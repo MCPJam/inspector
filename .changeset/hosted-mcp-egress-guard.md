@@ -39,3 +39,11 @@ being discarded by the allowlist and the answer was coming from the `NODE_ENV`
 fallback — correct by accident, logged as "ENVIRONMENT not set", and it left
 `ENV NODE_ENV=production` in the Dockerfile deciding which platform MCP worker
 production dials.
+
+A deployed hosted process now refuses to START when its own first-party MCP
+URLs (the platform worker, plus the docs/spec overrides) resolve to an address
+the egress guard will not dial — one named error at boot instead of a
+connection refused mid-turn, every turn. Scoped to DEPLOYED processes, which
+the built image marks with `NODE_ENV=production`: `HOSTED_MODE` alone also
+covers `npm run dev:hosted`, whose `ENVIRONMENT=dev` points the platform worker
+at `http://localhost:8787/mcp` on purpose, and that must keep starting.

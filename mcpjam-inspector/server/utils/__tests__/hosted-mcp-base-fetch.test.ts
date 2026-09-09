@@ -68,10 +68,33 @@ describe("hostedMcpBaseFetch", () => {
   });
 });
 
+/**
+ * Hosted AND deployed, which is the pair the assertion actually gates on.
+ *
+ * `HOSTED_MODE` alone does not mean a deployment — `npm run dev:hosted` sets it
+ * too — so the assertion also requires `NODE_ENV=production`, which the built
+ * image sets and the dev scripts do not. Vitest runs with `NODE_ENV=test`, so
+ * WITHOUT this helper every case below would return early: the refusal cases
+ * would fail loudly, but the acceptance cases would pass vacuously, and that
+ * silent half is the reason this is a named helper rather than a line someone
+ * can drop while editing a test.
+ */
+async function withDeployedHostedMode<T>(run: () => Promise<T>) {
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  try {
+    return await withHostedMode(true, run);
+  } finally {
+    if (previous === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous;
+  }
+}
+
 describe("assertHostedFirstPartyMcpUrls", () => {
   const saved: Record<string, string | undefined> = {};
   const keys = [
     "ENVIRONMENT",
+    "NODE_ENV",
     "MCPJAM_PLATFORM_MCP_URL",
     "MCPJAM_DOCS_MCP_URL",
     "MCPJAM_SPEC_MCP_URL",
@@ -93,7 +116,7 @@ describe("assertHostedFirstPartyMcpUrls", () => {
     // `ENVIRONMENT=production` (an alias, not a member of the enum), staging
     // and every PR preview set `staging`.
     for (const environment of ["production", "prod", "staging", "preview"]) {
-      await withHostedMode(true, async () => {
+      await withDeployedHostedMode(async () => {
         process.env.ENVIRONMENT = environment;
         delete process.env.MCPJAM_PLATFORM_MCP_URL;
         delete process.env.MCPJAM_DOCS_MCP_URL;
@@ -112,7 +135,7 @@ describe("assertHostedFirstPartyMcpUrls", () => {
     // `dev` would dial `http://localhost:8787/mcp` for its own platform server
     // — refused by the guard, one turn at a time, if nothing stopped it here.
     for (const environment of ["dev", "local", "test"]) {
-      await withHostedMode(true, async () => {
+      await withDeployedHostedMode(async () => {
         process.env.ENVIRONMENT = environment;
         const { assertHostedFirstPartyMcpUrls } = await import(
           "../hosted-mcp-base-fetch.js"
@@ -124,13 +147,45 @@ describe("assertHostedFirstPartyMcpUrls", () => {
     }
   });
 
+  it("still starts under `npm run dev:hosted`, which is hosted but not deployed", async () => {
+    // The pair above is HOSTED_MODE + `dev`, and so is `npm run dev:hosted`:
+    // that script sets `VITE_MCPJAM_HOSTED_MODE=true` and runs `dev:server`,
+    // which sets `ENVIRONMENT=dev` — resolving the platform worker to
+    // `http://localhost:8787/mcp`, the exact URL the case above refuses. So the
+    // assertion cannot key on HOSTED_MODE alone without stopping the one script
+    // that exists to run hosted mode locally (and the `[hosted]` project in
+    // `playwright.oauth-debugger.config.ts`, which boots the same server).
+    //
+    // `NODE_ENV` is what separates them: the built image sets
+    // `NODE_ENV=production`, `dev:server` sets `development`. Deliberately NOT
+    // using `withDeployedHostedMode` here — reproducing the dev shape is the
+    // whole point of this case.
+    for (const nodeEnv of ["development", "test"]) {
+      const previous = process.env.NODE_ENV;
+      process.env.NODE_ENV = nodeEnv;
+      try {
+        await withHostedMode(true, async () => {
+          process.env.ENVIRONMENT = "dev";
+          delete process.env.MCPJAM_PLATFORM_MCP_URL;
+          const { assertHostedFirstPartyMcpUrls } = await import(
+            "../hosted-mcp-base-fetch.js"
+          );
+          expect(() => assertHostedFirstPartyMcpUrls()).not.toThrow();
+        });
+      } finally {
+        if (previous === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = previous;
+      }
+    }
+  });
+
   it("refuses a private operator override", async () => {
     for (const key of [
       "MCPJAM_PLATFORM_MCP_URL",
       "MCPJAM_DOCS_MCP_URL",
       "MCPJAM_SPEC_MCP_URL",
     ]) {
-      await withHostedMode(true, async () => {
+      await withDeployedHostedMode(async () => {
         process.env.ENVIRONMENT = "prod";
         process.env[key] = "http://10.1.2.3/mcp";
         const { assertHostedFirstPartyMcpUrls } = await import(
@@ -146,7 +201,7 @@ describe("assertHostedFirstPartyMcpUrls", () => {
     // Found in review: checking only the hostname let an `http://` override
     // start the process, and the guard then refused every request it made —
     // the "loud at startup" promise, quietly half-kept.
-    await withHostedMode(true, async () => {
+    await withDeployedHostedMode(async () => {
       process.env.ENVIRONMENT = "prod";
       process.env.MCPJAM_DOCS_MCP_URL = "http://docs.mcpjam.com/mcp";
       const { assertHostedFirstPartyMcpUrls } = await import(
@@ -161,7 +216,7 @@ describe("assertHostedFirstPartyMcpUrls", () => {
     // whitespace-only value is truthy there and gets dialled verbatim; an
     // assertion that trimmed it to empty and skipped would have been checking
     // a URL the process never uses.
-    await withHostedMode(true, async () => {
+    await withDeployedHostedMode(async () => {
       process.env.ENVIRONMENT = "prod";
       process.env.MCPJAM_SPEC_MCP_URL = "   ";
       const { assertHostedFirstPartyMcpUrls } = await import(

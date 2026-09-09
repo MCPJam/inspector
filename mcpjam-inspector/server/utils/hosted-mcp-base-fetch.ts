@@ -131,6 +131,25 @@ const ALLOWED_FIRST_PARTY_PROTOCOL = "https:";
  */
 export function assertHostedFirstPartyMcpUrls(): void {
   if (!HOSTED_MODE) return;
+  // DEPLOYED hosted processes only, and `NODE_ENV` is what separates them.
+  //
+  // `HOSTED_MODE` alone does not mean "a deployment": `npm run dev:hosted` sets
+  // `VITE_MCPJAM_HOSTED_MODE=true` and runs `dev:server`, which sets
+  // `ENVIRONMENT=dev` — and `dev` resolves the platform worker to
+  // `http://localhost:8787/mcp`, exactly the shape refused below. Gating on
+  // `HOSTED_MODE` alone therefore stops the one script that exists to run
+  // hosted mode locally, which is not a misconfiguration to fail on.
+  //
+  // A real hosted deployment runs the built image, which sets
+  // `ENV NODE_ENV=production` (mcpjam-inspector/Dockerfile). So this keeps the
+  // trap the assertion exists for — a hosted container whose `ENVIRONMENT` is
+  // unset or misspelled and resolves to `dev` — fatal, because that container
+  // still has `NODE_ENV=production`, while letting `dev:hosted` start.
+  //
+  // NOT `resolveEnvironment()`: the value this guards against IS the resolved
+  // environment, so reading it here to decide whether to check it would exempt
+  // precisely the deployments that need catching.
+  if (process.env.NODE_ENV !== "production") return;
   for (const { label, url } of varyingFirstPartyMcpUrls()) {
     let parsed: URL;
     try {
