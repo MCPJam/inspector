@@ -61,12 +61,12 @@ vi.mock("@/state/app-state-context", () => ({
   useOptionalSharedAppState: (): AppState | null =>
     ({
       activeProjectId: activeProjectRef.current,
-      projects: {
-        [activeProjectRef.current]: {
-          id: activeProjectRef.current,
-          servers: {},
-        },
-      },
+      // BOTH projects, as app state really holds them. With only the active
+      // one here a picker pointed elsewhere fails to resolve at all, and the
+      // active-project comparison never gets exercised.
+      projects: Object.fromEntries(
+        ["p-1", "p-2"].map((id) => [id, { id, servers: {} }]),
+      ),
       servers: Object.fromEntries(
         Object.entries(statusRef.current).map(([name, connectionStatus]) => [
           name,

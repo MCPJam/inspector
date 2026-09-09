@@ -70,7 +70,6 @@ export interface GroupDraftServer {
   status?: ConnectionStatus;
 }
 
-/** The state a brand-new group form opens in: a small pool arrives already answered. */
 /**
  * Is a status a reading, or just the default? `disconnected` is what every
  * server reads on a fresh load and after a project switch, so drawing it would
@@ -82,6 +81,7 @@ export function isObservedStatus(
   return status !== undefined && status !== "disconnected";
 }
 
+/** The state a brand-new group form opens in: a small pool arrives already answered. */
 export function newGroupDraft(
   pool: readonly GroupDraftServer[],
   existingGroupNames: readonly string[],
