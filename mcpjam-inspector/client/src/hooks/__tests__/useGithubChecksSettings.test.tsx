@@ -380,6 +380,7 @@ describe("useGithubChecksSettings writes", () => {
         "mutation:github/checkRepoConfigs:setRepoConformance",
         "mutation:github/checkRepoConfigs:setRepoEnabled",
         "mutation:github/checkRepoConfigs:setRepoFeedbackComments",
+        "mutation:github/checkRepoConfigs:setRepoForkCredentials",
         "mutation:github/checkRepoConfigs:setRepoOutagePolicy",
         "mutation:github/checkRepoConfigs:setRepoSuite",
       ].sort()
