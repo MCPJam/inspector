@@ -787,6 +787,16 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
     toolName: string,
     input: Record<string, unknown>,
     timeoutMs = 10_000,
+    /**
+     * Run once the browser has REGISTERED this invocation, before we start
+     * waiting for its response.
+     *
+     * For the case that needs a person to act on an invocation that is already
+     * live: doing that on a timer would be a race — short enough to be flaky,
+     * long enough to be slow, and correct only by luck. This makes the ordering
+     * causal instead.
+     */
+    onStarted?: (invocationId: string) => Promise<void> | void,
   ): Promise<{
     invocationId: string;
     response?: RespondedPayload;
@@ -800,6 +810,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
       "WebMCP.invokeTool" as never,
       { frameId, toolName, input } as never,
     )) as { invocationId: string };
+    await onStarted?.(invocationId);
     const mine = () => responded.filter((r) => r.invocationId === invocationId);
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -945,26 +956,28 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
     // late answer rather than buffer it.
     expect(await cancelStillValid(first.invocationId)).toBe(false);
 
-    // A person now submits, and an invocation is answered. Which one is
+    // A person now submits, and an invocation is answered. WHICH ONE is
     // asserted rather than assumed: the first is still live in the page and
     // could not be cancelled, so a test that only checked `status` would pass
-    // whichever of the two Blink chose to answer. (It answers the SECOND — the
-    // form holds one invocation and the second replaced the first — which is
-    // what the id assertions below pin.)
+    // on whichever of the two Blink chose to answer. The form holds ONE
+    // invocation and the second replaces the first, so the second is the one
+    // the submit answers — pinned by the id assertions below.
     //
     // The first is therefore left dangling on purpose, because nothing can
     // reach it. Contained rather than ignored: every test here starts with
     // `open()`, which navigates, and a form invocation cannot outlive the
     // document holding it.
-    const second = invokeAndWait(
+    const { response, invocationId } = await invokeAndWait(
       frameId,
       FIXTURE_TOOLS.confirmOrder,
       { sku: "C2" },
       10_000,
+      // The click is CAUSED by the invocation being registered, not scheduled
+      // near it: `invokeTool` has resolved by the time this runs, so the form
+      // is holding the second invocation and there is no window in which the
+      // submit could answer the first.
+      () => page.click("#confirm-submit"),
     );
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    await page.click("#confirm-submit");
-    const { response, invocationId } = await second;
     expect(response?.invocationId).toBe(invocationId);
     expect(response?.invocationId).not.toBe(first.invocationId);
     expect(response?.status).toBe("Completed");
