@@ -88,6 +88,7 @@ import {
   type AgentSessionRecord,
 } from "../../services/browserd/local/agent-session-store.js";
 import type { BrowserAgentCommand } from "../../../shared/browser-agent-contract.js";
+import { logger } from "../../utils/logger.js";
 import { browserProfileArchiveResponse } from "../../../shared/browser-session-header.js";
 
 const computers = new Hono();
@@ -422,15 +423,26 @@ computers.post("/local-browser/profile/export", async (c) => {
     const archive = await exportBrowserProfileArchive(profileDir);
     let savedFrom: string | undefined;
     if (projectId && conversationId) {
-      const bearer = await getConvexBearerForRequest(c);
-      const logical = await new BrowserSessionService().resolveSession({
-        owner: { kind: "conversation", id: conversationId },
-        projectId,
-        bearer,
-        engine: "local",
-        profile: "blank",
-      });
-      savedFrom = logical?.sessionId;
+      // ISOLATED from the export. The browser is already closed and the
+      // archive is already in hand by this point; a control-plane blip here
+      // would otherwise fall into the catch below and 500, losing a save the
+      // user did ask for over a header they did not.
+      try {
+        const bearer = await getConvexBearerForRequest(c);
+        const logical = await new BrowserSessionService().resolveSession({
+          owner: { kind: "conversation", id: conversationId },
+          projectId,
+          bearer,
+          engine: "local",
+          profile: "blank",
+        });
+        savedFrom = logical?.sessionId;
+      } catch (error) {
+        logger.warn(
+          "[computers] profile export could not resolve its logical session",
+          { error: error instanceof Error ? error.message : String(error) },
+        );
+      }
     }
     return browserProfileArchiveResponse(archive, savedFrom);
   } catch (error) {

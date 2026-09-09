@@ -621,11 +621,16 @@ export function createComputerBrowserPanelRoutes(
       if (!session) {
         return c.json({ ok: false, error: "no_browser_session" }, 409);
       }
-      const exportProfile = createClient(session).exportProfile;
-      if (!exportProfile) {
+      // Called ON the client, not detached from it. `BrowserdClient` is a
+      // class and `exportProfile` reaches `this.request(...)`, so pulling the
+      // method off the instance and invoking it bare throws a TypeError that
+      // surfaces as a 502 — and only in production, since the injected test
+      // client is an object literal that survives losing its receiver.
+      const client = createClient(session);
+      if (!client.exportProfile) {
         return c.json({ ok: false, error: "profile_export_unavailable" }, 409);
       }
-      const archive = await exportProfile();
+      const archive = await client.exportProfile();
       return browserProfileArchiveResponse(archive, session.sessionId);
     } catch (error) {
       reportRouteFailure("browser profile export failed", error, {
