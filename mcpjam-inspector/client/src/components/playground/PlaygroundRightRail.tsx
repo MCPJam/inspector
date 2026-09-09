@@ -3,6 +3,7 @@ import {
   Cloud,
   FileText,
   FolderTree,
+  Globe,
   Laptop,
   Loader2,
   PanelRightClose,
@@ -17,7 +18,15 @@ import { ComputerTerminal } from "@/components/computer/ComputerTerminal";
 import { ComputerTerminalPane } from "@/components/computer/ComputerTerminalPane";
 import { PaneMessage } from "@/components/computer/PaneMessage";
 import { useComputerTerminal } from "@/components/computer/useComputerTerminal";
-import { useComputersEnabledState } from "@/hooks/useComputersEnabled";
+import {
+  useBrowserWorkspaceEnabled,
+  useComputersEnabledState,
+} from "@/hooks/useComputersEnabled";
+import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
+import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
+import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
+import { browserPanelAvailable } from "@/components/playground/PlaygroundBrowserPanel";
+import { useMintBrowserToken } from "@/hooks/useProjectComputer";
 import {
   useComputerEngine,
   type ComputerEngineState,
@@ -69,15 +78,20 @@ export function PlaygroundRightRail({
 }
 
 /**
- * The rail's tabs, now two.
+ * The rail's tabs.
  *
- * The Browser used to be the third, and it moved out to a panel of its own
- * beside chat — a page rendered at 30% of a workspace is a page in its mobile
- * layout, and hiding it to read the logs hides it at the moment you most want
- * to see what the agent just did. What stays here is text: a log stream and a
- * shell, which are exactly right in a narrow column.
+ * The Browser moved out to a panel of its own beside chat — a page rendered at
+ * 30% of a workspace is a page in its mobile layout, and hiding it to read the
+ * logs hides it at the moment you most want to see what the agent just did.
+ * What belongs here is text: a log stream and a shell, which are exactly right
+ * in a narrow column.
+ *
+ * It comes BACK when the browser workspace is gated off, because the
+ * alternative is no browser at all: a flag that removed the panel and left
+ * nothing in its place would be worse than either state it is choosing
+ * between. @see BROWSER_WORKSPACE_FLAG
  */
-type RightRailTab = "logs" | "shell";
+type RightRailTab = "logs" | "shell" | "browser";
 
 function RightRailTabbed({
   onClose,
@@ -106,6 +120,32 @@ function RightRailTabbed({
   // ask for. The CHIP follows the resolved `engine`, so it can never claim
   // "This machine" while commands actually run in the cloud.
   const isLocalShell = engine.selectedEngine === "local";
+  // THE FALLBACK BROWSER, and only that. While the workspace flag is on the
+  // browser lives in its own panel beside chat and this tab does not exist;
+  // with the flag off it is the rail's third tab again, exactly as it was.
+  const workspaceEnabled = useBrowserWorkspaceEnabled();
+  const localBrowserRunning = useLocalBrowserRunning(
+    !workspaceEnabled && engine.selectedEngine === "local",
+  );
+  const hasBrowser =
+    !workspaceEnabled &&
+    browserPanelAvailable({
+      hostHasBrowser: !!hostConfig?.builtInToolIds?.includes("browser"),
+      selectedEngine: engine.selectedEngine,
+      isAuthenticated,
+      localBrowserRunning,
+    });
+  // Which body. Follows `selectedEngine` like the Shell above, so someone who
+  // picked "This machine" but has not authorized it yet sees the local body's
+  // pointer rather than a cloud browser they did not ask for.
+  const isLocalBrowser = engine.selectedEngine === "local";
+  const mintBrowserToken = useMintBrowserToken();
+
+  // A tab that disappears cannot stay selected: leaving `activeTab` on a
+  // hidden pane hides all of them and the rail looks broken.
+  useEffect(() => {
+    if (!hasBrowser && activeTab === "browser") setActiveTab("logs");
+  }, [hasBrowser, activeTab]);
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
       if (next === activeTab) return;
@@ -134,6 +174,14 @@ function RightRailTabbed({
           isActive={activeTab === "shell"}
           onClick={() => handleTabClick("shell")}
         />
+        {hasBrowser ? (
+          <TabButton
+            icon={Globe}
+            label="Browser"
+            isActive={activeTab === "browser"}
+            onClick={() => handleTabClick("browser")}
+          />
+        ) : null}
         <button
           type="button"
           onClick={onClose}
@@ -153,6 +201,35 @@ function RightRailTabbed({
       >
         <LoggerView isCollapsable={false} />
       </div>
+      {hasBrowser ? (
+        <div
+          className={cn(
+            "min-h-0 flex-1 flex-col",
+            activeTab === "browser" ? "flex" : "hidden",
+          )}
+        >
+          {/* Mounted-hidden like the others: switching tabs must not drop the
+              frame socket, which would stop the screencast and make the agent's
+              browser go dark every time somebody glanced at the logs. `active`
+              is what makes that safe — a pane behind the Logs tab must stop
+              claiming somebody is watching, and on the hosted engine that claim
+              keeps a METERED box awake. */}
+          {isLocalBrowser ? (
+            <LocalBrowserBody
+              projectId={projectId}
+              consentGranted={engine.consent.granted}
+              consentToken={engine.consent.token}
+              active={activeTab === "browser"}
+            />
+          ) : (
+            <HostedBrowserBody
+              projectId={projectId}
+              mintToken={mintBrowserToken}
+              active={activeTab === "browser"}
+            />
+          )}
+        </div>
+      ) : null}
       <div
         className={cn(
           "min-h-0 flex-1 flex-col",

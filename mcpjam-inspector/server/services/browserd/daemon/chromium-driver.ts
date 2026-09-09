@@ -2438,7 +2438,24 @@ export class ChromiumDriver implements BrowserDriver {
       // still wins; today it is the same value.
       output: this.withDialogNote(
         tabId,
-        this.withHandoffNote({ url: frame.url, ...output }),
+        this.withHandoffNote({
+          url: frame.url,
+          // THE SIZE THIS WAS SEEN AT, on every observation without exception.
+          // It is what the model's coordinates are read in, and on a session
+          // that can be resized it is the only honest way to know: the tool
+          // schema states a range rather than a size, precisely so that it
+          // does not have to be regenerated — and its hash rotated — every
+          // time somebody drags a panel.
+          //
+          // In `output` rather than beside it, unlike `stateToken` and
+          // `cursors`, because this one IS for the model: it is the number it
+          // has to compute against.
+          viewport: {
+            width: this.sessionViewport.width,
+            height: this.sessionViewport.height,
+          },
+          ...output,
+        }),
       ),
       stateToken: this.tokenFor(tabId, entry, frame),
     };

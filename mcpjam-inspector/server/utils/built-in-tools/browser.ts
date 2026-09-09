@@ -55,8 +55,8 @@ import { logger } from "../logger.js";
 import { parkForHandoff } from "./browser-handoff.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
+import { MAX_SESSION_VIEWPORT } from "@/shared/browser-viewport";
 import {
-  BROWSERD_OBSERVATION_VIEWPORT,
   DEFAULT_QUEUE_KEY,
   isPointInViewport,
   type BrowserAction,
@@ -86,13 +86,28 @@ import { ensureLocalBrowserSession } from "../../services/browserd/local/local-b
 export { BROWSER_BUILT_IN_TOOL_ID };
 
 /**
- * The coordinate space the model is told about, stated in the tool schema and
- * re-checked before a command leaves this process. Read from the protocol so
- * the schema, the daemon's bounds check, and the launched viewport cannot
- * disagree about what "x: 900" means.
+ * The coordinate space the model is told about — as a RANGE, not a size.
+ *
+ * It used to be the size: the schema said `max: 1023`, the description said
+ * "1024x768", and the daemon's bounds check agreed with both. That works
+ * exactly as long as no session is ever a different size, and one of them now
+ * is — the interactive Playground's browser follows the panel somebody can
+ * drag. A schema that named 1023 would refuse a perfectly good click at x=1200
+ * before it ever reached the browser.
+ *
+ * So the schema states the WIDEST a session may be, the description tells the
+ * model to read the actual size off its last observation (every one carries
+ * `viewport`), and the daemon refuses anything outside the session's real
+ * bounds — which is the only place that knows them.
+ *
+ * WRITTEN ONCE, deliberately. A description that named the current size would
+ * have to be regenerated on every resize, and regenerating it rotates the
+ * host-configuration hash — so dragging a panel would invalidate every cached
+ * tool manifest, several times a second.
  */
-const VIEWPORT_W = BROWSERD_OBSERVATION_VIEWPORT.width;
-const VIEWPORT_H = BROWSERD_OBSERVATION_VIEWPORT.height;
+const VIEWPORT_MAX_W = MAX_SESSION_VIEWPORT.width;
+const VIEWPORT_MAX_H = MAX_SESSION_VIEWPORT.height;
+
 
 /**
  * How approval reaches the user for this turn — the thing a surface must
@@ -1336,10 +1351,10 @@ export function buildBrowserTools(
         "answer a JavaScript dialog that is blocking the page. " +
         "Target by `ref` from the last a11y observation (best: it is the element you read, and a covered one is refused rather than mis-clicked), or by coordinates from the last screenshot, or by CSS selector. Returns the " +
         "page after the action: URL, what you can act on (a11y with refs), and a " +
-        "screenshot. Coordinates are CSS pixels in a " +
-        `${VIEWPORT_W}x${VIEWPORT_H} viewport with (0, 0) at the TOP-LEFT of the ` +
-        "screenshot — the screenshot is always shown at that size, so read x and y " +
-        "straight off it without scaling.",
+        "screenshot. Coordinates are CSS pixels, (0, 0) at the screenshot's " +
+        "TOP-LEFT, read straight off it without scaling. The page can be " +
+        "resized while you work, so take its size from the `viewport` on your " +
+        "last observation; a coordinate outside it is refused, not clamped.",
       inputSchema: z.object({
         verb: z.enum([
           "click",
@@ -1357,19 +1372,15 @@ export function buildBrowserTools(
         x: z
           .number()
           .min(0)
-          .max(VIEWPORT_W - 1)
+          .max(VIEWPORT_MAX_W - 1)
           .optional()
-          .describe(
-            `X coordinate from the last screenshot, 0 to ${VIEWPORT_W - 1}.`,
-          ),
+          .describe("X from the last screenshot, inside its `viewport`."),
         y: z
           .number()
           .min(0)
-          .max(VIEWPORT_H - 1)
+          .max(VIEWPORT_MAX_H - 1)
           .optional()
-          .describe(
-            `Y coordinate from the last screenshot, 0 to ${VIEWPORT_H - 1}.`,
-          ),
+          .describe("Y from the last screenshot, inside its `viewport`."),
         value: z
           .string()
           .optional()
@@ -1412,9 +1423,11 @@ export function buildBrowserTools(
           // instead of as a transport error.
           return {
             error:
-              `out_of_viewport: (${x}, ${y}) is outside the ${VIEWPORT_W}x${VIEWPORT_H} ` +
-              "screenshot; nothing was clicked. Coordinates are CSS pixels with " +
-              "(0, 0) at the top-left — re-read the screenshot and pick a point inside it.",
+              `out_of_viewport: (${x}, ${y}) is outside any page this browser ` +
+              `can show (at most ${VIEWPORT_MAX_W}x${VIEWPORT_MAX_H}); nothing ` +
+              "was clicked. Coordinates are CSS pixels with (0, 0) at the " +
+              "top-left — re-read the screenshot, take the page's size from its " +
+              "`viewport`, and pick a point inside it.",
           };
         }
         // REF FIRST. It is the only target the model did not have to invent:
@@ -2188,6 +2201,22 @@ function defaultEnsureSession(
         projectId,
         contextMode,
         ...(ownerKey ? { ownerKey } : {}),
+        /**
+         * `followPane` for the interactive session, `fixed` for everything
+         * else, and `contextMode` is exactly that distinction already made.
+         *
+         * `persistent` is the interactive Playground's browser: one per
+         * project, keeping its logins between turns, watched by a panel
+         * somebody can drag. `ephemeral` is an eval iteration, a swarm, a
+         * journey attempt — a throwaway browser with no panel and a replay
+         * artifact that is only comparable against a run at the same size.
+         *
+         * Reusing the existing distinction rather than adding a second flag
+         * beside it: two ways to say "is this a real person's session" is two
+         * ways for them to disagree, and the disagreement would be an eval
+         * silently recorded at whatever size somebody's window happened to be.
+         */
+        viewportPolicy: contextMode === "persistent" ? "followPane" : "fixed",
       });
   }
   // Hosted. `target` decides WHICH BOX — the run's own disposable desktop when

@@ -1087,19 +1087,32 @@ describe("the screenshot reaches the model as an IMAGE, not as text", () => {
 });
 
 describe("the coordinate space is stated and enforced", () => {
-  it("names the viewport and the origin in the act tool's description", async () => {
+  it("names the origin, and sends the model to its observation for the size", async () => {
+    // It used to name 1024x768. That works exactly as long as no session is
+    // ever a different size, and the interactive Playground's browser now
+    // follows a panel somebody can drag — so the description says where to
+    // READ the size instead, and says it once. A description that named the
+    // current size would have to be regenerated on every resize, and
+    // regenerating it rotates the host-configuration hash.
     const { result } = build();
     const description = (result!.tools as any).browser_act.description as string;
-    expect(description).toContain("1024x768");
     expect(description).toMatch(/top-left/i);
+    expect(description).toMatch(/viewport/i);
+    expect(description).not.toContain("1024x768");
   });
 
-  it("bounds x and y in the schema", () => {
+  it("bounds x and y at the WIDEST a page can be, not at one page's size", () => {
+    // A schema that named 1023 would refuse a perfectly good click at x=1200
+    // on a session somebody had widened, before it ever reached the browser.
+    // The real bound is the session's, and only the daemon knows it.
     const { result } = build();
     const schema = (result!.tools as any).browser_act.inputSchema;
-    expect(schema.safeParse({ verb: "click", x: 1024, y: 10 }).success).toBe(false);
     expect(schema.safeParse({ verb: "click", x: -1, y: 10 }).success).toBe(false);
     expect(schema.safeParse({ verb: "click", x: 1023, y: 767 }).success).toBe(true);
+    expect(schema.safeParse({ verb: "click", x: 1600, y: 900 }).success).toBe(true);
+    expect(
+      schema.safeParse({ verb: "click", x: 99_999, y: 10 }).success,
+    ).toBe(false);
   });
 
   it("REFUSES an out-of-range coordinate at execute time, without sending a command", async () => {
@@ -1116,7 +1129,9 @@ describe("the coordinate space is stated and enforced", () => {
     });
 
     expect(output.error).toMatch(/out_of_viewport/);
-    expect(output.error).toContain("1024x768");
+    // The ceiling, not one session's size: the session's own bound is the
+    // daemon's to enforce, because only it knows what the page is right now.
+    expect(output.error).toMatch(/at most \d+x\d+/);
     expect(sendCommand).not.toHaveBeenCalled();
   });
 });
@@ -1919,6 +1934,26 @@ describe("the toolset's context footprint is pinned", () => {
     // layout is right, whose list is empty, and whose console is silent, where
     // the cause is a 401 on the fetch behind the list. Without it a model can
     // only re-read a page that will keep looking the same.
+    // Raised to 5_800 for `forward` and the resizable page (+~240 bytes,
+    // ~5500 → 5738). Two things, both of which remove a wrong answer rather
+    // than adding a capability nobody asked for.
+    //
+    // `forward` is one enum member and two words in a sentence. Without it a
+    // model that has gone back has to remember a URL and re-navigate, and a
+    // PERSON driving the pane has a forward button that does nothing — which
+    // is the visible half, and the reason it exists.
+    //
+    // The rest is the page's size ceasing to be a constant. The description
+    // used to name 1024x768; it now tells the model to read `viewport` off its
+    // last observation, because the interactive browser follows a panel
+    // somebody can drag and a schema that named 1023 would refuse a good click
+    // at x=1200 before it left this process. It is written ONCE, deliberately:
+    // a description that named the current size would be regenerated on every
+    // resize, and regenerating it rotates the host-configuration hash — so
+    // dragging a divider would invalidate every cached tool manifest several
+    // times a second. Those bytes buy a coordinate space the model cannot be
+    // silently wrong about.
+    //
     // Raised to 5_700 for the review round (+~200 bytes, 5316 → ~5500):
     // `requestId` on `browser_observe`, the two dialog verbs on `browser_act`,
     // and an honest `browser_navigate` description. Each closes a gap between
@@ -1930,7 +1965,7 @@ describe("the toolset's context footprint is pinned", () => {
     expect(
       bytes,
       "browser toolset grew; say what the extra bytes buy before raising this",
-    ).toBeLessThanOrEqual(5_700);
+    ).toBeLessThanOrEqual(5_800);
   });
 
   it("keeps a read-only advertisement smaller than the full one", () => {

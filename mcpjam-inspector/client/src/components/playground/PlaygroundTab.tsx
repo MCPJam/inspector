@@ -35,7 +35,10 @@ import {
 } from "@/components/playground/PlaygroundBrowserPanel";
 import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
-import { useComputersEnabledState } from "@/hooks/useComputersEnabled";
+import {
+  useBrowserWorkspaceEnabled,
+  useComputersEnabledState,
+} from "@/hooks/useComputersEnabled";
 import {
   MAX_BROWSER_PANEL_SIZE,
   MIN_BROWSER_PANEL_SIZE,
@@ -264,7 +267,11 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const localBrowserRunning = useLocalBrowserRunning(
     browserEngine.selectedEngine === "local" && computersEnabled === true,
   );
+  // GATED until all three engines meet the release criteria. Off, the browser
+  // is the right rail's Browser tab again — see `BROWSER_WORKSPACE_FLAG`.
+  const workspaceEnabled = useBrowserWorkspaceEnabled();
   const canBrowse =
+    workspaceEnabled &&
     computersEnabled === true &&
     browserPanelAvailable({
       hostHasBrowser: !!effectiveHostConfig?.builtInToolIds?.includes("browser"),

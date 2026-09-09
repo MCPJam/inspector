@@ -60,7 +60,14 @@ vi.mock("@/components/computer/useComputerTerminal", () => ({
 
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabledState: () => true,
+  // ON, so the rail is the two-tab one the tests below describe. The Browser
+  // tab is the FALLBACK for a workspace that is gated off, and it has its own
+  // suite at the bottom of this file.
+  useBrowserWorkspaceEnabled: () => workspaceFlag.enabled,
 }));
+
+/** Flipped by the fallback suite; on for everything else. */
+const workspaceFlag = vi.hoisted(() => ({ enabled: true }));
 
 vi.mock("@/components/logger-view", () => ({
   LoggerView: () => <div data-testid="logger-view" />,
@@ -343,5 +350,52 @@ describe("PlaygroundRightRail — no computer attached", () => {
  * properties these used to pin — which body each engine gets, when the panel
  * is offered at all, and that a hidden pane stops claiming somebody is
  * watching — are pinned in `PlaygroundBrowserPanel.test.tsx` against their new
- * home. Restating them here would be testing a rail that no longer has one.
+ * home. What is left here is the one thing that is about the RAIL: that the
+ * old tab comes back when the workspace is gated off.
  */
+describe("PlaygroundRightRail — the gated-off fallback", () => {
+  const browserHost = {
+    computer: { workdir: "/home/user" },
+    builtInToolIds: ["browser"],
+  } as any;
+
+  afterEach(() => {
+    workspaceFlag.enabled = true;
+  });
+
+  function renderRail() {
+    return render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+  }
+
+  it("offers no Browser tab while the workspace panel is on", () => {
+    // Two browsers on one screen is two panes claiming to be watched, on a
+    // metered box, showing the same page.
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    renderRail();
+    expect(
+      screen.queryByRole("button", { name: /browser/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("brings the old tab back when the workspace is gated off", () => {
+    // A flag that removed the panel and left nothing in its place would be
+    // worse than either state it is choosing between.
+    workspaceFlag.enabled = false;
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    renderRail();
+    expect(
+      screen.getByRole("button", { name: /browser/i }),
+    ).toBeInTheDocument();
+  });
+});
+

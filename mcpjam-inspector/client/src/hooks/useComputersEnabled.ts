@@ -74,3 +74,39 @@ export const LOCAL_HARNESS_FEATURE_FLAG = "local-harness-enabled";
 export function useLocalHarnessEnabled(): boolean {
   return useFeatureFlagEnabled(LOCAL_HARNESS_FEATURE_FLAG) === true;
 }
+
+
+/**
+ * The Codex-style browser WORKSPACE — the panel beside chat, the tab strip,
+ * automatic takeover, and the responsive viewport.
+ *
+ * A SECOND, NARROWER FLAG inside the `computers-enabled` surface, like the
+ * local-engine one above, and it exists because the feature is not one thing
+ * that can be true on one engine: the same shell drives a local Chromium, a
+ * hosted one behind an H.264 stream, and Electron's native `WebContentsView`,
+ * and the three reach the release criteria at different times. The hosted half
+ * in particular waits on a new desktop image and a measurement of the
+ * streaming cost at the wider sizes people will actually drag to; shipping the
+ * panel before that is shipping a browser that resizes on two engines and
+ * pretends to on the third.
+ *
+ * Flag off ⇒ the browser is the right rail's Browser tab again, at its old
+ * size, with "Take control". Nothing on the server changes: the pane routes,
+ * the viewport policy and the shell's state endpoint stay reachable, because a
+ * kill switch that also removed the plumbing would make the flag untestable in
+ * the deployment it matters in.
+ */
+export const BROWSER_WORKSPACE_FLAG = "browser-workspace-enabled";
+
+/**
+ * Tri-state, like `useComputersEnabledState` and for the same reason: a
+ * workspace that flickered the browser panel in and out while PostHog resolved
+ * would move the chat pane under somebody's cursor on every page load.
+ */
+export function useBrowserWorkspaceEnabledState(): boolean | undefined {
+  return useFeatureFlagEnabled(BROWSER_WORKSPACE_FLAG);
+}
+
+export function useBrowserWorkspaceEnabled(): boolean {
+  return useBrowserWorkspaceEnabledState() === true;
+}
