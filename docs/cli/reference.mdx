@@ -2323,6 +2323,120 @@ AI-generate test cases from the suite's tools (spends credits).
 
 ---
 
+## `browser` commands
+
+Drive this machine's browser from an outside agent or script. All `browser` commands require the local Inspector to be running (`mcpjam inspector start`) and a consent capability stored with `browser consent`.
+
+### Shared flags
+
+Every `browser` subcommand accepts these flags in addition to its own:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--inspector-url <url>` | | Local Inspector base URL |
+| `--project <id>` | `default` | Project whose browser to drive |
+| `--session <id>` | Last opened | Browser session id |
+| `--consent <token>` | Stored value | Local computer consent capability. Also read from `MCPJAM_LOCAL_CONSENT`. |
+| `--client-id <id>` | `mcpjam-cli` | How this client appears in the session trace |
+
+### `browser consent`
+
+Store the local computer capability granted in the Inspector.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--token <token>` | Yes | The capability the Inspector showed once |
+
+### `browser open`
+
+Open (or attach to) this project's browser session.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mode <mode>` | `allow_all` | Session policy: `allow_all` \| `read_only` \| `allowlist` |
+| `--origin <origin...>` | | Origins this session may visit |
+| `--tool <op...>` | | Operations this session may use |
+| `--profile <profile>` | `persistent` | `persistent` \| `ephemeral` |
+| `--attach <mode>` | `prefer` | `prefer` \| `never` \| `require` |
+| `--observe <mode>` | | Initial observation: `a11y` \| `screenshot` \| `none` |
+| `--out-dir <dir>` | | Where to write an initial screenshot |
+| `--run-key <key>` | | Names an ephemeral run, so two never share a profile |
+| `--no-screenshots` | | Keep a ledger without pictures for this session |
+
+### `browser observe`
+
+Look at the current page.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mode <mode>` | `a11y` | `a11y` \| `screenshot` \| `text` \| `dom` \| `console` \| `network` \| `dialog` \| `url` \| `page_tools` |
+| `--request <id>` | | With `--mode network`: read one exchange instead of the tail |
+| `--root-ref <ref>` | | Scope an a11y tree to a ref |
+| `--root-selector <selector>` | | Scope an a11y tree to a CSS selector |
+| `--filter <filter>` | | `interactive` \| `all` |
+| `--tab <tabId>` | | Which tab to observe |
+| `--out-dir <dir>` | | Where to write a screenshot |
+| `--inline` | | Return screenshot bytes instead of a file path |
+
+`--mode network` returns the tail of the page's network ring — requests and responses captured since the session started, with query strings and credentials stripped. Pass `--request <id>` to read one exchange by its id. `--mode dialog` reads any pending JavaScript dialog without answering it.
+
+### `browser navigate <url>`
+
+Go to a URL, returning the page it landed on.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--new-tab` | | Open in a new tab |
+| `--tab <tabId>` | | Which tab to navigate |
+| `--command-id <id>` | | Idempotency key: reuse it to retry safely after a transport failure |
+| `--observe-after <mode>` | `a11y` | `a11y` \| `screenshot` \| `none` |
+
+### `browser act`
+
+Click, type, press, scroll, hover, drag, select, or manage tabs and dialogs.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--verb <verb>` | Yes | `click` \| `type` \| `press` \| `scroll` \| `hover` \| `drag` \| `select` \| `close_tab` \| `activate_tab` \| `accept_dialog` \| `dismiss_dialog` |
+| `--ref <ref>` | | Target a ref from the last a11y observation |
+| `--selector <selector>` | | Target a CSS selector |
+| `--x <x>` | | Target x coordinate (1024×768 viewport) |
+| `--y <y>` | | Target y coordinate (1024×768 viewport) |
+| `--value <value>` | | Text to type, key to press, or option to select |
+| `--expected-state <token>` | | Refuse if the page has moved since this state token |
+| `--tab <tabId>` | | Which tab to act on |
+| `--command-id <id>` | | Idempotency key: reuse it to retry safely after a transport failure |
+| `--observe-after <mode>` | `a11y` | `a11y` \| `screenshot` \| `none` |
+| `--out-dir <dir>` | | Where to write a screenshot |
+
+Provide exactly one of `--ref`, `--selector`, or `--x`/`--y` as the target. `--ref` targets an accessibility ref from the last a11y observation — the daemon resolves it to the live node, scrolls it into view, and clicks its centre. `accept_dialog` and `dismiss_dialog` answer a pending JavaScript dialog; they work under any `dialogPolicy` and do not require a target.
+
+### `browser note <text>`
+
+Write a marker into the session trace.
+
+No additional flags beyond the shared flags.
+
+### `browser trace`
+
+Read this session's command history.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--after-seq <seq>` | | Only rows after this sequence number |
+| `--command-id <id>` | | Find one command's row |
+| `--limit <n>` | `100` | How many rows |
+
+### `browser close`
+
+Leave the session.
+
+| Flag | Description |
+|------|-------------|
+| `--terminate` | Close the browser itself, not just this participant |
+
+---
+
 ## `mcp` command
 
 ### `mcp`
