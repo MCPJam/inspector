@@ -102,7 +102,6 @@ import {
 } from "@/lib/chat-error-reporting";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
-import { useBrowserSessionsEnabled } from "@/hooks/useBrowserSessionsEnabled";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   prepareLocalHarnessSendRequest,
@@ -1718,7 +1717,6 @@ export function useChatSession(
   // hook defaults rather than retaining the prior host's value.
   const isExecutionConfigControlled = "executionConfig" in options;
   const hostedProjectId = hostedContext?.projectId;
-  const browserSessionsEnabled = useBrowserSessionsEnabled();
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
   const hostedOAuthTokens = hostedContext?.oauthTokens;
@@ -2960,7 +2958,7 @@ export function useChatSession(
         selectedServerIds: resolvedServerIds,
         selectedServerNames: resolvedServerNames,
         chatSessionId,
-        ...(browserSessionsEnabled && isHostedDirectChat
+        ...(isHostedDirectChat
           ? { browserScope: "conversation" as const }
           : {}),
         // Handshake: tells the server this bundle can render an elicitation
@@ -3048,7 +3046,7 @@ export function useChatSession(
             : {
                 selectedServers,
                 chatSessionId,
-                ...(browserSessionsEnabled && !hostedScenarioId
+                ...(!hostedScenarioId
                   ? { browserScope: "conversation" as const }
                   : {}),
                 // `directVisibility` only applies to direct chat. The
@@ -3258,7 +3256,6 @@ export function useChatSession(
     // the very next turn.
     resolvedLocalEngine,
     localConsentToken,
-    browserSessionsEnabled,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.

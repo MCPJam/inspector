@@ -34,7 +34,6 @@ import {
   useMintBrowserToken,
   useMintConversationBrowserToken,
 } from "@/hooks/useProjectComputer";
-import { useBrowserSessionsEnabled } from "@/hooks/useBrowserSessionsEnabled";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
@@ -177,13 +176,10 @@ function RightRailTabbed({
   const isLocalBrowser = engine.selectedEngine === "local";
   const mintBrowserToken = useMintBrowserToken();
   const mintConversationBrowserToken = useMintConversationBrowserToken();
-  const browserSessionsEnabled = useBrowserSessionsEnabled();
   const activeChatSessionId = useActiveChatSessionStore(
     (state) => state.sessionId,
   );
-  const browserSessionId = browserSessionsEnabled
-    ? (activeChatSessionId ?? undefined)
-    : undefined;
+  const browserSessionId = activeChatSessionId ?? undefined;
   const mintHostedBrowserToken = useCallback(
     ({ projectId: tokenProjectId }: { projectId: string }) =>
       browserSessionId
