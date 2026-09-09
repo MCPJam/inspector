@@ -72,6 +72,8 @@ export type AnyPage = {
   goto(url: string, options?: unknown): Promise<unknown>;
   reload(options?: unknown): Promise<unknown>;
   goBack(options?: unknown): Promise<unknown>;
+  goForward(options?: unknown): Promise<unknown>;
+  setViewportSize(size: { width: number; height: number }): Promise<void>;
   waitForLoadState(state: string, options?: unknown): Promise<void>;
   evaluate<R>(fn: string): Promise<R>;
   screenshot(options?: unknown): Promise<Buffer>;
@@ -315,6 +317,24 @@ export function wrapPage(page: AnyPage): DriverPage {
     },
     async goBack() {
       await page.goBack({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+    },
+    async setViewportSize(size) {
+      // Playwright's own call, which resizes the page's CSS viewport WITHOUT
+      // touching the OS window. That separation is the point on Electron and
+      // the hosted box alike: moving a window must not change the coordinate
+      // space the agent reasons in, and changing the coordinate space must not
+      // depend on anybody being able to move a window.
+      await page.setViewportSize(size);
+    },
+    async goForward() {
+      // Playwright resolves with a null response rather than throwing when
+      // there is nothing ahead, which is the behaviour the verb wants: the
+      // pane disables the button from `canGoForward`, so reaching this with an
+      // empty forward history is a race and not a fault worth a message.
+      await page.goForward({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS,
+      });
     },
     async waitForNetworkIdle(signal) {
       // settle's maxWait (via the abort signal) is the SOLE budget — no inner

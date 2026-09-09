@@ -22,6 +22,7 @@ import {
   type HandoffLease,
   type LeaseRefusal,
 } from "./lease";
+import type { SessionViewport } from "../../../../shared/browser-viewport";
 
 export interface DriverHealth {
   ok: boolean;
@@ -108,18 +109,42 @@ export interface BrowserDriver {
     command: BrowserCommand,
     wants: { a11y: boolean; screenshot: boolean },
   ): Promise<BrowserCommandResult>;
+  /**
+   * How big this session's page is, and which revision that size is.
+   *
+   * Optional like the rest of this group, and for a slightly different reason:
+   * a driver without one is not a driver that cannot answer, it is a driver
+   * whose answer is necessarily the launch constant — nothing has resized it
+   * because nothing can. Callers fall back to that rather than refusing, so a
+   * fake driver in a unit test keeps behaving exactly as it did.
+   */
+  sessionViewportState?(): SessionViewport;
 }
 
-/** Structural equality of two state tokens (L3). */
+/**
+ * Structural equality of two state tokens (L3).
+ *
+ * The viewport revision is compared only when BOTH sides carry one. An absent
+ * revision means "this side cannot say", and treating that as 0 would refuse
+ * every act on a session that has ever been resized — a token minted before
+ * the field existed, or round-tripped through a caller that dropped it, would
+ * look infinitely stale. The comparison is worth having exactly when both ends
+ * are speaking the current shape.
+ */
 export function stateTokensMatch(
   a: ObservationStateToken,
   b: ObservationStateToken,
 ): boolean {
+  const viewportAgrees =
+    a.viewportRevision === undefined ||
+    b.viewportRevision === undefined ||
+    a.viewportRevision === b.viewportRevision;
   return (
     a.tabId === b.tabId &&
     a.navCounter === b.navCounter &&
     a.urlHash === b.urlHash &&
-    a.domHash === b.domHash
+    a.domHash === b.domHash &&
+    viewportAgrees
   );
 }
 

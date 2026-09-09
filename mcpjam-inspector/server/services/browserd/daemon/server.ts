@@ -213,7 +213,8 @@ export function buildBrowserdStack(
      * truncate a file the run is still filling.
      */
     recorder?: import("./video-recorder").VideoRecorder;
-    displaySize?: { width: number; height: number };
+    displaySize?: () => { width: number; height: number };
+    cssViewport?: () => { width: number; height: number };
     /** Observability and the lazy-upgrade decision, never admission. */
     bundleHash?: string;
     contextMode?: "persistent" | "ephemeral";
@@ -270,6 +271,7 @@ export function buildBrowserdStack(
       ...(config.frames ?? {}),
       ...(config.video ? { video: config.video } : {}),
       ...(config.displaySize ? { displaySize: config.displaySize } : {}),
+      ...(config.cssViewport ? { cssViewport: config.cssViewport } : {}),
     },
   });
   // AFTER, because the stream host is built FROM the handler. Until this runs

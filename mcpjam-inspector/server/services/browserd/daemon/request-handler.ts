@@ -91,6 +91,7 @@ const ACTIVITY_BOOST_WINDOW_MS = 1_500;
 const MOTION_ACTIONS: ReadonlySet<string> = new Set([
   "navigate",
   "back",
+  "forward",
   "reload",
   "act",
 ]);
@@ -143,6 +144,7 @@ export interface BrowserdHandlerDeps {
     | "viewportIfWatched"
     | "tabsSnapshot"
     | "webmcpToolsSnapshot"
+    | "sessionViewportState"
   >;
   /** Minted once per daemon process start; echoed on every response. */
   bootId: string;
@@ -244,6 +246,7 @@ export class BrowserdRequestHandler {
     | "viewportIfWatched"
     | "tabsSnapshot"
     | "webmcpToolsSnapshot"
+    | "sessionViewportState"
   >;
   private readonly bootId: string;
   private readonly token: string;
@@ -1067,11 +1070,32 @@ export class BrowserdRequestHandler {
       ...(what.capturePage && result?.stateToken
         ? { stateToken: result.stateToken as never }
         : {}),
-      ...(what.capturePage ? { viewport: { ...BROWSERD_OBSERVATION_VIEWPORT } } : {}),
+      // The SESSION's size, not the constant. The ledger row is what a replay
+      // is reconstructed from, so a row that recorded 1024x768 for a command
+      // executed at 1400x900 would produce an artifact whose coordinates
+      // cannot be read back — and there would be nothing in the row to say so.
+      ...(what.capturePage ? { viewport: this.publishedViewport() } : {}),
       ...(result?.cursors ? { cursors: result.cursors } : {}),
       ...(what.capturePage ? { capturePage: true } : {}),
       ...(this.captureTypedText ? { captureTypedText: true } : {}),
     });
+  }
+
+  /**
+   * The size to stamp on a published result.
+   *
+   * From the DRIVER, which is the only thing that knows whether a resize
+   * landed. A driver that cannot answer — a unit fake, an engine with no
+   * session viewport — falls back to the constant, which is the size it is
+   * necessarily running at.
+   */
+  private publishedViewport(): { width: number; height: number } {
+    const session = this.driver.sessionViewportState
+      ? this.driver.sessionViewportState()
+      : undefined;
+    return session
+      ? { width: session.width, height: session.height }
+      : { ...BROWSERD_OBSERVATION_VIEWPORT };
   }
 
   /**

@@ -21,9 +21,6 @@ var HOSTED_DISPLAY = {
   width: BROWSERD_OBSERVATION_VIEWPORT.width,
   height: BROWSERD_OBSERVATION_VIEWPORT.height
 };
-function isPointInViewport(x, y) {
-  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 && y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1;
-}
 function wantsFor(observe) {
   const mode = observe ?? "screenshot";
   return {
@@ -357,6 +354,7 @@ function redactAction(action, options = {}) {
         ...sanitizeLedgerUrl(action.url) ? { url: sanitizeLedgerUrl(action.url) } : {}
       };
     case "back":
+    case "forward":
     case "reload":
       return { kind: action.kind };
     case "act": {
@@ -1140,6 +1138,7 @@ var ACTIVITY_BOOST_WINDOW_MS = 1500;
 var MOTION_ACTIONS = /* @__PURE__ */ new Set([
   "navigate",
   "back",
+  "forward",
   "reload",
   "act"
 ]);
@@ -1717,11 +1716,27 @@ var BrowserdRequestHandler = class {
       ...what.deduped ? { deduped: true } : {},
       ...what.capturePage && result ? { output: result.output } : {},
       ...what.capturePage && result?.stateToken ? { stateToken: result.stateToken } : {},
-      ...what.capturePage ? { viewport: { ...BROWSERD_OBSERVATION_VIEWPORT } } : {},
+      // The SESSION's size, not the constant. The ledger row is what a replay
+      // is reconstructed from, so a row that recorded 1024x768 for a command
+      // executed at 1400x900 would produce an artifact whose coordinates
+      // cannot be read back — and there would be nothing in the row to say so.
+      ...what.capturePage ? { viewport: this.publishedViewport() } : {},
       ...result?.cursors ? { cursors: result.cursors } : {},
       ...what.capturePage ? { capturePage: true } : {},
       ...this.captureTypedText ? { captureTypedText: true } : {}
     });
+  }
+  /**
+   * The size to stamp on a published result.
+   *
+   * From the DRIVER, which is the only thing that knows whether a resize
+   * landed. A driver that cannot answer — a unit fake, an engine with no
+   * session viewport — falls back to the constant, which is the size it is
+   * necessarily running at.
+   */
+  publishedViewport() {
+    const session = this.driver.sessionViewportState ? this.driver.sessionViewportState() : void 0;
+    return session ? { width: session.width, height: session.height } : { ...BROWSERD_OBSERVATION_VIEWPORT };
   }
   /**
    * Raise the frame rate for a moment after a command that moved the page.
@@ -2201,11 +2216,15 @@ function createFrameStreamHost(handler, options = {}) {
     let unsubscribe;
     let release;
     let seq = 0;
-    const size = options.displaySize ?? {
+    const size = options.displaySize?.() ?? {
       width: BROWSERD_OBSERVATION_VIEWPORT.width,
       height: BROWSERD_OBSERVATION_VIEWPORT.height
     };
-    const scale = size.width / BROWSERD_OBSERVATION_VIEWPORT.width;
+    const css = options.cssViewport?.() ?? {
+      width: BROWSERD_OBSERVATION_VIEWPORT.width,
+      height: BROWSERD_OBSERVATION_VIEWPORT.height
+    };
+    const scale = size.width / css.width;
     const entry = { end: (reason) => end(reason) };
     const end = (reason) => {
       if (ended) return;
@@ -2551,7 +2570,8 @@ function statsFor(subscription, previousFramesIn) {
 
 // server/services/browserd/daemon/browser-driver.ts
 function stateTokensMatch(a, b) {
-  return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash;
+  const viewportAgrees = a.viewportRevision === void 0 || b.viewportRevision === void 0 || a.viewportRevision === b.viewportRevision;
+  return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash && viewportAgrees;
 }
 function guardStaleness(driver, lease) {
   return async (command) => {
@@ -2726,7 +2746,8 @@ function buildBrowserdStack(driver, config) {
     frames: {
       ...config.frames ?? {},
       ...config.video ? { video: config.video } : {},
-      ...config.displaySize ? { displaySize: config.displaySize } : {}
+      ...config.displaySize ? { displaySize: config.displaySize } : {},
+      ...config.cssViewport ? { cssViewport: config.cssViewport } : {}
     }
   });
   handler.attachFrameCounters(() => frames.count());
@@ -3465,8 +3486,181 @@ function computeStateToken(inputs) {
     tabId: inputs.tabId,
     navCounter: inputs.navCounter,
     urlHash: shortHash(inputs.url),
-    domHash: shortHash(inputs.domSignal)
+    domHash: shortHash(inputs.domSignal),
+    ...inputs.viewportRevision !== void 0 ? { viewportRevision: inputs.viewportRevision } : {}
   };
+}
+
+// server/services/browserd/daemon/session-barrier.ts
+var DEFAULT_DEBOUNCE_MS = 150;
+var DEFAULT_MAX_WAIT_MS = 5e3;
+var SessionBarrier = class {
+  constructor(apply, options = {}) {
+    this.apply = apply;
+    this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    this.maxWaitMs = options.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
+    this.now = options.now ?? (() => Date.now());
+    this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+    this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
+  }
+  inFlight = 0;
+  /**
+   * Is a person's pointer down on the page right now?
+   *
+   * Separate from `inFlight` because it is not work the barrier can wait for:
+   * a drag has no promise to await, it ends when somebody lifts a finger, and
+   * a resize during one corrupts a value rather than merely disturbing it.
+   */
+  dragging = false;
+  /**
+   * The transition in progress, or null.
+   *
+   * A PROMISE rather than a boolean plus a waiter list, because the two lists
+   * a naive version needs — "waiting for this resize to end" and "waiting for
+   * my measurement to land" — are refilled at different moments, and a `run()`
+   * that queued itself on the second one waits for the NEXT resize instead of
+   * the current one. That is a deadlock when there is no next resize, which is
+   * the ordinary case: somebody stops dragging.
+   */
+  resizing = null;
+  /** The newest measurement, waiting for the debounce. */
+  pending = null;
+  debounceHandle;
+  pendingSince = 0;
+  /**
+   * Everyone whose `request` has not landed yet.
+   *
+   * Resolved together when the resize that supersedes them all completes: they
+   * are waiting for the same transition, and a caller that got its own promise
+   * would resolve at a different moment from the others for no reason.
+   */
+  requestWaiters = [];
+  debounceMs;
+  maxWaitMs;
+  now;
+  setTimer;
+  clearTimer;
+  /**
+   * Run one piece of page work, held off while a resize is transitioning.
+   *
+   * Wrapping rather than a bare `enter`/`leave` pair, because the thing being
+   * guarded can throw and a `leave` that a rejection skipped would wedge the
+   * barrier closed for the life of the session — every subsequent resize
+   * waiting out `maxWaitMs` for work that finished long ago.
+   */
+  async run(work) {
+    while (this.resizing) await this.resizing;
+    this.inFlight += 1;
+    try {
+      return await work();
+    } finally {
+      this.inFlight -= 1;
+      this.maybeResize();
+    }
+  }
+  /** A pointer went down on the page; hold resizes until it comes up. */
+  beginDrag() {
+    this.dragging = true;
+  }
+  endDrag() {
+    if (!this.dragging) return;
+    this.dragging = false;
+    this.maybeResize();
+  }
+  /**
+   * Ask for a size. Coalesces with anything already waiting.
+   *
+   * Returns a promise that settles when a resize carrying AT LEAST this
+   * measurement's intent has been applied — which for a coalesced burst is one
+   * resize for all of them. It deliberately does not promise that the applied
+   * size equals the requested one: a later measurement supersedes an earlier
+   * one, and the earlier caller wanted "the panel is now the right size", not
+   * "my particular number was used".
+   */
+  request(size) {
+    this.pending = size;
+    if (this.pendingSince === 0) this.pendingSince = this.now();
+    const settled = new Promise((resolve) => {
+      this.requestWaiters.push(resolve);
+    });
+    this.clearTimer(this.debounceHandle);
+    this.debounceHandle = this.setTimer(() => {
+      this.debounceHandle = void 0;
+      this.maybeResize();
+    }, this.debounceMs);
+    return settled;
+  }
+  /** Is a resize waiting or running? For the pane's "settling" affordance. */
+  get busy() {
+    return this.resizing !== null || this.pending !== null;
+  }
+  /**
+   * Run the pending resize if the session is quiet — or if it has waited long
+   * enough that quiet is no longer worth waiting for.
+   *
+   * Called from three places (the debounce firing, work finishing, a drag
+   * ending) because those are the three ways the answer can change, and a
+   * version that only checked on the timer would leave a resize parked behind
+   * a command that outlived its debounce.
+   */
+  maybeResize() {
+    if (this.resizing || this.pending === null) return;
+    if (this.debounceHandle !== void 0) return;
+    const waited = this.now() - this.pendingSince;
+    const expired = waited >= this.maxWaitMs;
+    if (!expired && (this.inFlight > 0 || this.dragging)) return;
+    const size = this.pending;
+    this.pending = null;
+    this.pendingSince = 0;
+    const waiters = this.requestWaiters;
+    this.requestWaiters = [];
+    this.resizing = this.apply(size).catch(() => {
+    }).then(() => {
+      this.resizing = null;
+      for (const resolve of waiters) resolve();
+      this.maybeResize();
+    });
+  }
+};
+
+// shared/browser-viewport.ts
+var DEFAULT_SESSION_VIEWPORT = { width: 1024, height: 768 };
+var MIN_SESSION_VIEWPORT = { width: 400, height: 300 };
+var MAX_SESSION_VIEWPORT = { width: 2560, height: 1600 };
+var INITIAL_SESSION_VIEWPORT = {
+  width: DEFAULT_SESSION_VIEWPORT.width,
+  height: DEFAULT_SESSION_VIEWPORT.height,
+  revision: 0
+};
+function normalizeViewportSize(size) {
+  return {
+    width: clampDimension(
+      size.width,
+      MIN_SESSION_VIEWPORT.width,
+      MAX_SESSION_VIEWPORT.width
+    ),
+    height: clampDimension(
+      size.height,
+      MIN_SESSION_VIEWPORT.height,
+      MAX_SESSION_VIEWPORT.height
+    )
+  };
+}
+function clampDimension(value, min, max) {
+  const numeric = typeof value === "number" ? value : Number.NaN;
+  if (!Number.isFinite(numeric)) return min;
+  return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+function advanceViewport(current, requested, policy) {
+  if (policy === "fixed") return current;
+  const next = normalizeViewportSize(requested);
+  if (next.width === current.width && next.height === current.height) {
+    return current;
+  }
+  return { width: next.width, height: next.height, revision: current.revision + 1 };
+}
+function isPointInSessionViewport(x, y, viewport) {
+  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= viewport.width - 1 && y <= viewport.height - 1;
 }
 
 // server/services/browserd/daemon/observation-budget.ts
@@ -5047,6 +5241,18 @@ var ChromiumDriver = class {
    * running command is live for as long as the command is.
    */
   activeInvocations = /* @__PURE__ */ new Set();
+  /**
+   * How big this session's page is, and its revision.
+   *
+   * The DRIVER owns it rather than the launch args, because it is the thing
+   * that knows every open tab and can therefore be the one place that
+   * guarantees they all agree. A per-tab answer would let two tabs in one
+   * session render at different sizes while one number was published for both.
+   */
+  sessionViewport;
+  viewportPolicy;
+  onViewportChange;
+  barrier;
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -5057,8 +5263,106 @@ var ChromiumDriver = class {
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
+    this.viewportPolicy = options.viewport?.policy ?? "fixed";
+    const initial = options.viewport?.initial;
+    this.sessionViewport = initial ? { width: initial.width, height: initial.height, revision: 0 } : INITIAL_SESSION_VIEWPORT;
+    this.onViewportChange = options.viewport?.onChange;
+    this.barrier = new SessionBarrier(
+      (size) => this.applyViewport(size),
+      options.viewport?.debounceMs !== void 0 ? { debounceMs: options.viewport.debounceMs } : {}
+    );
   }
+  /** This session's page size and revision, for everything that publishes it. */
+  sessionViewportState() {
+    return this.sessionViewport;
+  }
+  /**
+   * Ask for a new size, and resolve once the request has been dealt with.
+   *
+   * "Dealt with" rather than "applied": a burst of measurements from a drag
+   * collapses into one transition, and every caller in the burst resolves when
+   * that transition lands, whatever size it carried. A `fixed` session
+   * resolves immediately, having changed nothing.
+   */
+  async requestViewport(size) {
+    if (this.viewportPolicy === "fixed") return this.sessionViewport;
+    await this.barrier.request(size);
+    return this.sessionViewport;
+  }
+  /** Is a resize waiting or transitioning? Surfaces as the pane's affordance. */
+  viewportSettling() {
+    return this.barrier.busy;
+  }
+  /**
+   * Take every tab to a new size, or leave every tab where it was.
+   *
+   * ALL OR NOTHING, and rolled back by hand rather than left half-applied. A
+   * session whose tabs render at two different sizes has no honest number to
+   * publish for either — and the pane would draw the one that was written
+   * last, over a page that is not that size. The rollback is best-effort
+   * because a page that just refused a resize may refuse the way back too; what
+   * matters is that `sessionViewport` is not advanced unless every page took
+   * the new size, so the published number never runs ahead of the picture.
+   */
+  async applyViewport(size) {
+    const next = advanceViewport(this.sessionViewport, size, this.viewportPolicy);
+    if (next === this.sessionViewport) return;
+    const pages = [...this.tabs.values()].map((entry) => entry.page).filter((page) => !page.isClosed());
+    const unable = pages.find((page) => typeof page.setViewportSize !== "function");
+    if (unable) {
+      throw new Error(
+        "viewport_unsupported: this engine cannot resize its pages"
+      );
+    }
+    const previous = this.sessionViewport;
+    const applied = [];
+    try {
+      for (const page of pages) {
+        await page.setViewportSize?.({ width: next.width, height: next.height });
+        applied.push(page);
+      }
+    } catch (error) {
+      for (const page of applied) {
+        await page.setViewportSize?.({ width: previous.width, height: previous.height }).catch(() => {
+        });
+      }
+      throw error;
+    }
+    this.sessionViewport = next;
+    try {
+      this.onViewportChange?.(next);
+    } catch {
+    }
+  }
+  /**
+   * Is this coordinate on the page?
+   *
+   * The SESSION's numbers, not the module constant. The two agree exactly when
+   * the session is `fixed`, which is every caller that predates this — so the
+   * refusals a caller sees today do not move, and a resized session refuses
+   * the coordinates that are genuinely off ITS page rather than off a 1024x768
+   * one it is not.
+   */
+  inViewport(x, y) {
+    return isPointInSessionViewport(x, y, this.sessionViewport);
+  }
+  /** How this session's size reads in an error a caller has to act on. */
+  get viewportLabel() {
+    return `${this.sessionViewport.width}x${this.sessionViewport.height}`;
+  }
+  /**
+   * Run one command, never across a resize.
+   *
+   * The barrier is here rather than around the queue because the queue is
+   * per-TAB and a resize is per-SESSION: two tabs' FIFOs can each be mid-act
+   * while the display changes underneath both. Wrapping the one place every
+   * verb passes through is what makes "never resize midway through an action"
+   * true for all of them at once — including the ones added later.
+   */
   async execute(command) {
+    return this.barrier.run(() => this.executeInBarrier(command));
+  }
+  async executeInBarrier(command) {
     this.purgeHandoffRings();
     const permit = this.permitFor(command);
     if (!permit()) {
@@ -5111,15 +5415,17 @@ var ChromiumDriver = class {
         );
       }
       case "back":
+      case "forward":
       case "reload": {
         const entry = this.tabs.get(tabId);
         if (!entry || entry.page.isClosed()) {
           return { ok: false, error: `unknown_tab: ${tabId}` };
         }
+        const kind = action.kind;
         return this.navigateVerb(
           tabId,
           entry,
-          (page) => action.kind === "back" ? page.goBack() : page.reload(),
+          (page) => kind === "back" ? page.goBack() : kind === "forward" ? page.goForward() : page.reload(),
           permit,
           action.observe
         );
@@ -5356,10 +5662,10 @@ var ChromiumDriver = class {
       refNode.backendNodeId,
       label
     );
-    if (!isPointInViewport(point.x, point.y)) {
+    if (!this.inViewport(point.x, point.y)) {
       throw new ActError(
         "target_not_found",
-        `${label} is at (${point.x}, ${point.y}), outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} viewport even after scrolling; observe again to see where it is now`
+        `${label} is at (${point.x}, ${point.y}), outside the ${this.viewportLabel} viewport even after scrolling; observe again to see where it is now`
       );
     }
     if (check === "occlusion") {
@@ -5379,9 +5685,9 @@ var ChromiumDriver = class {
     };
     const target = action.target;
     const point = target && "coordinates" in target ? { x: target.coordinates[0], y: target.coordinates[1] } : null;
-    if (point && !isPointInViewport(point.x, point.y)) {
+    if (point && !this.inViewport(point.x, point.y)) {
       throw new Error(
-        `out_of_viewport: (${point.x}, ${point.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport; coordinates are CSS pixels with (0, 0) at the top-left of the last screenshot`
+        `out_of_viewport: (${point.x}, ${point.y}) is outside the ${this.viewportLabel} observation viewport; coordinates are CSS pixels with (0, 0) at the top-left of the last screenshot`
       );
     }
     const selector = target && "selector" in target ? target.selector : null;
@@ -5484,9 +5790,9 @@ var ChromiumDriver = class {
             'drag needs a destination in `value` as "x,y" (viewport coordinates)'
           );
         }
-        if (!isPointInViewport(to.x, to.y)) {
+        if (!this.inViewport(to.x, to.y)) {
           throw new Error(
-            `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport`
+            `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${this.viewportLabel} observation viewport`
           );
         }
         return page.dragTo(from, to);
@@ -6019,7 +6325,8 @@ var ChromiumDriver = class {
       tabId: tabId ?? DEFAULT_TAB,
       navCounter: entry.navCounter,
       url: entry.page.url(),
-      domSignal: await entry.page.domStructureSignal()
+      domSignal: await entry.page.domStructureSignal(),
+      viewportRevision: this.sessionViewport.revision
     });
   }
   /**
@@ -6102,7 +6409,10 @@ var ChromiumDriver = class {
       const cdp = await entry.page.cdp();
       if (!cdp) return null;
       return createTabViewport(cdp, {
-        surface: BROWSERD_OBSERVATION_VIEWPORT
+        surface: {
+          width: this.sessionViewport.width,
+          height: this.sessionViewport.height
+        }
       });
     })();
     this.viewports.set(key, created);
@@ -6291,7 +6601,12 @@ var ChromiumDriver = class {
       tabId,
       navCounter: entry.navCounter,
       url: frame.url,
-      domSignal: frame.domSignal
+      domSignal: frame.domSignal,
+      // The revision AT THE MOMENT OF THE OBSERVATION, which is what makes the
+      // comparison mean anything: an act decided from this token is refused
+      // once the layout has been re-flowed underneath it, even when the DOM
+      // came out structurally identical.
+      viewportRevision: this.sessionViewport.revision
     });
   }
   /** Read a tab's URL and DOM signal together, as one frame snapshot. */
@@ -7015,6 +7330,15 @@ function wrapPage(page) {
     async goBack() {
       await page.goBack({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
     },
+    async setViewportSize(size) {
+      await page.setViewportSize(size);
+    },
+    async goForward() {
+      await page.goForward({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
+    },
     async waitForNetworkIdle(signal) {
       const idle = page.waitForLoadState("networkidle", { timeout: 0 });
       idle.catch(() => {
@@ -7400,9 +7724,13 @@ async function main() {
     features,
     ...video ? { video } : {},
     ...recorder ? { recorder } : {},
-    displaySize: {
+    displaySize: () => ({
       width: displayWidth(config),
       height: displayHeight(config)
+    }),
+    cssViewport: () => {
+      const session = driver.sessionViewportState?.();
+      return session ? { width: session.width, height: session.height } : { ...BROWSERD_OBSERVATION_VIEWPORT };
     }
   });
   let shuttingDown = false;

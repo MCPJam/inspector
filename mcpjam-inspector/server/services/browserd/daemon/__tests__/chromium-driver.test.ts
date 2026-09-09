@@ -38,15 +38,17 @@ describe("ChromiumDriver — navigation (W1 subset)", () => {
     expect(viaExplicit.output).toEqual({ url: "https://x.test/" });
   });
 
-  it("dispatches back and reload to the page", async () => {
+  it("dispatches back, forward and reload to the page", async () => {
     const page = fakePage();
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
     await driver.execute(cmd({ kind: "reload" }));
     await driver.execute(cmd({ kind: "back" }));
+    await driver.execute(cmd({ kind: "forward" }));
     expect(page.calls.reload).toBe(1);
     expect(page.calls.goBack).toBe(1);
+    expect(page.calls.goForward).toBe(1);
   });
 
   it("returns settled:false when the page will not go quiet in budget", async () => {
@@ -719,13 +721,19 @@ describe("ChromiumDriver — only navigate may create or replace a tab (P2)", ()
     expect(res.error).toContain("explicit tabId");
   });
 
-  it("returns unknown_tab for back/reload on a tab that was never created", async () => {
+  it("returns unknown_tab for back/forward/reload on a tab that was never created", async () => {
     const { context, created } = fakeContext();
     const driver = new ChromiumDriver(context);
     expect(await driver.execute(cmd({ kind: "back" }, "ghost"))).toMatchObject({
       ok: false,
       error: "unknown_tab: ghost",
     });
+    // `forward` joins the same rule rather than getting its own: a verb that
+    // conjured an about:blank tab to go forward in would be a fresh page with
+    // no history at all.
+    expect(await driver.execute(cmd({ kind: "forward" }, "ghost"))).toMatchObject(
+      { ok: false, error: "unknown_tab: ghost" },
+    );
     expect(await driver.execute(cmd({ kind: "reload" }, "ghost"))).toMatchObject({
       ok: false,
       error: "unknown_tab: ghost",

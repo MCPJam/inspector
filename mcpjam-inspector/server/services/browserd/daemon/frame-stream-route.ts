@@ -81,8 +81,26 @@ export interface FrameStreamOptions {
    * screencast, exactly as a client without `VideoDecoder` does.
    */
   video?: VideoEncoder;
-  /** The captured display's size, for the video records' geometry. */
-  displaySize?: { width: number; height: number };
+  /**
+   * The captured display's size, for the video records' geometry.
+   *
+   * A FUNCTION rather than a value, because on a responsive session it moves:
+   * the display, the kiosk browser, the page viewport and the capture geometry
+   * are resized as one coordinated transition, and a stream that had captured
+   * the boot-time number would keep stamping it on frames of a differently
+   * shaped picture. A client scales its click coordinates by what these
+   * records say, so a stale number is a mis-aimed click rather than a cosmetic
+   * error.
+   */
+  displaySize?: () => { width: number; height: number };
+  /**
+   * The session's CSS viewport, for the capture-to-page scale.
+   *
+   * Also a function, and for the same reason. The two move TOGETHER — that is
+   * what makes the transition coordinated — but they are read at different
+   * moments by different code, so each has to be able to say what it is now.
+   */
+  cssViewport?: () => { width: number; height: number };
   /**
    * How often to prove liveness and re-ask the two questions a one-way stream
    * cannot answer by itself. Injectable because the behaviour it drives — a
@@ -235,13 +253,20 @@ export function createFrameStreamHost(
     let unsubscribe: (() => void) | undefined;
     let release: (() => void) | undefined;
     let seq = 0;
-    const size = options.displaySize ?? {
+    // Read PER SUBSCRIPTION rather than per module load: a session that was
+    // resized before this pane connected has to be described by its current
+    // geometry, not the one the daemon booted at.
+    const size = options.displaySize?.() ?? {
+      width: BROWSERD_OBSERVATION_VIEWPORT.width,
+      height: BROWSERD_OBSERVATION_VIEWPORT.height,
+    };
+    const css = options.cssViewport?.() ?? {
       width: BROWSERD_OBSERVATION_VIEWPORT.width,
       height: BROWSERD_OBSERVATION_VIEWPORT.height,
     };
     // Capture pixels per CSS pixel, so a click maps through exactly as it does
     // for a JPEG. The pane never has to know which codec drew the picture.
-    const scale = size.width / BROWSERD_OBSERVATION_VIEWPORT.width;
+    const scale = size.width / css.width;
 
     const entry = { end: (reason: FrameStreamEndReason) => end(reason) };
     const end = (reason: FrameStreamEndReason): void => {

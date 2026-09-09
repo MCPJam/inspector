@@ -185,6 +185,24 @@ export interface ObservationStateToken {
   navCounter: number;
   urlHash: string;
   domHash: string;
+  /**
+   * The session viewport this observation was taken at.
+   *
+   * The DOM hash cannot stand in for it, and that is the whole reason it
+   * exists. A CSS breakpoint crossing at 900px turns three columns into one
+   * with the IDENTICAL tag skeleton — same elements, same nesting, same
+   * structural digest — so a click computed from the wide screenshot passes
+   * every other arm of the staleness check and lands on whatever the reflow
+   * moved into that rectangle.
+   *
+   * OPTIONAL on the wire, and absent means "do not compare". A token minted by
+   * a daemon that predates this field, or handed back by a caller that
+   * round-tripped it through an older shape, must not be read as revision 0 —
+   * that would refuse every act on a session that has ever been resized, which
+   * is a worse failure than the one being prevented. A `fixed` session never
+   * moves off 0 anyway, so nothing that exists today changes behaviour.
+   */
+  viewportRevision?: number;
 }
 
 /**
@@ -283,6 +301,22 @@ export type BrowserAction =
       observe?: ActObserve;
     }
   | { kind: "back"; observe?: ActObserve }
+  /**
+   * The other half of the history, added for the PERSON rather than the model.
+   *
+   * There was no forward verb because the agent contract never needed one: an
+   * agent that has just gone back knows where it came from and can navigate
+   * there by URL. A person driving the pane does not have that — they went
+   * back to look at something and the way out is the forward button — and a
+   * browser whose forward button does nothing is visibly broken in a way no
+   * amount of explanation fixes.
+   *
+   * A forward with nothing to go forward to is a NO-OP, not an error, exactly
+   * as `back` is at the start of history: Chromium simply stays put. The pane
+   * disables the button from `canGoForward`, so the only way to reach this
+   * case is a race, and a race is not a fault worth a message.
+   */
+  | { kind: "forward"; observe?: ActObserve }
   | { kind: "reload"; observe?: ActObserve }
   | {
       kind: "act";

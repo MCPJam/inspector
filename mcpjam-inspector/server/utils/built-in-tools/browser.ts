@@ -1213,16 +1213,16 @@ export function buildBrowserTools(
     "browser_navigate",
     tool({
       description:
-        `Open a URL in ${engineLabel(engine)} (or go back / reload). Returns the page ` +
+        `Open a URL in ${engineLabel(engine)} (or go back / forward / reload). Returns the page ` +
         "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
         "so you do not need to observe separately before acting.",
       inputSchema: z.object({
         url: z
           .string()
           .optional()
-          .describe("URL to open. Omit when using back or reload."),
+          .describe("URL to open. Omit when using back, forward or reload."),
         action: z
-          .enum(["goto", "back", "reload"])
+          .enum(["goto", "back", "forward", "reload"])
           .optional()
           .describe("Defaults to goto."),
         tabId: z
@@ -1260,7 +1260,9 @@ export function buildBrowserTools(
               }
             : verb === "back"
               ? { kind: "back" }
-              : { kind: "reload" };
+              : verb === "forward"
+                ? { kind: "forward" }
+                : { kind: "reload" };
         return presented(
           await send(
             // BOTH, matching `browser_act` and matching what the description

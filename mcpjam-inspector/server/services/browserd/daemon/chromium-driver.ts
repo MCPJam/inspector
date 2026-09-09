@@ -15,11 +15,9 @@
  * in here from the pure helpers in PR (c1).
  */
 import {
-  BROWSERD_OBSERVATION_VIEWPORT,
   DEFAULT_QUEUE_KEY,
   formatBrowserdError,
   type WebMcpToolsRevision,
-  isPointInViewport,
   wantsFor,
   type BrowserAction,
   type BrowserActTarget,
@@ -52,6 +50,15 @@ import {
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
 import { computeStateToken, shortHash } from "./state-token";
+import { SessionBarrier } from "./session-barrier";
+import {
+  advanceViewport,
+  INITIAL_SESSION_VIEWPORT,
+  isPointInSessionViewport,
+  type SessionViewport,
+  type SessionViewportPolicy,
+  type ViewportSize,
+} from "../../../../shared/browser-viewport";
 import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
@@ -294,6 +301,30 @@ export interface ChromiumDriverOptions {
   webmcpOutputBytes?: number;
   /** Byte budget for one `observe {mode:"text"}` (L9). */
   pageTextBytes?: number;
+  /**
+   * How big this session's page is, and whether it may change.
+   *
+   * Absent means the old behaviour exactly: a `fixed` session at 1024x768 that
+   * refuses every resize. Every existing caller — evals, swarms, the CLI, the
+   * v1 bridge — gets that without being touched, which is the point: a run
+   * recorded last month and one recorded today stay comparable frame for
+   * frame, and only a caller that asked for a responsive session gets one.
+   */
+  viewport?: {
+    policy: SessionViewportPolicy;
+    initial?: ViewportSize;
+    /**
+     * Told whenever the session's size actually changes.
+     *
+     * AFTER the change has been applied to every page, never before: a
+     * listener that heard about a size the pages had not taken would publish
+     * dimensions that disagree with the picture, which is the one thing the
+     * whole responsive path must not do.
+     */
+    onChange?: (viewport: SessionViewport) => void;
+    /** Test seam for the barrier's debounce. */
+    debounceMs?: number;
+  };
 }
 
 /** Big enough for a real tool result, small enough not to blow a context. */
@@ -485,6 +516,20 @@ export class ChromiumDriver implements BrowserDriver {
    * running command is live for as long as the command is.
    */
   private readonly activeInvocations = new Set<string>();
+  /**
+   * How big this session's page is, and its revision.
+   *
+   * The DRIVER owns it rather than the launch args, because it is the thing
+   * that knows every open tab and can therefore be the one place that
+   * guarantees they all agree. A per-tab answer would let two tabs in one
+   * session render at different sizes while one number was published for both.
+   */
+  private sessionViewport: SessionViewport;
+  private readonly viewportPolicy: SessionViewportPolicy;
+  private readonly onViewportChange:
+    | ((viewport: SessionViewport) => void)
+    | undefined;
+  private readonly barrier: SessionBarrier;
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -497,9 +542,127 @@ export class ChromiumDriver implements BrowserDriver {
     this.pageTextMaxBytes =
       options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
+    this.viewportPolicy = options.viewport?.policy ?? "fixed";
+    const initial = options.viewport?.initial;
+    this.sessionViewport = initial
+      ? { width: initial.width, height: initial.height, revision: 0 }
+      : INITIAL_SESSION_VIEWPORT;
+    this.onViewportChange = options.viewport?.onChange;
+    this.barrier = new SessionBarrier(
+      (size) => this.applyViewport(size),
+      options.viewport?.debounceMs !== undefined
+        ? { debounceMs: options.viewport.debounceMs }
+        : {},
+    );
   }
 
+  /** This session's page size and revision, for everything that publishes it. */
+  sessionViewportState(): SessionViewport {
+    return this.sessionViewport;
+  }
+
+  /**
+   * Ask for a new size, and resolve once the request has been dealt with.
+   *
+   * "Dealt with" rather than "applied": a burst of measurements from a drag
+   * collapses into one transition, and every caller in the burst resolves when
+   * that transition lands, whatever size it carried. A `fixed` session
+   * resolves immediately, having changed nothing.
+   */
+  async requestViewport(size: ViewportSize): Promise<SessionViewport> {
+    if (this.viewportPolicy === "fixed") return this.sessionViewport;
+    await this.barrier.request(size);
+    return this.sessionViewport;
+  }
+
+  /** Is a resize waiting or transitioning? Surfaces as the pane's affordance. */
+  viewportSettling(): boolean {
+    return this.barrier.busy;
+  }
+
+  /**
+   * Take every tab to a new size, or leave every tab where it was.
+   *
+   * ALL OR NOTHING, and rolled back by hand rather than left half-applied. A
+   * session whose tabs render at two different sizes has no honest number to
+   * publish for either — and the pane would draw the one that was written
+   * last, over a page that is not that size. The rollback is best-effort
+   * because a page that just refused a resize may refuse the way back too; what
+   * matters is that `sessionViewport` is not advanced unless every page took
+   * the new size, so the published number never runs ahead of the picture.
+   */
+  private async applyViewport(size: ViewportSize): Promise<void> {
+    const next = advanceViewport(this.sessionViewport, size, this.viewportPolicy);
+    if (next === this.sessionViewport) return;
+    const pages = [...this.tabs.values()]
+      .map((entry) => entry.page)
+      .filter((page) => !page.isClosed());
+    // An engine that cannot resize must not be told it did. Refusing here is
+    // what makes `setViewportSize` genuinely optional on `DriverPage` rather
+    // than a method every engine has to pretend to have.
+    const unable = pages.find((page) => typeof page.setViewportSize !== "function");
+    if (unable) {
+      throw new Error(
+        "viewport_unsupported: this engine cannot resize its pages",
+      );
+    }
+    const previous = this.sessionViewport;
+    const applied: DriverPage[] = [];
+    try {
+      for (const page of pages) {
+        await page.setViewportSize?.({ width: next.width, height: next.height });
+        applied.push(page);
+      }
+    } catch (error) {
+      for (const page of applied) {
+        await page
+          .setViewportSize?.({ width: previous.width, height: previous.height })
+          .catch(() => {});
+      }
+      throw error;
+    }
+    this.sessionViewport = next;
+    try {
+      this.onViewportChange?.(next);
+    } catch {
+      // A listener that throws must not undo a resize that landed.
+    }
+  }
+
+  /**
+   * Is this coordinate on the page?
+   *
+   * The SESSION's numbers, not the module constant. The two agree exactly when
+   * the session is `fixed`, which is every caller that predates this — so the
+   * refusals a caller sees today do not move, and a resized session refuses
+   * the coordinates that are genuinely off ITS page rather than off a 1024x768
+   * one it is not.
+   */
+  private inViewport(x: number, y: number): boolean {
+    return isPointInSessionViewport(x, y, this.sessionViewport);
+  }
+
+  /** How this session's size reads in an error a caller has to act on. */
+  private get viewportLabel(): string {
+    return `${this.sessionViewport.width}x${this.sessionViewport.height}`;
+  }
+
+  /**
+   * Run one command, never across a resize.
+   *
+   * The barrier is here rather than around the queue because the queue is
+   * per-TAB and a resize is per-SESSION: two tabs' FIFOs can each be mid-act
+   * while the display changes underneath both. Wrapping the one place every
+   * verb passes through is what makes "never resize midway through an action"
+   * true for all of them at once — including the ones added later.
+   */
   async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
+    return this.barrier.run(() => this.executeInBarrier(command));
+  }
+
+  private async executeInBarrier(
+    command: BrowserCommand,
+  ): Promise<BrowserCommandResult> {
     // W4/L6 — before ANYTHING can read, discard what a person's handoff left
     // behind. The 423 gate stops an agent observing DURING a handoff, but the
     // console ring fills from an eager page listener that knows nothing about
@@ -570,17 +733,24 @@ export class ChromiumDriver implements BrowserDriver {
         );
       }
       case "back":
+      case "forward":
       case "reload": {
-        // back/reload act on an EXISTING tab only — an unknown tabId is an error,
-        // not a reason to conjure a fresh about:blank page (P2).
+        // back/forward/reload act on an EXISTING tab only — an unknown tabId is
+        // an error, not a reason to conjure a fresh about:blank page (P2).
         const entry = this.tabs.get(tabId);
         if (!entry || entry.page.isClosed()) {
           return { ok: false, error: `unknown_tab: ${tabId}` };
         }
+        const kind = action.kind;
         return this.navigateVerb(
           tabId,
           entry,
-          (page) => (action.kind === "back" ? page.goBack() : page.reload()),
+          (page) =>
+            kind === "back"
+              ? page.goBack()
+              : kind === "forward"
+                ? page.goForward()
+                : page.reload(),
           permit,
           action.observe,
         );
@@ -929,14 +1099,14 @@ export class ChromiumDriver implements BrowserDriver {
       refNode.backendNodeId,
       label,
     );
-    if (!isPointInViewport(point.x, point.y)) {
+    if (!this.inViewport(point.x, point.y)) {
       // Scrolled and still outside: a fixed-position element parked off-screen,
       // or a box the layout put beyond the viewport. Clicking those pixels
       // would hit nothing.
       throw new ActError(
         "target_not_found",
         `${label} is at (${point.x}, ${point.y}), outside the ` +
-          `${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} ` +
+          `${this.viewportLabel} ` +
           "viewport even after scrolling; observe again to see where it is now",
       );
     }
@@ -970,7 +1140,7 @@ export class ChromiumDriver implements BrowserDriver {
       target && "coordinates" in target
         ? { x: target.coordinates[0], y: target.coordinates[1] }
         : null;
-    if (point && !isPointInViewport(point.x, point.y)) {
+    if (point && !this.inViewport(point.x, point.y)) {
       // Refuse rather than dispatch. Chromium delivers a mouse event outside
       // the viewport quite happily; it hits nothing, and the caller reads an
       // ordinary post-act observation that looks exactly like a click landing
@@ -979,7 +1149,7 @@ export class ChromiumDriver implements BrowserDriver {
       // and the v1 bridge reach this same path.
       throw new Error(
         `out_of_viewport: (${point.x}, ${point.y}) is outside the ` +
-          `${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} ` +
+          `${this.viewportLabel} ` +
           "observation viewport; coordinates are CSS pixels with (0, 0) at the " +
           "top-left of the last screenshot",
       );
@@ -1113,13 +1283,12 @@ export class ChromiumDriver implements BrowserDriver {
             'drag needs a destination in `value` as "x,y" (viewport coordinates)',
           );
         }
-        if (!isPointInViewport(to.x, to.y)) {
+        if (!this.inViewport(to.x, to.y)) {
           // The destination rides in a string and so bypasses the check above;
           // a drag ending off-viewport drops its payload on nothing.
           throw new Error(
             `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ` +
-              `${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} ` +
-              "observation viewport",
+              `${this.viewportLabel} observation viewport`,
           );
         }
         return page.dragTo(from, to);
@@ -1903,6 +2072,7 @@ export class ChromiumDriver implements BrowserDriver {
       navCounter: entry.navCounter,
       url: entry.page.url(),
       domSignal: await entry.page.domStructureSignal(),
+      viewportRevision: this.sessionViewport.revision,
     });
   }
 
@@ -2053,8 +2223,14 @@ export class ChromiumDriver implements BrowserDriver {
     const created = (async () => {
       const cdp = await entry.page.cdp();
       if (!cdp) return null;
+      // The SESSION's size, read at attach time. A pane opening on a session
+      // that has already been resized has to letterbox against the picture it
+      // is actually being sent, not against the size the session launched at.
       return createTabViewport(cdp, {
-        surface: BROWSERD_OBSERVATION_VIEWPORT,
+        surface: {
+          width: this.sessionViewport.width,
+          height: this.sessionViewport.height,
+        },
       });
     })();
     this.viewports.set(key, created);
@@ -2316,6 +2492,11 @@ export class ChromiumDriver implements BrowserDriver {
       navCounter: entry.navCounter,
       url: frame.url,
       domSignal: frame.domSignal,
+      // The revision AT THE MOMENT OF THE OBSERVATION, which is what makes the
+      // comparison mean anything: an act decided from this token is refused
+      // once the layout has been re-flowed underneath it, even when the DOM
+      // came out structurally identical.
+      viewportRevision: this.sessionViewport.revision,
     });
   }
 

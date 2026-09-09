@@ -120,9 +120,15 @@ async function main(): Promise<void> {
     features,
     ...(video ? { video } : {}),
     ...(recorder ? { recorder } : {}),
-    displaySize: {
+    displaySize: () => ({
       width: displayWidth(config),
       height: displayHeight(config),
+    }),
+    cssViewport: () => {
+      const session = driver.sessionViewportState?.();
+      return session
+        ? { width: session.width, height: session.height }
+        : { ...BROWSERD_OBSERVATION_VIEWPORT };
     },
   });
 
