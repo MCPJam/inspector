@@ -142,23 +142,26 @@ export function SingleRunContent({
     revision: evalRunDecisionRevision(run),
   });
 
+  const previousLaunch = useMemo(() => {
+    if (previousRunId) {
+      return siblingRuns.filter((candidate) => candidate._id === previousRunId);
+    }
+    const previous = previousCompletedRunOf(run, siblingRuns);
+    return previous ? [previous] : [];
+  }, [previousRunId, siblingRuns, run]);
+
   const previousIterations = useMemo(() => {
-    if (!previousRunId || !allIterations) return null;
+    const previousId = previousLaunch[0]?._id;
+    if (!previousId || !allIterations) return null;
     const rows = allIterations.filter(
-      (iteration) => iteration.suiteRunId === previousRunId,
+      (iteration) => iteration.suiteRunId === previousId,
     );
     return rows.length > 0 ? rows : null;
-  }, [allIterations, previousRunId]);
+  }, [allIterations, previousLaunch]);
 
   const pairings = useMemo(() => {
     const names = hostNamesById ?? new Map();
     const modelId = run.effectiveModelId ?? "Client default";
-    const previousLaunch = previousRunId
-      ? siblingRuns.filter((candidate) => candidate._id === previousRunId)
-      : (() => {
-          const previous = previousCompletedRunOf(run, siblingRuns);
-          return previous ? [previous] : [];
-        })();
     return buildHeroPairings({
       targets: [
         {
@@ -176,14 +179,7 @@ export function SingleRunContent({
       previousLaunch: previousLaunch.length > 0 ? previousLaunch : null,
       previousIterations,
     });
-  }, [
-    run,
-    iterations,
-    hostNamesById,
-    previousRunId,
-    siblingRuns,
-    previousIterations,
-  ]);
+  }, [run, iterations, hostNamesById, previousLaunch, previousIterations]);
 
   const view = useMemo(
     () => ({

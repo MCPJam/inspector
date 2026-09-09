@@ -336,6 +336,55 @@ describe("EvaluateRunContent", () => {
     ).toHaveClass("text-sm", "font-semibold");
     expect(screen.queryByTestId("run-grading-peek")).toBeNull();
     expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
+    expect(within(pairings).getByTestId("result-count-bar")).toHaveAttribute(
+      "role",
+      "img",
+    );
+  });
+
+  it("pairs hero deltas to a fallback previous launch when previousRunId is omitted", () => {
+    const current = {
+      _id: "run_2",
+      status: "running",
+      result: "pending",
+      namedHostId: "host-1",
+      effectiveModelId: "sonnet",
+      runNumber: 2,
+      createdAt: 2_000,
+    } as unknown as EvalSuiteRun;
+    const previous = {
+      _id: "run_1",
+      status: "completed",
+      result: "failed",
+      namedHostId: "host-1",
+      effectiveModelId: "sonnet",
+      runNumber: 1,
+      createdAt: 1_000,
+    } as unknown as EvalSuiteRun;
+    const previousRows = [
+      {
+        _id: "prev_1",
+        suiteRunId: "run_1",
+        result: "failed",
+        status: "completed",
+      },
+      {
+        _id: "prev_2",
+        suiteRunId: "run_1",
+        result: "failed",
+        status: "completed",
+      },
+    ] as unknown as EvalIteration[];
+
+    renderContent({
+      run: current,
+      iterations: ITERATIONS,
+      previousRunId: null,
+      siblingRuns: [previous, current],
+      allIterations: previousRows,
+    });
+
+    expect(screen.getByTestId("run-verdict-stat-delta")).toHaveTextContent("+1");
   });
 
   it("says nothing about a verdict while the read is in flight", () => {

@@ -6,7 +6,7 @@ import {
   pairingDecision,
   useEvaluateRunPageHeaderActions,
 } from "../evaluate-run-page";
-import type { EvalSuiteRun, EvalSuite } from "../../evals/types";
+import type { EvalIteration, EvalSuiteRun, EvalSuite } from "../../evals/types";
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
@@ -85,10 +85,9 @@ describe("EvaluateRunPage", () => {
     expect(within(pill).getByTestId("run-header-pairing-decision")).toHaveTextContent(
       "HOLD",
     );
-    const logo = within(pill).getByRole("img", {
-      name: "Claude · Client default",
-    });
-    expect(logo.parentElement).toHaveClass("bg-background", "rounded-full");
+    const mark = within(pill).getByLabelText("Claude · Client default");
+    expect(mark).toHaveClass("bg-background", "rounded-full");
+    expect(mark.querySelector("img")).toHaveAttribute("alt", "");
     expect(screen.queryByTestId("run-header-pairing")).toBeNull();
   });
 
@@ -120,10 +119,10 @@ describe("EvaluateRunPage", () => {
       expect(within(pill).getByTestId("run-header-pairing-decision")).toHaveTextContent(
         label,
       );
-      expect(within(pill).getByRole("img")).toBeVisible();
-      expect(within(pill).getByRole("img").parentElement).toHaveClass(
-        "bg-background",
-      );
+      const mark = within(pill).getByLabelText("Claude · Client default");
+      expect(mark).toBeVisible();
+      expect(mark).toHaveClass("bg-background");
+      expect(mark.querySelector("img")).toBeVisible();
       expect(within(header).queryByText("Failed")).toBeNull();
       expect(within(header).queryByText("Passed")).toBeNull();
       expect(within(header).queryByTestId("run-header-verdict")).toBeNull();
@@ -179,24 +178,18 @@ describe("EvaluateRunPage", () => {
     expect(
       within(pills[1]).getByTestId("run-header-pairing-decision"),
     ).toHaveTextContent("SHIP");
-    expect(
-      within(pills[0]).getByRole("img", { name: "Claude · sonnet" }),
-    ).toBeVisible();
-    expect(
-      within(pills[0]).getByRole("img", { name: "Claude · sonnet" })
-        .parentElement,
-    ).toHaveClass("bg-background", "rounded-full");
-    expect(
-      within(pills[1]).getByRole("img", { name: "Claude · opus" }),
-    ).toBeVisible();
-    expect(within(pills[0]).queryByRole("img", { name: "Claude · opus" })).toBeNull();
-    expect(within(pills[1]).queryByRole("img", { name: "Claude · sonnet" })).toBeNull();
-    await user.hover(
-      within(pills[0]).getByRole("img", { name: "Claude · sonnet" }),
+    expect(within(pills[0]).getByLabelText("Claude · sonnet")).toBeVisible();
+    expect(within(pills[0]).getByLabelText("Claude · sonnet")).toHaveClass(
+      "bg-background",
+      "rounded-full",
     );
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Claude · sonnet",
-    );
+    expect(within(pills[1]).getByLabelText("Claude · opus")).toBeVisible();
+    expect(within(pills[0]).queryByLabelText("Claude · opus")).toBeNull();
+    expect(within(pills[1]).queryByLabelText("Claude · sonnet")).toBeNull();
+    await user.hover(within(pills[0]).getByLabelText("Claude · sonnet"));
+    expect(
+      await screen.findByRole("tooltip", { hidden: true }),
+    ).toHaveTextContent("Claude · sonnet");
     expect(screen.queryByRole("button", { name: /Client report/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Run actions" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Run details" })).toBeNull();
@@ -237,13 +230,40 @@ describe("EvaluateRunPage", () => {
     const pills = screen.getAllByTestId("run-header-decision-pill");
     expect(pills).toHaveLength(1);
     expect(pills[0]).toHaveAttribute("data-decision", "hold");
-    expect(within(pills[0]).getAllByRole("img")).toHaveLength(2);
+    expect(within(pills[0]).getAllByLabelText(/ · /)).toHaveLength(2);
     expect(screen.queryByText("SHIP")).toBeNull();
     expect(screen.queryByText("Hold:")).toBeNull();
     expect(screen.queryByText("HOLD:")).toBeNull();
     expect(
       within(pills[0]).getByTestId("run-header-pairing-decision"),
     ).toHaveTextContent("HOLD");
+  });
+
+  it("recovers the pairing model from iterations when the run omitted it", () => {
+    render(
+      <EvaluateRunPage
+        run={makeRun({ _id: "run-1" })}
+        iterations={
+          [
+            {
+              suiteRunId: "run-1",
+              testCaseSnapshot: { model: "anthropic/claude-haiku-4.5" },
+            },
+          ] as EvalIteration[]
+        }
+        hostNamesById={hostNamesById}
+        otherRuns={[]}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+      >
+        body
+      </EvaluateRunPage>,
+    );
+    expect(
+      within(screen.getByTestId("run-header-decision-pill")).getByLabelText(
+        "Claude · claude-haiku-4.5",
+      ),
+    ).toBeVisible();
   });
 
   it("keeps launch metadata out of the header", () => {

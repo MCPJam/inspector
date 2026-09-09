@@ -367,6 +367,7 @@ const RUN_HISTORY_DAY: Intl.DateTimeFormatOptions = {
 };
 
 export function formatRunHistoryDate(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
   return new Date(timestamp).toLocaleString(undefined, {
     ...RUN_HISTORY_DAY,
     hour: "numeric",
@@ -379,8 +380,12 @@ export function formatRunHistoryDateRange(
   earliest: number,
   latest: number,
 ): string {
-  const start = new Date(Math.min(earliest, latest));
-  const end = new Date(Math.max(earliest, latest));
+  const timestamps = [earliest, latest].filter(
+    (timestamp) => Number.isFinite(timestamp) && timestamp > 0,
+  );
+  if (timestamps.length === 0) return "-";
+  const start = new Date(Math.min(...timestamps));
+  const end = new Date(Math.max(...timestamps));
   const startLabel = start.toLocaleString(undefined, RUN_HISTORY_DAY);
   const sameDay =
     start.getFullYear() === end.getFullYear() &&

@@ -153,11 +153,11 @@ export function CreateSuitePage({
   );
 
   useEffect(() => {
+    if (nameEditedRef.current) return;
     if (initialName?.trim()) {
       setName(initialName);
       return;
     }
-    if (nameEditedRef.current) return;
     setName(seededName);
   }, [initialName, seededName]);
 

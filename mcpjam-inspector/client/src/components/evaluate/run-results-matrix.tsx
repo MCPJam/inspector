@@ -256,9 +256,10 @@ export function RunResultsMatrix({
       : status === "cancelled" && counts.cancelled === 0
         ? ALL_EVAL_FILTER_VALUES
         : status;
+  const query = search.trim().toLowerCase();
   const rows = data.rows.filter(
     (row) =>
-      row.title.toLowerCase().includes(search.toLowerCase()) &&
+      row.title.toLowerCase().includes(query) &&
       (activeStatus === ALL_EVAL_FILTER_VALUES ||
         data.targets.some(
           (target) =>
@@ -268,7 +269,7 @@ export function RunResultsMatrix({
         )),
   );
   const hasActiveFilters =
-    Boolean(search.trim()) ||
+    Boolean(query) ||
     activeStatus !== ALL_EVAL_FILTER_VALUES ||
     extraFiltersActive;
   const clearFilters = () => {

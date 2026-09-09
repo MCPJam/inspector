@@ -252,6 +252,37 @@ describe("run results matrix", () => {
     ).toEqual(["25%", "25%", "25%", "25%"]);
   });
 
+  it("does not treat a whitespace-only search as an active filter", async () => {
+    const user = userEvent.setup();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[
+          iteration("pass", "one", {
+            testCaseSnapshot: {
+              title: "Checkout",
+              model: "sonnet",
+              provider: "anthropic",
+              query: "Checkout",
+              expectedToolCalls: [],
+            },
+          }),
+        ]}
+        hostNamesById={names}
+      />,
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Find a test case" }),
+      " ",
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Inspect Checkout on Claude · sonnet",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  });
+
   it("filters cases and opens the correct evidence when switching client/model in the drawer", async () => {
     const user = userEvent.setup();
     const open = vi.fn();

@@ -37,7 +37,7 @@ import { formatRunId } from "../evals/helpers";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
 import { resolveHostLogoByName } from "@/lib/host-logo";
-import { compactModelIdTail } from "@/lib/environment-label";
+import { modelsFromRun } from "./run-launch-context";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import {
   Tooltip,
@@ -103,6 +103,7 @@ export function EvaluateRunPage({
   defaultCompareRunId,
   onCompareWithRun,
   onExport,
+  iterations,
   launchReview,
   children,
 }: {
@@ -151,6 +152,7 @@ export function EvaluateRunPage({
               <RunPairingDecisions
                 targets={targets}
                 hostNamesById={hostNamesById}
+                iterations={iterations}
               />
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
@@ -321,9 +323,21 @@ type PairingMark = {
   client: string;
 };
 
+function pairingModel(
+  target: EvalSuiteRun,
+  iterations: readonly EvalIteration[] | undefined,
+): string {
+  const recovered = modelsFromRun(
+    target,
+    (iterations ?? []).filter((iteration) => iteration.suiteRunId === target._id),
+  );
+  return recovered[0] ?? "Client default";
+}
+
 function groupPairingsByDecision(
   targets: readonly EvalSuiteRun[],
   hostNamesById: Map<string, string | null>,
+  iterations?: readonly EvalIteration[],
 ): Array<{
   tone: PairingDecisionTone;
   word: string;
@@ -336,9 +350,7 @@ function groupPairingsByDecision(
   for (const target of targets) {
     const decision = pairingDecision(target);
     const client = pairingClientName(target, hostNamesById);
-    const model = compactModelIdTail(
-      target.effectiveModelId ?? "Client default",
-    );
+    const model = pairingModel(target, iterations);
     const mark = {
       key: target._id,
       label: `${client} · ${model}`,
@@ -363,12 +375,14 @@ function groupPairingsByDecision(
 function RunPairingDecisions({
   targets,
   hostNamesById,
+  iterations,
 }: {
   targets: readonly EvalSuiteRun[];
   hostNamesById: Map<string, string | null>;
+  iterations?: readonly EvalIteration[];
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
-  const groups = groupPairingsByDecision(targets, hostNamesById);
+  const groups = groupPairingsByDecision(targets, hostNamesById, iterations);
   if (!groups.length) return null;
   return (
     <span
@@ -393,18 +407,20 @@ function RunPairingDecisions({
               <Tooltip key={mark.key}>
                 <TooltipTrigger asChild>
                   <span
-                    title={mark.label}
+                    aria-label={mark.label}
                     tabIndex={0}
                     className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-background"
                   >
                     <img
                       src={resolveHostLogoByName(mark.client, theme)}
-                      alt={mark.label}
+                      alt=""
                       className="size-3.5 object-contain"
                     />
                   </span>
                 </TooltipTrigger>
-                <TooltipContent variant="muted">{mark.label}</TooltipContent>
+                <TooltipContent variant="muted" aria-hidden="true">
+                  {mark.label}
+                </TooltipContent>
               </Tooltip>
             ))}
           </span>

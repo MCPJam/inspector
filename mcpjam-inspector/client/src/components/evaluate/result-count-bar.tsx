@@ -28,6 +28,13 @@ export function resultBarTotal(counts: ResultBarCounts): number {
   return counts.passed + counts.failed + counts.pending + counts.cancelled;
 }
 
+function resultBarLabel(counts: ResultBarCounts): string {
+  const parts = [`${counts.passed} passed`, `${counts.failed} failed`];
+  if (counts.pending > 0) parts.push(`${counts.pending} pending`);
+  if (counts.cancelled > 0) parts.push(`${counts.cancelled} cancelled`);
+  return parts.join(", ");
+}
+
 export function ResultCountBar({
   counts,
   className,
@@ -43,7 +50,8 @@ export function ResultCountBar({
         "flex h-1.5 overflow-hidden rounded-full bg-muted",
         className,
       )}
-      aria-label={`${counts.passed} passed, ${counts.failed} failed`}
+      role="img"
+      aria-label={resultBarLabel(counts)}
       data-testid="result-count-bar"
     >
       {SEGMENTS.map((status) =>

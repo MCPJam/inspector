@@ -561,6 +561,18 @@ describe("SUITE_RUN_HISTORY_PAGE_SIZE", () => {
       ).toLocaleString(undefined, day)}`,
     );
   });
+
+  it("treats a missing timestamp as unavailable", () => {
+    const morning = new Date(2026, 8, 8, 9, 0).getTime();
+    expect(formatRunHistoryDate(0)).toBe("-");
+    expect(formatRunHistoryDateRange(0, 0)).toBe("-");
+    expect(formatRunHistoryDateRange(0, morning)).toBe(
+      new Date(morning).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+      }),
+    );
+  });
 });
 
 describe("resolveRunHistoryVerdict — a run held for its judge", () => {
