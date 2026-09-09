@@ -2284,6 +2284,10 @@ const PAGE_DERIVED_KEYS = [
   // enum members, property names — so the messages are the page's words even
   // though the check was ours.
   "validation",
+  // What a JavaScript dialog said, and what was decided about it. The message
+  // is the page's own words, chosen for a person to read — which makes it as
+  // good a place to address the model as a tool description is.
+  "dialog",
   // Attribution for a page-tool result: the page's raw tool name and origin.
   // Kept on the result for the card that renders it, but a page picks its own
   // tool name, and a name is a place to write a sentence.

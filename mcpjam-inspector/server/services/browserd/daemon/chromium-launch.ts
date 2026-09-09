@@ -19,6 +19,7 @@ import {
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
 import { PAGE_TEXT_FN } from "./page-text";
+import type { PendingDialog } from "./dialogs";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
 /**
@@ -107,6 +108,24 @@ export type AnyPage = {
 const CONSOLE_RING_SIZE = 200;
 /** Per-entry cap at CAPTURE time; the observe budget caps again for output. */
 const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
+/**
+ * Per-dialog message cap at capture time.
+ *
+ * A dialog's text is page-authored and reaches the model, so it is bounded
+ * here for the same reason console entries are — and generously, because the
+ * whole value of the message is that a person or a model can recognise which
+ * dialog it is.
+ */
+const DIALOG_MESSAGE_BYTES = 2_000;
+
+/** The shape Playwright's `Dialog` gives us. Structural, like `AnyPage`. */
+interface PlaywrightDialog {
+  type?(): string;
+  message?(): string;
+  defaultValue?(): string | undefined;
+  accept(promptText?: string): Promise<void>;
+  dismiss(): Promise<void>;
+}
 
 /** Act timeouts: long enough for a slow page, short enough to stay a turn. */
 const ACT_TIMEOUT_MS = 15_000;
@@ -141,6 +160,38 @@ export function wrapPage(page: AnyPage): DriverPage {
       if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
     } catch {
       // A console listener must never take the page down.
+    }
+  });
+  // DIALOGS ARE CAPTURED, NOT ANSWERED HERE.
+  //
+  // Registering any `dialog` listener turns OFF Playwright's own auto-dismiss,
+  // which is what makes this possible at all: the dialog stays open, and the
+  // driver decides. That decision needs the lease — a dialog raised while a
+  // person is driving is theirs to answer, and dismissing it out from under
+  // them is exactly the surprise the handoff exists to prevent — and the lease
+  // is not something a page wrapper can see.
+  let pending: { dialog: PendingDialog; handle: PlaywrightDialog } | null =
+    null;
+  page.on("dialog", (dialog: PlaywrightDialog) => {
+    try {
+      pending = {
+        handle: dialog,
+        dialog: {
+          kind: (dialog.type?.() ?? "alert") as PendingDialog["kind"],
+          message: capText(dialog.message?.() ?? "", DIALOG_MESSAGE_BYTES),
+          ...(dialog.defaultValue?.()
+            ? {
+                defaultPrompt: capText(
+                  dialog.defaultValue()!,
+                  DIALOG_MESSAGE_BYTES,
+                ),
+              }
+            : {}),
+          at: Date.now(),
+        },
+      };
+    } catch {
+      // A dialog listener must never take the page down.
     }
   });
   page.on("pageerror", (error: unknown) => {
@@ -280,6 +331,24 @@ export function wrapPage(page: AnyPage): DriverPage {
       } catch {
         return "";
       }
+    },
+    pendingDialog: () => pending?.dialog ?? null,
+    async resolveDialog(accept: boolean, promptText?: string) {
+      const open = pending;
+      // CLEARED BEFORE THE ANSWER IS SENT, not after. `accept()` resolves once
+      // the renderer has taken the answer and started running again, and any
+      // command that arrives in that window must see an unblocked page rather
+      // than refuse against a dialog that is already on its way out.
+      pending = null;
+      if (!open) return false;
+      try {
+        if (accept) await open.handle.accept(promptText);
+        else await open.handle.dismiss();
+      } catch {
+        // Already gone — the page closed it, or the tab navigated. Answered
+        // either way, as far as the caller is concerned.
+      }
+      return true;
     },
     consoleEntries: () => consoleRing,
     consoleCursor: () => ({ console: consoleTotal, errors: errorsTotal }),

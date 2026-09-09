@@ -2990,6 +2990,24 @@ function createVideoEncoder(options) {
   };
 }
 
+// server/services/browserd/daemon/dialogs.ts
+function agentDefaultAccepts(kind) {
+  return kind === "beforeunload";
+}
+function safeUnderDialog(action) {
+  if (action.kind === "observe") {
+    return action.mode === "screenshot" || action.mode === "url" || action.mode === "console" || action.mode === "webmcp_revision";
+  }
+  if (action.kind === "act") {
+    return action.verb === "close_tab" || action.verb === "activate_tab";
+  }
+  return false;
+}
+function dialogRefusal(dialog) {
+  const quoted = dialog.message ? `: "${dialog.message}"` : "";
+  return `dialog_pending: a JavaScript ${dialog.kind} dialog is blocking this page${quoted}. The page cannot be read or acted on until it is answered \u2014 hand the browser back so a person can answer it, or close the tab.`;
+}
+
 // server/services/browserd/daemon/cdp-a11y.ts
 var UNINTERESTING_ROLES = /* @__PURE__ */ new Set([
   "generic",
@@ -4838,6 +4856,14 @@ var ChromiumDriver = class {
    */
   refs = /* @__PURE__ */ new Map();
   /**
+   * What was decided about a dialog, waiting to ride the next observation.
+   *
+   * Carried rather than returned because the dialog is answered at the top of
+   * `execute`, before the command that will produce the result has run — the
+   * same shape as the handoff note, and read out in the same funnel.
+   */
+  dialogNotes = /* @__PURE__ */ new Map();
+  /**
    * Tab creations already under way, by tabId.
    *
    * `context.newPage()` is awaited, so without this two callers arriving
@@ -4908,6 +4934,13 @@ var ChromiumDriver = class {
     }
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
+    const blocked = await this.answerOrRefuseDialog(
+      tabId,
+      action,
+      permit,
+      command.source
+    );
+    if (blocked) return blocked;
     switch (action.kind) {
       case "navigate": {
         if (action.newTab) {
@@ -4960,7 +4993,7 @@ var ChromiumDriver = class {
       case "observe":
         return this.observe(tabId, action, permit);
       case "act":
-        return this.act(tabId, action, permit);
+        return this.act(tabId, action, permit, command.source);
       case "webmcp_invoke":
         return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
@@ -4983,7 +5016,7 @@ var ChromiumDriver = class {
    * L3 staleness is enforced upstream by `guardStaleness`, which compares the
    * act's `expectedState` before this runs.
    */
-  async act(tabId, action, permit) {
+  async act(tabId, action, permit, source) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -5035,6 +5068,7 @@ var ChromiumDriver = class {
         } : {}
       };
     }
+    await this.answerOrRefuseDialog(tabId, action, permit, source);
     const settled = await this.settle(page);
     const observed = await this.afterAct(
       tabId,
@@ -5121,7 +5155,11 @@ var ChromiumDriver = class {
         "this browser cannot resolve refs; use a selector or coordinates"
       );
     }
-    const point = await pointForBackendNodeId(cdp, refNode.backendNodeId, label);
+    const point = await pointForBackendNodeId(
+      cdp,
+      refNode.backendNodeId,
+      label
+    );
     if (!isPointInViewport(point.x, point.y)) {
       throw new ActError(
         "target_not_found",
@@ -5171,7 +5209,9 @@ var ChromiumDriver = class {
         }
         if (point) return page.clickAt(point);
         if (selector) return page.clickSelector(selector);
-        throw new Error("no element: click needs a ref, coordinates or a selector");
+        throw new Error(
+          "no element: click needs a ref, coordinates or a selector"
+        );
       case "hover":
         if (refNode) {
           return page.hoverAt(
@@ -5180,15 +5220,13 @@ var ChromiumDriver = class {
         }
         if (point) return page.hoverAt(point);
         if (selector) return page.hoverSelector(selector);
-        throw new Error("no element: hover needs a ref, coordinates or a selector");
+        throw new Error(
+          "no element: hover needs a ref, coordinates or a selector"
+        );
       case "type": {
         const text = action.value ?? "";
         if (refNode) {
-          await replaceTextInNode(
-            await needCdp(),
-            refNode.backendNodeId,
-            text
-          );
+          await replaceTextInNode(await needCdp(), refNode.backendNodeId, text);
         } else if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
         if (action.submit) {
@@ -5874,7 +5912,10 @@ var ChromiumDriver = class {
       // page would reach the model unfiltered. Stamped at the funnel so no
       // future observation mode can forget it. An explicit `url` in `output`
       // still wins; today it is the same value.
-      output: this.withHandoffNote({ url: frame.url, ...output }),
+      output: this.withDialogNote(
+        tabId,
+        this.withHandoffNote({ url: frame.url, ...output })
+      ),
       stateToken: this.tokenFor(tabId, entry, frame)
     };
   }
@@ -5885,6 +5926,19 @@ var ChromiumDriver = class {
    * change that just happened. Consumed once, so it marks the result that
    * actually crossed the handoff rather than every later one.
    */
+  /**
+   * Fold in what was decided about a dialog, once, on the next observation.
+   *
+   * Consumed like the handoff note and for the same reason: it describes one
+   * moment, and repeating it on every later result would tell the model a
+   * dialog keeps appearing.
+   */
+  withDialogNote(tabId, output) {
+    const note = this.dialogNotes.get(tabId);
+    if (!note) return output;
+    this.dialogNotes.delete(tabId);
+    return { ...output, dialog: note };
+  }
   withHandoffNote(output) {
     return this.lease?.consumeResumedDirty() ? {
       ...output,
@@ -5905,6 +5959,41 @@ var ChromiumDriver = class {
    * command can take seconds (a navigation settles for up to ten), and the
    * handoff it must respect is the one happening NOW.
    */
+  /**
+   * Answer a pending dialog, or refuse the command that cannot run past one.
+   *
+   * Returns a refusal when the command must not proceed, and `undefined` when
+   * the page is clear — either it always was, or this call just made it so.
+   *
+   * WHO ANSWERS depends on the lease, and that is the whole reason the page
+   * wrapper captures dialogs instead of answering them. With the browser free,
+   * an agent-driven dialog is answered here on the agent's behalf and the
+   * choice is recorded for the model to read. With a person holding it, the
+   * dialog is THEIRS — dismissing it out from under someone signing in is
+   * exactly the surprise the handoff exists to prevent — so it stays open and
+   * the agent is told why its command cannot run.
+   */
+  async answerOrRefuseDialog(tabId, action, permit, source) {
+    const entry = this.tabs.get(tabId);
+    const dialog = entry?.page.pendingDialog?.();
+    if (!entry || !dialog) return void 0;
+    if (source === "manual" || !permit()) {
+      if (safeUnderDialog(action)) return void 0;
+      return { ok: false, error: dialogRefusal(dialog) };
+    }
+    const accept = agentDefaultAccepts(dialog.kind);
+    const answered = await entry.page.resolveDialog?.(accept).catch(() => false);
+    if (!answered) {
+      return void 0;
+    }
+    this.dialogNotes.set(tabId, {
+      kind: dialog.kind,
+      message: dialog.message,
+      choice: accept ? "accepted" : "dismissed",
+      auto: true
+    });
+    return void 0;
+  }
   permitFor(command) {
     const lease = this.lease;
     if (!lease) return () => true;
@@ -6552,6 +6641,7 @@ function abortPromise(signal) {
 }
 var CONSOLE_RING_SIZE = 200;
 var CONSOLE_ENTRY_CAPTURE_BYTES = 4e3;
+var DIALOG_MESSAGE_BYTES = 2e3;
 var ACT_TIMEOUT_MS = 15e3;
 var SCREENSHOT_JPEG_QUALITY = 70;
 function wrapPage(page) {
@@ -6568,6 +6658,26 @@ function wrapPage(page) {
       });
       consoleTotal += 1;
       if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+    } catch {
+    }
+  });
+  let pending = null;
+  page.on("dialog", (dialog) => {
+    try {
+      pending = {
+        handle: dialog,
+        dialog: {
+          kind: dialog.type?.() ?? "alert",
+          message: capText(dialog.message?.() ?? "", DIALOG_MESSAGE_BYTES),
+          ...dialog.defaultValue?.() ? {
+            defaultPrompt: capText(
+              dialog.defaultValue(),
+              DIALOG_MESSAGE_BYTES
+            )
+          } : {},
+          at: Date.now()
+        }
+      };
     } catch {
     }
   });
@@ -6665,6 +6775,18 @@ function wrapPage(page) {
       } catch {
         return "";
       }
+    },
+    pendingDialog: () => pending?.dialog ?? null,
+    async resolveDialog(accept, promptText) {
+      const open = pending;
+      pending = null;
+      if (!open) return false;
+      try {
+        if (accept) await open.handle.accept(promptText);
+        else await open.handle.dismiss();
+      } catch {
+      }
+      return true;
     },
     consoleEntries: () => consoleRing,
     consoleCursor: () => ({ console: consoleTotal, errors: errorsTotal }),

@@ -26,6 +26,7 @@
  */
 
 import type { ConsoleEntry } from "../daemon/observation-budget";
+import type { PendingDialog } from "../daemon/dialogs";
 import type { ActPoint, DriverPage } from "../daemon/browser-page";
 import type { CdpLike, WebMcpBridge } from "../daemon/webmcp-bridge";
 import { WebMcpBridge as Bridge } from "../daemon/webmcp-bridge";
@@ -43,6 +44,8 @@ const NETWORK_QUIET_MS = 500;
 /** Same quality as the Playwright engine: reading a page, not printing it. */
 const SCREENSHOT_JPEG_QUALITY = 70;
 /** Newest N console entries kept, matching the Playwright engine's ring. */
+/** Page-authored text that reaches the model, so bounded at capture. */
+const DIALOG_MESSAGE_CHARS = 2_000;
 const CONSOLE_RING_MAX = 200;
 
 /**
@@ -279,6 +282,8 @@ export function createElectronPage(
    * never return to zero, so the page would never settle again for the rest of
    * its life — a hang, not a wrong answer.
    */
+  /** The dialog this page is blocked on, if any. See the CDP handlers below. */
+  let pendingDialog: PendingDialog | null = null;
   const inFlightRequests = new Set<string>();
   /** Resolvers waiting for the page to go quiet. */
   const quietWaiters = new Set<() => void>();
@@ -350,6 +355,31 @@ export function createElectronPage(
           if (id !== undefined) inFlightRequests.delete(id);
           armQuiet();
         };
+        // DIALOGS. `Page.enable` is already sent above, so the events arrive
+        // without another domain enable. Captured and not answered, for the
+        // same reason as the Playwright engine: who answers depends on the
+        // lease, which the driver holds and this file cannot see.
+        adapter.on("Page.javascriptDialogOpening", (payload) => {
+          const p = payload as {
+            type?: string;
+            message?: string;
+            defaultPrompt?: string;
+          };
+          pendingDialog = {
+            kind: (p?.type ?? "alert") as PendingDialog["kind"],
+            message: (p?.message ?? "").slice(0, DIALOG_MESSAGE_CHARS),
+            ...(p?.defaultPrompt
+              ? {
+                  defaultPrompt: p.defaultPrompt.slice(0, DIALOG_MESSAGE_CHARS),
+                }
+              : {}),
+            at: Date.now(),
+          };
+        });
+        // Closed BY THE PAGE (or by us) — either way there is nothing pending.
+        adapter.on("Page.javascriptDialogClosed", () => {
+          pendingDialog = null;
+        });
         adapter.on("Network.loadingFinished", settled);
         adapter.on("Network.loadingFailed", settled);
         await adapter.send("Network.enable").catch(() => {});
@@ -1125,6 +1155,25 @@ export function createElectronPage(
       } catch {
         return "";
       }
+    },
+    pendingDialog: () => pendingDialog,
+    async resolveDialog(accept: boolean, promptText?: string) {
+      const open = pendingDialog;
+      // Cleared before the answer is sent, for the reason the Playwright
+      // adapter gives: a command arriving while the answer is in flight must
+      // see a page that is running again, not refuse against a dialog on its
+      // way out.
+      pendingDialog = null;
+      if (!open) return false;
+      const cdp = await session();
+      if (!cdp) return false;
+      await cdp
+        .send("Page.handleJavaScriptDialog", {
+          accept,
+          ...(promptText === undefined ? {} : { promptText }),
+        })
+        .catch(() => {});
+      return true;
     },
     consoleEntries: () => consoleRing,
     dropConsoleSince(since: number) {

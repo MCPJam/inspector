@@ -29,6 +29,12 @@ import {
   type ActObserve,
 } from "../protocol";
 import {
+  agentDefaultAccepts,
+  dialogRefusal,
+  safeUnderDialog,
+  type DialogOutcome,
+} from "./dialogs";
+import {
   coveringElementAt,
   focusBackendNodeId,
   pointForBackendNodeId,
@@ -400,6 +406,14 @@ export class ChromiumDriver implements BrowserDriver {
    */
   private readonly refs = new Map<string, RefMap>();
   /**
+   * What was decided about a dialog, waiting to ride the next observation.
+   *
+   * Carried rather than returned because the dialog is answered at the top of
+   * `execute`, before the command that will produce the result has run — the
+   * same shape as the handoff note, and read out in the same funnel.
+   */
+  private readonly dialogNotes = new Map<string, DialogOutcome>();
+  /**
    * Tab creations already under way, by tabId.
    *
    * `context.newPage()` is awaited, so without this two callers arriving
@@ -485,6 +499,16 @@ export class ChromiumDriver implements BrowserDriver {
     }
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
+    // A DIALOG STOPS THE RENDERER, so it is dealt with before anything reaches
+    // the page. Placed here rather than in each verb because every one of them
+    // would otherwise hang against a blocked page and report it as "unsettled".
+    const blocked = await this.answerOrRefuseDialog(
+      tabId,
+      action,
+      permit,
+      command.source,
+    );
+    if (blocked) return blocked;
     switch (action.kind) {
       case "navigate": {
         // `navigate` is the only verb that may CREATE a tab (P2).
@@ -545,7 +569,7 @@ export class ChromiumDriver implements BrowserDriver {
       case "observe":
         return this.observe(tabId, action, permit);
       case "act":
-        return this.act(tabId, action, permit);
+        return this.act(tabId, action, permit, command.source);
       case "webmcp_invoke":
         return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
@@ -573,6 +597,7 @@ export class ChromiumDriver implements BrowserDriver {
     tabId: string,
     action: Extract<BrowserAction, { kind: "act" }>,
     permit: () => boolean,
+    source: BrowserCommand["source"],
   ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
@@ -680,6 +705,11 @@ export class ChromiumDriver implements BrowserDriver {
       };
     }
 
+    // THE ACT'S OWN DIALOG. A click that calls `confirm()` blocks the renderer
+    // before this line, and settling against a blocked renderer burns the full
+    // 10s budget to report a page "unsettled" — which is true and useless.
+    // Answered here so the settle below runs against a page that is running.
+    await this.answerOrRefuseDialog(tabId, action, permit, source);
     const settled = await this.settle(page);
     const observed = await this.afterAct(
       tabId,
@@ -1928,7 +1958,10 @@ export class ChromiumDriver implements BrowserDriver {
       // page would reach the model unfiltered. Stamped at the funnel so no
       // future observation mode can forget it. An explicit `url` in `output`
       // still wins; today it is the same value.
-      output: this.withHandoffNote({ url: frame.url, ...output }),
+      output: this.withDialogNote(
+        tabId,
+        this.withHandoffNote({ url: frame.url, ...output }),
+      ),
       stateToken: this.tokenFor(tabId, entry, frame),
     };
   }
@@ -1940,6 +1973,23 @@ export class ChromiumDriver implements BrowserDriver {
    * change that just happened. Consumed once, so it marks the result that
    * actually crossed the handoff rather than every later one.
    */
+  /**
+   * Fold in what was decided about a dialog, once, on the next observation.
+   *
+   * Consumed like the handoff note and for the same reason: it describes one
+   * moment, and repeating it on every later result would tell the model a
+   * dialog keeps appearing.
+   */
+  private withDialogNote(
+    tabId: string,
+    output: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const note = this.dialogNotes.get(tabId);
+    if (!note) return output;
+    this.dialogNotes.delete(tabId);
+    return { ...output, dialog: note };
+  }
+
   private withHandoffNote(output: Record<string, unknown>) {
     return this.lease?.consumeResumedDirty()
       ? {
@@ -1963,6 +2013,59 @@ export class ChromiumDriver implements BrowserDriver {
    * command can take seconds (a navigation settles for up to ten), and the
    * handoff it must respect is the one happening NOW.
    */
+  /**
+   * Answer a pending dialog, or refuse the command that cannot run past one.
+   *
+   * Returns a refusal when the command must not proceed, and `undefined` when
+   * the page is clear — either it always was, or this call just made it so.
+   *
+   * WHO ANSWERS depends on the lease, and that is the whole reason the page
+   * wrapper captures dialogs instead of answering them. With the browser free,
+   * an agent-driven dialog is answered here on the agent's behalf and the
+   * choice is recorded for the model to read. With a person holding it, the
+   * dialog is THEIRS — dismissing it out from under someone signing in is
+   * exactly the surprise the handoff exists to prevent — so it stays open and
+   * the agent is told why its command cannot run.
+   */
+  private async answerOrRefuseDialog(
+    tabId: string,
+    action: BrowserAction,
+    permit: () => boolean,
+    source: BrowserCommand["source"],
+  ): Promise<BrowserCommandResult | undefined> {
+    const entry = this.tabs.get(tabId);
+    const dialog = entry?.page.pendingDialog?.();
+    if (!entry || !dialog) return undefined;
+    // A PERSON'S OWN COMMAND NEVER ANSWERS THEIR DIALOG. `manual` is the pane,
+    // which is the surface where they can read it and decide; answering it
+    // from under one of their own reads would take the decision away at the
+    // exact moment they were making it. They still get the reads that do not
+    // touch the blocked page, which is how the pane shows them the dialog.
+    if (source === "manual" || !permit()) {
+      if (safeUnderDialog(action)) return undefined;
+      return { ok: false, error: dialogRefusal(dialog) };
+    }
+    const accept = agentDefaultAccepts(dialog.kind);
+    const answered = await entry.page
+      .resolveDialog?.(accept)
+      .catch(() => false);
+    if (!answered) {
+      // Nothing there to answer after all (the page closed it, or a race).
+      // Proceeding is right: the renderer is running again either way.
+      return undefined;
+    }
+    // RECORDED, not merely handled. "I clicked Delete and nothing happened"
+    // and "I clicked Delete, a confirmation appeared, and it was cancelled on
+    // your behalf" lead the model to completely different next moves.
+    this.dialogNotes.set(tabId, {
+      kind: dialog.kind,
+      message: dialog.message,
+      choice: accept ? "accepted" : "dismissed",
+      auto: true,
+    });
+    return undefined;
+  }
+
   private permitFor(command: BrowserCommand): () => boolean {
     const lease = this.lease;
     if (!lease) return () => true;

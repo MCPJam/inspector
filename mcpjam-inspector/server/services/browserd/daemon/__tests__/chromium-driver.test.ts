@@ -3943,7 +3943,10 @@ describe("ChromiumDriver — acting on a ref", () => {
   it("answers unsupported_target when the engine has no CDP session at all", async () => {
     // An engine that cannot resolve nodes can still be driven by selector and
     // coordinates, so this is a capability answer rather than a fault.
-    const page = fakePage({ url: "https://x.test/", cdpSession: null });
+    const page = fakePage({ url: "https://x.test/" });
+    // `null` is the fake's "this engine has no CDP session at all", as opposed
+    // to `undefined`, which takes its default one.
+    page.cdpSession = null;
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
@@ -3952,5 +3955,138 @@ describe("ChromiumDriver — acting on a ref", () => {
     );
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/unknown_ref|unsupported_target/);
+  });
+});
+
+/**
+ * JavaScript dialogs.
+ *
+ * A dialog stops the renderer. Before this the daemon did not know what one
+ * was, so a page that called `confirm()` on a click left the tab blocked for
+ * the life of the browser and every command afterwards reported the page
+ * "unsettled" — true, and no help at all. These pin the three things that make
+ * that recoverable: it is answered, the answer is recorded, and it is never
+ * answered on behalf of the person who is holding the browser.
+ */
+describe("ChromiumDriver — JavaScript dialogs", () => {
+  const CONFIRM = {
+    kind: "confirm" as const,
+    message: "Delete this account?",
+    at: 1,
+  };
+
+  it("CANCELS a confirm on the agent's behalf, and says so", async () => {
+    // Cancel, not accept: a dialog is the one place a page asks a question
+    // whose default answer we are choosing for an absent user, and "Delete
+    // this account?" defaults to no.
+    const page = fakePage({ url: "https://x.test/", dialog: CONFIRM });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "dom" }));
+    expect(res.ok).toBe(true);
+    expect(page.dialogAnswers).toEqual([{ accept: false }]);
+    expect(res.output).toMatchObject({
+      dialog: {
+        kind: "confirm",
+        message: "Delete this account?",
+        choice: "dismissed",
+        auto: true,
+      },
+    });
+  });
+
+  it("ACCEPTS a beforeunload, because the agent asked to navigate", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    // Raised the way a real one is: the page asks on the way OUT, so the tab
+    // already exists and the next navigate is what meets it.
+    page.setDialog({ kind: "beforeunload", message: "Leave site?", at: 1 });
+    await driver.execute(cmd({ kind: "navigate", url: "https://y.test/" }));
+    expect(page.dialogAnswers).toEqual([{ accept: true }]);
+  });
+
+  it("reports the decision ONCE, not on every later result", async () => {
+    // It describes one moment. Repeating it would tell the model a dialog
+    // keeps appearing on a page where nothing is happening.
+    const page = fakePage({ url: "https://x.test/", dialog: CONFIRM });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const first = await driver.execute(cmd({ kind: "observe", mode: "url" }));
+    const second = await driver.execute(cmd({ kind: "observe", mode: "url" }));
+    expect(first.output).toMatchObject({ dialog: { kind: "confirm" } });
+    expect(second.output).not.toHaveProperty("dialog");
+  });
+
+  it("answers a dialog the ACT ITSELF raised, before settling on it", async () => {
+    // The real sequence: the click runs, the page calls `confirm()`, and the
+    // renderer stops. Settling against that burns the whole budget to report
+    // a page "unsettled", so the dialog is answered first.
+    const page = fakePage({
+      url: "https://x.test/",
+      dialogOnAct: CONFIRM,
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { coordinates: [5, 6] } }),
+    );
+    expect(page.calls.acts).toContain("click:5,6");
+    expect(page.dialogAnswers).toEqual([{ accept: false }]);
+    expect(res.output).toMatchObject({ dialog: { choice: "dismissed" } });
+  });
+
+  it("NEVER answers the dialog of a person who is holding the browser", async () => {
+    // Their dialog, their answer. Dismissing it out from under someone signing
+    // in is exactly the surprise the handoff exists to prevent.
+    const page = fakePage({ url: "https://x.test/", dialog: CONFIRM });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    lease.acquire("someone-else");
+    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    expect(res.ok).toBe(false);
+    expect(page.dialogAnswers).toEqual([]);
+    // A lease refusal is the one the caller gets, because it is the one that
+    // says who to wait for.
+    expect(res.leaseBlocked ?? String(res.error)).toBeTruthy();
+  });
+
+  it("still answers a screenshot and a URL while a dialog is open", async () => {
+    // The page is blocked, so anything that touches it hangs or lies — but the
+    // frame and the URL are exactly what a caller needs to make sense of the
+    // refusal it just got. This is checked with the lease HELD so the dialog
+    // stays pending for the duration.
+    const page = fakePage({ url: "https://x.test/", dialog: CONFIRM });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    lease.acquire("holder");
+    // As the HOLDER, which is what the lease is for: their own commands run.
+    const shot = await driver.execute({
+      commandId: "c-shot",
+      source: "manual",
+      holder: "holder",
+      action: { kind: "observe", mode: "screenshot" },
+    });
+    expect(shot.ok).toBe(true);
+    expect(page.dialogAnswers).toEqual([]);
+  });
+
+  it("does nothing at all on a page with no dialog", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "url" }));
+    expect(res.ok).toBe(true);
+    expect(page.dialogAnswers).toEqual([]);
+    expect(res.output).not.toHaveProperty("dialog");
   });
 });
