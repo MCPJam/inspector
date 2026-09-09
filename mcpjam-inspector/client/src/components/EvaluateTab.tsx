@@ -1680,8 +1680,7 @@ function EvaluateTabContent({
           </SheetContent>
         </Sheet>
 
-        {route.type === "list" &&
-          runReviewSuiteId &&
+        {runReviewSuiteId &&
           (() => {
             const suite = visibleSuites.find(
               (entry) => entry.suite._id === runReviewSuiteId,

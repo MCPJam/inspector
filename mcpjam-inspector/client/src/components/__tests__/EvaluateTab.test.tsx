@@ -418,6 +418,39 @@ describe("EvaluateTab", () => {
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { type: "suite-overview", suiteId: "suite-a" },
+    { type: "test-edit", suiteId: "suite-a", testId: "case-a" },
+    { type: "run-detail", suiteId: "suite-a", runId: "run-a" },
+  ])(
+    "keeps run setup available after navigating to $type",
+    async (detailRoute) => {
+      mocks.route.current = { type: "list" };
+      const { rerender } = render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(
+        screen.getByRole("button", { name: "Setup Run", exact: true }),
+      );
+      mocks.route.current = detailRoute;
+      rerender(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(
+        screen.getByRole("button", { name: "Suite suite-a", exact: true }),
+      );
+      expect(
+        screen.getByRole("dialog", { name: "Run Suite suite-a" }),
+      ).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Start reviewed run" }),
+      );
+      expect(mocks.handleRerun).toHaveBeenCalled();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Close run review" }),
+      );
+      expect(
+        screen.queryByRole("dialog", { name: "Run Suite suite-a" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
   it("renders from suite-driven route state without depending on an active server", () => {
     render(<EvaluateTab projectId="ws-1" />);
 
