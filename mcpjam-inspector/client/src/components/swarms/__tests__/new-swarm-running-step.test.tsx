@@ -595,8 +595,11 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     await waitFor(() => expect(onLeave).toHaveBeenCalledTimes(1), {
       timeout: 4000,
     });
-    // Once. A re-render on the same terminal state must not navigate twice.
     expect(onLeave).toHaveBeenCalledTimes(1);
+    // The announcement is one-shot even though the terminal effect can set up
+    // more than once.
+    expect(onRunsComplete).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledTimes(1);
   });
 });
 

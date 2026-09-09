@@ -807,18 +807,20 @@ export function NewSwarmRunningStep({
   /**
    * Announce the finish, then hand the viewer to Findings (BB-161).
    *
-   * Guarded to fire once. `allTerminal` starts false and only turns true once
-   * every launched run has a snapshot and none is still running, so there is
-   * no first-paint window where this triggers on unloaded data. The cleanup
-   * cancels the pending trip, which is what keeps an unmounted wizard from
-   * navigating out from under whatever replaced it.
+   * Only the announcement is ref-guarded. The trip is scheduled on every
+   * terminal setup: StrictMode's cleanup cancels the first timer, and a replay
+   * that skipped rescheduling would strand a finished run on screen. The
+   * cleanup keeps an unmounted wizard from navigating out from under whatever
+   * replaced it.
    */
   const completionAnnouncedRef = useRef(false);
   useEffect(() => {
-    if (!allTerminal || completionAnnouncedRef.current) return;
-    completionAnnouncedRef.current = true;
-    callbacksRef.current.onRunsComplete?.();
-    toast.success("Swarm complete!");
+    if (!allTerminal) return;
+    if (!completionAnnouncedRef.current) {
+      completionAnnouncedRef.current = true;
+      callbacksRef.current.onRunsComplete?.();
+      toast.success("Swarm complete!");
+    }
     const timer = window.setTimeout(() => {
       callbacksRef.current.onLeave();
     }, COMPLETION_TOAST_DWELL_MS);
