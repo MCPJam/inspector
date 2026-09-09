@@ -515,6 +515,31 @@ export type EvalTraceBrowserInteractionStepView = {
   videoOffsetMs?: number;
 };
 
+/**
+ * What a recording says about itself.
+ *
+ * Beside the blob id rather than derived from the bytes: `truncated` is
+ * knowable only to the thing that made the file (the daemon watched ffmpeg
+ * stop at its size cap), and `distinctFrames` is the count AFTER decimation —
+ * a static ten-minute run holds a handful of frames against six hundred
+ * seconds, which is honest and looks broken if you infer it from the duration.
+ *
+ * `source` says which recorder made it, because the two differ in ways a
+ * reader can see: the widget harness records the local Chromium context to a
+ * `.webm`, the hosted daemon grabs the whole X display to an MP4 at a fixed
+ * rate.
+ */
+export type EvalTraceVideoMeta = {
+  source: "hosted" | "widget";
+  /** Frames per second the recorder was asked for (not the written rate). */
+  fps?: number;
+  durationMs?: number;
+  /** Frames actually written, after identical ones were dropped. */
+  distinctFrames?: number;
+  /** The take stopped at its size cap before the run ended. */
+  truncated?: boolean;
+};
+
 /** Versioned blob written by `testSuites:updateTestIteration` when messages are stored. */
 export type EvalTraceBlobV1 = {
   traceVersion: 1;
@@ -528,6 +553,9 @@ export type EvalTraceBlobV1 = {
    * backend when the trace envelope is read for the replay UI.
    */
   videoBlobId?: string;
+  /** What that recording says about itself. Absent for every trace written
+   *  before recordings reported anything. */
+  videoMeta?: EvalTraceVideoMeta;
 };
 
 /** Zod mirror of Convex `traceSpanValidator` for client/server tests and optional runtime checks. */
@@ -641,6 +669,14 @@ const evalTraceWidgetSnapshotZ = z.object({
     .optional(),
 });
 
+export const evalTraceVideoMetaZ = z.object({
+  source: z.enum(["hosted", "widget"]),
+  fps: z.number().optional(),
+  durationMs: z.number().optional(),
+  distinctFrames: z.number().optional(),
+  truncated: z.boolean().optional(),
+});
+
 export const evalTraceBlobV1Z = z.object({
   traceVersion: z.literal(1),
   messages: z.array(z.any()),
@@ -648,6 +684,7 @@ export const evalTraceBlobV1Z = z.object({
   spans: z.array(evalTraceSpanZ).optional(),
   prompts: z.array(promptTraceSummaryZ).optional(),
   videoBlobId: z.string().optional(),
+  videoMeta: evalTraceVideoMetaZ.optional(),
 });
 
 export function msOffsetFromRunStart(

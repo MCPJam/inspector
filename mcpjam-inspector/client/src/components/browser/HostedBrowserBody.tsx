@@ -1,3 +1,8 @@
+import {
+  browserPageToolsKey,
+  noteWebmcpStats,
+  useBrowserPageToolsStore,
+} from "@/stores/browser-page-tools-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -7,10 +12,29 @@ import {
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
 import {
+  PaneControlBar,
+  PaneTabStrip,
+  labelFor,
+} from "@/components/browser/PaneControlBar";
+import { BrowserPanel } from "@/components/computer/BrowserPanel";
+import {
+  createTierController,
+  encoderTierFor,
+  type QualityTier,
+} from "@/lib/browser-pane/tier";
+import {
   createInputForwarder,
   type BrowserInputEvent,
   type PaneFrame,
 } from "@/lib/browser-pane/input";
+import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
+import { createFrameWireReader } from "@/lib/browser-pane/frame-wire";
+import {
+  createPaneVideoDecoder,
+  videoDecodeSupported,
+  seqOfUnitTimestamp,
+} from "@/lib/browser-pane/video-decoder";
+import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
   actOnHostedBrowserLease,
   createBrowserTokenCache,
@@ -43,6 +67,14 @@ import {
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_NOT_FOUND = 4404;
 const CLOSE_LEASE_HELD = 4409;
+/**
+ * This box cannot encode video. Reconnect WITHOUT asking for it.
+ *
+ * Its own code because the answer differs from every other close: retrying the
+ * request as-is asks a daemon that has already said it has no encoder for
+ * H.264 again, forever, while the JPEG wire underneath works perfectly.
+ */
+const CLOSE_VIDEO_UNAVAILABLE = 4415;
 
 /** How often the pane says somebody is looking. */
 const WATCH_PING_MS = 20_000;
@@ -63,6 +95,15 @@ interface Session {
   bootId: string;
   contextMode: "persistent" | "ephemeral";
 }
+
+/**
+ * The tiers the hosted pane can actually offer.
+ *
+ * VNC is here and not on the local pane because it is the DESKTOP view — the
+ * existing noVNC panel — which only a hosted box has. Offering a menu entry
+ * that cannot work is worse than not offering it.
+ */
+const HOSTED_TIERS = ["auto", "sharp", "saver", "mjpeg", "vnc"] as const;
 
 export function HostedBrowserBody({
   projectId,
@@ -116,6 +157,63 @@ export function HostedBrowserBody({
    * refuses inside it.
    */
   const tokenRetriesRef = useRef(0);
+  /**
+   * The live socket and what it said it could do.
+   *
+   * A REF because the input forwarder must not be rebuilt on every reconnect —
+   * rebuilding it mid-drag drops the queue — and because the `hello` that
+   * answers "can this server take input on the socket?" arrives after the
+   * forwarder already exists. A server that does not advertise `input` keeps
+   * getting POSTs, which is how a new client talks to an old relay for one
+   * release.
+   */
+  const socketRef = useRef<WebSocket | null>(null);
+  const socketInputRef = useRef(false);
+  /** The seq on screen when a gesture goes, for the input→paint sample. */
+  const frameSeqRef = useRef(0);
+  /**
+   * Has video already failed for this session?
+   *
+   * A REF, and it survives reconnects on purpose: a decoder that gave up did so
+   * because this browser cannot decode this stream, and asking again on the
+   * next socket would produce the same three errors and the same fallback, a
+   * few seconds later each time.
+   */
+  const videoRefusedRef = useRef(false);
+  /** The latest round trip, for the tier controller's latency rule. */
+  const rttRef = useRef<number | undefined>(undefined);
+  /**
+   * Which tab the box is showing.
+   *
+   * The video stream grabs the X display, so a model `activate_tab` changes the
+   * picture out from under a watching person — and kiosk hides Chromium's own
+   * tab strip, so nothing in the picture says so.
+   */
+  const [tabs, setTabs] = useState<{
+    active?: string;
+    list?: Array<{ id: string; url: string }>;
+  } | null>(null);
+  const activeTabRef = useRef<string | undefined>(undefined);
+  const [tabNotice, setTabNotice] = useState<string | null>(null);
+  /**
+   * Quality, and who decided it.
+   *
+   * The CONTROLLER lives in a ref because it is fed from the socket handler on
+   * every `stats` message, and rebuilding it per render would erase the
+   * hysteresis that stops the tier oscillating.
+   */
+  const tierController = useRef(createTierController());
+  const [tier, setTier] = useState<QualityTier>("auto");
+  const [tierPreference, setTierPreference] = useState<QualityTier>("auto");
+  /**
+   * The tier, readable from the socket effect without re-running it.
+   *
+   * The effect owns a live connection; re-running it on a tier change would
+   * drop the picture. Only the two tiers that change the TRANSPORT need a
+   * reconnect, and those bump `streamAttempt` explicitly.
+   */
+  const tierRef = useRef<QualityTier>(tier);
+  tierRef.current = tier;
 
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -281,6 +379,44 @@ export function HostedBrowserBody({
     if (!session || !tokens) return;
     let closed = false;
     let stream: { close(): void } | null = null;
+    /**
+     * This attempt's socket, captured for the cleanup.
+     *
+     * Compared by IDENTITY on teardown so a reconnect that already replaced
+     * the ref is not cleared by the closure of the connection it replaced —
+     * which would leave the pane POSTing input while a perfectly good socket
+     * was open.
+     */
+    let openedSocket: WebSocket | null = null;
+    /** Decodes the binary pixel path; null until the socket is open. */
+    let wire: ReturnType<typeof createFrameWireReader> | null = null;
+    /** The last bitmap this socket produced, so teardown can release it. */
+    let lastBitmap: ImageBitmap | undefined;
+    /** Built on the first access unit; null on a stream that stays JPEG. */
+    let video: ReturnType<typeof createPaneVideoDecoder> | null = null;
+    /**
+     * Record what the box says is on screen, and say so when it moves.
+     *
+     * Only when it MOVES, and only after a first reading: naming the tab a
+     * person just opened the pane on would be a notification about nothing.
+     */
+    const noteTabs = (next?: {
+      active?: string;
+      list?: Array<{ id: string; url: string }>;
+    }) => {
+      if (closed || !next) return;
+      setTabs(next);
+      const previous = activeTabRef.current;
+      activeTabRef.current = next.active;
+      if (!previous || !next.active || previous === next.active) return;
+      const tab = next.list?.find((entry) => entry.id === next.active);
+      // The HOST, like the strip beside it — a path carries reset tokens,
+      // share links and account ids, and this notice is the one thing on
+      // screen large enough for somebody at the next desk to read.
+      setTabNotice(
+        `The agent switched to ${tab ? labelFor(tab) : next.active}`,
+      );
+    };
     let ping: ReturnType<typeof setInterval> | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
 
@@ -295,15 +431,378 @@ export function HostedBrowserBody({
       }
       if (closed) return;
 
-      const opened = openHostedBrowserFrameStream({ token });
+      // The daemon's own bytes, and video when this browser can decode it. A
+      // relay too old to negotiate either ignores the parameters and keeps
+      // sending JSON, which the handler below still reads.
+      // `mjpeg` is the JPEG path FORCED: what somebody picks when video looks
+      // wrong to them and they want the transport they can reason about.
+      const wantsVideo =
+        videoDecodeSupported() &&
+        !videoRefusedRef.current &&
+        tierRef.current !== "mjpeg";
+      const opened = openHostedBrowserFrameStream({
+        token,
+        wire: "binary",
+        ...(wantsVideo ? { codec: "h264" as const } : {}),
+      });
       stream = opened;
+      /**
+       * The video decoder, built on the FIRST access unit rather than up front.
+       *
+       * A relay that agreed to `h264` still sends JPEG until the encoder has
+       * something to say, and a decoder constructed for a stream that turns
+       * out to be JPEG is a `VideoDecoder` held open for nothing.
+       */
+      /**
+       * The access unit currently being decoded.
+       *
+       * A REF, not the closure's `unit`: the decoder is built on the FIRST
+       * unit and its `onFrame` lives as long as the socket, so closing over
+       * that one made every later picture report the first frame's sequence,
+       * timestamp and geometry — a pane whose clicks map through a rectangle
+       * from ten minutes ago.
+       */
+      const units = new Map<
+        number,
+        {
+          deviceWidth: number;
+          deviceHeight: number;
+          scale: number;
+          relayTs: number;
+          seq: number;
+        }
+      >();
+      /**
+       * A LEAK GUARD, not a policy.
+       *
+       * What actually retires an entry is the paint: everything at or below
+       * the sequence on screen can never be claimed again. This is only for
+       * units a decoder swallowed without ever outputting, and it is set where
+       * no working decoder reaches — eight seconds of backlog at thirty frames
+       * a second. Evicting on a small count instead was a freeze waiting to
+       * happen: a decoder that fell behind by more than the count would have
+       * every one of its outputs miss, and a pane whose lookups all miss draws
+       * nothing at all.
+       */
+      const UNITS_MAX = 240;
+      /** The newest sequence PAINTED, so a slow decode cannot go backwards. */
+      let paintedSeq = -1;
+      const paintVideo = (unit: {
+        key: boolean;
+        au: Uint8Array;
+        deviceWidth: number;
+        deviceHeight: number;
+        scale: number;
+        relayTs: number;
+        seq: number;
+        bytes: number;
+      }) => {
+        if (closed) return;
+        paneFrameStats.noteTransport("h264");
+        paneFrameStats.noteFrameArrived({ bytes: unit.bytes });
+        // BY SEQUENCE, not "the newest". The decoder is asynchronous and can
+        // hold several units at once, so by the time it outputs the picture
+        // for unit N the wire has usually delivered N+1 — and reading a
+        // mutable `latest` at output time gave that picture the NEXT unit's
+        // geometry and timestamp. Which is a pane whose clicks map through the
+        // wrong rectangle for as long as the sizes differ.
+        units.set(unit.seq, {
+          deviceWidth: unit.deviceWidth,
+          deviceHeight: unit.deviceHeight,
+          scale: unit.scale,
+          relayTs: unit.relayTs,
+          seq: unit.seq,
+        });
+        // Insertion order IS sequence order: the wire delivers in order and a
+        // repeat of a sequence overwrites rather than appends. So everything
+        // up to what is on screen is at the front, and everything at or below
+        // it is a picture that has already been drawn or superseded.
+        for (const seq of units.keys()) {
+          if (seq > paintedSeq) break;
+          units.delete(seq);
+        }
+        while (units.size > UNITS_MAX) {
+          const oldest = units.keys().next();
+          if (oldest.done) break;
+          units.delete(oldest.value);
+        }
+        // A picture arriving is the same proof of life a JPEG is: the token
+        // works, the lease is ours, and whatever the last close said is over.
+        tokenRetriesRef.current = 0;
+        setNotice(null);
+        if (leaseIsStale.current) {
+          // Frames are flowing again, so whoever was holding the browser is
+          // not holding it any more — and nothing else says so. The JPEG path
+          // has always re-read here; the video path cleared the flag and left
+          // the header and the take-control button describing the old holder
+          // until something else happened to read the lease.
+          leaseIsStale.current = false;
+          void refresh();
+        }
+        if (!video) {
+          video = createPaneVideoDecoder({
+            onFrame: (decoded) => {
+              // The unit this picture belongs to, found by the timestamp the
+              // decoder carried through from the chunk (`seq * 1_000`).
+              const at = units.get(seqOfUnitTimestamp(decoded.timestamp));
+              if (at) units.delete(at.seq);
+              if (closed || !at) {
+                decoded.close();
+                return;
+              }
+              frameSeqRef.current = at.seq;
+              // The pane converts to a bitmap it owns — the same shape every
+              // other wire produces, which is what keeps the surface free of
+              // codec knowledge. The `VideoFrame` is closed only once that
+              // conversion has finished reading it.
+              void createImageBitmap(decoded)
+                .then((bitmap) => {
+                  // Decodes can finish out of order. An older picture painted
+                  // over a newer one is a visibly stale page whose clicks map
+                  // through the wrong rectangle.
+                  if (closed || at.seq <= paintedSeq) {
+                    bitmap.close();
+                    return;
+                  }
+                  paintedSeq = at.seq;
+                  // The pane releases each bitmap as the next replaces it; a
+                  // frame that never reached the surface has no successor to
+                  // do it.
+                  lastBitmap?.close();
+                  lastBitmap = bitmap;
+                  setFrame({
+                    bitmap,
+                    deviceWidth: at.deviceWidth,
+                    deviceHeight: at.deviceHeight,
+                    scale: at.scale,
+                    ts: at.relayTs,
+                    relayTs: at.relayTs,
+                    seq: at.seq,
+                  });
+                })
+                .catch(() => {
+                  // One picture. The next one replaces it.
+                })
+                .finally(() => {
+                  decoded.close();
+                });
+            },
+            onGiveUp: () => {
+              // Video is not going to work for this session. Reconnecting
+              // without asking for it puts the pane back on JPEG, which is the
+              // same fallback a browser with no `VideoDecoder` takes.
+              video = null;
+              videoRefusedRef.current = true;
+              opened.close();
+            },
+          });
+        }
+        video.push({ key: unit.key, au: unit.au, seq: unit.seq });
+      };
+
+      wire = createFrameWireReader(
+        {
+          onVideo: paintVideo,
+          onFrame: (decoded) => {
+            if (closed) return;
+            paneFrameStats.noteTransport("jpeg-binary");
+            paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
+            frameSeqRef.current = decoded.seq;
+            tokenRetriesRef.current = 0;
+            setNotice(null);
+            if (leaseIsStale.current) {
+              leaseIsStale.current = false;
+              void refresh();
+            }
+            // React can coalesce two `setFrame` calls into one render, and the
+            // surface only ever releases a frame it PAINTED — so a picture that
+            // was superseded before the commit has nobody to free it.
+            lastBitmap?.close();
+            lastBitmap = decoded.bitmap;
+            setFrame({
+              bitmap: decoded.bitmap,
+              decodeMs: decoded.decodeMs,
+              deviceWidth: decoded.deviceWidth,
+              deviceHeight: decoded.deviceHeight,
+              scale: decoded.scale,
+              ts: decoded.relayTs,
+              relayTs: decoded.relayTs,
+              seq: decoded.seq,
+            });
+          },
+          onHeartbeat: (daemon) => {
+            // MERGED, not assigned: the relay's own counters arrive on the
+            // `stats` message and the daemon's ride the frame wire, at different
+            // cadences. Writing the whole object from either would blank the
+            // other's numbers between ticks.
+            if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
+            noteTabs(
+              (daemon as { tabs?: { active?: string } } | undefined)?.tabs,
+            );
+            // The page's tools, as a CHANGE SIGNAL. It rides a beat that is
+            // already flowing, so the Tools pane becomes live without a second
+            // stream and without polling a page-touching observation.
+            noteWebmcpStats(
+              browserPageToolsKey(projectId, "hosted"),
+              daemon as never,
+              session.bootId,
+            );
+          },
+          onFatal: () => {
+            // A reader that has lost its place in a byte stream can never find
+            // it again, so the connection goes rather than the record.
+            opened.close();
+          },
+        },
+        { video: wantsVideo },
+      );
+      openedSocket = opened.socket;
+      socketRef.current = opened.socket;
+      // Until this socket's own `hello` says otherwise. A reconnect must not
+      // inherit the previous connection's answer.
+      socketInputRef.current = false;
+      paneFrameStats.noteTransport("jpeg-json");
       opened.socket.onmessage = (event) => {
+        // The pixel path is bytes and the control path is text, on one socket.
+        // Branching on the DATA rather than on what `hello` promised keeps a
+        // pane correct against a relay that answered `json` and a relay that
+        // answered `binary` alike.
+        if (typeof event.data !== "string") {
+          wire?.push(event.data as ArrayBuffer);
+          return;
+        }
         try {
-          const parsed = JSON.parse(String(event.data)) as {
+          const raw = String(event.data);
+          const parsed = JSON.parse(raw) as {
             type?: string;
             frame?: PaneFrame;
+            t?: number;
+            framesIn?: number;
+            framesOut?: number;
+            bytes?: number;
+            dropped?: number;
+            subscribers?: number;
+            daemon?: Record<string, unknown>;
           };
+          if (parsed.type === "hello") {
+            const features = Array.isArray(
+              (parsed as { features?: unknown }).features,
+            )
+              ? ((parsed as { features: unknown[] }).features as unknown[])
+              : [];
+            socketInputRef.current = features.includes("input");
+            return;
+          }
+          if (parsed.type === "input_ack") {
+            const ack = parsed as unknown as {
+              seq?: number;
+              refused?: string;
+            };
+            if (typeof ack.seq === "number")
+              paneFrameStats.noteInputAck(ack.seq);
+            // A REFUSAL IS THE SERVER SAYING THIS PANE DOES NOT HAVE CONTROL.
+            // Recording only the latency left the pane believing it did —
+            // still forwarding keys and clicks into a page that discards every
+            // one, with nothing on screen to say why.
+            if (
+              ack.refused === "lease_held" ||
+              ack.refused === "lease_parked"
+            ) {
+              setHolding(false);
+              setNotice(
+                "Somebody else has taken control of this browser. The view will resume when they hand it back.",
+              );
+              leaseIsStale.current = true;
+              void refresh();
+            } else if (ack.refused === "lease_required") {
+              setHolding(false);
+            }
+            return;
+          }
+          if (parsed.type === "pong") {
+            // The pane's own stamp, echoed. One clock, so the subtraction is
+            // a round trip rather than the drift between two machines.
+            if (typeof parsed.t === "number") {
+              const rtt = Date.now() - parsed.t;
+              paneFrameStats.noteRtt(rtt);
+              // Kept for the tier controller, which reads loss AND latency: a
+              // link that drops nothing but answers in half a second is still
+              // a link somebody is waiting on, and without this the whole
+              // latency half of the auto rule never fired.
+              rttRef.current = rtt;
+            }
+            return;
+          }
+          if (parsed.type === "stats") {
+            // ALSO HERE, not only on the frame wire: this engine's relay
+            // consumes the daemon's heartbeat itself and re-emits its own
+            // `stats`, so on a stream with no video the frame-wire handler
+            // above never fires at all.
+            noteWebmcpStats(
+              browserPageToolsKey(projectId, "hosted"),
+              parsed.daemon as never,
+              session.bootId,
+            );
+            // The tier decision is made from what the RELAY saw, not from what
+            // this pane painted: a pane that dropped a frame because a tab was
+            // hidden is not a link that cannot carry the stream.
+            const before = tierController.current.current();
+            const next = tierController.current.observe({
+              ...(parsed.framesIn !== undefined
+                ? { framesIn: parsed.framesIn }
+                : {}),
+              ...(parsed.dropped !== undefined
+                ? { dropped: parsed.dropped }
+                : {}),
+              ...(rttRef.current !== undefined ? { rtt: rttRef.current } : {}),
+              ...(typeof (parsed.daemon as { encoderIdle?: boolean })
+                ?.encoderIdle === "boolean"
+                ? {
+                    encoderIdle: (parsed.daemon as { encoderIdle: boolean })
+                      .encoderIdle,
+                  }
+                : {}),
+            });
+            setTier(next);
+            paneFrameStats.noteTier(next);
+            // TELL THE DAEMON. Auto used to move only the pane's own state,
+            // so a viewer on a link that could not carry the stream was
+            // labelled "Data saver" while the encoder went on producing
+            // exactly the bitrate that was being dropped.
+            if (next !== before) {
+              const socket = socketRef.current;
+              if (socket?.readyState === WebSocket.OPEN) {
+                socket.send(
+                  JSON.stringify({
+                    type: "quality",
+                    tier: encoderTierFor(next),
+                  }),
+                );
+              }
+            }
+            // THE TAB STRIP LIVES HERE ON HOSTED. The relay consumes the
+            // daemon's heartbeat to build this message, so the frame wire's
+            // own `onHeartbeat` never fires on this engine — and the strip,
+            // which only hosted has, never updated once.
+            noteTabs(
+              (parsed.daemon as { tabs?: { active?: string } } | undefined)
+                ?.tabs,
+            );
+            paneFrameStats.noteRelayStats({
+              framesIn: parsed.framesIn ?? 0,
+              ...(parsed.framesOut !== undefined
+                ? { framesOut: parsed.framesOut }
+                : {}),
+              bytes: parsed.bytes ?? 0,
+              dropped: parsed.dropped ?? 0,
+              subscribers: parsed.subscribers ?? 0,
+              ...(parsed.daemon ? { daemon: parsed.daemon as never } : {}),
+            });
+            return;
+          }
           if (parsed.type === "frame" && parsed.frame) {
+            paneFrameStats.noteFrameArrived({ bytes: raw.length });
+            frameSeqRef.current = parsed.frame.seq;
             setFrame(parsed.frame);
             // The attempt worked: forgive the refusals that came before it,
             // and clear whatever the last close told the viewer, since the
@@ -371,6 +870,16 @@ export function HostedBrowserBody({
           );
           return;
         }
+        if (event.code === CLOSE_VIDEO_UNAVAILABLE) {
+          // A box with no ffmpeg, or an encoder that failed to spawn. The same
+          // fallback a browser with no `VideoDecoder` takes, and the same one
+          // the daemon's own `video_unavailable` was always meant to trigger.
+          videoRefusedRef.current = true;
+          retry = setTimeout(() => {
+            if (!closed) setStreamAttempt((n) => n + 1);
+          }, RETRY_MS);
+          return;
+        }
         if (event.code === CLOSE_NOT_FOUND) {
           // The browser stopped. Offer to open one rather than retrying at a
           // machine that has nothing to show — and drop whatever the last
@@ -396,17 +905,40 @@ export function HostedBrowserBody({
         if (!activeRef.current) return;
         if (document.visibilityState !== "visible") return;
         if (opened.socket.readyState !== WebSocket.OPEN) return;
-        opened.socket.send(JSON.stringify({ type: "ping" }));
+        // Stamped, so the pong measures a round trip. A server too old to echo
+        // `t` simply produces no rtt sample rather than a wrong one.
+        opened.socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
       }, WATCH_PING_MS);
     })();
 
     return () => {
       closed = true;
+      wire?.close();
+      video?.close();
+      // The pane releases each bitmap as the next one replaces it; the LAST
+      // one has no successor, and this is the thing that knows the stream is
+      // over.
+      lastBitmap?.close();
       if (ping) clearInterval(ping);
       if (retry) clearTimeout(retry);
+      if (socketRef.current === openedSocket) {
+        socketRef.current = null;
+        socketInputRef.current = false;
+      }
       stream?.close();
     };
   }, [session, tokens, refresh, streamAttempt]);
+
+  // THE SIGNAL DIES WITH THE PANE. It describes the browser this pane was
+  // watching; once the pane is gone (or the project changes under it) the
+  // Tools pane must not keep answering for a stream nobody is reading. Its own
+  // effect, keyed on the project alone, so a reconnect does not clear it — a
+  // cleared key comes back on the next beat as a fresh epoch, which would
+  // refetch the page's tools on every reconnect for nothing.
+  useEffect(() => {
+    const key = browserPageToolsKey(projectId, "hosted");
+    return () => useBrowserPageToolsStore.getState().clear(key);
+  }, [projectId]);
 
   const setLeaseAction = useCallback(
     async (action: "acquire" | "resume") => {
@@ -480,12 +1012,60 @@ export function HostedBrowserBody({
   // forwarder per HOLD, not per session: whatever it has queued belonged to
   // the hold that queued it, so a hand-back or an expiry must retire it rather
   // than let its tail arrive under whoever holds the browser next.
+  // The tab toast is transient: it says something HAPPENED, and a message that
+  // stayed would keep describing a switch that is minutes old.
+  useEffect(() => {
+    if (!tabNotice) return;
+    const timer = setTimeout(() => setTabNotice(null), 4_000);
+    return () => clearTimeout(timer);
+  }, [tabNotice]);
+
+  // One analytics event per pane, on the way out — see `session-summary`.
+  useEffect(() => () => captureBrowserPaneSessionSummary("hosted"), []);
+
+  /**
+   * Will the next batch go on the SOCKET?
+   *
+   * One predicate for two decisions that must agree: which transport the send
+   * callback picks, and whether the forwarder has to serialize. Two spellings
+   * of the same question drifted, and the drift was silent — concurrent POSTs
+   * on a socket that had merely dropped.
+   */
+  const socketSendable = useCallback(
+    () =>
+      socketInputRef.current &&
+      socketRef.current?.readyState === WebSocket.OPEN,
+    [],
+  );
+
   const forwarder = useMemo(() => {
     if (!tokens || !holding) return null;
-    return createInputForwarder((events) =>
-      sendHostedBrowserInput(tokens, { events }),
+    return createInputForwarder(
+      (events, seq) => {
+        paneFrameStats.noteInputSent(frameSeqRef.current, seq);
+        if (socketSendable()) {
+          // Ordered by the socket, so nothing here waits — see the
+          // forwarder's docstring. A refusal comes back as an `input_ack`,
+          // never a close.
+          socketRef.current!.send(
+            JSON.stringify({ type: "input", seq, events }),
+          );
+          return;
+        }
+        // One release of fallback: an old relay that did not advertise
+        // `input`, or a socket that is between reconnects.
+        return sendHostedBrowserInput(tokens, { events });
+      },
+      // Only the POST needs ordering imposed on it; concurrent POSTs arrive in
+      // whatever order the network felt like.
+      // The predicate has to match the TRANSPORT the callback actually
+      // chooses, not merely the capability: the send falls back to POST
+      // whenever the socket is not open, and a `serialize` that only read the
+      // flag let two POSTs travel at once — an unordered drag lands where
+      // nobody aimed, and an unordered press/release leaves a button held.
+      { serialize: () => !socketSendable() },
     );
-  }, [tokens, holding]);
+  }, [tokens, holding, socketSendable]);
   useEffect(() => () => forwarder?.cancel(), [forwarder]);
 
   const send = useCallback(
@@ -544,6 +1124,33 @@ export function HostedBrowserBody({
         ? "script"
         : "other";
 
+  // The DESKTOP view, not the page: `BrowserPanel` proxies RFB and shows the
+  // window manager, dialogs and popups. It is the honest answer to "the new
+  // viewer is not working for me", and it only exists for a hosted box.
+  if (tier === "vnc" && projectId) {
+    return (
+      <>
+        <PaneControlBar
+          control={control}
+          statsOpen={false}
+          onToggleStats={() => {}}
+          tier={tierPreference}
+          tiers={HOSTED_TIERS}
+          onTier={(next) => {
+            setTierPreference(next);
+            const resolved = tierController.current.setPreference(next);
+            setTier(resolved);
+            tierRef.current = resolved;
+            setStreamAttempt((n) => n + 1);
+          }}
+        />
+        <div className="min-h-0 flex-1 px-3 pb-3">
+          <BrowserPanel projectId={projectId} />
+        </div>
+      </>
+    );
+  }
+
   return (
     <BrowserPaneSurface
       frame={frame}
@@ -561,7 +1168,39 @@ export function HostedBrowserBody({
       onInput={send}
       placeholder={placeholder}
       error={notice ?? error}
+      notice={tabNotice}
+      controls={<PaneTabStrip tabs={tabs} />}
+      tier={tierPreference}
+      tiers={HOSTED_TIERS}
+      onTier={(next) => {
+        setTierPreference(next);
+        const resolved = tierController.current.setPreference(next);
+        const wasVideo =
+          tierRef.current !== "mjpeg" && tierRef.current !== "vnc";
+        const isVideo = resolved !== "mjpeg" && resolved !== "vnc";
+        setTier(resolved);
+        tierRef.current = resolved;
+        paneFrameStats.noteTier(resolved);
+        // Only a change of TRANSPORT needs a new socket. Reconnecting for a
+        // bitrate change would drop the picture to buy nothing.
+        if (wasVideo !== isVideo) setStreamAttempt((n) => n + 1);
+        const socket = socketRef.current;
+        if (socket?.readyState === WebSocket.OPEN) {
+          // The daemon re-encodes at the new tier, which restarts ffmpeg and
+          // produces the fresh keyframe every watcher needs. A relay too old
+          // to understand this ignores it, and the tier stays a client-side
+          // preference — which is still the right picture, just not a cheaper
+          // one.
+          socket.send(
+            JSON.stringify({
+              type: "quality",
+              tier: encoderTierFor(resolved),
+            }),
+          );
+        }
+      }}
       active={active}
+      engine="hosted"
     />
   );
 }

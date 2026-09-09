@@ -17,6 +17,8 @@ import type { EvalSuite } from "../types";
 
 const {
   flags,
+  capability,
+  modelsProbe,
   environmentsRef,
   ensureAdhocMock,
   setSuiteEnvironmentsMock,
@@ -24,6 +26,8 @@ const {
   toastError,
 } = vi.hoisted(() => ({
   flags: { environments: true },
+  capability: { matrix: true as boolean | undefined },
+  modelsProbe: { value: false as boolean | undefined },
   environmentsRef: { current: [] as any[] },
   ensureAdhocMock: vi.fn(),
   setSuiteEnvironmentsMock: vi.fn(async () => ({})),
@@ -42,6 +46,14 @@ vi.mock("convex/react", () => ({
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => flags.environments,
 }));
+// The bar keys on the CAPABILITY now, not the flag. `flags.environments` stays
+// mocked because the composer inside still reads it for the named-env picker.
+vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
+  useEvalComposeCapable: () => ({
+    capable: capability.matrix === true,
+    pending: capability.matrix === undefined,
+  }),
+}));
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => false,
 }));
@@ -52,7 +64,7 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: (projectId: string | null) =>
     projectId ? environmentsRef.current : undefined,
   useEnsureAdhocEnvironments: () => ensureAdhocMock,
-  useModelMatrixCapability: () => false,
+  useModelMatrixCapability: () => modelsProbe.value,
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
@@ -108,6 +120,8 @@ beforeEach(() => {
   // from an earlier case would otherwise leak into every case after it.
   setSuiteEnvironmentsMock.mockResolvedValue({});
   flags.environments = true;
+  capability.matrix = true;
+  modelsProbe.value = false;
   environmentsRef.current = [];
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
@@ -337,6 +351,52 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("suite-env-clients-picker")).not.toBeDisabled();
   });
+
+  it("composes cells with the named-environments flag off", () => {
+    // The flag gates NAMED environments. Composing ad-hoc cells is ungated
+    // launch-path substrate, so an unflagged user still gets clients x models.
+    flags.environments = false;
+    modelsProbe.value = true;
+    renderBar({
+      hostAttachments: [
+        { namedHostId: "host-1", enabledOptionalServerIds: [] },
+      ] as any,
+    });
+
+    // No named-environment picker — that is what the flag still hides — but
+    // the compose strip itself is live.
+    expect(
+      screen.queryByTestId("suite-env-environments-picker"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-clients-picker")).not.toBeDisabled();
+  });
+
+  it("says what the first edit will convert", () => {
+    renderBar({
+      hostAttachments: [
+        { namedHostId: "host-1", enabledOptionalServerIds: [] },
+      ] as any,
+    });
+
+    expect(screen.getByTestId("suite-env-convert-hint")).toBeInTheDocument();
+  });
+
+  it("drops the conversion note once the suite already runs cells", () => {
+    environmentsRef.current = [
+      {
+        environmentId: "env-a",
+        projectId: "proj-1",
+        origin: "adhoc",
+        hostId: "host-1",
+        revision: 1,
+      },
+    ];
+    renderBar({ environmentIds: ["env-a"] } as any);
+
+    expect(
+      screen.queryByTestId("suite-env-convert-hint"),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe("SuiteEnvironmentComposerBar — legacy mode", () => {
@@ -348,16 +408,18 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
       ] as any,
     });
 
-    // No project ⇒ no environments to compose into; the strip still renders,
-    // it just writes the fields this suite actually runs.
+    // No project ⇒ no cells to compose into; the strip still renders, it just
+    // writes the fields this suite actually runs.
     expect(
       screen.queryByTestId("suite-env-environments-picker"),
     ).not.toBeInTheDocument();
     expect(setSuiteEnvironmentsMock).not.toHaveBeenCalled();
   });
 
-  it("writes host attachments when project environments are off", async () => {
-    flags.environments = false;
+  it("writes host attachments when the backend cannot compose cells", async () => {
+    // Deploy skew: `modelMatrix` false means this backend does not accept a
+    // model on a cell, so the legacy axes are the honest thing to offer.
+    capability.matrix = false;
     renderBar({
       hostAttachments: [
         { namedHostId: "host-1", enabledOptionalServerIds: [] },
@@ -376,7 +438,7 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
   });
 
   it("refuses the last detach — a suite with no client cannot run", async () => {
-    flags.environments = false;
+    capability.matrix = false;
     renderBar({
       hostAttachments: [
         { namedHostId: "host-1", enabledOptionalServerIds: [] },
@@ -389,10 +451,10 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
     expect(onUpdateMock).not.toHaveBeenCalled();
   });
 
-  it("is NOT editable for a suite that already attaches environments", () => {
+  it("is NOT editable for a cell suite this backend cannot compose", () => {
     // `buildSuiteRunPlans` prefers environmentIds, so a legacy client write here
     // would report success and change nothing about what runs.
-    flags.environments = false;
+    capability.matrix = false;
     renderBar({
       environmentIds: ["env-a"],
       hostAttachments: [
@@ -407,7 +469,7 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
   });
 
   it("renders read-only when the caller says so", () => {
-    flags.environments = false;
+    capability.matrix = false;
     renderBar(
       {
         hostAttachments: [

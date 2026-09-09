@@ -31,6 +31,17 @@ import {
   touchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
 import type { ViewportFrame } from "../../services/browserd/daemon/viewport.js";
+import {
+  encodeFrameStreamRecord,
+  FRAME_STREAM_KIND,
+} from "../../services/browserd/frame-stream.js";
+import { createFrameRelayStats, pongFor } from "./browser-frame-relay-stats.js";
+import {
+  createRelayInputForwarder,
+  type RelayInputForwarder,
+} from "./browser-pane-input-forwarder.js";
+import { parseBrowserPaneInputMessage } from "../../../shared/browser-pane-input.js";
+import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
 
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_NOT_FOUND = 4404;
@@ -100,6 +111,15 @@ export function createLocalBrowserFramesWsHandler(
     const nonce = protocolHeader.split(",")[0]?.trim() ?? "";
     const bootId = c.req.query("bootId") ?? "";
     const holder = c.req.query("holder") ?? undefined;
+    /**
+     * The daemon's own bytes instead of a JSON envelope.
+     *
+     * Worth doing even on loopback, where base64 costs a memcpy rather than a
+     * network hop: the point is that ONE pane component reads one wire on both
+     * engines, so the hosted path's decoder is exercised on every local run
+     * rather than only on staging.
+     */
+    const binaryWire = c.req.query("wire") === "binary";
     const origin = c.req.header("Origin");
 
     // Everything resolvable before the socket opens is resolved here; a
@@ -151,12 +171,30 @@ export function createLocalBrowserFramesWsHandler(
     let unsubscribe: (() => void) | undefined;
     let revalidate: (() => void) | undefined;
     let registered: { close(): void } | undefined;
+    /** Per socket, so one congested pane's loss is not averaged away. */
+    let stats: ReturnType<typeof createFrameRelayStats> | undefined;
+    /** One dispatch at a time, so a drag arrives in the order it was made. */
+    let input: RelayInputForwarder | undefined;
     let closed = false;
+    /** Timers and the like this socket started, torn down with it. */
+    const cleanups: Array<() => void> = [];
     const detach = () => {
       closed = true;
+      for (const stop of cleanups.splice(0)) {
+        try {
+          stop();
+        } catch {
+          // A timer already cleared.
+        }
+      }
       unsubscribe?.();
       unsubscribe = undefined;
       revalidate = undefined;
+      stats?.stop();
+      stats = undefined;
+      // Whatever is queued belonged to the hold that queued it.
+      input?.cancel();
+      input = undefined;
       if (registered) {
         // Removed by IDENTITY, so a reconnect cannot retain the dead
         // `WSContext` of the connection it replaced: without this the set grows
@@ -186,7 +224,10 @@ export function createLocalBrowserFramesWsHandler(
         // bootId says which browser they are asking to watch. They have to be
         // the same one.
         if (!nonceProject || session.projectKey !== nonceProject) {
-          ws.close(CLOSE_UNAUTHORIZED, "That browser belongs to another project.");
+          ws.close(
+            CLOSE_UNAUTHORIZED,
+            "That browser belongs to another project.",
+          );
           return;
         }
 
@@ -210,12 +251,34 @@ export function createLocalBrowserFramesWsHandler(
             // overhead costs a memcpy and buys one obvious wire format; the
             // hosted path, which crosses a real network, is where the packed
             // frame earns its complexity.
-            try {
-              ws.send(JSON.stringify({ type: "frame", frame }));
-            } catch {
-              // A socket that has gone away: the unsubscribe on close handles
-              // the rest.
+            if (closed) {
+              stats?.countDrop();
+              return;
             }
+            if (binaryWire) {
+              // The same 24-byte header the hosted daemon writes, so the pane
+              // has one decoder. The comment this replaces anticipated exactly
+              // this change.
+              const bytes = new Uint8Array(
+                encodeFrameStreamRecord({
+                  kind: FRAME_STREAM_KIND.frame,
+                  deviceWidth: frame.deviceWidth,
+                  deviceHeight: frame.deviceHeight,
+                  scale: frame.scale,
+                  ts: Date.now(),
+                  seq: frame.seq,
+                  jpeg: new Uint8Array(Buffer.from(frame.data, "base64")),
+                }),
+              );
+              stats?.offer(bytes.byteLength, () => ws.send(bytes));
+              return;
+            }
+            // `relayTs` even on loopback, where it equals `ts` to within a
+            // millisecond. The pane must not have to know which engine drew a
+            // frame to know which field it may subtract from its own clock.
+            const stamped = { ...frame, relayTs: Date.now() };
+            const payload = JSON.stringify({ type: "frame", frame: stamped });
+            stats?.offer(payload.length, () => ws.send(payload));
           },
         });
 
@@ -246,6 +309,102 @@ export function createLocalBrowserFramesWsHandler(
         revalidate = subscription.revalidate;
         registered = { close: () => ws.close(CLOSE_UNAVAILABLE, "closed") };
         liveSockets.add(registered);
+        stats = createFrameRelayStats({
+          send: (payload) => ws.send(payload),
+          bufferedAmount: () =>
+            (ws.raw as { bufferedAmount?: number } | undefined)?.bufferedAmount,
+        });
+        stats.setSubscribers(1);
+        stats.start();
+        // THE VIEWPORT'S OWN LOSS, on the same message. The hosted pane gets
+        // it because the daemon sends it in the heartbeat across the sandbox
+        // boundary; in-process there is no heartbeat to ride, so without this
+        // the local overlay silently reported no dedupe, oversize or pacer
+        // drops at all — the one engine a developer debugs against.
+        const mergeViewport = () => {
+          if (closed || !subscription.ok) return;
+          try {
+            const counters = subscription.counters();
+            // The page-tool change signal, synthesized for the same reason the
+            // drop counters are: in-process there is no heartbeat to ride, so
+            // without this the Tools pane would be live on the hosted engine
+            // and permanently stale on the one a developer debugs against.
+            const webmcp = session.handler.webmcpSnapshot?.();
+            stats?.mergeDaemon({
+              framesIn: counters.framesIn,
+              framesOut: counters.framesOut,
+              bytesOut: counters.bytesOut,
+              dropped: counters.dropped,
+              ...(webmcp
+                ? {
+                    webmcp: {
+                      revision: webmcp.revision,
+                      hash: webmcp.hash,
+                      count: webmcp.count,
+                      ...(webmcp.url ? { url: webmcp.url } : {}),
+                    },
+                  }
+                : {}),
+            });
+          } catch {
+            // Telemetry. A subscription that cannot answer is not a reason to
+            // take down a pane that is watching perfectly well.
+          }
+        };
+        mergeViewport();
+        const viewportCounters = setInterval(mergeViewport, 1_000);
+        cleanups.push(() => clearInterval(viewportCounters));
+
+        input = createRelayInputForwarder({
+          dispatch: async ({ tabId, events }) => {
+            // Resolved per batch rather than captured: the browser can be
+            // relaunched under a live pane, and the handle this socket opened
+            // with would then dispatch into a session that is gone.
+            const current = findLocalBrowserSession(bootId);
+            if (!current) return { ok: false, refused: "no_browser_session" };
+            const result = await current.handler.dispatchInput({
+              // From the SOCKET's query, mirroring `POST /local-browser/input`.
+              // The nonce proved consent for this project; the holder only has
+              // to tell one pane from another so two tabs cannot each believe
+              // they have control.
+              ...(holder ? { holder } : { holder: "" }),
+              ...(tabId ? { tabId } : {}),
+              events: events as readonly ViewportInputEvent[],
+            });
+            if (result.ok) {
+              touchLocalBrowserSession(current.handle);
+              return { ok: true };
+            }
+            return {
+              ok: false,
+              refused:
+                result.error === "unknown_tab" ? "unknown_tab" : "lease_held",
+            };
+          },
+          ack: (payload) => {
+            if (closed) return;
+            try {
+              ws.send(JSON.stringify({ type: "input_ack", ...payload }));
+            } catch {
+              // Already gone.
+            }
+          },
+        });
+
+        // What this server can do, said before the pane has to guess. A client
+        // that does not see `input` here keeps POSTing.
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "hello",
+              features: ["input"],
+              codecs: ["jpeg"],
+              wire: binaryWire ? "binary" : "json",
+            }),
+          );
+        } catch {
+          // Already gone.
+        }
         // Watching IS using it: a person with the pane open must not have the
         // browser reaped out from under them. Frames themselves never tick the
         // clock — a CSS spinner would keep a browser alive forever.
@@ -255,7 +414,28 @@ export function createLocalBrowserFramesWsHandler(
         // The only inbound message is a heartbeat, sent while the tab is
         // visible. It is what tells us somebody is still there.
         try {
-          const parsed = JSON.parse(String(event.data)) as { type?: unknown };
+          const parsed = JSON.parse(String(event.data)) as {
+            type?: unknown;
+            t?: unknown;
+          };
+          if (closed) return;
+          if (parsed?.type === "input") {
+            const message = parseBrowserPaneInputMessage(parsed);
+            if (!message.ok) {
+              const seq = (parsed as { seq?: unknown }).seq;
+              ws.send(
+                JSON.stringify({
+                  type: "input_ack",
+                  seq: typeof seq === "number" ? seq : -1,
+                  dispatched: 0,
+                  refused: "invalid_input",
+                }),
+              );
+              return;
+            }
+            input?.submit(message);
+            return;
+          }
           if (parsed?.type !== "ping") return;
           // The heartbeat is also when a watcher's right to watch is re-asked
           // out of band. Revocation otherwise rides frame delivery, and a
@@ -266,7 +446,7 @@ export function createLocalBrowserFramesWsHandler(
           if (closed) return;
           const session = findLocalBrowserSession(bootId);
           if (session) touchLocalBrowserSession(session.handle);
-          ws.send(JSON.stringify({ type: "pong" }));
+          ws.send(pongFor(parsed));
         } catch {
           // Not our protocol; ignore rather than close.
         }

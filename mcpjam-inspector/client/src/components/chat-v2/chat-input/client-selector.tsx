@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, MoreHorizontal, Plus, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -58,7 +59,7 @@ const QUICK_ADD_VISIBLE = 6;
  * working unchanged.
  */
 export interface ClientSelectorData {
-  hosts: HostListItem[];
+  hosts: Pick<HostListItem, "hostId" | "name" | "displayName">[];
   /** Project the hosts belong to — required to create new hosts. May be a
    *  client-local project id (UUID) before the project is synced to Convex. */
   projectId: string | null;
@@ -84,6 +85,9 @@ export interface ClientSelectorData {
 }
 
 interface ClientSelectorProps extends ClientSelectorData {
+  /** Alternate trigger for embedded surfaces such as eval tables. */
+  trigger?: ReactNode;
+  inModal?: boolean;
   disabled?: boolean;
   isLoading?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -99,6 +103,8 @@ function compactHostLabel(name: string): string {
 }
 
 export function ClientSelector({
+  trigger,
+  inModal = false,
   hosts,
   projectId,
   currentHostId,
@@ -120,7 +126,7 @@ export function ClientSelector({
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [createTemplateId, setCreateTemplateId] = useState<string | undefined>(
-    undefined
+    undefined,
   );
   const catalogState = useHostCatalog();
   const keepPopoverOpenRef = useRef(false);
@@ -180,7 +186,7 @@ export function ClientSelector({
   };
 
   const hostsById = useMemo(() => {
-    const map = new Map<string, HostListItem>();
+    const map = new Map<string, ClientSelectorData["hosts"][number]>();
     for (const host of hosts) map.set(host.hostId, host);
     return map;
   }, [hosts]);
@@ -206,7 +212,7 @@ export function ClientSelector({
 
   const selectedIds = useMemo(
     () => new Set(effectiveSelectedHostIds),
-    [effectiveSelectedHostIds]
+    [effectiveSelectedHostIds],
   );
 
   const leadHostId = effectiveSelectedHostIds[0] ?? currentHostId ?? null;
@@ -257,7 +263,7 @@ export function ClientSelector({
   const orderedCatalogHosts = useMemo(() => {
     if (catalogState.status !== "live") return [];
     const hostsById = new Map(
-      getCatalogHosts(catalogState.catalog).map((host) => [host.id, host])
+      getCatalogHosts(catalogState.catalog).map((host) => [host.id, host]),
     );
     const priority = QUICK_ADD_ORDER.flatMap((id) => {
       const host = hostsById.get(id);
@@ -266,7 +272,7 @@ export function ClientSelector({
       return [host];
     });
     const rest = [...hostsById.values()].sort((a, b) =>
-      a.label.localeCompare(b.label)
+      a.label.localeCompare(b.label),
     );
     return [...priority, ...rest];
   }, [catalogState]);
@@ -283,69 +289,71 @@ export function ClientSelector({
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={disabled || isLoading}
-                className={cn(
-                  "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                  isComparing ? "max-w-[280px] gap-1" : "max-w-[170px] gap-1"
-                )}
-                data-testid="client-selector-trigger"
-              >
-                {isComparing ? (
-                  <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
-                    {effectiveSelectedHostIds.map((hostId, index) => {
-                      const host = hostsById.get(hostId);
-                      const name = compactHostLabel(
-                        host ? clientDisplayName(host) : hostId
-                      );
-                      const logo = resolveHostLogoByName(
-                        host?.name ?? name,
-                        themeMode
-                      );
-                      return (
-                        <span
-                          key={hostId}
-                          className={cn(
-                            "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
-                            index === 0
-                              ? "border-primary/25 text-foreground"
-                              : "border-border/50 text-muted-foreground"
-                          )}
-                        >
-                          <HostChipLogo
-                            logoSrc={logo}
-                            name={name}
-                            size="xs"
-                          />
-                          <span className="truncate">{name}</span>
-                        </span>
-                      );
-                    })}
-                  </span>
-                ) : (
-                  <>
+              {trigger ?? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled || isLoading}
+                  className={cn(
+                    "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
+                    isComparing ? "max-w-[280px] gap-1" : "max-w-[170px] gap-1",
+                  )}
+                  data-testid="client-selector-trigger"
+                >
+                  {isComparing ? (
+                    <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
+                      {effectiveSelectedHostIds.map((hostId, index) => {
+                        const host = hostsById.get(hostId);
+                        const name = compactHostLabel(
+                          host ? clientDisplayName(host) : hostId,
+                        );
+                        const logo = resolveHostLogoByName(
+                          host?.name ?? name,
+                          themeMode,
+                        );
+                        return (
+                          <span
+                            key={hostId}
+                            className={cn(
+                              "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
+                              index === 0
+                                ? "border-primary/25 text-foreground"
+                                : "border-border/50 text-muted-foreground",
+                            )}
+                          >
+                            <HostChipLogo
+                              logoSrc={logo}
+                              name={name}
+                              size="xs"
+                            />
+                            <span className="truncate">{name}</span>
+                          </span>
+                        );
+                      })}
+                    </span>
+                  ) : (
+                    <>
+                      <HostChipLogo
+                        logoSrc={leadHostLogo}
+                        name={leadHostName}
+                        size="md"
+                      />
+                      <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
+                        {triggerLabel}
+                      </span>
+                    </>
+                  )}
+                  {isComparing ? (
                     <HostChipLogo
                       logoSrc={leadHostLogo}
                       name={leadHostName}
                       size="md"
+                      className="hidden @max-2xl/toolbar:block"
                     />
-                    <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
-                      {triggerLabel}
-                    </span>
-                  </>
-                )}
-                {isComparing ? (
-                  <HostChipLogo
-                    logoSrc={leadHostLogo}
-                    name={leadHostName}
-                    size="md"
-                    className="hidden @max-2xl/toolbar:block"
-                  />
-                ) : null}
-              </Button>
+                  ) : null}
+                </Button>
+              )}
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
@@ -354,11 +362,12 @@ export function ClientSelector({
         </Tooltip>
 
         <PopoverContent
+          portalled={!inModal}
           align={align}
           className="max-h-[min(520px,calc(100vh-6rem))] w-[260px] overflow-hidden p-0"
           side="top"
           sideOffset={8}
-          avoidCollisions={false}
+          avoidCollisions={true}
           collisionPadding={8}
         >
           <Command shouldFilter={true}>
@@ -379,7 +388,7 @@ export function ClientSelector({
                   const name = host ? clientDisplayName(host) : hostId;
                   const logo = resolveHostLogoByName(
                     host?.name ?? name,
-                    modalThemeMode
+                    modalThemeMode,
                   );
                   return (
                     <span
@@ -388,7 +397,7 @@ export function ClientSelector({
                         "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
                         isLead
                           ? "border-primary/25 bg-primary/5 text-foreground"
-                          : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
+                          : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
                       )}
                     >
                       {/* Promotion and removal are separate sibling buttons,
@@ -399,11 +408,7 @@ export function ClientSelector({
                         className="inline-flex min-w-0 items-center gap-1"
                         onClick={() => handlePromoteLeadFromChip(hostId)}
                       >
-                        <HostChipLogo
-                          logoSrc={logo}
-                          name={name}
-                          size="xs"
-                        />
+                        <HostChipLogo logoSrc={logo} name={name} size="xs" />
                         <span className="truncate">{name}</span>
                       </button>
                       {!isLead ? (
@@ -442,10 +447,7 @@ export function ClientSelector({
                 const isSelected = selectedIds.has(host.hostId);
                 const isLimitedOut =
                   checklistMode && !isSelected && limitReached;
-                const logo = resolveHostLogoByName(
-                  host.name,
-                  modalThemeMode
-                );
+                const logo = resolveHostLogoByName(host.name, modalThemeMode);
 
                 const row = (
                   <CommandItem
@@ -481,7 +483,7 @@ export function ClientSelector({
                           "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
                           isSelected
                             ? "border-primary bg-primary shadow-sm"
-                            : "border-border/60 bg-transparent hover:border-border"
+                            : "border-border/60 bg-transparent hover:border-border",
                         )}
                         aria-hidden
                       >

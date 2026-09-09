@@ -68,6 +68,8 @@ export type ControlPlaneResult<T> =
        * branch on this rather than on the message prose.
        */
       code?: string;
+      /** Which budget a capacity refusal hit; see `postJson`. */
+      resource?: string;
     };
 
 export function getConvexHttpUrl(): string | null {
@@ -166,6 +168,13 @@ async function postJson<T>(
       status: response.status,
       error,
       ...(code ? { code } : {}),
+      // WHICH budget a 503 hit (`run` | `desktop` | `org` | `global`), when
+      // the control plane said. Lets a caller word its wait notice — "waiting
+      // on desktop capacity" is a different sentence, and a different wait,
+      // from "this organization has too many sandboxes in flight".
+      ...(typeof body?.resource === "string"
+        ? { resource: body.resource }
+        : {}),
     };
   }
   return { ok: true, value: payload as T };
@@ -191,18 +200,39 @@ function bearerHeader(raw: string): Record<string, string> {
 export interface EvalSandbox {
   sandboxId: string;
   sandboxRowId: string;
+  /**
+   * What ACTUALLY booted — not what was asked for. On a reuse the control
+   * plane answers with the row's own kind, so a caller can never believe it
+   * holds a desktop box when it holds a terminal one.
+   */
+  runtimeKind?: RuntimeKind;
+  /** What the live box advertises (`["bash","browser"]` for a desktop). */
+  capabilities?: string[];
 }
 
 /**
  * Provision a fresh ephemeral sandbox for one eval iteration, pinned to the
  * run's frozen environment build (user-bearer auth). The body carries only the
- * run/iteration ids — the control plane resolves the image from the run's
- * configSnapshot, so this can never boot an arbitrary template.
+ * run/iteration ids and the image CLASS — the control plane resolves the image
+ * itself from the run's configSnapshot, so this can never boot an arbitrary
+ * template.
+ *
+ * `runtimeKind: "desktop-browser"` is a REQUEST, not a grant: the control
+ * plane refuses it unless the iteration's own frozen host config advertises
+ * the `browser` tool, and refuses it outright when the run also pins a custom
+ * environment image.
+ *
+ * Failure statuses the caller must distinguish:
+ *   409 `desktop_not_advertised` / `desktop_pin_conflict` /
+ *       `desktop_unavailable` — terminal for this run, and the `error` string
+ *       is written for a human: surface it, do not retry.
+ *   503 — at capacity; `resource` says which budget. Retryable with backoff.
  */
 export async function provisionEvalSandbox(args: {
   bearer: string;
   runId: string;
   iterationId?: string;
+  runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<EvalSandbox>> {
   return postJson<EvalSandbox>(
@@ -211,6 +241,7 @@ export async function provisionEvalSandbox(args: {
     {
       runId: args.runId,
       ...(args.iterationId ? { iterationId: args.iterationId } : {}),
+      ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
     },
     args.signal
   );
@@ -256,6 +287,10 @@ export interface JourneySandbox {
   sandboxRowId: string;
   /** Working directory the target's host configured (backend-resolved). */
   workdir?: string;
+  /** What ACTUALLY booted — on a reuse, the row's kind, not the request's. */
+  runtimeKind?: RuntimeKind;
+  /** What the live box advertises (`["bash","browser"]` for a desktop). */
+  capabilities?: string[];
 }
 
 /**
@@ -272,15 +307,21 @@ export interface JourneySandbox {
  * the attempt finished is refused outright.
  *
  * Failure statuses the caller must distinguish:
- *   409 — no image pinned / attempt not running / image unavailable. Terminal
- *         for this attempt; retrying cannot help.
- *   503 — at capacity. Retryable with backoff.
+ *   409 — no image pinned / attempt not running / image unavailable, or one of
+ *         the desktop refusals (`desktop_not_advertised`,
+ *         `desktop_pin_conflict`, `desktop_unavailable`). Terminal for this
+ *         attempt; the `error` string is written for a human.
+ *   503 — at capacity; `resource` says which budget. Retryable with backoff.
+ *
+ * `runtimeKind: "desktop-browser"` is a REQUEST, not a grant — the control
+ * plane refuses it unless the target's FROZEN snapshot advertises `browser`.
  */
 export async function provisionJourneySandbox(args: {
   bearer: string;
   runId: string;
   targetId: string;
   sessionIdx: number;
+  runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<JourneySandbox>> {
   return postJson<JourneySandbox>(
@@ -290,6 +331,7 @@ export async function provisionJourneySandbox(args: {
       runId: args.runId,
       targetId: args.targetId,
       sessionIdx: args.sessionIdx,
+      ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
     },
     args.signal
   );

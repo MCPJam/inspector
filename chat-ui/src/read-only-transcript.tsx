@@ -114,11 +114,19 @@ export type ReadOnlyTranscriptProps = Omit<
 >;
 
 /**
- * Public, fully static read-only transcript. Renders text, reasoning, files,
- * sources, JSON/data parts, approvals-as-state, and tool call/result blocks.
- * Widget-bearing tools render a placeholder (see `widgetPolicy`). No host
- * seams are wired, so this never touches Convex, analytics, stores, contexts,
- * or any widget runtime.
+ * Public read-only transcript. Renders text, reasoning, files, sources,
+ * JSON/data parts, approvals-as-state, and tool call/result blocks.
+ * Widget-bearing tools render a placeholder (see `widgetPolicy`).
+ *
+ * READ-ONLY means no host seams and no side effects: this never touches
+ * Convex, analytics, stores, contexts, or any widget runtime, and nothing it
+ * renders can edit the thread or call a tool.
+ *
+ * It is NOT inert. Parts own local disclosure state — reasoning collapses
+ * (`ReasoningPart`) and a large tool payload folds (`FoldedBlock`) — so the
+ * subtree contains focusable controls whose only effect is on what this
+ * component shows. A transcript that inlined every hundred-line payload was
+ * the "bunch of JSON" BB-198 was filed about.
  */
 export function ReadOnlyTranscript(props: ReadOnlyTranscriptProps) {
   return <Transcript {...props} />;

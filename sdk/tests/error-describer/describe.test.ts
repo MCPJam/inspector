@@ -5,6 +5,7 @@ import {
   ERROR_CATALOG,
   extractNodeErrno,
   isNormalizedError,
+  originOf,
   type NormalizedError,
 } from "../../src/error-describer/index.js";
 import { MCPAuthError, MCPError } from "../../src/mcp-client-manager/errors.js";
@@ -204,6 +205,52 @@ const CASES: Case[] = [
     name: "Missing bearer",
     build: () => new Error("Missing or invalid bearer token"),
     expectSlug: "auth/missing_bearer",
+  },
+  // Provider quota / rate limit. A 429 reaches us in three shapes: the AI-SDK
+  // `APICallError` carries `statusCode`, some transports set a numeric `code`,
+  // and the local-BYOK swarm path loses both and leaves only the message.
+  {
+    name: "HTTP 429 statusCode",
+    build: () => makeError("Too Many Requests", { statusCode: 429 }),
+    expectSlug: "provider/quota",
+    expectRawCode: 429,
+  },
+  {
+    name: "HTTP 429 status",
+    build: () => makeError("Rate limited", { status: 429 }),
+    expectSlug: "provider/quota",
+    expectRawCode: 429,
+  },
+  {
+    name: "429 numeric code",
+    build: () => makeError("Rate limited", { code: 429 }),
+    expectSlug: "provider/quota",
+    expectRawCode: 429,
+  },
+  {
+    name: "bare 429 in message",
+    build: () => new Error("429 Too Many Requests"),
+    expectSlug: "provider/quota",
+  },
+  {
+    name: "'too many requests' wording without a status",
+    build: () => new Error("Anthropic returned Too Many Requests"),
+    expectSlug: "provider/quota",
+  },
+  {
+    // What a real throttle looks like: the AI SDK retries three times, then
+    // wraps the last provider error in a `RetryError` that keeps no status.
+    name: "AI SDK RetryError wording",
+    build: () =>
+      new Error("Failed after 3 attempts. Last error: Too Many Requests"),
+    expectSlug: "provider/quota",
+  },
+  {
+    // A port is not a status: with no `code` field to classify on, the bare-429
+    // matcher used to win here and the transport reason never reached the user.
+    name: "port 429 stays a transport error",
+    build: () => new Error("connect ECONNREFUSED 127.0.0.1:429"),
+    expectSlug: "transport/econnrefused",
   },
   // OAuth body
   {
@@ -666,5 +713,41 @@ describe("protocol version pin", () => {
     expect(new ProtocolVersionPinUnsupported("srv", "2026-07-28").message).toContain(
       "which this client is pinned to",
     );
+  });
+});
+
+describe("a 429 is attributed to the boundary it crossed", () => {
+  // The status arrives identically from an LLM provider and from the MCP
+  // server under test (`StreamableHTTPError` puts it on `.code`), so the
+  // classifier alone cannot tell them apart. Only the caller knows.
+  it("still reads an unqualified 429 as provider quota", () => {
+    const d = describeError(makeError("Too Many Requests", { statusCode: 429 }));
+    expect(d.slug).toBe("provider/quota");
+    expect(originOf(d)).toBe("user_config");
+  });
+
+  it("reads an MCP server's 429 as the SERVER's rate limit", () => {
+    const d = describeError(makeError("Too Many Requests", { statusCode: 429 }), {
+      surface: "mcpServer",
+    });
+    expect(d.slug).toBe("server/rate_limited");
+    // The user's provider settings are not at fault, so the advice must not
+    // send them to a provider dashboard.
+    expect(originOf(d)).toBe("user_server");
+    expect(JSON.stringify(d.nextSteps)).not.toMatch(/provider/i);
+  });
+
+  it("covers the numeric-code shape too — that is how a transport reports it", () => {
+    const d = describeError(makeError("Rate limited", { code: 429 }), {
+      surface: "mcpServer",
+    });
+    expect(d.slug).toBe("server/rate_limited");
+  });
+
+  it("leaves every other slug alone under the same surface", () => {
+    const d = describeError(makeError("Unauthorized", { statusCode: 401 }), {
+      surface: "mcpServer",
+    });
+    expect(d.slug).toBe("auth/http_401");
   });
 });

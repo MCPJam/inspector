@@ -277,3 +277,54 @@ describe("streamFrames", () => {
     await sink.ended;
   });
 });
+
+
+/**
+ * V-5. The video stream is the ACTIVE tab: the encoder grabs the X display,
+ * which has no concept of a tab. Sending a `tabId` alongside `codec=h264`
+ * would be a request the daemon cannot honour and a promise the pane would
+ * read as kept.
+ */
+describe("streamFrames — asking for video", () => {
+  it("asks for the codec and drops the tabId", async () => {
+    const urls: string[] = [];
+    const client = new BrowserdClient({
+      baseUrl: "https://box.example",
+      bearer: "secret",
+      fetchImpl: (async (url: string) => {
+        urls.push(String(url));
+        return new Response(new ReadableStream(), { status: 200 });
+      }) as never,
+    });
+    await client.streamFrames({
+      holder: "u1",
+      tabId: "tab-2",
+      codec: "h264",
+      signal: new AbortController().signal,
+      onFrame: () => {},
+      onEnd: () => {},
+    });
+    expect(urls[0]).toContain("codec=h264");
+    expect(urls[0]).not.toContain("tabId");
+  });
+
+  it("keeps the tabId on a JPEG stream", async () => {
+    const urls: string[] = [];
+    const client = new BrowserdClient({
+      baseUrl: "https://box.example",
+      bearer: "secret",
+      fetchImpl: (async (url: string) => {
+        urls.push(String(url));
+        return new Response(new ReadableStream(), { status: 200 });
+      }) as never,
+    });
+    await client.streamFrames({
+      holder: "u1",
+      tabId: "tab-2",
+      signal: new AbortController().signal,
+      onFrame: () => {},
+      onEnd: () => {},
+    });
+    expect(urls[0]).toContain("tabId=tab-2");
+  });
+});

@@ -7,6 +7,7 @@ import { createServer, createConnection } from "net";
 import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import open from "open";
+import { launchWorkspaceCandidate } from "./launch-workspace.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -497,6 +498,31 @@ async function runHarnessSubcommand(args) {
     logSuccess(`Runtime pack ${result.packVersion} installed and verified`);
     return 0;
   }
+  // The reason, where the installer could establish one. Each of these sends a
+  // reader somewhere different — retry the network, free some disk, report a
+  // bad artifact — so collapsing them into "it failed" is what makes an
+  // installer message useless.
+  const REASONS = {
+    network: "the runtime could not be downloaded",
+    verification:
+      "the downloaded runtime did not match what this Inspector expected, " +
+      "so it was not installed",
+    disk: "the runtime could not be written to its install location",
+    unknown: "the install did not complete",
+  };
+  if (result.state === "failed") {
+    logError(
+      `${REASONS[result.reason] ?? REASONS.unknown}` +
+        (result.message ? `: ${result.message}` : ""),
+    );
+    logInfo("Run `mcpjam-inspector harness install` again to retry.");
+    return 1;
+  }
+  if (result.state === "interrupted") {
+    logError("Setup was interrupted before it finished.");
+    logInfo("Run `mcpjam-inspector harness install` again to continue.");
+    return 1;
+  }
   logError(
     `Runtime pack not installed (${result.state})` +
       (result.message ? `: ${result.message}` : ""),
@@ -973,12 +999,17 @@ async function main() {
     }
 
     // Spawn the server process but don't wait for it to exit
+    // The invocation folder travels EXPLICITLY, because `cwd` below is about
+    // to become the installed package's root and the server would otherwise
+    // have no way back to where the user actually was.
+    const launchWorkspace = launchWorkspaceCandidate({ projectRoot });
     const serverProcess = spawn("node", [distServerPath], {
       env: {
         ...process.env,
         MCPJAM_INSPECTOR_PARENT_PID: process.pid.toString(),
         NODE_ENV: "production",
         PORT: PORT,
+        ...(launchWorkspace ? { MCPJAM_LAUNCH_WORKSPACE: launchWorkspace } : {}),
         ...(verboseLogs && { VERBOSE_LOGS: "true" }),
       },
       cwd: projectRoot,

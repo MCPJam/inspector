@@ -16,6 +16,10 @@ import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { RUNNER_CAPABILITIES } from "./runner-capabilities.js";
+import type {
+  RunCiMetadata,
+  RunLauncher,
+} from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
@@ -381,6 +385,7 @@ export const startSuiteRunWithRecorder = async ({
   replayedFromRunId,
   useCurrentSuiteConfig,
   environmentOverride,
+  githubCheckServerOverride,
   toolSnapshot,
   toolSnapshotDebug,
   iterationOverride,
@@ -400,6 +405,8 @@ export const startSuiteRunWithRecorder = async ({
   toolDescriptionOverride,
   ephemeralEnvironment,
   importApprovals,
+  launcher,
+  ciMetadata,
 }: EvalRunProvenance & {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -422,6 +429,11 @@ export const startSuiteRunWithRecorder = async ({
     // object would silently drop it before Convex).
     computerEnvironmentId?: string;
   };
+  /** Replace only the MCP servers for a GitHub check run. */
+  githubCheckServerOverride?: Array<{
+    serverName: string;
+    projectServerId: string;
+  }>;
   toolSnapshot?: ServerToolSnapshot;
   toolSnapshotDebug?: Record<string, unknown>;
   /**
@@ -535,6 +547,22 @@ export const startSuiteRunWithRecorder = async ({
    * backend refusing a run they did approve.
    */
   importApprovals?: Array<{ testCaseId: string; reason: string }>;
+  /**
+   * The run's DECLARED launcher, read off `x-mcpjam-launcher` at the `/v1`
+   * boundary. A LABEL, not an authorization input: `source` is still stamped
+   * by the route and the verified attribution is still what the audit reads.
+   *
+   * Must be declared here — like every other field in this list — because the
+   * mutation args below are RECONSTRUCTED from these parameters, so anything
+   * nobody destructures is something the backend never sees.
+   */
+  launcher?: RunLauncher;
+  /**
+   * The CI envelope this launch came from, mapped to the run row's own
+   * spelling at the header boundary. Fills the Runs table's CI column and
+   * makes `--baseline-sha` resolvable for a CLI run inside GitHub Actions.
+   */
+  ciMetadata?: RunCiMetadata;
 }) => {
   let response: any;
   try {
@@ -546,7 +574,10 @@ export const startSuiteRunWithRecorder = async ({
         passCriteria,
         replayedFromRunId,
         useCurrentSuiteConfig,
-        environmentOverride,
+        ...(environmentOverride ? { environmentOverride } : {}),
+        ...(githubCheckServerOverride
+          ? { githubCheckServerOverride }
+          : {}),
         toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
         toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
         iterationOverride,
@@ -580,6 +611,13 @@ export const startSuiteRunWithRecorder = async ({
         ...(importApprovals && importApprovals.length
           ? { importApprovals }
           : {}),
+        // Forwarded only when present. An older backend's `startTestSuiteRun`
+        // validator does not know these args and rejects the whole call for an
+        // unknown field, so sending `launcher: undefined` would break every
+        // launch against a deployment that predates run provenance — including
+        // self-hosted ones this Inspector talks to.
+        ...(launcher ? { launcher } : {}),
+        ...(ciMetadata ? { ciMetadata } : {}),
         runnerCapabilities: RUNNER_CAPABILITIES,
       }
     );
