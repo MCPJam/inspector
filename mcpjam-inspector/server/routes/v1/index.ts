@@ -60,6 +60,7 @@ import capabilities from "./capabilities.js";
 import evalDisclosure from "./eval-disclosure.js";
 import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
+import browserSessions from "./browser-sessions.js";
 import tunnels from "./tunnels.js";
 import readiness from "./readiness.js";
 import conformanceRuns from "./conformance-runs.js";
@@ -249,6 +250,7 @@ v1.route("/", capabilities);
 // would actually matter.
 v1.route("/", evalDisclosure);
 v1.route("/", tunnels);
+v1.route("/", browserSessions);
 
 v1.onError((error, c) => v1OnError(error, c));
 
