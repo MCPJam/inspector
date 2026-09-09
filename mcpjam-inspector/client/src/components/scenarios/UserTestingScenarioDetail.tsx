@@ -305,6 +305,10 @@ export function UserTestingScenarioDetail({
   // otherwise a focused field with no edits saves its stale draft over a
   // value that arrived while the reseed below was suppressed.
   const descriptionSeedRef = useRef(scenario.description ?? "");
+  // Which save owns the field. The seed is marked before a write lands, so a
+  // later completion that is no longer the newest must not reconcile against
+  // it — its value has already been superseded.
+  const descriptionSaveRef = useRef(0);
   useEffect(() => {
     if (descriptionFocusedRef.current) return;
     descriptionSeedRef.current = scenario.description ?? "";
@@ -339,14 +343,22 @@ export function UserTestingScenarioDetail({
       adoptRemoteDescription();
       return;
     }
+    // Marked BEFORE the write, not after it: the seed is what "dirty" is
+    // measured against, and leaving Edit re-measures while this is still in
+    // flight. Advancing it late sent `next` a second time from that flush.
+    const generation = ++descriptionSaveRef.current;
+    descriptionSeedRef.current = next;
     try {
       await updateScenario({
         scenarioId: scenario.scenarioId,
         description: next,
       } as any);
-      descriptionSeedRef.current = next;
     } catch (err) {
+      // A newer save has taken over: its value is the one to keep, and
+      // resyncing from here would drop it.
+      if (generation !== descriptionSaveRef.current) return;
       toast.error(convexErrMessage(err, "Failed to save the description"));
+      // Also rolls the marked seed back to what is actually stored.
       adoptRemoteDescription();
     }
   };

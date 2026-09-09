@@ -663,6 +663,71 @@ describe("UserTestingScenarioDetail", () => {
       expect(updateScenarioMock).not.toHaveBeenCalled();
     });
 
+    it("does not re-send a save that is still in flight when Edit closes", async () => {
+      // The blur save marks the seed synchronously. Advancing it only after
+      // the write let the exit flush measure dirty against the pre-save seed
+      // and send the same value a second time.
+      let settleSave = () => {};
+      updateScenarioMock.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          settleSave = () => resolve();
+        }),
+      );
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "New copy" } });
+      fireEvent.blur(textarea);
+      expect(updateScenarioMock).toHaveBeenCalledTimes(1);
+
+      // Leaving Edit while that write is still unresolved.
+      rerender(detail({ description: "Old copy" }));
+      expect(updateScenarioMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        settleSave();
+      });
+    });
+
+    it("keeps the newer value when an older save fails late", async () => {
+      // Two writes can overlap: blur starts one, retyping and leaving Edit
+      // starts the next. The first one failing last must not resync the field
+      // over the value that superseded it.
+      let failFirst: (err: Error) => void = () => {};
+      updateScenarioMock.mockReturnValueOnce(
+        new Promise<void>((_resolve, reject) => {
+          failFirst = reject;
+        }),
+      );
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "First" } });
+      fireEvent.blur(textarea);
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Second" } });
+      rerender(detail({ description: "Old copy" }));
+
+      expect(updateScenarioMock).toHaveBeenNthCalledWith(2, {
+        scenarioId: "cb-1",
+        description: "Second",
+      });
+
+      await act(async () => {
+        failFirst(new Error("stale save rejected"));
+      });
+
+      // Back into Edit: the draft still holds what the newer save sent, and
+      // the superseded failure stayed silent.
+      rerender(detail({ description: "Old copy" }, { editMode: true }));
+      expect(screen.getByTestId("user-testing-description")).toHaveValue(
+        "Second",
+      );
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
     it("keeps the description out of the header, where it crowded the tabs", () => {
       renderDetail({ description: "Old copy" });
 
