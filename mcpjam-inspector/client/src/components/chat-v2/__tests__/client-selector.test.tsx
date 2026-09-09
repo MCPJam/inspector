@@ -316,6 +316,82 @@ describe("ClientSelector", () => {
     expect(onHostChange).toHaveBeenCalledWith("host-3");
   });
 
+  /**
+   * Two clients can carry the same stored name — `resolveClientDisplayNames`
+   * is what tells them apart, and it does so in `displayName` alone. Naming
+   * the button after the raw name gave both rows "Compare with Claude": one
+   * button announced twice, and unreachable by voice or by role query.
+   */
+  it("names the compare button after the client the row shows", async () => {
+    const user = userEvent.setup();
+    render(
+      <ClientSelector
+        hosts={[
+          // The lead sits elsewhere so BOTH duplicates render the "Compare
+          // with" branch, which is where the collision showed.
+          { hostId: "host-lead", name: "Cursor", displayName: "Cursor" },
+          { hostId: "host-a", name: "Claude", displayName: "Claude" },
+          { hostId: "host-b", name: "Claude", displayName: "Claude #2" },
+        ]}
+        projectId="project-1"
+        currentHostId="host-lead"
+        selectedHostIds={["host-lead"]}
+        onHostChange={vi.fn()}
+        onSelectedHostIdsChange={vi.fn()}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+
+    expect(
+      screen.getByRole("button", { name: "Compare with Claude #2" })
+    ).toBeInTheDocument();
+    // Exact match, so the raw-name version fails here too: it produced two
+    // buttons with this name and the query cannot resolve them.
+    expect(
+      screen.getByRole("button", { name: "Compare with Claude" })
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The cap tooltip's only hover surface is the disabled checkbox, so the
+   * button drops pointer events and the wrapper takes them. The click has to
+   * stop there: falling through to the row would switch the client out from
+   * under someone who aimed at a checkbox.
+   */
+  it("does not switch the lead when the capped checkbox is clicked", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1", "host-2"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={vi.fn()}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    const capped = screen.getByTestId("client-row-compare-host-3");
+    expect(capped).toBeDisabled();
+
+    // The wrapper is what a pointer actually lands on once the button stops
+    // taking events.
+    const wrapper = capped.parentElement;
+    expect(wrapper).not.toBeNull();
+    await user.click(wrapper as HTMLElement);
+
+    expect(onHostChange).not.toHaveBeenCalled();
+  });
+
   it("uses app-surface logo variants inside the modal", async () => {
     const user = userEvent.setup();
     renderClientSelector({

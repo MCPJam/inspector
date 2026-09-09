@@ -465,10 +465,14 @@ export function ClientSelector({
                   <button
                     type="button"
                     aria-pressed={isSelected}
+                    // `clientDisplayName`, not `host.name`: two clients can
+                    // share a stored name and are told apart only by the
+                    // resolved display name, so the raw one names both rows
+                    // "Compare with Claude".
                     aria-label={
                       isSelected
-                        ? `Remove ${host.name} from comparison`
-                        : `Compare with ${host.name}`
+                        ? `Remove ${clientDisplayName(host)} from comparison`
+                        : `Compare with ${clientDisplayName(host)}`
                     }
                     disabled={isLimitedOut}
                     data-testid={`client-row-compare-${host.hostId}`}
@@ -484,7 +488,12 @@ export function ClientSelector({
                       if (event.key === "Enter") event.stopPropagation();
                     }}
                     className={cn(
-                      "flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)] disabled:cursor-not-allowed disabled:opacity-50",
+                      // `pointer-events-none` when disabled so the wrapper
+                      // below receives the hover instead: Chrome retargets a
+                      // disabled control's pointer events to the parent,
+                      // Firefox and Safari drop them, and the cap tooltip has
+                      // no other hover surface.
+                      "flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)] disabled:pointer-events-none disabled:opacity-50",
                       isSelected
                         ? "border-primary bg-primary shadow-sm"
                         : "border-border/60 bg-transparent hover:border-border"
@@ -527,7 +536,16 @@ export function ClientSelector({
                         {isLimitedOut ? (
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <span className="flex">{compareToggle}</span>
+                              {/* Holds the cursor the button can no longer
+                                  show, and swallows the click the button no
+                                  longer takes — reaching the row would switch
+                                  the client the user aimed a checkbox at. */}
+                              <span
+                                className="flex cursor-not-allowed"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                {compareToggle}
+                              </span>
                             </TooltipTrigger>
                             <TooltipContent side="right">
                               You can compare up to {maxSelectedHosts} clients
