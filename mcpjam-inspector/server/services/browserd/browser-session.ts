@@ -1001,6 +1001,13 @@ function withActivityTouches(
     ...(client.recordStatus
       ? { recordStatus: () => client.recordStatus!() }
       : {}),
+    // Exactly the capability the comment above warns about: without this line
+    // a daemon that CAN export a profile looks like one that cannot, and the
+    // panel answers `profile_export_unavailable` on a browser that would have
+    // exported fine.
+    ...(client.exportProfile
+      ? { exportProfile: () => client.exportProfile!() }
+      : {}),
   };
 }
 

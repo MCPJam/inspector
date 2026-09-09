@@ -1873,6 +1873,59 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
     expect(spies.recordStatus).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards exportProfile too", async () => {
+    // The capability this describe block exists to protect, and the one that
+    // was actually dropped: without forwarding, a daemon that CAN export a
+    // profile reaches the panel looking like one that cannot, and the route
+    // answers `profile_export_unavailable` on a perfectly good browser.
+    const exportProfile = vi.fn(async () => new Uint8Array([7, 8, 9]));
+    const f = makeFakes({ lookups: [liveLookup()] });
+    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({
+        status: async () =>
+          ({
+            kind: "ok",
+            bootId: ROW.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+            bundleHash: HASH,
+          }) as BrowserdStatus,
+        sendCommand: async () => ({ kind: "ok" }) as never,
+        exportProfile,
+      }),
+    );
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.client.exportProfile).toBeTypeOf("function");
+    await expect(handle.client.exportProfile!()).resolves.toEqual(
+      new Uint8Array([7, 8, 9]),
+    );
+    expect(exportProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not invent a capability the client lacks", async () => {
+    // The other half of the contract: forwarding is conditional, so a daemon
+    // that genuinely cannot export must still report that honestly rather than
+    // get a wrapper method that throws when called.
+    const f = makeFakes({ lookups: [liveLookup()] });
+    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({
+        status: async () =>
+          ({
+            kind: "ok",
+            bootId: ROW.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+            bundleHash: HASH,
+          }) as BrowserdStatus,
+        sendCommand: async () => ({ kind: "ok" }) as never,
+      }),
+    );
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.client.exportProfile).toBeUndefined();
+  });
+
   it("omits them entirely for a client that has neither", async () => {
     // Absent, not present-and-throwing: the caller gates on the method
     // existing, exactly as it does for `lease`.

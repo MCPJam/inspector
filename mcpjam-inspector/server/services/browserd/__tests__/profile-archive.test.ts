@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   exportBrowserProfileArchive,
@@ -84,18 +84,33 @@ describe("browser profile archives", () => {
     temporaryDirectories.push(source, target);
     await writeFile(join(source, "Preferences"), "x".repeat(1024));
 
-    // Pins the boundary: `maxOutputLength` permits exactly N and refuses N+1,
-    // which is the same predicate as the `> N` check it replaced. If zlib ever
-    // moved to `>=`, archives that imported yesterday would start failing and
-    // this is what would catch it.
+    // Pins the boundary from BOTH sides: `maxOutputLength` permits exactly N
+    // and refuses N+1, which is the same predicate as the `> N` check it
+    // replaced. The cap is derived from the archive's real expanded size — a
+    // round number comfortably above it would pass whether zlib used `>` or
+    // `>=`, and so would not pin anything. If zlib ever moved to `>=`,
+    // archives that imported yesterday would start failing, and this is what
+    // catches it.
     const archive = await exportBrowserProfileArchive(source);
+    const expanded = gunzipSync(archive).byteLength;
+
     await expect(
       importBrowserProfileArchive(target, archive, {
-        maxUncompressedBytes: 10 * 1024,
+        maxUncompressedBytes: expanded,
       }),
     ).resolves.toBeUndefined();
     await expect(
       readFile(join(target, "Preferences"), "utf8"),
     ).resolves.toContain("x");
+
+    // One byte under the same archive must be refused, or "exactly the cap
+    // passes" would be vacuous.
+    const tooTight = await mkdtemp(join(tmpdir(), "mcpjam-profile-tight-"));
+    temporaryDirectories.push(tooTight);
+    await expect(
+      importBrowserProfileArchive(tooTight, archive, {
+        maxUncompressedBytes: expanded - 1,
+      }),
+    ).rejects.toThrow(/exceeds the expanded size limit/);
   });
 });

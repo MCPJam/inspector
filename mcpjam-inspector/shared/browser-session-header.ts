@@ -23,7 +23,10 @@ export function browserProfileArchiveResponse(
   archive: Uint8Array,
   savedFrom?: string,
 ): Response {
-  return new Response(Buffer.from(archive), {
+  // The view itself, NOT `Buffer.from(archive)`: that copies, and this archive
+  // runs to 256 MB. `Response` will copy the body once regardless; there is no
+  // reason to pay for it twice.
+  return new Response(archive as unknown as BodyInit, {
     status: 200,
     headers: {
       "content-type": "application/gzip",
