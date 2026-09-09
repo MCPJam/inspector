@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ReactNode } from "react";
 import { render, screen, act, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import {
@@ -170,12 +171,9 @@ describe("WebmcpInspectorTab — viewport", () => {
       screen.getByAltText("Live view of the inspected page"),
     ).toBeInTheDocument();
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Live view" }));
-    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Live view" }));
 
     // Holding the screenshot would freeze the pane on an old picture still
     // labelled "live", and the "Live view is off" line would never appear
@@ -202,12 +200,9 @@ describe("WebmcpInspectorTab — viewport", () => {
     await act(async () => {});
     setScreencast.mockClear();
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Live view" }));
-    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Live view" }));
     expect(setScreencast).toHaveBeenCalledWith(false);
     expect(setScreencast).not.toHaveBeenCalledWith(true);
   });
@@ -908,12 +903,9 @@ describe("WebmcpInspectorTab — viewport", () => {
       display: "in-app",
     });
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "In app" }));
-    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "In app" }));
     await act(async () => {
       screen.getByRole("button", { name: "Open browser" }).click();
     });

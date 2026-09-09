@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ReactNode } from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import type {
@@ -23,12 +24,14 @@ vi.mock("@/components/ui/resizable", () => ({
   ResizableHandle: () => <div data-testid="resizable-handle" />,
 }));
 
-function openExportMenu() {
-  fireEvent.click(screen.getByRole("button", { name: "Export activity" }));
+async function openExportMenu(user = userEvent.setup()) {
+  await user.click(screen.getByRole("button", { name: "Export activity" }));
+  return user;
 }
 
-function openMoreActions() {
-  fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+async function openMoreActions(user = userEvent.setup()) {
+  await user.click(screen.getByRole("button", { name: "More actions" }));
+  return user;
 }
 
 // jsdom implements neither, and the tab reconnects its stream on mount.
@@ -85,8 +88,8 @@ describe("WebmcpInspectorTab — export", () => {
   it("copies the viewport's own diagnostics, and only with a session", async () => {
     clipboard.copy.mockClear();
     const view = render(<WebmcpInspectorTab />);
-    openMoreActions();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Copy diagnostics" }));
+    const user = await openMoreActions();
+    await user.click(screen.getByRole("menuitem", { name: "Copy diagnostics" }));
     await Promise.resolve();
 
     const copied = JSON.parse(String(clipboard.copy.mock.calls[0]![0]));
@@ -108,8 +111,7 @@ describe("WebmcpInspectorTab — export", () => {
     ).toBeNull();
   });
 
-  it("does not revoke the blob URL in the same task as the click", () => {
-    vi.useFakeTimers();
+  it("does not revoke the blob URL in the same task as the click", async () => {
     const createObjectURL = vi
       .spyOn(URL, "createObjectURL")
       .mockReturnValue("blob:fake");
@@ -121,7 +123,12 @@ describe("WebmcpInspectorTab — export", () => {
       .mockImplementation(() => {});
 
     render(<WebmcpInspectorTab />);
-    openExportMenu();
+    // Open with userEvent so Radix receives a real pointer sequence. The
+    // revoke assertion is about the download click's own task, so that click
+    // has to stay synchronous — awaiting userEvent would flush the delayed
+    // revoke before we can observe it.
+    await openExportMenu();
+    vi.useFakeTimers();
     fireEvent.click(screen.getByRole("menuitem", { name: "Export JSON" }));
 
     expect(createObjectURL).toHaveBeenCalledTimes(1);
@@ -134,7 +141,7 @@ describe("WebmcpInspectorTab — export", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake");
   });
 
-  it("names the downloaded file after the session and format", () => {
+  it("names the downloaded file after the session and format", async () => {
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fake");
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     const downloads: string[] = [];
@@ -145,10 +152,10 @@ describe("WebmcpInspectorTab — export", () => {
     });
 
     render(<WebmcpInspectorTab />);
-    openExportMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Export JSON" }));
-    openExportMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Export OTLP" }));
+    const user = await openExportMenu();
+    await user.click(screen.getByRole("menuitem", { name: "Export JSON" }));
+    await openExportMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: "Export OTLP" }));
 
     expect(downloads).toEqual([
       "webmcp-session-426581af.json",

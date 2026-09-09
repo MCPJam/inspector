@@ -3,15 +3,12 @@ import { track } from "@/lib/analytics";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import {
   AlertCircle,
-  Search,
   Trash2,
-  PanelRightClose,
-  Copy,
   Download,
 } from "lucide-react";
 import { LogRow } from "@/components/ui/log-row";
+import { LogToolbar } from "@/components/ui/log-toolbar";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { Input } from "@mcpjam/design-system/input";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
@@ -585,23 +582,25 @@ export function LoggerView({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="@container/logger-toolbar flex min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
-        {isSearchVisible && (
-          <>
-            <div className="relative min-w-0 flex-1">
-              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search logs"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-7 pl-7 text-xs"
-              />
-            </div>
-            <span className="hidden whitespace-nowrap text-xs text-muted-foreground @min-[400px]/logger-toolbar:inline-block">
-              {filteredItemCount} / {totalItemCount}
-            </span>
-
-            {/* Source filter + log levels — hide on narrow panels; search + copy/clear stay */}
+      <LogToolbar
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        searchVisible={isSearchVisible}
+        filteredCount={filteredItemCount}
+        totalCount={totalItemCount}
+        onCopy={copyLogs}
+        copyDisabled={filteredItemCount === 0}
+        onClose={
+          onClose && isCollapsable
+            ? () => {
+                captureLogger("logger_collapsed");
+                onClose();
+              }
+            : undefined
+        }
+        closeTitle="Hide JSON-RPC panel"
+        leading={
+            /* Source filter + log levels — hide on narrow panels; search + copy/clear stay */
             <div className="hidden items-center gap-1.5 @min-[340px]/logger-toolbar:flex">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -827,22 +826,9 @@ export function LoggerView({
                 </Popover>
               )}
             </div>
-          </>
-        )}
-
-        {/* Push action buttons to the right when search is hidden */}
-        {!isSearchVisible && <div className="flex-1" />}
-
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={copyLogs}
-          disabled={filteredItemCount === 0}
-          className="hidden h-7 w-7 shrink-0 @min-[300px]/logger-toolbar:inline-flex"
-          title="Copy logs to clipboard"
-        >
-          <Copy className="h-3.5 w-3.5" />
-        </Button>
+        }
+        actions={
+          <>
         <Button
           variant="ghost"
           size="icon"
@@ -863,21 +849,9 @@ export function LoggerView({
         >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
-        {onClose && isCollapsable && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => {
-              captureLogger("logger_collapsed");
-              onClose();
-            }}
-            className="h-7 w-7 flex-shrink-0"
-            title="Hide JSON-RPC panel"
-          >
-            <PanelRightClose className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </div>
+          </>
+        }
+      />
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
         {searchQuery.trim() && matchesHiddenBySourceFilter > 0 && (

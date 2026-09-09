@@ -1,18 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  Accordion,
-  AccordionItem,
-  AccordionTrigger,
-  AccordionContent,
-} from "@mcpjam/design-system/accordion";
-import {
   generateFormFieldsFromSchema,
   buildParametersFromFields,
   type FormField,
 } from "@/lib/tool-form";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
-import { SchemaViewer } from "@/components/ui/schema-viewer";
+import { ToolDetailsAccordion } from "@/components/ui/tool-details-accordion";
 import type { WebMcpToolDescriptor } from "@/shared/webmcp-inspector-protocol";
 
 export interface ToolInvokeHandle {
@@ -64,6 +58,7 @@ export const ToolInvokePane = forwardRef<ToolInvokeHandle, ToolInvokePaneProps>(
     }, [tool.toolKey]);
 
     const submit = () => {
+      if (pendingInvokeId) return;
       if (rawMode) {
         try {
           const parsed = JSON.parse(rawJson || "{}");
@@ -86,6 +81,7 @@ export const ToolInvokePane = forwardRef<ToolInvokeHandle, ToolInvokePaneProps>(
     };
 
     useImperativeHandle(ref, () => ({ submit }), [
+      pendingInvokeId,
       rawMode,
       rawJson,
       fields,
@@ -109,42 +105,18 @@ export const ToolInvokePane = forwardRef<ToolInvokeHandle, ToolInvokePaneProps>(
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="min-h-0 flex-1 overflow-auto">
-          <Accordion
-            type="multiple"
-            value={openSections}
-            onValueChange={setOpenSections}
-            className="px-3"
-          >
-            {tool.description ? (
-              <AccordionItem value="description">
-                <AccordionTrigger className="text-xs">
-                  Description
-                </AccordionTrigger>
-                <AccordionContent>
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    {tool.description}
-                  </p>
-                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                    {tool.origin}
-                  </p>
-                </AccordionContent>
-              </AccordionItem>
-            ) : null}
-            {tool.inputSchema ? (
-              <AccordionItem value="input-schema">
-                <AccordionTrigger className="text-xs">
-                  Input Schema
-                </AccordionTrigger>
-                <AccordionContent>
-                  <SchemaViewer schema={tool.inputSchema} />
-                </AccordionContent>
-              </AccordionItem>
-            ) : null}
-            <AccordionItem value="parameters">
-              <AccordionTrigger className="text-xs">
-                Parameters
-              </AccordionTrigger>
-              <AccordionContent>
+          <ToolDetailsAccordion
+            description={tool.description}
+            descriptionExtra={
+              <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                {tool.origin}
+              </p>
+            }
+            inputSchema={tool.inputSchema}
+            openSections={openSections}
+            onOpenSectionsChange={setOpenSections}
+            parameters={
+              <>
                 <div className="flex items-center justify-end px-3 pb-1">
                   <Button
                     type="button"
@@ -186,9 +158,9 @@ export const ToolInvokePane = forwardRef<ToolInvokeHandle, ToolInvokePaneProps>(
                     onExecute={submit}
                   />
                 )}
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
+              </>
+            }
+          />
         </div>
         {pendingInvokeId ? (
           <div className="flex-shrink-0 border-t border-border px-3 py-2">

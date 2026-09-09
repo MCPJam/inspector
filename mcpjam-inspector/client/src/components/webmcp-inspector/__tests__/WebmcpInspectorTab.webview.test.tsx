@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { StrictMode, type ReactNode } from "react";
 import { render, screen, act, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import type { WebMcpSessionPublic } from "@/shared/webmcp-inspector-protocol";
@@ -418,7 +419,7 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
     expect(screen.queryByRole("button", { name: "In app" })).toBeNull();
     const more = screen.queryByRole("button", { name: "More actions" });
     if (more) {
-      fireEvent.click(more);
+      await userEvent.click(more);
       expect(screen.queryByRole("menuitem", { name: "In app" })).toBeNull();
     }
   });
@@ -426,7 +427,7 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
   it("keeps the destination toggle in a dev run", async () => {
     render(<WebmcpInspectorTab />);
     await act(async () => {});
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
     expect(screen.getByRole("menuitem", { name: "In app" })).toBeInTheDocument();
   });
 });

@@ -1,11 +1,16 @@
 import { useMemo, useState } from "react";
-import { Copy, Download, PanelRightClose, Search } from "lucide-react";
+import { Download } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Input } from "@mcpjam/design-system/input";
 import { cn } from "@/lib/utils";
 import { LogRow } from "@/components/ui/log-row";
+import { LogToolbar } from "@/components/ui/log-toolbar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import type { WebMcpActivityEntry } from "@/shared/webmcp-inspector-protocol";
-import { ActionMenu, ActionMenuItem } from "./ActionMenu";
 
 /**
  * What happened, in order, across navigations.
@@ -41,73 +46,47 @@ export function ActivityTimeline({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="@container/logger-toolbar flex min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
-        <div className="relative min-w-0 flex-1">
-          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search logs"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            className="h-7 pl-7 text-xs"
-          />
-        </div>
-        <span className="hidden whitespace-nowrap text-xs text-muted-foreground @min-[400px]/logger-toolbar:inline-block">
-          {filtered.length} / {entries.length}
-        </span>
-        {canExport ? (
-          <>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => onCopy?.(filtered)}
-              disabled={filtered.length === 0}
-              className="h-7 w-7 shrink-0"
-              title="Copy logs to clipboard"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-            <ActionMenu
-              triggerLabel="Export activity"
-              triggerTitle="Export activity"
-              align="end"
-              trigger={<Download className="h-3.5 w-3.5" />}
-            >
-              {(close) => (
-                <>
-                  <ActionMenuItem
-                    onSelect={() => {
-                      onExportJson?.();
-                      close();
-                    }}
-                  >
-                    Export JSON
-                  </ActionMenuItem>
-                  <ActionMenuItem
-                    onSelect={() => {
-                      onExportOtlp?.();
-                      close();
-                    }}
-                  >
-                    Export OTLP
-                  </ActionMenuItem>
-                </>
-              )}
-            </ActionMenu>
-          </>
-        ) : null}
-        {onClose ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="h-7 w-7 flex-shrink-0"
-            title="Hide activity"
-            aria-label="Hide activity"
-          >
-            <PanelRightClose className="h-3.5 w-3.5" />
-          </Button>
-        ) : null}
-      </div>
+      <LogToolbar
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        filteredCount={filtered.length}
+        totalCount={entries.length}
+        onCopy={canExport ? () => onCopy?.(filtered) : undefined}
+        copyDisabled={filtered.length === 0}
+        onClose={onClose}
+        closeTitle="Hide activity"
+        actions={
+          canExport ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  title="Export activity"
+                  aria-label="Export activity"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  className="text-xs"
+                  onSelect={() => onExportJson?.()}
+                >
+                  Export JSON
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-xs"
+                  onSelect={() => onExportOtlp?.()}
+                >
+                  Export OTLP
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null
+        }
+      />
       <div className="min-h-0 flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
           <div className="py-8 text-center">

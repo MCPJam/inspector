@@ -9,7 +9,12 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { SearchInput } from "@/components/ui/search-input";
 import { SelectedToolHeader } from "@/components/ui-playground/SelectedToolHeader";
-import { ActionMenu, ActionMenuItem } from "./ActionMenu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import { ToolsPanel } from "./ToolsPanel";
 import {
   ToolInvokePane,
@@ -93,24 +98,30 @@ export function WebmcpToolsSidebar({
           </div>
           <div className="flex items-center gap-0.5 text-muted-foreground/80">
             {overflowActions.length > 0 ? (
-              <ActionMenu
-                triggerLabel="More actions"
-                trigger={<MoreHorizontal className="h-3.5 w-3.5" />}
-              >
-                {(close) =>
-                  overflowActions.map((action, index) => (
-                    <ActionMenuItem
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    aria-label="More actions"
+                    title="More actions"
+                  >
+                    <MoreHorizontal className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {overflowActions.map((action, index) => (
+                    <DropdownMenuItem
                       key={`${action.label}-${index}`}
-                      onSelect={() => {
-                        action.onSelect();
-                        close();
-                      }}
+                      className="text-xs"
+                      onSelect={action.onSelect}
                     >
                       {action.label}
-                    </ActionMenuItem>
-                  ))
-                }
-              </ActionMenu>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
             {onClose ? (
               <Button
@@ -174,11 +185,13 @@ export function WebmcpToolsSidebar({
             description={selectedTool.origin}
             onExpand={() => onSelectTool(undefined)}
             toolSwitchList={{
-              names: tools.map((tool) => tool.name),
-              onSelect: (name) => {
-                const next = tools.find((tool) => tool.name === name);
-                if (next) onSelectTool(next.toolKey);
-              },
+              items: tools.map((tool) => ({
+                id: tool.toolKey,
+                label: tool.name,
+                description: tool.origin,
+              })),
+              selectedId: selectedTool.toolKey,
+              onSelect: (toolKey) => onSelectTool(toolKey),
             }}
           />
           <ToolInvokePane

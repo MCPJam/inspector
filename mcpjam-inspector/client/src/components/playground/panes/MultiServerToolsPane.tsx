@@ -16,12 +16,6 @@
  * The Saved tab renders an empty state pointing this out.
  */
 import { useEffect, useMemo, useState } from "react";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@mcpjam/design-system/accordion";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
@@ -36,7 +30,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
 import { SelectedToolHeader } from "@/components/ui-playground/SelectedToolHeader";
 import { TabHeader } from "@/components/ui-playground/TabHeader";
-import { SchemaViewer } from "@/components/ui/schema-viewer";
+import { ToolDetailsAccordion } from "@/components/ui/tool-details-accordion";
 import { SearchInput } from "@/components/ui/search-input";
 import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
 import { BrowserToolsSection } from "@/components/playground/BrowserToolsSection";
@@ -551,59 +545,22 @@ function SelectedToolView({
     <div className="h-full flex flex-col">
       <SelectedToolHeader toolName={headerToolName} onExpand={onExpand} />
       <ScrollArea className="flex-1 min-h-0">
-        <Accordion
-          type="multiple"
-          value={openSections}
-          onValueChange={setOpenSections}
-          className="px-3"
-        >
-          {entry.tool.description && (
-            <AccordionItem value="description">
-              <AccordionTrigger className="text-xs">
-                Description
-              </AccordionTrigger>
-              <AccordionContent>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {entry.tool.description}
-                </p>
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {entry.tool.inputSchema && (
-            <AccordionItem value="input-schema">
-              <AccordionTrigger className="text-xs">
-                Input Schema
-              </AccordionTrigger>
-              <AccordionContent>
-                <SchemaViewer schema={entry.tool.inputSchema} />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {entry.tool.outputSchema && (
-            <AccordionItem value="output-schema">
-              <AccordionTrigger className="text-xs">
-                Output Schema
-              </AccordionTrigger>
-              <AccordionContent>
-                <SchemaViewer schema={entry.tool.outputSchema} />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {hasParameters && (
-            <AccordionItem value="parameters">
-              <AccordionTrigger className="text-xs">
-                Parameters
-              </AccordionTrigger>
-              <AccordionContent>
-                <ParametersForm
-                  fields={formFields}
-                  onFieldChange={onFieldChange}
-                  onToggleField={onToggleField}
-                />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-        </Accordion>
+        <ToolDetailsAccordion
+          description={entry.tool.description}
+          inputSchema={entry.tool.inputSchema}
+          outputSchema={entry.tool.outputSchema}
+          openSections={openSections}
+          onOpenSectionsChange={setOpenSections}
+          parameters={
+            hasParameters ? (
+              <ParametersForm
+                fields={formFields}
+                onFieldChange={onFieldChange}
+                onToggleField={onToggleField}
+              />
+            ) : undefined
+          }
+        />
       </ScrollArea>
     </div>
   );

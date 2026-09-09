@@ -46,8 +46,10 @@ The workspace shares `ThreePanelLayout` with Tools / Resources / Prompts / Tasks
 
 The right rail is a custom slot, not the JSON-RPC `LoggerView`. Activity is
 WebMCP evidence (registrations, invocations, before/after screenshots), not MCP
-traffic. Rows share `LogRow` with the MCP logger (click to expand) but stay
-on the WebMCP session store.
+traffic. Session state and JSON-RPC traffic stay in separate stores. What is
+shared is the chrome: `LogRow`, `LogToolbar`, `ToolDetailsAccordion`, and
+`SelectedToolHeader` (tools identified by `{ id, label, description }`, so two
+frames that both register `submit` stay distinct).
 
 `provider.ts` is the browser boundary. Everything above it — runtime, registry,
 routes — is written against that interface and never imports Playwright, so the

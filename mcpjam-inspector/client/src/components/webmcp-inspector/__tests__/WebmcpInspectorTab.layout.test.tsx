@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ReactNode } from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import type {
@@ -133,5 +134,29 @@ describe("WebmcpInspectorTab — three-panel workspace", () => {
       screen.getByText(/Enter a URL on the left to inspect the tools it registers/),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open browser" })).toBeInTheDocument();
+  });
+
+  it("switches between two tools that share a name by identity", async () => {
+    const user = userEvent.setup();
+    const frameTool: WebMcpToolDescriptor = {
+      ...TOOL,
+      toolKey: "https://checkout.test::add_topping",
+      origin: "https://checkout.test",
+      description: "Add a topping from checkout",
+    };
+    useWebmcpInspectorStore.setState({ tools: [TOOL, frameTool] });
+    render(<WebmcpInspectorTab />);
+
+    await user.click(
+      screen.getByRole("button", { name: /Add one or more toppings/i }),
+    );
+    expect(screen.getByText("https://pizza.test")).toBeInTheDocument();
+
+    await user.click(screen.getByTitle("Switch tool"));
+    await user.click(screen.getByText("https://checkout.test"));
+
+    expect(screen.getByText("https://checkout.test")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Description" }));
+    expect(screen.getByText("Add a topping from checkout")).toBeInTheDocument();
   });
 });
