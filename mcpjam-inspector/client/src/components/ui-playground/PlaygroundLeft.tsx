@@ -8,12 +8,6 @@
  */
 
 import { useState, useEffect, useMemo } from "react";
-import {
-  Accordion,
-  AccordionItem,
-  AccordionTrigger,
-  AccordionContent,
-} from "@mcpjam/design-system/accordion";
 import type { Tool } from "@modelcontextprotocol/client";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -24,7 +18,6 @@ import type { SavedRequest } from "@/lib/types/request-types";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 import { LoggerView } from "../logger-view";
-import { SchemaViewer } from "@/components/ui/schema-viewer";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -35,6 +28,7 @@ import { TabHeader } from "./TabHeader";
 import { ToolList } from "./ToolList";
 import { SelectedToolHeader } from "./SelectedToolHeader";
 import { ParametersForm } from "./ParametersForm";
+import { ToolDetailsAccordion } from "@/components/ui/tool-details-accordion";
 import { useBuiltinToolRun } from "@/components/playground/use-builtin-tool-run";
 import { BuiltinToolDetailView } from "@/components/playground/BuiltinToolDetailView";
 
@@ -418,64 +412,28 @@ function ToolParametersView({
         toolName={headerToolName}
         onExpand={onExpand}
         toolSwitchList={{
-          names: toolNames,
+          items: toolNames.map((name) => ({ id: name, label: name })),
+          selectedId: selectedToolName,
           onSelect: (name) => onSelectTool(name),
         }}
       />
       <ScrollArea className="flex-1 min-h-0">
-        <Accordion
-          type="multiple"
-          value={openSections}
-          onValueChange={setOpenSections}
-          className="px-3"
-        >
-          {effectiveTool?.description && (
-            <AccordionItem value="description">
-              <AccordionTrigger className="text-xs">
-                Description
-              </AccordionTrigger>
-              <AccordionContent>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {effectiveTool.description}
-                </p>
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {effectiveTool?.inputSchema && (
-            <AccordionItem value="input-schema">
-              <AccordionTrigger className="text-xs">
-                Input Schema
-              </AccordionTrigger>
-              <AccordionContent>
-                <SchemaViewer schema={effectiveTool.inputSchema} />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {effectiveTool?.outputSchema && (
-            <AccordionItem value="output-schema">
-              <AccordionTrigger className="text-xs">
-                Output Schema
-              </AccordionTrigger>
-              <AccordionContent>
-                <SchemaViewer schema={effectiveTool.outputSchema} />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {hasParameters && (
-            <AccordionItem value="parameters">
-              <AccordionTrigger className="text-xs">
-                Parameters
-              </AccordionTrigger>
-              <AccordionContent>
-                <ParametersForm
-                  fields={formFields}
-                  onFieldChange={onFieldChange}
-                  onToggleField={onToggleField}
-                />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-        </Accordion>
+        <ToolDetailsAccordion
+          description={effectiveTool?.description}
+          inputSchema={effectiveTool?.inputSchema}
+          outputSchema={effectiveTool?.outputSchema}
+          openSections={openSections}
+          onOpenSectionsChange={setOpenSections}
+          parameters={
+            hasParameters ? (
+              <ParametersForm
+                fields={formFields}
+                onFieldChange={onFieldChange}
+                onToggleField={onToggleField}
+              />
+            ) : undefined
+          }
+        />
       </ScrollArea>
     </div>
   );
