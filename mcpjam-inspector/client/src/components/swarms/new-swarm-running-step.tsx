@@ -808,10 +808,11 @@ export function NewSwarmRunningStep({
    * Announce the finish, then hand the viewer to Findings (BB-161).
    *
    * Only the announcement is ref-guarded. The trip is scheduled on every
-   * terminal setup: StrictMode's cleanup cancels the first timer, and a replay
-   * that skipped rescheduling would strand a finished run on screen. The
-   * cleanup keeps an unmounted wizard from navigating out from under whatever
-   * replaced it.
+   * terminal setup, because a wave that settles, blips off terminal, and
+   * settles again replays this effect: the cleanup cancels the pending trip,
+   * and a setup that skipped rescheduling would strand the viewer on a
+   * finished run. That cleanup is also what keeps an unmounted wizard from
+   * navigating out from under whatever replaced it.
    */
   const completionAnnouncedRef = useRef(false);
   useEffect(() => {

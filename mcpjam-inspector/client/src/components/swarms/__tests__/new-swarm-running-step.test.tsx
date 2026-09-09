@@ -126,11 +126,18 @@ const failedSessionFixture = {
   },
 };
 
+/**
+ * What the run query hands back. Swappable so a test can flip a wave off and
+ * back onto terminal — `RunLiveBridge` keys its effect on run identity, so a
+ * mutation of `runFixture` alone would never reach the snapshot.
+ */
+const runQueryState = { run: runFixture as JourneyRun | null };
+
 vi.mock("convex/react", () => ({
   useQuery: (name: string) => {
     switch (name) {
       case "journeyRuns:getJourneyRun":
-        return runFixture;
+        return runQueryState.run;
       case "hosts:listHosts":
         return hostsFixture;
       default:
@@ -166,6 +173,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     sessionsFixture = [];
     runFixture.status = "running";
     runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 0 };
+    runQueryState.run = runFixture;
     runFixture.hostSummaries![0].targetId = "environment:env-1";
     runFixture.snapshot!.hosts[0].targetId = "environment:env-1";
     liveTraceState.trace = null;
@@ -598,6 +606,74 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(onLeave).toHaveBeenCalledTimes(1);
     // The announcement is one-shot even though the terminal effect can set up
     // more than once.
+    expect(onRunsComplete).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A wave that goes terminal, blips, and settles terminal again replays the
+   * completion effect: the cleanup cancels the pending trip, and the second
+   * setup has to schedule a new one. Guarding the timer behind the
+   * announcement ref left that setup with nothing scheduled, stranding the
+   * viewer on a finished run.
+   */
+  it("re-arms the trip when a settled wave blips back to running", async () => {
+    runFixture.status = "completed";
+    runFixture.summary = { total: 2, succeeded: 2, failed: 0, rateLimited: 0 };
+    const onLeave = vi.fn();
+    const onRunsComplete = vi.fn();
+
+    const tree = () => (
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Async Documentation Writer",
+              personaRole: "Writer",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          environments={[
+            {
+              environmentId: "env-1",
+              projectId: "proj-1",
+              name: "Prod-like",
+              hostId: "host-1",
+              revision: 1,
+            },
+          ]}
+          onLeave={onLeave}
+          onOpenSession={vi.fn()}
+          onRunsComplete={onRunsComplete}
+        />
+      </div>
+    );
+
+    const { rerender } = render(tree());
+
+    // Terminal: announced, and the trip is pending behind the dwell.
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Swarm complete!"),
+    );
+    expect(onLeave).not.toHaveBeenCalled();
+
+    // Off terminal mid-dwell. A new object, or the bridge effect never re-runs.
+    runQueryState.run = { ...runFixture, status: "running" } as JourneyRun;
+    rerender(tree());
+    // Back on, which is the setup that has to re-arm.
+    runQueryState.run = { ...runFixture, status: "completed" } as JourneyRun;
+    rerender(tree());
+
+    await waitFor(() => expect(onLeave).toHaveBeenCalledTimes(1), {
+      timeout: 4000,
+    });
+    // The replay re-arms the trip without re-announcing it.
     expect(onRunsComplete).toHaveBeenCalledTimes(1);
     expect(toast.success).toHaveBeenCalledTimes(1);
   });
