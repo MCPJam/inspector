@@ -21,8 +21,13 @@ const { mockState } = vi.hoisted(() => ({
   mockState: {
     attachments: [] as any[],
     attachmentsLoading: false,
+    // Separate from `*Loading`, because the hooks report them separately: a
+    // SKIPPED query is `isLoading: false` with an empty list. Driving both
+    // from one switch would leave the bootstrap half of BB-182 unfalsifiable.
+    attachmentsBootstrapping: false,
     servers: undefined as any[] | undefined,
     catalogLoading: false,
+    catalogBootstrapping: false,
     runtime: null as Record<string, { connectionStatus: string }> | null,
     // Separate from `runtime`: the two providers are independent, and a
     // surface can sit inside SharedAppState but outside ServerActions. Driving
@@ -45,10 +50,12 @@ vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
     serverAttachments: mockState.attachments,
     isLoading: mockState.attachmentsLoading,
+    isBootstrapping: mockState.attachmentsBootstrapping,
   }),
   useProjectServers: () => ({
     servers: mockState.servers,
     isLoading: mockState.catalogLoading,
+    isBootstrapping: mockState.catalogBootstrapping,
   }),
 }));
 
@@ -84,8 +91,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockState.attachments = [];
   mockState.attachmentsLoading = false;
+  mockState.attachmentsBootstrapping = false;
   mockState.servers = CATALOG;
   mockState.catalogLoading = false;
+  mockState.catalogBootstrapping = false;
   mockState.runtime = { alpha: { connectionStatus: "connected" } };
   mockState.hasActions = true;
   mockState.createSpy = vi.fn().mockResolvedValue({ _id: "att_new" });
@@ -814,7 +823,7 @@ describe("ServerPicker — a write already in flight", () => {
     expect(mockState.createSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores REUSING a row while a mint is still in flight", async () => {
+  it("freezes the rows, so REUSING one cannot race a mint in flight", async () => {
     // The reuse path writes nothing, so it looks harmless — but it reports a
     // selection the pending mint's own `onChange` then overwrites.
     mockState.attachments = [
@@ -917,7 +926,7 @@ describe("ServerPicker — a write already in flight", () => {
     expect(onChange).toHaveBeenCalledWith("att_p", expect.anything());
   });
 
-  it("ignores picking a GROUP while a mint is still in flight", async () => {
+  it("freezes the rows, so a GROUP pick cannot race a mint in flight", async () => {
     mockState.attachments = [
       {
         _id: "att_pair",
@@ -938,7 +947,7 @@ describe("ServerPicker — a write already in flight", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("ignores a row while a GROUP create is still in flight", async () => {
+  it("freezes the tabs, so a row cannot race a GROUP create in flight", async () => {
     // The latch has to span both write paths, or the form's pending write and
     // a click on the Servers tab race to report a different selection.
     mockState.attachments = [
@@ -970,7 +979,7 @@ describe("ServerPicker — a write already in flight", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("ignores a second server while the first is still being written", async () => {
+  it("freezes the rows, so a second server cannot race the first write", async () => {
     mockState.runtime = {
       alpha: { connectionStatus: "connected" },
       beta: { connectionStatus: "connected" },
@@ -1199,6 +1208,72 @@ describe("ServerPicker — a catalog query that never runs", () => {
     open();
 
     expect(await screen.findByText("Loading servers…")).toBeInTheDocument();
+  });
+});
+
+describe("ServerPicker — before either query has RUN", () => {
+  /**
+   * The other half of BB-182, and the half `isLoading` cannot express.
+   *
+   * Both hooks skip until the DB user is ready, and a skipped Convex query
+   * reports `isLoading: false` with an empty list — indistinguishable from
+   * "answered, and empty" unless `isBootstrapping` is read. That is the state
+   * the user is in for the first renders of a signed-in session, and reading
+   * it as an answer is what told them the project had no servers.
+   *
+   * Every case here holds `*Loading` FALSE on purpose: flip it true and the
+   * `isLoading` half of each guard covers the assertion, and these stop
+   * saying anything about the bootstrap.
+   */
+  it("says the catalog is loading, not that the project is empty", async () => {
+    mockState.servers = undefined;
+    mockState.catalogLoading = false;
+    mockState.catalogBootstrapping = true;
+    open();
+
+    expect(await screen.findByText("Loading servers…")).toBeInTheDocument();
+    expect(screen.queryByText("No servers in this project yet.")).toBeNull();
+  });
+
+  it("says it is loading rather than claiming nothing is selected", () => {
+    mockState.attachments = [];
+    mockState.attachmentsLoading = false;
+    mockState.attachmentsBootstrapping = true;
+    render(
+      <ServerPicker projectId="p_1" value="att_solo" onChange={vi.fn()} />,
+    );
+
+    // Without the bootstrap half the row resolves as dangling and the trigger
+    // asserts "nothing picked" over a live selection.
+    expect(screen.getByTestId("server-picker-trigger")).toHaveTextContent(
+      /loading/i,
+    );
+  });
+
+  it("withholds the clear control over a selection it has not seen", () => {
+    mockState.attachmentsBootstrapping = true;
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value="att_solo"
+        onChange={vi.fn()}
+        onClearSelection={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("server-picker-clear")).toBeNull();
+  });
+
+  it("writes nothing, because the row it would reuse may already exist", async () => {
+    mockState.attachmentsBootstrapping = true;
+    const onChange = open();
+
+    // Disabled rather than silently refusing: `busy` covers the bootstrap the
+    // same way it covers a query in flight.
+    expect(await serverRow("srv_1")).toBeDisabled();
+    fireEvent.click(await serverRow("srv_1"));
+    expect(mockState.createSpy).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 
