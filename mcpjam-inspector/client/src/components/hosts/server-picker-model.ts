@@ -134,9 +134,7 @@ export function resolvePickerSelection(
  * Servers is the default, and also where a dangling selection goes — it is the
  * tab the user can fix it from.
  */
-export function initialPickerTab(
-  selection: PickerSelection | null,
-): PickerTab {
+export function initialPickerTab(selection: PickerSelection | null): PickerTab {
   return selection?.kind === "group" ? "groups" : "servers";
 }
 
@@ -159,6 +157,8 @@ export function resolveServerConnection(
 
   const status = runtime[serverName]?.connectionStatus ?? "disconnected";
   const inFlight =
-    status === "connected" || status === "connecting" || status === "oauth-flow";
+    status === "connected" ||
+    status === "connecting" ||
+    status === "oauth-flow";
   return { status, canConnect: !inFlight };
 }

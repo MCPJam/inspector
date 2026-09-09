@@ -28,7 +28,10 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
-import { useProjectServerAttachments, useProjectServers } from "@/hooks/useViews";
+import {
+  useProjectServerAttachments,
+  useProjectServers,
+} from "@/hooks/useViews";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
@@ -124,7 +127,11 @@ export function ServerPicker({
     serverAttachments,
     isLoading: attachmentsLoading,
     isBootstrapping: attachmentsBootstrapping,
-  } = useProjectServerAttachments({ isAuthenticated, authLoading, projectId: project });
+  } = useProjectServerAttachments({
+    isAuthenticated,
+    authLoading,
+    projectId: project,
+  });
   const {
     servers: catalogRows,
     isLoading: catalogLoading,
@@ -235,7 +242,6 @@ export function ServerPicker({
    */
   const writing = useRef(false);
 
-
   /**
    * One list for every reader: the query, corrected by what we know it has not
    * seen. Without the `added` half the trigger falls back to the empty label
@@ -302,7 +308,10 @@ export function ServerPicker({
         if (!isCurrent()) return;
         if (result.readyServerNames.includes(serverName)) return;
         if (result.reauthServerNames.includes(serverName)) {
-          toast.error(`${serverName} needs authorizing before it can connect.`, goToServers);
+          toast.error(
+            `${serverName} needs authorizing before it can connect.`,
+            goToServers,
+          );
           return;
         }
         toast.error(`${serverName} didn't connect.`, goToServers);
@@ -310,7 +319,9 @@ export function ServerPicker({
         if (!isCurrent()) return;
         const raw = err instanceof Error ? err.message : "";
         toast.error(
-          raw ? `${serverName} didn't connect: ${raw}` : `${serverName} didn't connect.`,
+          raw
+            ? `${serverName} didn't connect: ${raw}`
+            : `${serverName} didn't connect.`,
           goToServers,
         );
       } finally {
@@ -538,7 +549,9 @@ export function ServerPicker({
         // caller's commit error it told the user to rename a group that had
         // just been written, and a rename writes a second one.
         toast.error(
-          !wrote && /already exists/i.test(raw) ? mint.collision : raw || mint.failure,
+          !wrote && /already exists/i.test(raw)
+            ? mint.collision
+            : raw || mint.failure,
         );
         throw { wrote } as MintFailure;
       }
@@ -739,9 +752,7 @@ export function ServerPicker({
           const removed = mine ? prev.removed : [];
           return {
             projectId: project,
-            added: mine
-              ? prev.added.filter((row) => row._id !== groupId)
-              : [],
+            added: mine ? prev.added.filter((row) => row._id !== groupId) : [],
             removed: removed.includes(groupId)
               ? removed
               : [...removed, groupId],
@@ -842,10 +853,7 @@ export function ServerPicker({
         while the list is unknown (every row looks dangling then) and while a
         write is in flight (its `onChange` would undo the clear).
       */}
-      {onClearSelection &&
-      selection &&
-      attachmentsKnown &&
-      !busy ? (
+      {onClearSelection && selection && attachmentsKnown && !busy ? (
         <button
           type="button"
           data-testid="server-picker-clear"

@@ -7,7 +7,13 @@
  * named after the server when it does not. Getting that wrong either writes a
  * duplicate row per click or silently attaches servers the user never picked.
  */
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -53,9 +59,7 @@ vi.mock("@/state/app-state-context", () => ({
 
 vi.mock("@/state/server-actions-context", () => ({
   useServerActionsOptional: () =>
-    mockState.hasActions
-      ? { ensureServersReady: mockState.ensureReady }
-      : null,
+    mockState.hasActions ? { ensureServersReady: mockState.ensureReady } : null,
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -66,7 +70,6 @@ vi.mock("@/lib/app-navigation", () => ({
   navigateApp: (...args: unknown[]) => mockState.navigate(...args),
   routePaths: { servers: "/servers" },
 }));
-
 
 import { toast } from "@/lib/toast";
 import { ServerPicker } from "../server-picker";
@@ -117,7 +120,12 @@ async function serverRow(serverId: string): Promise<HTMLElement> {
 describe("ServerPicker — picking a bare server", () => {
   it("REUSES the row that already holds exactly that server", async () => {
     mockState.attachments = [
-      { _id: "att_solo", name: "alpha", serverIds: ["srv_1"], resolvedServerNames: ["alpha"] },
+      {
+        _id: "att_solo",
+        name: "alpha",
+        serverIds: ["srv_1"],
+        resolvedServerNames: ["alpha"],
+      },
     ];
     const onChange = open();
 
@@ -146,7 +154,12 @@ describe("ServerPicker — picking a bare server", () => {
     // Picking a SERVER must select that server, not a group that happens to
     // hold only it — otherwise the trigger names the group.
     mockState.attachments = [
-      { _id: "att_named", name: "group A", serverIds: ["srv_1"], resolvedServerNames: ["alpha"] },
+      {
+        _id: "att_named",
+        name: "group A",
+        serverIds: ["srv_1"],
+        resolvedServerNames: ["alpha"],
+      },
     ];
     const onChange = open();
     fireEvent.click(await screen.findByText("alpha"));
@@ -161,7 +174,12 @@ describe("ServerPicker — picking a bare server", () => {
 
   it("never reuses a multi-server row that merely contains the server", async () => {
     mockState.attachments = [
-      { _id: "att_pair", name: "alpha + 1", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["alpha", "beta"] },
+      {
+        _id: "att_pair",
+        name: "alpha + 1",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
     ];
     open();
     fireEvent.click(await screen.findByText("alpha"));
@@ -176,8 +194,18 @@ describe("ServerPicker — picking a bare server", () => {
     // next click minted `alpha 3`, then `alpha 4`, unbounded — and nothing in
     // the app can delete them.
     mockState.attachments = [
-      { _id: "att_other", name: "alpha", serverIds: ["srv_2"], resolvedServerNames: ["beta"] },
-      { _id: "att_sfx", name: "alpha 2", serverIds: ["srv_1"], resolvedServerNames: ["alpha"] },
+      {
+        _id: "att_other",
+        name: "alpha",
+        serverIds: ["srv_2"],
+        resolvedServerNames: ["beta"],
+      },
+      {
+        _id: "att_sfx",
+        name: "alpha 2",
+        serverIds: ["srv_1"],
+        resolvedServerNames: ["alpha"],
+      },
     ];
     const onChange = open();
 
@@ -190,7 +218,12 @@ describe("ServerPicker — picking a bare server", () => {
 
   it("suffixes the minted name when the server's name is taken", async () => {
     mockState.attachments = [
-      { _id: "att_other", name: "alpha", serverIds: ["srv_2"], resolvedServerNames: ["beta"] },
+      {
+        _id: "att_other",
+        name: "alpha",
+        serverIds: ["srv_2"],
+        resolvedServerNames: ["beta"],
+      },
     ];
     open();
     fireEvent.click(await screen.findByText("alpha"));
@@ -203,8 +236,18 @@ describe("ServerPicker — picking a bare server", () => {
 describe("ServerPicker — the Groups tab", () => {
   it("hides the rows that stand in for a single server", async () => {
     mockState.attachments = [
-      { _id: "att_solo", name: "alpha", serverIds: ["srv_1"], resolvedServerNames: ["alpha"] },
-      { _id: "att_pair", name: "alpha + 1", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["alpha", "beta"] },
+      {
+        _id: "att_solo",
+        name: "alpha",
+        serverIds: ["srv_1"],
+        resolvedServerNames: ["alpha"],
+      },
+      {
+        _id: "att_pair",
+        name: "alpha + 1",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
     ];
     open();
     await userEvent.click(
@@ -219,7 +262,12 @@ describe("ServerPicker — the Groups tab", () => {
 
   it("emits a group id straight through, with no write", async () => {
     mockState.attachments = [
-      { _id: "att_pair", name: "alpha + 1", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["alpha", "beta"] },
+      {
+        _id: "att_pair",
+        name: "alpha + 1",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
     ];
     const onChange = open();
     await userEvent.click(
@@ -238,7 +286,9 @@ describe("ServerPicker — connection state", () => {
     mockState.runtime = { alpha: { connectionStatus: "disconnected" } };
     open();
 
-    const connects = await screen.findAllByRole("button", { name: /^Connect / });
+    const connects = await screen.findAllByRole("button", {
+      name: /^Connect /,
+    });
     fireEvent.click(connects[0]);
     expect(mockState.ensureReady).toHaveBeenCalledWith(["alpha"]);
   });
@@ -317,12 +367,19 @@ describe("ServerPicker — connection state", () => {
 describe("ServerPicker — trigger", () => {
   it("names the selected server, not the row that carries it", () => {
     mockState.attachments = [
-      { _id: "att_solo", name: "alpha", serverIds: ["srv_1"], resolvedServerNames: ["alpha"] },
+      {
+        _id: "att_solo",
+        name: "alpha",
+        serverIds: ["srv_1"],
+        resolvedServerNames: ["alpha"],
+      },
     ];
     render(
       <ServerPicker projectId="p_1" value="att_solo" onChange={vi.fn()} />,
     );
-    expect(screen.getByTestId("server-picker-trigger")).toHaveTextContent("alpha");
+    expect(screen.getByTestId("server-picker-trigger")).toHaveTextContent(
+      "alpha",
+    );
   });
 
   it("falls back to the empty label with nothing selected", () => {
@@ -374,7 +431,12 @@ describe("ServerPicker — creating a multi-server group", () => {
     // `isServerStandIn` reads as "not a group", so suggesting that hid the
     // group the user was making. The collision rule this covers is unchanged.
     mockState.attachments = [
-      { _id: "att_a", name: "alpha + 1", serverIds: ["srv_2"], resolvedServerNames: ["beta"] },
+      {
+        _id: "att_a",
+        name: "alpha + 1",
+        serverIds: ["srv_2"],
+        resolvedServerNames: ["beta"],
+      },
     ];
     render(<ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />);
     await openForm();
@@ -416,9 +478,11 @@ describe("ServerPicker — Connect while a handshake is in flight", () => {
     mockState.ensureReady = vi.fn(() => new Promise(() => {}));
     open();
 
-    const connect = (await screen.findAllByRole("button", {
-      name: /^Connect /,
-    }))[0];
+    const connect = (
+      await screen.findAllByRole("button", {
+        name: /^Connect /,
+      })
+    )[0];
     fireEvent.click(connect);
     await waitFor(() => expect(mockState.ensureReady).toHaveBeenCalledTimes(1));
 
@@ -503,7 +567,9 @@ describe("ServerPicker — Connect reports what to fix", () => {
     disconnected();
     outcome({ readyServerNames: ["alpha"] });
     open();
-    fireEvent.click((await screen.findAllByRole("button", { name: /^Connect / }))[0]);
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: /^Connect / }))[0],
+    );
     await waitFor(() => expect(mockState.ensureReady).toHaveBeenCalled());
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -512,7 +578,9 @@ describe("ServerPicker — Connect reports what to fix", () => {
     disconnected();
     outcome({ failedServerNames: ["alpha"] });
     open();
-    fireEvent.click((await screen.findAllByRole("button", { name: /^Connect / }))[0]);
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: /^Connect / }))[0],
+    );
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     const [message, options] = (toast.error as any).mock.calls[0];
@@ -528,7 +596,9 @@ describe("ServerPicker — Connect reports what to fix", () => {
     disconnected();
     outcome({ reauthServerNames: ["alpha"] });
     open();
-    fireEvent.click((await screen.findAllByRole("button", { name: /^Connect / }))[0]);
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: /^Connect / }))[0],
+    );
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect((toast.error as any).mock.calls[0][0]).toMatch(/authoriz/i);
@@ -560,9 +630,7 @@ describe("ServerPicker — switching projects", () => {
     // stale completion's project match again, so it would record a row and
     // report a selection the user made two screens ago.
     let release: (v: unknown) => void = () => {};
-    mockState.createSpy = vi.fn(
-      () => new Promise((r) => (release = r)),
-    );
+    mockState.createSpy = vi.fn(() => new Promise((r) => (release = r)));
     const onChange = vi.fn();
     const { rerender } = render(
       <ServerPicker projectId="p_1" value={null} onChange={onChange} />,
@@ -674,9 +742,7 @@ describe("ServerPicker — the window before the query refetches", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const onChange = vi.fn();
-      render(
-        <ServerPicker projectId="p_1" value={null} onChange={onChange} />,
-      );
+      render(<ServerPicker projectId="p_1" value={null} onChange={onChange} />);
       fireEvent.click(screen.getByTestId("server-picker-trigger"));
       fireEvent.click(await screen.findByText("alpha"));
       await waitFor(() => expect(onChange).toHaveBeenCalled());
@@ -738,9 +804,7 @@ describe("ServerPicker — a write already in flight", () => {
     // closes is two events reaching a handler before React commits, which
     // this environment cannot produce for exactly the reason above. The ref
     // is a backstop for the paths that do not go through a disabled control.
-    mockState.createSpy = vi.fn(
-      () => new Promise(() => {}),
-    );
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
     open();
     const row = await serverRow("srv_1");
 
@@ -765,9 +829,7 @@ describe("ServerPicker — a write already in flight", () => {
       alpha: { connectionStatus: "connected" },
       beta: { connectionStatus: "connected" },
     };
-    mockState.createSpy = vi.fn(
-      () => new Promise(() => {}),
-    );
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
     const onChange = open();
 
     fireEvent.click(await serverRow("srv_1"));
@@ -815,9 +877,7 @@ describe("ServerPicker — a write already in flight", () => {
 
     // The wait is on screen: no write is happening, but the commit this picker
     // is waiting on is, and the rows say so rather than looking live.
-    await waitFor(async () =>
-      expect(await serverRow("srv_2")).toBeDisabled(),
-    );
+    await waitFor(async () => expect(await serverRow("srv_2")).toBeDisabled());
     fireEvent.click(await serverRow("srv_2"));
 
     expect(onChange).toHaveBeenCalledTimes(1);
@@ -866,9 +926,7 @@ describe("ServerPicker — a write already in flight", () => {
         resolvedServerNames: ["alpha", "beta"],
       },
     ];
-    mockState.createSpy = vi.fn(
-      () => new Promise(() => {}),
-    );
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
     const onChange = open();
 
     fireEvent.click(await serverRow("srv_1"));
@@ -900,7 +958,9 @@ describe("ServerPicker — a write already in flight", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /new group/i }),
     );
-    await userEvent.click(await screen.findByRole("checkbox", { name: "beta" }));
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "beta" }),
+    );
     fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
 
     // The tab itself is frozen now, so the race cannot even be reached: the
@@ -915,9 +975,7 @@ describe("ServerPicker — a write already in flight", () => {
       alpha: { connectionStatus: "connected" },
       beta: { connectionStatus: "connected" },
     };
-    mockState.createSpy = vi.fn(
-      () => new Promise(() => {}),
-    );
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
     open();
 
     fireEvent.click(await serverRow("srv_1"));
@@ -988,7 +1046,12 @@ describe("ServerPicker — refusals the user can see", () => {
 
   it("withholds Delete from a disabled picker, not only the rows", async () => {
     mockState.attachments = [
-      { _id: "att_p", name: "prod pair", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["alpha", "beta"] },
+      {
+        _id: "att_p",
+        name: "prod pair",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
     ];
     // Opened FIRST, then disabled: a disabled trigger cannot be clicked, so
     // rendering straight into that state leaves the panel unmounted and the
@@ -1271,9 +1334,7 @@ describe("ServerPicker — the consequences of a delete", () => {
         resolvedServerNames: ["alpha", "beta"],
       },
     ];
-    render(
-      <ServerPicker projectId="p_1" value="att_p" onChange={vi.fn()} />,
-    );
+    render(<ServerPicker projectId="p_1" value="att_p" onChange={vi.fn()} />);
     fireEvent.click(screen.getByTestId("server-picker-trigger"));
     await userEvent.click(
       await screen.findByRole("tab", { name: "Server Groups" }),
@@ -1285,7 +1346,9 @@ describe("ServerPicker — the consequences of a delete", () => {
     expect(
       await screen.findByRole("button", { name: "Delete other pair" }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Delete prod pair" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Delete prod pair" }),
+    ).toBeNull();
     expect(mockState.deleteSpy).not.toHaveBeenCalled();
   });
 
@@ -1342,11 +1405,14 @@ describe("ServerPicker — the consequences of a delete", () => {
   it("still deletes a row that is NOT the selection", async () => {
     mockState.attachments = [
       PAIR2,
-      { _id: "att_o", name: "other pair", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["alpha", "beta"] },
+      {
+        _id: "att_o",
+        name: "other pair",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
     ];
-    render(
-      <ServerPicker projectId="p_1" value="att_p" onChange={vi.fn()} />,
-    );
+    render(<ServerPicker projectId="p_1" value="att_p" onChange={vi.fn()} />);
     fireEvent.click(screen.getByTestId("server-picker-trigger"));
     await userEvent.click(
       await screen.findByRole("tab", { name: "Server Groups" }),
@@ -1378,8 +1444,12 @@ describe("ServerPicker — the consequences of a delete", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /new group/i }),
     );
-    await userEvent.click(await screen.findByRole("checkbox", { name: "alpha" }));
-    await userEvent.click(await screen.findByRole("checkbox", { name: "beta" }));
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "alpha" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "beta" }),
+    );
     fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
     await waitFor(() => expect(onChange).toHaveBeenCalled());
 
@@ -1400,9 +1470,9 @@ describe("ServerPicker — the consequences of a delete", () => {
 
     await waitFor(() => expect(mockState.deleteSpy).toHaveBeenCalled());
     await waitFor(() =>
-      expect(screen.queryAllByRole("button", { name: /^Delete / })).toHaveLength(
-        0,
-      ),
+      expect(
+        screen.queryAllByRole("button", { name: /^Delete / }),
+      ).toHaveLength(0),
     );
   });
 });
@@ -1440,7 +1510,12 @@ describe("ServerPicker — clearing a selection the list no longer holds", () =>
 
   it("withholds it while its own write is in flight", async () => {
     mockState.attachments = [
-      { _id: "att_solo", name: "alpha", serverIds: ["srv_1"], resolvedServerNames: ["alpha"] },
+      {
+        _id: "att_solo",
+        name: "alpha",
+        serverIds: ["srv_1"],
+        resolvedServerNames: ["alpha"],
+      },
     ];
     mockState.createSpy = vi.fn(() => new Promise(() => {}));
     render(
@@ -1475,15 +1550,17 @@ describe("ServerPicker — a group of exactly one server", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /new group/i }),
     );
-    await userEvent.click(await screen.findByRole("checkbox", { name: "alpha" }));
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "alpha" }),
+    );
     fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
 
     await waitFor(() => expect(mockState.createSpy).toHaveBeenCalled());
     const written = mockState.createSpy.mock.calls[0][0];
     expect(written.serverIds).toEqual(["srv_1"]);
-    expect(isServerStandIn({ ...written, resolvedServerNames: ["alpha"] })).toBe(
-      false,
-    );
+    expect(
+      isServerStandIn({ ...written, resolvedServerNames: ["alpha"] }),
+    ).toBe(false);
   });
 });
 
@@ -1491,7 +1568,12 @@ describe("ServerPicker — a server named like the fallback", () => {
   it("suggests a name that is not that server's stand-in", async () => {
     mockState.servers = [{ _id: "srv_g", name: "prod" }];
     mockState.attachments = [
-      { _id: "att_1", name: "Group 1", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["a", "b"] },
+      {
+        _id: "att_1",
+        name: "Group 1",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["a", "b"],
+      },
     ];
     open();
     await userEvent.click(
@@ -1500,14 +1582,16 @@ describe("ServerPicker — a server named like the fallback", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /new group/i }),
     );
-    await userEvent.click(await screen.findByRole("checkbox", { name: "prod" }));
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "prod" }),
+    );
     fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
 
     await waitFor(() => expect(mockState.createSpy).toHaveBeenCalled());
     const written = mockState.createSpy.mock.calls[0][0];
-    expect(
-      isServerStandIn({ ...written, resolvedServerNames: ["prod"] }),
-    ).toBe(false);
+    expect(isServerStandIn({ ...written, resolvedServerNames: ["prod"] })).toBe(
+      false,
+    );
   });
 
   it("cannot clear the rule for a server named after the numbering stem", async () => {
@@ -1517,7 +1601,12 @@ describe("ServerPicker — a server named like the fallback", () => {
     // No choice of number escapes that; only the storage column would.
     mockState.servers = [{ _id: "srv_g", name: "group" }];
     mockState.attachments = [
-      { _id: "att_1", name: "Group 1", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["a", "b"] },
+      {
+        _id: "att_1",
+        name: "Group 1",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["a", "b"],
+      },
     ];
     open();
     await userEvent.click(
@@ -1526,7 +1615,9 @@ describe("ServerPicker — a server named like the fallback", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /new group/i }),
     );
-    await userEvent.click(await screen.findByRole("checkbox", { name: "group" }));
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "group" }),
+    );
 
     const suggested = (screen.getByLabelText("Group name") as HTMLInputElement)
       .value;
@@ -1543,7 +1634,9 @@ describe("ServerPicker — a server named like the fallback", () => {
 
 describe("ServerPicker — one failure, one message", () => {
   it("raises a single toast when the write itself fails", async () => {
-    mockState.createSpy = vi.fn().mockRejectedValue(new Error("already exists"));
+    mockState.createSpy = vi
+      .fn()
+      .mockRejectedValue(new Error("already exists"));
     open();
     fireEvent.click(await screen.findByText("alpha"));
 
@@ -1557,7 +1650,9 @@ describe("ServerPicker — one failure, one message", () => {
   });
 
   it("raises a single toast when a GROUP write fails", async () => {
-    mockState.createSpy = vi.fn().mockRejectedValue(new Error("already exists"));
+    mockState.createSpy = vi
+      .fn()
+      .mockRejectedValue(new Error("already exists"));
     open();
     await userEvent.click(
       await screen.findByRole("tab", { name: "Server Groups" }),
@@ -1565,8 +1660,12 @@ describe("ServerPicker — one failure, one message", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /new group/i }),
     );
-    await userEvent.click(await screen.findByRole("checkbox", { name: "alpha" }));
-    await userEvent.click(await screen.findByRole("checkbox", { name: "beta" }));
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "alpha" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "beta" }),
+    );
     fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
@@ -1592,8 +1691,12 @@ describe("ServerPicker — one failure, one message", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /new group/i }),
     );
-    await userEvent.click(await screen.findByRole("checkbox", { name: "alpha" }));
-    await userEvent.click(await screen.findByRole("checkbox", { name: "beta" }));
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "alpha" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "beta" }),
+    );
     fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
@@ -1668,7 +1771,9 @@ describe("ServerPicker — a parent whose onChange is async", () => {
 
 describe("ServerPicker — a create that fails", () => {
   it("rethrows so the panel can keep the draft", async () => {
-    mockState.createSpy = vi.fn().mockRejectedValue(new Error("already exists"));
+    mockState.createSpy = vi
+      .fn()
+      .mockRejectedValue(new Error("already exists"));
     render(<ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />);
     fireEvent.click(screen.getByTestId("server-picker-trigger"));
     await userEvent.click(
@@ -1687,7 +1792,9 @@ describe("ServerPicker — a create that fails", () => {
     let release!: () => void;
     mockState.createSpy = vi
       .fn()
-      .mockImplementation(() => new Promise((r) => (release = () => r({ _id: "x" }))));
+      .mockImplementation(
+        () => new Promise((r) => (release = () => r({ _id: "x" }))),
+      );
     render(<ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />);
     fireEvent.click(screen.getByTestId("server-picker-trigger"));
     fireEvent.click(await screen.findByText("alpha"));

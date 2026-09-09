@@ -407,77 +407,76 @@ export function ServerPickerPanel({
             </div>
           </div>
         ) : null}
-        {showForm ? null : groups.map((group) => {
-          const selected = group.id === selectedGroupId;
-          // As many as FIT, which is what the design does: `Group 1` shows two
-          // `excalidraw` chips and `+4`, while a group of three short names
-          // shows all three. A fixed count rendered three wide names and wrapped
-          // the row. Characters stand in for width — no measuring, no
-          // ResizeObserver, and the row is one line either way.
-          // ponytail: character budget, measure for real if a name's glyph
-          // width ever diverges enough to wrap.
-          const shown: string[] = [];
-          let used = 0;
-          for (const [i, name] of group.serverNames.entries()) {
-            // `+N` takes room too, so each candidate has to leave space for
-            // the summary that would follow it.
-            const hidden = group.serverNames.length - i - 1;
-            const next = used + chipWidth(name);
-            if (
-              shown.length > 0 &&
-              next + (hidden > 0 ? chipWidth(`+${hidden}`) : 0) > chipRoomPx
-            ) {
-              break;
-            }
-            shown.push(name);
-            used = next;
-          }
-          const hidden = group.serverNames.length - shown.length;
-          return (
-            <div
-              key={group.id}
-              className="group flex items-center gap-1 rounded pr-1 hover:bg-accent"
-            >
-              <button
-                type="button"
-                onClick={() => onSelectGroup(group.id)}
-                disabled={busy}
-                aria-current={selected ? "true" : undefined}
-                className={cn(
-                  ROW,
-                  "min-w-0 flex-1 flex-col !items-start gap-1 disabled:opacity-50",
-                )}
-              >
-                <span className="truncate text-sm">{group.name}</span>
-                <span className="flex flex-wrap items-center gap-1">
-                  {shown.map((name, i) => (
-                    <Badge
-                      key={`${group.id}-${i}`}
-                      className={CHIP}
-                    >
-                      {name}
-                    </Badge>
-                  ))}
-                  {hidden > 0 ? (
-                    <Badge className={CHIP}>{`+${hidden}`}</Badge>
-                  ) : null}
-                </span>
-              </button>
-              {selected ? <SelectionDot /> : null}
-              {onDeleteGroup && (canDeleteSelected || !selected) ? (
-                <button
-                  type="button"
-                  aria-label={`Delete ${group.name}`}
-                  disabled={busy}
-                  onClick={() => onDeleteGroup(group.id)}
-                  className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-destructive disabled:opacity-30"
+        {showForm
+          ? null
+          : groups.map((group) => {
+              const selected = group.id === selectedGroupId;
+              // As many as FIT, which is what the design does: `Group 1` shows two
+              // `excalidraw` chips and `+4`, while a group of three short names
+              // shows all three. A fixed count rendered three wide names and wrapped
+              // the row. Characters stand in for width — no measuring, no
+              // ResizeObserver, and the row is one line either way.
+              // ponytail: character budget, measure for real if a name's glyph
+              // width ever diverges enough to wrap.
+              const shown: string[] = [];
+              let used = 0;
+              for (const [i, name] of group.serverNames.entries()) {
+                // `+N` takes room too, so each candidate has to leave space for
+                // the summary that would follow it.
+                const hidden = group.serverNames.length - i - 1;
+                const next = used + chipWidth(name);
+                if (
+                  shown.length > 0 &&
+                  next + (hidden > 0 ? chipWidth(`+${hidden}`) : 0) > chipRoomPx
+                ) {
+                  break;
+                }
+                shown.push(name);
+                used = next;
+              }
+              const hidden = group.serverNames.length - shown.length;
+              return (
+                <div
+                  key={group.id}
+                  className="group flex items-center gap-1 rounded pr-1 hover:bg-accent"
                 >
-                  <Trash2 className="size-3" />
-                </button>
-              ) : null}
-            </div>
-          );
-        })}
+                  <button
+                    type="button"
+                    onClick={() => onSelectGroup(group.id)}
+                    disabled={busy}
+                    aria-current={selected ? "true" : undefined}
+                    className={cn(
+                      ROW,
+                      "min-w-0 flex-1 flex-col !items-start gap-1 disabled:opacity-50",
+                    )}
+                  >
+                    <span className="truncate text-sm">{group.name}</span>
+                    <span className="flex flex-wrap items-center gap-1">
+                      {shown.map((name, i) => (
+                        <Badge key={`${group.id}-${i}`} className={CHIP}>
+                          {name}
+                        </Badge>
+                      ))}
+                      {hidden > 0 ? (
+                        <Badge className={CHIP}>{`+${hidden}`}</Badge>
+                      ) : null}
+                    </span>
+                  </button>
+                  {selected ? <SelectionDot /> : null}
+                  {onDeleteGroup && (canDeleteSelected || !selected) ? (
+                    <button
+                      type="button"
+                      aria-label={`Delete ${group.name}`}
+                      disabled={busy}
+                      onClick={() => onDeleteGroup(group.id)}
+                      className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-destructive disabled:opacity-30"
+                    >
+                      <Trash2 className="size-3" />
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
         {!showForm ? (
           <button
             type="button"

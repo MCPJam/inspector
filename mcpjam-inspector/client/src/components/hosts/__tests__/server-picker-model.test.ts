@@ -29,7 +29,12 @@ const group = (
 ) => ({ _id, name, serverIds, resolvedServerNames });
 
 const SOLO_ALPHA = group("g_alpha", "alpha", ["srv_1"], ["alpha"]);
-const PAIR = group("g_pair", "alpha + 1", ["srv_1", "srv_2"], ["alpha", "beta"]);
+const PAIR = group(
+  "g_pair",
+  "alpha + 1",
+  ["srv_1", "srv_2"],
+  ["alpha", "beta"],
+);
 const TRIO = group(
   "g_trio",
   "Group 3",
@@ -41,9 +46,9 @@ describe("listGroupsForTab", () => {
   it("hides a one-server row named after its server", () => {
     // That is the shape `findSoloGroup` mints for a bare server pick, so
     // listing it here would offer the same choice twice under two names.
-    expect(listGroupsForTab([SOLO_ALPHA, PAIR, TRIO]).map((g) => g._id)).toEqual(
-      ["g_pair", "g_trio"],
-    );
+    expect(
+      listGroupsForTab([SOLO_ALPHA, PAIR, TRIO]).map((g) => g._id),
+    ).toEqual(["g_pair", "g_trio"]);
   });
 
   it("KEEPS a one-server group the user named themselves", () => {
@@ -149,9 +154,9 @@ describe("a stand-in whose name had to be suffixed", () => {
     expect(isServerStandIn(group("g_2", "alpha 2", ["srv_1"], ["alpha"]))).toBe(
       true,
     );
-    expect(isServerStandIn(group("g_10", "alpha 10", ["srv_1"], ["alpha"]))).toBe(
-      true,
-    );
+    expect(
+      isServerStandIn(group("g_10", "alpha 10", ["srv_1"], ["alpha"])),
+    ).toBe(true);
   });
 
   it("anchors at the START, not just the end", () => {
@@ -163,16 +168,27 @@ describe("a stand-in whose name had to be suffixed", () => {
   });
 
   it("refuses a leading zero, which the generator never writes", () => {
-    expect(isServerStandIn(group("g_z", "alpha 02", ["srv_1"], ["alpha"]))).toBe(
-      false,
-    );
+    expect(
+      isServerStandIn(group("g_z", "alpha 02", ["srv_1"], ["alpha"])),
+    ).toBe(false);
   });
 
   it("still recognises a server name that carries regex punctuation", () => {
     // Every metacharacter, as the name a person actually gave a server. These
     // pin the characters whose UNESCAPED form either stops matching (`a$b`
     // becomes an impossible pattern) or throws (`a(b)` never closes).
-    for (const raw of ["a+b", "a*b", "a?b", "a(b)", "a[b]", "a{b}", "a|b", "a^b", "a$b", "a\\b"]) {
+    for (const raw of [
+      "a+b",
+      "a*b",
+      "a?b",
+      "a(b)",
+      "a[b]",
+      "a{b}",
+      "a|b",
+      "a^b",
+      "a$b",
+      "a\\b",
+    ]) {
       expect(
         isServerStandIn(group("g", `${raw} 2`, ["srv_1"], [raw])),
         raw,
@@ -215,15 +231,15 @@ describe("a stand-in whose name had to be suffixed", () => {
   it("does not swallow a name that merely starts the same way", () => {
     // Only the exact shape the generator writes: a space and digits, nothing
     // else. `alpha two` and `alpha 2 backup` are names a person chose.
-    expect(isServerStandIn(group("g_a", "alpha two", ["srv_1"], ["alpha"]))).toBe(
-      false,
-    );
+    expect(
+      isServerStandIn(group("g_a", "alpha two", ["srv_1"], ["alpha"])),
+    ).toBe(false);
     expect(
       isServerStandIn(group("g_b", "alpha 2 backup", ["srv_1"], ["alpha"])),
     ).toBe(false);
-    expect(isServerStandIn(group("g_c", "alphax 2", ["srv_1"], ["alpha"]))).toBe(
-      false,
-    );
+    expect(
+      isServerStandIn(group("g_c", "alphax 2", ["srv_1"], ["alpha"])),
+    ).toBe(false);
   });
 
   it("still needs to hold exactly the one server", () => {
@@ -344,9 +360,9 @@ describe("initialPickerTab", () => {
   });
 
   it("opens on Servers when a bare server is selected", () => {
-    expect(initialPickerTab(resolvePickerSelection([SOLO_ALPHA], "g_alpha"))).toBe(
-      "servers",
-    );
+    expect(
+      initialPickerTab(resolvePickerSelection([SOLO_ALPHA], "g_alpha")),
+    ).toBe("servers");
   });
 
   it("opens on Groups when a group is selected", () => {
@@ -364,7 +380,7 @@ describe("initialPickerTab", () => {
 });
 
 describe("resolveServerConnection", () => {
-  const runtime = (status: string) => ({ connectionStatus: status } as any);
+  const runtime = (status: string) => ({ connectionStatus: status }) as any;
 
   it("reports UNKNOWN when there is no runtime at all", () => {
     // Some surfaces mount the picker outside the server-actions provider. Not
@@ -386,9 +402,9 @@ describe("resolveServerConnection", () => {
   it("offers Connect on disconnected and on FAILED", () => {
     // `failed` must not read like `disconnected` (BB-49) but it is equally
     // retryable, so the action stays.
-    expect(resolveServerConnection("a", { a: runtime("disconnected") })).toEqual(
-      { status: "disconnected", canConnect: true },
-    );
+    expect(
+      resolveServerConnection("a", { a: runtime("disconnected") }),
+    ).toEqual({ status: "disconnected", canConnect: true });
     expect(resolveServerConnection("a", { a: runtime("failed") })).toEqual({
       status: "failed",
       canConnect: true,

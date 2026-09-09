@@ -98,7 +98,9 @@ describe("ServerPickerPanel — Servers tab", () => {
         })}
       />,
     );
-    expect(screen.getAllByRole("button", { name: /^Connect / })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Connect / })).toHaveLength(
+      1,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /^Connect / }));
     expect(onConnect).toHaveBeenCalledTimes(1);
@@ -170,7 +172,9 @@ describe("the create form and an unanswered catalog", () => {
         catalogKnown={false}
       />,
     );
-    expect(screen.getByRole("button", { name: /Create new group/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Create new group/ }),
+    ).toBeDisabled();
   });
 
   it("opens once the catalog answers", () => {
@@ -463,7 +467,9 @@ describe("ServerPickerPanel — creating a group", () => {
   it("KEEPS the draft when the caller rejects", async () => {
     // The submit is fire-and-forget today, so a duplicate-name rejection
     // leaves the user re-ticking every server they had picked.
-    const onCreateGroup = vi.fn().mockRejectedValue(new Error("already exists"));
+    const onCreateGroup = vi
+      .fn()
+      .mockRejectedValue(new Error("already exists"));
     render(<ServerPickerPanel {...onCreate({ onCreateGroup })} />);
     await openForm();
     await userEvent.click(screen.getByLabelText("Excalidraw (App)"));
@@ -546,7 +552,12 @@ describe("ServerPickerPanel — a draft emptied by the catalog", () => {
 
     rerender(
       <ServerPickerPanel
-        {...panelProps({ tab: "groups", onCreateGroup, deriveName, servers: [] })}
+        {...panelProps({
+          tab: "groups",
+          onCreateGroup,
+          deriveName,
+          servers: [],
+        })}
       />,
     );
 
@@ -615,16 +626,16 @@ describe("ServerPickerPanel — a submit in flight", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Create$/ }));
 
     expect(screen.getByLabelText("Group name")).toBeDisabled();
-    expect(
-      screen.getByRole("checkbox", { name: "Demo (App)" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Demo (App)" })).toBeDisabled();
   });
 });
 
 describe("ServerPickerPanel — removing a group", () => {
   it("offers no delete where the caller cannot perform one", () => {
     render(<ServerPickerPanel {...panelProps({ tab: "groups" })} />);
-    expect(screen.queryByRole("button", { name: /^Delete Group 1$/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /^Delete Group 1$/ }),
+    ).toBeNull();
   });
 
   it("reports the group to delete, and does not select it on the way", async () => {
@@ -651,7 +662,9 @@ describe("ServerPickerPanel — removing a group", () => {
         {...panelProps({ tab: "groups", onDeleteGroup: vi.fn(), busy: true })}
       />,
     );
-    expect(screen.getByRole("button", { name: "Delete Group 1" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Delete Group 1" }),
+    ).toBeDisabled();
   });
 });
 
@@ -680,7 +693,9 @@ describe("ServerPickerPanel — a draft the catalog moved under", () => {
           tab: "groups",
           onCreateGroup,
           deriveName,
-          servers: [{ id: "srv_1", name: "Excalidraw (App)", status: CONNECTED }],
+          servers: [
+            { id: "srv_1", name: "Excalidraw (App)", status: CONNECTED },
+          ],
         })}
       />,
     );
@@ -754,7 +769,9 @@ describe("ServerPickerPanel — an unanswered catalog", () => {
 
   it("states the project is empty once the catalog has answered", () => {
     render(
-      <ServerPickerPanel {...panelProps({ servers: [], catalogKnown: true })} />,
+      <ServerPickerPanel
+        {...panelProps({ servers: [], catalogKnown: true })}
+      />,
     );
     expect(
       screen.getByText("No servers in this project yet."),

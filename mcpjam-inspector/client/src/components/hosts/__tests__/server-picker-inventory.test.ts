@@ -145,11 +145,11 @@ describe("one server picker", () => {
       undeclared.length === 0
         ? ""
         : `These files render a clickable list of servers and are not declared in ALLOWED:\n` +
-          undeclared.map((p) => `  - ${p}`).join("\n") +
-          `\n\nIf the surface lets someone choose a server or a server group for a ` +
-          `project, render <ServerPicker> instead — that is what BB-142 was for. ` +
-          `If it is something else (authorizing, connecting, a shortcut that ` +
-          `navigates away), add it to ALLOWED in this file with the reason.`,
+            undeclared.map((p) => `  - ${p}`).join("\n") +
+            `\n\nIf the surface lets someone choose a server or a server group for a ` +
+            `project, render <ServerPicker> instead — that is what BB-142 was for. ` +
+            `If it is something else (authorizing, connecting, a shortcut that ` +
+            `navigates away), add it to ALLOWED in this file with the reason.`,
     ).toEqual([]);
   });
 
@@ -165,9 +165,9 @@ describe("one server picker", () => {
       stale.length === 0
         ? ""
         : `These paths are declared in ALLOWED but no longer render a clickable ` +
-          `server list (migrated, renamed, or deleted):\n` +
-          stale.map((p) => `  - ${p}`).join("\n") +
-          `\n\nDelete the entry.`,
+            `server list (migrated, renamed, or deleted):\n` +
+            stale.map((p) => `  - ${p}`).join("\n") +
+            `\n\nDelete the entry.`,
     ).toEqual([]);
   });
 

@@ -86,7 +86,7 @@ export function serverPickers(
   };
   visit(tree);
   return found;
-};
+}
 
 describe("ServerPicker inside a modal Dialog written in the same file", () => {
   /**
