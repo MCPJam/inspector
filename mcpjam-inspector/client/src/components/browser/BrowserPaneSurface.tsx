@@ -156,6 +156,32 @@ const MODIFIER_KEYS: ReadonlySet<string> = new Set([
   "Process",
 ]);
 
+/**
+ * Is this keystroke a character being typed, rather than a shortcut?
+ *
+ * A single-character `key` is not enough on its own. `Alt+F` reports `key: "f"`
+ * on Linux and Windows and `key: "ƒ"` on macOS — both length 1 — so a test that
+ * only excluded Ctrl and Meta sent an Alt shortcut down the text path, which
+ * drops the modifier entirely: the page never sees `Alt+F` and gets a stray "f"
+ * or "ƒ" typed into it instead.
+ *
+ * Shift is deliberately NOT here. `Shift+a` is how you type "A", and the `key`
+ * already carries the capital.
+ */
+function isTypedCharacter(event: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+}): boolean {
+  return (
+    event.key.length === 1 &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey
+  );
+}
+
 /** The DOM's button numbering, in the daemon's names. */
 function buttonOf(event: { button?: number }): "left" | "middle" | "right" {
   if (event.button === 1) return "middle";
@@ -578,7 +604,7 @@ export function BrowserPaneSurface({
             if (event.key === "Tab") return; // Leaving the pane, not typing.
             event.preventDefault();
             takeover(
-              event.key.length === 1 && !event.ctrlKey && !event.metaKey
+              isTypedCharacter(event)
                 ? [{ type: "text", text: event.key }]
                 : [
                     {
@@ -614,7 +640,7 @@ export function BrowserPaneSurface({
           // A printable character is inserted as TEXT: paste and IME
           // composition have no keystrokes to replay, and a key table that
           // tried would be wrong for every non-US layout.
-          if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+          if (isTypedCharacter(event)) {
             send([{ type: "text", text: event.key }]);
             return;
           }

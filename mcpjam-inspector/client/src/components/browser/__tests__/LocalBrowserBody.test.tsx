@@ -249,6 +249,25 @@ describe("the agent browser pane", () => {
     );
   });
 
+  it("sends an Alt shortcut as a shortcut, not as a letter", async () => {
+    // `Alt+F` reports a single-character `key` — "f" on Linux and Windows,
+    // "ƒ" on macOS — so a text test that only excluded Ctrl and Meta dropped
+    // the Alt modifier and typed a stray character into the page instead of
+    // opening the menu the person asked for.
+    renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    const image = await deliverFrame();
+    fireEvent.keyDown(image, { key: "f", code: "KeyF", altKey: true });
+    await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
+    const events = api.inputs.flatMap((call: any) => call.events as any[]);
+    expect(events.some((e) => e?.type === "text")).toBe(false);
+    expect(events.some((e) => e?.type === "key_down" && e.key === "f")).toBe(
+      true,
+    );
+  });
+
   it("sends no input until this pane holds the browser", async () => {
     // The server refuses it anyway; not sending is the honest UI of the same
     // rule, and keeps a stray mouse move off the wire entirely.
