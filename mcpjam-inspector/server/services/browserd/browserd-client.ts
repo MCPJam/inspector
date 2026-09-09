@@ -19,6 +19,18 @@
  */
 import type { BrowserCommand } from "./protocol";
 import {
+  decodePaneCommand,
+  decodePaneState,
+  decodeViewport,
+  type PaneCommandOutcome,
+} from "./pane-client";
+import type { BrowserStateSnapshot } from "../../../shared/browser-session-state";
+import type {
+  BrowserPaneCommand,
+  InteractionAnchor,
+} from "../../../shared/browser-pane-command";
+import type { SessionViewport } from "../../../shared/browser-viewport";
+import {
   asRecord,
   BrowserdClientError,
   decodeCommandResponse,
@@ -195,9 +207,22 @@ export class BrowserdClient {
     return decodeStatus({ status: res.status, body: await this.json(res) });
   }
 
-  /** Read the handoff lease without changing it. */
-  async lease(): Promise<BrowserdLeaseState> {
-    const res = await this.request("/v1/lease", { method: "GET" }, true);
+  /**
+   * Read the handoff lease without changing it.
+   *
+   * The signal matters here more than on most reads: the handoff poll sits on
+   * this call for as long as somebody holds the browser, and a cancelled turn
+   * that could not abort it left the request pending until the client timeout
+   * — long after the thing that wanted the answer had gone.
+   */
+  async lease(options?: { signal?: AbortSignal }): Promise<BrowserdLeaseState> {
+    const res = await this.request(
+      "/v1/lease",
+      { method: "GET" },
+      true,
+      undefined,
+      options?.signal,
+    );
     return decodeLease({ status: res.status, body: await this.json(res) });
   }
 
@@ -229,7 +254,69 @@ export class BrowserdClient {
     });
   }
 
-  /** Send a command and interpret the daemon's reply. */
+  /**
+   * The whole browser, for the pane's shell.
+   *
+   * `holder` rides in the QUERY rather than the body because this is a GET —
+   * the daemon compares it against the lease to decide whether this watcher
+   * may see the tab list at all, exactly as the frame stream does.
+   */
+  async paneState(args: {
+    holder?: string;
+  }): Promise<BrowserStateSnapshot | null> {
+    const query = args.holder
+      ? `?holder=${encodeURIComponent(args.holder)}`
+      : "";
+    const res = await this.request(
+      `/v1/state${query}`,
+      { method: "GET" },
+      true,
+    );
+    return decodePaneState({ status: res.status, body: await this.json(res) });
+  }
+
+  /** One human navigation, taking the browser first if it is free. */
+  async paneCommand(args: {
+    holder: string;
+    command: BrowserPaneCommand;
+    commandId?: string;
+    anchor?: InteractionAnchor;
+  }): Promise<PaneCommandOutcome> {
+    const res = await this.request(
+      "/v1/pane-command",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(args),
+      },
+      true,
+    );
+    return decodePaneCommand({
+      status: res.status,
+      body: await this.json(res),
+    });
+  }
+
+  /** Report a panel measurement; answer with the size the session settled at. */
+  async paneViewport(args: {
+    policy?: "fixed" | "followPane";
+    width: number;
+    height: number;
+  }): Promise<SessionViewport | null> {
+    const res = await this.request(
+      "/v1/viewport",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(args),
+      },
+      true,
+    );
+    if (res.status !== 200) return null;
+    const body = (await this.json(res)) as Record<string, unknown>;
+    return decodeViewport(body.viewport);
+  }
+
   /**
    * Send a command and interpret the daemon's reply.
    *
@@ -284,6 +371,7 @@ export class BrowserdClient {
    * that stops issuing ids once exhausted.
    */
   async sendInput(args: {
+    anchor?: unknown;
     holder: string;
     events: readonly ViewportInputEvent[];
     tabId?: string;
@@ -295,6 +383,7 @@ export class BrowserdClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           holder: args.holder,
+          ...(args.anchor !== undefined ? { anchor: args.anchor } : {}),
           events: args.events,
           ...(args.tabId ? { tabId: args.tabId } : {}),
         }),

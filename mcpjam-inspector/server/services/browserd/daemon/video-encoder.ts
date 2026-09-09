@@ -85,6 +85,21 @@ export interface VideoEncoder {
   failure(): string | undefined;
   /** Change the bitrate/sharpness trade. Restarts ffmpeg — see the note below. */
   setTier(tier: VideoTier): void;
+  /**
+   * Follow the display to a new size.
+   *
+   * A RESTART, like `setTier`, and for a stronger reason: an H.264 stream's
+   * SPS carries the picture dimensions, so a stream that says 1024 wide cannot
+   * carry a 1400-wide frame at all. A decoder handed one drops it or renders
+   * garbage — and `repeat-headers=1` means the restart puts fresh parameter
+   * sets in front of the first key unit, which is exactly what every watcher
+   * needs to start decoding the new geometry.
+   *
+   * Frames captured before the transition are already gone: `stop()` tears
+   * down the ffmpeg that produced them, so nothing from the previous
+   * generation can reach a subscriber after this returns.
+   */
+  resize(size: { width: number; height: number }): void;
   tier(): VideoTier;
   /**
    * How many access units this encoder has published, ever.
@@ -321,6 +336,14 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const listeners = new Set<(unit: VideoAccessUnit) => void>();
   let tier: VideoTier = options.tier ?? "auto";
+  /**
+   * The display's size, which MOVES on a responsive session.
+   *
+   * `let` rather than `options.width`, because `resize` changes it and every
+   * later ffmpeg start has to grab the screen that is actually there.
+   */
+  let width = Math.max(2, Math.round(options.width));
+  let height = Math.max(2, Math.round(options.height));
   let child: EncoderProcess | undefined;
   let splitter = createAccessUnitSplitter();
   let failure: string | undefined;
@@ -380,8 +403,13 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
         ffmpegPath,
         ffmpegArgs({
           display: options.display,
-          width: options.width,
-          height: options.height,
+          // The CURRENT geometry, not the one this encoder was built with: a
+          // `followPane` session moves the display, and an ffmpeg restarted
+          // after that must grab the screen that is actually there. `x11grab`
+          // with a `-video_size` larger than the screen fails outright; one
+          // smaller silently captures a corner.
+          width,
+          height,
           tier,
         }),
         { stdio: ["ignore", "pipe", "pipe"] },
@@ -433,6 +461,19 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
     subscriberCount: () => listeners.size,
     failure: () => failure,
     tier: () => tier,
+    resize(size) {
+      const nextWidth = Math.max(2, Math.round(size.width));
+      const nextHeight = Math.max(2, Math.round(size.height));
+      if (nextWidth === width && nextHeight === height) return;
+      width = nextWidth;
+      height = nextHeight;
+      if (!child) return;
+      // See the interface note: the SPS carries the dimensions, so this is a
+      // restart rather than a reconfiguration, and the restart is what mints
+      // the parameter sets and the keyframe the new geometry needs.
+      stop();
+      start();
+    },
     setTier(next) {
       if (next === tier) return;
       tier = next;

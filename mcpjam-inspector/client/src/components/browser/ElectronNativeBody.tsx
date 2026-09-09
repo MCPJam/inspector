@@ -59,7 +59,9 @@ export function ElectronNativeBody({
   active = true,
   engine = "local",
   extra,
+  chrome = "bar",
 }: {
+  chrome?: "bar" | "none";
   /** The browser this pane is looking at, or null while none is running. */
   session: { bootId: string } | null;
   /** This pane's lease identity, compared against the daemon's holder. */
@@ -123,6 +125,8 @@ export function ElectronNativeBody({
    * next, and nothing short of an unmount removes it.
    */
   const shownRef = useRef<string | null>(null);
+  const takeoverRef = useRef(chrome === "none");
+  takeoverRef.current = chrome === "none";
   const holderRef = useRef(holder);
   holderRef.current = holder;
   const wantVisibleRef = useRef(wantVisible);
@@ -155,6 +159,7 @@ export function ElectronNativeBody({
       .setViewport({
         bootId,
         holder: holderRef.current,
+        takeover: takeoverRef.current,
         visible,
         ...(visible && rect
           ? {
@@ -225,7 +230,7 @@ export function ElectronNativeBody({
   // moved, a pane that stopped being the visible tab, a grant withdrawn.
   useEffect(() => {
     schedule();
-  }, [schedule, session?.bootId, holder, control, wantVisible]);
+  }, [schedule, session?.bootId, holder, control, wantVisible, chrome]);
 
   /**
    * Take the view OUT of the window on the way past.
@@ -295,18 +300,26 @@ export function ElectronNativeBody({
 
   return (
     <>
-      <PaneControlBar
-        control={control}
-        onTakeControl={onTakeControl}
-        onHandBack={onHandBack}
-        extra={extra}
-        statsOpen={statsOpen}
-        onToggleStats={(next) => {
-          paneFrameStats.setEnabled(next);
-          setStatsOpen(next);
-        }}
-      />
-      <div className="relative flex min-h-0 flex-1 flex-col px-3 pb-3">
+      {chrome === "bar" ? (
+        <PaneControlBar
+          control={control}
+          onTakeControl={onTakeControl}
+          onHandBack={onHandBack}
+          extra={extra}
+          statsOpen={statsOpen}
+          onToggleStats={(next) => {
+            paneFrameStats.setEnabled(next);
+            setStatsOpen(next);
+          }}
+        />
+      ) : null}
+      <div
+        className={
+          chrome === "none"
+            ? "relative flex min-h-0 flex-1 flex-col"
+            : "relative flex min-h-0 flex-1 flex-col px-3 pb-3"
+        }
+      >
         {/*
           IN FLOW, not over the picture. There is no picture: the view paints
           over the slot's rectangle, so an overlay inside it would be on screen

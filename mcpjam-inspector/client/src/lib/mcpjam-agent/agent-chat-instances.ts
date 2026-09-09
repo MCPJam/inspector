@@ -273,6 +273,23 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     requireToolApproval: false,
   };
 
+  /**
+   * The approval value the IN-FLIGHT turn was sent with.
+   *
+   * `config.requireToolApproval` is mutable and the switch is a live control,
+   * so reading it in `onToolCall` answers a different question than the server
+   * answered: the server declared every tool's `needsApproval` from the value
+   * in THAT request. Flipping the switch off while the response streams would
+   * otherwise let `handleUiToolCall` run a destructive `ui_*` action — a
+   * computer deletion, a billed swarm launch — immediately, past the pill the
+   * server is already emitting, because the tool-input event arrives before
+   * the approval request.
+   *
+   * Stamped once per send, in the `body` closure below. Mirrors
+   * `turnRequireToolApprovalRef` in `use-chat-session`.
+   */
+  let turnRequireToolApproval = config.requireToolApproval;
+
   const chat: Chat<UIMessage> = new Chat<UIMessage>({
     id: chatSessionId,
     transport: new DefaultChatTransport({
@@ -293,7 +310,10 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         model: config.model,
         projectId: config.projectId,
         chatSessionId,
-        requireToolApproval: config.requireToolApproval,
+        // Stamped here, where the turn is actually sent, so `onToolCall`
+        // decides with the value the SERVER built this turn's tools from.
+        requireToolApproval: (turnRequireToolApproval =
+          config.requireToolApproval),
         // WebMCP UI tools snapshot, drained fresh at POST time (same
         // contract as `useChatSession`). The server validates again in
         // `validateUiToolEntries`.
@@ -324,7 +344,8 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         onNavigationToolCall: (toolName) => {
           maybeHandoffToPanel(config, toolName);
         },
-        requireToolApproval: config.requireToolApproval,
+        // The turn's value, not the live one — see `turnRequireToolApproval`.
+        requireToolApproval: turnRequireToolApproval,
         // Duplicate detection is per chat session — this instance's key.
         telemetryScope: chatSessionId,
       });

@@ -19,6 +19,11 @@ import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
+import {
+  pendingCredentialClearForUrlEdit,
+  rowHoldsStoredCredential,
+  type PendingCredentialClear,
+} from "@/lib/credential-origin";
 
 interface InitialFormValues {
   name: string;
@@ -145,6 +150,14 @@ export function useServerForm(
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [hasStoredClientSecret, setHasStoredClientSecret] = useState(false);
+  // The url as SAVED on the row, kept beside the editable one so the form can
+  // tell a cross-origin repoint from an ordinary path edit (MJ-003).
+  const [savedUrl, setSavedUrl] = useState<string | null>(null);
+  // The target origin the user has explicitly accepted losing credentials for.
+  // An origin rather than a boolean, so acknowledging one host and then typing
+  // a different one re-arms the warning instead of carrying consent across.
+  const [credentialClearAcknowledgedFor, setCredentialClearAcknowledgedFor] =
+    useState<string | null>(null);
   const [clearClientSecret, setClearClientSecret] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
   // True when the server has a saved bearer token whose value was stripped
@@ -407,6 +420,8 @@ export function useServerForm(
       setName(server.name);
       setType(serverType);
       setUrl(serverUrl);
+      setSavedUrl(serverUrl || null);
+      setCredentialClearAcknowledgedFor(null);
       setCommandInput(fullCommand);
 
       // Don't set a default scope for existing servers - use what's configured
@@ -1020,6 +1035,8 @@ export function useServerForm(
     setType("http");
     setCommandInput("");
     setUrl("");
+    setSavedUrl(null);
+    setCredentialClearAcknowledgedFor(null);
     setOauthScopesInput("");
     setOauthProtocolMode(DEFAULT_OAUTH_PROTOCOL_MODE);
     setOauthRegistrationMode(DEFAULT_OAUTH_REGISTRATION_MODE);
@@ -1117,6 +1134,24 @@ export function useServerForm(
     (type === "http" &&
       authType === "xaa" &&
       confidentialCimdBlockReason !== null);
+  // MJ-003. Saving a cross-origin url on a row that holds credentials makes the
+  // backend wipe them, including ones this user never entered and cannot see.
+  // Which rows count is `rowHoldsStoredCredential`'s business.
+  const holdsStoredCredential = rowHoldsStoredCredential(server);
+  const pendingCredentialClear: PendingCredentialClear | null =
+    type === "http"
+      ? pendingCredentialClearForUrlEdit({
+          holdsStoredCredential,
+          savedUrl,
+          nextUrl: url,
+        })
+      : null;
+  // Blocked until acknowledged, following `authConfigurationBlocksSubmit`. A
+  // destructive side effect on somebody else's credential should not happen on
+  // a single Save click.
+  const credentialClearBlocksSubmit =
+    pendingCredentialClear !== null &&
+    credentialClearAcknowledgedFor !== pendingCredentialClear.nextOrigin;
   const oauthAuthorizationHeaderWarning =
     type === "http" &&
     authType === "oauth" &&
@@ -1129,6 +1164,10 @@ export function useServerForm(
     hasChanges,
     preregisteredOauthBlocksSubmit,
     authConfigurationBlocksSubmit,
+    pendingCredentialClear,
+    credentialClearBlocksSubmit,
+    credentialClearAcknowledgedFor,
+    acknowledgeCredentialClear: setCredentialClearAcknowledgedFor,
 
     // Form data
     name,

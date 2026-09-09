@@ -52,10 +52,11 @@ import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { webmcpPageToolsMode } from "../../config.js";
 import { logger } from "../logger.js";
+import { parkForHandoff } from "./browser-handoff.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
+import { MAX_SESSION_VIEWPORT } from "@/shared/browser-viewport";
 import {
-  BROWSERD_OBSERVATION_VIEWPORT,
   DEFAULT_QUEUE_KEY,
   isPointInViewport,
   type BrowserAction,
@@ -95,13 +96,28 @@ import {
 export { BROWSER_BUILT_IN_TOOL_ID };
 
 /**
- * The coordinate space the model is told about, stated in the tool schema and
- * re-checked before a command leaves this process. Read from the protocol so
- * the schema, the daemon's bounds check, and the launched viewport cannot
- * disagree about what "x: 900" means.
+ * The coordinate space the model is told about — as a RANGE, not a size.
+ *
+ * It used to be the size: the schema said `max: 1023`, the description said
+ * "1024x768", and the daemon's bounds check agreed with both. That works
+ * exactly as long as no session is ever a different size, and one of them now
+ * is — the interactive Playground's browser follows the panel somebody can
+ * drag. A schema that named 1023 would refuse a perfectly good click at x=1200
+ * before it ever reached the browser.
+ *
+ * So the schema states the WIDEST a session may be, the description tells the
+ * model to read the actual size off its last observation (every one carries
+ * `viewport`), and the daemon refuses anything outside the session's real
+ * bounds — which is the only place that knows them.
+ *
+ * WRITTEN ONCE, deliberately. A description that named the current size would
+ * have to be regenerated on every resize, and regenerating it rotates the
+ * host-configuration hash — so dragging a panel would invalidate every cached
+ * tool manifest, several times a second.
  */
-const VIEWPORT_W = BROWSERD_OBSERVATION_VIEWPORT.width;
-const VIEWPORT_H = BROWSERD_OBSERVATION_VIEWPORT.height;
+const VIEWPORT_MAX_W = MAX_SESSION_VIEWPORT.width;
+const VIEWPORT_MAX_H = MAX_SESSION_VIEWPORT.height;
+
 
 /**
  * How approval reaches the user for this turn — the thing a surface must
@@ -131,11 +147,33 @@ export interface BrowserSessionScope {
 }
 
 export interface BrowserToolsOptions {
+  /**
+   * Told while a turn is parked behind a person holding the browser.
+   *
+   * The "visible waiting state" the handoff needs: without it, a turn that is
+   * politely waiting for somebody to finish signing in is indistinguishable
+   * from a turn that has hung. Optional because an unattended run has nobody
+   * to show it to.
+   */
+  onHandoffWaiting?: (state: {
+    waiting: boolean;
+    holder?: { kind: "human" | "script" };
+  }) => void;
   /** Bearer authorization forwarded to the control plane. */
   authHeader: string;
   /** Project whose computer this turn drives. */
   projectId: string;
   executionScope?: ExecutionScope;
+  /**
+   * The host's Tool Approval switch.
+   *
+   * Threaded like `bash` threads it, and read for the same reason: this family
+   * follows the user's setting rather than overruling it. Absent counts as
+   * off, so a caller that never had a switch to thread gets the same answer it
+   * did before this option existed — and an UNATTENDED run ignores it either
+   * way, because its floor is `never` (nobody to ask).
+   */
+  requireToolApproval?: boolean;
   /**
    * Where L3 tokens live BETWEEN requests, so an act that paused for approval
    * is still pinned when it resumes. Defaults to the process-wide one;
@@ -409,6 +447,11 @@ interface CommandSender {
  * Read BOTH failure layers of a daemon reply. The transport status says
  * whether the command was ADMITTED; `result.ok` says whether the browser
  * actually did it. Only when both are good is this a success.
+ */
+/**
+ * The handoff coordinator, imported rather than inlined: it is the one piece
+ * of this file with no browser in it at all, and it is easier to trust when it
+ * can be tested against a clock the test owns.
  */
 function unwrapCommand(response: {
   status: string;
@@ -991,24 +1034,39 @@ export function buildBrowserTools(
     return undefined;
   }
 
-  // Floors, one per shape of run. Local is forced to ask, exactly as `bash` is
-  // — the browser is driving a real, signed-in Chromium on someone's own
-  // machine, where the blast radius of an unreviewed click is their accounts
-  // rather than a disposable box. An attested (interactive) run has someone to
-  // ask, so it always does. What is left is an unattended run on a disposable
-  // box: nobody to ask, so the declared policy is the answer, and the
-  // interactive tools it might have freed were never built (see `names`).
+  // Floors, one per shape of run.
   //
-  // NOT the switch, on any branch: `requireToolApproval` cannot lower a floor,
-  // and there is no reading of this family where it should.
+  // A run with SOMEBODY TO ASK — an attested interactive turn, or the local
+  // engine driving a real signed-in Chromium on someone's own machine — asks
+  // when the user's switch says to. It used to ask unconditionally, and that
+  // made "Tool Approval: off" untrue for the most common thing anyone does
+  // here: opening a page. The blast radius argument was real, but it is an
+  // argument for what to DEFAULT to, not for overruling a person who has just
+  // told this host what they want.
+  //
+  // An UNATTENDED run keeps `never`, and that is not the switch being ignored
+  // — there is nobody to ask, so a gate would hang the run rather than protect
+  // it. The declared `toolPolicy` is the answer instead, and the interactive
+  // tools it might have freed were never built (see `names`).
+  //
+  // ON DELIVERY ALONE, not on the engine. An unattended run uses the LOCAL
+  // engine (a throwaway Chromium keyed per run), so an `|| engine === "local"`
+  // here would put every unattended local run back on the switch — and a host
+  // config with approval on would then hang each eval iteration against a pill
+  // nobody can click. The engine says whose machine it is; only the delivery
+  // says whether anyone is there to ask.
   const interactiveFloor: ApprovalFloor =
-    delivery.kind === "attested" || engine === "local" ? "always" : "never";
+    delivery.kind === "attested" ? "setting" : "never";
   // Observation is the one thing a read-only policy may free, and only there:
   // a policy cannot make clicking a button on a live logged-in page safe, but
   // it can say this run only looks.
   const observationFloor: ApprovalFloor = readOnly ? "never" : interactiveFloor;
-  const needsApproval = needsApprovalFor(interactiveFloor, false);
-  const observationNeedsApproval = needsApprovalFor(observationFloor, false);
+  const requireToolApproval = opts.requireToolApproval === true;
+  const needsApproval = needsApprovalFor(interactiveFloor, requireToolApproval);
+  const observationNeedsApproval = needsApprovalFor(
+    observationFloor,
+    requireToolApproval,
+  );
 
   /**
    * The tab the model is actually working in.
@@ -1141,9 +1199,13 @@ export function buildBrowserTools(
           : undefined;
       let response;
       try {
-        response = await client.sendCommand(command, handle.bootId, {
-          ...(args.signal ? { signal: args.signal } : {}),
-        });
+        response = await client.sendCommand(
+          { ...command, responsiveViewport: true },
+          handle.bootId,
+          {
+            ...(args.signal ? { signal: args.signal } : {}),
+          },
+        );
       } catch (error) {
         disarm?.();
         if (args.signal?.aborted) {
@@ -1161,6 +1223,45 @@ export function buildBrowserTools(
         throw error;
       }
       disarm?.();
+      // A PERSON HAS THE BROWSER. Park instead of refusing, and come back with
+      // a fresh look rather than with this command's result — which does not
+      // exist, because the command was never run. @see browser-handoff.ts
+      if (response.status === "lease_blocked" && !recovering) {
+        state.forgetTokens(handle.bootId);
+        return {
+          ...(await parkForHandoff<ObservationStateToken>({
+            // The SESSION client, not the `CommandSender` cast above: reading
+            // the lease is a different method, and it is the one thing here
+            // that a `sendCommand`-shaped view cannot answer.
+            client: handle.client,
+            ...(args.signal ? { signal: args.signal } : {}),
+            observe: (signal) =>
+              send(
+                { kind: "observe", mode: "a11y" },
+                {
+                  ...(args.tabId ? { tabId: args.tabId } : {}),
+                  ...(signal ? { signal } : {}),
+                  // `recovering`, for the same reason the origin recovery
+                  // below is: this runs from INSIDE the lock section this
+                  // command already holds, so taking the lock again parks the
+                  // resumption behind the command it exists to resume — and
+                  // neither ever finishes. The turn hangs until the client
+                  // gives up, with the person holding a browser nobody is
+                  // coming back for.
+                  recovering: true,
+                  // The observation belongs to the model — it is what the next
+                  // action is decided from — so its token is remembered like
+                  // any other. `raw` would withhold exactly the thing that
+                  // makes the resumption usable.
+                },
+              ),
+            ...(opts.onHandoffWaiting
+              ? { onWaiting: opts.onHandoffWaiting }
+              : {}),
+          })),
+          tabId,
+        };
+      }
       let outcome = unwrapCommand(response);
       // W4/L6 — a handoff invalidates everything this turn cached. Two signals
       // reach us: a refusal while the person still holds the browser, and the
@@ -1263,16 +1364,18 @@ export function buildBrowserTools(
     "browser_navigate",
     tool({
       description:
-        `Open a URL in ${engineLabel(engine)} (or go back / reload). Returns the page ` +
+        `Open a URL in ${engineLabel(
+          engine,
+        )} (or go back / forward / reload). Returns the page ` +
         "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
         "so you do not need to observe separately before acting.",
       inputSchema: z.object({
         url: z
           .string()
           .optional()
-          .describe("URL to open. Omit when using back or reload."),
+          .describe("URL to open. Omit when using back, forward or reload."),
         action: z
-          .enum(["goto", "back", "reload"])
+          .enum(["goto", "back", "forward", "reload"])
           .optional()
           .describe("Defaults to goto."),
         tabId: z
@@ -1310,7 +1413,9 @@ export function buildBrowserTools(
               }
             : verb === "back"
               ? { kind: "back" }
-              : { kind: "reload" };
+              : verb === "forward"
+                ? { kind: "forward" }
+                : { kind: "reload" };
         return presented(
           await send(
             // BOTH, matching `browser_act` and matching what the description
@@ -1335,10 +1440,10 @@ export function buildBrowserTools(
         "answer a JavaScript dialog that is blocking the page. " +
         "Target by `ref` from the last a11y observation (best: it is the element you read, and a covered one is refused rather than mis-clicked), or by coordinates from the last screenshot, or by CSS selector. Returns the " +
         "page after the action: URL, what you can act on (a11y with refs), and a " +
-        "screenshot. Coordinates are CSS pixels in a " +
-        `${VIEWPORT_W}x${VIEWPORT_H} viewport with (0, 0) at the TOP-LEFT of the ` +
-        "screenshot — the screenshot is always shown at that size, so read x and y " +
-        "straight off it without scaling.",
+        "screenshot. Coordinates are CSS pixels, (0, 0) at the screenshot's " +
+        "TOP-LEFT, read straight off it without scaling. The page can be " +
+        "resized while you work, so take its size from the `viewport` on your " +
+        "last observation; a coordinate outside it is refused, not clamped.",
       inputSchema: z.object({
         verb: z.enum([
           "click",
@@ -1356,19 +1461,15 @@ export function buildBrowserTools(
         x: z
           .number()
           .min(0)
-          .max(VIEWPORT_W - 1)
+          .max(VIEWPORT_MAX_W - 1)
           .optional()
-          .describe(
-            `X coordinate from the last screenshot, 0 to ${VIEWPORT_W - 1}.`,
-          ),
+          .describe("X from the last screenshot, inside its `viewport`."),
         y: z
           .number()
           .min(0)
-          .max(VIEWPORT_H - 1)
+          .max(VIEWPORT_MAX_H - 1)
           .optional()
-          .describe(
-            `Y coordinate from the last screenshot, 0 to ${VIEWPORT_H - 1}.`,
-          ),
+          .describe("Y from the last screenshot, inside its `viewport`."),
         value: z
           .string()
           .optional()
@@ -1403,7 +1504,17 @@ export function buildBrowserTools(
         { verb, ref, selector, x, y, value, fields, submit, observe, tabId },
         { abortSignal },
       ) => {
-        if (x !== undefined && y !== undefined && !isPointInViewport(x, y)) {
+        if (
+          x !== undefined &&
+          y !== undefined &&
+          // The WIDEST page this browser could be showing, not the default
+          // one. This session's real size lives in the daemon, and the daemon
+          // refuses against it; this check exists only to answer an obviously
+          // impossible coordinate in the model's own terms rather than as a
+          // transport error, so a bound tighter than the schema's would refuse
+          // points that are perfectly valid on a panel somebody widened.
+          !isPointInViewport(x, y, MAX_SESSION_VIEWPORT)
+        ) {
           // The schema states the bounds, but a hosted path reconstructs the
           // schema on the wire and executes with whatever input comes back, so
           // the bound is re-checked here rather than assumed. The daemon
@@ -1411,9 +1522,11 @@ export function buildBrowserTools(
           // instead of as a transport error.
           return {
             error:
-              `out_of_viewport: (${x}, ${y}) is outside the ${VIEWPORT_W}x${VIEWPORT_H} ` +
-              "screenshot; nothing was clicked. Coordinates are CSS pixels with " +
-              "(0, 0) at the top-left — re-read the screenshot and pick a point inside it.",
+              `out_of_viewport: (${x}, ${y}) is outside any page this browser ` +
+              `can show (at most ${VIEWPORT_MAX_W}x${VIEWPORT_MAX_H}); nothing ` +
+              "was clicked. Coordinates are CSS pixels with (0, 0) at the " +
+              "top-left — re-read the screenshot, take the page's size from its " +
+              "`viewport`, and pick a point inside it.",
           };
         }
         // REF FIRST. It is the only target the model did not have to invent:
@@ -2253,6 +2366,9 @@ function defaultEnsureSession(
         projectId,
         contextMode,
         ...(ownerKey ? { ownerKey } : {}),
+        // Start fixed regardless of opening order. An enabled interactive
+        // pane negotiates followPane through the authenticated viewport route.
+        viewportPolicy: "fixed",
         ...(logicalSessionId ? { sessionId: logicalSessionId } : {}),
         ...(profileArchive ? { profileArchive } : {}),
       });
@@ -2746,7 +2862,9 @@ function fencePageContent(
 ): string {
   const nonce = pageContentNonce();
   return (
-    `--- MCPJAM_PAGE_CONTENT nonce=${nonce} origin=${safeOrigin(origin)} ---\n` +
+    `--- MCPJAM_PAGE_CONTENT nonce=${nonce} origin=${safeOrigin(
+      origin,
+    )} ---\n` +
     JSON.stringify(page) +
     `\n--- END_MCPJAM_PAGE_CONTENT nonce=${nonce} ---`
   );

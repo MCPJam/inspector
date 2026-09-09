@@ -50,6 +50,18 @@ function assertSecureLocalOrigin(): void {
 
 /** What the pane knows about this machine's browser. */
 import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
+import type { BrowserStateSnapshot } from "../../../../shared/browser-session-state";
+import type {
+  BrowserPaneCommand,
+  InteractionAnchor,
+} from "../../../../shared/browser-pane-command";
+import type { SessionViewport } from "../../../../shared/browser-viewport";
+import {
+  decodeSessionViewport,
+  decodeStateSnapshot,
+  paneCommandFromStatus,
+  type PaneCommandResult,
+} from "../../../../shared/browser-pane-wire";
 
 export interface LocalBrowserStatus {
   /**
@@ -114,13 +126,15 @@ async function post<T>(
     ...(options?.keepalive ? { keepalive: true } : {}),
   });
   const json = (await response.json().catch(() => null)) as
-    (T & { error?: string }) | null;
+    | (T & { error?: string })
+    | null;
   if (!response.ok) {
     throw new LocalBrowserRequestError(
       typeof json?.error === "string"
         ? json.error
         : "The local browser could not be reached.",
       response.status,
+      json as Record<string, unknown> | null,
     );
   }
   return json as T;
@@ -139,6 +153,17 @@ export class LocalBrowserRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /**
+     * The parsed response body, when there was one.
+     *
+     * Carried because a refusal's body is not decoration: a 423 names the
+     * holder, and an error that kept only `message` left the shared mapper
+     * with nothing to decode — so a browser held by a SCRIPT was announced to
+     * the person as one held by another person. The hosted client passes its
+     * whole body and got this right, which made the two engines disagree about
+     * the same refusal.
+     */
+    readonly body?: Record<string, unknown> | null,
   ) {
     super(message);
     this.name = "LocalBrowserRequestError";
@@ -296,7 +321,8 @@ export interface LocalBrowserTraceGap {
 }
 
 export type LocalBrowserTraceEntry =
-  LocalBrowserTraceRow | LocalBrowserTraceGap;
+  | LocalBrowserTraceRow
+  | LocalBrowserTraceGap;
 
 export interface LocalBrowserTracePage {
   entries: LocalBrowserTraceEntry[];
@@ -306,7 +332,12 @@ export interface LocalBrowserTracePage {
 }
 
 export function sendLocalBrowserInput(
-  args: { bootId: string; holder: string; events: BrowserInputEvent[] },
+  args: {
+    bootId: string;
+    holder: string;
+    events: BrowserInputEvent[];
+    anchor?: import("../../../../shared/browser-pane-command").InteractionAnchor;
+  },
   consentToken: string | null,
 ): Promise<{ ok: true }> {
   return post("input", args, consentToken);
@@ -416,4 +447,76 @@ export function openLocalBrowserFrameStream(args: {
       }
     },
   };
+}
+
+
+/**
+ * The browser shell's three calls, on the local engine.
+ *
+ * All POSTs, like every other local-browser route: the project id and the
+ * bootId travel in the body beside the consent capability, and `post` above is
+ * what attaches that header.
+ *
+ * None of them THROWS for a refusal. Every caller is a shell drawing chrome,
+ * and the useful answer to "somebody else has the browser" is a banner rather
+ * than an exception — so a refusal comes back as a value and only a genuine
+ * transport failure is absent.
+ */
+export async function fetchLocalBrowserState(args: {
+  bootId: string;
+  holder: string;
+  consentToken: string | null;
+}): Promise<BrowserStateSnapshot | null> {
+  const { consentToken, ...body } = args;
+  const answer = await post<{ state?: unknown }>(
+    "state",
+    body,
+    consentToken,
+  ).catch(() => null);
+  return answer ? decodeStateSnapshot(answer.state) : null;
+}
+
+export async function sendLocalPaneCommand(args: {
+  bootId: string;
+  holder: string;
+  command: BrowserPaneCommand;
+  commandId?: string;
+  anchor?: InteractionAnchor;
+  consentToken: string | null;
+}): Promise<PaneCommandResult> {
+  const { consentToken, ...body } = args;
+  try {
+    const answer = await post<Record<string, unknown>>(
+      "pane-command",
+      body,
+      consentToken,
+    );
+    return paneCommandFromStatus(200, answer);
+  } catch (error) {
+    // `post` throws with the status still attached, which is exactly what the
+    // shared mapper reads. Anything else is a transport failure with no status
+    // to interpret.
+    return error instanceof LocalBrowserRequestError
+      ? paneCommandFromStatus(
+          error.status,
+          error.body ?? { error: error.message },
+        )
+      : { ok: false, reason: "failed" };
+  }
+}
+
+export async function reportLocalPaneViewport(args: {
+  bootId: string;
+  width: number;
+  policy?: "fixed" | "followPane";
+  height: number;
+  consentToken: string | null;
+}): Promise<SessionViewport | null> {
+  const { consentToken, ...body } = args;
+  const answer = await post<{ viewport?: unknown }>(
+    "viewport",
+    body,
+    consentToken,
+  ).catch(() => null);
+  return answer ? decodeSessionViewport(answer.viewport) : null;
 }

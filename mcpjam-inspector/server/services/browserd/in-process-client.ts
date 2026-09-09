@@ -21,6 +21,12 @@
  * screenshot out of a trace while someone types their password.
  */
 import type { BrowserdStack } from "./daemon/server";
+import {
+  decodePaneCommand,
+  decodePaneState,
+  decodeViewport,
+  type BrowserPaneClient,
+} from "./pane-client";
 import type { BrowserLedgerEntry } from "./daemon/command-ledger";
 import type { BrowserCommand } from "./protocol";
 import {
@@ -80,10 +86,13 @@ export interface InProcessBrowserdClient {
   exportProfile(): Promise<Uint8Array>;
 }
 
+/** The shell's three calls, satisfied in-process. @see BrowserPaneClient */
+export type InProcessPaneClient = InProcessBrowserdClient & BrowserPaneClient;
+
 export function createInProcessBrowserdClient(
   stack: Pick<BrowserdStack, "handler">,
   token: string,
-): InProcessBrowserdClient {
+): InProcessPaneClient {
   const callRaw = async (
     method: string,
     path: string,
@@ -140,6 +149,19 @@ export function createInProcessBrowserdClient(
       return decodeCommandResponse(
         await call("POST", "/v1/commands", { command, expectedBootId }),
       );
+    },
+    async paneState(args) {
+      const query = args.holder
+        ? `?holder=${encodeURIComponent(args.holder)}`
+        : "";
+      return decodePaneState(await call("GET", `/v1/state${query}`));
+    },
+    async paneCommand(args) {
+      return decodePaneCommand(await call("POST", "/v1/pane-command", args));
+    },
+    async paneViewport(args) {
+      const res = await call("POST", "/v1/viewport", args);
+      return res.status === 200 ? decodeViewport(res.body.viewport) : null;
     },
     async readTrace(args = {}) {
       const query = new URLSearchParams();

@@ -81,8 +81,26 @@ export interface FrameStreamOptions {
    * screencast, exactly as a client without `VideoDecoder` does.
    */
   video?: VideoEncoder;
-  /** The captured display's size, for the video records' geometry. */
-  displaySize?: { width: number; height: number };
+  /**
+   * The captured display's size, for the video records' geometry.
+   *
+   * A FUNCTION rather than a value, because on a responsive session it moves:
+   * the display, the kiosk browser, the page viewport and the capture geometry
+   * are resized as one coordinated transition, and a stream that had captured
+   * the boot-time number would keep stamping it on frames of a differently
+   * shaped picture. A client scales its click coordinates by what these
+   * records say, so a stale number is a mis-aimed click rather than a cosmetic
+   * error.
+   */
+  displaySize?: () => { width: number; height: number };
+  /**
+   * The session's CSS viewport, for the capture-to-page scale.
+   *
+   * Also a function, and for the same reason. The two move TOGETHER — that is
+   * what makes the transition coordinated — but they are read at different
+   * moments by different code, so each has to be able to say what it is now.
+   */
+  cssViewport?: () => { width: number; height: number };
   /**
    * How often to prove liveness and re-ask the two questions a one-way stream
    * cannot answer by itself. Injectable because the behaviour it drives — a
@@ -235,13 +253,33 @@ export function createFrameStreamHost(
     let unsubscribe: (() => void) | undefined;
     let release: (() => void) | undefined;
     let seq = 0;
-    const size = options.displaySize ?? {
-      width: BROWSERD_OBSERVATION_VIEWPORT.width,
-      height: BROWSERD_OBSERVATION_VIEWPORT.height,
+    // Read PER RECORD, not once per subscription.
+    //
+    // A resize does not end the stream: `encoder.resize()` restarts ffmpeg but
+    // keeps its listeners, so this subscription goes on emitting across the
+    // transition. Geometry captured at connect time therefore describes the
+    // display the pane joined at, and every frame after a resize carries the
+    // old numbers — which is not a cosmetic error, because the watcher divides
+    // by exactly these to map a click back into the page. A stale scale is a
+    // mis-aimed click, silently.
+    const geometry = (): {
+      size: { width: number; height: number };
+      css: { width: number; height: number };
+      scale: number;
+    } => {
+      const size = options.displaySize?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height,
+      };
+      const css = options.cssViewport?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height,
+      };
+      // Capture pixels per CSS pixel, so a click maps through exactly as it
+      // does for a JPEG. The pane never has to know which codec drew the
+      // picture.
+      return { size, css, scale: size.width / css.width };
     };
-    // Capture pixels per CSS pixel, so a click maps through exactly as it does
-    // for a JPEG. The pane never has to know which codec drew the picture.
-    const scale = size.width / BROWSERD_OBSERVATION_VIEWPORT.width;
 
     const entry = { end: (reason: FrameStreamEndReason) => end(reason) };
     const end = (reason: FrameStreamEndReason): void => {
@@ -318,14 +356,15 @@ export function createFrameStreamHost(
       // window is not a smaller version of it.
       gate.revalidate();
       if (ended) return; // revalidate may have revoked us
+      const geo = geometry();
       pacer.push(
         encodeFrameStreamRecord({
           kind: unit.key
             ? FRAME_STREAM_KIND.video_key
             : FRAME_STREAM_KIND.video_delta,
-          deviceWidth: size.width,
-          deviceHeight: size.height,
-          scale,
+          deviceWidth: geo.size.width,
+          deviceHeight: geo.size.height,
+          scale: geo.scale,
           ts: Date.now(),
           seq: (seq += 1),
           au: unit.bytes,

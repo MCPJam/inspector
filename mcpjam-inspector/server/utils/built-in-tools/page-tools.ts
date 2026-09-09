@@ -32,17 +32,18 @@
  *      off the tool object itself (`shared/tool-approval.ts`), and an absent
  *      declaration is FREE — so a `webmcp_*` tool built without one would run
  *      third-party code on a signed-in browser with no pill at all. The value
- *      is the browser capability's interactive floor for this turn: `always`
- *      wherever a person can be asked, and the declared policy where nobody
- *      can (an unattended run, gated at execute time by the tool policy).
- *      `mcpjam-stream-handler.test.ts` pins the ungated behaviour that makes
- *      the declaration mandatory.
+ *      is the browser capability's interactive floor for this turn: the user's
+ *      Tool Approval switch wherever a person can be asked, and the declared
+ *      policy where nobody can (an unattended run, gated at execute time by
+ *      the tool policy). `mcpjam-stream-handler.test.ts` pins the ungated
+ *      behaviour that makes the declaration mandatory.
  *
  *   2. PAGE ANNOTATIONS ARE NEVER READ. A page's `readOnly` is a claim by the
  *      party whose code would run, and Chromium does not carry annotations
  *      through for imperative registrations at all — so `readOnly: false` on
- *      one of those is the absence of a signal, not a claim. Everything gates.
- *      See `pageToolCallNeedsApproval`.
+ *      one of those is the absence of a signal, not a claim. The switch is the
+ *      only input; the page never gets a vote. See
+ *      `pageToolCallNeedsApproval`.
  */
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { type BrowserUnattendedPolicy } from "@/shared/client-fulfilled-tools";

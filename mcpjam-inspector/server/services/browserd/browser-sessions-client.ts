@@ -110,7 +110,8 @@ export interface SandboxBrowserSessionRecord extends BrowserSessionRecordCommon 
 }
 
 export type BrowserSessionRecord =
-  ComputerBrowserSessionRecord | SandboxBrowserSessionRecord;
+  | ComputerBrowserSessionRecord
+  | SandboxBrowserSessionRecord;
 
 interface BrowserSessionLookupCommon {
   /**
@@ -173,7 +174,8 @@ export interface SandboxBrowserSessionLookup extends BrowserSessionLookupCommon 
 }
 
 export type BrowserSessionLookup =
-  ComputerBrowserSessionLookup | SandboxBrowserSessionLookup;
+  | ComputerBrowserSessionLookup
+  | SandboxBrowserSessionLookup;
 
 const LOOKUP_PATH = "/browser-runtime/session/lookup";
 const RECORD_PATH = "/browser-runtime/session/record";
@@ -489,7 +491,7 @@ export async function lookupBrowserSession(
   args: { computerId: string } & LookupOptions,
 ): Promise<ComputerBrowserSessionLookup>;
 export async function lookupBrowserSession(
-  args: { sandboxRowId: string } & LookupOptions,
+  args: { sandboxRowId: string; watched?: boolean } & LookupOptions,
 ): Promise<SandboxBrowserSessionLookup>;
 export async function lookupBrowserSession(
   args: BrowserSessionTargetArgs & LookupOptions,
@@ -528,7 +530,7 @@ export async function lookupBrowserSession(
     session: parseSession(
       raw.session,
       targetsSandbox(args) ? "sandbox" : "computer",
-      targetsSandbox(args) && args.watched === true,
+      "watched" in args && args.watched === true,
     ),
     ...(staleSession ? { staleSession } : {}),
     ...(stale === "bundle_changed" ||
@@ -714,7 +716,8 @@ export async function touchBrowserSession(args: {
  * backend that has not deployed yet, or let a real conflict through.
  */
 export type BrowserRelaunchClaim =
-  { ok: true } | { ok: false; reason: "claimed" | "unavailable" };
+  | { ok: true }
+  | { ok: false; reason: "claimed" | "unavailable" };
 
 /**
  * Take the exclusive right to relaunch this computer's browser.

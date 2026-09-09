@@ -44,6 +44,7 @@ import {
 import type { DriverContext } from "../daemon/browser-page.js";
 import { probeSingletonOwner } from "../daemon/profile-lock.js";
 import { launchElectronContext } from "../electron/electron-context.js";
+import type { SessionViewportPolicy } from "../../../../shared/browser-viewport";
 import {
   createContextSurface,
   forgetContextSurface,
@@ -52,7 +53,7 @@ import {
 } from "../electron/agent-surface.js";
 import {
   createInProcessBrowserdClient,
-  type InProcessBrowserdClient,
+  type InProcessPaneClient,
 } from "../in-process-client.js";
 import { withKeyedLock } from "../probe-lock.js";
 import { formatBrowserdError } from "../protocol.js";
@@ -239,6 +240,16 @@ export interface EnsureLocalBrowserArgs {
    * the one place it matters most.
    */
   captureTypedText?: boolean;
+  /**
+   * May this browser change size?
+   *
+   * `fixed` unless the caller says otherwise, which keeps every existing
+   * opener — evals, swarms, journeys, the CLI, an outside agent through the
+   * door — on the 1024x768 session it has always had. Only the interactive
+   * Playground asks for `followPane`, because it is the only surface with a
+   * panel to follow.
+   */
+  viewportPolicy?: SessionViewportPolicy;
   /** Saved profile bytes applied before a new persistent session launches. */
   profileArchive?: Uint8Array;
 }
@@ -262,7 +273,7 @@ interface LocalSession {
    * refusal — and narrowing a union at each call site would be a cast asserting
    * something this module already knows.
    */
-  inProcessClient: InProcessBrowserdClient;
+  inProcessClient: InProcessPaneClient;
   driver: ChromiumDriver;
   lease: HandoffLease;
   handle: LocalBrowserSessionHandle;
@@ -484,7 +495,32 @@ async function startSession(
    */
   const nativeSurface =
     resolveLocalBrowserSurface(deps.env, runtime) === "native";
-  const surface = nativeSurface ? createContextSurface() : undefined;
+  /**
+   * The driver, once it exists, so the surface can ask it to resize.
+   *
+   * A LATE BINDING because the ordering is genuinely circular: the surface has
+   * to exist before the context, since the context registers each tab with it
+   * as the tab is made, and the driver cannot exist before the context. The
+   * alternative — a surface that queues requests until a driver arrives —
+   * would be queueing measurements that are stale by the time anything reads
+   * them, which is the one thing the coalescing barrier is for.
+   */
+  let resizeSession:
+    | ((size: { width: number; height: number }) => void)
+    | undefined;
+  /**
+   * Take the browser when somebody clicks the native view.
+   *
+   * Late-bound for the same reason `resizeSession` is: the surface has to
+   * exist before the lease, and the lease is what this acquires.
+   */
+  let takeOnShieldGesture: (() => void) | undefined;
+  const surface = nativeSurface
+    ? createContextSurface({
+        onViewportRequest: (size) => resizeSession?.(size),
+        onShieldGesture: () => takeOnShieldGesture?.(),
+      })
+    : undefined;
 
   const context =
     runtime === "electron"
@@ -495,7 +531,9 @@ async function startSession(
           ...(persistent
             ? {
                 partitionKey: args.sessionId
-                  ? `${validateLocalProjectKey(args.projectId)}--session-${validateLogicalSessionId(args.sessionId)}`
+                  ? `${validateLocalProjectKey(
+                      args.projectId,
+                    )}--session-${validateLogicalSessionId(args.sessionId)}`
                   : validateLocalProjectKey(args.projectId),
               }
             : {}),
@@ -544,7 +582,58 @@ async function startSession(
         }
       : {},
   );
-  const driver = new ChromiumDriver(context, { lease });
+  const driver = new ChromiumDriver(context, {
+    lease,
+    /**
+     * The Playground's browser follows its panel; every other caller does not.
+     *
+     * `followPane` here rather than at the pane, because the policy belongs to
+     * what OPENED the session: an eval driving this same code path opens a
+     * `fixed` one, and a pane that could choose would let a person watching an
+     * eval resize the run they are watching.
+     */
+    viewport: {
+      policy: args.viewportPolicy ?? "fixed",
+      allowPaneResize: contextMode === "persistent",
+      onChange: (viewport) =>
+        surface?.setViewport({
+          width: viewport.width,
+          height: viewport.height,
+        }),
+    },
+  });
+  // Now that both exist, close the loop: a pane measurement reaches the
+  // driver's barrier, and the size the barrier settles on comes back to the
+  // surface through `onChange` above.
+  /**
+   * The pane's own holder, as the surface knows it.
+   *
+   * The shield reports a gesture and nothing else — it does not know who is
+   * clicking, and it must not: a shield that named a holder would be a
+   * renderer-supplied identity reaching the lease through the one path that
+   * exists to be trusted. The surface already holds the pane's id, set over
+   * the IPC channel whose sender is checked, so the acquire uses that.
+   */
+  takeOnShieldGesture = () => {
+    const holder = surface?.paneHolder();
+    // No holder is a pane that has not identified itself, which on this path
+    // means a click arrived before the renderer's first `set-viewport`. There
+    // is nobody to grant the lease to, and inventing one would create a hold
+    // nothing can hand back.
+    if (!holder) return;
+    // Refusals are ordinary here and say nothing new: the surface only shields
+    // a view it is showing, and it only shows one the lease has not given to
+    // somebody else — so the case this can lose is a race with the model's own
+    // turn, which the next click wins.
+    lease.acquire(holder);
+  };
+
+  resizeSession = (size) => {
+    void driver.requestViewport(size).catch(() => {
+      // The barrier reports its own failures and restores the last confirmed
+      // geometry; a rejected measurement must not take the session down.
+    });
+  };
   // A per-boot bearer even in-process. Nothing else can reach this handler, but
   // the token is what makes the in-process client the SAME client as hosted —
   // and a stack whose auth is disabled on one engine is a stack whose auth is
@@ -556,7 +645,13 @@ async function startSession(
     contextMode,
     ...(args.captureTypedText ? { captureTypedText: true } : {}),
     ...(profileDir
-      ? { profileExport: () => exportBrowserProfileArchive(profileDir) }
+      ? {
+          profileExport: async () => {
+            await context.close();
+            await driver.close();
+            return exportBrowserProfileArchive(profileDir);
+          },
+        }
       : {}),
   });
   const client = createInProcessBrowserdClient(stack, token);
@@ -618,7 +713,7 @@ export function touchLocalBrowserSession(
  */
 export function findLocalBrowserSession(bootId: string):
   | {
-      client: InProcessBrowserdClient;
+      client: InProcessPaneClient;
       handler: BrowserdStack["handler"];
       handle: LocalBrowserSessionHandle;
       /**
@@ -682,7 +777,7 @@ export function findLocalBrowserSessionForSession(
 
 /** What a caller gets when it has found the browser it may reach. */
 export interface LiveLocalBrowser {
-  client: InProcessBrowserdClient;
+  client: InProcessPaneClient;
   handle: LocalBrowserSessionHandle;
   ledger: BrowserdStack["ledger"];
   projectKey: string;
@@ -883,11 +978,15 @@ const TEARDOWN_HOLDER = "browserd:teardown";
  */
 export async function closeLocalBrowserSession(
   bootId: string,
+  whileClosed?: () => Promise<void>,
 ): Promise<
-  { closed: true } | { closed: false; reason: "not_found" | "lease_held" }
+  | { closed: true }
+  | { closed: false; reason: "not_found" | "lease_held" | "busy" }
 > {
   for (const session of sessions.values()) {
     if (session.stack.bootId !== bootId) continue;
+    if (whileClosed && !session.stack.queue.isIdle())
+      return { closed: false, reason: "busy" };
     // CLAIMED, not merely checked. A read says who held the lease a moment ago;
     // `acquire` says who holds it now and keeps holding it. It returns the
     // OTHER holder's state unchanged when somebody already has the browser, so
@@ -903,9 +1002,20 @@ export async function closeLocalBrowserSession(
     // `session`/`ensure` arriving a moment later either reuses an entry that is
     // already disposing or launches straight into the profile's singleton lock
     // that Chromium has not yet released, and the caller sees `profile_in_use`.
-    await withKeyedLock(`local-browser:${session.key}`, () =>
-      disposeSession(session),
-    );
+    await withKeyedLock(`local-browser:${session.key}`, async () => {
+      // Export must observe a successful flush and keep ensure() out until
+      // the archive is complete, even after the live entry is removed.
+      if (whileClosed) {
+        try {
+          await session.context.close();
+        } catch (error) {
+          session.lease.resume(TEARDOWN_HOLDER);
+          throw error;
+        }
+      }
+      await disposeSession(session);
+      await whileClosed?.();
+    });
     return { closed: true };
   }
   return { closed: false, reason: "not_found" };

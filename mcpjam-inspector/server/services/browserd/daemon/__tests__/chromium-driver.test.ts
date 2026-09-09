@@ -19,7 +19,7 @@ describe("ChromiumDriver — navigation (W1 subset)", () => {
     const res = await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
     expect(page.calls.goto).toEqual(["https://x.test/"]);
     expect(res.ok).toBe(true);
-    expect(res.output).toEqual({ url: "https://x.test/" });
+    expect(res.output).toMatchObject({ url: "https://x.test/" });
     expect(res.settled).toBe(true);
     // tab-less commands resolve to the shared session key, which MUST match the
     // queue's default key so they cannot race an explicit tabId of the same name.
@@ -35,18 +35,36 @@ describe("ChromiumDriver — navigation (W1 subset)", () => {
       cmd({ kind: "observe", mode: "url" }, "@session"),
     );
     expect(created).toHaveLength(1); // one page, not two racing FIFOs
-    expect(viaExplicit.output).toEqual({ url: "https://x.test/" });
+    expect(viaExplicit.output).toMatchObject({ url: "https://x.test/" });
   });
 
-  it("dispatches back and reload to the page", async () => {
+  it("carries the size it was seen at on every observation", async () => {
+    // The model's coordinates are read in this space, and on a session that
+    // can be resized it is the only honest way for it to know: the tool schema
+    // states a RANGE rather than a size, precisely so it does not have to be
+    // regenerated — and its hash rotated — every time somebody drags a panel.
+    const page = fakePage();
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    const res = await driver.execute(
+      cmd({ kind: "navigate", url: "https://x.test/", observe: "screenshot" }),
+    );
+    expect(res.output).toMatchObject({
+      viewport: { width: 1024, height: 768 },
+    });
+  });
+
+  it("dispatches back, forward and reload to the page", async () => {
     const page = fakePage();
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
     await driver.execute(cmd({ kind: "reload" }));
     await driver.execute(cmd({ kind: "back" }));
+    await driver.execute(cmd({ kind: "forward" }));
     expect(page.calls.reload).toBe(1);
     expect(page.calls.goBack).toBe(1);
+    expect(page.calls.goForward).toBe(1);
   });
 
   it("returns settled:false when the page will not go quiet in budget", async () => {
@@ -67,7 +85,10 @@ describe("ChromiumDriver — observe {mode:\"text\"}", () => {
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
     const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
     expect(res.ok).toBe(true);
-    expect(res.output).toEqual({ text: "# Title\n\nHello", url: "https://x.test/" });
+    expect(res.output).toMatchObject({
+      text: "# Title\n\nHello",
+      url: "https://x.test/",
+    });
     expect(res.stateToken).toMatchObject({ tabId: "@session" });
   });
 
@@ -161,17 +182,17 @@ describe("ChromiumDriver — observe", () => {
     // `url` rides on EVERY observation, screenshots included: the unattended
     // origin allowlist is enforced against it, and a result without one would
     // pass that check by default.
-    expect(shot.output).toEqual({
+    expect(shot.output).toMatchObject({
       url: "https://x.test/",
       screenshot: "BASE64PNG",
     });
     expect(shot.stateToken).toBeDefined();
 
     const url = await driver.execute(cmd({ kind: "observe", mode: "url" }));
-    expect(url.output).toEqual({ url: "https://x.test/" });
+    expect(url.output).toMatchObject({ url: "https://x.test/" });
 
     const dom = await driver.execute(cmd({ kind: "observe", mode: "dom" }));
-    expect(dom.output).toEqual({ url: "https://x.test/", dom: "0BODY>1DIV" });
+    expect(dom.output).toMatchObject({ url: "https://x.test/", dom: "0BODY>1DIV" });
   });
 
   it("fails an observe on a tab that was never navigated", async () => {
@@ -644,7 +665,7 @@ describe("ChromiumDriver — screenshot token binds to the captured frame (P1)",
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
     const res = await driver.execute(cmd({ kind: "observe", mode: "screenshot" }));
-    expect(res.output).toEqual({
+    expect(res.output).toMatchObject({
       url: "https://x.test/",
       screenshot: "BASE64PNG",
     });
@@ -719,13 +740,19 @@ describe("ChromiumDriver — only navigate may create or replace a tab (P2)", ()
     expect(res.error).toContain("explicit tabId");
   });
 
-  it("returns unknown_tab for back/reload on a tab that was never created", async () => {
+  it("returns unknown_tab for back/forward/reload on a tab that was never created", async () => {
     const { context, created } = fakeContext();
     const driver = new ChromiumDriver(context);
     expect(await driver.execute(cmd({ kind: "back" }, "ghost"))).toMatchObject({
       ok: false,
       error: "unknown_tab: ghost",
     });
+    // `forward` joins the same rule rather than getting its own: a verb that
+    // conjured an about:blank tab to go forward in would be a fresh page with
+    // no history at all.
+    expect(await driver.execute(cmd({ kind: "forward" }, "ghost"))).toMatchObject(
+      { ok: false, error: "unknown_tab: ghost" },
+    );
     expect(await driver.execute(cmd({ kind: "reload" }, "ghost"))).toMatchObject({
       ok: false,
       error: "unknown_tab: ghost",
