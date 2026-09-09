@@ -16,21 +16,18 @@
  * means.
  */
 
-import type {
-  BrowserSessionState,
-  BrowserStateSnapshot,
-  BrowserTabState,
-} from "../../../shared/browser-session-state";
+import type { BrowserStateSnapshot } from "../../../shared/browser-session-state";
+import {
+  decodeSessionViewport,
+  decodeStateSnapshot,
+  paneCommandFromStatus,
+} from "../../../shared/browser-pane-wire";
 import type {
   BrowserPaneCommand,
   BrowserPaneHolder,
   InteractionAnchor,
 } from "../../../shared/browser-pane-command";
-import {
-  INITIAL_SESSION_VIEWPORT,
-  parseViewportPolicy,
-  type SessionViewport,
-} from "../../../shared/browser-viewport";
+import type { SessionViewport } from "../../../shared/browser-viewport";
 
 export type PaneCommandOutcome =
   | { ok: true; viewport?: SessionViewport }
@@ -92,77 +89,7 @@ interface RawResponse {
  */
 export function decodePaneState(res: RawResponse): BrowserStateSnapshot | null {
   if (res.status !== 200) return null;
-  const body = res.body;
-  if (!Array.isArray(body.tabs)) return null;
-  const tabs = body.tabs
-    .map(decodeTab)
-    .filter((tab): tab is BrowserTabState => tab !== null);
-  const activeTabId =
-    typeof body.activeTabId === "string" ? body.activeTabId : null;
-  return {
-    seq: typeof body.seq === "number" ? body.seq : 0,
-    tabs,
-    // An active id naming a tab that is not in the list reads as "no tab is on
-    // screen", which is worse than picking the first: the shell would draw an
-    // empty address bar over a page that is plainly there.
-    activeTabId:
-      activeTabId && tabs.some((tab) => tab.id === activeTabId)
-        ? activeTabId
-        : (tabs[0]?.id ?? null),
-    canGoBack: body.canGoBack === true,
-    canGoForward: body.canGoForward === true,
-    control: decodeControl(body.control),
-    viewport: decodeViewport(body.viewport) ?? INITIAL_SESSION_VIEWPORT,
-    policy: parseViewportPolicy(body.policy),
-  };
-}
-
-function decodeTab(raw: unknown): BrowserTabState | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const value = raw as Record<string, unknown>;
-  if (typeof value.id !== "string" || !value.id) return null;
-  return {
-    id: value.id,
-    url: typeof value.url === "string" ? value.url : "",
-    title: typeof value.title === "string" ? value.title : "",
-    ...(typeof value.faviconUrl === "string" && value.faviconUrl
-      ? { faviconUrl: value.faviconUrl }
-      : {}),
-    loading: value.loading === true,
-  };
-}
-
-function decodeControl(raw: unknown): BrowserSessionState["control"] {
-  if (typeof raw !== "object" || raw === null) return { kind: "agent" };
-  const value = raw as Record<string, unknown>;
-  // Anything we cannot read is `agent`, which is the SAFE default here in a
-  // way that may look backwards: it means the shell offers no "hand back" and
-  // no input, so an unreadable answer costs a person a click rather than
-  // letting them type into a page somebody else is holding.
-  const kind =
-    value.kind === "human" || value.kind === "script" ? value.kind : "agent";
-  return {
-    kind,
-    ...(typeof value.holder === "string" ? { holder: value.holder } : {}),
-    ...(value.parked === true ? { parked: true } : {}),
-  };
-}
-
-export function decodeViewport(raw: unknown): SessionViewport | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const value = raw as Record<string, unknown>;
-  if (
-    typeof value.width !== "number" ||
-    typeof value.height !== "number" ||
-    typeof value.revision !== "number"
-  ) {
-    return null;
-  }
-  return {
-    width: value.width,
-    height: value.height,
-    revision: value.revision,
-  };
+  return decodeStateSnapshot(res.body);
 }
 
 /**
@@ -174,37 +101,15 @@ export function decodeViewport(raw: unknown): SessionViewport | null {
  * and anything else is an error worth naming.
  */
 export function decodePaneCommand(res: RawResponse): PaneCommandOutcome {
-  const viewport = decodeViewport(res.body.viewport);
-  if (res.status === 200 && res.body.ok !== false) {
-    return { ok: true, ...(viewport ? { viewport } : {}) };
-  }
-  if (res.status === 423) {
-    const holder = res.body.holder;
-    return {
-      ok: false,
-      reason: "lease_held",
-      ...(typeof holder === "object" && holder !== null
-        ? {
-            holder: {
-              kind:
-                (holder as Record<string, unknown>).kind === "script"
-                  ? "script"
-                  : "human",
-              ...(typeof (holder as Record<string, unknown>).id === "string"
-                ? { id: (holder as Record<string, unknown>).id as string }
-                : {}),
-            },
-          }
-        : {}),
-    };
-  }
-  if (res.status === 409 && res.body.error === "page_changed") {
-    return { ok: false, reason: "page_changed" };
-  }
-  if (res.status === 501) return { ok: false, reason: "unsupported" };
-  return {
-    ok: false,
-    reason: "failed",
-    ...(typeof res.body.error === "string" ? { detail: res.body.error } : {}),
-  };
+  const result = paneCommandFromStatus(res.status, res.body);
+  if (result.ok) return result;
+  // `no_session` is the inspector routes' vocabulary, not the daemon's: the
+  // daemon always has a session (it IS one), so a 409 from it is only ever a
+  // changed page.
+  return result.reason === "no_session"
+    ? { ok: false, reason: "failed" }
+    : result;
 }
+
+/** Re-exported so callers of this module need only one import. */
+export { decodeSessionViewport as decodeViewport };

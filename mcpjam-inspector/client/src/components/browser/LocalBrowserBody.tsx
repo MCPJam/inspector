@@ -12,6 +12,11 @@ import {
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
 import { ElectronNativeBody } from "@/components/browser/ElectronNativeBody";
+import { BrowserShell } from "@/components/browser/BrowserShell";
+import { PaneSettingsMenu } from "@/components/browser/PaneControlBar";
+import { useBrowserSession } from "@/lib/browser-shell/use-browser-session";
+import { TakeoverCoordinator } from "@/lib/browser-shell/takeover";
+import type { BrowserPaneCommand } from "../../../../shared/browser-pane-command";
 import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
 import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
 import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
@@ -19,6 +24,9 @@ import { createFrameWireReader } from "@/lib/browser-pane/frame-wire";
 import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
   actOnLocalBrowserLease,
+  fetchLocalBrowserState,
+  reportLocalPaneViewport,
+  sendLocalPaneCommand,
   createInputForwarder,
   ensureLocalBrowser,
   fetchLocalBrowserStatus,
@@ -549,9 +557,19 @@ export function LocalBrowserBody({
     return () => useBrowserPageToolsStore.getState().clear(key);
   }, [projectId]);
 
+  /**
+   * Acquire or hand back, and say whether it landed.
+   *
+   * Returns a boolean because the TAKEOVER path needs the answer: a click that
+   * did not get the lease must not then be forwarded as input, and the pane
+   * has to know which. One function rather than two call sites, so that the
+   * generation guard cannot be skipped by the newer one — a lease belongs to
+   * ONE browser, and an answer arriving after the pane has moved to another
+   * would show control of something nobody is watching.
+   */
   const setLeaseAction = useCallback(
-    async (action: "acquire" | "resume") => {
-      if (!session) return;
+    async (action: "acquire" | "resume"): Promise<boolean> => {
+      if (!session) return false;
       const generation = railGeneration.current;
       setError(null);
       try {
@@ -562,11 +580,13 @@ export function LocalBrowserBody({
         // A lease belongs to ONE browser. If the pane moved on while this was
         // in flight — another project, or another browser in this one —
         // applying it would show control of something nobody is watching.
-        if (railGeneration.current !== generation) return;
+        if (railGeneration.current !== generation) return false;
         setLease(next);
+        return true;
       } catch (err) {
-        if (railGeneration.current !== generation) return;
+        if (railGeneration.current !== generation) return false;
         setError(err instanceof Error ? err.message : String(err));
+        return false;
       }
     },
     [session, holder, consentToken],
@@ -857,6 +877,17 @@ export function LocalBrowserBody({
     return undefined;
   })();
 
+  // The stats overlay's flag, which the take-control bar used to own. Seeded
+  // from the persisted key so somebody who set it in the console still gets
+  // the overlay, exactly as the bar did.
+  const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
+  const onStatsToggle = useCallback((next: boolean) => {
+    // The menu IS the flag: turning the overlay on has to START the recording,
+    // not merely reveal a set of zeros.
+    paneFrameStats.setEnabled(next);
+    setStatsOpen(next);
+  }, []);
+
   const control: PaneControl =
     lease.state === "free"
       ? "agent"
@@ -865,6 +896,108 @@ export function LocalBrowserBody({
         : lease.holderKind === "script"
           ? "script"
           : "other";
+
+  /**
+   * The shell's transport, for this engine.
+   *
+   * Built here rather than in the shell because everything in it is
+   * local-specific: the bootId that names this browser, the consent capability
+   * every route needs, and a `resume` that is the lease's own verb. The shell
+   * knows none of that and does not need to.
+   */
+  const bootId = session?.bootId ?? null;
+  const shellTransport = useMemo(() => {
+    if (!bootId) return null;
+    return {
+      readState: () =>
+        fetchLocalBrowserState({ bootId, holder, consentToken }),
+      sendCommand: (args: {
+        command: BrowserPaneCommand;
+        commandId?: string;
+      }) =>
+        sendLocalPaneCommand({
+          bootId,
+          holder,
+          consentToken,
+          command: args.command,
+          ...(args.commandId ? { commandId: args.commandId } : {}),
+        }),
+      reportViewport: (size: { width: number; height: number }) =>
+        reportLocalPaneViewport({ bootId, consentToken, ...size }),
+      // THE PANE'S OWN lease action, not a bare call: it applies the answer to
+      // this body's `lease` and drops one that arrived after the pane moved to
+      // another browser. A resume that only reached the server would leave the
+      // shell saying "You have it" over a browser the agent had already
+      // resumed, until the next poll caught up.
+      resume: async () => {
+        // The boolean is for the takeover path, which must not deliver input
+        // it did not get the lease for. A resume has nothing to gate: it
+        // either handed back or reported its own error, and the shell's next
+        // reconcile says which.
+        await setLeaseAction("resume");
+      },
+    };
+  }, [bootId, holder, consentToken, setLeaseAction]);
+
+  const shell = useBrowserSession({
+    transport: shellTransport,
+    holderId: holder,
+    active,
+  });
+
+  /**
+   * Take the browser, then deliver the interaction that asked for it.
+   *
+   * THE LEASE ENDPOINT, not a pane command. `pane-command` acquires as a side
+   * effect of doing something, which is right for a navigation and wrong here:
+   * a person who clicked into the page has asked for exactly that click, and
+   * borrowing some other verb to get the lease would perform an action nobody
+   * requested. `acquire` is the verb whose whole meaning is "this is mine now".
+   *
+   * The ordinary input path is untouched. Once the lease is ours, `holding`
+   * flips and every later event goes through the batched forwarder over the
+   * socket, as it always has; this runs once, for the interaction that arrived
+   * before there was a lease to send it under.
+   */
+  const takeoverRef = useRef<TakeoverCoordinator<BrowserInputEvent[]> | null>(
+    null,
+  );
+  const holdingRef = useRef(holding);
+  holdingRef.current = holding;
+  // The coordinator is built ONCE and outlives every re-render, so it reads
+  // the action through a ref rather than closing over the one that existed
+  // when it was made — which would be pinned to the first session's bootId.
+  const setLeaseActionRef = useRef(setLeaseAction);
+  setLeaseActionRef.current = setLeaseAction;
+  const takeover = useCallback(
+    (events: BrowserInputEvent[]) => {
+      if (!bootId) return;
+      takeoverRef.current ??= new TakeoverCoordinator<BrowserInputEvent[]>({
+        isHolding: () => holdingRef.current,
+        // THE PANE'S OWN lease action, generation guard and all. A bare call
+        // would apply an answer that arrived after the pane moved to another
+        // browser, and the shell would then say "You have it" over a browser
+        // that was torn down — wiring the keyboard and mouse to nothing.
+        acquire: async () =>
+          (await setLeaseActionRef.current("acquire"))
+            ? { ok: true as const }
+            : { ok: false as const },
+        // No anchor on this engine yet: the pane has no per-tab nav counter to
+        // compare, and an anchor it cannot verify would DROP every takeover
+        // click rather than protect any of them. The daemon's own
+        // `stale_observation` guard still covers the model's acts; what is
+        // missing here is only the extra check on a person's first click.
+      });
+      void takeoverRef.current.gesture({ payload: events }).then((result) => {
+        if (result.status !== "deliver") return;
+        void sendLocalBrowserInput(
+          { bootId, holder, events: result.payload },
+          consentToken,
+        ).catch(() => {});
+      });
+    },
+    [bootId, holder, consentToken],
+  );
 
   // The page ITSELF, in the app's own window — no encoder, no socket, no
   // decode. Everything above is unchanged and still applies: the same status,
@@ -913,31 +1046,63 @@ export function LocalBrowserBody({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-0 flex-1 flex-col">
-        <BrowserPaneSurface
-          // Gated as well as cleared: a frame that lands in the same tick as
-          // the revocation must not be the one that gets painted.
-          frame={consentGranted ? frame : null}
+        <BrowserShell
+          state={shell.state}
+          holderId={holder}
+          // THIS engine's lease, not the shell's polled copy: the local body
+          // learns about its own acquire the moment it lands, and the shell's
+          // reconcile is a beat behind. @see BrowserShellProps.control
           holding={holding}
-          control={control}
-          // Offered only when there is a browser to take and nobody has it. A
-          // lease held by somebody else is not something this pane may step
-          // over.
-          onTakeControl={
-            session && !holding && lease.state === "free"
-              ? () => void setLeaseAction("acquire")
-              : undefined
+          control={{
+            kind:
+              lease.state === "free"
+                ? "agent"
+                : lease.holderKind === "script"
+                  ? "script"
+                  : "human",
+            ...(lease.state !== "free" && lease.holder
+              ? { holder: lease.holder }
+              : {}),
+            ...(lease.state === "parked" ? { parked: true } : {}),
+          }}
+          onCommand={shell.run}
+          {...(session && holding ? { onResumeAgent: shell.resume } : {})}
+          resuming={shell.resuming}
+          // The shell owns the picture's SIZE, so it is the shell that
+          // measures. @see BrowserShellProps.onViewportMeasured
+          onViewportMeasured={shell.reportViewport}
+          ready={!!session}
+          // The shell's own notice wins over the pane's — a dropped takeover
+          // click is about this interaction, while the pane's notices are
+          // about the stream — and the pane's shows through when there is no
+          // shell notice to display.
+          notice={shell.notice}
+          error={error ?? shell.error}
+          // The ENGINE's blocked states — no consent, no Chromium, a browser
+          // that has gone — replace the page area entirely. @see the prop.
+          {...(placeholder ? { placeholder } : {})}
+          trailing={
+            <PaneSettingsMenu
+              statsOpen={statsOpen}
+              onToggleStats={onStatsToggle}
+            />
           }
-          onHandBack={
-            session && holding
-              ? () => void setLeaseAction("resume")
-              : undefined
-          }
-          onInput={send}
-          placeholder={placeholder}
-          error={error}
-          active={active}
-          engine={status?.runtime ?? "local"}
-        />
+        >
+          <BrowserPaneSurface
+            // Gated as well as cleared: a frame that lands in the same tick as
+            // the revocation must not be the one that gets painted.
+            frame={consentGranted ? frame : null}
+            holding={holding}
+            control={control}
+            // NO take-control button. Using the browser is what takes it now,
+            // and the shell's second row already says who is driving.
+            chrome="none"
+            onInput={send}
+            onTakeoverInput={takeover}
+            active={active}
+            engine={status?.runtime ?? "local"}
+          />
+        </BrowserShell>
       </div>
       <Activity
         projectId={projectId}

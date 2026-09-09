@@ -13,6 +13,19 @@
  * can, because a pane that had to branch on more than that would be two panes.
  */
 
+import type { BrowserStateSnapshot } from "../../../../shared/browser-session-state";
+import type {
+  BrowserPaneCommand,
+  InteractionAnchor,
+} from "../../../../shared/browser-pane-command";
+import type { SessionViewport } from "../../../../shared/browser-viewport";
+import {
+  decodeSessionViewport,
+  decodeStateSnapshot,
+  paneCommandFromStatus,
+  type PaneCommandResult,
+} from "../../../../shared/browser-pane-wire";
+
 export const HOSTED_BROWSER_BASE = "/api/web/computers/browser";
 
 /** Loopback is fine unencrypted; nothing leaves the machine. */
@@ -253,6 +266,67 @@ export async function sendHostedBrowserInput(
     body: JSON.stringify(args),
   });
   return decode<{ ok: true }>(res);
+}
+
+/**
+ * The browser shell's three calls, on the hosted engine.
+ *
+ * None of them throws for a refusal, unlike the calls above. Every caller is a
+ * shell drawing chrome, and the useful answer to "somebody else has the
+ * browser" is a banner rather than an exception — so a refusal comes back as a
+ * value, and only a genuine transport failure is absent.
+ *
+ * No `holder` on any of them. The server derives it from the token's claims,
+ * exactly as `/input` and `/lease` do: a holder the client could name would
+ * let anyone who echoed the right id read the tab titles of a session somebody
+ * else is signing into, or drive it.
+ */
+export async function fetchHostedBrowserState(
+  tokens: BrowserTokenCache,
+): Promise<BrowserStateSnapshot | null> {
+  const res = await authorized(tokens, "/state", { method: "GET" }).catch(
+    () => null,
+  );
+  if (!res) return null;
+  const body = (await res.json().catch(() => null)) as {
+    state?: unknown;
+  } | null;
+  return res.ok && body ? decodeStateSnapshot(body.state) : null;
+}
+
+export async function sendHostedPaneCommand(
+  tokens: BrowserTokenCache,
+  args: {
+    command: BrowserPaneCommand;
+    commandId?: string;
+    anchor?: InteractionAnchor;
+  },
+): Promise<PaneCommandResult> {
+  const res = await authorized(tokens, "/pane-command", {
+    method: "POST",
+    body: JSON.stringify(args),
+  }).catch(() => null);
+  if (!res) return { ok: false, reason: "failed" };
+  const body = (await res.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null;
+  return paneCommandFromStatus(res.status, body);
+}
+
+export async function reportHostedPaneViewport(
+  tokens: BrowserTokenCache,
+  size: { width: number; height: number },
+): Promise<SessionViewport | null> {
+  const res = await authorized(tokens, "/viewport", {
+    method: "POST",
+    body: JSON.stringify(size),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  const body = (await res.json().catch(() => null)) as {
+    viewport?: unknown;
+  } | null;
+  return body ? decodeSessionViewport(body.viewport) : null;
 }
 
 /** "This pane is still open." Keeps the box from hibernating underneath it. */

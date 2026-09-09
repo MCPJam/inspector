@@ -104,7 +104,47 @@ export interface BrowserPaneSurfaceProps {
   tier?: QualityTier;
   onTier?: (next: QualityTier) => void;
   tiers?: readonly QualityTier[];
+  /**
+   * Draw the take-control bar above the picture, or not.
+   *
+   * `"none"` is for a pane wrapped in `BrowserShell`, whose two rows already
+   * carry the ownership status and the resume control — a bar above them would
+   * be a third row repeating both. Everything else this component does is
+   * unchanged: it is still the picture, the pointer, the keys and the
+   * letterbox arithmetic, and those are what make it worth sharing.
+   */
+  chrome?: "bar" | "none";
+  /**
+   * Handle a pointer or key event as a TAKEOVER when this pane does not hold
+   * the browser.
+   *
+   * Without it, `holding: false` simply drops input, which is what the surface
+   * did when taking control was a button. With it, the first click into the
+   * picture acquires the lease and is then delivered — or dropped with a
+   * notice, if the page moved while acquiring. The surface does not decide
+   * any of that; it reports the interaction and the body's coordinator does.
+   */
+  onTakeoverInput?: ((events: BrowserInputEvent[]) => void) | undefined;
 }
+
+/**
+ * Keys that are never somebody typing.
+ *
+ * A lone modifier is a hand resting or a host shortcut beginning, and taking
+ * the browser from the agent for one would be the keyboard's version of taking
+ * it on a hover.
+ */
+const MODIFIER_KEYS: ReadonlySet<string> = new Set([
+  "Shift",
+  "Control",
+  "Alt",
+  "Meta",
+  "CapsLock",
+  "NumLock",
+  "ScrollLock",
+  "Dead",
+  "Process",
+]);
 
 /** The DOM's button numbering, in the daemon's names. */
 function buttonOf(event: { button?: number }): "left" | "middle" | "right" {
@@ -129,6 +169,8 @@ export function BrowserPaneSurface({
   tier,
   onTier,
   tiers,
+  chrome = "bar",
+  onTakeoverInput,
 }: BrowserPaneSurfaceProps) {
   /**
    * Is the overlay up?
@@ -180,6 +222,23 @@ export function BrowserPaneSurface({
       onInput(events);
     },
     [holding, onInput],
+  );
+
+  /**
+   * The interaction that TAKES the browser.
+   *
+   * Deliberately not routed through `send`. Taking is a round trip, and the
+   * events that would be forwarded on the way — a bare `mouse_down` whose
+   * `mouse_up` arrives while the acquire is still in flight — would leave the
+   * page holding a button nobody is pressing. So a takeover carries a COMPLETE
+   * interaction: a whole click, a whole wheel tick, a whole keystroke.
+   */
+  const takeover = useCallback(
+    (events: BrowserInputEvent[]) => {
+      if (holding || events.length === 0) return;
+      onTakeoverInput?.(events);
+    },
+    [holding, onTakeoverInput],
   );
 
   /**
@@ -376,9 +435,47 @@ export function BrowserPaneSurface({
           // The page gets the right-click; the host's own menu would cover it.
           if (holding) event.preventDefault();
         }}
+        onClick={(event) => {
+          // THE CLICK, not the mousedown, is what takes the browser. A
+          // takeover is a round trip; forwarding a lone `mouse_down` into it
+          // would leave the page holding a button whose release arrived while
+          // the acquire was still running. A click is complete by definition.
+          if (holding) return;
+          const point = pointAt(event);
+          if (!point) return;
+          takeover([
+            { type: "mouse_move", ...point, modifiers: modifiersOf(event) },
+            {
+              type: "mouse_down",
+              ...point,
+              button: buttonOf(event),
+              clickCount: event.detail || 1,
+              modifiers: modifiersOf(event),
+            },
+            {
+              type: "mouse_up",
+              ...point,
+              button: buttonOf(event),
+              clickCount: event.detail || 1,
+              modifiers: modifiersOf(event),
+            },
+          ]);
+        }}
         onWheel={(event) => {
           const point = pointAt(event);
           if (!point) return;
+          if (!holding) {
+            takeover([
+              {
+                type: "wheel",
+                ...point,
+                deltaX: event.deltaX,
+                deltaY: event.deltaY,
+                modifiers: modifiersOf(event),
+              },
+            ]);
+            return;
+          }
           send([
             {
               type: "wheel",
@@ -395,6 +492,7 @@ export function BrowserPaneSurface({
 
   return (
     <>
+      {chrome === "none" ? null : (
       <PaneControlBar
         control={control}
         onTakeControl={onTakeControl}
@@ -412,11 +510,15 @@ export function BrowserPaneSurface({
           setStatsOpen(next);
         }}
       />
+      )}
       <div
         ref={paneRef}
         className="relative min-h-0 flex-1 px-3 pb-3 outline-none"
-        // Keys go to the page only while this pane holds the browser.
-        tabIndex={holding ? 0 : -1}
+        // FOCUSABLE EVEN WHEN THE AGENT IS DRIVING, because typing is now one
+        // of the things that takes the browser. It used to be `-1` while not
+        // holding, which was right when taking control was a button: there was
+        // nothing a keystroke here could do. Now there is.
+        tabIndex={0}
         onPaste={(event) => {
           // Paste has no keystrokes to replay. `Ctrl+V` forwarded as a key
           // pair asks the PAGE to paste from a clipboard the sandbox does not
@@ -436,7 +538,34 @@ export function BrowserPaneSurface({
           if (event.data) send([{ type: "text", text: event.data }]);
         }}
         onKeyDown={(event) => {
-          if (!holding) return;
+          if (!holding) {
+            // A modifier on its own is not somebody typing — it is somebody
+            // about to use a host shortcut, or resting a hand. Taking the
+            // browser away from the agent for a lone Shift would be the
+            // keyboard version of taking it on a hover.
+            if (MODIFIER_KEYS.has(event.key)) return;
+            if (event.key === "Tab") return; // Leaving the pane, not typing.
+            event.preventDefault();
+            takeover(
+              event.key.length === 1 && !event.ctrlKey && !event.metaKey
+                ? [{ type: "text", text: event.key }]
+                : [
+                    {
+                      type: "key_down",
+                      key: event.key,
+                      code: event.code,
+                      modifiers: modifiersOf(event),
+                    },
+                    {
+                      type: "key_up",
+                      key: event.key,
+                      code: event.code,
+                      modifiers: modifiersOf(event),
+                    },
+                  ],
+            );
+            return;
+          }
           // ESCAPE HATCH, and it has to be a key: taking control moves focus
           // into this pane and every other key goes to the page, so a person
           // navigating by keyboard had no way back to "Hand back" — including

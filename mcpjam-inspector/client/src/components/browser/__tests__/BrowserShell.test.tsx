@@ -33,6 +33,10 @@ function state(patch: Partial<BrowserSessionState> = {}): BrowserSessionState {
     ...EMPTY_BROWSER_SESSION_STATE,
     tabs: [tab("a"), tab("b")],
     activeTabId: "a",
+    // Non-zero, because this state came FROM a browser. `seq: 0` means "we
+    // have not heard yet", and the shell deliberately draws the engine's
+    // picture rather than a start page until it has.
+    seq: 1,
     ...patch,
   };
 }
@@ -290,6 +294,15 @@ describe("the page area", () => {
     // Closing the last tab returns here without ending the session.
     renderShell({ tabs: [], activeTabId: null });
     expect(screen.getByTestId("browser-start-page")).toBeInTheDocument();
+  });
+
+  it("draws the engine's picture, not a start page, before the browser has said anything", () => {
+    // Otherwise the shell covers the page with "type an address above" for the
+    // whole first poll of every session, and forever on an engine that cannot
+    // report its tabs.
+    renderShell({ seq: 0, tabs: [], activeTabId: null });
+    expect(screen.getByTestId("page-area")).toBeInTheDocument();
+    expect(screen.queryByTestId("browser-start-page")).toBeNull();
   });
 
   it("shows a notice over the page without covering it", () => {
