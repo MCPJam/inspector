@@ -1,10 +1,15 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { Maximize2, Minimize2, PanelRightClose } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
 import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
-import { useMintBrowserToken } from "@/hooks/useProjectComputer";
+import {
+  useMintBrowserToken,
+  useMintConversationBrowserToken,
+} from "@/hooks/useProjectComputer";
+import { useBrowserSessionsEnabled } from "@/hooks/useBrowserSessionsEnabled";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 
 /**
@@ -48,6 +53,30 @@ export function PlaygroundBrowserPanel({
 }: PlaygroundBrowserPanelProps) {
   const engine = useComputerEngine(projectId);
   const mintBrowserToken = useMintBrowserToken();
+  // THE DURABLE SESSION, in the panel as well as in the rail tab it replaces.
+  // The browser a chat owns keeps its logins and its saved profile across
+  // turns, and that identity travels on the token: minting the project-scoped
+  // one here would have handed the workspace a fresh anonymous browser every
+  // time the flag was on, which is every time this panel is the browser.
+  // @see PlaygroundRightRail, which wires the fallback tab identically.
+  const mintConversationBrowserToken = useMintConversationBrowserToken();
+  const browserSessionsEnabled = useBrowserSessionsEnabled();
+  const activeChatSessionId = useActiveChatSessionStore(
+    (state) => state.sessionId,
+  );
+  const browserSessionId = browserSessionsEnabled
+    ? (activeChatSessionId ?? undefined)
+    : undefined;
+  const mintHostedBrowserToken = useCallback(
+    ({ projectId: tokenProjectId }: { projectId: string }) =>
+      browserSessionId
+        ? mintConversationBrowserToken({
+            projectId: tokenProjectId,
+            conversationId: browserSessionId,
+          })
+        : mintBrowserToken({ projectId: tokenProjectId }),
+    [browserSessionId, mintBrowserToken, mintConversationBrowserToken],
+  );
   const expanded = useBrowserWorkspaceStore((state) => state.expanded);
   const setExpanded = useBrowserWorkspaceStore((state) => state.setExpanded);
 
@@ -109,6 +138,7 @@ export function PlaygroundBrowserPanel({
         {isLocal ? (
           <LocalBrowserBody
             projectId={projectId}
+            sessionId={browserSessionId}
             consentGranted={engine.consent.granted}
             consentToken={engine.consent.token}
             active={visible}
@@ -116,7 +146,8 @@ export function PlaygroundBrowserPanel({
         ) : (
           <HostedBrowserBody
             projectId={projectId}
-            mintToken={mintBrowserToken}
+            sessionId={browserSessionId}
+            mintToken={mintHostedBrowserToken}
             active={visible}
           />
         )}
