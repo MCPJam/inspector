@@ -76,6 +76,8 @@ export function BrowserPanel({
   const [holding, setHolding] = useState(false);
   // A tab that is not visible must not keep a machine awake.
   const visibleRef = useRef(true);
+  /** Bumped whenever this panel changes which browser it is looking at. */
+  const panelGeneration = useRef(0);
 
   /** Every call mints its own token: they last ~60s, so caching one across a
    *  panel's lifetime would just produce expiry failures. */
@@ -126,9 +128,17 @@ export function BrowserPanel({
   }, [authorized]);
 
   const refresh = useCallback(async () => {
+    // Captured before the await. Clearing state on a switch is not enough on
+    // its own: conversation A's refresh can still be in flight and land LAST,
+    // writing A's boot over B — and `BrowserStream` then pairs that stale boot
+    // with B's token, cannot connect, and leaves the viewer broken until some
+    // later refresh happens to fix it.
+    const generation = panelGeneration.current;
+    const stale = () => panelGeneration.current !== generation;
     try {
       const res = await authorized(`/session${ensure ? "?ensure=1" : ""}`);
       const body = await res.json();
+      if (stale()) return;
       if (!res.ok) {
         setSession(null);
         setError(
@@ -142,6 +152,7 @@ export function BrowserPanel({
       if (sessionId) markBrowserSessionActive(sessionId);
       setError(null);
     } catch (cause) {
+      if (stale()) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, [authorized, ensure, markBrowserSessionActive, sessionId]);
@@ -167,6 +178,9 @@ export function BrowserPanel({
   useEffect(() => {
     if (identityRef.current === sessionId) return;
     identityRef.current = sessionId;
+    // Anything still in flight against the previous conversation's browser
+    // must not land on this one.
+    panelGeneration.current += 1;
     setSession(null);
     setHolding(false);
     setBusy(false);

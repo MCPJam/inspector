@@ -309,11 +309,21 @@ export function LocalBrowserBody({
     if (!projectId) return;
     setBusy(true);
     setError(null);
+    // Captured BEFORE the await, and compared after, exactly as `exportProfile`
+    // below does. The project check alone is not enough: a conversation switch
+    // stays inside one project, bumps this counter, and would otherwise let A's
+    // late answer install into B's pane — where the frame and input routes,
+    // keyed by project plus bootId, would happily show and drive A's browser
+    // under B's identity.
+    const generation = railGeneration.current;
     try {
       const next = await ensureLocalBrowser(projectId, consentToken, sessionId);
-      // The project may have changed while this was in flight; a late answer
-      // describes a browser this rail is no longer looking at.
-      if (projectRef.current !== projectId) return;
+      if (
+        projectRef.current !== projectId ||
+        railGeneration.current !== generation
+      ) {
+        return;
+      }
       // A different browser from here on, even within this project: anything
       // still in flight against the last one must not land on this one.
       railGeneration.current += 1;
@@ -321,7 +331,12 @@ export function LocalBrowserBody({
       if (sessionId) markBrowserSessionActive(sessionId);
       setLease(next.lease);
     } catch (err) {
-      if (projectRef.current !== projectId) return;
+      if (
+        projectRef.current !== projectId ||
+        railGeneration.current !== generation
+      ) {
+        return;
+      }
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
