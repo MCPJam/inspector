@@ -278,6 +278,25 @@ describe("POST /v1/pane-command — automatic takeover", () => {
     expect(submitted).toHaveLength(0);
   });
 
+  it("does not treat a driver that cannot answer as a changed page", async () => {
+    // `currentStateToken` is optional so that older drivers keep working.
+    // Refusing every anchored command on a driver that simply lacks it made
+    // clicking the page impossible there — the pane was told the page had
+    // changed, forever, about a page sitting perfectly still.
+    const { handler, submitted } = makeHandler(); // no currentStateToken
+    const res = await handler.handle(
+      req({
+        body: JSON.stringify({
+          holder: "pane-1",
+          command: { op: "reload", tabId: "t1" },
+          anchor: { tabId: "t1", url: "https://a.test/", navCounter: 8 },
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(submitted).toHaveLength(1);
+  });
+
   it("refuses a command with no holder", async () => {
     const { handler } = makeHandler();
     const res = await handler.handle(

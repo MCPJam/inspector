@@ -1585,11 +1585,12 @@ var BrowserdRequestHandler = class {
     const anchor = parseAnchor(body.anchor);
     if (anchor) {
       const fresh = await this.currentAnchor(anchor.tabId);
-      if (!fresh || // HASHED on this side. The pane sends the URL it saw; the daemon's
+      const moved = fresh !== "unsupported" && // HASHED on this side. The pane sends the URL it saw; the daemon's
       // token carries a digest of the URL it has. Comparing in the digest's
       // space keeps the hashing scheme internal — the pane never learns it —
       // and costs one hash of a string the pane already sent.
-      fresh.urlHash !== shortHash(anchor.url) || fresh.navCounter !== anchor.navCounter) {
+      (!fresh || fresh.urlHash !== shortHash(anchor.url) || fresh.navCounter !== anchor.navCounter);
+      if (moved) {
         return {
           status: 409,
           body: { error: "page_changed", bootId: this.bootId }
@@ -1635,7 +1636,7 @@ var BrowserdRequestHandler = class {
    * and asking twice would let the two disagree.
    */
   async currentAnchor(tabId) {
-    if (!this.driver.currentStateToken) return null;
+    if (!this.driver.currentStateToken) return "unsupported";
     const token = await this.driver.currentStateToken(tabId);
     if (!token) return null;
     return { urlHash: token.urlHash, navCounter: token.navCounter };
@@ -2566,15 +2567,17 @@ function createFrameStreamHost(handler, options = {}) {
     let unsubscribe;
     let release;
     let seq = 0;
-    const size = options.displaySize?.() ?? {
-      width: BROWSERD_OBSERVATION_VIEWPORT.width,
-      height: BROWSERD_OBSERVATION_VIEWPORT.height
+    const geometry = () => {
+      const size = options.displaySize?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height
+      };
+      const css = options.cssViewport?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height
+      };
+      return { size, css, scale: size.width / css.width };
     };
-    const css = options.cssViewport?.() ?? {
-      width: BROWSERD_OBSERVATION_VIEWPORT.width,
-      height: BROWSERD_OBSERVATION_VIEWPORT.height
-    };
-    const scale = size.width / css.width;
     const entry = { end: (reason) => end(reason) };
     const end = (reason) => {
       if (ended) return;
@@ -2639,12 +2642,13 @@ function createFrameStreamHost(handler, options = {}) {
       if (ended) return;
       gate.revalidate();
       if (ended) return;
+      const geo = geometry();
       pacer.push(
         encodeFrameStreamRecord({
           kind: unit.key ? FRAME_STREAM_KIND.video_key : FRAME_STREAM_KIND.video_delta,
-          deviceWidth: size.width,
-          deviceHeight: size.height,
-          scale,
+          deviceWidth: geo.size.width,
+          deviceHeight: geo.size.height,
+          scale: geo.scale,
           ts: Date.now(),
           seq: seq += 1,
           au: unit.bytes
@@ -3887,6 +3891,17 @@ var SessionBarrier = class {
    * would resolve at a different moment from the others for no reason.
    */
   requestWaiters = [];
+  /**
+   * Armed when a resize is deferred, so the ceiling can enforce itself.
+   *
+   * Without it `maxWaitMs` was only ever CHECKED, never awaited: `maybeResize`
+   * runs on the debounce firing, on work finishing and on a drag ending, and a
+   * command that hangs while nobody is dragging produces none of the three. The
+   * pending resize then waited on an event that was never coming, which is the
+   * opposite of what a ceiling is for — the one case it exists for is the one
+   * where the session never goes quiet.
+   */
+  expiryHandle;
   debounceMs;
   maxWaitMs;
   now;
@@ -3947,6 +3962,20 @@ var SessionBarrier = class {
     return this.resizing !== null || this.pending !== null;
   }
   /**
+   * Wake up in `ms` and reconsider, replacing any timer already waiting.
+   *
+   * Replacing rather than stacking: the budget is a property of the pending
+   * measurement, not of the calls that noticed it, and several deferrals in a
+   * row must not each add a wake-up.
+   */
+  armExpiry(ms) {
+    this.clearTimer(this.expiryHandle);
+    this.expiryHandle = this.setTimer(() => {
+      this.expiryHandle = void 0;
+      this.maybeResize();
+    }, Math.max(0, ms));
+  }
+  /**
    * Run the pending resize if the session is quiet — or if it has waited long
    * enough that quiet is no longer worth waiting for.
    *
@@ -3960,7 +3989,12 @@ var SessionBarrier = class {
     if (this.debounceHandle !== void 0) return;
     const waited = this.now() - this.pendingSince;
     const expired = waited >= this.maxWaitMs;
-    if (!expired && (this.inFlight > 0 || this.dragging)) return;
+    if (!expired && (this.inFlight > 0 || this.dragging)) {
+      this.armExpiry(this.maxWaitMs - waited);
+      return;
+    }
+    this.clearTimer(this.expiryHandle);
+    this.expiryHandle = void 0;
     const size = this.pending;
     this.pending = null;
     this.pendingSince = 0;
@@ -5764,6 +5798,11 @@ var ChromiumDriver = class {
       throw error;
     }
     this.sessionViewport = next;
+    for (const entry of this.tabs.values()) {
+      if (applied.includes(entry.page) || entry.page.isClosed()) continue;
+      await entry.page.setViewportSize?.({ width: next.width, height: next.height }).catch(() => {
+      });
+    }
     try {
       this.onViewportChange?.(next);
     } catch {
@@ -7156,6 +7195,11 @@ var ChromiumDriver = class {
         webmcp: emptyWebmcpState()
       };
       this.tabs.set(tabId, entry);
+      await entry.page.setViewportSize?.({
+        width: this.sessionViewport.width,
+        height: this.sessionViewport.height
+      }).catch(() => {
+      });
       void this.attachWebmcp(tabId, entry);
       this.activeTabId = tabId;
       return entry;
@@ -8110,8 +8154,11 @@ async function resizeHostedDisplay(deps, next, previous) {
     });
     const result = await applyDisplay(back);
     if (!result.ok) return false;
+    let pageRestored = true;
     await deps.resizePage?.(previous).catch(() => {
+      pageRestored = false;
     });
+    if (!pageRestored) return false;
     await deps.restartEncoder?.(previous).catch(() => {
     });
     return true;
@@ -8321,10 +8368,10 @@ async function main() {
               run: runShell,
               deviceScaleFactor: config.deviceScaleFactor,
               restartEncoder: async (size) => {
-                await encoder?.resize?.({
-                  width: Math.round(size.width * config.deviceScaleFactor),
-                  height: Math.round(size.height * config.deviceScaleFactor)
+                const { width, height } = displayGeometryFor(size, {
+                  deviceScaleFactor: config.deviceScaleFactor
                 });
+                await encoder?.resize?.({ width, height });
               }
             },
             next,
@@ -8363,6 +8410,14 @@ async function main() {
       );
     }
   }
+  const liveDisplaySize = () => {
+    const session = driver.sessionViewportState?.();
+    const css = session ? { width: session.width, height: session.height } : { ...BROWSERD_OBSERVATION_VIEWPORT };
+    const { width, height } = displayGeometryFor(css, {
+      deviceScaleFactor: config.deviceScaleFactor
+    });
+    return { width, height };
+  };
   const stack = buildBrowserdStack(driver, {
     token: config.token,
     lease,
@@ -8376,10 +8431,19 @@ async function main() {
     features,
     ...video ? { video } : {},
     ...recorder ? { recorder } : {},
-    displaySize: () => ({
-      width: displayWidth(config),
-      height: displayHeight(config)
-    }),
+    // THE DISPLAY AS IT IS NOW, not as it booted.
+    //
+    // `cssViewport` below already follows the session, and these two are one
+    // contract: the frame stream divides them to get the scale a watcher maps
+    // its clicks through. A `displaySize` pinned to the boot geometry made the
+    // two diverge at precisely the moment something moved, so every click after
+    // a resize was scaled by a ratio built from one live number and one stale
+    // one.
+    //
+    // Through `displayGeometryFor`, which is what `xrandr --fb` was actually
+    // given — parity bump included. Multiplying by the scale factor a second
+    // time here would be off by a pixel on every odd dimension.
+    displaySize: liveDisplaySize,
     cssViewport: () => {
       const session = driver.sessionViewportState?.();
       return session ? { width: session.width, height: session.height } : { ...BROWSERD_OBSERVATION_VIEWPORT };

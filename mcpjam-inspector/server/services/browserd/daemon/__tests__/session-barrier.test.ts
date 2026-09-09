@@ -163,10 +163,12 @@ describe("SessionBarrier", () => {
     await flush();
     expect(h.applied).toEqual([]);
 
-    // Past the ceiling, and something has to poke it — the next measurement.
+    // THE CLOCK ALONE. Nothing else happens: the command is still hung, the
+    // debounce already fired, nobody is dragging and no second measurement
+    // arrives. If the ceiling needed one of those to notice it had expired it
+    // would not be a ceiling, and the browser would sit at the wrong size for
+    // as long as the command took.
     h.advance(500);
-    void h.barrier.request({ width: 1400, height: 900 });
-    h.advance(100);
     await flush();
     expect(h.applied).toEqual([{ width: 1400, height: 900 }]);
   });

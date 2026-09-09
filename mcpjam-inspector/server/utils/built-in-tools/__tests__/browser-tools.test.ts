@@ -524,6 +524,57 @@ describe("a token pin survives an approval resume", () => {
     expect(commands.at(-1).action.expectedState).toBeUndefined();
   });
 
+  it("does not park the resumption behind the command it is resuming", async () => {
+    // THE DEADLOCK. `send` holds an emission-order lock across its whole body,
+    // and the handoff's fresh observation is taken from inside that body. A
+    // nested `send` that takes the lock again chains behind a release that
+    // cannot happen until the nested call returns — so the turn hangs, with a
+    // person holding a browser nobody is coming back for, until the client
+    // gives up. `recovering` is what skips the second take.
+    const sendCommand = vi.fn(async (command: any) =>
+      command.action?.kind === "observe"
+        ? OK
+        : ({ status: "lease_blocked" } as SendResult),
+    );
+    const ensureSession = vi.fn(
+      async (): Promise<BrowserSessionHandle> =>
+        ({
+          engine: "hosted" as const,
+          target: "computer" as const,
+          sessionId: "session-1",
+          computerId: "computer-1",
+          bootId: "boot-1",
+          // A lease that is already free: the person handed it back while the
+          // command was in flight, which is the ordinary case this path exists
+          // to serve.
+          client: { sendCommand, lease: async () => ({ state: "free" }) } as never,
+          streamUrl: "https://stream.example/vnc.html",
+          streamPassword: "pw",
+          contextMode: "persistent",
+          reused: true,
+        }) as BrowserSessionHandle,
+    );
+    const built = buildBrowserTools({
+      authHeader: "Bearer user",
+      projectId: "project-1",
+      approvalDelivery: { kind: "attested" },
+      ensureSession,
+    })!;
+
+    const settled = await Promise.race([
+      run(built.tools, "browser_act", { verb: "click", x: 1, y: 2 }).then(
+        (value: any) => ({ value }),
+      ),
+      // Generous, and still finite: without the fix nothing here ever settles,
+      // and a test that hangs forever reports nothing.
+      new Promise((resolve) => setTimeout(() => resolve("HUNG"), 2_000)),
+    ]);
+    expect(settled).not.toBe("HUNG");
+    expect((settled as any).value.error).toContain(
+      "YOUR ACTION WAS NOT PERFORMED",
+    );
+  });
+
   it("forgets a token a person had ten minutes to invalidate", async () => {
     let now = 1_000;
     const memory = new BrowserTokenMemory(() => now);

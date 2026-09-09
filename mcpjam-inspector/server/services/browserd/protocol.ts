@@ -153,14 +153,34 @@ export const HOSTED_DISPLAY = {
   height: BROWSERD_OBSERVATION_VIEWPORT.height,
 } as const;
 
-export function isPointInViewport(x: number, y: number): boolean {
+/**
+ * Is this coordinate inside the page?
+ *
+ * `bounds` defaults to the observation viewport, which is the right answer for
+ * the FIXED-policy callers that were the only callers when this was written —
+ * the public agent contract among them, where the viewport is part of the
+ * contract and must not move under an external agent.
+ *
+ * A `followPane` session is not one of those. Its page can be up to
+ * `MAX_SESSION_VIEWPORT`, so a caller that cannot see the session's real size
+ * passes the widest bound it can justify and lets the daemon — which knows the
+ * size — make the exact refusal. Checking against a constant 1024x768 there
+ * rejected a click at x=1200 on a page 1400 wide, and rejected it before the
+ * daemon ever saw it, so the model was told its own screenshot was out of
+ * bounds.
+ */
+export function isPointInViewport(
+  x: number,
+  y: number,
+  bounds: { width: number; height: number } = BROWSERD_OBSERVATION_VIEWPORT,
+): boolean {
   return (
     Number.isFinite(x) &&
     Number.isFinite(y) &&
     x >= 0 &&
     y >= 0 &&
-    x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 &&
-    y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1
+    x <= bounds.width - 1 &&
+    y <= bounds.height - 1
   );
 }
 

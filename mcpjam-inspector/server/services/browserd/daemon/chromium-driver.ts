@@ -661,6 +661,19 @@ export class ChromiumDriver implements BrowserDriver {
       throw error;
     }
     this.sessionViewport = next;
+    // ANYTHING THAT APPEARED WHILE WE RAN. `pages` above is a snapshot, and a
+    // `navigate {newTab: true}` can register a page inside the awaits below it
+    // — the barrier defers work while a resize transitions, but its ceiling
+    // lets one through when a command has outlived its budget. Such a page
+    // sized itself from `sessionViewport` on creation, which was `previous`
+    // until the line above; sweeping here is what closes the window rather
+    // than leaving one tab a different size from the rest.
+    for (const entry of this.tabs.values()) {
+      if (applied.includes(entry.page) || entry.page.isClosed()) continue;
+      await entry.page
+        .setViewportSize?.({ width: next.width, height: next.height })
+        .catch(() => {});
+    }
     try {
       this.onViewportChange?.(next);
     } catch {
@@ -2677,6 +2690,28 @@ export class ChromiumDriver implements BrowserDriver {
         webmcp: emptyWebmcpState(),
       };
       this.tabs.set(tabId, entry);
+      // THE SESSION'S SIZE, not the launch size.
+      //
+      // A page opens at whatever the browser was launched with, and on a
+      // `followPane` session that stops being the right answer the first time
+      // somebody drags the panel. Without this, every tab opened after a resize
+      // laid out at 1024x768 while the session published the panel's size — so
+      // the model read one rectangle and clicked in another, on the tab it had
+      // just opened.
+      //
+      // Registered BEFORE this await, and re-checked by `applyViewport` after
+      // its own loop: between those two, a page created while a resize is
+      // transitioning is picked up by whichever of them runs second.
+      await entry.page
+        .setViewportSize?.({
+          width: this.sessionViewport.width,
+          height: this.sessionViewport.height,
+        })
+        .catch(() => {
+          // A page that cannot be sized is not a reason to fail opening the
+          // tab: the engine may not support it at all, which is exactly what
+          // `applyViewport` refuses on and this path must tolerate.
+        });
       // EAGERLY, reversing the bridge's original lazy attach. Lazy was right
       // when the only consumer was `webmcp_invoke` — a tab that never called a
       // page tool should not pay for a CDP session. It is wrong now: the tool

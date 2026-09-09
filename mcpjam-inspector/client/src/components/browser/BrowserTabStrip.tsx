@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Globe, Plus, X } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
 import type { BrowserTabState } from "../../../../shared/browser-session-state";
@@ -179,7 +180,17 @@ function BrowserTab({
  * is its title — so it is hidden from assistive technology entirely.
  */
 function TabIcon({ tab }: { tab: BrowserTabState }) {
-  if (!tab.faviconUrl) {
+  /**
+   * Did this URL fail to load?
+   *
+   * Hiding the broken image left an empty square where every other tab has an
+   * icon, and a great many declared favicons are 404s — so that was the common
+   * case, not the rare one. Reset when the URL changes: the last icon's failure
+   * says nothing about the next one.
+   */
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [tab.faviconUrl]);
+  if (!tab.faviconUrl || failed) {
     return <Globe className="size-3.5 shrink-0 opacity-70" aria-hidden />;
   }
   return (
@@ -191,9 +202,7 @@ function TabIcon({ tab }: { tab: BrowserTabState }) {
       // the agent is looking at out of the request for its icon.
       referrerPolicy="no-referrer"
       className="size-3.5 shrink-0 rounded-[2px] object-contain"
-      onError={(event) => {
-        event.currentTarget.style.display = "none";
-      }}
+      onError={() => setFailed(true)}
     />
   );
 }

@@ -17,7 +17,7 @@ import { launchBrowserdContext } from "./chromium-launch";
 import { HandoffLease } from "./lease";
 import { mkdirSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { resizeHostedDisplay } from "./display-resize";
+import { displayGeometryFor, resizeHostedDisplay } from "./display-resize";
 import {
   announcedFeatures,
   extraArgsFor,
@@ -130,10 +130,17 @@ async function main(): Promise<void> {
                     // stream whose SPS says 1024 wide cannot carry a 1400-wide
                     // frame, and a decoder handed one drops it or renders
                     // garbage.
-                    await encoder?.resize?.({
-                      width: Math.round(size.width * config.deviceScaleFactor),
-                      height: Math.round(size.height * config.deviceScaleFactor),
+                    //
+                    // THE SAME HELPER THE DISPLAY WAS SIZED WITH. A plain
+                    // `Math.round` here rounds an odd scaled dimension DOWN
+                    // where `displayGeometryFor` rounds it up to even, so
+                    // `x11grab` would be given a `-video_size` one column
+                    // short of the screen — which captures a corner of the
+                    // display and says nothing about it.
+                    const { width, height } = displayGeometryFor(size, {
+                      deviceScaleFactor: config.deviceScaleFactor,
                     });
+                    await encoder?.resize?.({ width, height });
                   },
                 },
                 next,
@@ -195,6 +202,24 @@ async function main(): Promise<void> {
       );
     }
   }
+  /**
+   * The display's geometry right now, derived from the session viewport.
+   *
+   * A function rather than a constant because on a `followPane` session the
+   * answer changes, and every consumer of it — the frame stream's coordinate
+   * scale above all — is documented as needing the current one.
+   */
+  const liveDisplaySize = (): { width: number; height: number } => {
+    const session = driver.sessionViewportState?.();
+    const css = session
+      ? { width: session.width, height: session.height }
+      : { ...BROWSERD_OBSERVATION_VIEWPORT };
+    const { width, height } = displayGeometryFor(css, {
+      deviceScaleFactor: config.deviceScaleFactor,
+    });
+    return { width, height };
+  };
+
   const stack = buildBrowserdStack(driver, {
     token: config.token,
     lease,
@@ -208,10 +233,19 @@ async function main(): Promise<void> {
     features,
     ...(video ? { video } : {}),
     ...(recorder ? { recorder } : {}),
-    displaySize: () => ({
-      width: displayWidth(config),
-      height: displayHeight(config),
-    }),
+    // THE DISPLAY AS IT IS NOW, not as it booted.
+    //
+    // `cssViewport` below already follows the session, and these two are one
+    // contract: the frame stream divides them to get the scale a watcher maps
+    // its clicks through. A `displaySize` pinned to the boot geometry made the
+    // two diverge at precisely the moment something moved, so every click after
+    // a resize was scaled by a ratio built from one live number and one stale
+    // one.
+    //
+    // Through `displayGeometryFor`, which is what `xrandr --fb` was actually
+    // given — parity bump included. Multiplying by the scale factor a second
+    // time here would be off by a pixel on every odd dimension.
+    displaySize: liveDisplaySize,
     cssViewport: () => {
       const session = driver.sessionViewportState?.();
       return session

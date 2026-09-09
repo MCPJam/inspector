@@ -1286,8 +1286,13 @@ export function HostedBrowserBody({
       resuming={shell.resuming}
       onViewportMeasured={shell.reportViewport}
       ready={!!session}
-      notice={shell.notice ?? tabNotice}
-      error={notice ?? error ?? shell.error}
+      // `notice` is the socket's lease-handoff message — somebody took the
+      // browser, somebody handed it back. That is a STATUS, and the shell
+      // renders notices as a polite live region while errors are static
+      // destructive text: routed through `error` it was announced to nobody
+      // and drawn as a failure.
+      notice={notice ?? shell.notice ?? tabNotice}
+      error={error ?? shell.error}
       {...(placeholder ? { placeholder } : {})}
       trailing={
         <PaneSettingsMenu
@@ -1306,6 +1311,8 @@ export function HostedBrowserBody({
         // NO take-control button. Using the browser is what takes it now, and
         // the shell's second row already says who is driving.
         chrome="none"
+        // The shell's menu owns this now; the surface draws it.
+        statsOpen={statsOpen}
         onInput={send}
         onTakeoverInput={takeover}
         active={active}

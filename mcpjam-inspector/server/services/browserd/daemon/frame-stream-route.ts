@@ -253,20 +253,33 @@ export function createFrameStreamHost(
     let unsubscribe: (() => void) | undefined;
     let release: (() => void) | undefined;
     let seq = 0;
-    // Read PER SUBSCRIPTION rather than per module load: a session that was
-    // resized before this pane connected has to be described by its current
-    // geometry, not the one the daemon booted at.
-    const size = options.displaySize?.() ?? {
-      width: BROWSERD_OBSERVATION_VIEWPORT.width,
-      height: BROWSERD_OBSERVATION_VIEWPORT.height,
+    // Read PER RECORD, not once per subscription.
+    //
+    // A resize does not end the stream: `encoder.resize()` restarts ffmpeg but
+    // keeps its listeners, so this subscription goes on emitting across the
+    // transition. Geometry captured at connect time therefore describes the
+    // display the pane joined at, and every frame after a resize carries the
+    // old numbers — which is not a cosmetic error, because the watcher divides
+    // by exactly these to map a click back into the page. A stale scale is a
+    // mis-aimed click, silently.
+    const geometry = (): {
+      size: { width: number; height: number };
+      css: { width: number; height: number };
+      scale: number;
+    } => {
+      const size = options.displaySize?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height,
+      };
+      const css = options.cssViewport?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height,
+      };
+      // Capture pixels per CSS pixel, so a click maps through exactly as it
+      // does for a JPEG. The pane never has to know which codec drew the
+      // picture.
+      return { size, css, scale: size.width / css.width };
     };
-    const css = options.cssViewport?.() ?? {
-      width: BROWSERD_OBSERVATION_VIEWPORT.width,
-      height: BROWSERD_OBSERVATION_VIEWPORT.height,
-    };
-    // Capture pixels per CSS pixel, so a click maps through exactly as it does
-    // for a JPEG. The pane never has to know which codec drew the picture.
-    const scale = size.width / css.width;
 
     const entry = { end: (reason: FrameStreamEndReason) => end(reason) };
     const end = (reason: FrameStreamEndReason): void => {
@@ -343,14 +356,15 @@ export function createFrameStreamHost(
       // window is not a smaller version of it.
       gate.revalidate();
       if (ended) return; // revalidate may have revoked us
+      const geo = geometry();
       pacer.push(
         encodeFrameStreamRecord({
           kind: unit.key
             ? FRAME_STREAM_KIND.video_key
             : FRAME_STREAM_KIND.video_delta,
-          deviceWidth: size.width,
-          deviceHeight: size.height,
-          scale,
+          deviceWidth: geo.size.width,
+          deviceHeight: geo.size.height,
+          scale: geo.scale,
           ts: Date.now(),
           seq: (seq += 1),
           au: unit.bytes,

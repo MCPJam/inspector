@@ -171,6 +171,39 @@ describe("parkForHandoff — the whole handoff, end to end", () => {
 
   const noSleep = async () => {};
 
+  it("hands the abort signal to the lease read", async () => {
+    // The poll sits on this call for as long as somebody holds the browser.
+    // A read that could not be aborted left a cancelled turn's request pending
+    // until the client timeout, long after anything wanted the answer.
+    const seen: Array<AbortSignal | undefined> = [];
+    const controller = new AbortController();
+    await parkForHandoff({
+      client: {
+        lease: async (options?: { signal?: AbortSignal }) => {
+          seen.push(options?.signal);
+          return { state: "free" as const };
+        },
+      },
+      observe: async () => ({ ok: true, output: { url: "https://a.test/" } }),
+      signal: controller.signal,
+      sleep: noSleep,
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(controller.signal);
+  });
+
+  it("still reads a lease from a client that takes no options", async () => {
+    // Every implementation is free to ignore the signal; none may be broken by
+    // being offered one.
+    const { client } = leasingClient(0);
+    const outcome = await parkForHandoff({
+      client,
+      observe: async () => ({ ok: true, output: { url: "https://a.test/" } }),
+      sleep: noSleep,
+    });
+    expect(outcome.error).toContain("YOUR ACTION WAS NOT PERFORMED");
+  });
+
   it("comes back with a FRESH observation, not the blocked action's result", async () => {
     const { client } = leasingClient(2);
     const observe = vi.fn(async () => ({

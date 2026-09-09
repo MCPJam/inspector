@@ -671,15 +671,17 @@ export class BrowserdRequestHandler {
     const anchor = parseAnchor(body.anchor);
     if (anchor) {
       const fresh = await this.currentAnchor(anchor.tabId);
-      if (
-        !fresh ||
+      // A driver that cannot mint a token is not consulted; see currentAnchor.
+      const moved =
+        fresh !== "unsupported" &&
         // HASHED on this side. The pane sends the URL it saw; the daemon's
         // token carries a digest of the URL it has. Comparing in the digest's
         // space keeps the hashing scheme internal — the pane never learns it —
         // and costs one hash of a string the pane already sent.
-        fresh.urlHash !== shortHash(anchor.url) ||
-        fresh.navCounter !== anchor.navCounter
-      ) {
+        (!fresh ||
+          fresh.urlHash !== shortHash(anchor.url) ||
+          fresh.navCounter !== anchor.navCounter);
+      if (moved) {
         return {
           status: 409,
           body: { error: "page_changed", bootId: this.bootId },
@@ -732,9 +734,21 @@ export class BrowserdRequestHandler {
    */
   private async currentAnchor(
     tabId: string,
-  ): Promise<{ urlHash: string; navCounter: number } | null> {
-    if (!this.driver.currentStateToken) return null;
+  ): Promise<
+    { urlHash: string; navCounter: number } | null | "unsupported"
+  > {
+    // UNSUPPORTED IS NOT NULL, and the difference is the whole point of this
+    // return type. A driver with no `currentStateToken` has not told us the
+    // page moved — it has told us nothing, and it is optional precisely so
+    // that older drivers keep working. Answering `null` there made the caller
+    // refuse EVERY anchored command with `page_changed`, so on such a driver
+    // clicking the page could never take the browser: the pane would report a
+    // page that had changed, forever, on a page sitting perfectly still.
+    if (!this.driver.currentStateToken) return "unsupported";
     const token = await this.driver.currentStateToken(tabId);
+    // Null still means what it meant: the driver CAN answer and could not read
+    // this tab, which is a tab that has gone or is mid-navigation. Refusing is
+    // right there.
     if (!token) return null;
     return { urlHash: token.urlHash, navCounter: token.navCounter };
   }

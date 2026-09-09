@@ -82,6 +82,38 @@ describe("taking the browser", () => {
     }
   });
 
+  it("drops a JOINED click whose page moved during the acquire", async () => {
+    // A gesture that merely joined somebody else's acquire captured its anchor
+    // before the same round trip, so it is exactly as stale as the one that
+    // started it. Delivered unchecked, it is a click landing on whatever the
+    // page navigated to while the lease was being taken.
+    const gate = deferred<void>();
+    let holding = false;
+    const coordinator = new TakeoverCoordinator<string>({
+      isHolding: () => holding,
+      acquire: async () => {
+        await gate.promise;
+        holding = true;
+        return { ok: true as const };
+      },
+      // The page has moved on: a different nav counter from the one both
+      // gestures were aimed at.
+      readAnchor: async () => ({
+        tabId: "t1",
+        url: "https://elsewhere.test/",
+        navCounter: 9,
+      }),
+    });
+
+    const anchor = { tabId: "t1", url: "https://a.test/", navCounter: 4 };
+    const first = coordinator.gesture({ payload: "click-1", anchor });
+    const joined = coordinator.gesture({ payload: "click-2", anchor });
+    gate.resolve();
+
+    expect(await first).toEqual({ status: "dropped", reason: "page_changed" });
+    expect(await joined).toEqual({ status: "dropped", reason: "page_changed" });
+  });
+
   it("reports coalesced for a gesture whose acquire was refused", async () => {
     const gate = deferred<void>();
     const coordinator = new TakeoverCoordinator<string>({

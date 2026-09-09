@@ -106,16 +106,18 @@ export class TakeoverCoordinator<T> {
       return { status: "deliver", payload: interaction.payload };
     }
     if (this.inFlight) {
-      // DROPPED, not queued. A queue would replay half a drag into a page that
-      // has since scrolled, and the person's hand is still on the mouse — the
-      // next event they generate is a better one than this.
+      // JOINED, not queued. The acquire in flight is the one this gesture
+      // needs too, so it waits for that answer rather than starting a second
+      // round trip — and is then verified against its own anchor, exactly as
+      // the initiating gesture is. Nothing is replayed: a gesture that lost
+      // its page is dropped, because the person's hand is still on the mouse
+      // and the next event they generate is a better one than this.
       await this.inFlight;
       // Re-read rather than trusting the joined result: that result described
       // the INITIATING gesture, and this one is a different gesture that may
-      // now simply proceed.
-      return this.deps.isHolding()
-        ? { status: "deliver", payload: interaction.payload }
-        : { status: "coalesced" };
+      // now proceed — but only against the page it was actually aimed at.
+      if (!this.deps.isHolding()) return { status: "coalesced" };
+      return this.verified(interaction);
     }
     const run = this.acquireThen(interaction);
     this.inFlight = run;
@@ -144,6 +146,22 @@ export class TakeoverCoordinator<T> {
         ...(outcome.holder ? { holder: outcome.holder } : {}),
       };
     }
+    return this.verified(interaction);
+  }
+
+  /**
+   * Deliver this interaction only if the page it was aimed at is still there.
+   *
+   * Shared by BOTH paths into the browser, and that is the point: a gesture
+   * that merely joined somebody else's acquire captured its anchor before the
+   * same round trip, so it is exactly as stale as the one that started it. It
+   * used to be delivered unchecked, which is a click landing on whatever the
+   * page navigated to during the acquire — the failure this class exists to
+   * prevent, reached by being second in the queue.
+   */
+  private async verified(
+    interaction: PendingInteraction<T>,
+  ): Promise<TakeoverResult<T>> {
     const anchor = interaction.anchor;
     // No anchor is not "unverified", it is "nothing to verify": a keystroke or
     // a scroll is aimed at whatever has focus, and a navigation is aimed at a

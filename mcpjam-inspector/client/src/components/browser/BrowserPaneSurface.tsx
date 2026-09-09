@@ -115,6 +115,16 @@ export interface BrowserPaneSurfaceProps {
    */
   chrome?: "bar" | "none";
   /**
+   * Whether the stats overlay is up, when somebody else owns that decision.
+   *
+   * A pane wrapped in `BrowserShell` moves the toggle into the shell's menu,
+   * and the menu writing only its own state left this component drawing the
+   * value it happened to mount with: the item showed a tick and the overlay
+   * never moved. Omitted, the surface keeps its own state, which is what the
+   * standalone pane still wants.
+   */
+  statsOpen?: boolean;
+  /**
    * Handle a pointer or key event as a TAKEOVER when this pane does not hold
    * the browser.
    *
@@ -170,6 +180,7 @@ export function BrowserPaneSurface({
   onTier,
   tiers,
   chrome = "bar",
+  statsOpen: statsOpenProp,
   onTakeoverInput,
 }: BrowserPaneSurfaceProps) {
   /**
@@ -179,7 +190,10 @@ export function BrowserPaneSurface({
    * the console gets the overlay without hunting for the menu — and the menu
    * writes the same key back, so the choice survives a reload either way.
    */
-  const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
+  const [ownStatsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
+  // The prop WINS when it is given, and there is no syncing between the two:
+  // one owner per value, chosen by whether a caller supplied one.
+  const statsOpen = statsOpenProp ?? ownStatsOpen;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -534,11 +548,23 @@ export function BrowserPaneSurface({
         onCompositionEnd={(event) => {
           // The composed text, once — not the Latin keystrokes that built it.
           composingRef.current = false;
-          if (!holding) return;
-          if (event.data) send([{ type: "text", text: event.data }]);
+          if (!event.data) return;
+          // TAKEOVER TOO, not only `send`. Composing is typing, and typing is
+          // how a person takes the browser; dropping it while the agent held
+          // the lease meant an IME user's first sentence went nowhere and took
+          // nothing.
+          if (holding) send([{ type: "text", text: event.data }]);
+          else takeover([{ type: "text", text: event.data }]);
         }}
         onKeyDown={(event) => {
           if (!holding) {
+            // MID-COMPOSITION KEYSTROKES ARE NOT TEXT. They are the Latin keys
+            // building a character that has not been chosen yet, and sending
+            // them as well as the committed `event.data` types the scaffolding
+            // and the result. Ignored here rather than in `takeover`, because
+            // the browser is taken by the composition ending — which is the
+            // moment the person actually meant something.
+            if (composingRef.current) return;
             // A modifier on its own is not somebody typing — it is somebody
             // about to use a host shortcut, or resting a hand. Taking the
             // browser away from the agent for a lone Shift would be the

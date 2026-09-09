@@ -36,7 +36,7 @@ import {
 import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
 import {
-  useBrowserWorkspaceEnabled,
+  useBrowserWorkspaceEnabledState,
   useComputersEnabledState,
 } from "@/hooks/useComputersEnabled";
 import {
@@ -269,9 +269,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   );
   // GATED until all three engines meet the release criteria. Off, the browser
   // is the right rail's Browser tab again — see `BROWSER_WORKSPACE_FLAG`.
-  const workspaceEnabled = useBrowserWorkspaceEnabled();
+  // TRI-STATE, kept as one: `undefined` is "PostHog has not answered", which
+  // is not the same as "no" and must not close a panel on its own.
+  const workspaceState = useBrowserWorkspaceEnabledState();
+  const canBrowseResolved =
+    workspaceState !== undefined && computersEnabled !== undefined;
   const canBrowse =
-    workspaceEnabled &&
+    workspaceState === true &&
     computersEnabled === true &&
     browserPanelAvailable({
       hostHasBrowser: !!effectiveHostConfig?.builtInToolIds?.includes("browser"),
@@ -296,8 +300,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // session behind it is gone either way, and an empty panel holding 60% of
   // the workspace is worse than the room back.
   useEffect(() => {
-    if (browserOpen && !canBrowse) closeBrowser();
-  }, [browserOpen, canBrowse, closeBrowser]);
+    // RESOLVED FALSE, not merely falsy. Both flag hooks report `false` while
+    // they are still loading, so a panel opened by `useOpenBrowserOnBrowsing`
+    // during that window was closed again the moment this ran — and the
+    // auto-open effect does not fire a second time when the flags land,
+    // because nothing it watches changed. The browser simply never appeared.
+    if (browserOpen && canBrowseResolved && !canBrowse) closeBrowser();
+  }, [browserOpen, canBrowse, canBrowseResolved, closeBrowser]);
 
   // Panel handles let us programmatically expand a collapsed rail when the
   // user clicks the corresponding `CollapsedPanelStrip` peek button.
@@ -405,7 +414,15 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                         // set of constraints by ignoring the sizes it was
                         // given — so the browser opened at whatever was left
                         // rather than at the size it asked for.
-                        minSize={showBrowser ? 15 : 40}
+                        // ZERO WHILE EXPANDED, and the reason is arithmetic:
+                        // the browser panel asks for 100 and the group enforces
+                        // every panel's minimum, so a floor of 15 here left the
+                        // browser clamped to 85 — with chat hidden by CSS
+                        // rather than unmounted, that 15% was an unusable gap
+                        // beside a browser that was supposed to fill the space.
+                        minSize={
+                          browserExpanded ? 0 : showBrowser ? 15 : 40
+                        }
                         className={cn(
                           "min-h-0 min-w-0 overflow-hidden",
                           // An expanded browser hides chat rather than

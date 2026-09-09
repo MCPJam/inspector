@@ -206,9 +206,22 @@ export class BrowserdClient {
     return decodeStatus({ status: res.status, body: await this.json(res) });
   }
 
-  /** Read the handoff lease without changing it. */
-  async lease(): Promise<BrowserdLeaseState> {
-    const res = await this.request("/v1/lease", { method: "GET" }, true);
+  /**
+   * Read the handoff lease without changing it.
+   *
+   * The signal matters here more than on most reads: the handoff poll sits on
+   * this call for as long as somebody holds the browser, and a cancelled turn
+   * that could not abort it left the request pending until the client timeout
+   * — long after the thing that wanted the answer had gone.
+   */
+  async lease(options?: { signal?: AbortSignal }): Promise<BrowserdLeaseState> {
+    const res = await this.request(
+      "/v1/lease",
+      { method: "GET" },
+      true,
+      undefined,
+      options?.signal,
+    );
     return decodeLease({ status: res.status, body: await this.json(res) });
   }
 

@@ -1097,6 +1097,8 @@ export function LocalBrowserBody({
             // NO take-control button. Using the browser is what takes it now,
             // and the shell's second row already says who is driving.
             chrome="none"
+            // The shell's menu owns this now; the surface draws it.
+            statsOpen={statsOpen}
             onInput={send}
             onTakeoverInput={takeover}
             active={active}

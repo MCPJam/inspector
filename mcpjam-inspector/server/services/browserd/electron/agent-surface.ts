@@ -350,11 +350,32 @@ export function createContextSurface(
     parented = undefined;
   };
 
+  /**
+   * Take the shield down, wherever we are coming from.
+   *
+   * One definition because there are three ways out — the pane hides, the
+   * surface stops being visible, the lease comes back — and a copy that one of
+   * them forgot is an invisible rectangle left over an app that has moved on.
+   */
+  const uncover = (): void => {
+    if (!shielded) return;
+    shield?.remove();
+    shielded = false;
+  };
+
   const apply = (): void => {
     if (disposed) return;
     const view = active();
     if (!holderWindow || !bounds || !view || !visible()) {
       detach();
+      // THE SHIELD FOLLOWS THE VIEW OUT. `applyShield()` at the end of this
+      // function is the only other place it comes down, and this path never
+      // reaches it — so a pane that was showing the page when somebody else
+      // took the lease left an invisible rectangle parented over the app, with
+      // the browser view removed from under it. It goes on eating clicks meant
+      // for whatever is behind it, exactly as `hide()` guards against, and
+      // nothing clears it until the pane hides or the lease comes back.
+      uncover();
       return;
     }
     if (parented && parented !== view) detach();
@@ -396,10 +417,7 @@ export function createContextSurface(
   const applyShield = (): void => {
     const wanted = !!holderWindow && !!bounds && !!parented && !allowed();
     if (!wanted) {
-      if (shielded) {
-        shield?.remove();
-        shielded = false;
-      }
+      uncover();
       return;
     }
     // Rebuilt when the WINDOW changes, not only when there is none: a shield
@@ -467,10 +485,7 @@ export function createContextSurface(
       // The shield comes out with the view. A shield over a page nobody is
       // showing is an invisible rectangle that eats the clicks meant for
       // whatever the pane switched to.
-      if (shielded) {
-        shield?.remove();
-        shielded = false;
-      }
+      uncover();
       holderWindow = undefined;
       bounds = undefined;
     },

@@ -94,6 +94,17 @@ export class SessionBarrier {
    * would resolve at a different moment from the others for no reason.
    */
   private requestWaiters: Array<() => void> = [];
+  /**
+   * Armed when a resize is deferred, so the ceiling can enforce itself.
+   *
+   * Without it `maxWaitMs` was only ever CHECKED, never awaited: `maybeResize`
+   * runs on the debounce firing, on work finishing and on a drag ending, and a
+   * command that hangs while nobody is dragging produces none of the three. The
+   * pending resize then waited on an event that was never coming, which is the
+   * opposite of what a ceiling is for — the one case it exists for is the one
+   * where the session never goes quiet.
+   */
+  private expiryHandle: unknown;
   private readonly debounceMs: number;
   private readonly maxWaitMs: number;
   private readonly now: () => number;
@@ -178,6 +189,21 @@ export class SessionBarrier {
   }
 
   /**
+   * Wake up in `ms` and reconsider, replacing any timer already waiting.
+   *
+   * Replacing rather than stacking: the budget is a property of the pending
+   * measurement, not of the calls that noticed it, and several deferrals in a
+   * row must not each add a wake-up.
+   */
+  private armExpiry(ms: number): void {
+    this.clearTimer(this.expiryHandle);
+    this.expiryHandle = this.setTimer(() => {
+      this.expiryHandle = undefined;
+      this.maybeResize();
+    }, Math.max(0, ms));
+  }
+
+  /**
    * Run the pending resize if the session is quiet — or if it has waited long
    * enough that quiet is no longer worth waiting for.
    *
@@ -192,7 +218,14 @@ export class SessionBarrier {
     if (this.debounceHandle !== undefined) return;
     const waited = this.now() - this.pendingSince;
     const expired = waited >= this.maxWaitMs;
-    if (!expired && (this.inFlight > 0 || this.dragging)) return;
+    if (!expired && (this.inFlight > 0 || this.dragging)) {
+      // Come back when the budget runs out, whether or not anything else
+      // happens between now and then. @see expiryHandle
+      this.armExpiry(this.maxWaitMs - waited);
+      return;
+    }
+    this.clearTimer(this.expiryHandle);
+    this.expiryHandle = undefined;
     const size = this.pending;
     this.pending = null;
     this.pendingSince = 0;

@@ -132,6 +132,7 @@ async function post<T>(
         ? json.error
         : "The local browser could not be reached.",
       response.status,
+      json as Record<string, unknown> | null,
     );
   }
   return json as T;
@@ -150,6 +151,17 @@ export class LocalBrowserRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /**
+     * The parsed response body, when there was one.
+     *
+     * Carried because a refusal's body is not decoration: a 423 names the
+     * holder, and an error that kept only `message` left the shared mapper
+     * with nothing to decode — so a browser held by a SCRIPT was announced to
+     * the person as one held by another person. The hosted client passes its
+     * whole body and got this right, which made the two engines disagree about
+     * the same refusal.
+     */
+    readonly body?: Record<string, unknown> | null,
   ) {
     super(message);
     this.name = "LocalBrowserRequestError";
@@ -425,7 +437,10 @@ export async function sendLocalPaneCommand(args: {
     // shared mapper reads. Anything else is a transport failure with no status
     // to interpret.
     return error instanceof LocalBrowserRequestError
-      ? paneCommandFromStatus(error.status, { error: error.message })
+      ? paneCommandFromStatus(
+          error.status,
+          error.body ?? { error: error.message },
+        )
       : { ok: false, reason: "failed" };
   }
 }

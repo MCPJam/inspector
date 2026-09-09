@@ -121,6 +121,13 @@ export function createElectronInputShield(
   const ensure = (): ShieldView | null => {
     if (disposed) return null;
     if (view && !view.webContents.isDestroyed?.()) return view;
+    // A REPLACEMENT IS NOT PARENTED, whatever the view it replaces was. Left
+    // set, `attached` makes `cover` skip `addChildView` and merely position a
+    // view that belongs to no window — so nothing covers the browser, every
+    // click reaches the agent's page, and `isShielded()` reports true the whole
+    // time. That is the exact failure this module exists to prevent, arrived at
+    // by way of a renderer crash.
+    attached = false;
     try {
       view = new View({
         webPreferences: {

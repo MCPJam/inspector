@@ -153,6 +153,20 @@ describe("the native input shield", () => {
     expect(() => made[0]?.emit({ type: "mouseDown" })).not.toThrow();
   });
 
+  it("re-parents a shield whose renderer died under it", () => {
+    // A crashed renderer is replaced by `ensure()`. If the replacement is
+    // treated as still attached it is merely positioned, belongs to no window,
+    // and covers nothing — while `isShielded()` goes on reporting true and
+    // every click reaches the agent's page.
+    const { shield, window, made } = build();
+    shield.cover({ x: 0, y: 0, width: 10, height: 10 });
+    expect(window.children).toHaveLength(1);
+    made[0]!.view.closed = true; // the renderer goes away
+    shield.cover({ x: 0, y: 0, width: 10, height: 10 });
+    expect(made).toHaveLength(2);
+    expect(window.children).toContain(made[1]!.view);
+  });
+
   it("comes out, and closes its renderer on dispose", () => {
     // An invisible view left behind outlives the browser it was covering and
     // goes on eating clicks in that rectangle.
@@ -218,6 +232,21 @@ describe("the surface's use of the shield", () => {
     surface.setPaneHolder("pane-1");
     surface.show({ holder: fakeHolder(), bounds });
     surface.setLease({ state: "held", holder: "pane-1" });
+    expect(surface.isShielded()).toBe(false);
+    expect(removed()).toBeGreaterThan(0);
+  });
+
+  it("takes the shield out when somebody else takes the browser", () => {
+    // The surface stops being visible and the browser view is detached. A
+    // shield left parented over it is an invisible rectangle over an app the
+    // browser is no longer behind — the same failure `hide()` guards against,
+    // reached by a different door.
+    const { surface, removed } = surfaceWith();
+    surface.registerTab(view() as never);
+    surface.setPaneHolder("pane-1");
+    surface.show({ holder: fakeHolder(), bounds });
+    expect(surface.isShielded()).toBe(true);
+    surface.setLease({ state: "held", holder: "somebody-else" });
     expect(surface.isShielded()).toBe(false);
     expect(removed()).toBeGreaterThan(0);
   });

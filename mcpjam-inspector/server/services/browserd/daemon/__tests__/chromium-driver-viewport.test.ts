@@ -17,6 +17,19 @@ function cmd(action: BrowserCommand["action"], tabId?: string): BrowserCommand {
   return { commandId: `c-${Math.random()}`, tabId, source: "chat", action };
 }
 
+/**
+ * The sizes a page was taken to AFTER it was opened.
+ *
+ * Every tab is now sized to the session viewport as it is created, so that a
+ * tab opened after a resize does not lay out at the launch size. That call is
+ * real and worth having, and it is not what these assertions are about — they
+ * are about what a RESIZE does, so the opening size is dropped here rather than
+ * repeated in every expectation.
+ */
+const resizes = (page: {
+  calls: { viewportSizes: Array<{ width: number; height: number }> };
+}) => page.calls.viewportSizes.slice(1);
+
 /** No debounce: these tests are about the decision, not the pacing. */
 const responsive = (onChange?: (viewport: SessionViewport) => void) => ({
   viewport: {
@@ -45,7 +58,7 @@ describe("session viewport", () => {
 
     const after = await driver.requestViewport({ width: 1400, height: 900 });
     expect(after).toEqual({ width: 1024, height: 768, revision: 0 });
-    expect(page.calls.viewportSizes).toEqual([]);
+    expect(resizes(page)).toEqual([]);
   });
 
   it("resizes every open tab and bumps the revision once", async () => {
@@ -62,8 +75,8 @@ describe("session viewport", () => {
 
     await driver.requestViewport({ width: 1400, height: 900 });
 
-    expect(a.calls.viewportSizes).toEqual([{ width: 1400, height: 900 }]);
-    expect(b.calls.viewportSizes).toEqual([{ width: 1400, height: 900 }]);
+    expect(resizes(a)).toEqual([{ width: 1400, height: 900 }]);
+    expect(resizes(b)).toEqual([{ width: 1400, height: 900 }]);
     expect(driver.sessionViewportState()).toEqual({
       width: 1400,
       height: 900,
@@ -81,7 +94,7 @@ describe("session viewport", () => {
 
     await driver.requestViewport({ width: 1024, height: 768 });
     expect(driver.sessionViewportState().revision).toBe(0);
-    expect(page.calls.viewportSizes).toEqual([]);
+    expect(resizes(page)).toEqual([]);
   });
 
   it("clamps a request outside the bounds instead of refusing it", async () => {
@@ -101,6 +114,24 @@ describe("session viewport", () => {
 });
 
 describe("the published number never runs ahead of the picture", () => {
+  it("opens a NEW tab at the session's size, not the launch size", async () => {
+    // A page opens at whatever the browser launched with. Nothing used to
+    // carry the session's size onto it, so every tab opened after somebody
+    // widened the panel laid out at 1024x768 while the session published the
+    // panel's size — the model read one rectangle and clicked in another.
+    const first = fakePage();
+    const late = fakePage();
+    const { context } = fakeContext({ pages: [first, late] });
+    const driver = new ChromiumDriver(context, responsive());
+    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }, "a"));
+    await driver.requestViewport({ width: 1400, height: 900 });
+
+    await driver.execute(cmd({ kind: "navigate", url: "https://b.test/" }, "b"));
+
+    // Its FIRST call, at creation — there is no resize afterwards to correct it.
+    expect(late.calls.viewportSizes[0]).toEqual({ width: 1400, height: 900 });
+  });
+
   it("keeps the old size when a page refuses the resize", async () => {
     const good = fakePage();
     const bad = fakePage();
@@ -127,7 +158,7 @@ describe("the published number never runs ahead of the picture", () => {
     expect(changes).toEqual([]);
     // And the tab that DID take the new size is put back, so no two tabs in
     // one session are rendering at different sizes.
-    expect(good.calls.viewportSizes).toEqual([
+    expect(resizes(good)).toEqual([
       { width: 1400, height: 900 },
       { width: 1024, height: 768 },
     ]);

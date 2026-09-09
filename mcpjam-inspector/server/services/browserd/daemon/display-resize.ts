@@ -174,10 +174,28 @@ export async function resizeHostedDisplay(
     });
     const result = await applyDisplay(back);
     if (!result.ok) return false;
-    // Best effort, and deliberately not checked: the page and the encoder are
-    // being put back to a size they were already at, so a refusal here leaves
-    // them where they are, which is where they should be.
-    await deps.resizePage?.(previous).catch(() => {});
+    // THE PAGE IS CHECKED, THE ENCODER IS NOT, and the asymmetry is the point.
+    //
+    // There are two ways in here. From the display branch nothing moved, the
+    // page was never touched, and putting it back is genuinely a no-op. From
+    // the page/encoder branch it is not: `resizePage(next)` may have already
+    // succeeded, so the page is laid out for `next` while the display has just
+    // gone back to `previous`. Swallowing a failed `resizePage(previous)` there
+    // and still answering `restored: true` produces exactly the state this
+    // file's header calls the one genuinely bad one — a display at one size, a
+    // page at another, and a caller told the rollback worked, publishing
+    // `previous` while every coordinate the model reads is wrong.
+    //
+    // The trigger is not exotic: whatever broke `resizePage` on the way out (a
+    // detached CDP session, a closed page) is likely to break it coming back.
+    let pageRestored = true;
+    await deps.resizePage?.(previous).catch(() => {
+      pageRestored = false;
+    });
+    if (!pageRestored) return false;
+    // The encoder stays best-effort. A capture at the wrong geometry is a bad
+    // picture, which is recoverable and visible; a page at the wrong size is a
+    // coordinate space that lies, which is neither.
     await deps.restartEncoder?.(previous).catch(() => {});
     return true;
   };

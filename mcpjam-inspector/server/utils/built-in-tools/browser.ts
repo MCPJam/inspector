@@ -1162,6 +1162,14 @@ export function buildBrowserTools(
                 {
                   ...(args.tabId ? { tabId: args.tabId } : {}),
                   ...(signal ? { signal } : {}),
+                  // `recovering`, for the same reason the origin recovery
+                  // below is: this runs from INSIDE the lock section this
+                  // command already holds, so taking the lock again parks the
+                  // resumption behind the command it exists to resume — and
+                  // neither ever finishes. The turn hangs until the client
+                  // gives up, with the person holding a browser nobody is
+                  // coming back for.
+                  recovering: true,
                   // The observation belongs to the model — it is what the next
                   // action is decided from — so its token is remembered like
                   // any other. `raw` would withhold exactly the thing that
@@ -1415,7 +1423,17 @@ export function buildBrowserTools(
         { verb, ref, selector, x, y, value, fields, submit, observe, tabId },
         { abortSignal },
       ) => {
-        if (x !== undefined && y !== undefined && !isPointInViewport(x, y)) {
+        if (
+          x !== undefined &&
+          y !== undefined &&
+          // The WIDEST page this browser could be showing, not the default
+          // one. This session's real size lives in the daemon, and the daemon
+          // refuses against it; this check exists only to answer an obviously
+          // impossible coordinate in the model's own terms rather than as a
+          // transport error, so a bound tighter than the schema's would refuse
+          // points that are perfectly valid on a panel somebody widened.
+          !isPointInViewport(x, y, MAX_SESSION_VIEWPORT)
+        ) {
           // The schema states the bounds, but a hosted path reconstructs the
           // schema on the wire and executes with whatever input comes back, so
           // the bound is re-checked here rather than assumed. The daemon

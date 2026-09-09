@@ -208,7 +208,14 @@ export interface ParkForHandoffArgs<Token> {
    * exactly as it was before this feature existed.
    */
   client: {
-    lease?: () => Promise<{
+    /**
+     * The signal is OPTIONAL ON THE CALLEE, and passed whenever we have one.
+     * The poll below sits on this call for as long as somebody holds the
+     * browser; an implementation that ignores the signal is no worse than
+     * before, and one that honours it stops a cancelled turn from leaving a
+     * request pending until the client timeout.
+     */
+    lease?: (options?: { signal?: AbortSignal }) => Promise<{
       state: string;
       holder?: string;
       holderKind?: string;
@@ -257,7 +264,9 @@ export async function parkForHandoff<Token>(
   const outcome = await waitForHandoff(
     {
       readLease: async () => {
-        const lease = await readLease();
+        const lease = await readLease(
+          args.signal ? { signal: args.signal } : undefined,
+        );
         if (lease.state === "free") return { held: false };
         return {
           held: true,
