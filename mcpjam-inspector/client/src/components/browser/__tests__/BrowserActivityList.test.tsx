@@ -1,5 +1,5 @@
 /**
- * The rail's record of what drove the browser.
+ * What drove the browser, as logs on the Logs tab.
  *
  * What is asserted here is mostly about HONESTY rather than layout: the three
  * outcomes stay three different things, a gap in the history is shown rather
@@ -7,7 +7,7 @@
  * never carried one.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const listSessions = vi.fn();
 const readTrace = vi.fn();
@@ -70,6 +70,17 @@ describe("BrowserActivityList", () => {
     expect(
       await screen.findByText(/Nothing has driven this browser yet/i),
     ).toBeTruthy();
+    expect(screen.getByPlaceholderText("Search logs")).toBeTruthy();
+  });
+
+  it("expands a command row like the other log rails", async () => {
+    readTrace.mockResolvedValueOnce({
+      entries: [row({ seq: 1, command: { kind: "reload" } })],
+      headSeq: 1,
+    });
+    mount();
+    fireEvent.click(await screen.findByText("reload"));
+    expect(screen.getByText(/"kind": "reload"/)).toBeTruthy();
   });
 
   it("polls nothing while the tab is hidden", async () => {
@@ -251,7 +262,7 @@ describe("BrowserActivityList", () => {
   });
 
   it("follows the PERSISTENT session, not a throwaway agent run", async () => {
-    // The frames above this list come from the project's persistent browser.
+    // The Browser tab's frames come from the project's persistent browser.
     // Following the newest open session of any profile let an ephemeral run
     // steal the rail, so the history on screen belonged to a browser nobody
     // could see — and the person's own clicks vanished from it.

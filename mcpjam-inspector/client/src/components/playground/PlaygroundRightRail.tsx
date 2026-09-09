@@ -234,7 +234,18 @@ function RightRailTabbed({
           activeTab === "logs" ? "flex flex-col" : "hidden",
         )}
       >
-        <LoggerView isCollapsable={false} />
+        <LoggerView
+          isCollapsable={false}
+          browserActivity={
+            hasBrowser && isLocalBrowser && engine.consent.granted && projectId
+              ? {
+                  projectId,
+                  consentToken: engine.consent.token,
+                  active: activeTab === "logs",
+                }
+              : null
+          }
+        />
       </div>
       {hasBrowser ? (
         <div

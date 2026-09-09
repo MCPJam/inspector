@@ -63,7 +63,15 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
 }));
 
 vi.mock("@/components/logger-view", () => ({
-  LoggerView: () => <div data-testid="logger-view" />,
+  LoggerView: (props: {
+    browserActivity?: { active?: boolean } | null;
+  }) => (
+    <div
+      data-testid="logger-view"
+      data-has-browser={String(Boolean(props.browserActivity))}
+      data-browser-active={String(Boolean(props.browserActivity?.active))}
+    />
+  ),
 }));
 
 vi.mock("@/components/computer/ComputerStatusChip", () => ({
@@ -445,5 +453,67 @@ describe("PlaygroundRightRail — the Browser tab", () => {
     expect(screen.getByTestId("browser-pane").dataset.active).toBe("false");
     fireEvent.click(screen.getByRole("button", { name: /browser/i }));
     expect(screen.getByTestId("browser-pane").dataset.active).toBe("true");
+  });
+});
+
+describe("PlaygroundRightRail — browser activity on the Logs tab", () => {
+  const browserHost = {
+    computer: { workdir: "/home/user" },
+    builtInToolIds: ["browser"],
+  } as any;
+
+  it("feeds local browser activity into the same Logs list", () => {
+    engineState.engine = "local";
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+
+    const logs = screen.getByTestId("logger-view");
+    expect(logs.dataset.hasBrowser).toBe("true");
+    expect(logs.dataset.browserActive).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+    expect(logs.dataset.browserActive).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: /logs/i }));
+    expect(logs.dataset.browserActive).toBe("true");
+  });
+
+  it("does not read the ledger before this machine is authorized", () => {
+    engineState.engine = "local";
+    engineState.selectedEngine = "local";
+    engineState.granted = false;
+    render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+    expect(screen.getByTestId("logger-view").dataset.hasBrowser).toBe("false");
+  });
+
+  it("does not mount a local ledger on the hosted engine", () => {
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    engineState.granted = true;
+    render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+    expect(screen.getByTestId("logger-view").dataset.hasBrowser).toBe("false");
   });
 });
