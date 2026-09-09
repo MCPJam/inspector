@@ -12,6 +12,7 @@ import { useMutation, useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
 import {
   deriveServerGroupName,
+  isObservedStatus,
   newGroupDraft,
 } from "@/components/hosts/server-group-name";
 import { Button } from "@mcpjam/design-system/button";
@@ -32,6 +33,7 @@ import { getConnectionStatusMeta } from "@/components/connection/server-card-uti
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useProjectServers } from "@/hooks/useViews";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
+import { findProjectByAnyId } from "@/state/app-types";
 import { ServerSelectionList } from "@/components/hosts/server-selection-list";
 import type { EvalServerAttachment } from "@/components/evals/types";
 
@@ -131,7 +133,17 @@ export function ServerGroupPicker({
    * read: the picker also renders with no provider above it.
    */
   const appState = useOptionalSharedAppState();
-  const runtimeServers = appState?.servers;
+  // ...but only the ACTIVE project's: `SWITCH_PROJECT` and hydration both
+  // replace `servers` wholesale. This picker is handed a record's own
+  // `projectId` (a suite's, a scenario's), which a bookmarked URL can point at
+  // a project that is not active — and a name like `github` exists in more than
+  // one of them. Join only when the two resolve to the same project: an
+  // unmarked row is a supported state, another project's status is not.
+  const activeProjectId = appState?.activeProjectId;
+  const joinable =
+    activeProjectId !== undefined &&
+    findProjectByAnyId(appState?.projects, projectId)?.id === activeProjectId;
+  const runtimeServers = joinable ? appState?.servers : undefined;
   const serverPool = useMemo(
     () =>
       projectServers.map((server) => ({
@@ -566,7 +578,7 @@ export function ServerGroupPicker({
                           // rather than an accessible name.
                           const status =
                             runtimeServers?.[name]?.connectionStatus;
-                          const meta = status
+                          const meta = isObservedStatus(status)
                             ? getConnectionStatusMeta(status)
                             : null;
                           return (

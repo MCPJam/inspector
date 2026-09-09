@@ -145,7 +145,24 @@ describe("ServerSelectionList", () => {
     ).toBeInTheDocument();
   });
 
-  // Unknown is not the same claim as disconnected, so the row says nothing.
+  /**
+   * `disconnected` is what every server reads on a fresh load and again after
+   * a project switch, so it is the default rather than a reading. Drawing it
+   * put a grey dot on every row — including the ones a draft had just ticked.
+   */
+  it("leaves a row unmarked when it is merely disconnected", () => {
+    render(
+      <ServerSelectionList
+        servers={[{ id: "s_d", name: "draw", status: "disconnected" }]}
+        selectedIds={new Set()}
+        onToggle={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("server-status-s_d")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "draw" })).toBeInTheDocument();
+  });
+
+  // A status app state has never heard of is not a reading either.
   it("leaves a row unmarked when the status is unknown", () => {
     render(
       <ServerSelectionList

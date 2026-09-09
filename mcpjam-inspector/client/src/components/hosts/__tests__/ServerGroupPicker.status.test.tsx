@@ -12,7 +12,14 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState } from "@/state/app-types";
 
-const { serversRef, attachmentsRef, statusRef, createMock, onChangeMock } =
+const {
+  serversRef,
+  attachmentsRef,
+  statusRef,
+  activeProjectRef,
+  createMock,
+  onChangeMock,
+} =
   vi.hoisted(() => ({
     serversRef: {
       current: [] as Array<{ _id: string; name: string; url: string }>,
@@ -26,6 +33,9 @@ const { serversRef, attachmentsRef, statusRef, createMock, onChangeMock } =
       }>,
     },
     statusRef: { current: {} as Record<string, string> },
+    // Which project app state is CURRENTLY on. The picker is handed a
+    // record's own projectId, and the two need not agree.
+    activeProjectRef: { current: "p-1" },
     createMock: vi.fn(),
     onChangeMock: vi.fn(),
   }));
@@ -50,6 +60,13 @@ vi.mock("@/lib/toast", () => ({
 vi.mock("@/state/app-state-context", () => ({
   useOptionalSharedAppState: (): AppState | null =>
     ({
+      activeProjectId: activeProjectRef.current,
+      projects: {
+        [activeProjectRef.current]: {
+          id: activeProjectRef.current,
+          servers: {},
+        },
+      },
       servers: Object.fromEntries(
         Object.entries(statusRef.current).map(([name, connectionStatus]) => [
           name,
@@ -87,6 +104,7 @@ describe("ServerGroupPicker — connection status in the create form", () => {
     vi.clearAllMocks();
     createMock.mockResolvedValue({ _id: "new-id" });
     statusRef.current = {};
+    activeProjectRef.current = "p-1";
     attachmentsRef.current = [];
   });
 
@@ -118,6 +136,33 @@ describe("ServerGroupPicker — connection status in the create form", () => {
     );
   });
 
+  // `disconnected` is the fresh-load and post-switch value for EVERY server,
+  // so drawing it would put a dot on the whole pool before anything was tried
+  // — including the rows the draft just ticked and took the name from.
+  it("says nothing about a server that is merely disconnected", async () => {
+    serversRef.current = [remote("draw")];
+    statusRef.current = { draw: "disconnected" };
+    await openCreateForm();
+
+    expect(screen.queryByTestId("server-status-s-draw")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "draw" })).toBeChecked();
+  });
+
+  // App state holds the ACTIVE project's servers. A bookmarked suite URL opens
+  // this picker on another project, and `github` is not a rare name.
+  it("does not borrow another project's status for a name it shares", async () => {
+    serversRef.current = [remote("github")];
+    statusRef.current = { github: "failed" };
+    activeProjectRef.current = "p-2";
+    await openCreateForm();
+
+    expect(
+      screen.queryByTestId("server-status-s-github"),
+    ).not.toBeInTheDocument();
+    // And the wrong project's failure must not drive preselection either.
+    expect(screen.getByRole("checkbox", { name: "github" })).toBeChecked();
+  });
+
   // The reported state, minus the failure: nothing regressed for a healthy
   // pool that app state has not connected yet.
   it("keeps preselecting a pool app state knows nothing about", async () => {
@@ -138,6 +183,7 @@ describe("ServerGroupPicker — connection status on a saved group's servers", (
   beforeEach(() => {
     vi.clearAllMocks();
     statusRef.current = {};
+    activeProjectRef.current = "p-1";
     serversRef.current = [];
     attachmentsRef.current = [
       {
@@ -204,6 +250,21 @@ describe("ServerGroupPicker — connection status on a saved group's servers", (
     expect(
       within(untouched).queryByText(/connected|disconnected|failed/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("says nothing about a server that is merely disconnected", async () => {
+    statusRef.current = {
+      excalidraw: "disconnected",
+      "test-bad-url": "failed",
+    };
+    await expandTheGroup();
+
+    expect(
+      within(rowFor("excalidraw")).queryByText("Disconnected"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(rowFor("test-bad-url")).getByText("Failed"),
+    ).toBeInTheDocument();
   });
 
   it("says nothing about a server app state has no status for", async () => {

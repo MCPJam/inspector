@@ -2,6 +2,7 @@ import { type ReactNode, useMemo } from "react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { getConnectionStatusMeta } from "@/components/connection/server-card-utils";
+import { isObservedStatus } from "@/components/hosts/server-group-name";
 import type { ConnectionStatus } from "@/state/app-types";
 import { cn } from "@/lib/utils";
 
@@ -73,7 +74,7 @@ export function ServerSelectionList({
     <div role="group" aria-label={ariaLabel} className="flex flex-col gap-1">
       {servers.map((server) => {
         const checked = stableSelected.has(server.id);
-        const statusMeta = server.status
+        const statusMeta = isObservedStatus(server.status)
           ? getConnectionStatusMeta(server.status)
           : null;
         return (

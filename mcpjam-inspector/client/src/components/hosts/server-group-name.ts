@@ -71,6 +71,17 @@ export interface GroupDraftServer {
 }
 
 /** The state a brand-new group form opens in: a small pool arrives already answered. */
+/**
+ * Is a status a reading, or just the default? `disconnected` is what every
+ * server reads on a fresh load and after a project switch, so drawing it would
+ * mark every row before anything was tried.
+ */
+export function isObservedStatus(
+  status: ConnectionStatus | undefined,
+): status is Exclude<ConnectionStatus, "disconnected"> {
+  return status !== undefined && status !== "disconnected";
+}
+
 export function newGroupDraft(
   pool: readonly GroupDraftServer[],
   existingGroupNames: readonly string[],
