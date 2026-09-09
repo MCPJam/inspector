@@ -1,3 +1,4 @@
+import { refuseGithubCredentialAccess } from "../services/github-checks/credential-policy.js";
 import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import {
@@ -166,6 +167,7 @@ export async function resolveOrgModelConfig(
 
   const authHeader = normalizeAuthHeader(auth);
   const serverIds = normalizeServerIds(auth?.serverIds);
+  refuseGithubCredentialAccess();
   const cacheKey = buildCacheKey(params, auth);
   const cached = resolveCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -548,6 +550,7 @@ export async function resolveOrgProviderRuntimeForTarget(
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
 
+  refuseGithubCredentialAccess();
   const cacheKey = buildRuntimeCacheKey(target, providerKey, model, auth);
   const now = Date.now();
   pruneRuntimeResolveCache(now);
