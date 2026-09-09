@@ -4,8 +4,8 @@
  * The security shape of this module is the whole point, so it is stated up
  * front. Everything it runs is UNTRUSTED code from a pull request:
  *
- *   - the sandbox holds ZERO credentials. The clone is anonymous (public repo,
- *     no token), and nothing about MCPJam's own environment is passed in;
+ *   - repository code receives no MCPJam-managed credentials. A private clone
+ *     authenticates only its completed Git processes, before checkout or build;
  *   - it runs a DEDICATED minimal template (`GITHUB_CHECKS_E2B_TEMPLATE_ID`:
  *     node + git, nothing else), never the shared computer template;
  *   - outbound network is the same NON-GUEST PLATFORM BASELINE used by the
@@ -13,9 +13,7 @@
  *     denied at the provider. This module passes that policy at CREATE time;
  *     the box is never narrowed afterwards. An earlier revision revoked egress
  *     entirely between the build and the start; that is deliberately gone. It
- *     defended nothing (there is no secret in the box to exfiltrate, and the
- *     clone is a public repo), it is stricter than every mainstream CI system
- *     running untrusted PR code, and it BROKE the product: a large share of MCP
+ *     prevented MCP servers from reaching the APIs they test: a large share of MCP
  *     servers exist to proxy an external API, so their tools failed inside a
  *     check — often GREEN, because shallow assertions like
  *     `toolCalledAtLeastOnce` cannot tell a working call from an erroring one.
@@ -39,9 +37,7 @@ import type { CheckRecipe } from "./recipes.js";
 
 /** Outcomes this module can produce. A subset of the worker's full taxonomy. */
 export type CheckStepOutcome =
-  | "build_failed"
-  | "server_unhealthy"
-  | "infra_error";
+  "build_failed" | "server_unhealthy" | "infra_error";
 
 /**
  * A step failure that already knows how the PR's check should conclude.
@@ -593,7 +589,7 @@ export async function cloneAndCheckout(
     headSha: string;
     /**
      * Installation token for a PRIVATE repository. Absent ⇒ the clone is
-     * anonymous, byte-for-byte as it has always been.
+     * anonymous; both paths use the same Git isolation settings.
      */
     cloneToken?: string;
   }
@@ -602,9 +598,7 @@ export async function cloneAndCheckout(
   // credential travels in a header, so the URL stays the ordinary public-looking
   // HTTPS one and nothing that echoes it can leak anything.
   const cloneUrl = `https://github.com/${args.repoFullName}.git`;
-  // A trailing space when present and the empty string when not, so the
-  // anonymous command bytes are identical to what they were before tokens
-  // existed.
+  // Authentication is a process-local option on clone and fetch only.
   const authConfig = args.cloneToken
     ? `-c ${shellQuote(
         `http.extraheader=AUTHORIZATION: basic ${cloneAuthHeaderValue(
@@ -612,17 +606,21 @@ export async function cloneAndCheckout(
         )}`
       )} `
     : "";
+  // Ignore system/user Git configuration and template hooks. Checkout is a
+  // separate command after every process carrying authentication has exited.
+  const safeGit =
+    "env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c credential.helper=";
   const script = [
     `set -e`,
     `rm -rf ${CHECKOUT_DIR}`,
     // Shallow, but deep enough that a PR ref's own history resolves.
-    `git ${authConfig}clone --depth 50 ${shellQuote(cloneUrl)} ${CHECKOUT_DIR}`,
+    `${safeGit} ${authConfig}clone --no-checkout --template= --depth 50 ${shellQuote(
+      cloneUrl,
+    )} ${CHECKOUT_DIR}`,
     `cd ${CHECKOUT_DIR}`,
-    `git ${authConfig}fetch --depth 50 origin ${shellQuote(
-      `pull/${args.prNumber}/head`
+    `${safeGit} ${authConfig}fetch --depth 50 origin ${shellQuote(
+      `pull/${args.prNumber}/head`,
     )}`,
-    // No credential: a detached checkout is a purely local operation.
-    `git checkout --detach ${shellQuote(args.headSha)}`,
   ].join(" && ");
 
   const result = await runForeground(
@@ -655,6 +653,16 @@ export async function cloneAndCheckout(
       )
     );
   }
+
+  const checkout = await runForeground(
+    sandbox,
+    `${safeGit} -C ${CHECKOUT_DIR} checkout --detach ${shellQuote(
+      args.headSha,
+    )}`,
+    { timeoutMs: CLONE_TIMEOUT_MS, timeoutOutcome: "infra_error" },
+  );
+  if (checkout.exitCode !== 0)
+    throw new CheckStepError("infra_error", "checkout failed");
 
   const head = await runForeground(
     sandbox,
@@ -1221,9 +1229,7 @@ async function probeResponseIsHealthy(
   if (mode === null) return false;
 
   const body = (response as { body?: unknown }).body as
-    | ReadableStream<Uint8Array>
-    | null
-    | undefined;
+    ReadableStream<Uint8Array> | null | undefined;
   if (!body || typeof body.getReader !== "function") {
     // No streaming body available (a buffered runtime, or a test stub): the
     // payload is already in hand, so reading it cannot block — and nothing more
