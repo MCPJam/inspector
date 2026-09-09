@@ -166,7 +166,7 @@ describe("combined run report", () => {
     expect(pairingDecisions).toEqual(["SHIP"]);
     const shipPill = screen.getByTestId("run-header-decision-pill");
     expect(shipPill).toHaveAttribute("data-decision", "ship");
-    expect(within(shipPill).getAllByRole("img")).toHaveLength(3);
+    expect(within(shipPill).getAllByLabelText(/ · /)).toHaveLength(3);
     const pairingRows = within(hero).getAllByTestId("run-verdict-pairing");
     expect(pairingRows).toHaveLength(3);
     expect(pairingRows[0]).toHaveTextContent("Cursor");
@@ -228,8 +228,8 @@ describe("combined run report", () => {
         .map((node) => node.textContent),
     ).toEqual(pairingDecisions);
     expect(
-      within(screen.getByTestId("run-header-decision-pill")).getAllByRole(
-        "img",
+      within(screen.getByTestId("run-header-decision-pill")).getAllByLabelText(
+        / · /,
       ),
     ).toHaveLength(3);
     expect(
