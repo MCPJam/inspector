@@ -1070,7 +1070,7 @@ describe("TestTemplateEditor run view from route", () => {
     fireEvent.change(prompt, { target: { value: "" } });
     await user.click(screen.getByRole("button", { name: "Setup Run" }));
     const run = screen.getByRole("button", { name: "Run test case" });
-    if (!(run as HTMLButtonElement).disabled) await user.click(run);
+    expect(run).toBeDisabled();
     expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
     expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
   });
@@ -1506,7 +1506,7 @@ describe("TestTemplateEditor run view from route", () => {
     await waitFor(() => {
       expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
     });
-    expect(screen.getByTestId("iteration-trial-chain")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Iteration stages" })).toBeInTheDocument();
   });
 
   it("shows the quick-run chain in RunColumn after a just-finished run", async () => {
@@ -1581,12 +1581,13 @@ describe("TestTemplateEditor run view from route", () => {
     await user.click(screen.getByRole("button", { name: "Setup Run" }));
     expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run test case" }));
+    await user.click((await screen.findAllByTestId("case-run-row"))[0]);
     await waitFor(() => {
       expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
     });
   });
 
-  it("opens a just-finished quick run on its Scorecard, with the chain above it", async () => {
+  it("opens a just-finished quick run with its chain in the Scorecard", async () => {
     // The run stays in RunColumn after it finishes (`showRunInPreview`), so
     // without a scorecard here the most common trial on the page would be the
     // one that has none.
@@ -1655,17 +1656,15 @@ describe("TestTemplateEditor run view from route", () => {
     await user.click(screen.getByRole("button", { name: "Setup Run" }));
     expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run test case" }));
+    await user.click((await screen.findAllByTestId("case-run-row"))[0]);
 
     const card = await screen.findByTestId("trial-scorecard");
     expect(card).toBeInTheDocument();
-    // The chain describes the trial, so it sits above the tabs, not inside one.
-    const chain = screen.getByTestId("trial-chain-panel");
-    expect(
-      chain.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    // The report contains the chain alongside its recorded assertions.
+    expect(card).toContainElement(screen.getByTestId("trial-chain-panel"));
   });
 
-  it("shows the observational route rollup for a multi-trial quick run", async () => {
+  it("shows each quick-run trial in history with aggregate tool-call metrics", async () => {
     const metadata = { compareRunId: "cmp_rollup" };
     const trials: EvalIteration[] = [
       {
@@ -1722,15 +1721,12 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
-    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
-    await waitFor(() => {
-      expect(screen.getByTestId("route-rollup-card")).toBeInTheDocument();
-    });
-    const card = screen.getByTestId("route-rollup-card");
-    expect(card).toHaveTextContent("Across 3 iterations");
-    expect(card).toHaveTextContent("same route in 2 of 3");
-    expect(card).toHaveTextContent("Observational");
-    expect(card).not.toHaveTextContent(/pass|fail|verdict/i);
+    const rows = await screen.findAllByTestId("case-run-row");
+    expect(rows).toHaveLength(3);
+    expect(screen.getByText("1.7")).toBeVisible();
+    fireEvent.click(rows[0]);
+    expect(await screen.findByRole("dialog")).toBeVisible();
+    expect(screen.getByTestId("trial-scorecard")).toBeInTheDocument();
   });
 
   it("runs compare across case-configured models and reuses the compare session id for per-model retry", async () => {

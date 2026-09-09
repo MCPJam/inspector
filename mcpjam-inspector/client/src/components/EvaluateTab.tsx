@@ -1258,7 +1258,8 @@ function EvaluateTabContent({
           server={preparedServer}
           onExit={() => navigatePlaygroundEvalsRoute({ type: "list" })}
           onReconnect={
-            ensureServersReady
+            ensureServersReady &&
+            emptyHeroServers.some((server) => server.id === preparedServer.id)
               ? async () => {
                   await ensureServersReady([preparedServer.name]);
                 }
@@ -1621,7 +1622,7 @@ function EvaluateTabContent({
         )}
 
         <Sheet
-          open={route.type === "list" && suiteAction !== null}
+          open={suiteAction !== null}
           onOpenChange={(open) => {
             if (!open) setSuiteAction(null);
           }}

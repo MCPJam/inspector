@@ -11972,6 +11972,22 @@
             "type": "string",
             "description": "The case's effective declared id. Absent on cases authored before declared identity existed."
           },
+          "source": {
+            "type": "object",
+            "description": "Source provenance for an AI-assisted Markdown case. endLine must be greater than or equal to startLine.",
+            "additionalProperties": false,
+            "required": ["format", "method", "fileName", "fileHash", "excerpt", "startLine", "endLine", "extractorVersion"],
+            "properties": {
+              "format": { "type": "string", "enum": ["markdown"] },
+              "method": { "type": "string", "enum": ["ai"] },
+              "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "fileHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+              "excerpt": { "type": "string", "minLength": 1, "maxLength": 102400 },
+              "startLine": { "type": "integer", "minimum": 1 },
+              "endLine": { "type": "integer", "minimum": 1 },
+              "extractorVersion": { "type": "string", "minLength": 1, "maxLength": 100 }
+            }
+          },
           "title": {
             "type": "string"
           },

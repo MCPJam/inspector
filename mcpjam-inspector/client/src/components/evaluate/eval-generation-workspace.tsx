@@ -22,12 +22,14 @@ export function EvalGenerationWorkspace({
   suiteName,
   autoStart = true,
   config,
+  onExit,
 }: {
   projectId: string;
   suiteId: string;
   suiteName: string;
   autoStart?: boolean;
   config?: GenerateCasesConfig;
+  onExit?: () => void;
 }) {
   const generation = useEvalGeneration(
     (s) => s.suites[evalSuiteKey({ projectId, suiteId })],
@@ -40,14 +42,12 @@ export function EvalGenerationWorkspace({
     () => new Set(initialIds.current),
   );
   const [startError, setStartError] = useState<string>();
-  const [expectedCount] = useState(
-    () => {
-      const selected = config ?? loadGenerateConfig(suiteId);
-      // Show placeholders for the lower bound; the final count is model-selected.
-      if (selected.testSet) return selected.testSet === "quick" ? 5 : 20;
-      return totalCases(selected) || totalCases(DEFAULT_GENERATE_CONFIG);
-    },
-  );
+  const [expectedCount] = useState(() => {
+    const selected = config ?? loadGenerateConfig(suiteId);
+    // Show placeholders for the lower bound; the final count is model-selected.
+    if (selected.testSet) return selected.testSet === "quick" ? 5 : 20;
+    return totalCases(selected) || totalCases(DEFAULT_GENERATE_CONFIG);
+  });
   const start = () => {
     initialIds.current = new Set(generation?.drafts.map((draft) => draft.id));
     setVisibleIds(new Set(initialIds.current));
@@ -107,6 +107,13 @@ export function EvalGenerationWorkspace({
       data-testid="suite-case-generation-workspace"
       className="flex min-h-0 flex-1 flex-col gap-4"
     >
+      {onExit && (
+        <div>
+          <Button variant="ghost" size="sm" onClick={onExit}>
+            Back to suite
+          </Button>
+        </div>
+      )}
       <header className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold">Generate test cases</h2>

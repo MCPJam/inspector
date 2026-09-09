@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   route: {
     current: { type: "suite-overview" as const, suiteId: "suite-a" },
   },
+  preparedPage: vi.fn(),
   useEvalQueries: vi.fn(),
   navigatePlaygroundEvalsRoute: vi.fn(),
   toSuiteOverview: vi.fn(),
@@ -52,6 +53,14 @@ vi.mock("../evaluate/suite-list-run-review", () => ({
     </div>
   ),
 }));
+
+vi.mock("../evaluate/prepared-eval-server-page", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../evaluate/prepared-eval-server-page")>();
+  return { ...actual, PreparedEvalServerPage: (props: any) => {
+    mocks.preparedPage(props);
+    return <actual.PreparedEvalServerPage {...props} />;
+  } };
+});
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
@@ -399,7 +408,7 @@ describe("EvaluateTab", () => {
     mocks.getEffectiveSuiteServers.mockReturnValue(["server-a"]);
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await userEvent.click(screen.getByRole("button", { name: "Run Suite suite-a" }));
+    await userEvent.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
     expect(screen.getByRole("dialog", { name: "Run Suite suite-a" })).toBeInTheDocument();
     expect(screen.getByTestId("evals-suites-overview")).toBeInTheDocument();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
@@ -606,7 +615,7 @@ describe("EvaluateTab", () => {
     const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await user.click(screen.getByRole("button", { name: "Run Suite suite-a" }));
+    await user.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
     expect(mocks.handleRerun).not.toHaveBeenCalled();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Start reviewed run" }));
@@ -712,6 +721,19 @@ describe("EvaluateTab", () => {
         initialServerId: null,
       }),
     );
+  });
+
+  it("only offers reconnect once the server record is resolved", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({});
+    mocks.route.current = { type: "eval-server", serverId: "missing" } as any;
+    const view = render(<EvaluateTab projectId="ws-1" ensureServersReady={ensureServersReady} />);
+    expect(mocks.preparedPage.mock.calls.at(-1)?.[0].onReconnect).toBeUndefined();
+    mocks.route.current = { type: "eval-server", serverId: "srv-a" } as any;
+    view.rerender(<EvaluateTab projectId="ws-1" ensureServersReady={ensureServersReady} />);
+    const reconnect = mocks.preparedPage.mock.calls.at(-1)?.[0].onReconnect;
+    expect(reconnect).toBeTypeOf("function");
+    await act(async () => reconnect());
+    expect(ensureServersReady).toHaveBeenCalledWith(["server-a"]);
   });
 
   it("opens today's case editor from a first-run case and can return", async () => {

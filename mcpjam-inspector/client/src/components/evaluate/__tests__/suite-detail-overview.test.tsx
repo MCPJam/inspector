@@ -580,7 +580,9 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-case-generation-workspace")).toBeVisible();
     expect(onGenerateTestCases).not.toHaveBeenCalled();
 
-    expect(screen.queryByRole("button", { name: "Back to suite" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Back to suite" }));
+    expect(screen.queryByTestId("suite-case-generation-workspace")).toBeNull();
+    expect(screen.getByTestId("suite-detail-overview")).toBeVisible();
   });
 
   it("disables the card's Generate while a generation is already running", () => {

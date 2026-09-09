@@ -121,6 +121,29 @@ describe("shared agent docking", () => {
       "Keep this draft",
     );
   });
+  it("restores the desired width after the viewport grows", () => {
+    useAgentPanelStore.setState({ width: 700 });
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 375,
+    });
+    const { container } = render(
+      <AgentSidePanel projectId="p" organizationId={null} activeTab="evals" />,
+    );
+    const panel = container.querySelector('[data-slot="agent-side-panel"]')!;
+    expect(panel).toHaveStyle({ width: "351px" });
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(useAgentPanelStore.getState().width).toBe(700);
+    act(() => {
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: 1440,
+      });
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(panel).toHaveStyle({ width: "700px" });
+    expect(useAgentPanelStore.getState().width).toBe(700);
+  });
   it("keeps eval chat focused without general-chat or conversation navigation controls", () => {
     render(
       <AgentSidePanel

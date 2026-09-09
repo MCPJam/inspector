@@ -74,7 +74,7 @@ interface LoadedState {
 function loadPersisted(): LoadedState {
   const fallback: LoadedState = {
     isOpen: false,
-    width: clampAgentPanelWidth(AGENT_PANEL_DEFAULT_WIDTH),
+    width: AGENT_PANEL_DEFAULT_WIDTH,
     activeSessionId: null,
     activeSessionProjectId: null,
   };
@@ -100,8 +100,8 @@ function loadPersisted(): LoadedState {
     return {
       isOpen: parsed.isOpen === true,
       width:
-        typeof parsed.width === "number"
-          ? clampAgentPanelWidth(parsed.width)
+        typeof parsed.width === "number" && Number.isFinite(parsed.width)
+          ? parsed.width
           : fallback.width,
       // A v1-shape entry has a sessionId but no sessionProjectId. Treat that
       // as a cross-project pointer (we don't know its project) and drop it
@@ -209,14 +209,5 @@ if (isWindowAvailable()) {
       activeSessionId: next.activeSessionId,
       activeSessionProjectId: next.activeSessionProjectId,
     });
-  });
-
-  // Re-clamp width when the viewport shrinks. Without this, a width persisted
-  // at a larger viewport size would exceed the 50vw cap and overflow the main
-  // layout. `setWidth` is a no-op when the clamped value equals the current
-  // one, so this is cheap when the viewport grows or stays the same.
-  window.addEventListener("resize", () => {
-    const { width, setWidth } = useAgentPanelStore.getState();
-    setWidth(width);
   });
 }

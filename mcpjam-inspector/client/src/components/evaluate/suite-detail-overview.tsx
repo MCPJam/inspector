@@ -326,7 +326,8 @@ export function SuiteDetailOverview({
   const showEmptyCasesHero = !hasCases && !hasGeneratedContent;
 
   const [generationOpen, setGenerationOpen] = useState(false);
-  const [generationConfig, setGenerationConfig] = useState<GenerateCasesConfig>();
+  const [generationConfig, setGenerationConfig] =
+    useState<GenerateCasesConfig>();
   const handleGenerateCases = () => {
     if (projectId) setGenerationOpen(true);
   };
@@ -355,6 +356,7 @@ export function SuiteDetailOverview({
       <EvalGenerationWorkspace
         key={`${projectId}:${suite._id}`}
         config={generationConfig}
+        onExit={() => setGenerationConfig(undefined)}
         projectId={projectId}
         suiteId={suite._id}
         suiteName={suite.name}
