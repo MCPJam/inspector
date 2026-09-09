@@ -1,0 +1,145 @@
+---
+title: "Cloud browser"
+description: "Drive isolated cloud browsers from coding agents using mcpjam browser --cloud"
+icon: "globe"
+---
+
+Use `mcpjam browser --cloud` to open and drive isolated cloud browsers from a coding agent. Each session gets its own blank browser profile in a metered desktop. No project computer attachment or host configuration is required — only project membership and your existing cloud credentials.
+
+<Note>
+  Cloud browser sessions require the feature to be enabled on your deployment. Use your existing `mcpjam cloud login` or `MCPJAM_API_KEY`.
+</Note>
+
+## Authentication
+
+Cloud browser commands use the same credentials as other `mcpjam cloud` commands:
+
+```bash
+# Use stored login
+mcpjam cloud login
+
+# Or pass an API key directly
+mcpjam browser open --cloud --api-key sk_... --project PROJECT_ID --mode allow_all
+```
+
+Pass `--api-url` to target a specific deployment:
+
+```bash
+export MCPJAM_API_URL=https://staging.mcpjam.com/api/v1
+mcpjam browser open --cloud --project PROJECT_ID --mode allow_all
+```
+
+Local consent (`--consent`) is never sent to the cloud. Do not pass `--inspector-url` or `--consent` with `--cloud`.
+
+## Opening a session
+
+```bash
+mcpjam browser open --cloud --project PROJECT_ID --mode allow_all
+```
+
+Pass `--run-key` to name the session. The same key and policy reattach the same browser on a later call; omit it for a fresh session each time. A closed key cannot be reopened — use a new key.
+
+```bash
+mcpjam browser open --cloud --project PROJECT_ID --run-key my-task --mode allow_all
+```
+
+The CLI remembers the last opened session per deployment and project. Subsequent commands pick it up automatically. Pass `--session SESSION_ID` to address a specific session.
+
+## Driving the browser
+
+```bash
+# Navigate to a URL
+mcpjam browser navigate https://example.com --cloud --project PROJECT_ID --command-id nav-1
+
+# Go back, forward, or reload
+mcpjam browser back    --cloud --project PROJECT_ID
+mcpjam browser forward --cloud --project PROJECT_ID
+mcpjam browser reload  --cloud --project PROJECT_ID
+
+# Click, type, scroll, and other interactions
+mcpjam browser act --cloud --project PROJECT_ID --verb click --ref e3 --command-id click-1
+mcpjam browser act --cloud --project PROJECT_ID --verb type  --ref e5 --value "hello"
+
+# Read the page
+mcpjam browser observe --cloud --project PROJECT_ID --mode a11y
+mcpjam browser observe --cloud --project PROJECT_ID --mode screenshot
+
+# List WebMCP tools exposed by the page, then invoke one
+mcpjam browser observe --cloud --project PROJECT_ID --mode page_tools
+mcpjam browser invoke TOOL_KEY --input '{"day":"Monday"}' --cloud --project PROJECT_ID --command-id tool-1
+```
+
+## Idempotency
+
+Pass `--command-id` on every mutating command. The same ID with the same payload returns the saved result without replaying the action. If a command was in-flight when a network failure occurred, reusing the ID returns `unknown` — check `trace` before deciding what to do next. Never retry an `unknown` action under a new ID without first checking the page.
+
+```bash
+mcpjam browser navigate https://example.com --cloud --project PROJECT_ID --command-id nav-1
+# Safe to retry with the same --command-id if the network dropped
+mcpjam browser navigate https://example.com --cloud --project PROJECT_ID --command-id nav-1
+```
+
+## Inspecting history
+
+```bash
+# Read the command history for the current session
+mcpjam browser trace --cloud --project PROJECT_ID
+
+# Page through long histories
+mcpjam browser trace --cloud --project PROJECT_ID --after-seq 50 --limit 100
+
+# Find one command's result
+mcpjam browser trace --cloud --project PROJECT_ID --command-id nav-1
+
+# List all your sessions in this project
+mcpjam browser sessions --cloud --project PROJECT_ID
+```
+
+Screenshots are not embedded in trace listings. Fetch them separately with `observe --mode screenshot`.
+
+## Writing notes
+
+```bash
+mcpjam browser note "Reached the checkout page" --cloud --project PROJECT_ID
+```
+
+Notes are written into the session trace without driving the browser.
+
+## Closing a session
+
+```bash
+mcpjam browser close --cloud --project PROJECT_ID
+```
+
+Cloud `close` ends the session and releases its desktop. Use a new `--run-key` for another browser.
+
+## Session policy
+
+A policy is stored when the session opens and enforced on every subsequent command.
+
+| Mode | Effect |
+|------|--------|
+| `allow_all` | All navigation and actions permitted |
+| `read_only` | Observation only; navigation and actions are refused |
+| `allowlist` | Restricts navigation and returned observations to the listed origins |
+
+```bash
+# Read-only session
+mcpjam browser open --cloud --project PROJECT_ID --mode read_only
+
+# Allowlist session
+mcpjam browser open --cloud --project PROJECT_ID --mode allowlist --origin https://example.com
+```
+
+The same daemon handoff protections apply: if a human takes control of the browser, agent commands are blocked until control is returned.
+
+## Sleep and wake
+
+A cloud browser sleeps through the existing idle lifecycle and wakes automatically when the agent issues its next command. Profile state persists within the session, subject to the platform's retention policy.
+
+## Limits
+
+- History is bounded to 10,000 commands per session.
+- `trace` returns at most 100 entries per call; use `--after-seq` to page through longer histories.
+- Screenshots are stored as base64 and are not embedded in trace listings.
+- Cloud sessions start blank. Saved-profile selection and attaching to an existing Playground browser are not available in this API.
