@@ -1,4 +1,5 @@
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { HOSTED_MODE } from "@/lib/config";
 
 /**
  * PostHog rollout gate for ALL Project Computers UI (the host-editor computer
@@ -112,4 +113,22 @@ export function useBrowserWorkspaceEnabled(): boolean {
 export const LOCAL_BROWSER_FEATURE_FLAG = "local-browser-enabled";
 export function useLocalBrowserEnabled(): boolean {
   return useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG) === true;
+}
+
+export const HOSTED_BROWSER_FEATURE_FLAG = "hosted-browser-enabled";
+export function useHostedBrowserEnabled(): boolean {
+  return useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG) === true;
+}
+
+/** Browser has two location rollouts, neither nested under Computers. */
+export function useBrowserEnabledState(): boolean | undefined {
+  const local = useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG);
+  const hosted = useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG);
+  if (HOSTED_MODE) return hosted;
+  if (local === true || hosted === true) return true;
+  return local === undefined || hosted === undefined ? undefined : false;
+}
+
+export function useBrowserEnabled(): boolean {
+  return useBrowserEnabledState() === true;
 }

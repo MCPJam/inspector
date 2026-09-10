@@ -23,6 +23,7 @@ import { useComputerTerminal } from "@/components/computer/useComputerTerminal";
 import {
   useBrowserWorkspaceEnabled,
   useComputersEnabledState,
+  useBrowserEnabledState,
 } from "@/hooks/useComputersEnabled";
 import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
@@ -64,7 +65,8 @@ export function PlaygroundRightRail({
   isAuthenticated: boolean;
 }) {
   const computersEnabled = useComputersEnabledState();
-  if (computersEnabled !== true) {
+  const browsersEnabled = useBrowserEnabledState();
+  if (computersEnabled !== true && browsersEnabled !== true) {
     return <LoggerView onClose={onClose} />;
   }
   return (
@@ -108,7 +110,9 @@ function RightRailTabbed({
   hostId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
-  const shellAvailable = !!hostConfig?.computer;
+  const computersEnabled = useComputersEnabledState();
+  const browsersEnabled = useBrowserEnabledState();
+  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
   // Which engine serves this project's computer work. The rail is an INDICATOR
   // only — switching lives on the Computer tab, which owns the consent gate.
   //
@@ -131,6 +135,7 @@ function RightRailTabbed({
     !workspaceEnabled && browserEngine.selectedEngine === "local",
   );
   const hasBrowser =
+    browsersEnabled === true &&
     !workspaceEnabled &&
     browserPanelAvailable({
       hostHasBrowser: !!hostConfig?.builtInToolIds?.includes("browser"),

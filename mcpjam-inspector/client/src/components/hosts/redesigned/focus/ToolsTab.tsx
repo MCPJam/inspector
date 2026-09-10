@@ -4,7 +4,10 @@ import { BrowserProfilePicker } from "./BrowserProfilePicker";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import { BuiltInToolCheckboxList } from "@/components/client-config/BuiltInToolCheckboxList";
 import { visibleBuiltInToolCatalog } from "@/lib/host-config-computer";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import {
+  useComputersEnabled,
+  useBrowserEnabled,
+} from "@/hooks/useComputersEnabled";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
 
 interface ToolsTabProps {
@@ -36,11 +39,13 @@ export function ToolsTab({
 }: ToolsTabProps) {
   const builtInToolCatalog = useBuiltInToolCatalog();
   const computersEnabled = useComputersEnabled();
+  const browsersEnabled = useBrowserEnabled();
   // Render only the rows this user may see: with `computers-enabled` off,
   // computer-backed rows (e.g. an enabled `bash`) stay hidden — except an
   // already-selected id, which must remain visible to stay removable.
   const visibleBuiltInTools = visibleBuiltInToolCatalog(builtInToolCatalog, {
     computersEnabled,
+    browsersEnabled,
     selectedIds: draft.builtInToolIds,
   });
 
