@@ -30,6 +30,14 @@ vi.mock("react-router", async (importOriginal) => {
   };
 });
 
+// The route reads WorkOS identity now (REEV-6's gated preview asks "does this
+// person have an account?"). A resolved, signed-in user keeps every assertion
+// below about the FLAG and BILLING gates — the guest path has its own suite in
+// `GatedFeatureRoutes.preview.test.tsx`.
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { email: "member@example.com" }, isLoading: false }),
+}));
+
 vi.mock("../components/ui/json-editor/codemirror-json-editor", () => ({
   CodemirrorJsonEditor: () => null,
 }));

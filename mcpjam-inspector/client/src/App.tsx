@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type ReactElement,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
@@ -280,6 +281,10 @@ import {
   useHostMutations,
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
+import { useIsHostedGuest } from "@/hooks/use-hosted-guest";
+import { GatedFeaturePreview } from "@/components/guest-preview/GatedFeaturePreview";
+import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
+import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
 import { useEvaluateEnabledState } from "@/hooks/useEvaluateEnabled";
 import {
@@ -639,7 +644,13 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
   }
 }
 
-function ActiveBillingUpsellGate() {
+function ActiveBillingUpsellGate({
+  variant,
+}: {
+  /** `inline` when this renders inside the gated preview shell — see
+   *  `BillingUpsellGate`'s prop docs for why the chrome differs. */
+  variant?: "page" | "inline";
+} = {}) {
   const {
     activeTabBillingFeature,
     shellBillingStatus,
@@ -650,6 +661,7 @@ function ActiveBillingUpsellGate() {
 
   return (
     <BillingUpsellGate
+      variant={variant}
       feature={activeTabBillingFeature}
       currentPlan={
         shellBillingStatus?.effectivePlan ?? shellBillingStatus?.plan ?? "free"
@@ -1587,28 +1599,81 @@ export function CompatibilityRoute() {
   );
 }
 
+/**
+ * The gated-preview decision shared by Swarms and User Testing (REEV-6).
+ *
+ * Both surfaces answer "may this person run it?" identically, so the answer
+ * lives once. Returns the element to render INSTEAD of the real tab, or `null`
+ * to mean "carry on" — deliberately not a boolean, because three of the four
+ * outcomes need different markup and a caller reconstructing that from flags
+ * is how the two routes would drift apart.
+ *
+ * Order matters and is not arbitrary:
+ *
+ *   1. Guest identity unresolved → hold. Rendering anything here flashes a
+ *      sign-up wall at signed-in customers on every cold load.
+ *   2. Guest → the preview, before billing is consulted at all. A visitor
+ *      with no account has no organization and no plan; asking them to
+ *      upgrade would be answering a question they haven't reached.
+ *   3. Plan-locked → the same preview shell, with the existing upsell in the
+ *      slot where a guest sees sign-up.
+ *
+ * Callers must invoke this from the top of the component with their other
+ * hooks — it calls hooks itself, so it can never sit after an early return.
+ */
+function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
+  const { billingUiEnabled, activeTabBillingLocked, activeTabBillingFeature } =
+    useAppRouteContext();
+  const isHostedGuest = useIsHostedGuest();
+
+  if (isHostedGuest === undefined) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isHostedGuest) {
+    return (
+      <GatedFeaturePreview feature={feature}>
+        <GuestPreviewCta feature={feature} />
+      </GatedFeaturePreview>
+    );
+  }
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return (
+      <GatedFeaturePreview feature={feature}>
+        <ActiveBillingUpsellGate variant="inline" />
+      </GatedFeaturePreview>
+    );
+  }
+
+  return null;
+}
+
 // The User Testing surface: `/user-testing` (the project's scenarios) and
 // `/user-testing/:scenarioId` (one scenario). Same billing feature and
 // `sandboxes-enabled` flag as Swarms below.
 export function ScenariosRoute() {
-  const {
-    billingUiEnabled,
-    activeTabBillingLocked,
-    activeTabBillingFeature,
-    convexProjectId,
-    isAuthenticated,
-  } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
   // The sidebar filters this item on the flag, but a filtered nav item is not
   // a gate — `/user-testing` is a plain route, so without this a direct URL
   // mounts the whole surface for users the flag excludes.
   const sandboxesEnabled = useSandboxesEnabledState();
   // Hooks first: every gate below early-returns, and a hook after one of them
   // would crash React the moment a gate settles between renders.
+  const gate = useGatedFeatureGate("user-testing");
   const params = useParams<{ scenarioId?: string }>();
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`, and bouncing then would strand a flagged-in user who cold-
   // loads the URL. (Same tradeoff SwarmsRoute makes.)
+  //
+  // Still FIRST, ahead of the preview: until the flag comes out (REEV-6
+  // Block E) an unflagged visitor keeps today's redirect exactly, so the
+  // preview ships dark rather than quietly going live with this commit.
   if (sandboxesEnabled === false) {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
@@ -1616,8 +1681,9 @@ export function ScenariosRoute() {
     return null;
   }
 
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
-    return <ActiveBillingUpsellGate />;
+  // Guests and plan-locked users stop here. `null` means neither applies.
+  if (gate) {
+    return gate;
   }
 
   // Router params arrive decoded, but App also renders this component outside
@@ -1697,13 +1763,7 @@ export function SwarmsRoute() {
   // longer a per-host scenario tab. Keeps the same billing gate as the scenario
   // product surface, and re-mounts per project so selection state can't leak
   // across a project switch.
-  const {
-    billingUiEnabled,
-    activeTabBillingLocked,
-    activeTabBillingFeature,
-    convexProjectId,
-    isAuthenticated,
-  } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
   // WorkOS identity is the membership match key for the *invitee guest*
   // notice. Convex `isAuthenticated` is also true for anonymous sessions,
   // which never get a WorkOS `user.email` — but those actors still own a
@@ -1736,12 +1796,17 @@ export function SwarmsRoute() {
   // Hook order: must run on EVERY render — the gates below early-return on
   // hydration states that flip between renders, and a hook after them would
   // crash React the moment a gate settles.
+  const gate = useGatedFeatureGate("swarms");
   const params = useParams<{ swarmId?: string }>();
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
   // /swarms directly. Render nothing until it settles. (Same tradeoff the
   // Environments route already makes.)
+  //
+  // Still FIRST, ahead of the preview: until the flag comes out (REEV-6
+  // Block E) an unflagged visitor keeps today's redirect exactly, so the
+  // preview ships dark rather than quietly going live with this commit.
   if (sandboxesEnabled === false) {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
@@ -1749,8 +1814,14 @@ export function SwarmsRoute() {
     return null;
   }
 
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
-    return <ActiveBillingUpsellGate />;
+  // Guests and plan-locked users stop here. `null` means neither applies.
+  //
+  // This is ABOVE the invitee-guest notice below on purpose: the two "guests"
+  // are different populations. This one has no account at all; that one is a
+  // signed-in person holding project role `guest`, who needs to be told to ask
+  // an admin, not to sign up for an account they already have.
+  if (gate) {
+    return gate;
   }
 
   // Wait for WorkOS before choosing signed-in gate vs anonymous fallthrough,
