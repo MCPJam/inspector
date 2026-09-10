@@ -62,14 +62,31 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 const providerState = vi.hoisted(() => ({
   deps: [] as Array<Record<string, unknown>>,
 }));
-vi.mock("../../../services/webmcp-inspector/browserd-provider", () => ({
-  createBrowserdWebMcpProvider: (deps: Record<string, unknown>) => {
-    providerState.deps.push(deps);
-    return {
-      createSession: () => Promise.reject(new Error("no browser in this test")),
-    };
-  },
-}));
+// Partial, not wholesale. This mock only needs to intercept
+// `createBrowserdWebMcpProvider`; the module also exports the
+// `BrowserdWebMcpSession` CLASS, and `local-browserd-provider` does
+// `class LocalBrowserdWebMcpSession extends BrowserdWebMcpSession`. Replacing
+// the module outright left that export undefined, so the subclass had no base
+// to extend and the whole file died at import with
+// `No "BrowserdWebMcpSession" export is defined on the ... mock`.
+//
+// A stub base class would not do either — the subclass inherits real behaviour
+// from it. So spread the real module and override the one factory under test.
+vi.mock(
+  "../../../services/webmcp-inspector/browserd-provider",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../services/webmcp-inspector/browserd-provider")
+    >()),
+    createBrowserdWebMcpProvider: (deps: Record<string, unknown>) => {
+      providerState.deps.push(deps);
+      return {
+        createSession: () =>
+          Promise.reject(new Error("no browser in this test")),
+      };
+    },
+  }),
+);
 
 import { Hono } from "hono";
 import webmcpInspector from "../webmcp-inspector";
