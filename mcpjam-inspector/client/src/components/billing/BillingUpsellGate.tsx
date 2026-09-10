@@ -26,6 +26,18 @@ export interface BillingUpsellGateProps {
   upgradePlan: OrganizationPlan | null;
   canManageBilling: boolean;
   onNavigateToBilling: () => void;
+  /**
+   * `page` (default) owns the whole tab body: full height, centered, in its
+   * own bordered card, headed by the feature name.
+   *
+   * `inline` is the same decision rendered as a slot — no page-height wrapper,
+   * no card, no heading. It exists for the gated Swarms/User Testing preview
+   * (REEV-6), where the screen already has a title and a hero above this and a
+   * second bordered box under a second heading would read as two competing
+   * answers to "why can't I use this?". Same copy, same entitlement logic,
+   * same `billing_upsell_gate_viewed` event, so the funnel does not split.
+   */
+  variant?: "page" | "inline";
 }
 
 export function BillingUpsellGate({
@@ -34,6 +46,7 @@ export function BillingUpsellGate({
   upgradePlan,
   canManageBilling,
   onNavigateToBilling,
+  variant = "page",
 }: BillingUpsellGateProps) {
   const viewedRef = useRef(false);
   const featureName = formatBillingFeatureName(feature);
@@ -58,30 +71,49 @@ export function BillingUpsellGate({
     });
   }, [canManageBilling, currentPlan, feature, upgradePlan]);
 
+  const body = (
+    <>
+      {variant === "page" ? (
+        <h2 className="text-lg font-semibold">{featureName}</h2>
+      ) : null}
+      <p className="text-sm text-muted-foreground">{description}</p>
+      <p className="text-sm text-muted-foreground">{includedLine}</p>
+      {canManageBilling ? (
+        <div className="flex justify-center pt-1">
+          <Button
+            type="button"
+            className="mt-3 w-full sm:w-auto"
+            onClick={onNavigateToBilling}
+          >
+            Upgrade
+          </Button>
+        </div>
+      ) : (
+        <p className="pt-2 text-sm font-medium text-foreground">
+          Ask your admin to upgrade
+        </p>
+      )}
+    </>
+  );
+
+  if (variant === "inline") {
+    return (
+      <div
+        className="max-w-md space-y-2 text-center"
+        data-testid="billing-upsell-gate"
+      >
+        {body}
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex h-full min-h-[240px] flex-col items-center justify-center gap-4 p-8 text-center"
       data-testid="billing-upsell-gate"
     >
       <div className="max-w-md space-y-2 rounded-md border border-border/70 p-6 text-center shadow-sm">
-        <h2 className="text-lg font-semibold">{featureName}</h2>
-        <p className="text-sm text-muted-foreground">{description}</p>
-        <p className="text-sm text-muted-foreground">{includedLine}</p>
-        {canManageBilling ? (
-          <div className="flex justify-center pt-1">
-            <Button
-              type="button"
-              className="mt-3 w-full sm:w-auto"
-              onClick={onNavigateToBilling}
-            >
-              Upgrade
-            </Button>
-          </div>
-        ) : (
-          <p className="pt-2 text-sm font-medium text-foreground">
-            Ask your admin to upgrade
-          </p>
-        )}
+        {body}
       </div>
     </div>
   );
