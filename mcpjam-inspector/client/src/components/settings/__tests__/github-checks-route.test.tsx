@@ -18,12 +18,14 @@ const {
   mockSetRepoOutagePolicy,
   mockSetRepoConformance,
   mockSetRepoForkCredentials,
+  mockSetRepoPrServerOAuth,
   mockSetRepoFeedbackComments,
   mockDisconnectRepo,
   mockConnectRepo,
   mockConnectVerifiedRepo,
   mockListInstallationRepos,
   mockBindings,
+  mockPrServerOAuthSources,
   mockStartInstallation,
   mockStartDirectClaim,
   mockUnbindInstallation,
@@ -41,6 +43,9 @@ const {
   mockSetRepoSuite: vi.fn(async () => ({ changed: true })),
   mockSetRepoOutagePolicy: vi.fn(async () => ({ changed: true })),
   mockSetRepoForkCredentials: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
+  mockSetRepoPrServerOAuth: vi.fn(async (_args?: unknown) => ({
     changed: true,
   })),
   mockSetRepoConformance: vi.fn(async () => ({ changed: true })),
@@ -66,6 +71,7 @@ const {
     },
   ]),
   mockBindings: { value: undefined as unknown[] | undefined },
+  mockPrServerOAuthSources: { value: [] as unknown[] },
   mockStartInstallation: vi.fn(async () => ({
     installUrl: "https://github.com/apps/mcpjam/installations/new?state=abc",
   })),
@@ -92,6 +98,7 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     repos: mockRepos.value,
     suites: mockSuites.value,
     bindings: mockBindings.value,
+    prServerOAuthSources: mockPrServerOAuthSources.value,
     connectRepo: mockConnectRepo,
     connectVerifiedRepo: mockConnectVerifiedRepo,
     setRepoEnabled: mockSetRepoEnabled,
@@ -99,6 +106,7 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     setRepoOutagePolicy: mockSetRepoOutagePolicy,
     setRepoConformance: mockSetRepoConformance,
     setRepoForkCredentials: mockSetRepoForkCredentials,
+    setRepoPrServerOAuth: mockSetRepoPrServerOAuth,
     setRepoFeedbackComments: mockSetRepoFeedbackComments,
     disconnectRepo: mockDisconnectRepo,
     listInstallationRepos: mockListInstallationRepos,
@@ -1907,5 +1915,33 @@ it("Settings opts in only the selected repository", async () => {
   expect(mockSetRepoForkCredentials).toHaveBeenCalledWith({
     configId: ROW._id,
     enabled: true,
+  });
+});
+
+it("Settings selects an authorized project-shared OAuth source", async () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [ROW];
+  mockPrServerOAuthSources.value = [
+    {
+      serverId: "server-oauth",
+      projectId: ROW.projectId,
+      name: "Test OAuth server",
+      authorized: true,
+    },
+  ];
+  renderRoute();
+
+  await chooseOption(
+    userEvent.setup(),
+    `Server authentication for ${ROW.repoFullName}`,
+    "Test OAuth server",
+  );
+
+  expect(mockSetRepoPrServerOAuth).toHaveBeenCalledWith({
+    configId: ROW._id,
+    sourceServerId: "server-oauth",
   });
 });

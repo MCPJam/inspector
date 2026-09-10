@@ -264,6 +264,7 @@ export function GithubChecksRoute({
     availability,
     repos,
     suites,
+    prServerOAuthSources,
     bindings,
     connectVerifiedRepo,
     setRepoEnabled,
@@ -271,6 +272,7 @@ export function GithubChecksRoute({
     setRepoOutagePolicy,
     setRepoConformance,
     setRepoForkCredentials,
+    setRepoPrServerOAuth,
     setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
@@ -306,7 +308,7 @@ export function GithubChecksRoute({
       activeOrganizationId
         ? sortedOrganizations.find((org) => org._id === activeOrganizationId)
         : undefined,
-    [sortedOrganizations, activeOrganizationId]
+    [sortedOrganizations, activeOrganizationId],
   );
   const canManage = canManageGithubChecks(activeOrganization);
 
@@ -338,6 +340,9 @@ export function GithubChecksRoute({
   // different writes land on one row, and a shared set would grey out a control
   // the admin has no reason to think is busy.
   const [pendingFeedback, setPendingFeedback] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [pendingOAuth, setPendingOAuth] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   // The picker's value is the repository's NUMERIC ID as a string, not its
@@ -694,6 +699,28 @@ export function GithubChecksRoute({
     }
   };
 
+  const handlePrServerOAuthChange = async (
+    row: GithubCheckRepoConfigRow,
+    value: string,
+  ) => {
+    if (pendingOAuth.has(row._id)) return;
+    setPendingOAuth((current) => new Set(current).add(row._id));
+    try {
+      await setRepoPrServerOAuth({
+        configId: row._id,
+        sourceServerId: value === "none" ? null : value,
+      });
+    } catch (error) {
+      handleWriteError(error);
+    } finally {
+      setPendingOAuth((current) => {
+        const next = new Set(current);
+        next.delete(row._id);
+        return next;
+      });
+    }
+  };
+
   const handleConformanceToggle = async (row: GithubCheckRepoConfigRow) => {
     if (pendingConformance.has(row._id)) return;
     setPendingConformance((current) => new Set(current).add(row._id));
@@ -951,16 +978,16 @@ export function GithubChecksRoute({
                       on somebody else's pull request, and a line that only
                       appeared once it was switched off would be an explanation
                       arriving after the decision. */}
-                  <span
-                    id={`feedback-comments-note-${row._id}`}
-                    className="text-xs text-muted-foreground"
-                  >
-                    MCPJam posts one comment per pull request and updates it in
-                    place. Turning this off stops the comments and changes
-                    nothing else.
-                  </span>
-                  {row.outagePolicy === undefined ? (
-                    /* Not the same statement as "fail open": the backend does
+                    <span
+                      id={`feedback-comments-note-${row._id}`}
+                      className="text-xs text-muted-foreground"
+                    >
+                      MCPJam posts one comment per pull request and updates it
+                      in place. Turning this off stops the comments and changes
+                      nothing else.
+                    </span>
+                    {row.outagePolicy === undefined ? (
+                      /* Not the same statement as "fail open": the backend does
                        behave that way for an unstamped row, but nobody chose
                        it, and saying so is what lets an administrator tell the
                        two apart. */
@@ -995,7 +1022,7 @@ export function GithubChecksRoute({
                     </SelectContent>
                   </Select>
 
-                {/* `?? ""` shows the placeholder rather than a value. Binding
+                  {/* `?? ""` shows the placeholder rather than a value. Binding
                     this to `fail_open` for an unstamped row would render the
                     administrator's screen as though they had already chosen
                     the default — a claim the stored row does not make. */}
@@ -1020,7 +1047,7 @@ export function GithubChecksRoute({
                     </SelectContent>
                   </Select>
 
-                {/* Each switch is captioned. Three bare switches in a row
+                  {/* Each switch is captioned. Three bare switches in a row
                     said nothing about which was which, and only a screen
                     reader could tell them apart.
 
@@ -1030,36 +1057,36 @@ export function GithubChecksRoute({
                     word the control does not answer to. That is why the third
                     reads "Comments" and not "PR comments" — keep it that way
                     if the wording changes. */}
-                <SwitchField label="Checks">
-                  <Switch
-                    checked={row.enabled}
-                    disabled={pendingToggles.has(row._id) || !canManage}
-                    onCheckedChange={() => void handleToggle(row)}
-                    aria-label={`Enable checks for ${row.repoFullName}`}
-                  />
-                </SwitchField>
+                  <SwitchField label="Checks">
+                    <Switch
+                      checked={row.enabled}
+                      disabled={pendingToggles.has(row._id) || !canManage}
+                      onCheckedChange={() => void handleToggle(row)}
+                      aria-label={`Enable checks for ${row.repoFullName}`}
+                    />
+                  </SwitchField>
 
-                {/* Dimmed with its switch while checks are off, because it is
+                  {/* Dimmed with its switch while checks are off, because it is
                     a SUB-SETTING of them — the switch has always been
                     disabled in that state, and a caption at full strength
                     beside a dead control reads as a bug rather than a rule. */}
-                <SwitchField
-                  label="Conformance"
-                  muted={!row.enabled || !canManage}
-                >
-                  <Switch
-                    checked={row.conformanceEnabled === true}
-                    disabled={
-                      pendingConformance.has(row._id) ||
-                      !row.enabled ||
-                      !canManage
-                    }
-                    onCheckedChange={() => void handleConformanceToggle(row)}
-                    aria-label={`Enable conformance check for ${row.repoFullName}`}
-                  />
-                </SwitchField>
+                  <SwitchField
+                    label="Conformance"
+                    muted={!row.enabled || !canManage}
+                  >
+                    <Switch
+                      checked={row.conformanceEnabled === true}
+                      disabled={
+                        pendingConformance.has(row._id) ||
+                        !row.enabled ||
+                        !canManage
+                      }
+                      onCheckedChange={() => void handleConformanceToggle(row)}
+                      aria-label={`Enable conformance check for ${row.repoFullName}`}
+                    />
+                  </SwitchField>
 
-                {/* `!== "off"` — ABSENT IS ON. Every row connected before
+                  {/* `!== "off"` — ABSENT IS ON. Every row connected before
                     this existed, and every row nobody has touched since, is a
                     repository MCPJam comments on; rendering those off would
                     tell an admin the opposite of what is happening on their
@@ -1067,17 +1094,17 @@ export function GithubChecksRoute({
                     conformance is: this is a policy about what MCPJam may
                     write, and it stays answerable while checks are paused —
                     so its caption is NOT muted with the others. */}
-                <SwitchField label="Comments" muted={!canManage}>
-                  <Switch
-                    checked={row.feedbackComments !== "off"}
-                    disabled={pendingFeedback.has(row._id) || !canManage}
-                    onCheckedChange={() =>
-                      void handleFeedbackCommentsToggle(row)
-                    }
-                    aria-label={`Post feedback comments on pull requests for ${row.repoFullName}`}
-                    aria-describedby={`feedback-comments-note-${row._id}`}
-                  />
-                </SwitchField>
+                  <SwitchField label="Comments" muted={!canManage}>
+                    <Switch
+                      checked={row.feedbackComments !== "off"}
+                      disabled={pendingFeedback.has(row._id) || !canManage}
+                      onCheckedChange={() =>
+                        void handleFeedbackCommentsToggle(row)
+                      }
+                      aria-label={`Post feedback comments on pull requests for ${row.repoFullName}`}
+                      aria-describedby={`feedback-comments-note-${row._id}`}
+                    />
+                  </SwitchField>
 
                   <Button
                     variant="ghost"
@@ -1096,6 +1123,51 @@ export function GithubChecksRoute({
                 canManage={canManage}
                 onChange={setRepoForkCredentials}
               />
+              <div className="flex flex-wrap items-center gap-3 border-t border-border/40 pt-3">
+                <div className="min-w-52">
+                  <p className="text-sm font-medium">Server authentication</p>
+                  <p className="text-xs text-muted-foreground">
+                    Reuse one project-shared test OAuth connection when this
+                    repository&apos;s PR server requires login.
+                  </p>
+                </div>
+                <Select
+                  value={row.prServerOAuthSourceServerId ?? "none"}
+                  disabled={pendingOAuth.has(row._id) || !canManage}
+                  onValueChange={(value) =>
+                    void handlePrServerOAuthChange(row, value)
+                  }
+                >
+                  <SelectTrigger
+                    className="w-64"
+                    aria-label={`Server authentication for ${row.repoFullName}`}
+                  >
+                    <SelectValue placeholder="No saved authorization" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No saved authorization</SelectItem>
+                    {(prServerOAuthSources ?? [])
+                      .filter((source) => source.projectId === row.projectId)
+                      .map((source) => (
+                        <SelectItem
+                          key={source.serverId}
+                          value={source.serverId}
+                          disabled={!source.authorized}
+                        >
+                          {source.name}
+                          {source.authorized ? "" : " — authorize first"}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={() => appNavigate(`/p/${row.projectId}/servers`)}
+                >
+                  Authorize or reconnect
+                </Button>
+              </div>
             </div>
           ))
         )}

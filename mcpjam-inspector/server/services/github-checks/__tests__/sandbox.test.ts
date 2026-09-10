@@ -8,6 +8,7 @@ import {
   OUTPUT_CLAMP_CHARS,
   redactCloneCredential,
   PROBE_MAX_RESPONSE_BYTES,
+  probeMcpInitialize,
   waitForMcpInitialize,
   type CheckSandbox,
 } from "../sandbox";
@@ -881,6 +882,25 @@ describe("redactCloneCredential", () => {
 });
 
 describe("waitForMcpInitialize", () => {
+  it("reports a Bearer challenge as authorization required", async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response("unauthorized", {
+        status: 401,
+        headers: { "www-authenticate": 'Bearer realm="mcp"' },
+      })
+    );
+    const options = {
+      timeoutMs: 50,
+      intervalMs: 1,
+      fetchImpl: fetchImpl as typeof fetch,
+    };
+
+    expect(await probeMcpInitialize("https://box/mcp", options)).toBe(
+      "authorization_required"
+    );
+    expect(await waitForMcpInitialize("https://box/mcp", options)).toBe(false);
+  });
+
   const seams = {
     intervalMs: 1,
     sleep: async () => {},

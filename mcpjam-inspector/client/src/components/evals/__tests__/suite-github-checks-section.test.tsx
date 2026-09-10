@@ -8,6 +8,8 @@ const {
   mockBindings,
   mockConnectRepo,
   mockSetRepoForkCredentials,
+  mockSetRepoPrServerOAuth,
+  mockPrServerOAuthSources,
   mockConnectVerifiedRepo,
   mockListInstallationRepos,
   mockNavigate,
@@ -27,6 +29,10 @@ const {
   mockSetRepoForkCredentials: vi.fn(async (_args?: unknown) => ({
     changed: true,
   })),
+  mockSetRepoPrServerOAuth: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
+  mockPrServerOAuthSources: { value: [] as any[] },
   mockConnectRepo: vi.fn(async () => ({ configId: "cfg-legacy" })),
   // Loosely typed for the same reason as the settings-route suite: these stand
   // in for Convex actions whose arguments are hand-mirrored, and a narrow
@@ -60,8 +66,10 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     availability: mockAvailability.value,
     repos: mockRepos.value,
     bindings: mockBindings.value,
+    prServerOAuthSources: mockPrServerOAuthSources.value,
     connectRepo: mockConnectRepo,
     setRepoForkCredentials: mockSetRepoForkCredentials,
+    setRepoPrServerOAuth: mockSetRepoPrServerOAuth,
     connectVerifiedRepo: mockConnectVerifiedRepo,
     listInstallationRepos: mockListInstallationRepos,
   }),
@@ -80,6 +88,7 @@ const CONNECTED_HERE = {
   repoFullName: "mcpjam/mcp-check-fixture",
   enabled: true,
   suiteId: "suite-1",
+  projectId: "proj-1",
 };
 const CONNECTED_ELSEWHERE = {
   _id: "cfg-2",
@@ -490,6 +499,32 @@ it("the suite section edits the same repository credential policy", async () => 
   expect(mockSetRepoForkCredentials).toHaveBeenCalledWith({
     configId: CONNECTED_HERE._id,
     enabled: true,
+  });
+});
+
+it("the suite section selects an authorized OAuth source", async () => {
+  mockPrServerOAuthSources.value = [
+    {
+      serverId: "server-oauth",
+      projectId: "proj-1",
+      name: "Test OAuth server",
+      authorized: true,
+    },
+  ];
+  renderSection({
+    availability: { state: "enabled", canManage: true },
+    repos: [{ ...CONNECTED_HERE, connectionStatus: "verified" }],
+  });
+
+  await chooseOption(
+    userEvent.setup(),
+    `Server authentication for ${CONNECTED_HERE.repoFullName}`,
+    "Test OAuth server",
+  );
+
+  expect(mockSetRepoPrServerOAuth).toHaveBeenCalledWith({
+    configId: CONNECTED_HERE._id,
+    sourceServerId: "server-oauth",
   });
 });
 
