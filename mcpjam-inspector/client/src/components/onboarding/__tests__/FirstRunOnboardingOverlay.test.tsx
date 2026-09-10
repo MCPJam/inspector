@@ -38,6 +38,7 @@ function renderOverlay(connectionState = { status: "idle" } as const) {
     rerenderWithConnectionState: (
       nextConnectionState:
         | { status: "idle" }
+        | { status: "preparing"; serverName: string }
         | { status: "connecting"; serverName: string }
         | { status: "failed"; error: string },
     ) =>
@@ -162,6 +163,24 @@ describe("FirstRunOnboardingOverlay", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
     expect(onSkip).toHaveBeenCalledOnce();
+  });
+
+  it("shows project preparation separately from the MCP handshake", () => {
+    const { rerenderWithConnectionState } = renderOverlay();
+
+    rerenderWithConnectionState({
+      status: "preparing",
+      serverName: "Excalidraw (App)",
+    });
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Preparing your MCPJam workspace",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Getting your project ready to connect/i),
+    ).toBeInTheDocument();
   });
 
   it("uses the prototype's welcome and server-choice copy", () => {
