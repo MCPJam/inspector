@@ -525,6 +525,12 @@ Any completed chat session can be turned into a test case without rewriting it f
 
 In both cases the dialog shows the servers recorded for that session, lets you set a case title and suite name, and (when attachment pickers are enabled) lets you configure the server attachment and client host for the new suite.
 
+## Importing cases from Markdown
+
+If you have existing documentation, runbooks, or specification files, you can extract test cases from them directly. Click **Import from Markdown** in the suite header, paste or upload your Markdown content, and an AI extractor proposes cases based on the passages it finds.
+
+Each proposed case opens in a review editor before it is saved. Cases flagged as unsupported remain blocked with the reason shown — review the note and either edit the case to fit a supported shape or discard it. Cases you approve are saved with a source provenance record that traces each case back to the file, its SHA-256 hash, and the line range the extractor read.
+
 ## Generating cases from your tools
 
 The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the checks, then save.
