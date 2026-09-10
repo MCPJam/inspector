@@ -202,7 +202,7 @@ describe("hotRestart", () => {
     expect(restarts).toBe(2);
   });
 
-  it("warns and releases the lock when a restart never completes", () => {
+  it("warns but KEEPS the lock when a restart never completes", () => {
     const main = asHooks(hotRestart("main"));
     rebuild(main);
     rebuild(main);
@@ -213,7 +213,28 @@ describe("hotRestart", () => {
     vi.advanceTimersByTime(WATCHDOG_MS + 1);
     expect(stderr.join("")).toMatch(/did not complete within 10s/);
 
-    // A later save still works rather than being silently dead.
+    // The lock must NOT be released. Forge adds an `'exit'` listener to
+    // `lastSpawned` per `rs`, and does not reassign `lastSpawned` until the
+    // respawn finishes -- so a second `rs` before the first child exits makes
+    // both listeners fire on the one exit and spawn two Electron processes, one
+    // of them untracked. Parking auto-restart is the cheaper failure.
+    rebuild(main);
+    settle();
+    expect(restarts).toBe(1);
+
+    // It tells the developer how to recover, rather than going quiet.
+    expect(stderr.join("")).toMatch(/re-run 'npm run electron:dev' to recover/);
+  });
+
+  it("recovers if a late postStart does arrive after the watchdog fired", () => {
+    const main = asHooks(hotRestart("main"));
+    rebuild(main);
+    rebuild(main);
+    settle();
+    vi.advanceTimersByTime(WATCHDOG_MS + 1);
+
+    // The wedged child finally exited and forge respawned it.
+    notifyRestartComplete();
     rebuild(main);
     settle();
     expect(restarts).toBe(2);

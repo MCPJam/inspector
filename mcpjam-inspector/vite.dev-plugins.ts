@@ -120,12 +120,18 @@ function fire(): void {
   state.watchdog = setTimeout(() => {
     state.watchdog = null;
     if (!state.inFlight) return;
-    // Release the lock: a wedged restart must not disable every later one.
-    state.inFlight = false;
+    // Deliberately KEEP the lock. Only `postStart` proves forge finished the
+    // respawn, and a second `rs` before the first child exits double-spawns:
+    // forge's handler adds an `'exit'` listener to `lastSpawned` per `rs`, and
+    // `lastSpawned` is not reassigned until the respawn completes -- so both
+    // listeners fire on the one exit and each calls `forgeSpawnWrapper()`,
+    // leaving an Electron process nobody tracks. Losing auto-restart for the
+    // rest of a session is the cheaper failure, and this line says so out loud.
     log(
       `!! restart #${state.restarts} did not complete within ${WATCHDOG_MS / 1000}s. ` +
-        `The main process is probably stuck shutting down. Press Ctrl-C and ` +
-        `re-run 'npm run electron:dev', or type 'rs' to retry.`,
+        `The main process is probably stuck shutting down, and auto-restart is ` +
+        `now parked to avoid spawning a second Electron. Press Ctrl-C and re-run ` +
+        `'npm run electron:dev' to recover.`,
     );
   }, WATCHDOG_MS);
 }

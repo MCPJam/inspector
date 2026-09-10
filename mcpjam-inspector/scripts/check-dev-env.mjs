@@ -183,7 +183,7 @@ export function evaluateDevEnv(input) {
       if (output.exists) continue;
       errors.push({
         code: "build-output-missing",
-        message: `${output.label} is missing; it is packaged into the app as a resource.`,
+        message: `${output.label} is missing or empty; it is packaged into the app as a resource.`,
         fix: "npm run build -w @mcpjam/inspector",
       });
     }
@@ -256,6 +256,32 @@ function probeDmgAddons() {
       };
     }
   });
+}
+
+/**
+ * A build output counts only if it is a directory with at least one file
+ * somewhere inside it.
+ *
+ * `existsSync` is satisfied by an empty directory and by a plain file, so an
+ * interrupted or half-cleaned build would sail past this guard and produce an
+ * app whose UI is simply absent -- the class of silent failure this whole
+ * script exists to catch.
+ */
+function hasBuiltOutput(dir) {
+  let stat;
+  try {
+    stat = fs.statSync(dir);
+  } catch {
+    return false;
+  }
+  if (!stat.isDirectory()) return false;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isFile()) return true;
+    if (entry.isDirectory() && hasBuiltOutput(path.join(dir, entry.name))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function probePortInUse(port) {
@@ -337,11 +363,11 @@ async function main(argv) {
       ? [
           {
             label: "dist/client",
-            exists: fs.existsSync(path.join(inspectorDir, "dist", "client")),
+            exists: hasBuiltOutput(path.join(inspectorDir, "dist", "client")),
           },
           {
             label: "../sdk/dist",
-            exists: fs.existsSync(path.join(repoRoot, "sdk", "dist")),
+            exists: hasBuiltOutput(path.join(repoRoot, "sdk", "dist")),
           },
         ]
       : [],

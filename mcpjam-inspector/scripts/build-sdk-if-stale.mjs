@@ -108,6 +108,15 @@ function decide() {
     ...INPUTS.map((entry) => mtimeExtremes(path.join(sdkDir, entry)).newest),
   );
   const oldestOutput = mtimeExtremes(distDir).oldest;
+  // `Infinity` means the walk found no FILES under `dist/` -- only directories.
+  // `readdirSync` above is satisfied by those directories, so without this the
+  // comparison below is `newestInput > Infinity`, i.e. always "fresh", and a
+  // half-created or half-deleted `dist/` would never be rebuilt. `electron:dev`
+  // does not check build outputs the way packaging does, so the first sign
+  // would be an unresolvable `@mcpjam/sdk` import.
+  if (!Number.isFinite(oldestOutput)) {
+    return { build: true, why: "sdk/dist contains no files, only directories" };
+  }
   if (newestInput > oldestOutput) {
     return {
       build: true,
