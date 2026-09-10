@@ -42,7 +42,8 @@ import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
 import { emitClientSaveTelemetry } from "./client-save-telemetry";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useBrowserProfileName } from "@/hooks/useBrowserProfileName";
+import { useComputersEnabled, useBrowserEnabled } from "@/hooks/useComputersEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { HOSTED_MODE } from "@/lib/config";
 import { useComputerStatus } from "@/hooks/useProjectComputer";
@@ -131,6 +132,7 @@ export function HostBuilderViewRedesigned({
   });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
   const computersEnabled = useComputersEnabled();
+  const browsersEnabled = useBrowserEnabled();
   // Mirrors ConnectViewHeader's gating: Skills is flagged in hosted mode only,
   // local filesystem skills are ungated.
   const skillsEnabled = useSkillsEnabled();
@@ -147,6 +149,7 @@ export function HostBuilderViewRedesigned({
   const [draftConfig, setDraftConfig] = useState<HostConfigInputV2 | null>(
     null,
   );
+  const browserProfileName = useBrowserProfileName(projectId, draftConfig?.browserProfileId);
   const [isSaving, setIsSaving] = useState(false);
   const saveInFlightRef = useRef(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -391,6 +394,8 @@ export function HostBuilderViewRedesigned({
         projectServers: availableServersForCanvas,
         prev: prevHostSnapshot ?? undefined,
         computersEnabled,
+        browsersEnabled,
+        browserProfileName,
         computerStatus,
         builtInToolCatalog,
       },
@@ -405,6 +410,8 @@ export function HostBuilderViewRedesigned({
     attention,
     prevHostSnapshot,
     computersEnabled,
+    browsersEnabled,
+    browserProfileName,
     computerStatus,
     builtInToolCatalog,
   ]);

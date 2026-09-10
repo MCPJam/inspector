@@ -3,6 +3,8 @@ import {
   usePlaygroundBrowserOverride,
 } from "./playground-browser-override";
 import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
+import { useAppNavigate } from "@/lib/app-navigation";
 import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -114,6 +116,7 @@ function RightRailTabbed({
   hostConfig: HostConfigDtoV2 | null;
   hostId: string | null;
 }) {
+  const navigate = useAppNavigate();
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
   const computersEnabled = useComputersEnabledState();
   const browsersEnabled = useBrowserEnabledState();
@@ -249,7 +252,10 @@ function RightRailTabbed({
         ) : null}
         <div className="ml-auto flex items-center gap-1">
           {hasBrowser && activeTab === "browser" ? (
-            <BrowserRuntimeControls projectId={projectId} compact />
+            <>
+              <BrowserRuntimeControls projectId={projectId} compact />
+              {hostId && <button type="button" onClick={() => navigate(buildHostFocusTabPath(hostId, "browser"))} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">Browser settings</button>}
+            </>
           ) : null}
           <button
             type="button"
