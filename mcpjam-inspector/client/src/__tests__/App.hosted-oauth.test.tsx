@@ -3321,6 +3321,30 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
+  it("routes a fresh Playground visitor through the explicit server-choice flow", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/playground");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/home");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
   it("keeps a first-run guest in onboarding while their server connects", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();

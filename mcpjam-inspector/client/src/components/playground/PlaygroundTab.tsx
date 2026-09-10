@@ -80,6 +80,7 @@ interface PlaygroundTabProps {
   isClientConfigSyncPending?: boolean;
   areServersHydrated?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
+  autoConnectFirstRun?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
@@ -219,6 +220,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     isClientConfigSyncPending: props.isClientConfigSyncPending,
     areServersHydrated: props.areServersHydrated,
     hasSeenFirstRunOnboarding: props.hasSeenFirstRunOnboarding,
+    autoConnectFirstRun: props.autoConnectFirstRun,
     isServerSyncing: props.isServerSyncing,
     onConnect: props.onConnect,
     onSaveHostContext: props.onSaveHostContext,
