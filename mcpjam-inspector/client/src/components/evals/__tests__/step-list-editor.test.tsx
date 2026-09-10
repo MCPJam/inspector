@@ -5,6 +5,14 @@ import { type TestStep } from "@/shared/steps";
 import { StepListEditor } from "../step-list-editor";
 
 describe("StepListEditor", () => {
+  it("protects prompts while keeping assertions removable in a case editor", () => {
+    const onStepsChange = vi.fn();
+    render(<StepListEditor protectPrompts steps={[{id: "p", kind: "prompt", prompt: "Hello"}, {id: "a", kind: "assert", assertion: {type: "noToolErrors"}}]} onStepsChange={onStepsChange} availableTools={[]} suiteServers={[]} evalValidationBorderClass="" />);
+    expect(screen.queryByRole("button", {name: "Remove step 1"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Remove step 2"}));
+    expect(onStepsChange).toHaveBeenCalledWith([{id: "p", kind: "prompt", prompt: "Hello"}]);
+  });
+
   it("renders one row per derived step in order", () => {
     const steps: TestStep[] = [
       { id: "1", kind: "prompt", prompt: "Draw a cat" },

@@ -65,12 +65,7 @@ export function BrowserTabStrip({
           active={tab.id === activeTabId}
           disabled={disabled}
           onActivate={() => onActivate(tab.id)}
-          // A one-tab browser has no close button. Closing the last tab is a
-          // real thing — it returns to the start page without ending the
-          // session — but it happens through the tab's own control only when
-          // there is a strip to come back to; with one tab the button reads as
-          // "close the browser", which it is not.
-          onClose={tabs.length > 1 ? () => onClose(tab.id) : undefined}
+          onClose={() => onClose(tab.id)}
         />
       ))}
       <button

@@ -401,3 +401,32 @@ describe("the native surface", () => {
     await context.close();
   });
 });
+
+describe("managed Electron popups", () => {
+  it("returns the adopted webContents with its original opener, and enforces the cap", async () => {
+    const electron = fakeElectron();
+    const context = await launchElectronContext({ electron });
+    const parent = await context.newPage();
+    const events: unknown[] = [];
+    context.onPageCreated!((event) => events.push(event));
+    const handler = electron.windows[0].webContents.windowOpenHandler!;
+    const decision = handler({ url: "https://popup.test" }) as {
+      action: string;
+      createWindow: (options: object) => unknown;
+    };
+    expect(decision.action).toBe("allow");
+    const originalContents = { originalPopup: true };
+    const contents = decision.createWindow({ webContents: originalContents });
+    expect(electron.windows[1].options.webContents).toBe(originalContents);
+    expect(contents).toBe(electron.windows[1].webContents);
+    expect(events[0]).toMatchObject({ opener: parent });
+    expect(electron.windows[1].options.webPreferences).toMatchObject({
+      sandbox: true,
+      nodeIntegration: false,
+      partition: "persist:mcpjam-browser-default",
+    });
+    for (let i = 2; i < ELECTRON_TAB_CAP; i++) await context.newPage();
+    expect(handler({ url: "https://excess.test" })).toEqual({ action: "deny" });
+    await context.close();
+  });
+});

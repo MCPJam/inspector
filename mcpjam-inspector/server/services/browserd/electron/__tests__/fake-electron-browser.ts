@@ -14,7 +14,7 @@
  * without a DOM.
  */
 import { EventEmitter } from "node:events";
-import { FakeDebugger } from "../../../webmcp-inspector/__tests__/fake-electron";
+import { FakeDebugger } from "./fake-debugger";
 import type { ElectronLike, ElectronWindowLike } from "../electron-context";
 
 export { FakeDebugger };
@@ -32,7 +32,9 @@ export function elementAt(
    * — which is refused, not filled. Defaults to a plain text input, the shape
    * the click and hover fixtures want.
    */
-  describe: { nodeName?: string; attributes?: string[] } = { nodeName: "INPUT" },
+  describe: { nodeName?: string; attributes?: string[] } = {
+    nodeName: "INPUT",
+  },
 ): Map<string, unknown> {
   return new Map<string, unknown>([
     ["DOM.getDocument", { root: { nodeId: 1 } }],
@@ -254,7 +256,12 @@ export class FakeWebContentsView {
     this.webContents = contents ?? new FakeBrowserWebContents();
   }
 
-  setBounds(next: { x: number; y: number; width: number; height: number }): void {
+  setBounds(next: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }): void {
     this.bounds = next;
   }
 

@@ -6,30 +6,19 @@
  * does not appear until a kind files there.
  */
 
-import { Plus } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
+import { EvalAddDrawer } from "@/components/evaluate/case-spine/assertion-drawer";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import { isRecommendedDefaultPredicateKind } from "@mcpjam/sdk/contract";
-import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
-import { WIDGET_ASSERTION_LABELS, type WidgetAssertion } from "@/shared/steps";
+import type { WidgetAssertion } from "@/shared/steps";
 import { SYNTHETIC_MONITOR_KINDS } from "./predicate-kind-meta";
-import {
-  NEW_SCORER_KINDS,
-  scorerLibraryCategories,
-  type ScorerLibraryCategory,
-} from "./suite-scorer-table-model";
+import { scorerLibraryCategories } from "./suite-scorer-table-model";
 
 export function SuiteScorerLibraryMenu({
   onAdd,
   kinds,
   authorableKinds,
   triggerLabel = "Add scorer",
+  triggerClassName,
   onAddWidgetCheck,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
@@ -59,6 +48,7 @@ export function SuiteScorerLibraryMenu({
    * as well as what, and a generic label would lose the position.
    */
   triggerLabel?: string;
+  triggerClassName?: string;
   /**
    * Offers DOM-level widget assertions alongside the predicates, under their
    * own category. Only a surface that can place a check at a position can
@@ -67,122 +57,41 @@ export function SuiteScorerLibraryMenu({
    */
   onAddWidgetCheck?: (kind: WidgetAssertion["kind"]) => void;
 }) {
+  return (
+    <EvalAddDrawer
+      wholeRunOnly
+      allowWidgetChecks={Boolean(onAddWidgetCheck)}
+      kinds={kinds}
+      authorableKinds={authorableKinds}
+      className={triggerClassName}
+      triggerLabel={triggerLabel}
+      onSelect={(choice) => {
+        if (choice.kind === "check") onAdd(choice.predicateKind);
+        else if (choice.kind === "widget-check")
+          onAddWidgetCheck?.(choice.widgetKind);
+      }}
+    />
+  );
+}
+
+export function useScorerLibraryCategories(
+  kinds?: readonly Predicate["type"][],
+  authorableKinds?: readonly Predicate["type"][],
+) {
   const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
   const offered =
     kinds && authorableKinds
       ? kinds.filter((kind) => authorableKinds.includes(kind))
       : (kinds ?? authorableKinds);
-  const categories = scorerLibraryCategories(offered).map((category) => ({
-    ...category,
-    kinds: category.kinds.filter(
-      (kind) =>
-        syntheticMonitorsEnabled || !SYNTHETIC_MONITOR_KINDS.has(kind),
-    ),
-  })).filter((category) => category.kinds.length > 0);
+  const categories = scorerLibraryCategories(offered)
+    .map((category) => ({
+      ...category,
+      kinds: category.kinds.filter(
+        (kind) =>
+          syntheticMonitorsEnabled || !SYNTHETIC_MONITOR_KINDS.has(kind),
+      ),
+    }))
+    .filter((category) => category.kinds.length > 0);
 
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          aria-haspopup="dialog"
-          aria-label={triggerLabel}
-          className="h-8 gap-1.5 border-dashed text-xs"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {triggerLabel}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" sideOffset={4} className="w-72 p-1">
-        <div className="px-2 pb-1.5 pt-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {triggerLabel}
-          </span>
-        </div>
-        <ul className="space-y-2" data-testid="scorer-library">
-          {categories.map((category) => (
-            <LibraryCategory
-              key={category.id}
-              category={category}
-              onAdd={onAdd}
-            />
-          ))}
-          {onAddWidgetCheck ? (
-            <li data-library-category="widget">
-              <div className="px-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                In the view
-              </div>
-              <ul className="space-y-0.5">
-                {(
-                  Object.keys(WIDGET_ASSERTION_LABELS) as Array<
-                    WidgetAssertion["kind"]
-                  >
-                ).map((kind) => (
-                  <li key={kind}>
-                    <button
-                      type="button"
-                      data-testid={`add-widget-check-${kind}`}
-                      onClick={() => onAddWidgetCheck(kind)}
-                      className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent/50"
-                    >
-                      <span>{WIDGET_ASSERTION_LABELS[kind]}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ) : null}
-        </ul>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function LibraryCategory({
-  category,
-  onAdd,
-}: {
-  category: ScorerLibraryCategory;
-  onAdd: (kind: Predicate["type"]) => void;
-}) {
-  return (
-    <li data-library-category={category.id}>
-      <div className="px-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {category.label}
-      </div>
-      <ul className="space-y-0.5">
-        {category.kinds.map((kind) => (
-          <li key={kind}>
-            <button
-              type="button"
-              data-testid={`add-scorer-${kind}`}
-              onClick={() => onAdd(kind)}
-              className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent/50"
-            >
-              <span>{PREDICATE_KIND_LABELS[kind] ?? kind}</span>
-              {/*
-                "Recommended" outranks "New": a kind a new suite already
-                starts with is not news to an author reading this menu, and
-                two chips on one row is noise.
-              */}
-              {isRecommendedDefaultPredicateKind(kind) ? (
-                <span
-                  title="New suites start with this check, as Warn"
-                  className="text-[10px] uppercase tracking-[0.06em] text-muted-foreground"
-                >
-                  Recommended
-                </span>
-              ) : NEW_SCORER_KINDS.includes(kind) ? (
-                <span className="text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
-                  New
-                </span>
-              ) : null}
-            </button>
-          </li>
-        ))}
-      </ul>
-    </li>
-  );
+  return categories;
 }

@@ -134,6 +134,10 @@ import {
 } from "../../utils/computers/local-consent.js";
 import { isGuestChatRequest } from "../../utils/computers/local-engine-request.js";
 import {
+  resolveBrowserRollout,
+  guestBrowserProject,
+} from "../../utils/computers/browser-rollout.js";
+import {
   LOCAL_HARNESS_GRANT_HEADER,
   parseHarnessExecutionTarget,
   type RawHarnessTargetInput,
@@ -1346,21 +1350,35 @@ chatV2.post("/", async (c) => {
     });
 
     const localBrowserRequested = body.browserEngine === "local";
+    const browserRollout = resolvedExecution.builtInToolIds?.includes(
+      BROWSER_BUILT_IN_TOOL_ID,
+    )
+      ? await resolveBrowserRollout(c, localBrowserRequested)
+      : { enabled: false, actor: null };
+    const localBrowserGuestId =
+      localBrowserRequested &&
+      browserRollout.enabled &&
+      browserRollout.actor?.guest
+        ? browserRollout.actor.id
+        : undefined;
     const browserConsentToken = c.req.header(BROWSER_CONSENT_HEADER);
     const browserConsentValid =
-      !requestIsGuest &&
+      browserRollout.enabled &&
+      (!requestIsGuest || Boolean(localBrowserGuestId)) &&
       !isScenarioSession &&
       (await verifyLocalBrowserConsent(browserConsentToken));
     let browserEngine = resolveBrowserEngine({
       preference: localBrowserRequested ? "local" : "cloud",
       localConsentValid: browserConsentValid,
     });
-    let browserUnavailableReason =
-      localBrowserRequested && browserEngine !== "local"
-        ? browserConsentValid
-          ? "browser_runtime_unavailable: Browser on this machine is unavailable. Check Browser settings."
-          : "browser_consent_required: Allow Browser in the Browser panel."
-        : undefined;
+    if (!browserRollout.enabled) browserEngine = "unavailable";
+    let browserUnavailableReason = !browserRollout.enabled
+      ? "browser_rollout_unavailable: Browser is not available for this location."
+      : localBrowserRequested && browserEngine !== "local"
+      ? browserConsentValid
+        ? "browser_runtime_unavailable: Browser on this machine is unavailable. Check Browser settings."
+        : "browser_consent_required: Allow Browser in the Browser panel."
+      : undefined;
 
     if (
       browserEngine === "local" &&
@@ -1372,6 +1390,7 @@ chatV2.post("/", async (c) => {
         "browser_runtime_unavailable: Install Chromium in the Browser panel.";
     }
     if (
+      !localBrowserGuestId &&
       body.browserEngine &&
       body.chatSessionId &&
       body.projectId &&
@@ -1428,7 +1447,11 @@ chatV2.post("/", async (c) => {
       hasV1PageTools: validatedPageTools.length > 0,
       engine: browserEngine === "local" ? "local" : "hosted",
       projectId:
-        typeof body.projectId === "string" ? body.projectId : undefined,
+        typeof body.projectId === "string"
+          ? localBrowserGuestId
+            ? guestBrowserProject(body.projectId, localBrowserGuestId)
+            : body.projectId
+          : undefined,
       ...(builtInAuthHeader ? { bearer: builtInAuthHeader } : {}),
     });
     const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
@@ -1492,7 +1515,7 @@ chatV2.post("/", async (c) => {
             // resolver withholds bash on the personal-project path — matching
             // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
             // only for a host-funded swarm executionScope.
-            isGuest: !requestAuthHeader,
+            isGuest: requestIsGuest,
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
@@ -1504,6 +1527,7 @@ chatV2.post("/", async (c) => {
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
             browserEngine,
+            localBrowserGuestId,
             browserConsentToken,
             localBrowserRequested,
             browserUnavailableReason,

@@ -113,12 +113,20 @@ export interface WebMcpInvokeRequest {
 }
 
 export interface WebMcpBrowserSession {
+  browserState?(): Promise<
+    import("@/shared/browser-session-state").BrowserStateSnapshot | null
+  >;
+  browserCommand?(
+    command: import("@/shared/browser-pane-command").BrowserPaneCommand,
+  ): Promise<void>;
   navigate(url: string): Promise<void>;
   reload(): Promise<void>;
   goBack(): Promise<void>;
-  invokeTool(request: WebMcpInvokeRequest): Promise<{ output: unknown }>;
+  invokeTool(
+    request: WebMcpInvokeRequest,
+  ): Promise<{ output: unknown; truncated?: boolean }>;
   /** Best-effort thumbnail; resolves undefined rather than throwing. */
-  captureScreenshot(): Promise<string | undefined>;
+  captureScreenshot(tabId?: string): Promise<string | undefined>;
   currentUrl(): string;
   viewportTransport(): WebMcpViewportTransport;
   /**
@@ -155,7 +163,7 @@ export interface WebMcpBrowserSession {
    * A provider that cannot be driven this way (the hosted one, whose viewport
    * is driven through the Browser panel instead) logs and returns.
    */
-  dispatchInput(events: WebMcpInputEvent[]): Promise<void>;
+  dispatchInput(events: WebMcpInputEvent[], tabId?: string): Promise<void>;
   /**
    * A frame could not be handed to a viewer, and was replaced by a newer one.
    *

@@ -179,35 +179,11 @@ export type WebMcpViewportTransport =
    * box.
    */
   | { kind: "frame-stream"; width: number; height: number }
-  /**
-   * A REAL Chromium surface, embedded in the desktop app, that the CLIENT owns.
-   *
-   * The inversion is the whole point. Every other kind describes a browser the
-   * server started and the client observes; this one describes a browser the
-   * client mounted and the server merely ATTACHED to. So it carries no
-   * dimensions (the element is laid out by CSS and resizes with the window), it
-   * is never screencast (there is nothing to encode — the pixels are already
-   * on the viewer's screen), and it is never driven by forwarded input (the
-   * surface receives the viewer's real mouse and keyboard natively). A client
-   * that treated it like `frame-stream` would ask for an encoder nobody reads
-   * and deliver every click twice.
-   */
-  | { kind: "electron-webview" };
+  /** Main-owned WebContentsView, placed through the existing native surface IPC. */
+  | { kind: "electron-native"; bootId: string };
 
-/**
- * The Electron session partition every embedded WebMCP surface runs in.
- *
- * Named here, in the file both halves already import, because it is enforced
- * at THREE points that must agree exactly: the client's `<webview partition>`
- * attribute, the main process's `will-attach-webview` guard, and the server
- * provider's check that the `webContents` it was handed is really one of ours.
- * Three string literals would drift; one constant cannot.
- *
- * `persist:` on purpose — the local inspector's stance everywhere else is a
- * persistent profile, because a developer inspecting their own site should not
- * have to sign in again on every session.
- */
-export const WEBMCP_WEBVIEW_PARTITION = "persist:webmcp-inspector";
+/** Retain WebMCP's existing persistent Electron profile across the ownership migration. */
+export const WEBMCP_BROWSER_PARTITION = "persist:webmcp-inspector";
 
 export interface WebMcpSessionPublic {
   sessionId: string;
@@ -285,6 +261,11 @@ export const WEBMCP_INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
 export const WEBMCP_INPUT_TEXT_MAX_CHARS = BROWSER_INPUT_TEXT_MAX_CHARS;
 
 export type WebMcpCommand =
+  | { type: "browser_state" }
+  | {
+      type: "browser_command";
+      command: import("./browser-pane-command").BrowserPaneCommand;
+    }
   | { type: "navigate"; url: string }
   | { type: "reload" }
   | { type: "go_back" }
@@ -324,7 +305,7 @@ export type WebMcpCommand =
    * rate-limit. The route bounds the array, so one request can never carry an
    * unbounded amount of work.
    */
-  | { type: "input"; events: WebMcpInputEvent[] };
+  | { type: "input"; events: WebMcpInputEvent[]; tabId?: string };
 
 export type WebMcpCommandResult =
   | { ok: true }

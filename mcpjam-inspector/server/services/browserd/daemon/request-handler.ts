@@ -180,6 +180,7 @@ export interface BrowserdHandlerDeps {
    * hold the screenshot of someone's password field.
    */
   lease?: HandoffLease;
+  authority?: "lease" | "shared";
   /**
    * What this daemon can do beyond the baseline protocol.
    *
@@ -267,6 +268,7 @@ export class BrowserdRequestHandler {
   private readonly bootId: string;
   private readonly token: string;
   private readonly lease: HandoffLease;
+  private readonly authority: "lease" | "shared";
   private readonly features: readonly string[];
   private readonly bundleHash: string | undefined;
   private readonly contextMode: "persistent" | "ephemeral" | undefined;
@@ -319,6 +321,7 @@ export class BrowserdRequestHandler {
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
+    this.authority = deps.authority ?? "lease";
     // MERGED HERE, not at a call site. These describe what this daemon's CODE
     // can do, which is not something an assembler should be able to forget to
     // announce: the hosted `main.ts`, the local in-process session and a test
@@ -345,8 +348,7 @@ export class BrowserdRequestHandler {
    * reads as "this engine cannot tell you" rather than as "no tabs".
    */
   tabsSnapshot():
-    | { active?: string; list?: Array<{ id: string; url: string }> }
-    | undefined {
+    { active?: string; list?: Array<{ id: string; url: string }> } | undefined {
     return this.driver.tabsSnapshot?.();
   }
 
@@ -776,8 +778,14 @@ export class BrowserdRequestHandler {
     // refuses a different one, so this is both "take it" and "confirm I still
     // have it" in one call — which is what lets the pane send a command
     // without first knowing whether it is the holder.
-    const lease = this.lease.acquire(holder);
-    if (lease.state === "free" || lease.holder !== holder) {
+    const lease =
+      this.authority === "shared"
+        ? this.lease.state()
+        : this.lease.acquire(holder);
+    if (
+      this.authority === "lease" &&
+      (lease.state === "free" || lease.holder !== holder)
+    ) {
       return {
         status: 423,
         body: {
@@ -816,6 +824,7 @@ export class BrowserdRequestHandler {
       }
     }
     const mapped = paneCommandToAction(command);
+    mapped.tabId ??= this.driver.tabsSnapshot?.().active;
     const outcome = await this.queue.submit({
       // `manual` is the one source `leaseRefusalFor` admits while a lease is
       // held, which is what lets this run at all now that the pane owns the
@@ -1287,8 +1296,8 @@ export class BrowserdRequestHandler {
         outcome.error === "page_changed"
           ? 409
           : outcome.error === "unknown_tab"
-          ? 404
-          : 423,
+            ? 404
+            : 423,
       body: { error: outcome.error, bootId: this.bootId },
     };
   }
@@ -1330,10 +1339,10 @@ export class BrowserdRequestHandler {
     // nobody holding it the agent may be mid-turn, and two drivers on one page
     // is precisely what the lease is for. Take the lease first.
     const leaseState = this.lease.state();
-    const refusal: LeaseRefusal | undefined = leaseRefusalFor(
-      leaseState,
-      parsed.command,
-    );
+    const refusal: LeaseRefusal | undefined =
+      this.authority === "shared"
+        ? undefined
+        : leaseRefusalFor(leaseState, parsed.command);
     if (refusal) {
       // Recorded, and recorded WITHOUT a page: the gate above captured nothing,
       // so there is nothing to attach and nothing to leak. The row is the point
@@ -1830,10 +1839,13 @@ export class BrowserdRequestHandler {
     anchor?: unknown;
   }): Promise<{ ok: true } | { ok: false; error: string }> {
     const stillTheirs = () => {
-      const refused = leaseRefusalFor(this.lease.state(), {
-        source: "manual",
-        holder: args.holder,
-      });
+      const refused =
+        this.authority === "shared"
+          ? undefined
+          : leaseRefusalFor(this.lease.state(), {
+              source: "manual",
+              holder: args.holder,
+            });
       if (refused) return refused;
       if (args.anchor !== undefined) {
         const before = parseAnchor(args.anchor);
@@ -1887,6 +1899,7 @@ export class BrowserdRequestHandler {
 
   /** May this watcher see frames right now? */
   private watcherRefusal(holder: string | undefined): LeaseRefusal | undefined {
+    if (this.authority === "shared") return undefined;
     const lease = this.lease.state();
     if (lease.state === "free") return undefined;
     return holder && holder === lease.holder
@@ -1901,6 +1914,11 @@ export class BrowserdRequestHandler {
    * cannot be released by another tab that happens to know the endpoint.
    */
   private handleLease(req: DaemonRequest): DaemonResponse {
+    if (this.authority === "shared" && req.method !== "GET")
+      return {
+        status: 409,
+        body: { error: "shared_authority", bootId: this.bootId },
+      };
     if (req.method === "GET") {
       return { status: 200, body: this.leaseBody(this.lease.state()) };
     }

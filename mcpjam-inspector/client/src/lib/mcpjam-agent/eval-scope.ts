@@ -1,3 +1,4 @@
+import { isDescribeTarget } from "./describe-surface";
 import { stopAgentChat } from "./agent-chat-instances";
 import { dismissAskUserQuestions } from "@/lib/webmcp/ask-user-store";
 import { create } from "zustand";
@@ -67,6 +68,8 @@ export function assertEvalToolAllowed(
     throw new Error(
       "Eval context changed during this turn. Submit a new request for the current case.",
     );
+  if (pinned && !isDescribeTarget(pinned))
+    throw new Error("Return to Describe to continue creating tests.");
   if (pinned && !EVAL_AGENT_TOOL_NAMES.has(toolName))
     throw new Error(
       `Tool ${toolName} is unavailable in eval scope. This conversation only supports eval work.`,
@@ -85,6 +88,7 @@ export function openEvalChat(
   input: EvalChatTarget,
   options: { fresh?: boolean } = {},
 ): string {
+  if (!isDescribeTarget(input)) return "";
   const panel = useAgentPanelStore.getState();
   const scopes = useEvalAgentScopes.getState().scopes;
   const previous = panel.activeSessionId
@@ -130,13 +134,26 @@ export function syncEvalChatContext(input: EvalChatTarget) {
 }
 
 /** Saving the same logical draft is a continuation, not a different case. */
-export function promoteEvalDraftChat(input: EvalChatTarget, savedCaseId: string) {
+export function promoteEvalDraftChat(
+  input: EvalChatTarget,
+  savedCaseId: string,
+) {
   const panel = useAgentPanelStore.getState();
   const sessionId = panel.activeSessionId;
-  const scope = sessionId ? useEvalAgentScopes.getState().scopes[sessionId] : undefined;
-  if (!sessionId || !scope || !sameTarget(scope, input) || !scope.caseId?.startsWith("draft:")) return;
+  const scope = sessionId
+    ? useEvalAgentScopes.getState().scopes[sessionId]
+    : undefined;
+  if (
+    !sessionId ||
+    !scope ||
+    !sameTarget(scope, input) ||
+    !scope.caseId?.startsWith("draft:")
+  )
+    return;
   invalidateEvalTurn(sessionId);
-  useEvalAgentScopes.getState().set(sessionId, { ...scope, caseId: savedCaseId, id: generateId() });
+  useEvalAgentScopes
+    .getState()
+    .set(sessionId, { ...scope, caseId: savedCaseId, id: generateId() });
 }
 
 /** Leaving a task invalidates its queued calls without widening its capability set. */

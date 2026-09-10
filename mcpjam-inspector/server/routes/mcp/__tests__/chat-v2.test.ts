@@ -501,6 +501,14 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("emits Browser readiness as data, never as assistant text", async () => {
+      // Exercise missing consent after the server's independent rollout gate.
+      const rollout = await import(
+        "../../../utils/computers/browser-rollout.js"
+      );
+      vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValueOnce({
+        enabled: true,
+        actor: { id: "test-member", guest: false },
+      });
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
         model: { id: "gpt-4", provider: "openai" },

@@ -25,6 +25,23 @@ vi.mock("node:os", async () => {
 });
 
 const authState = vi.hoisted(() => ({ verified: true, guest: false }));
+vi.mock(
+  "../../../utils/computers/browser-rollout.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../utils/computers/browser-rollout.js")
+    >()),
+    resolveBrowserRollout: async () => ({
+      enabled: authState.verified,
+      actor: authState.verified
+        ? {
+            id: authState.guest ? "guest-1" : "member-1",
+            guest: authState.guest,
+          }
+        : null,
+    }),
+  }),
+);
 vi.mock("../../../middleware/bearer-auth.js", () => ({
   bearerAuthMiddleware: (c: any, next: any) => {
     if (authState.guest) c.set("guestId", "guest-1");
@@ -110,7 +127,7 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   getLocalBrowserRoot: () => join(scratch, ".mcpjam", "computer", "browser"),
   listLocalBrowserSessions: () =>
     [...browserState.sessions.values()].map((s: any) => ({
-      key: "proj",
+      key: s.key,
       handle: s.handle,
       lastUsedAt: 0,
       leaseHeld: s.lease.isBlocking(),
@@ -493,16 +510,32 @@ describe("GET /local-browser/status", () => {
     expect((await status()).status).toBe(404);
   });
 
-  it("401s an unverified caller and 403s a guest", async () => {
+  it("401s an unverified caller and admits a verified local guest", async () => {
     authState.verified = false;
     expect((await status()).status).toBe(401);
     authState.verified = true;
     authState.guest = true;
-    expect((await status()).status).toBe(403);
+    expect((await status()).status).toBe(200);
   });
 });
 
 describe("driving the browser from the pane", () => {
+  it("isolates guest browsers and rejects member boot ids, including after consent", async () => {
+    const token = await grantConsent();
+    const member = await ensured(token);
+    authState.guest = true;
+    const guest = await ensured(token);
+    expect(guest.bootId).not.toBe(member.bootId);
+    expect(browserState.launched.at(-1)?.projectId).toMatch(/^guest-browser-/);
+    const denied = await post("state", token, { bootId: member.bootId });
+    expect(denied.status).toBe(404);
+    expect((await post("state", token, { bootId: guest.bootId })).status).toBe(
+      200,
+    );
+    expect(
+      (await post("profile/export", token, { bootId: guest.bootId })).status,
+    ).toBe(403);
+  });
   async function ensured(token: string) {
     const res = await createApp().request(
       "/api/mcp/computers/local-browser/ensure",

@@ -228,6 +228,7 @@ export function resetContextSurfacesForTests(): void {
 }
 
 export interface CreateContextSurfaceOptions {
+  authority?: "lease" | "shared";
   /**
    * Hide a view rather than only refusing its input.
    *
@@ -325,7 +326,8 @@ export function createContextSurface(
    * shown and its input refused. Only a hold that is THIS pane's admits input.
    */
   const allowed = (): boolean =>
-    lease.state !== "free" && !!paneHolder && lease.holder === paneHolder;
+    options.authority === "shared" ||
+    (lease.state !== "free" && !!paneHolder && lease.holder === paneHolder);
 
   /**
    * May the view be on screen at all?
@@ -336,7 +338,9 @@ export function createContextSurface(
    * an observation.
    */
   const visible = (): boolean =>
-    lease.state === "free" || (!!paneHolder && lease.holder === paneHolder);
+    options.authority === "shared" ||
+    lease.state === "free" ||
+    (!!paneHolder && lease.holder === paneHolder);
 
   const detach = (): void => {
     if (!parented || !holderWindow) {

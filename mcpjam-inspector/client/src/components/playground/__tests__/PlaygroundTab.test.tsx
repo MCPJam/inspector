@@ -38,6 +38,22 @@ vi.mock("@/hooks/use-previewed-client-id", () => ({
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({ servers: [] }),
 }));
+// The engine hook subscribes to environment and chat-session stores that
+// re-render the tab once they settle; the loading branch under test renders
+// before any of that matters.
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    engine: "cloud",
+    selectedEngine: "cloud",
+    setEngine: () => {},
+    resolved: true,
+    localAvailable: false,
+    cloudAvailable: false,
+    toggleVisible: false,
+    environmentMode: false,
+    consent: null,
+  }),
+}));
 vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
   useAutoConnectProjectServers: () => {},
 }));
@@ -66,7 +82,8 @@ vi.mock("@/contexts/scenario-client-capabilities-override-context", () => ({
   }) => children,
 }));
 vi.mock("@/contexts/active-mcp-profile-context", () => ({
-  ActiveMcpProfileProvider: ({ children }: { children?: ReactNode }) => children,
+  ActiveMcpProfileProvider: ({ children }: { children?: ReactNode }) =>
+    children,
 }));
 vi.mock("@/contexts/active-host-client-capabilities-context", () => ({
   ActiveHostCapsResolverScope: ({ children }: { children?: ReactNode }) =>
@@ -115,10 +132,10 @@ describe("PlaygroundTab loading branch", () => {
 
     expect(mockLoadingScreen).toHaveBeenCalledTimes(1);
     expect(mockLoadingScreen).toHaveBeenCalledWith(
-      expect.objectContaining({ message: "Setting things up..." })
+      expect.objectContaining({ message: "Setting things up..." }),
     );
     expect(screen.getByTestId("loading-screen")).toHaveTextContent(
-      "Setting things up..."
+      "Setting things up...",
     );
   });
 

@@ -179,23 +179,26 @@ describe("shouldShowComputerToggle", () => {
 });
 
 describe("visibleBuiltInToolCatalog", () => {
-  it("keeps Browser in the rollout cohort without requiring a computer", () => {
+  it("shows Browser with Computers off, while preserving removability", () => {
     const browser = { ...CATALOG[1], id: "browser", requiresComputer: false };
     expect(
       visibleBuiltInToolCatalog([browser], {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: [],
       }),
     ).toEqual([]);
     expect(
       visibleBuiltInToolCatalog([browser], {
-        computersEnabled: true,
+        computersEnabled: false,
+        browsersEnabled: true,
         selectedIds: [],
       }),
     ).toEqual([browser]);
     expect(
       visibleBuiltInToolCatalog([browser], {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: ["browser"],
       }),
     ).toEqual([browser]);
@@ -214,15 +217,17 @@ describe("visibleBuiltInToolCatalog", () => {
     expect(
       visibleBuiltInToolCatalog(CATALOG, {
         computersEnabled: true,
+        browsersEnabled: false,
         selectedIds: [],
       }),
-    ).toBe(CATALOG);
+    ).toEqual(CATALOG);
   });
 
   it("hides computer-backed rows when the flag is off (enabled bash row stays invisible pre-rollout)", () => {
     expect(
       visibleBuiltInToolCatalog(CATALOG, {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: [],
       }),
     ).toEqual([CATALOG[0]]);
@@ -232,6 +237,7 @@ describe("visibleBuiltInToolCatalog", () => {
     expect(
       visibleBuiltInToolCatalog(CATALOG, {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: ["bash"],
       }),
     ).toEqual(CATALOG);
@@ -241,6 +247,7 @@ describe("visibleBuiltInToolCatalog", () => {
     expect(
       visibleBuiltInToolCatalog(undefined, {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: [],
       }),
     ).toBeUndefined();

@@ -3,6 +3,7 @@ import { useProjectEnvironmentsEnabled } from "./useProjectEnvironmentsEnabled";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { HOSTED_MODE } from "@/lib/config";
+import { useAuth } from "@workos-inc/authkit-react";
 import {
   loadBrowserEngine,
   saveBrowserEngine,
@@ -10,14 +11,19 @@ import {
   type BrowserEngineChoice,
 } from "@/lib/browser-engine-storage";
 import { useLocalBrowserConsent } from "./useLocalBrowserConsent";
-import { useLocalBrowserEnabled } from "./useComputersEnabled";
+import {
+  useLocalBrowserEnabled,
+  useHostedBrowserEnabled,
+} from "./useComputersEnabled";
 import { useComputersDataPlaneConfig } from "./useProjectComputer";
 
 /** Selection is independent of consent and readiness: never silently move a browser. */
 export function useBrowserEngine(projectId: string | null) {
+  const { user } = useAuth();
   const config = useComputersDataPlaneConfig();
   const consent = useLocalBrowserConsent();
   const enabled = useLocalBrowserEnabled();
+  const hostedEnabled = useHostedBrowserEnabled();
   const [environmentId] = usePreviewedEnvironmentId(projectId);
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environmentMode = environmentsEnabled && Boolean(environmentId);
@@ -60,7 +66,8 @@ export function useBrowserEngine(projectId: string | null) {
       : boundLocation ??
         preference ??
         (enabled && localAvailable ? "local" : "cloud");
-  const cloudAvailable = config?.engines.cloud.available ?? false;
+  const cloudAvailable =
+    Boolean(user) && hostedEnabled && config?.engines.cloud.available === true;
   return {
     engine: selectedEngine,
     selectedEngine,

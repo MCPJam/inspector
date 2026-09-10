@@ -12918,12 +12918,57 @@
           "import": {
             "$ref": "#/components/schemas/EvalCaseImportClaim"
           },
+          "source": {
+            "$ref": "#/components/schemas/EvalCaseSource"
+          },
           "createdAt": {
             "type": ["number", "null"]
           },
           "updatedAt": {
             "type": ["number", "null"]
           }
+        }
+      },
+      "EvalCaseSource": {
+        "type": "object",
+        "description": "Where an AI-assisted Markdown case was authored from. Provenance only: the file, its hash, and the line range the extractor read, so a reader can trace a case back to its source document. It is not an import claim (see `EvalCaseImportClaim`) and carries no approval semantics.",
+        "required": [
+          "format",
+          "method",
+          "fileName",
+          "fileHash",
+          "excerpt",
+          "startLine",
+          "endLine",
+          "extractorVersion"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "format": { "type": "string", "enum": ["markdown"] },
+          "method": {
+            "type": "string",
+            "enum": ["ai"],
+            "description": "How the case was derived from the document. `ai`: an extractor model proposed it and a person reviewed it before it was saved."
+          },
+          "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "fileHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 of the source document, lowercase hex."
+          },
+          "excerpt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 102400,
+            "description": "The passage the case was extracted from."
+          },
+          "startLine": { "type": "integer", "minimum": 1 },
+          "endLine": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Inclusive; never less than `startLine`."
+          },
+          "extractorVersion": { "type": "string", "minLength": 1, "maxLength": 100 }
         }
       },
       "EvalCaseImportClaim": {
@@ -13152,6 +13197,9 @@
           },
           "import": {
             "$ref": "#/components/schemas/EvalCaseImportClaim"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EvalCaseSource"
           }
         },
         "additionalProperties": false

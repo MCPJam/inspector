@@ -309,7 +309,7 @@ export function createWebMcpFramesWsHandler(
         if (runtime.toPublic().viewportTransport.kind === "frame-stream") {
           input = createRelayInputForwarder({
             preserveGestureBoundaries: true,
-            dispatch: async ({ events }) => {
+            dispatch: async ({ events, tabId }) => {
               try {
                 if (
                   closed ||
@@ -326,6 +326,7 @@ export function createWebMcpFramesWsHandler(
                 events.map(fromBrowserPaneInput),
                 () => closed || ws.readyState !== 1,
                 "socket",
+                tabId,
               );
               return { ok: true };
             },
@@ -429,7 +430,11 @@ export function createWebMcpFramesWsHandler(
           }
           lastInputSeq = seq;
           pendingInput.add(seq);
-          input.submit({ seq, events: events.map(toBrowserPaneInput) });
+          input.submit({
+            seq,
+            events: events.map(toBrowserPaneInput),
+            tabId: parsed.data.tabId,
+          });
           return;
         }
         // A ping is a viewer saying they are still watching, so it refreshes

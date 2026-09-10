@@ -2180,7 +2180,7 @@ describe("useEvalHandlers", () => {
         await result.current.handleGenerateTests("suite-123", ["server-1"]);
       });
 
-      expect(ensureServersReady).toHaveBeenCalledWith(["server-1"]);
+      expect(ensureServersReady).toHaveBeenCalledWith(["server-1"], { allowInteractiveOAuthFlow: true });
       expect(mockAuthFetch).toHaveBeenCalled();
     });
 

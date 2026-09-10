@@ -1,3 +1,7 @@
+import {
+  BROWSER_TAB_CAP,
+  tabAfterClose,
+} from "../../../../shared/browser-session-state";
 /**
  * The real browser driver: it fills the `CommandExecutor` seam PR (a)'s queue
  * drives and PR (b)'s control plane authenticates, turning a `BrowserCommand`
@@ -122,7 +126,10 @@ const DEFAULT_TAB = DEFAULT_QUEUE_KEY;
  * outer one wrong.
  */
 class ActError extends Error {
-  constructor(readonly code: BrowserdErrorCode, message: string) {
+  constructor(
+    readonly code: BrowserdErrorCode,
+    message: string,
+  ) {
     super(message);
     this.name = "ActError";
   }
@@ -171,6 +178,8 @@ function isNotAnInputRefusal(message: string): boolean {
 
 interface TabEntry {
   page: DriverPage;
+  openerId?: string;
+  loading?: boolean;
   /** Bumps on every navigation so back/forward to the same URL yield distinct
    * tokens (L3). */
   navCounter: number;
@@ -270,6 +279,10 @@ interface FrameSnapshot {
 }
 
 export interface ChromiumDriverOptions {
+  maxTabs?: number;
+  onExternalInvocation?: (tabId: string, toolName: string) => void;
+  onPopupOpened?: (url: string) => void;
+  onTabLimit?: () => void;
   settle?: SettleOptions;
   /**
    * The human-handoff lease, shared with the request handler.
@@ -546,18 +559,48 @@ export class ChromiumDriver implements BrowserDriver {
   private sessionViewport: SessionViewport;
   /** Monotonic per boot, so two snapshots in one millisecond still order. */
   private stateSeq = 0;
+  private stopPageCreated?: () => void;
+  private nextPopupId = 0;
+  private readonly maxTabs: number;
+  private readonly onExternalInvocation?: (
+    tabId: string,
+    toolName: string,
+  ) => void;
   private readonly allowPaneResize: boolean;
   private viewportPolicy: SessionViewportPolicy;
   private latestViewportRequest?: import("../../../../shared/browser-viewport").PaneViewportRequest;
   private readonly onViewportChange:
-    | ((viewport: SessionViewport) => void)
-    | undefined;
+    ((viewport: SessionViewport) => void) | undefined;
   private readonly barrier: SessionBarrier;
   private readonly resizeDisplay:
     | ((next: ViewportSize, previous: ViewportSize) => Promise<boolean>)
     | undefined;
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
+    this.onExternalInvocation = options.onExternalInvocation;
+    this.maxTabs = Math.max(1, options.maxTabs ?? BROWSER_TAB_CAP);
+    this.stopPageCreated = context.onPageCreated?.(
+      ({ page, opener, background }) => {
+        const openerId = [...this.tabs].find(
+          ([, entry]) => entry.page === opener,
+        )?.[0];
+        if (
+          this.closing ||
+          !openerId ||
+          this.tabs.size + this.pendingTabs.size >= this.maxTabs
+        ) {
+          void page.close().catch(() => {});
+          return;
+        }
+        let id: string;
+        do {
+          id = `popup-${++this.nextPopupId}`;
+        } while (this.tabs.has(id) || this.pendingTabs.has(id));
+        void this.registerTab(id, page, openerId, background)
+          .then(() => options.onPopupOpened?.(safeUrl(page)))
+          .catch(() => page.close().catch(() => {}));
+      },
+    );
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
@@ -789,7 +832,7 @@ export class ChromiumDriver implements BrowserDriver {
         "a person took control of this browser before this action ran; nothing was run and nothing was observed",
       );
     }
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const action = command.action;
     // A DIALOG STOPS THE RENDERER, so it is dealt with before anything reaches
     // the page. Placed here rather than in each verb because every one of them
@@ -908,6 +951,8 @@ export class ChromiumDriver implements BrowserDriver {
     if (action.verb === "close_tab") {
       await page.close().catch(() => {});
       await this.dropTab(tabId);
+      if (!this.closing && this.tabs.size === 0)
+        await this.getOrCreateTab(DEFAULT_TAB);
       return { ok: true, output: { closed: tabId } };
     }
     if (action.verb === "accept_dialog" || action.verb === "dismiss_dialog") {
@@ -1645,7 +1690,22 @@ export class ChromiumDriver implements BrowserDriver {
         output,
         this.webmcpOutputBudgetBytes,
       );
-      const frame = await this.snapshot(entry.page);
+      const frame = await this.snapshot(entry.page).catch(() => undefined);
+      // The tool's own result is authoritative even if it navigated away.
+      // Failure to sample the destination must not turn completed work into a failure.
+      if (!frame)
+        return permit()
+          ? {
+              ok: true,
+              output: {
+                invocationId,
+                result: capped,
+                ...(omitted ? { omitted } : {}),
+              },
+            }
+          : this.leaseBlockedResult(
+              "The tool ran, but control changed before its result could be read.",
+            );
       return {
         ...this.observation(
           tabId,
@@ -1896,7 +1956,6 @@ export class ChromiumDriver implements BrowserDriver {
     // never read.
     return observed.ok ? { settled, ...observed } : observed;
   }
-
 
   private async observe(
     tabId: string,
@@ -2184,10 +2243,10 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   async currentStateToken(tabId: string | undefined) {
-    const entry = this.tabs.get(tabId ?? DEFAULT_TAB);
+    const entry = this.tabs.get(tabId ?? this.activeTabId ?? DEFAULT_TAB);
     if (!entry) return undefined;
     return computeStateToken({
-      tabId: tabId ?? DEFAULT_TAB,
+      tabId: tabId ?? this.activeTabId ?? DEFAULT_TAB,
       navCounter: entry.navCounter,
       url: entry.page.url(),
       domSignal: await entry.page.domStructureSignal(),
@@ -2261,6 +2320,7 @@ export class ChromiumDriver implements BrowserDriver {
       faviconUrl?: string;
       navCounter: number;
       loading: boolean;
+      openerId?: string;
     }>;
     activeTabId: string | null;
     canGoBack: boolean;
@@ -2268,9 +2328,13 @@ export class ChromiumDriver implements BrowserDriver {
     viewport: SessionViewport;
     policy: SessionViewportPolicy;
   }> {
-    const live = [...this.tabs.entries()].filter(
-      ([, entry]) => !entry.page.isClosed(),
-    );
+    const hadTabs = this.tabs.size > 0;
+    for (const [id, entry] of [...this.tabs]) {
+      if (entry.page.isClosed()) await this.dropTab(id);
+    }
+    if (hadTabs && this.tabs.size === 0 && !this.closing)
+      await this.getOrCreateTab(DEFAULT_TAB);
+    const live = [...this.tabs.entries()];
     // IN PARALLEL. Serially, a browser with a dozen tabs would spend a dozen
     // CDP round trips per heartbeat, and the strip would lag the browser by
     // more than the interval that refreshes it.
@@ -2284,7 +2348,7 @@ export class ChromiumDriver implements BrowserDriver {
     const activeTabId =
       this.activeTabId && read.some(({ id }) => id === this.activeTabId)
         ? this.activeTabId
-        : read[0]?.id ?? null;
+        : (read[0]?.id ?? null);
     const active = read.find(({ id }) => id === activeTabId);
     this.stateSeq += 1;
     return {
@@ -2292,16 +2356,11 @@ export class ChromiumDriver implements BrowserDriver {
       tabs: read.map(({ id, meta, entry }) => ({
         id,
         navCounter: entry.navCounter,
+        ...(entry.openerId ? { openerId: entry.openerId } : {}),
         url: meta.url,
         title: meta.title,
         ...(meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {}),
-        // The driver has no per-tab loading flag: every verb here awaits its
-        // own settle before answering, so by the time anything can ask, the
-        // navigation this driver started is over. A tab loading because the
-        // PAGE navigated itself is real and is not modelled — reporting a
-        // guess would be worse than reporting nothing, since the strip's
-        // spinner is the one thing on it that must not be permanent.
-        loading: false,
+        loading: entry.loading ?? false,
       })),
       activeTabId,
       // The ACTIVE tab's history, which is what the two buttons act on.
@@ -2407,7 +2466,7 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   async viewport(tabId?: string): Promise<TabViewport | null> {
-    const key = tabId ?? DEFAULT_TAB;
+    const key = tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
     if (live && !live.page.isClosed()) {
       const cached = this.viewports.get(key);
@@ -2459,6 +2518,7 @@ export class ChromiumDriver implements BrowserDriver {
   async close(): Promise<void> {
     // Refuse new pages from here on, so nothing can register behind the sweep.
     this.closing = true;
+    this.stopPageCreated?.();
     // A tab creation already awaiting `newPage()` would otherwise register its
     // page after this ran, leaving a renderer nobody closes for the life of
     // the browser. Settle them first, then let the sweep below take whatever
@@ -2748,6 +2808,81 @@ export class ChromiumDriver implements BrowserDriver {
     return settled;
   }
 
+  private async registerTab(
+    tabId: string,
+    page: DriverPage,
+    openerId?: string,
+    background = false,
+  ): Promise<TabEntry> {
+    const entry: TabEntry = {
+      page,
+      ...(openerId ? { openerId } : {}),
+      navCounter: 0,
+      webmcp: emptyWebmcpState(),
+    };
+    this.tabs.set(tabId, entry);
+    void page
+      .cdp()
+      .then(async (cdp) => {
+        if (!cdp || this.tabs.get(tabId) !== entry) return;
+        const frames = new Set<string>();
+        cdp.on("Page.frameStartedLoading", (raw) => {
+          if (this.tabs.get(tabId) !== entry) return;
+          frames.add((raw as { frameId: string }).frameId);
+          entry.loading = true;
+        });
+        cdp.on("Page.frameStoppedLoading", (raw) => {
+          if (this.tabs.get(tabId) !== entry) return;
+          frames.delete((raw as { frameId: string }).frameId);
+          entry.loading = frames.size > 0;
+        });
+        await cdp.send("Page.enable");
+      })
+      .catch(() => {});
+    // THE SESSION'S SIZE, not the launch size.
+    //
+    // A page opens at whatever the browser was launched with, and on a
+    // `followPane` session that stops being the right answer the first time
+    // somebody drags the panel. Without this, every tab opened after a resize
+    // laid out at 1024x768 while the session published the panel's size — so
+    // the model read one rectangle and clicked in another, on the tab it had
+    // just opened.
+    //
+    // Registered BEFORE this await, and re-checked by `applyViewport` after
+    // its own loop: between those two, a page created while a resize is
+    // transitioning is picked up by whichever of them runs second.
+    await entry.page
+      .setViewportSize?.({
+        width: this.sessionViewport.width,
+        height: this.sessionViewport.height,
+      })
+      .catch(() => {
+        // A page that cannot be sized is not a reason to fail opening the
+        // tab: the engine may not support it at all, which is exactly what
+        // `applyViewport` refuses on and this path must tolerate.
+      });
+    // EAGERLY, reversing the bridge's original lazy attach. Lazy was right
+    // when the only consumer was `webmcp_invoke` — a tab that never called a
+    // page tool should not pay for a CDP session. It is wrong now: the tool
+    // set is a thing the server READS between model steps, and a bridge that
+    // attaches on first use has no idea what the page registered before it
+    // existed. Fire-and-forget so tab creation is not slowed by it; every
+    // reader awaits `attachWebmcp` itself.
+    void this.attachWebmcp(tabId, entry);
+    // A new tab is the one Chromium shows, which is what the human pane's
+    // video will be grabbing a moment later.
+    if (!background) {
+      this.activeTabId = tabId;
+      if (openerId) await page.bringToFront?.().catch(() => {});
+    } else if (this.activeTabId) {
+      await this.tabs
+        .get(this.activeTabId)
+        ?.page.bringToFront?.()
+        .catch(() => {});
+    }
+    return entry;
+  }
+
   /** `null` means teardown has begun and no new page will be opened. */
   private async getOrCreateTab(tabId: string): Promise<TabEntry | null> {
     const existing = this.tabs.get(tabId);
@@ -2755,6 +2890,11 @@ export class ChromiumDriver implements BrowserDriver {
     const inFlight = this.pendingTabs.get(tabId);
     if (inFlight) return inFlight;
     if (this.closing) return null;
+    if (this.tabs.size + this.pendingTabs.size >= this.maxTabs) {
+      throw new Error(
+        `not found: this browser is at its limit of ${this.maxTabs} tabs — close one first`,
+      );
+    }
     const creating = (async () => {
       // Replacing a closed tab retires everything attached to the old page —
       // its viewport is bound to a CDP session that will never speak again.
@@ -2767,46 +2907,7 @@ export class ChromiumDriver implements BrowserDriver {
         await page.close().catch(() => {});
         return null;
       }
-      const entry: TabEntry = {
-        page,
-        navCounter: 0,
-        webmcp: emptyWebmcpState(),
-      };
-      this.tabs.set(tabId, entry);
-      // THE SESSION'S SIZE, not the launch size.
-      //
-      // A page opens at whatever the browser was launched with, and on a
-      // `followPane` session that stops being the right answer the first time
-      // somebody drags the panel. Without this, every tab opened after a resize
-      // laid out at 1024x768 while the session published the panel's size — so
-      // the model read one rectangle and clicked in another, on the tab it had
-      // just opened.
-      //
-      // Registered BEFORE this await, and re-checked by `applyViewport` after
-      // its own loop: between those two, a page created while a resize is
-      // transitioning is picked up by whichever of them runs second.
-      await entry.page
-        .setViewportSize?.({
-          width: this.sessionViewport.width,
-          height: this.sessionViewport.height,
-        })
-        .catch(() => {
-          // A page that cannot be sized is not a reason to fail opening the
-          // tab: the engine may not support it at all, which is exactly what
-          // `applyViewport` refuses on and this path must tolerate.
-        });
-      // EAGERLY, reversing the bridge's original lazy attach. Lazy was right
-      // when the only consumer was `webmcp_invoke` — a tab that never called a
-      // page tool should not pay for a CDP session. It is wrong now: the tool
-      // set is a thing the server READS between model steps, and a bridge that
-      // attaches on first use has no idea what the page registered before it
-      // existed. Fire-and-forget so tab creation is not slowed by it; every
-      // reader awaits `attachWebmcp` itself.
-      void this.attachWebmcp(tabId, entry);
-      // A new tab is the one Chromium shows, which is what the human pane's
-      // video will be grabbing a moment later.
-      this.activeTabId = tabId;
-      return entry;
+      return this.registerTab(tabId, page);
     })();
     this.pendingTabs.set(tabId, creating);
     try {
@@ -3036,7 +3137,9 @@ export class ChromiumDriver implements BrowserDriver {
       // Only when it MOVED. `url` is on every observation already; a
       // `previousUrl` equal to it teaches the model nothing and costs a line
       // on every act.
-      ...(before && before.url !== frame.url ? { previousUrl: before.url } : {}),
+      ...(before && before.url !== frame.url
+        ? { previousUrl: before.url }
+        : {}),
       ...a11yFields,
       ...(screenshot ? { screenshot } : {}),
     };
@@ -3110,7 +3213,7 @@ export class ChromiumDriver implements BrowserDriver {
     command: BrowserCommand,
     wants: { a11y: boolean; screenshot: boolean },
   ): Promise<BrowserCommandResult> {
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -3271,11 +3374,18 @@ export class ChromiumDriver implements BrowserDriver {
       // the same name). Subscribing then would wire a dead page's bridge to a
       // live entry.
       if (!bridge || this.tabs.get(tabId) !== entry) return;
-      entry.webmcp.unsubscribe = bridge.subscribe((tools) => {
+      const unsubscribeTools = bridge.subscribe((tools) => {
         entry.webmcp.tools = tools;
         entry.webmcp.supported = bridge.isSupported();
         this.bumpWebmcpRevision(entry);
       });
+      const unsubscribeExternal = bridge.subscribeExternalInvocation?.((name) =>
+        this.onExternalInvocation?.(tabId, name),
+      );
+      entry.webmcp.unsubscribe = () => {
+        unsubscribeTools();
+        unsubscribeExternal?.();
+      };
     })().catch(() => {});
     return entry.webmcp.attaching;
   }
@@ -3338,15 +3448,18 @@ export class ChromiumDriver implements BrowserDriver {
     // bridge whose page is being replaced, it would keep bumping a revision
     // nothing reads and keep the entry alive with it.
     going?.webmcp.unsubscribe?.();
+    const next = tabAfterClose(
+      [...this.tabs].map(([id, tab]) => ({ id, openerId: tab.openerId })),
+      tabId,
+      this.activeTabId ?? null,
+    );
     this.tabs.delete(tabId);
-    if (this.activeTabId === tabId) {
-      // Chromium shows SOMETHING after a close, and the most recently
-      // registered remaining tab is the best answer available without asking
-      // the browser — which would be a round trip on a path that runs whenever
-      // a tab goes away.
-      const remaining = [...this.tabs.keys()];
-      this.activeTabId = remaining[remaining.length - 1];
-    }
+    this.activeTabId = next ?? undefined;
+    if (!this.closing && next)
+      await this.tabs
+        .get(next)
+        ?.page.bringToFront?.()
+        .catch(() => {});
     // Refs name nodes in a page that is going away. Left behind, they would be
     // handed to a recreated tab of the same name and resolve — by role and
     // name — against a document that never issued them.

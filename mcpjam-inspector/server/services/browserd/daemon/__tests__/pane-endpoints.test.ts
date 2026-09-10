@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  BrowserdRequestHandler,
-  type DaemonRequest,
-} from "../request-handler";
+import { BrowserdRequestHandler, type DaemonRequest } from "../request-handler";
 import { HandoffLease } from "../lease";
 import { shortHash } from "../state-token";
 import { parsePaneCommand, paneCommandToAction } from "../pane-command";
@@ -20,6 +17,7 @@ const BOOT = "boot-abc";
 function makeHandler(
   over: {
     lease?: HandoffLease;
+    authority?: "shared" | "lease";
     submit?: (c: BrowserCommand) => Promise<BrowserCommandOutcome>;
     stateSnapshot?: () => Promise<unknown>;
     requestViewport?: (size: {
@@ -60,6 +58,7 @@ function makeHandler(
     },
     bootId: BOOT,
     token: TOKEN,
+    authority: over.authority,
     lease,
   });
   return { handler, lease, submitted };
@@ -114,7 +113,12 @@ describe("GET /v1/state", () => {
     });
 
     let res = await handler.handle(
-      req({ method: "GET", path: "/v1/state", body: "", query: new URLSearchParams({ holder: "pane-1" }) }),
+      req({
+        method: "GET",
+        path: "/v1/state",
+        body: "",
+        query: new URLSearchParams({ holder: "pane-1" }),
+      }),
     );
     expect(res.body).toMatchObject({
       control: { kind: "human", holder: "pane-1" },
@@ -122,7 +126,12 @@ describe("GET /v1/state", () => {
 
     now.mockReturnValue(5_000);
     res = await handler.handle(
-      req({ method: "GET", path: "/v1/state", body: "", query: new URLSearchParams({ holder: "pane-1" }) }),
+      req({
+        method: "GET",
+        path: "/v1/state",
+        body: "",
+        query: new URLSearchParams({ holder: "pane-1" }),
+      }),
     );
     expect(res.body).toMatchObject({ control: { parked: true } });
   });
@@ -308,7 +317,11 @@ describe("POST /v1/pane-command — automatic takeover", () => {
 
   it("refuses a url a person has no business being sent to", async () => {
     const { handler, lease } = makeHandler();
-    for (const url of ["file:///etc/passwd", "javascript:alert(1)", "nonsense"]) {
+    for (const url of [
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "nonsense",
+    ]) {
       const res = await handler.handle(
         req({
           body: JSON.stringify({
@@ -370,9 +383,9 @@ describe("POST /v1/viewport", () => {
 
 describe("parsePaneCommand", () => {
   it("normalises what a person typed", () => {
-    expect(parsePaneCommand({ op: "navigate", url: "  example.com  " })).toEqual(
-      { op: "navigate", url: "https://example.com/" },
-    );
+    expect(
+      parsePaneCommand({ op: "navigate", url: "  example.com  " }),
+    ).toEqual({ op: "navigate", url: "https://example.com/" });
   });
 
   it("refuses an op that is not a person's to send", () => {
@@ -390,7 +403,9 @@ describe("parsePaneCommand", () => {
   });
 
   it("allows a new tab with no url at all", () => {
-    expect(parsePaneCommand({ op: "create_tab" })).toEqual({ op: "create_tab" });
+    expect(parsePaneCommand({ op: "create_tab" })).toEqual({
+      op: "create_tab",
+    });
   });
 });
 
@@ -439,5 +454,34 @@ describe("paneCommandToAction", () => {
         observe: "none",
       });
     }
+  });
+});
+
+describe("shared inspection authority", () => {
+  it("runs navigation without acquiring a synthetic lease", async () => {
+    const { handler, lease, submitted } = makeHandler({ authority: "shared" });
+    const res = await handler.handle(
+      req({
+        path: "/v1/pane-command",
+        body: JSON.stringify({
+          holder: "inspector",
+          command: { op: "navigate", url: "https://a.test" },
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(submitted).toHaveLength(1);
+    expect(lease.state().state).toBe("free");
+  });
+  it("does not allow a request to turn shared inspection into an exclusive lease", async () => {
+    const { handler, lease } = makeHandler({ authority: "shared" });
+    const res = await handler.handle(
+      req({
+        path: "/v1/lease",
+        body: JSON.stringify({ action: "acquire", holder: "inspector" }),
+      }),
+    );
+    expect(res.status).toBe(409);
+    expect(lease.state().state).toBe("free");
   });
 });

@@ -346,7 +346,7 @@ interface WebMcpInspectorState {
    */
   setScreencast(enabled: boolean): Promise<boolean>;
   /** Drive the page from the pane. Batched by the caller, not here. */
-  sendInput(events: WebMcpInputEvent[]): Promise<void>;
+  sendInput(events: WebMcpInputEvent[], tabId?: string): Promise<void>;
   clearError(): void;
   /**
    * Re-attach the event stream to the session that is still running, e.g. after
@@ -1572,7 +1572,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         }
       },
 
-      async sendInput(events) {
+      async sendInput(events, tabId) {
         if (events.length === 0) return;
         // Preserve the queue-inclusive headline; a newer frame remains only
         // a proxy, not proof that it contains this gesture's effect.
@@ -1600,7 +1600,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             if (get().session?.sessionId !== aimedAt) return;
             const socketResult =
               typeof window !== "undefined" && window.isElectron !== true
-                ? frameSocket?.sendInput(batch)
+                ? frameSocket?.sendInput(batch, tabId)
                 : undefined;
             if (socketResult) {
               // Ordered sends need not await CDP dispatch. The runtime orders
@@ -1633,7 +1633,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             // Through `sendCommand`, unlike `set_screencast`: input the server
             // refuses is a person's click going nowhere, which they should be
             // told about rather than left to wonder at.
-            await get().sendCommand({ type: "input", events: batch });
+            await get().sendCommand({ type: "input", events: batch, tabId });
           }
         });
         await Promise.all(completions);
