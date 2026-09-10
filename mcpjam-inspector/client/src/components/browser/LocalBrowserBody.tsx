@@ -8,6 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { PaneMessage } from "@/components/computer/PaneMessage";
+import { LocalComputerConsentGate } from "@/components/computer/LocalComputerConsentGate";
+import { useLocalComputerConsent } from "@/hooks/useLocalComputerConsent";
 import {
   BrowserPaneSurface,
   type PaneControl,
@@ -138,6 +140,7 @@ export function LocalBrowserBody({
   active?: boolean;
 }) {
   const workspaceEnabled = useBrowserWorkspaceEnabled();
+  const { grant: grantConsent } = useLocalComputerConsent();
   const [status, setStatus] = useState<LocalBrowserStatus | null>(null);
   const [session, setSession] = useState<{ bootId: string } | null>(null);
   const [lease, setLease] = useState<LocalBrowserLease>({ state: "free" });
@@ -884,13 +887,14 @@ export function LocalBrowserBody({
    */
   const placeholder = (() => {
     if (!consentGranted) {
-      // A pointer, not a second consent gate: the Computer tab owns the grant.
       return (
         <PaneMessage dashed>
-          <span data-testid="rail-browser-unconsented">
-            This machine isn&apos;t authorized yet. Open the Computer tab to
-            allow the agent to use it.
-          </span>
+          <div data-testid="rail-browser-unconsented">
+            <LocalComputerConsentGate
+              onAllow={grantConsent}
+              location="playground_browser"
+            />
+          </div>
         </PaneMessage>
       );
     }

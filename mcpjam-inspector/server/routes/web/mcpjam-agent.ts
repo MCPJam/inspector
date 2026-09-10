@@ -104,6 +104,7 @@ import {
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 
 const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
@@ -326,6 +327,13 @@ mcpjamAgent.post("/", async (c) => {
       },
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+        // These three URLs are ours, not a caller's, so this is uniformity
+        // rather than a fix: after MJ-001 no hosted manager is constructed
+        // without the guard, which is what lets the static check forbid a bare
+        // `new MCPClientManager` in hosted route files. `MCPJAM_*_MCP_URL`
+        // overrides are classified at boot so a private one fails there
+        // (`assertHostedFirstPartyMcpUrls`) instead of mid-turn.
+        baseFetch: hostedMcpBaseFetch(),
         rpcLogger: rpcCollector.rpcLogger,
         httpLogger: rpcCollector.httpLogger,
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
@@ -573,6 +581,7 @@ mcpjamAgent.post("/widget-content", async (c) => {
       { [PLATFORM_SERVER_ID]: buildPlatformConfig(bearerToken) },
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+        baseFetch: hostedMcpBaseFetch(),
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       }
     );
