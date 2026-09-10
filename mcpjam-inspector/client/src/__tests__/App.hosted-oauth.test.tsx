@@ -104,7 +104,9 @@ const {
     setSelectedServer: vi.fn(),
     toggleServerSelection: vi.fn(),
     setSelectedMultipleServersToAllServers: vi.fn(),
-    projects: {},
+    projects: {
+      ws_local: { id: "ws_local", sharedProjectId: "project-1" },
+    },
     activeProjectId: "ws_local",
     handleSwitchProject: vi.fn(),
     handleCreateProject: vi.fn(),
@@ -3442,6 +3444,63 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
     });
     expect(window.location.pathname).toBe("/playground");
+  });
+
+  it("waits for project provisioning before starting the first-run handshake", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    appState.projects.ws_local = { id: "ws_local" };
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: "Preparing your MCPJam workspace",
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(appState.handleConnect).not.toHaveBeenCalled();
+
+    appState.projects.ws_local = {
+      id: "ws_local",
+      sharedProjectId: "project-1",
+    };
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(appState.handleConnect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Excalidraw (App)",
+          url: "https://mcp.excalidraw.com/mcp",
+        }),
+      );
+      expect(
+        screen.getByRole("heading", {
+          name: "Connecting to Excalidraw (App)",
+        }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("dismisses first-run onboarding when a guest skips it", async () => {

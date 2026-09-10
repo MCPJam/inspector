@@ -2530,6 +2530,8 @@ export default function App() {
     useState(false);
   const [firstRunConnectionState, setFirstRunConnectionState] =
     useState<FirstRunConnectionState>({ status: "idle" });
+  const [pendingFirstRunConnection, setPendingFirstRunConnection] =
+    useState<ServerFormData | null>(null);
   // Bumped to ask the active debugger route to open its own "configure server"
   // modal (XAA / OAuth) instead of the generic Add Server modal — see the
   // onAddServerRequested wiring on the header server picker below.
@@ -3393,23 +3395,54 @@ export default function App() {
       }
 
       markOnboardingStarted();
+      setPendingFirstRunConnection(formData);
       setFirstRunConnectionState({
-        status: "connecting",
+        status: "preparing",
         serverName: formData.name,
       });
-      void handleConnect(formData);
     },
-    [handleConnect],
+    [],
   );
 
   const connectFirstRunDemo = useCallback(() => {
     markOnboardingStarted();
+    setPendingFirstRunConnection(EXCALIDRAW_SERVER_CONFIG);
     setFirstRunConnectionState({
-      status: "connecting",
+      status: "preparing",
       serverName: EXCALIDRAW_SERVER_NAME,
     });
-    void handleConnect(EXCALIDRAW_SERVER_CONFIG);
-  }, [handleConnect]);
+  }, []);
+
+  // Hosted project creation is asynchronous. `handleConnect` deliberately
+  // rejects earlier attempts with "Finishing setup." because it needs the
+  // shared Convex project id. Keep the selected server here and launch the
+  // normal save, handshake, compatibility, and tool-discovery path as soon as
+  // that project is available instead of surfacing an unusable connection UI.
+  const isFirstRunProjectReady =
+    !HOSTED_MODE ||
+    !isAuthenticated ||
+    Boolean(projects[activeProjectId]?.sharedProjectId);
+  useEffect(() => {
+    if (
+      !pendingFirstRunConnection ||
+      firstRunConnectionState.status !== "preparing" ||
+      !isFirstRunProjectReady
+    ) {
+      return;
+    }
+
+    setPendingFirstRunConnection(null);
+    setFirstRunConnectionState({
+      status: "connecting",
+      serverName: pendingFirstRunConnection.name,
+    });
+    void handleConnect(pendingFirstRunConnection);
+  }, [
+    firstRunConnectionState.status,
+    handleConnect,
+    isFirstRunProjectReady,
+    pendingFirstRunConnection,
+  ]);
 
   useEffect(() => {
     if (firstRunConnectionState.status !== "connecting") return;
@@ -3418,6 +3451,7 @@ export default function App() {
     if (!server) return;
 
     if (server.connectionStatus === "connected") {
+      setPendingFirstRunConnection(null);
       setFirstRunConnectionState({ status: "idle" });
       setFirstRunOverlayDismissed(true);
       navigateApp(routePaths.playground);
@@ -3425,6 +3459,7 @@ export default function App() {
     }
 
     if (server.connectionStatus === "failed") {
+      setPendingFirstRunConnection(null);
       setFirstRunConnectionState({
         status: "failed",
         error: server.lastError || "MCPJam could not connect to this server.",
@@ -3434,6 +3469,7 @@ export default function App() {
 
   const dismissFirstRunOverlay = useCallback(() => {
     markOnboardingDismissed();
+    setPendingFirstRunConnection(null);
     setFirstRunConnectionState({ status: "idle" });
     setFirstRunOverlayDismissed(true);
   }, []);

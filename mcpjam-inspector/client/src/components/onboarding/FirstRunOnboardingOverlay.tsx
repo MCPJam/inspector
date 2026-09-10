@@ -25,6 +25,7 @@ type FirstRunOverlayStep =
 
 export type FirstRunConnectionState =
   | { status: "idle" }
+  | { status: "preparing"; serverName: string }
   | { status: "connecting"; serverName: string }
   | { status: "failed"; error: string };
 
@@ -131,7 +132,10 @@ export function FirstRunOnboardingOverlay({
 
   useEffect(() => {
     if (!open) return;
-    if (connectionState.status === "connecting") {
+    if (
+      connectionState.status === "preparing" ||
+      connectionState.status === "connecting"
+    ) {
       setStep("connecting");
     } else if (connectionState.status === "failed") {
       setStep("server-details");
@@ -329,13 +333,17 @@ export function FirstRunOnboardingOverlay({
               />
               <DialogHeader className="mt-5 gap-0 text-center">
                 <DialogTitle className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  Connecting to{" "}
+                  {connectionState.status === "preparing"
+                    ? "Preparing your MCPJam workspace"
+                    : "Connecting to "}
                   {connectionState.status === "connecting"
                     ? connectionState.serverName
-                    : "your server"}
+                    : null}
                 </DialogTitle>
                 <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  Negotiating MCP compatibility and loading tools.
+                  {connectionState.status === "preparing"
+                    ? "Getting your project ready to connect to an MCP server."
+                    : "Negotiating MCP compatibility and loading tools."}
                 </DialogDescription>
               </DialogHeader>
             </div>
