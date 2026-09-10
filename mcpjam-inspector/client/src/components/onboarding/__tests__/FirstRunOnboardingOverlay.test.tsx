@@ -43,7 +43,14 @@ describe("FirstRunOnboardingOverlay", () => {
   it("advances from the welcome card with Continue", () => {
     renderOverlay();
 
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const continueButton = screen.getByRole("button", { name: "Continue" });
+    expect(continueButton).toHaveClass(
+      "justify-self-start",
+      "focus-visible:!border-0",
+      "focus-visible:!ring-0",
+    );
+
+    fireEvent.click(continueButton);
     expect(
       screen.getByRole("heading", { name: "Point MCPJam at a server" }),
     ).toBeInTheDocument();
