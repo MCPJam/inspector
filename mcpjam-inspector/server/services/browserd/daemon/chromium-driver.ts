@@ -662,6 +662,20 @@ export class ChromiumDriver implements BrowserDriver {
     return this.barrier.busy;
   }
 
+  /** Resize an attached capture together with its page, including rollback. */
+  private async resizePage(
+    page: DriverPage,
+    size: { width: number; height: number },
+  ): Promise<void> {
+    const tab = [...this.tabs].find(([, entry]) => entry.page === page);
+    const capture = tab ? await this.viewports.get(tab[0]) : undefined;
+    const apply = async () => {
+      await page.setViewportSize?.({ width: size.width, height: size.height });
+    };
+    if (capture) await capture.resize(size, apply);
+    else await apply();
+  }
+
   /**
    * Take every tab to a new size, or leave every tab where it was.
    *
@@ -715,17 +729,12 @@ export class ChromiumDriver implements BrowserDriver {
     const applied: DriverPage[] = [];
     try {
       for (const page of pages) {
-        await page.setViewportSize?.({
-          width: next.width,
-          height: next.height,
-        });
+        await this.resizePage(page, next);
         applied.push(page);
       }
     } catch (error) {
       for (const page of applied) {
-        await page
-          .setViewportSize?.({ width: previous.width, height: previous.height })
-          .catch(() => {});
+        await this.resizePage(page, previous).catch(() => {});
       }
       // THE DISPLAY COMES BACK TOO. It moved first, and on a hosted box it
       // took the kiosk window and the encoder with it — so a page refusing
@@ -759,9 +768,7 @@ export class ChromiumDriver implements BrowserDriver {
     // than leaving one tab a different size from the rest.
     for (const entry of this.tabs.values()) {
       if (applied.includes(entry.page) || entry.page.isClosed()) continue;
-      await entry.page
-        .setViewportSize?.({ width: next.width, height: next.height })
-        .catch(() => {});
+      await this.resizePage(entry.page, next).catch(() => {});
     }
     try {
       this.onViewportChange?.(next);
