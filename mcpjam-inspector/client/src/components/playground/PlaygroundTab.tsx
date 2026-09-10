@@ -107,6 +107,9 @@ interface PlaygroundTabProps {
   activeHost?: HostConfigDtoV2 | null;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
+  /** One-shot prompt handed off by first-run server connection. */
+  firstRunPrompt?: string | null;
+  onFirstRunPromptConsumed?: () => void;
 }
 
 /**
@@ -511,6 +514,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           evalChatHandoff={props.evalChatHandoff}
                           onEvalChatHandoffConsumed={
                             props.onEvalChatHandoffConsumed
+                          }
+                          firstRunPrompt={props.firstRunPrompt}
+                          onFirstRunPromptConsumed={
+                            props.onFirstRunPromptConsumed
                           }
                         />
                       </ResizablePanel>

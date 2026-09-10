@@ -415,6 +415,8 @@ vi.mock("../components/playground/PlaygroundTab", () => ({
     isWorkOsAuthLoading?: boolean;
     isConvexAuthenticated?: boolean;
     hasSeenFirstRunOnboarding?: boolean;
+    firstRunPrompt?: string | null;
+    onFirstRunPromptConsumed?: () => void;
   }) => {
     mockPlaygroundTabProps(props);
     const { onOnboardingChange } = props;
@@ -3569,6 +3571,11 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
     });
     expect(window.location.pathname).toBe("/playground");
+    expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        firstRunPrompt: "What can this server do?",
+      }),
+    );
     expect(
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
