@@ -1,3 +1,4 @@
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 /**
  * WebmcpPageToolsSection
  *
@@ -38,6 +39,9 @@ import { useWebmcpInspectorEnabled } from "@/hooks/useWebmcpInspectorEnabled";
 
 export function WebmcpPageToolsSection() {
   const flagOn = useWebmcpInspectorEnabled();
+  const approval = useActiveChatSessionStore((state) =>
+    state.sessionId ? state.approvalSettings[state.sessionId] : undefined,
+  );
   const session = useWebmcpInspectorStore((state) => state.session);
   const tools = useWebmcpInspectorStore((state) => state.tools);
   const chatEnabled = useWebmcpInspectorStore((state) => state.chatEnabled);
@@ -89,7 +93,19 @@ export function WebmcpPageToolsSection() {
             <span className="block text-[11px] text-muted-foreground">
               {tools.length === 0
                 ? "No tools registered yet"
-                : `${tools.length} tool${tools.length === 1 ? "" : "s"} — every call asks first`}
+                : `${tools.length} tool${
+                    tools.length === 1 ? "" : "s"
+                  } — Tool Approval ${
+                    approval === undefined
+                      ? "uses chat setting"
+                      : approval
+                      ? "on"
+                      : "off"
+                  }`}
+            </span>
+            <span className="block text-[11px] text-muted-foreground">
+              Chat and you share control of this signed-in page. Tool results go
+              to your model provider.
             </span>
           </span>
         </label>

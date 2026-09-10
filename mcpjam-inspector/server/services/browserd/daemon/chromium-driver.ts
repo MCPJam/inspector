@@ -126,10 +126,7 @@ const DEFAULT_TAB = DEFAULT_QUEUE_KEY;
  * outer one wrong.
  */
 class ActError extends Error {
-  constructor(
-    readonly code: BrowserdErrorCode,
-    message: string,
-  ) {
+  constructor(readonly code: BrowserdErrorCode, message: string) {
     super(message);
     this.name = "ActError";
   }
@@ -570,7 +567,8 @@ export class ChromiumDriver implements BrowserDriver {
   private viewportPolicy: SessionViewportPolicy;
   private latestViewportRequest?: import("../../../../shared/browser-viewport").PaneViewportRequest;
   private readonly onViewportChange:
-    ((viewport: SessionViewport) => void) | undefined;
+    | ((viewport: SessionViewport) => void)
+    | undefined;
   private readonly barrier: SessionBarrier;
   private readonly resizeDisplay:
     | ((next: ViewportSize, previous: ViewportSize) => Promise<boolean>)
@@ -902,8 +900,8 @@ export class ChromiumDriver implements BrowserDriver {
             kind === "back"
               ? page.goBack()
               : kind === "forward"
-                ? page.goForward()
-                : page.reload(),
+              ? page.goForward()
+              : page.reload(),
           permit,
           action.observe,
         );
@@ -1060,8 +1058,8 @@ export class ChromiumDriver implements BrowserDriver {
         error instanceof ActError
           ? error.code
           : /timeout|not found|no element|strict mode/i.test(message)
-            ? "target_not_found"
-            : "act_failed";
+          ? "target_not_found"
+          : "act_failed";
       // Same rule as the success path: the act may have failed, but the page
       // it failed on can still be someone's now. `afterAct` asks `permit()`
       // before it reads anything, and `observation` asks again on the way out,
@@ -1722,7 +1720,9 @@ export class ChromiumDriver implements BrowserDriver {
         error:
           error instanceof WebMcpBridgeError
             ? `${error.failure}: ${error.message}`
-            : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`,
+            : `webmcp_error: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
       };
     }
   }
@@ -2125,7 +2125,16 @@ export class ChromiumDriver implements BrowserDriver {
         return this.observation(
           tabId,
           entry,
-          { webmcpSupported: true, tools: bridge.list() },
+          {
+            webmcpSupported: true,
+            tools: bridge.list(),
+            ...(bridge.discoveryLimitReached?.()
+              ? {
+                  notice:
+                    "Page tool discovery exceeded its security budget. Reduce registrations and reload the page; browsing remains available.",
+                }
+              : {}),
+          },
           frame,
           permit,
         );
@@ -2348,7 +2357,7 @@ export class ChromiumDriver implements BrowserDriver {
     const activeTabId =
       this.activeTabId && read.some(({ id }) => id === this.activeTabId)
         ? this.activeTabId
-        : (read[0]?.id ?? null);
+        : read[0]?.id ?? null;
     const active = read.find(({ id }) => id === activeTabId);
     this.stateSeq += 1;
     return {

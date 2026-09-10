@@ -123,6 +123,7 @@ export class BrowserdWebMcpSession implements WebMcpBrowserSession {
   private disposed = false;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private lastToolsJson = "";
+  private lastDiscoveryNotice: string | undefined;
   private lastCommandAt = 0;
   /**
    * When the poll may next probe after a lease refusal.
@@ -401,6 +402,16 @@ export class BrowserdWebMcpSession implements WebMcpBrowserSession {
         { kind: "observe", mode: "webmcp_tools" },
         { background: true },
       );
+      const notice =
+        result.output &&
+        typeof result.output === "object" &&
+        "notice" in result.output &&
+        typeof result.output.notice === "string"
+          ? result.output.notice
+          : undefined;
+      if (notice && notice !== this.lastDiscoveryNotice)
+        this.options.callbacks.onSessionNotice?.(notice);
+      this.lastDiscoveryNotice = notice;
       const tools = parseTools(
         result.output,
         this.handle.bootId,

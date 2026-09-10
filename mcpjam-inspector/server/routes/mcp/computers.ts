@@ -513,7 +513,8 @@ computers.post("/local-browser/lookup", async (c) => {
  * the pane rather than a stalled tool call.
  */
 computers.post("/local-browser/ensure", async (c) => {
-  if (!(await requireConsent(c))) {
+  const consentFingerprint = await requireConsent(c);
+  if (!consentFingerprint) {
     return c.json(
       {
         error:
@@ -566,6 +567,8 @@ computers.post("/local-browser/ensure", async (c) => {
       );
     }
     const handle = await ensureLocalBrowserSession({
+      consentFingerprint,
+      authHeader: c.req.header("authorization"),
       projectId,
       ...(sessionId ? { sessionId } : {}),
     });
@@ -1231,7 +1234,8 @@ function liveBrowserFor(
  * browser to watch and a second history to read.
  */
 computers.post("/local-browser/session", async (c) => {
-  if (!(await requireConsent(c))) {
+  const consentFingerprint = await requireConsent(c);
+  if (!consentFingerprint) {
     return c.json(
       {
         error:
@@ -1367,6 +1371,8 @@ computers.post("/local-browser/session", async (c) => {
   // session record, so the two cannot drift into a session pointing at a
   // browser nobody opened.
   const browserArgs = {
+    consentFingerprint,
+    authHeader: c.req.header("authorization"),
     projectId,
     contextMode: profile,
     ...(profile === "ephemeral" ? { ownerKey: runKey } : {}),

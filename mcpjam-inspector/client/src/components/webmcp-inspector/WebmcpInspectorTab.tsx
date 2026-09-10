@@ -1,3 +1,7 @@
+import { LocalBrowserConsentGate } from "@/components/browser/LocalBrowserConsentGate";
+import { useLocalBrowserConsent } from "@/hooks/useLocalBrowserConsent";
+import { authFetch } from "@/lib/session-token";
+import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 import { BrowserShell } from "@/components/browser/BrowserShell";
 import {
   useBrowserSession,
@@ -69,6 +73,7 @@ const SCREENSHOT_POLL_MS = 1_000;
  * instead of a silent fall-through to window behaviour.
  */
 export function WebmcpInspectorTab() {
+  const consent = useLocalBrowserConsent();
   const {
     session,
     tools,
@@ -329,11 +334,15 @@ export function WebmcpInspectorTab() {
     if (hosted && activeProjectId) {
       return { transport: "hosted" as const, projectId: activeProjectId };
     }
-    return inApp ? { display: "in-app" as const } : undefined;
+    return {
+      projectId: activeProjectId ?? undefined,
+      ...(inApp ? { display: "in-app" as const } : {}),
+    };
   };
 
   const openBrowser = async () => {
     if (HOSTED_MODE && !hostedReady) return;
+    if (!HOSTED_MODE && !hosted && !consent.granted) return;
     await startSession(url, startOptions());
   };
 
@@ -378,7 +387,41 @@ export function WebmcpInspectorTab() {
     else toast.error("Could not copy activity to your clipboard");
   };
 
+  const clearProfile = async (legacy = false) => {
+    if (
+      !window.confirm(
+        legacy
+          ? "Delete sign-ins and site data from the old shared WebMCP profile? New profiles are unaffected."
+          : "Close inspection sessions and delete sign-ins and site data for this account and project? Saved transcripts and exports remain.",
+      )
+    )
+      return;
+    const response = await authFetch("/api/mcp/webmcp/profile", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        [BROWSER_CONSENT_HEADER]: consent.token ?? "",
+      },
+      body: JSON.stringify({ projectId: activeProjectId ?? undefined, legacy }),
+    });
+    if (response.ok) {
+      if (!legacy) await closeSession();
+      toast.success("Inspection site data cleared");
+    } else toast.error("Could not clear inspection site data");
+  };
   const overflowActions = [
+    ...(!HOSTED_MODE && !hosted && isPackaged && consent.granted
+      ? [
+          {
+            label: "Clear inspection site data",
+            onSelect: () => void clearProfile(),
+          },
+          {
+            label: "Delete old shared profile",
+            onSelect: () => void clearProfile(true),
+          },
+        ]
+      : []),
     ...(live
       ? [
           {
@@ -522,6 +565,9 @@ export function WebmcpInspectorTab() {
     </div>
   );
 
+  if (!HOSTED_MODE && !hosted && !consent.granted) {
+    return <LocalBrowserConsentGate onAllow={consent.grant} />;
+  }
   return (
     <div className="flex h-full flex-col">
       {error ? (
@@ -816,8 +862,8 @@ function ViewportPane({
             {streaming
               ? "Waiting for the first frame…"
               : behaviour.serverPaints
-                ? "Live view is off. Turn it on to watch the page here."
-                : behaviour.viewOnlyCaption}
+              ? "Live view is off. Turn it on to watch the page here."
+              : behaviour.viewOnlyCaption}
           </p>
         }
       />
@@ -846,8 +892,8 @@ function StatusBadge({ status }: { status: WebMcpSessionStatus }) {
     status === "ready"
       ? "default"
       : status === "error" || status === "unsupported"
-        ? "destructive"
-        : "secondary";
+      ? "destructive"
+      : "secondary";
   return (
     <Badge variant={tone} className="text-[10px] capitalize">
       {status}

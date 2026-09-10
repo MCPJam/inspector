@@ -59,6 +59,7 @@ var BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  "browser_policy_refused",
   /** A `fill_form` stopped partway; the detail names which field and why. */
   "fill_form_failed",
   "out_of_viewport",
@@ -4787,6 +4788,9 @@ function originOf(url) {
 var WebMcpBridge = class {
   constructor(cdp, options = {}) {
     this.cdp = cdp;
+    this.localSecurity = options.localSecurity ?? false;
+    this.localBudget = options.localBudget;
+    this.onDiscoveryLimit = options.onDiscoveryLimit;
     this.sessions.set(MAIN_SESSION_KEY, {
       key: MAIN_SESSION_KEY,
       frameId: "",
@@ -4871,6 +4875,110 @@ var WebMcpBridge = class {
   probeGeneration = 0;
   subscribers = /* @__PURE__ */ new Set();
   disposed = false;
+  localSecurity = false;
+  localBudget;
+  updateBudget() {
+    if (!this.localBudget) return;
+    if (this.disposed) {
+      this.localBudget.entries.delete(this);
+      return;
+    }
+    let bytes = 0;
+    for (const entry of this.tools.values()) bytes += entry.bytes ?? 0;
+    this.localBudget.entries.set(this, {
+      registrations: this.tools.size,
+      bytes,
+      frames: Math.max(
+        this.frames.size,
+        this.sessions.size,
+        this.frameSessions.size
+      )
+    });
+  }
+  otherBudget() {
+    const total = { registrations: 0, bytes: 0, frames: 0 };
+    for (const [owner, entry] of this.localBudget?.entries ?? [])
+      if (owner !== this) {
+        total.registrations += entry.registrations;
+        total.bytes += entry.bytes;
+        total.frames += entry.frames;
+      }
+    return total;
+  }
+  discoveryBlocked = false;
+  onDiscoveryLimit;
+  changeTokens = 2048;
+  changeAt = Date.now();
+  discoveryLimitReached() {
+    return this.discoveryBlocked;
+  }
+  blockDiscovery() {
+    if (!this.discoveryBlocked) {
+      this.discoveryBlocked = true;
+      this.tools.clear();
+      for (const [id, waiter] of this.pending) {
+        void waiter.cdp.send("WebMCP.cancelInvocation", { invocationId: id }).catch(() => {
+        });
+        this.settle(id);
+        waiter.reject(
+          new WebMcpBridgeError(
+            "webmcp_tool_gone",
+            "Page tool discovery exceeded its security budget. Reload the page after reducing its registrations."
+          )
+        );
+      }
+      this.onDiscoveryLimit?.();
+      this.announce();
+    }
+    return false;
+  }
+  allowChanges(count) {
+    if (!this.localSecurity) return true;
+    if (this.discoveryBlocked) return false;
+    const now = Date.now();
+    const rate = this.localBudget ? this.localBudget.rate ??= { tokens: 2048, at: now } : { tokens: this.changeTokens, at: this.changeAt };
+    rate.tokens = Math.min(
+      2048,
+      rate.tokens + Math.max(0, now - rate.at) * 1.024
+    );
+    rate.at = now;
+    if (count > rate.tokens) return this.blockDiscovery();
+    rate.tokens -= count;
+    this.changeTokens = rate.tokens;
+    this.changeAt = now;
+    return true;
+  }
+  allowTool(tool) {
+    if (!this.localSecurity) return true;
+    let bytes = 0, nodes = 0;
+    const stack = [[tool, 0]];
+    while (stack.length) {
+      const [value, depth] = stack.pop();
+      if (++nodes > 65536 || depth > 32) return this.blockDiscovery();
+      if (typeof value === "string") {
+        if (value.length > 65536) return this.blockDiscovery();
+        bytes += new TextEncoder().encode(value).byteLength;
+      } else if (value && typeof value === "object") {
+        for (const key of Object.keys(value)) {
+          bytes += key.length * 3;
+          if (stack.length >= 65536) return this.blockDiscovery();
+          stack.push([value[key], depth + 1]);
+        }
+      } else bytes += 8;
+      if (bytes > 65536) return this.blockDiscovery();
+    }
+    const others = this.otherBudget();
+    if (this.tools.size + others.registrations >= 1024 && !this.tools.has(this.key(tool.frameId, tool.name)))
+      return this.blockDiscovery();
+    let retained = bytes;
+    for (const entry of this.tools.values()) retained += entry.bytes ?? 0;
+    if (retained + others.bytes > 8 * 1024 * 1024) return this.blockDiscovery();
+    if (!this.frameSessions.has(tool.frameId) && this.frameSessions.size + others.frames >= 64)
+      return this.blockDiscovery();
+    this.nextToolBytes = bytes;
+    return true;
+  }
+  nextToolBytes = 0;
   onChange;
   onExternalInvocation;
   /**
@@ -4882,6 +4990,7 @@ var WebMcpBridge = class {
    * responsible for the bridge's own bookkeeping.
    */
   announce() {
+    this.updateBudget();
     if (this.disposed) return;
     if (!this.onChange && this.subscribers.size === 0) return;
     const tools = this.list();
@@ -5011,22 +5120,27 @@ var WebMcpBridge = class {
     session.cdp.on("WebMCP.toolsAdded", (payload) => {
       if (!this.live(session)) return;
       const { tools } = payload ?? {};
+      if (!Array.isArray(tools) || !this.allowChanges(tools.length)) return;
       const registrationSeq = this.nextRegistrationSeq++;
       for (const tool of tools ?? []) {
+        if (!this.allowTool(tool)) return;
         const owner = this.frameSessions.get(tool.frameId);
         if (owner !== void 0 && owner !== session.key) continue;
         this.tools.set(this.key(tool.frameId, tool.name), {
           tool,
           registrationSeq,
-          sessionKey: session.key
+          sessionKey: session.key,
+          bytes: this.nextToolBytes
         });
         this.frameSessions.set(tool.frameId, session.key);
+        this.updateBudget();
       }
       this.announce();
     });
     session.cdp.on("WebMCP.toolsRemoved", (payload) => {
       if (!this.live(session)) return;
       const { tools } = payload ?? {};
+      if (!Array.isArray(tools) || !this.allowChanges(tools.length)) return;
       for (const tool of tools ?? []) {
         const key = this.key(tool.frameId, tool.name);
         if (this.tools.get(key)?.sessionKey !== session.key) continue;
@@ -5064,6 +5178,18 @@ var WebMcpBridge = class {
       if (!this.live(session)) return;
       const { frame } = payload ?? {};
       if (!frame) return;
+      if (this.localSecurity && session.isMain && !frame.parentId) {
+        this.discoveryBlocked = false;
+        this.changeTokens = 2048;
+        this.changeAt = Date.now();
+        this.tools.clear();
+        this.frames.clear();
+        this.frameSessions.clear();
+      }
+      if (this.localSecurity && !this.frames.has(frame.id) && this.frames.size + this.otherBudget().frames >= 64) {
+        this.blockDiscovery();
+        return;
+      }
       this.frames.set(frame.id, frame.url);
       this.dropFrame(frame.id, session.key);
       if (session.isMain && !frame.parentId) {
@@ -5113,6 +5239,10 @@ var WebMcpBridge = class {
   async addSession(frameId, cdp) {
     const key = `${frameId}#${this.nextSessionSeq++}`;
     if (this.disposed) return key;
+    if (this.localSecurity && (this.discoveryBlocked || this.sessions.size + this.otherBudget().frames >= 64)) {
+      this.blockDiscovery();
+      return key;
+    }
     for (const existing of [...this.sessions.values()]) {
       if (!existing.isMain && existing.frameId === frameId) {
         this.removeSession(existing.key);
@@ -5120,6 +5250,7 @@ var WebMcpBridge = class {
     }
     const session = { key, frameId, cdp, isMain: false };
     this.sessions.set(key, session);
+    this.updateBudget();
     this.frameSessions.set(frameId, key);
     this.wireSession(session);
     await cdp.send("Page.enable").catch(() => {
@@ -5157,12 +5288,20 @@ var WebMcpBridge = class {
   /** Record a session's frame URLs, for origins we missed by attaching late. */
   async seedFrames(cdp) {
     const tree = await cdp.send("Page.getFrameTree");
+    let visited = 0;
     const walk = (node) => {
+      if (this.localSecurity && (++visited > 64 || this.discoveryBlocked)) {
+        this.blockDiscovery();
+        return;
+      }
       if (!node?.frame) return;
       if (!this.frames.has(node.frame.id)) {
         this.frames.set(node.frame.id, node.frame.url ?? "");
       }
-      for (const child of node.childFrames ?? []) walk(child);
+      for (const child of node.childFrames ?? []) {
+        if (this.localSecurity && this.discoveryBlocked) break;
+        walk(child);
+      }
     };
     walk(tree?.frameTree);
   }
@@ -5364,6 +5503,14 @@ var WebMcpBridge = class {
         );
       }
       invocationId = result.invocationId;
+      if (this.localSecurity && (this.discoveryBlocked || this.disposed)) {
+        void owner.send("WebMCP.cancelInvocation", { invocationId }).catch(() => {
+        });
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          "Page tool discovery is no longer available; earlier effects may already have occurred."
+        );
+      }
       try {
         args.onStarted?.(invocationId);
       } catch {
@@ -5450,6 +5597,7 @@ var WebMcpBridge = class {
   }
   /** Reject every waiter; called when the tab or daemon goes away. */
   dispose() {
+    this.localBudget?.entries.delete(this);
     if (this.disposed) return;
     this.disposed = true;
     this.subscribers.clear();
@@ -6233,9 +6381,9 @@ var ChromiumDriver = class {
     if (size.policy === "followPane" && this.allowPaneResize)
       this.viewportPolicy = "followPane";
     if (this.viewportPolicy === "fixed") return this.sessionViewport;
-    const request = size.policy === "fixed" ? { ...size, width: 1024, height: 768 } : size;
-    this.latestViewportRequest = request;
-    await this.barrier.request(request);
+    const request2 = size.policy === "fixed" ? { ...size, width: 1024, height: 768 } : size;
+    this.latestViewportRequest = request2;
+    await this.barrier.request(request2);
     return this.sessionViewport;
   }
   /** Is a resize waiting or transitioning? Surfaces as the pane's affordance. */
@@ -7238,7 +7386,13 @@ var ChromiumDriver = class {
         return this.observation(
           tabId,
           entry,
-          { webmcpSupported: true, tools: bridge.list() },
+          {
+            webmcpSupported: true,
+            tools: bridge.list(),
+            ...bridge.discoveryLimitReached?.() ? {
+              notice: "Page tool discovery exceeded its security budget. Reduce registrations and reload the page; browsing remains available."
+            } : {}
+          },
           frame,
           permit
         );
@@ -8169,6 +8323,400 @@ function safeUrl(page) {
   }
 }
 
+// server/services/browserd/local/egress-proxy.ts
+import { createServer as createServer2, request } from "node:http";
+import { connect } from "node:net";
+import { randomBytes as randomBytes3, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+
+// server/services/browserd/local/security-policy.ts
+import { networkInterfaces } from "node:os";
+
+// shared/hosted-web-timeouts.ts
+var WEB_CALL_TIMEOUT_MS = 3e4;
+
+// server/config.ts
+var SERVER_PORT = process.env.SERVER_PORT ? parseInt(process.env.SERVER_PORT, 10) : 6274;
+var SERVER_HOSTNAME = process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
+var LOCAL_SERVER_ADDR = `http://localhost:${SERVER_PORT}`;
+var HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
+var LOCAL_BROWSER_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_BROWSER_ENABLED !== "false";
+var LOCAL_COMPUTER_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
+var LOCAL_HARNESS_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
+var SCHEDULED_EVALS_WRITE_ENABLED = process.env.MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED === "true";
+var WEBMCP_INSPECTOR_ENABLED = process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
+var EVAL_WIDGET_MODEL_CONTEXT = process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
+var WEB_ALLOWED_ORIGINS = (process.env.WEB_ALLOWED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter((origin) => origin.length > 0);
+var CLIENT_PORT = process.env.CLIENT_PORT || "5173";
+var DEFAULT_CORS_ORIGINS = [
+  `http://localhost:${CLIENT_PORT}`,
+  // Vite dev server
+  "http://localhost:8080",
+  // Electron renderer dev server
+  `http://localhost:${SERVER_PORT}`,
+  // Hono server
+  `http://127.0.0.1:${SERVER_PORT}`,
+  // Hono server production
+  "https://staging.mcpjam.com"
+  // Hosted deployment
+];
+var CORS_ORIGINS = HOSTED_MODE && WEB_ALLOWED_ORIGINS.length > 0 ? WEB_ALLOWED_ORIGINS : Array.from(/* @__PURE__ */ new Set([...DEFAULT_CORS_ORIGINS, ...WEB_ALLOWED_ORIGINS]));
+var ELICITATION_FORM_TTL_MS = 5 * 6e4;
+var ELICITATION_URL_CONSENT_TTL_MS = 2 * 6e4;
+var ELICITATION_TIMEOUT_EXTENSION_MS = ELICITATION_FORM_TTL_MS + 3e4;
+var MRTR_CONTINUATION_TTL_MS = 10 * 6e4;
+var MRTR_CONTINUATION_ROUTE_TIMEOUT_MS = 1e4;
+var MRTR_CONTINUATION_LEASE_TTL_MS = 4 * MRTR_CONTINUATION_ROUTE_TIMEOUT_MS + WEB_CALL_TIMEOUT_MS + 6e4;
+var MRTR_RESUME_STATE_MAX_BYTES = 128 * 1024;
+var MRTR_DISPLAY_FIELD_MAX_BYTES = 16 * 1024;
+var MRTR_RESPONSE_CONTENT_MAX_BYTES = 64 * 1024;
+var MCPJAM_HOSTED_ORIGIN = process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") || "https://app.mcpjam.com";
+function parseAllowedHosts(raw) {
+  return raw ? raw.split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0) : [];
+}
+var ALLOWED_HOSTS = parseAllowedHosts(
+  process.env.MCPJAM_ALLOWED_HOSTS
+);
+var CANIUSE_LANDING_HOSTS = new Set(
+  (process.env.CANIUSE_LANDING_HOSTS ?? "caniuse.dev,www.caniuse.dev").split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0)
+);
+var SCORE_LANDING_HOSTS = new Set(
+  (process.env.SCORE_LANDING_HOSTS ?? "score.mcpjam.com,www.score.mcpjam.com").split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0)
+);
+var BARE_HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+function parseSandboxHosts(raw) {
+  return new Set(
+    raw.split(",").map((h) => h.trim().toLowerCase()).filter((h) => BARE_HOSTNAME.test(h))
+  );
+}
+var SANDBOX_HOSTS = parseSandboxHosts(
+  process.env.SANDBOX_HOSTS ?? "sandbox.mcpjam.com,sandbox-staging.mcpjam.com"
+);
+
+// server/services/browserd/local/security-policy.ts
+var BrowserPolicyError = class extends Error {
+  code = "browser_policy_refused";
+  constructor(message = "Browser access to this destination is not allowed.") {
+    super(`browser_policy_refused: ${message}`);
+    this.name = "BrowserPolicyError";
+  }
+};
+var controllerPorts = /* @__PURE__ */ new Map();
+var controllerOrigins = /* @__PURE__ */ new Map();
+function registerBrowserController(url) {
+  const parsed = new URL(url);
+  const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+  controllerOrigins.set(
+    parsed.origin,
+    (controllerOrigins.get(parsed.origin) ?? 0) + 1
+  );
+  const local = isMachineAddress(parsed.hostname);
+  if (local) controllerPorts.set(port, (controllerPorts.get(port) ?? 0) + 1);
+  let removed = false;
+  return () => {
+    if (removed) return;
+    removed = true;
+    for (const [map, key] of [
+      [controllerOrigins, parsed.origin],
+      [controllerPorts, port]
+    ]) {
+      if (map === controllerPorts && !local) continue;
+      const registry = map;
+      const count = registry.get(key) ?? 0;
+      if (count <= 1) registry.delete(key);
+      else registry.set(key, count - 1);
+    }
+  };
+}
+function host(raw) {
+  return raw.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+}
+function isMachineAddress(raw) {
+  const value = host(raw);
+  if (value === "localhost" || value.endsWith(".localhost") || value === "::1" || value === "::" || value === "0.0.0.0" || /^127\./.test(value))
+    return true;
+  if (value.startsWith("::ffff:")) {
+    const tail = value.slice(7);
+    if (tail.includes(".")) return isMachineAddress(tail);
+    const parts = tail.split(":");
+    if (parts.length === 2 && parts.every((p) => /^[\da-f]{1,4}$/.test(p))) {
+      const first = parseInt(parts[0], 16), last = parseInt(parts[1], 16);
+      return isMachineAddress(
+        `${first >> 8}.${first & 255}.${last >> 8}.${last & 255}`
+      );
+    }
+  }
+  return Object.values(networkInterfaces()).flat().some((a) => a && host(a.address) === value);
+}
+function secureDriverContext(context, policy) {
+  const pages = /* @__PURE__ */ new WeakMap();
+  let closed = false;
+  let stop;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    stop?.();
+    try {
+      await context.close();
+    } finally {
+      policy.dispose?.();
+    }
+  };
+  stop = policy.onRevoked(close);
+  function guard(page) {
+    const existing = pages.get(page);
+    if (existing) return existing;
+    const synchronous = /* @__PURE__ */ new Set([
+      "url",
+      "isClosed",
+      "consoleEntries",
+      "consoleCursor",
+      "dropConsoleSince",
+      "networkEntries",
+      "networkCursor",
+      "dropNetworkSince",
+      "pendingDialog"
+    ]);
+    const wrapped = new Proxy(page, {
+      get(target, key) {
+        const value = Reflect.get(target, key);
+        if (typeof value !== "function") return value;
+        if (key === "close" || key === "isClosed") return value.bind(target);
+        if (synchronous.has(String(key)))
+          return (...args) => {
+            if (!policy.isActive())
+              throw new BrowserPolicyError("Browser permission was revoked.");
+            return value.apply(target, args);
+          };
+        return async (...args) => {
+          await policy.assertActive();
+          if (key === "goto") policy.assertNavigation(args[0]);
+          if (key !== "goto" && !policy.allowsRequest(target.url()))
+            throw new BrowserPolicyError();
+          const result = await value.apply(target, args);
+          await policy.assertActive();
+          if ((key === "cdp" || key === "webmcp") && result) {
+            return new Proxy(result, {
+              get(rpc, method) {
+                const member = Reflect.get(rpc, method);
+                if (typeof member !== "function") return member;
+                if (!["send", "invoke"].includes(String(method)))
+                  return member.bind(rpc);
+                return async (...params) => {
+                  await policy.assertActive();
+                  if (!policy.allowsRequest(target.url()))
+                    throw new BrowserPolicyError();
+                  if (method === "send" && params[0] === "Page.navigate")
+                    policy.assertNavigation(params[1].url);
+                  const response = await member.apply(rpc, params);
+                  await policy.assertActive();
+                  return response;
+                };
+              }
+            });
+          }
+          return result;
+        };
+      }
+    });
+    pages.set(page, wrapped);
+    return wrapped;
+  }
+  return {
+    async newPage() {
+      await policy.assertActive();
+      const page = await context.newPage();
+      await policy.assertActive();
+      return guard(page);
+    },
+    ...context.onPageCreated ? {
+      onPageCreated: (listener) => context.onPageCreated(
+        (event) => listener({
+          ...event,
+          page: guard(event.page),
+          opener: guard(event.opener)
+        })
+      )
+    } : {},
+    isConnected: () => !closed && policy.isActive() && context.isConnected(),
+    close
+  };
+}
+
+// server/services/browserd/local/egress-proxy.ts
+async function startLocalBrowserProxy(policy) {
+  const username = "browser";
+  const password = randomBytes3(32).toString("hex");
+  const expected = Buffer.from(
+    `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
+  );
+  const sockets = /* @__PURE__ */ new Set();
+  let closed = false;
+  const authorized = (req) => {
+    const actual = Buffer.from(req.headers["proxy-authorization"] ?? "");
+    return !closed && policy.isActive() && actual.length === expected.length && timingSafeEqual2(actual, expected);
+  };
+  const server = createServer2(
+    { maxHeaderSize: 64 * 1024, requestTimeout: 12e4 },
+    async (req, res) => {
+      if (!authorized(req)) {
+        res.writeHead(407, {
+          "Proxy-Authenticate": 'Basic realm="MCPJam managed browser"'
+        });
+        res.end();
+        return;
+      }
+      try {
+        const target = new URL(req.url ?? "");
+        if (target.protocol !== "http:" || target.username || target.password || !policy.allowsRequest(target.href))
+          throw new Error("denied");
+        const address2 = await policy.resolveDestination(
+          target.hostname,
+          Number(target.port || 80)
+        );
+        if (closed || req.destroyed) throw new Error("closed");
+        const headers = {
+          ...req.headers,
+          host: target.host
+        };
+        delete headers["proxy-authorization"];
+        delete headers["proxy-connection"];
+        const upstream = request(
+          {
+            hostname: address2.address,
+            family: address2.family,
+            port: target.port || 80,
+            path: target.pathname + target.search,
+            method: req.method,
+            headers,
+            maxHeaderSize: 64 * 1024,
+            agent: false
+          },
+          (incoming) => {
+            res.writeHead(incoming.statusCode ?? 502, incoming.headers);
+            incoming.pipe(res);
+          }
+        );
+        upstream.on("socket", (socket) => track(socket));
+        upstream.on("error", () => {
+          if (!res.headersSent) res.writeHead(502);
+          res.end();
+        });
+        res.on("close", () => upstream.destroy());
+        req.pipe(upstream);
+      } catch {
+        res.writeHead(403);
+        res.end("Browser destination blocked.");
+      }
+    }
+  );
+  function track(socket) {
+    if (closed || sockets.size >= 256) {
+      socket.destroy();
+      return;
+    }
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    socket.on("error", () => socket.destroy());
+  }
+  server.maxConnections = 128;
+  server.on("connection", track);
+  server.on("clientError", (_error, socket) => socket.destroy());
+  const tunnel = async (req, downstream, head, upgrade) => {
+    if (!authorized(req)) {
+      downstream.end(
+        'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="MCPJam managed browser"\r\nConnection: close\r\n\r\n'
+      );
+      return;
+    }
+    try {
+      const target = new URL(upgrade ? req.url ?? "" : `https://${req.url}`);
+      if (!(upgrade ? ["http:", "ws:"] : ["https:"]).includes(target.protocol) || target.username || target.password || !policy.allowsRequest(target.href))
+        throw new Error("denied");
+      const destination = await policy.resolveDestination(
+        target.hostname,
+        Number(target.port || (upgrade ? 80 : 443))
+      );
+      if (closed || downstream.destroyed) throw new Error("closed");
+      const upstream = connect({
+        host: destination.address,
+        family: destination.family,
+        port: Number(target.port || (upgrade ? 80 : 443))
+      });
+      track(upstream);
+      upstream.setTimeout(3e4, () => {
+        if (upstream.connecting) upstream.destroy();
+      });
+      downstream.once("close", () => upstream.destroy());
+      upstream.once("close", () => downstream.destroy());
+      upstream.once("connect", () => {
+        upstream.setTimeout(0);
+        if (closed || !policy.isActive()) {
+          upstream.destroy();
+          return;
+        }
+        if (upgrade) {
+          const headers = Object.entries({
+            ...req.headers,
+            host: target.host
+          }).filter(
+            ([key]) => !["proxy-authorization", "proxy-connection"].includes(
+              key.toLowerCase()
+            )
+          );
+          upstream.write(
+            `${req.method} ${target.pathname}${target.search} HTTP/1.1\r
+${headers.map(
+              ([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`
+            ).join("\r\n")}\r
+\r
+`
+          );
+        } else downstream.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length) upstream.write(head);
+        downstream.pipe(upstream);
+        upstream.pipe(downstream);
+      });
+    } catch {
+      downstream.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+    }
+  };
+  server.on("connect", (req, socket, head) => {
+    void tunnel(req, socket, head, false);
+  });
+  server.on("upgrade", (req, socket, head) => {
+    void tunnel(req, socket, head, true);
+  });
+  await new Promise((resolve2, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve2();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("Browser network policy unavailable.");
+  const url = `http://127.0.0.1:${address.port}`;
+  const unregister = registerBrowserController(url);
+  let unsubscribe;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    unsubscribe?.();
+    unregister();
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve2) => server.close(() => resolve2()));
+  };
+  server.on("error", () => {
+    void close();
+  });
+  unsubscribe = policy.onRevoked(close);
+  return {
+    proxy: { server: url, username, password, bypass: "<-loopback>" },
+    close
+  };
+}
+
 // server/services/webmcp-inspector/launch-args.ts
 var WEBMCP_LAUNCH_ARGS = [
   "--enable-features=WebMCP"
@@ -8303,10 +8851,10 @@ async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, descri
   }
   const separator = target.lastIndexOf("-");
   if (separator <= 0) return { live: false };
-  const host = target.slice(0, separator);
+  const host2 = target.slice(0, separator);
   const pid = Number(target.slice(separator + 1));
   if (!Number.isInteger(pid) || pid <= 0) return { live: false };
-  if (host !== hostname()) return { live: true, pid, host };
+  if (host2 !== hostname()) return { live: true, pid, host: host2 };
   if (!isAlive(pid)) return { live: false, pid };
   const command = describeProcess(pid)?.trim();
   if (command && !looksLikeBrowser(command)) {
@@ -8370,7 +8918,7 @@ function warn(message) {
 }
 var ACT_TIMEOUT_MS = 15e3;
 var SCREENSHOT_JPEG_QUALITY = 70;
-function wrapPage(page) {
+function wrapPage(page, localSecurity = false, localBudget) {
   const consoleRing = [];
   let consoleTotal = 0;
   let errorsTotal = 0;
@@ -8393,33 +8941,33 @@ function wrapPage(page) {
   const network = new NetworkRing();
   const requestIds = /* @__PURE__ */ new WeakMap();
   let nextRequestId = 0;
-  const idFor = (request) => {
-    const known = requestIds.get(request);
+  const idFor = (request2) => {
+    const known = requestIds.get(request2);
     if (known) return known;
     nextRequestId += 1;
     const minted = `r${nextRequestId}`;
-    requestIds.set(request, minted);
+    requestIds.set(request2, minted);
     return minted;
   };
-  page.on("request", (request) => {
+  page.on("request", (request2) => {
     try {
       network.started({
-        requestId: idFor(request),
-        method: request.method?.() ?? "GET",
-        url: request.url?.() ?? "",
-        ...request.resourceType?.() ? { resourceType: request.resourceType() } : {}
+        requestId: idFor(request2),
+        method: request2.method?.() ?? "GET",
+        url: request2.url?.() ?? "",
+        ...request2.resourceType?.() ? { resourceType: request2.resourceType() } : {}
       });
     } catch {
     }
   });
   page.on("response", (response) => {
     try {
-      const request = response.request?.();
-      if (!request) return;
+      const request2 = response.request?.();
+      if (!request2) return;
       const headers = response.headers?.();
       const length = Number(headers?.["content-length"]);
       network.finished({
-        requestId: idFor(request),
+        requestId: idFor(request2),
         ...response.status ? { status: response.status() } : {},
         ...response.statusText?.() ? { statusText: response.statusText() } : {},
         ...Number.isFinite(length) ? { bytes: length } : {},
@@ -8428,11 +8976,11 @@ function wrapPage(page) {
     } catch {
     }
   });
-  page.on("requestfailed", (request) => {
+  page.on("requestfailed", (request2) => {
     try {
       network.finished({
-        requestId: idFor(request),
-        failure: request.failure?.()?.errorText ?? "request failed"
+        requestId: idFor(request2),
+        failure: request2.failure?.()?.errorText ?? "request failed"
       });
     } catch {
     }
@@ -8595,7 +9143,7 @@ function wrapPage(page) {
     webmcp() {
       webmcpPromise ??= (async () => {
         const session = await adapted.cdp();
-        return session ? attachWebMcp(page, session) : null;
+        return session ? attachWebMcp(page, session, localSecurity, localBudget) : null;
       })();
       return webmcpPromise;
     },
@@ -8610,13 +9158,13 @@ function wrapPage(page) {
   };
   return adapted;
 }
-async function attachWebMcp(page, session) {
+async function attachWebMcp(page, session, localSecurity = false, localBudget) {
   try {
     const probe = async () => {
       const supported = await page.evaluate(`(() => ${PAGE_API_PROBE})()`).catch(() => false);
       return supported === true;
     };
-    const bridge = new WebMcpBridge(session);
+    const bridge = new WebMcpBridge(session, { localSecurity, localBudget });
     bridge.resupport(probe);
     await bridge.start(probe);
     attachFrameSessions(page, bridge);
@@ -8683,55 +9231,116 @@ function contextOptionsFor(options) {
   return { ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: dpr };
 }
 async function launchBrowserdContext(options) {
+  const policy = options.securityPolicy;
+  if (policy) {
+    if (process.getuid?.() === 0)
+      throw new Error(
+        "Local Browser requires a non-root user so Chromium can remain sandboxed."
+      );
+    if (options.extraArgs?.some(
+      (arg) => /--(?:no-sandbox|disable-setuid-sandbox|disable-web-security|proxy|host-resolver|ignore-certificate-errors)/.test(
+        arg
+      )
+    ))
+      throw new Error("Unsafe local Browser launch override.");
+    await policy.assertActive();
+  }
+  if (policy && options.contextMode !== "ephemeral" && options.userDataDir) {
+    const { rm } = await import("node:fs/promises");
+    const { join: join4 } = await import("node:path");
+    for (const cache of ["Service Worker", "Cache", "Code Cache"]) {
+      await rm(join4(options.userDataDir, "Default", cache), {
+        recursive: true,
+        force: true
+      });
+    }
+  }
   const { chromium } = await import("playwright");
-  const launchArgs = {
-    headless: options.headless ?? false,
-    ...options.channel ? { channel: options.channel } : {},
-    ...options.executablePath ? { executablePath: options.executablePath } : {},
-    // Chromium cannot start its renderer sandbox as uid 0 (the image builds
-    // as root), so it is disabled only in that case.
-    chromiumSandbox: process.getuid?.() !== 0,
-    args: buildBrowserdLaunchArgs(options.extraArgs)
-  };
-  if (options.contextMode === "ephemeral") {
-    const browser = await chromium.launch(launchArgs);
-    let context2;
+  const proxy = policy ? await startLocalBrowserProxy(policy) : void 0;
+  const finish = async (context, onClose) => {
     try {
-      context2 = await browser.newContext({
-        acceptDownloads: false,
-        permissions: [],
-        // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
-        // whatever the box says, so eval captures match across hosts.
-        ...contextOptionsFor({ contextMode: "ephemeral" }),
-        deviceScaleFactor: options.deviceScaleFactor ?? 1
+      if (policy) {
+        await context.route("**/*", async (route) => {
+          if (!policy.allowsRequest(route.request().url()))
+            await route.abort("blockedbyclient");
+          else await route.continue();
+        });
+        for (const page of context.pages()) {
+          if (!policy.allowsRequest(page.url())) await page.close();
+        }
+      }
+      const adapted = adaptContext(context, {
+        localSecurity: Boolean(policy),
+        localBudget: policy?.discoveryBudget,
+        onClose: async () => {
+          try {
+            await onClose?.();
+          } finally {
+            await proxy?.close();
+          }
+        }
       });
+      return policy ? secureDriverContext(adapted, policy) : adapted;
     } catch (error) {
-      await browser.close().catch(() => {
+      await context.close().catch(() => {
       });
+      await onClose?.();
       throw error;
     }
-    return adaptContext(context2, {
-      // The browser outlives the context, so closing the context alone would
-      // leave a Chromium process behind in the box.
-      onClose: () => browser.close()
-    });
-  }
-  const cleared = await clearStaleSingletonLock(options.userDataDir);
-  if (cleared.heldBy) {
-    throw new Error(
-      `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+  };
+  try {
+    const launchArgs = {
+      ...proxy ? { proxy: proxy.proxy } : {},
+      headless: options.headless ?? false,
+      ...options.channel ? { channel: options.channel } : {},
+      ...options.executablePath ? { executablePath: options.executablePath } : {},
+      // Chromium cannot start its renderer sandbox as uid 0 (the image builds
+      // as root), so it is disabled only in that case.
+      chromiumSandbox: process.getuid?.() !== 0,
+      args: buildBrowserdLaunchArgs(options.extraArgs)
+    };
+    if (options.contextMode === "ephemeral") {
+      const browser = await chromium.launch(launchArgs);
+      let context2;
+      try {
+        context2 = await browser.newContext({
+          acceptDownloads: false,
+          permissions: [],
+          // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
+          // whatever the box says, so eval captures match across hosts.
+          ...contextOptionsFor({ contextMode: "ephemeral" }),
+          deviceScaleFactor: options.deviceScaleFactor ?? 1
+        });
+      } catch (error) {
+        await browser.close().catch(() => {
+        });
+        throw error;
+      }
+      return await finish(context2, () => browser.close());
+    }
+    const cleared = await clearStaleSingletonLock(options.userDataDir);
+    if (cleared.heldBy) {
+      throw new Error(
+        `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+      );
+    }
+    const context = await chromium.launchPersistentContext(
+      options.userDataDir,
+      {
+        ...launchArgs,
+        acceptDownloads: false,
+        permissions: [],
+        ...contextOptionsFor({
+          contextMode: "persistent",
+          ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
+        })
+      }
     );
+    return await finish(context);
+  } catch (error) {
+    await proxy?.close();
+    throw error;
   }
-  const context = await chromium.launchPersistentContext(options.userDataDir, {
-    ...launchArgs,
-    acceptDownloads: false,
-    permissions: [],
-    ...contextOptionsFor({
-      contextMode: "persistent",
-      ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
-    })
-  });
-  return adaptContext(context);
 }
 function adaptContext(context, options = {}) {
   const startup = [...context.pages()];
@@ -8748,7 +9357,11 @@ function adaptContext(context, options = {}) {
         (frame) => context.newCDPSession(frame)
       );
     }
-    const driverPage = wrapPage(page);
+    const driverPage = wrapPage(
+      page,
+      options.localSecurity,
+      options.localBudget
+    );
     wrapped.set(page, driverPage);
     page.on("popup", (popup) => {
       const child = adopt(popup);
@@ -8883,7 +9496,7 @@ async function resizeHostedDisplay(deps, next, previous) {
 }
 
 // server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes3 } from "node:crypto";
+import { createHash as createHash2, randomBytes as randomBytes4 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
@@ -8954,7 +9567,7 @@ function readRecordMaxBytes(env) {
   return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 function defaultMintToken(path) {
-  const token = randomBytes3(32).toString("hex");
+  const token = randomBytes4(32).toString("hex");
   writeFileSync(path, token, { encoding: "utf8", mode: 384 });
   chmodSync(path, 384);
   return token;
@@ -8981,10 +9594,10 @@ function extraArgsFor(config) {
   }
   return args;
 }
-function formatReadyLine(host, port, bootId, protocolVersion) {
+function formatReadyLine(host2, port, bootId, protocolVersion) {
   return JSON.stringify({
     event: "listening",
-    host,
+    host: host2,
     port,
     bootId,
     ...protocolVersion === void 0 ? {} : { protocolVersion }

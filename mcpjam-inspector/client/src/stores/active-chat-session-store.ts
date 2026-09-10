@@ -6,6 +6,8 @@ interface BrowserLocation {
   engine: "local" | "cloud";
 }
 interface ActiveChatSessionState {
+  approvalSettings: Record<string, boolean>;
+  setApprovalSetting: (id: string, enabled: boolean) => void;
   sessionId: string | null;
   browserLocation: BrowserLocation | null;
   setBrowserLocation: (location: BrowserLocation) => void;
@@ -23,6 +25,11 @@ interface ActiveChatSessionState {
  */
 export const useActiveChatSessionStore = create<ActiveChatSessionState>(
   (set) => ({
+    approvalSettings: {},
+    setApprovalSetting: (id, enabled) =>
+      set((state) => ({
+        approvalSettings: { ...state.approvalSettings, [id]: enabled },
+      })),
     sessionId: null,
     browserLocation: null,
     setBrowserLocation: (browserLocation) => set({ browserLocation }),

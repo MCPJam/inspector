@@ -1,3 +1,10 @@
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => ({
+    granted: true,
+    token: "test-consent",
+    grant: vi.fn(async () => true),
+  }),
+}));
 /**
  * The export buttons are the surface's takeaway: whatever the session recorded
  * leaves as a file. A download that silently does nothing is the one failure
@@ -89,7 +96,9 @@ describe("WebmcpInspectorTab — export", () => {
     clipboard.copy.mockClear();
     const view = render(<WebmcpInspectorTab />);
     const user = await openMoreActions();
-    await user.click(screen.getByRole("menuitem", { name: "Copy diagnostics" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "Copy diagnostics" }),
+    );
     await Promise.resolve();
 
     const copied = JSON.parse(String(clipboard.copy.mock.calls[0]![0]));
@@ -176,6 +185,8 @@ describe("WebmcpInspectorTab — export", () => {
   it("offers no export for a session with an empty timeline", () => {
     useWebmcpInspectorStore.setState({ activity: [] });
     render(<WebmcpInspectorTab />);
-    expect(screen.queryByRole("button", { name: "Export activity" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Export activity" }),
+    ).toBeNull();
   });
 });
