@@ -19,6 +19,7 @@ import {
   Users,
   ShieldCheck,
   Loader2,
+  ExternalLink,
   Layers,
   Cable,
   MessagesSquare,
@@ -538,18 +539,31 @@ export function MCPSidebar({
   const {
     status: updateStatus,
     restartRequested,
+    downloadManually,
     restartAndInstall,
   } = useUpdateNotification();
   const showUpdateButton =
-    updateStatus.kind === "pending" || updateStatus.kind === "downloaded";
+    updateStatus.kind === "pending" ||
+    updateStatus.kind === "downloaded" ||
+    updateStatus.kind === "manual";
+  // Auto-update announced a build it then failed to install. The pill has to
+  // stay — there IS a newer version — but it must stop offering an in-app
+  // install that has already proven it cannot happen, or the user is back to
+  // clicking a control that does nothing.
+  const updateIsManual = updateStatus.kind === "manual";
   // Two ways to be mid-install, and both must disable the button: waiting on a
   // download that was asked to install when it finishes, and waiting on the
   // app to quit for one already downloaded. The second is the one a repeat
   // click used to get through.
   const updateInstalling =
-    restartRequested ||
-    (updateStatus.kind === "pending" && updateStatus.installRequested);
+    !updateIsManual &&
+    (restartRequested ||
+      (updateStatus.kind === "pending" && updateStatus.installRequested));
   const handleUpdateClick = () => {
+    if (updateIsManual) {
+      downloadManually();
+      return;
+    }
     if (!updateInstalling) {
       restartAndInstall();
     }
@@ -797,7 +811,14 @@ export function MCPSidebar({
                 {updateInstalling && (
                   <Loader2 className="size-2.5 animate-spin" aria-hidden />
                 )}
-                {updateInstalling ? "Updating…" : "Update"}
+                {updateIsManual && (
+                  <ExternalLink className="size-2.5" aria-hidden />
+                )}
+                {updateIsManual
+                  ? "Download update"
+                  : updateInstalling
+                  ? "Updating…"
+                  : "Update"}
               </Button>
             </div>
           )}

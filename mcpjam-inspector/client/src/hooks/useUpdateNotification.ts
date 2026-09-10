@@ -20,6 +20,12 @@ export function useUpdateNotification() {
    */
   const [restartRequested, setRestartRequested] = useState(false);
 
+  const downloadManually = useCallback(() => {
+    window.electronAPI?.app?.openExternal(RELEASES_URL)?.catch((error) => {
+      console.warn("Failed to open releases page", error);
+    });
+  }, []);
+
   useEffect(() => {
     if (!window.isElectron || !window.electronAPI?.update) {
       return;
@@ -44,13 +50,7 @@ export function useUpdateNotification() {
       toast.error("Update failed. Try again later.", {
         action: {
           label: "Download manually",
-          onClick: () => {
-            window.electronAPI?.app
-              ?.openExternal(RELEASES_URL)
-              ?.catch((error) => {
-                console.warn("Failed to open releases page", error);
-              });
-          },
+          onClick: downloadManually,
         },
       });
     });
@@ -72,7 +72,8 @@ export function useUpdateNotification() {
       window.electronAPI?.update?.removeUpdateStatusListener();
       window.electronAPI?.update?.removeUpdateErrorListener();
     };
-  }, []);
+    // `downloadManually` is stable, so this stays a mount-once effect.
+  }, [downloadManually]);
 
   const restartAndInstall = useCallback(() => {
     setRestartRequested(true);
@@ -94,6 +95,7 @@ export function useUpdateNotification() {
   return {
     status,
     restartRequested,
+    downloadManually,
     restartAndInstall,
     simulateUpdate,
     simulateUpdateDownloaded,

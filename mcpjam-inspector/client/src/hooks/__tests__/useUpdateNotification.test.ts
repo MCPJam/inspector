@@ -288,6 +288,27 @@ describe("useUpdateNotification", () => {
     });
   });
 
+  describe("downloadManually", () => {
+    it("opens the releases page", () => {
+      // The escape hatch behind the `manual` status: auto-update announced a
+      // build it could not install, so the pill stops offering an in-app
+      // install and sends the user somewhere that works.
+      setupElectronMock();
+      const mockOpenExternal = vi.fn().mockResolvedValue(undefined);
+      (window.electronAPI as any).app = { openExternal: mockOpenExternal };
+
+      const { result } = renderHook(() => useUpdateNotification());
+
+      act(() => {
+        result.current.downloadManually();
+      });
+
+      expect(mockOpenExternal).toHaveBeenCalledWith(
+        "https://github.com/MCPJam/inspector/releases",
+      );
+    });
+  });
+
   describe("simulateUpdate", () => {
     it("calls the Electron simulate API", () => {
       const {
