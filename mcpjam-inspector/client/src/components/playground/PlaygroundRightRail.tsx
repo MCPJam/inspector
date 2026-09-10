@@ -1,7 +1,3 @@
-import {
-  applyBrowserOverride,
-  usePlaygroundBrowserOverride,
-} from "./playground-browser-override";
 import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
 import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { useAppNavigate } from "@/lib/app-navigation";
@@ -131,11 +127,7 @@ function RightRailTabbed({
   // harmless (the engine hooks no-op without a shared project) and deliberate.
   const engine = useComputerEngine(projectId);
   const browserEngine = useBrowserEngine(projectId);
-  const override = usePlaygroundBrowserOverride();
-  const browserToolIds = applyBrowserOverride(
-    hostConfig?.builtInToolIds,
-    browserEngine.environmentMode ? null : override,
-  );
+  const browserToolIds = hostConfig?.builtInToolIds;
   // The BODY follows `selectedEngine` (consent-blind), mirroring the Computer
   // tab's face choice: someone who picked "This machine" but hasn't authorized
   // it yet must see the local body's pointer, not a cloud terminal they didn't

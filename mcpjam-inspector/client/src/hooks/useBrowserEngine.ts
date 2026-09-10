@@ -79,7 +79,11 @@ export function useBrowserEngine(
     resolved: config !== undefined,
     localAvailable,
     cloudAvailable,
-    toggleVisible: !HOSTED_MODE && !environmentMode,
+    // Same rule as the Computer tab: a location picker only exists when
+    // both engines are real options. `cloudAvailable` already includes the
+    // hosted-browser rollout, so a local-only launch never offers Cloud.
+    toggleVisible:
+      !HOSTED_MODE && !environmentMode && localAvailable && cloudAvailable,
     environmentMode,
     consent,
   };

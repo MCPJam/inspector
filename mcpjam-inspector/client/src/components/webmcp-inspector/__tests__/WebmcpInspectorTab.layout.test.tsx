@@ -1,7 +1,8 @@
+const consentState = vi.hoisted(() => ({ granted: true }));
 vi.mock("@/hooks/useLocalBrowserConsent", () => ({
   useLocalBrowserConsent: () => ({
-    granted: true,
-    token: "test-consent",
+    granted: consentState.granted,
+    token: consentState.granted ? "test-consent" : null,
     grant: vi.fn(async () => true),
   }),
 }));
@@ -82,6 +83,7 @@ const ACTIVITY: WebMcpActivityEntry[] = [
 describe("WebmcpInspectorTab — three-panel workspace", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    consentState.granted = true;
     useWebmcpInspectorStore.setState({
       session: SESSION,
       tools: [TOOL],
@@ -171,5 +173,34 @@ describe("WebmcpInspectorTab — three-panel workspace", () => {
     expect(screen.getByText("https://checkout.test")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Description" }));
     expect(screen.getByText("Add a topping from checkout")).toBeInTheDocument();
+  });
+
+  it("closes the session from the tools menu, not a second chrome bar", async () => {
+    const user = userEvent.setup();
+    const closeSession = vi.fn(async () => {});
+    useWebmcpInspectorStore.setState({ closeSession });
+    render(<WebmcpInspectorTab />);
+
+    expect(screen.queryByRole("button", { name: "Close browser" })).toBeNull();
+    expect(
+      screen.queryByText(/This page is running in the pane below/),
+    ).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close browser" }));
+    expect(closeSession).toHaveBeenCalled();
+  });
+
+  it("centers the local-browser consent gate in the chrome panel", () => {
+    consentState.granted = false;
+    render(<WebmcpInspectorTab />);
+    const gate = screen.getByTestId("local-browser-consent-gate");
+    expect(gate.parentElement).toHaveClass(
+      "flex",
+      "h-full",
+      "flex-1",
+      "items-center",
+      "justify-center",
+    );
   });
 });
