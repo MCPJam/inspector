@@ -140,11 +140,15 @@ MCPJam supports multiple LLM providers:
 <Step title="Install Dependencies">```bash npm install ```</Step>
 
 <Step title="Set Environment Variables">
-  Copy the sample env file into the inspector workspace, then add your provider
-  keys to it. The path matters: the dev server and the Electron app both read
-  `mcpjam-inspector/.env.development`, not a `.env` at the repo root. ```bash cp
-  mcpjam-inspector/.env.local mcpjam-inspector/.env.development #
-  OPENAI_API_KEY=your_key_here # ANTHROPIC_API_KEY=your_key_here ```
+  Copy the sample env file into the inspector workspace:
+
+  ```bash
+  cp mcpjam-inspector/.env.local mcpjam-inspector/.env.development
+  ```
+
+  Then add your provider keys to it (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and
+  any others you use). The path matters: the dev server and the Electron app
+  both read `mcpjam-inspector/.env.development`, not a `.env` at the repo root.
 </Step>
 
   <Step title="Start Development Server">
