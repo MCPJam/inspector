@@ -1,113 +1,77 @@
-diff --git a/.changeset/republish-inspector-cli-sdk.md b/.changeset/republish-inspector-cli-sdk.md
+diff --git a/.changeset/friendly-browsers-recover.md b/.changeset/friendly-browsers-recover.md
 deleted file mode 100644
-index 39364923c..000000000
---- a/.changeset/republish-inspector-cli-sdk.md
+index 9755a4070..000000000
+--- a/.changeset/friendly-browsers-recover.md
 +++ /dev/null
-@@ -1,9 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
--"@mcpjam/cli": patch
--"@mcpjam/sdk": patch
 ----
 -
--Cut a fresh patch of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
--
--The last release job reported `@mcpjam/sdk@8.7.0` as published, but that version never reached the npm registry — `latest` is still 8.6.0, while `@mcpjam/cli@5.7.0` and `@mcpjam/inspector@3.4.0` from the same run did land. This changeset is a version bump only, with no code changes, so the release job re-publishes the three packages together and the SDK on npm catches up with main.
-diff --git a/cli/package.json b/cli/package.json
-index 0c904bd8a..41ee7c463 100644
---- a/cli/package.json
-+++ b/cli/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/cli",
--  "version": "5.7.0",
-+  "version": "5.7.1",
-   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
-   "type": "module",
-   "main": "dist/index.js",
-@@ -20,7 +20,7 @@
-     "prepublishOnly": "npm run build"
-   },
-   "dependencies": {
--    "@mcpjam/sdk": "^8.7.0",
-+    "@mcpjam/sdk": "^8.7.1",
-     "@modelcontextprotocol/server": "2.0.0",
-     "commander": "^14.0.3",
-     "posthog-node": "^5.24.10",
+-Fix comparison browser controls leaving browser access blocked before the next chat turn. Make Chromium installation and recovery available before a comparison browser starts, and notify consent subscribers once when clearing browser permission.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index c809d2ff3..dc8c24353 100644
+index ea2df04d2..7731fc822 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.4.0",
-+  "version": "3.4.1",
+-  "version": "3.5.1",
++  "version": "3.5.2",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -139,7 +139,7 @@
-     "@hookform/resolvers": "^3.10.0",
-     "@lezer/highlight": "^1.2.3",
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.7.0",
-+    "@mcpjam/sdk": "^8.7.1",
-     "@modelcontextprotocol/client": "2.0.0",
-     "@modelcontextprotocol/ext-apps": "^1.7.4",
-     "@novnc/novnc": "^1.7.0",
 diff --git a/package-lock.json b/package-lock.json
-index d1d880568..20ccd1a66 100644
+index bc625c390..4515c9cb1 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -62,9 +62,9 @@
-     },
-     "cli": {
-       "name": "@mcpjam/cli",
--      "version": "5.7.0",
-+      "version": "5.7.1",
-       "dependencies": {
--        "@mcpjam/sdk": "^8.7.0",
-+        "@mcpjam/sdk": "^8.7.1",
-         "@modelcontextprotocol/server": "2.0.0",
-         "commander": "^14.0.3",
-         "posthog-node": "^5.24.10",
 @@ -400,7 +400,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.4.0",
-+      "version": "3.4.1",
+-      "version": "3.5.1",
++      "version": "3.5.2",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -435,7 +435,7 @@
-         "@hookform/resolvers": "^3.10.0",
-         "@lezer/highlight": "^1.2.3",
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.7.0",
-+        "@mcpjam/sdk": "^8.7.1",
-         "@modelcontextprotocol/client": "2.0.0",
-         "@modelcontextprotocol/ext-apps": "^1.7.4",
-         "@novnc/novnc": "^1.7.0",
-@@ -39279,7 +39279,7 @@
-     },
-     "sdk": {
-       "name": "@mcpjam/sdk",
--      "version": "8.7.0",
-+      "version": "8.7.1",
+@@ -8198,9 +8198,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
        "license": "MIT",
-       "dependencies": {
-         "@ai-sdk/amazon-bedrock": "^3.0.101",
-diff --git a/sdk/package.json b/sdk/package.json
-index 33bbd0ae1..c7aa75d4b 100644
---- a/sdk/package.json
-+++ b/sdk/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/sdk",
--  "version": "8.7.0",
-+  "version": "8.7.1",
-   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
-   "type": "module",
-   "main": "dist/index.js",
+       "optional": true,
+       "os": [
+@@ -8217,9 +8214,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -8236,9 +8230,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -8255,9 +8246,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [

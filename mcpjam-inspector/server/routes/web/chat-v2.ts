@@ -1683,7 +1683,21 @@ chatV2.post("/", async (c) => {
     // `peekPageTools`). A turn that was not going to drive one pays nothing,
     // and a failure of any kind means "no page tools this turn" rather than a
     // failed conversation.
+    // One owner for discovery AND execution; never infer it from the visible pane.
+    const browserSessionScope =
+      body.browserScope === "conversation" &&
+      body.chatSessionId &&
+      !isScenarioSession
+        ? {
+            kind: "conversation" as const,
+            sessionId: body.chatSessionId,
+            ...(hostId ? { hostId } : {}),
+          }
+        : undefined;
     const pageToolsPeek = await peekPageToolsForChatTurn({
+      ...(browserSessionScope
+        ? { conversationId: browserSessionScope.sessionId }
+        : {}),
       builtInToolIds: resolvedExecution.builtInToolIds,
       browserToolId: BROWSER_BUILT_IN_TOOL_ID,
       firstClass: webmcpPageToolsMode() === "first_class",
@@ -1766,17 +1780,7 @@ chatV2.post("/", async (c) => {
         // A Playground conversation owns one durable browser identity. It is
         // resolved lazily by the browser tool on first use, so merely opening
         // the chat does not provision a paid desktop.
-        ...(body.browserScope === "conversation" &&
-        body.chatSessionId &&
-        !isScenarioSession
-          ? {
-              browserSessionScope: {
-                kind: "conversation" as const,
-                sessionId: body.chatSessionId,
-                ...(hostId ? { hostId } : {}),
-              },
-            }
-          : {}),
+        ...(browserSessionScope ? { browserSessionScope } : {}),
         ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
         // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset as
         // a constructor argument and never re-reads it, so claiming it here

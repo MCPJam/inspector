@@ -10,6 +10,56 @@ const holders = new Map<string, Holder>();
 const keyFor = (projectId: string | null, sessionId?: string | null) =>
   JSON.stringify([projectId, sessionId ?? null]);
 
+type CommandHandoff = {
+  settled: Promise<void>;
+  release: () => Promise<void>;
+  releaseInFlight?: Promise<void>;
+};
+// Tab-strip commands can hold a browser that has never had a mounted renderer.
+// Keep these separate from pane registrations, which may mount/unmount while a
+// command is still in flight and must not overwrite its pending handoff.
+const commandHandoffs = new Map<string, Set<CommandHandoff>>();
+
+export function runBrowserCommandWithHandoff<T>(args: {
+  projectId: string;
+  sessionId: string;
+  send: () => Promise<T>;
+  release: () => Promise<void>;
+}): Promise<T> {
+  const key = keyFor(args.projectId, args.sessionId);
+  const pending = Promise.resolve().then(args.send);
+  const handoff: CommandHandoff = {
+    // Even an error can follow acquisition (for example a stale page). A lost
+    // response is not evidence that the daemon did not acquire the lease.
+    settled: pending.then(
+      () => {},
+      () => {},
+    ),
+    release: args.release,
+  };
+  const entries = commandHandoffs.get(key) ?? new Set<CommandHandoff>();
+  entries.add(handoff);
+  commandHandoffs.set(key, entries);
+  return pending;
+}
+
+async function releaseCommandHandoffs(key: string): Promise<void> {
+  const entries = commandHandoffs.get(key);
+  if (!entries) return;
+  for (const handoff of entries) {
+    handoff.releaseInFlight ??= handoff.settled
+      .then(handoff.release)
+      .then(() => {
+        entries.delete(handoff);
+        if (!entries.size) commandHandoffs.delete(key);
+      })
+      .finally(() => {
+        handoff.releaseInFlight = undefined;
+      });
+    await handoff.releaseInFlight;
+  }
+}
+
 /** The holder survives closing the panel: the browser lease does too. */
 export function useBrowserChatHandoff({
   projectId,
@@ -48,6 +98,7 @@ export async function releaseBrowserForChat(
 ): Promise<void> {
   if (!projectId) return;
   const key = keyFor(projectId, sessionId);
+  if (commandHandoffs.has(key)) await releaseCommandHandoffs(key);
   const holder = holders.get(key);
   if (!holder) return;
   if (!holder.releaseInFlight && holder.holding) {

@@ -147,6 +147,8 @@ export type HostConfigHarnessV2 = Harness;
  * write path stops sending server fields.
  */
 export type HostConfigInputV2 = {
+  /** Editor-only metadata, saved on the client rather than its immutable config. */
+  localBrowserEnabled?: boolean;
   hostStyle: HostStyleId;
   modelId: string;
   systemPrompt: string;
@@ -261,6 +263,8 @@ export type HostConfigInputV2 = {
  * can detect "no change" vs "modified" and skip unnecessary writes.
  */
 export type HostConfigDtoV2 = {
+  /** Effective shared local setting (client override or project default). */
+  localBrowserEnabled?: boolean;
   id: string;
   schemaVersion: number;
   hostStyle: HostStyleId;
@@ -1183,6 +1187,7 @@ export function hostConfigInputsEqual(
   // Order-insensitive, same semantics as server ids — toggling a built-in
   // marks the draft dirty in the host/project/eval editors.
   if (!stringArrayEq(a.builtInToolIds, b.builtInToolIds)) return false;
+  if (a.localBrowserEnabled !== b.localBrowserEnabled) return false;
   // Computer: presence, KIND and workdir. Attaching/detaching or changing the
   // workdir marks the draft dirty. `kind` is compared because it is no longer
   // always 'personal' — a run's pinned config can carry the platform-minted

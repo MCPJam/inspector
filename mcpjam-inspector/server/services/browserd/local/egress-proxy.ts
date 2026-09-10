@@ -1,11 +1,27 @@
 /** Local browser egress only. No TLS interception, body capture, or direct fallback. */
 import { createServer, request, type IncomingMessage } from "node:http";
-import { connect, type Socket } from "node:net";
+import { connect, type LookupFunction, type Socket } from "node:net";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   registerBrowserController,
   type LocalBrowserSecurityPolicy,
 } from "./security-policy.js";
+
+// Let Node try both address families, but only from the DNS answer already
+// checked by the policy. Never resolve again during connection fallback.
+function pinnedAddressOptions(
+  addresses: Array<{ address: string; family: number }>,
+) {
+  const lookup: LookupFunction = (_hostname, options, callback) => {
+    if (options.all) callback(null, addresses);
+    else callback(null, addresses[0].address, addresses[0].family);
+  };
+  return {
+    lookup,
+    autoSelectFamily: true,
+    autoSelectFamilyAttemptTimeout: 250,
+  };
+}
 
 export async function startLocalBrowserProxy(
   policy: LocalBrowserSecurityPolicy,
@@ -45,7 +61,7 @@ export async function startLocalBrowserProxy(
           !policy.allowsRequest(target.href)
         )
           throw new Error("denied");
-        const address = await policy.resolveDestination(
+        const addresses = await policy.resolveDestination(
           target.hostname,
           Number(target.port || 80),
         );
@@ -58,8 +74,8 @@ export async function startLocalBrowserProxy(
         delete headers["proxy-connection"];
         const upstream = request(
           {
-            hostname: address.address,
-            family: address.family,
+            hostname: target.hostname.replace(/^\[|\]$/g, ""),
+            ...pinnedAddressOptions(addresses),
             port: target.port || 80,
             path: target.pathname + target.search,
             method: req.method,
@@ -120,14 +136,14 @@ export async function startLocalBrowserProxy(
         !policy.allowsRequest(target.href)
       )
         throw new Error("denied");
-      const destination = await policy.resolveDestination(
+      const addresses = await policy.resolveDestination(
         target.hostname,
         Number(target.port || (upgrade ? 80 : 443)),
       );
       if (closed || downstream.destroyed) throw new Error("closed");
       const upstream = connect({
-        host: destination.address,
-        family: destination.family,
+        host: target.hostname.replace(/^\[|\]$/g, ""),
+        ...pinnedAddressOptions(addresses),
         port: Number(target.port || (upgrade ? 80 : 443)),
       });
       track(upstream);

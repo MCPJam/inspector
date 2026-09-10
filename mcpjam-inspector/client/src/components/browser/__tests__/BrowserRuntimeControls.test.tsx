@@ -1,3 +1,4 @@
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
@@ -5,14 +6,17 @@ const state = vi.hoisted(() => ({
   setEngine: vi.fn(),
   newChat: vi.fn(async () => true),
   revoke: vi.fn(),
+  grant: vi.fn(async () => true),
+  toggleVisible: true,
 }));
 vi.mock("@/hooks/useBrowserEngine", () => ({
   useBrowserEngine: () => ({
     selectedEngine: "local",
-    toggleVisible: true,
+    toggleVisible: state.toggleVisible,
     resolved: true,
     localAvailable: true,
-    consent: { granted: true, revoke: state.revoke },
+    cloudAvailable: state.toggleVisible,
+    consent: { granted: true, revoke: state.revoke, grant: state.grant },
     setEngine: state.setEngine,
   }),
 }));
@@ -34,6 +38,7 @@ import { BrowserRuntimeControls } from "../BrowserRuntimeControls";
 beforeEach(() => {
   vi.clearAllMocks();
   state.sessionId = "chat-1";
+  state.toggleVisible = true;
   state.newChat.mockResolvedValue(true);
 });
 it("changes a bound location only after a new chat succeeds", async () => {
@@ -61,6 +66,15 @@ it("revokes only through the Browser permission controller", () => {
   expect(state.revoke).toHaveBeenCalledOnce();
 });
 
+it("offers existing grants explicit shared setup without applying it on mount", async () => {
+  render(<BrowserRuntimeControls projectId="p" settings />);
+  expect(state.grant).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Enable for all clients" }));
+  expect(state.grant).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+  await waitFor(() => expect(state.grant).toHaveBeenCalledOnce());
+});
+
 it("keeps runtime controls in the compact options menu", async () => {
   render(<BrowserRuntimeControls projectId="p" compact />);
   expect(screen.queryByLabelText("Browser location")).toBeNull();
@@ -75,4 +89,13 @@ it("changes the personal preference without resetting or starting a chat", () =>
   fireEvent.change(screen.getByLabelText("Browser location"), { target: { value: "cloud" } });
   expect(state.setEngine).toHaveBeenCalledWith("cloud");
   expect(state.newChat).not.toHaveBeenCalled();
+});
+
+it("hides Cloud location chrome when only This machine is offered", () => {
+  state.toggleVisible = false;
+  render(<BrowserRuntimeControls projectId="p" settings />);
+  expect(screen.queryByLabelText("Browser location")).toBeNull();
+  expect(screen.queryByText(/environments use Cloud/)).toBeNull();
+  expect(screen.queryByText("Cloud")).toBeNull();
+  expect(screen.getByText("Browser authorized")).toBeInTheDocument();
 });

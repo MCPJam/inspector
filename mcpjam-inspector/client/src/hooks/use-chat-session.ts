@@ -1,4 +1,5 @@
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
+import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 /**
@@ -3330,12 +3331,13 @@ export function useChatSession(
   const latestTransportRef = useRef<ChatTransport<UIMessage>>(transport);
   latestTransportRef.current = transport;
   const proxyTransport = useMemo<ChatTransport<UIMessage>>(
-    () => ({
-      sendMessages: (options) =>
-        latestTransportRef.current.sendMessages(options),
-      reconnectToStream: (options) =>
-        latestTransportRef.current.reconnectToStream(options),
-    }),
+    () =>
+      withWebMcpTraffic({
+        sendMessages: (options) =>
+          latestTransportRef.current.sendMessages(options),
+        reconnectToStream: (options) =>
+          latestTransportRef.current.reconnectToStream(options),
+      }),
     [],
   );
 

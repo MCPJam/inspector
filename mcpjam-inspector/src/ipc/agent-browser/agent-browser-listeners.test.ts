@@ -215,6 +215,36 @@ describe("agent-browser:capability", () => {
 });
 
 describe("agent-browser:set-viewport", () => {
+  it("does not reattach a view when an older show finishes after hide", async () => {
+    const surface = createContextSurface({ authority: "shared" });
+    const view = fakeView();
+    surface.registerTab(view);
+    let finishShow!: (valid: boolean) => void;
+    const verifyConsent = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishShow = resolve;
+          }),
+      )
+      .mockResolvedValue(true);
+    const api = install({
+      surfaces: new Map([["boot-1", surface]]),
+      verifyConsent,
+    });
+    const show = api.setViewport({
+      bootId: "boot-1",
+      visible: true,
+      bounds: BOUNDS,
+    });
+    await api.setViewport({ bootId: "boot-1", visible: false });
+    finishShow(true);
+    await show;
+    expect(surface.isShown()).toBe(false);
+    expect(window_.children).not.toContain(view);
+  });
+
   const withSurface = (holder = "rail-1") => {
     const surface = createContextSurface();
     const view = fakeView();

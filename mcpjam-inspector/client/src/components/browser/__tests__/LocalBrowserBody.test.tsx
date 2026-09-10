@@ -1,4 +1,8 @@
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { id: "member" } }),
+}));
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
+import { useBrowserPageToolsStore } from "@/stores/browser-page-tools-store";
 import { beforeAll } from "vitest";
 beforeAll(() => {
   window.PointerEvent = MouseEvent as typeof PointerEvent;
@@ -174,6 +178,7 @@ vi.mock("@/lib/local-browser/client", async () => {
 });
 
 import { LocalBrowserBody } from "../LocalBrowserBody";
+import { BrowserWorkspaceChrome } from "../BrowserWorkspaceChrome";
 
 beforeEach(() => {
   api.workspaceEnabled = true;
@@ -248,12 +253,85 @@ function renderBody(over: Record<string, unknown> = {}) {
 }
 
 describe("the agent browser pane", () => {
+  it("offers Chromium installation before a comparison session exists", async () => {
+    api.status = {
+      ...api.status,
+      installed: false,
+      install: { status: "idle" },
+    } as typeof api.status;
+    render(
+      <BrowserWorkspaceChrome.Provider
+        value={{ holderId: "comparison-holder" }}
+      >
+        <LocalBrowserBody
+          projectId="proj-1"
+          sessionId="cursor-session"
+          consentGranted
+          consentToken="tok"
+        />
+      </BrowserWorkspaceChrome.Provider>,
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Install Chromium" }),
+    );
+    expect(api.installs).toBe(1);
+    expect(api.ensures).toEqual([]);
+  });
+
+  it("notifies comparison chrome when an existing session is discovered", async () => {
+    const ready = vi.fn();
+    api.lookup.mockResolvedValue({
+      bootId: "existing",
+      lease: { state: "free" },
+    });
+    render(
+      <BrowserWorkspaceChrome.Provider
+        value={{ holderId: "comparison-holder" }}
+      >
+        <LocalBrowserBody
+          projectId="proj-1"
+          sessionId="cursor-session"
+          consentGranted
+          consentToken="tok"
+          onSessionReady={ready}
+        />
+      </BrowserWorkspaceChrome.Provider>,
+    );
+    await waitFor(() => expect(ready).toHaveBeenCalledOnce());
+    expect(api.ensures).toEqual([]);
+  });
+
+  it("only attaches to existing sessions when viewing a comparison client", async () => {
+    render(
+      <BrowserWorkspaceChrome.Provider
+        value={{ clientName: "Cursor", holderId: "comparison-holder" }}
+      >
+        <LocalBrowserBody
+          projectId="proj-1"
+          sessionId="cursor-session"
+          consentGranted
+          consentToken="tok"
+        />
+      </BrowserWorkspaceChrome.Provider>,
+    );
+    await waitFor(() =>
+      expect(api.lookup).toHaveBeenCalledWith(
+        "proj-1",
+        "tok",
+        "cursor-session",
+      ),
+    );
+    expect(api.ensures).toEqual([]);
+    expect(api.streams).toEqual([]);
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+  });
+
   it("grants Browser-only consent from the Browser panel", async () => {
     const view = renderBody({ consentGranted: false });
     expect(await screen.findByTestId("rail-browser-unconsented")).toBeTruthy();
     expect(screen.queryByText(/Open the Computer tab/)).toBeNull();
     expect(
-      screen.getByText(/permission does not authorize shell commands/),
+      screen.getByText(/Allow agents to navigate, click, type, and read pages/),
     ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Allow" }));
     expect(grantConsent).toHaveBeenCalled();
@@ -777,6 +855,44 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(api.socket).toBeNull();
     expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+  });
+
+  it("publishes page-tool changes without a frame socket", async () => {
+    asDesktopApp();
+    useBrowserPageToolsStore.setState({ live: {}, epoch: {} });
+    api.state = {
+      seq: 1,
+      tabs: [
+        {
+          id: "pizza-tab",
+          url: "https://pizza.test",
+          title: "Pizza",
+          loading: false,
+          navCounter: 0,
+        },
+      ],
+      activeTabId: "pizza-tab",
+      canGoBack: false,
+      canGoForward: false,
+      viewport: { width: 1024, height: 768, revision: 0 },
+      policy: "fixed",
+      control: { kind: "agent" },
+      webmcp: { revision: 4, hash: "pizza", count: 7 },
+    };
+    renderBody();
+    await screen.findByTestId("rail-browser-native-slot");
+    await waitFor(() =>
+      expect(
+        useBrowserPageToolsStore.getState().live["proj-1:local"],
+      ).toMatchObject({
+        revision: 4,
+        hash: "pizza",
+        count: 7,
+        tabId: "pizza-tab",
+        bootId: "boot-proj-1",
+      }),
+    );
+    expect(api.socket).toBeNull();
   });
 
   it("still says somebody is watching, with no socket to say it", async () => {

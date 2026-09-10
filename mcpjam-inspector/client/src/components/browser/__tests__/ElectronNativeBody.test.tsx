@@ -75,6 +75,42 @@ const lastAsk = async () => {
 };
 
 describe("the native Electron browser pane", () => {
+  it("hides pending placement when the session disappears before IPC replies", async () => {
+    let finishShow!: (result: typeof answer) => void;
+    window.electronAPI!.agentBrowser!.setViewport = async (request) => {
+      asked.push(request);
+      if (request.visible) {
+        return new Promise<typeof answer>((resolve) => {
+          finishShow = resolve;
+        });
+      }
+      return { shown: false, inputAllowed: false };
+    };
+    const view = renderBody();
+    await lastAsk();
+    view.rerender(
+      <ElectronNativeBody
+        session={null}
+        holder="rail-1"
+        control="agent"
+        holding={false}
+        consentGranted
+      />,
+    );
+    await waitFor(() =>
+      expect(asked).toContainEqual(
+        expect.objectContaining({ bootId: "boot-1", visible: false }),
+      ),
+    );
+    finishShow({ shown: true, inputAllowed: false });
+    await waitFor(() =>
+      expect(screen.getByTestId("rail-browser-native-slot")).toHaveAttribute(
+        "data-shown",
+        "false",
+      ),
+    );
+  });
+
   it("asks for the view at the slot it measured", async () => {
     renderBody();
     expect(await lastAsk()).toEqual({

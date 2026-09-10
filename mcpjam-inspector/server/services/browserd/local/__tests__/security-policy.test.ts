@@ -59,10 +59,12 @@ describe("local Browser destination policy", () => {
       lookup,
     });
     await expect(p.resolveDestination("rebind.test", 62344)).rejects.toThrow();
-    await expect(p.resolveDestination("dev.test", 3000)).resolves.toEqual({
-      address: "127.0.0.1",
-      family: 4,
-    });
+    await expect(p.resolveDestination("dev.test", 3000)).resolves.toEqual([
+      {
+        address: "127.0.0.1",
+        family: 4,
+      },
+    ]);
   });
   it("recognizes IPv4-mapped loopback", () =>
     expect(isMachineAddress("::ffff:7f00:1")).toBe(true));
@@ -159,4 +161,26 @@ it("reports bounded reason counts once without retaining destination content", (
     networkRefused: 1,
     destinationRefused: 0,
   });
+});
+
+it("validates every fallback address before returning the pinned DNS answer", async () => {
+  const addresses = [
+    { address: "203.0.113.1", family: 4 },
+    { address: "::1", family: 6 },
+  ];
+  const lookup = vi.fn().mockResolvedValue(addresses);
+  const policy = createLocalBrowserSecurityPolicy({
+    controllerUrls: ["http://localhost:62346"],
+    lookup,
+  });
+  try {
+    await expect(
+      policy.resolveDestination("alias.test", 62346),
+    ).rejects.toThrow(/browser_policy_refused/);
+    await expect(
+      policy.resolveDestination("alias.test", 3000),
+    ).resolves.toEqual(addresses);
+  } finally {
+    policy.dispose?.();
+  }
 });

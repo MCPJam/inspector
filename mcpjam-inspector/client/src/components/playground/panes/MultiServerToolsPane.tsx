@@ -35,7 +35,6 @@ import { SearchInput } from "@/components/ui/search-input";
 import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
 import { BrowserToolsSection } from "@/components/playground/BrowserToolsSection";
 import { ToolSourceHeader } from "@/components/playground/ToolSourceHeader";
-import { WebmcpPageToolsSection } from "@/components/playground/WebmcpPageToolsSection";
 import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 import { useBuiltinToolRun } from "@/components/playground/use-builtin-tool-run";
 import { useBrowserToolRun } from "@/components/playground/use-browser-tool-run";
@@ -580,7 +579,6 @@ function FlatToolList({
               onSelect={onSelectBuiltin}
               localExecution={builtinToolsRunLocally}
             />
-            <WebmcpPageToolsSection />
           </div>
         )}
       </div>

@@ -1615,12 +1615,14 @@ var BrowserdRequestHandler = class {
       };
     }
     const snapshot = await this.driver.stateSnapshot();
+    const webmcp = this.webmcpSnapshot(snapshot.activeTabId ?? void 0);
     const lease = this.lease.state();
     return {
       status: 200,
       body: {
         bootId: this.bootId,
         ...snapshot,
+        ...webmcp ? { webmcp } : {},
         control: lease.state === "free" ? { kind: "agent" } : {
           kind: lease.holderKind === "script" ? "script" : "human",
           holder: lease.holder,
@@ -8705,6 +8707,17 @@ function secureDriverContext(context, policy) {
 }
 
 // server/services/browserd/local/egress-proxy.ts
+function pinnedAddressOptions(addresses) {
+  const lookup = (_hostname, options, callback) => {
+    if (options.all) callback(null, addresses);
+    else callback(null, addresses[0].address, addresses[0].family);
+  };
+  return {
+    lookup,
+    autoSelectFamily: true,
+    autoSelectFamilyAttemptTimeout: 250
+  };
+}
 async function startLocalBrowserProxy(policy) {
   const username = "browser";
   const password = randomBytes3(32).toString("hex");
@@ -8731,7 +8744,7 @@ async function startLocalBrowserProxy(policy) {
         const target = new URL(req.url ?? "");
         if (target.protocol !== "http:" || target.username || target.password || !policy.allowsRequest(target.href))
           throw new Error("denied");
-        const address2 = await policy.resolveDestination(
+        const addresses = await policy.resolveDestination(
           target.hostname,
           Number(target.port || 80)
         );
@@ -8744,8 +8757,8 @@ async function startLocalBrowserProxy(policy) {
         delete headers["proxy-connection"];
         const upstream = request(
           {
-            hostname: address2.address,
-            family: address2.family,
+            hostname: target.hostname.replace(/^\[|\]$/g, ""),
+            ...pinnedAddressOptions(addresses),
             port: target.port || 80,
             path: target.pathname + target.search,
             method: req.method,
@@ -8794,14 +8807,14 @@ async function startLocalBrowserProxy(policy) {
       const target = new URL(upgrade ? req.url ?? "" : `https://${req.url}`);
       if (!(upgrade ? ["http:", "ws:"] : ["https:"]).includes(target.protocol) || target.username || target.password || !policy.allowsRequest(target.href))
         throw new Error("denied");
-      const destination = await policy.resolveDestination(
+      const addresses = await policy.resolveDestination(
         target.hostname,
         Number(target.port || (upgrade ? 80 : 443))
       );
       if (closed || downstream.destroyed) throw new Error("closed");
       const upstream = connect({
-        host: destination.address,
-        family: destination.family,
+        host: target.hostname.replace(/^\[|\]$/g, ""),
+        ...pinnedAddressOptions(addresses),
         port: Number(target.port || (upgrade ? 80 : 443))
       });
       track(upstream);

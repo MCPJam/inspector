@@ -213,15 +213,18 @@ export function registerSessionsBrowserCommands(sessions: Command): void {
             context
           );
           if (!download) return result;
-          const artifact =
-            op === "artifact"
-              ? result
-              : await context.client.chatSessionBrowser(
-                  wire.sessionId,
-                  "artifact",
-                  { commandId: wire.commandId },
-                  { signal: context.signal }
-                );
+          let artifact = result;
+          if (op !== "artifact") {
+            const commandId = wire.commandId;
+            if (!commandId)
+              throw usageError("--download requires a command ID");
+            artifact = await context.client.chatSessionBrowser(
+              wire.sessionId,
+              "artifact",
+              { commandId },
+              { signal: context.signal }
+            );
+          }
           if (!("url" in artifact) || typeof artifact.url !== "string")
             throw usageError("No screenshot is available for this command");
           const bytes = await fetchArtifactBytes(artifact.url, 30_000);
