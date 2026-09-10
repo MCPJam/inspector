@@ -333,6 +333,19 @@ test.describe("WebMCP viewport frame stream", () => {
         viewportTransport?: { kind?: string; width?: number; height?: number };
         error?: string;
       };
+      // `/api/mcp/webmcp/*` now goes through `authorizeLocalInspection`, which
+      // needs a rollout verdict for `local-browser-enabled` on top of a
+      // browser-consent grant (#4921). A headless run has no PostHog key, so
+      // the flag resolves false and start answers 404 — the same gate this
+      // file's header describes dodging by driving the API rather than the
+      // `/webmcp` screen, which moving it onto the API closed. Read off the
+      // server's own answer rather than a hardcoded condition, so this runs
+      // again by itself the moment the gate admits a localhost caller.
+      test.skip(
+        created.status === 404 &&
+          (session as { code?: string }).code === "local-browser-disabled",
+        "The server gates local WebMCP behind `local-browser-enabled`; a headless run cannot resolve that flag.",
+      );
       expect(
         created.status,
         `session start failed: ${JSON.stringify(session)}`,

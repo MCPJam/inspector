@@ -559,7 +559,12 @@ webmcpInspector.post("/sessions", async (c) => {
   }
 
   let localScope: LocalInspectionScope | undefined;
-  if (transport === "local") {
+  // NOT `transport === "local"`: the field is optional, and an omitted one
+  // means local (a real window on this machine). Keying consent off the
+  // explicit value let the wire default launch Chromium unauthorized, and
+  // `resolveRuntime` — which checks EVERY non-hosted session — then refused
+  // every command on the session that start had just handed back.
+  if (transport !== "hosted") {
     try {
       localScope = await authorizeLocalInspection(c, projectId);
     } catch (error) {
