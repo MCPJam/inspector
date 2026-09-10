@@ -39,6 +39,8 @@ import {
   redactBrowserScreenshots,
   type BrowserScreenshotEvidence,
 } from "../../services/browser-tool-evidence";
+import { observedToolBinding } from "../../services/browser-tool-binding";
+import { logger } from "../../utils/logger";
 import { v1Error, v1Resource } from "./envelope";
 
 const openSchema = z.strictObject({
@@ -171,13 +173,20 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
           browser: { ...browser, state: "active", bootId: handle.bootId },
         });
       } finally {
-        await client.mutation(
-          "chatSessions:releaseTurnLease" as never,
-          {
+        try {
+          await client.mutation(
+            "chatSessions:releaseTurnLease" as never,
+            {
+              turnId: lease.turnId,
+              executionOwnerToken: lease.executionOwnerToken,
+            } as never,
+          );
+        } catch (error) {
+          logger.warn("[v1/chat-sessions] browser open lease release failed", {
             turnId: lease.turnId,
-            executionOwnerToken: lease.executionOwnerToken,
-          } as never,
-        );
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     } catch (error) {
       return browserError(c, error);
@@ -486,7 +495,10 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
                             sessionId: browser.browserSessionId,
                             actor: { kind: "agent", id: "session-api" },
                             ...(tabId ? { tabId } : {}),
-                            action: { kind: "observe", mode: "url" },
+                            action: {
+                              kind: "observe",
+                              mode: command!.op === "invoke_page_tool" ? "webmcp_tools" : "url",
+                            },
                           },
                           handle.bootId,
                         );
@@ -507,6 +519,23 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
                           throw new Error(
                             "origin_not_allowed: observe an allowed page before acting",
                           );
+                        if (
+                          before.status === "ok" &&
+                          command!.op === "invoke_page_tool" &&
+                          mapped.action.kind === "webmcp_invoke"
+                        ) {
+                          const status = await handle.client.status({ signal: c.req.raw.signal });
+                          if (status.kind !== "ok" || !status.features?.includes("webmcp-binding"))
+                            throw new Error("browser_unavailable: the daemon cannot enforce page-tool bindings");
+                          mapped.action.expectedBinding = observedToolBinding({
+                            output: before.result?.output,
+                            stateToken: before.result?.stateToken,
+                            bootId: handle.bootId,
+                            toolKey: command!.toolKey,
+                            frameId: command!.frameId,
+                            origins: resolved.effectivePolicy.origins,
+                          });
+                        }
                       }
                       dispatched = true;
                       const response = await handle.client.sendCommand(
@@ -610,7 +639,9 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
                       error instanceof Error &&
                       error.message.startsWith("origin_not_allowed:")
                         ? "origin_not_allowed"
-                        : "browser_unavailable",
+                        : error instanceof Error && error.message.startsWith("stale_binding:")
+                          ? "stale_observation"
+                          : "browser_unavailable",
                     message:
                       error instanceof Error ? error.message : String(error),
                   });

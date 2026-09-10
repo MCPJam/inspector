@@ -50,3 +50,26 @@ test("new browser sessions require a caller-owned retry key", async (t) => {
   assert.match(result.stderr + result.stdout, /--idempotency-key is required/);
   assert.equal(fetch.mock.callCount(), 0);
 });
+
+test("new browser sessions require an explicit policy before any request", async (t) => {
+  const fetch = t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("Unexpected request");
+  });
+  const result = await runCli([
+    "cloud",
+    "sessions",
+    "browser",
+    "open",
+    "--project",
+    "p",
+    "--idempotency-key",
+    "key",
+    "--api-key",
+    "sk_test_fixture",
+    "--api-url",
+    "http://127.0.0.1:1/api/v1",
+  ]);
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.stderr + result.stdout, /--browser-mode is required/);
+  assert.equal(fetch.mock.callCount(), 0);
+});

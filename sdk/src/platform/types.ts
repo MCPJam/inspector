@@ -1,14 +1,83 @@
-import type { BrowserAgentCommand, BrowserAgentResult } from "./browser-agent-contract.js";
-export type PlatformBrowserToolPolicy = { mode: "allow_all" | "read_only" | "allowlist"; originAllowlist?: string[]; toolAllowlist?: string[] };
-export type PlatformSessionBrowserInput = { policy?: PlatformBrowserToolPolicy; profileId?: string };
-export type PlatformBrowserScreenshot = { turnId?: string; toolCallId: string; toolName?: string; stepIndex: number; status?: "ready" | "not_captured" | "unavailable"; url?: string; mediaType?: "image/png" | "image/jpeg"; bytes?: number; ts?: number };
-export type PlatformSessionBrowser = { browserSessionId: string; state: "active" | "sleeping" | "closed"; policy?: PlatformBrowserToolPolicy; profileId?: string; bootId?: string; controlledBy?: "human" | null; box?: string | null; lastActiveAt?: number };
-export type PlatformSessionBrowserOpened = { sessionId: string; chatSessionId: string; projectId: string; browser: PlatformSessionBrowser };
+import type {
+  BrowserAgentCommand,
+  BrowserAgentResult,
+} from "./browser-agent-contract.js";
+import type { PlatformBrowserToolPolicy } from "./browser-policy.js";
+export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
+export type PlatformSessionBrowserInput = {
+  policy?: PlatformBrowserToolPolicy;
+  profileId?: string;
+};
+export type PlatformBrowserScreenshot = {
+  turnId?: string;
+  toolCallId: string;
+  toolName?: string;
+  stepIndex: number;
+  status?: "ready" | "not_captured" | "unavailable";
+  url?: string;
+  mediaType?: "image/png" | "image/jpeg";
+  bytes?: number;
+  ts?: number;
+};
+export type PlatformSessionBrowser = {
+  browserSessionId: string;
+  state: "active" | "sleeping" | "closed";
+  policy?: PlatformBrowserToolPolicy;
+  profileId?: string;
+  bootId?: string;
+  controlledBy?: "human" | null;
+  box?: string | null;
+  lastActiveAt?: number;
+};
+export type PlatformSessionBrowserOpened = {
+  sessionId: string;
+  chatSessionId: string;
+  projectId: string;
+  browser: PlatformSessionBrowser;
+};
 export type PlatformSessionBrowserCommand = BrowserAgentCommand;
-export type PlatformSessionBrowserResult = BrowserAgentResult & { screenshots?: PlatformBrowserScreenshot[] };
-export type PlatformSessionBrowserTrace = { sessionId: string; chatSessionId: string; entries: Array<{ commandId: string; seq: number; result?: PlatformSessionBrowserResult }>; screenshots: PlatformBrowserScreenshot[] };
-export type PlatformSessionBrowserOperation = "open" | "command" | "note" | "trace" | "artifact" | "close";
-export type PlatformSessionBrowserOperationResult = PlatformSessionBrowserOpened | PlatformSessionBrowserResult | PlatformSessionBrowserTrace | { url: string; mediaType?: string } | { ok: boolean };
+export type PlatformSessionBrowserResult = BrowserAgentResult & {
+  screenshots?: PlatformBrowserScreenshot[];
+};
+export type PlatformSessionBrowserTrace = {
+  sessionId: string;
+  chatSessionId: string;
+  entries: Array<{
+    commandId: string;
+    seq: number;
+    result?: PlatformSessionBrowserResult;
+  }>;
+  screenshots: PlatformBrowserScreenshot[];
+};
+export type PlatformSessionBrowserOperation =
+  | "open"
+  | "command"
+  | "note"
+  | "trace"
+  | "artifact"
+  | "close";
+export interface PlatformSessionBrowserBodies {
+  open: PlatformSessionBrowserInput;
+  command: { command: BrowserAgentCommand; commandId?: string; tabId?: string };
+  note: { text: string; commandId?: string };
+  trace: { afterSeq?: number; limit?: number };
+  artifact: { commandId: string };
+  close: Record<string, never>;
+}
+export interface PlatformSessionBrowserResults {
+  open: PlatformSessionBrowserOpened;
+  command: PlatformSessionBrowserResult;
+  note: PlatformSessionBrowserResult;
+  trace: PlatformSessionBrowserTrace;
+  artifact: { url: string; mediaType?: string };
+  close: { ok: boolean };
+}
+export type PlatformSessionBrowserOperationResult =
+  | PlatformSessionBrowserOpened
+  | PlatformSessionBrowserResult
+  | PlatformSessionBrowserTrace
+  | { url: string; mediaType?: string }
+  | { ok: boolean };
 import type { CaseSource } from "../contract/case-source.js";
 /**
  * Wire DTOs for the MCPJam Platform API (`/api/v1`).
@@ -550,7 +619,7 @@ export interface PlatformChatSessionDetail {
 
 /** One turn's entry in a trace read. */
 export interface PlatformChatSessionTraceTurn {
-  browser?: { browserSessionId: string; bootId?: string; box?: unknown };
+  browser?: { browserSessionId: string; bootId?: string; box?: { sandboxRowId: string } | { computerId: string } };
   screenshots?: PlatformBrowserScreenshot[];
   turnId: string;
   promptIndex: number;

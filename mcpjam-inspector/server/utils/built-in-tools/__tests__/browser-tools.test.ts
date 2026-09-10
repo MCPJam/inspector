@@ -63,7 +63,7 @@ function fakeSession(
         sessionId: "session-1",
         computerId: "computer-1",
         bootId,
-        client: { sendCommand } as never,
+        client: { sendCommand, status: async () => ({ kind: "ok", features: ["webmcp-binding"] }) } as never,
         streamUrl: "https://stream.example/vnc.html",
         streamPassword: "pw",
         contextMode: "persistent",
@@ -3746,6 +3746,18 @@ it("revoked Browser consent blocks a previously cached local session", async () 
 });
 
 describe("buildBrowserTools — session policy", () => {
+  it("pins generic page tool calls to the allowed registration and propagates a stale refusal", async () => {
+    const daemon = vi.fn(async (command: any) => command.action.kind === "observe" ? {
+      ...OK,
+      result: { ...OK.result!, output: { url: "https://example.com", tools: [{ name: "submit", origin: "https://example.com", frameId: "frame", registrationSeq: 7 }] } },
+    } : { status: "ok", result: { ok: false, error: "stale_binding: the document changed" } });
+    const { result } = build({ pageTools: undefined, approvalDelivery: { kind: "session-policy", policy: { mode: "allowlist", originAllowlist: ["https://example.com"] } }, sessionScope: { kind: "conversation", sessionId: "wire" } }, daemon);
+    const answer = await run(result!.tools, "browser_webmcp_invoke", { toolName: "submit", input: {} });
+    expect(daemon.mock.calls[0][0].action).toEqual({ kind: "observe", mode: "webmcp_tools" });
+    expect(daemon.mock.calls[1][0].action.expectedBinding).toEqual({ bootId: "boot-1", tabId: "@session", navCounter: 1, frameId: "frame", registrationSeq: 7 });
+    expect(JSON.stringify(answer)).toContain("stale_binding");
+    expect(daemon).toHaveBeenCalledTimes(2);
+  });
   it("keeps a hosted conversation persistent and applies its read-only policy", async () => {
     const { result, ensureSession } = build({
       approvalDelivery: {

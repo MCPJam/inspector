@@ -41,8 +41,8 @@ describe("waiting for the browser to come back", () => {
     await expect(waitForHandoff(deps)).resolves.toMatchObject({
       status: "released",
     });
-    // Nothing to show: there was no wait.
-    expect(waiting).toEqual([]);
+    // Handback can land between the rejected action and the first lease read.
+    expect(waiting).toEqual([{ waiting: false, resumed: true, holder: { kind: "human" } }]);
   });
 
   it("parks until the person hands back, and says how long it waited", async () => {

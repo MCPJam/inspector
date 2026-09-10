@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import {
+  platformBrowserToolPolicySchema,
   driveChatSessionBrowserOperation,
   observeChatSessionBrowserOperation,
   type DriveChatSessionBrowserInput,
@@ -56,23 +57,14 @@ export function browserInput(
     throw usageError(
       "--browser-mode must be allow_all, read_only, or allowlist"
     );
+  const policy = options.browserMode ? platformBrowserToolPolicySchema.safeParse({
+    mode: options.browserMode,
+    ...(options.browserOrigins ? { originAllowlist: options.browserOrigins } : {}),
+    ...(options.browserTools ? { toolAllowlist: options.browserTools } : {}),
+  }) : undefined;
+  if (policy && !policy.success) throw usageError(policy.error.message);
   return {
-    ...(options.browserMode
-      ? {
-          policy: {
-            mode: options.browserMode as
-              | "allow_all"
-              | "read_only"
-              | "allowlist",
-            ...(options.browserOrigins
-              ? { originAllowlist: options.browserOrigins }
-              : {}),
-            ...(options.browserTools
-              ? { toolAllowlist: options.browserTools }
-              : {}),
-          },
-        }
-      : {}),
+    ...(policy?.success ? { policy: policy.data } : {}),
     ...(options.browserProfile ? { profileId: options.browserProfile } : {}),
   };
 }
@@ -122,6 +114,8 @@ export function registerSessionsBrowserCommands(sessions: Command): void {
         throw usageError(
           "--idempotency-key is required when creating a session; reuse it after a timeout"
         );
+      if (!o.session && !o.browserMode)
+        throw usageError("--browser-mode is required when creating a session");
       return {
         op: "open",
         sessionId: o.session,

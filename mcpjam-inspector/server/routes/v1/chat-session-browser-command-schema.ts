@@ -22,7 +22,14 @@ export const commandSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("cancel_page_tool"), invocationId: id }),
   z.object({
     op: z.literal("navigate"),
-    url: z.string().url().max(8192),
+    url: z
+      .string()
+      .url()
+      .max(8192)
+      .refine(
+        (url) => ["http:", "https:"].includes(new URL(url).protocol),
+        "Browser navigation requires an HTTP or HTTPS URL",
+      ),
     newTab: z.boolean().optional(),
     observeAfter: z.enum(["a11y", "screenshot", "none"]).optional(),
   }),

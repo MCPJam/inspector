@@ -151,7 +151,7 @@ export async function waitForHandoff(
     // ALWAYS, including on the cancelled and unknown paths. A surface left
     // showing "waiting for you to hand the browser back" after the turn was
     // stopped is a spinner nothing will ever clear.
-    if (announced)
+    if (announced || resumed)
       deps.onWaiting?.({
         waiting: false,
         ...(resumed ? { resumed: true } : {}),

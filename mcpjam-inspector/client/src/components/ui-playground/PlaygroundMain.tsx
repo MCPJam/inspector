@@ -1252,6 +1252,9 @@ export function PlaygroundMain({
   // conversation only while this Playground center is mounted; the rail then
   // binds the watched browser to the same durable owner. Clearing is guarded
   // so an overlapping PlaygroundMain cannot erase a newer active session.
+  const restoredSessionHasBrowser = useActiveChatSessionStore(
+    (state) => state.restoredSession?.sessionId === chatSessionId && !!state.restoredSession.browser,
+  );
   const apiSessionViewOnly = useActiveChatSessionStore(state => state.restoredSession?.sessionId === chatSessionId && state.restoredSession.origin === "api");
   const setActiveChatSessionId = useActiveChatSessionStore(
     (state) => state.setSessionId,
@@ -3427,6 +3430,12 @@ export function PlaygroundMain({
   // overlay for one frame. After ~120 ms the load is "slow enough" to warrant
   // visible feedback.
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
+  useLayoutEffect(() => {
+    useActiveChatSessionStore.getState().setRestorationPending(
+      !!loadingHistorySessionId || isRestoringConversation || restoringTarget !== null,
+    );
+    return () => useActiveChatSessionStore.getState().setRestorationPending(false);
+  }, [loadingHistorySessionId, isRestoringConversation, restoringTarget]);
   useEffect(() => {
     // A URL restore is the same "fetching a transcript" wait, and it happens on
     // a cold load — without it the user stares at an empty composer until the
@@ -4818,11 +4827,19 @@ export function PlaygroundMain({
         onDismiss={() => setLocalHarnessJustReady(false)}
       />
     ) : null;
+  const apiSessionNotice = apiSessionViewOnly ? (
+    <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
+      This conversation is driven by an agent. Continue it through the session API.
+      {restoredSessionHasBrowser ? " You can take over its browser here." : ""}
+    </p>
+  ) : null;
   const composerNotice =
+    apiSessionNotice ||
     conversationTargetNotice ||
     localHarnessNotice ||
     localHarnessReadyNotice ? (
       <div className="flex flex-col gap-2">
+        {apiSessionNotice}
         {conversationTargetNotice}
         {localHarnessNotice}
         {localHarnessReadyNotice}
@@ -5013,7 +5030,7 @@ export function PlaygroundMain({
    * composer with the device frame behind it set to `display: none`.
    */
   const showPinnedConversationTargetNotice =
-    !!conversationTargetNotice &&
+    !!(apiSessionNotice || conversationTargetNotice) &&
     isWidgetFullTakeover &&
     !showLiveTraceDiagnostics &&
     !(isThreadEmpty && showSingleModelEmptyStateComposer);
@@ -5027,7 +5044,7 @@ export function PlaygroundMain({
           className="pointer-events-auto absolute inset-x-0 top-0 z-30 px-2 pt-2"
         >
           <div className="rounded-md bg-background/95 shadow-lg backdrop-blur-md">
-            {conversationTargetNotice}
+            {apiSessionNotice || conversationTargetNotice}
           </div>
         </div>
       ) : null}
@@ -5204,7 +5221,13 @@ export function PlaygroundMain({
                 displayMode={displayMode}
                 onDisplayModeChange={handleDisplayModeChange}
                 onFullscreenChange={setIsWidgetFullscreen}
-                onToolApprovalResponse={addToolApprovalResponse}
+                interactive={
+                  !apiSessionViewOnly && loadingHistorySessionId === null && restoringTarget === null
+                }
+                onToolApprovalResponse={(response) => {
+                  if (!conversationSendBlockedRef.current)
+                    return addToolApprovalResponse(response);
+                }}
                 toolRenderOverrides={mergedToolRenderOverrides}
                 mcpToolResultImageRendering={
                   effectiveMcpToolResultImageRendering
@@ -5315,7 +5338,6 @@ export function PlaygroundMain({
                 />
               </div>
             )}
-            {apiSessionViewOnly && <p role="status" className="px-3 py-2 text-sm text-muted-foreground">This conversation is driven by an agent. You can take over its browser here.</p>}
             <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
           </div>
         )}
@@ -5640,7 +5662,7 @@ export function PlaygroundMain({
                           executionConfig={{
                             ...column.executionConfig,
                             builtInToolIds: applyBrowserOverride(
-                              column.executionConfig.builtInToolIds,
+                              column.hostConfig.builtInToolIds,
                               browserOverride,
                             ),
                           }}

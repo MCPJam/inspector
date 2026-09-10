@@ -6,6 +6,8 @@ interface BrowserLocation {
   engine: "local" | "cloud";
 }
 interface ActiveChatSessionState {
+  restorationPending: boolean;
+  setRestorationPending: (pending: boolean) => void;
   restoredSession: {
     sessionId: string;
     origin?: string;
@@ -31,6 +33,8 @@ interface ActiveChatSessionState {
  */
 export const useActiveChatSessionStore = create<ActiveChatSessionState>(
   (set) => ({
+    restorationPending: false,
+    setRestorationPending: (restorationPending) => set({ restorationPending }),
     restoredSession: null,
     setRestoredSession: (restoredSession) =>
       set({ restoredSession, sessionId: restoredSession.sessionId }),

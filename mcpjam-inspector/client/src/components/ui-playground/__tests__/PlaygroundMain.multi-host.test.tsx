@@ -1630,8 +1630,8 @@ describe("PlaygroundMain — multi-host render path", () => {
       { hostId: "h-B", name: "Host B" },
     ];
     multiHostFixture.hosts = {
-      "h-A": makeHost("h-A", "Host A", {}),
-      "h-B": makeHost("h-B", "Host B", {}),
+      "h-A": makeHost("h-A", "Host A", { builtInToolIds: ["bash"] }),
+      "h-B": makeHost("h-B", "Host B", { builtInToolIds: ["bash"] }),
     };
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
     multiHostFixture.multiHostEnabled = true;
@@ -1642,7 +1642,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     );
     expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
     for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
-      expect(props.executionConfig.builtInToolIds).toEqual(["browser"]);
+      expect(props.executionConfig.builtInToolIds).toEqual(["bash", "browser"]);
     }
   });
 

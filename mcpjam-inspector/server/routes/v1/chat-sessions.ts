@@ -291,7 +291,16 @@ chatSessions.get("/chat-sessions/:sessionId", async (c) => {
   return v1Resource(c, {
     sessionId: session._id,
     chatSessionId: session.chatSessionId,
-    browser: session.browser ?? null,
+    browser: session.browser ? {
+      browserSessionId: session.browser.browserSessionId,
+      state: session.browser.state,
+      policy: session.browser.policy,
+      profileId: session.browser.profileId,
+      bootId: session.browser.bootId,
+      controlledBy: session.browser.controlledBy,
+      box: session.browser.box,
+      lastActiveAt: session.browser.lastActiveAt,
+    } : null,
     apiConfigState: session.apiConfigState ?? "configured",
     ...(session.cumulativeInputTokens !== undefined ||
     session.cumulativeOutputTokens !== undefined

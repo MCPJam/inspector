@@ -12404,7 +12404,7 @@
           "Chat sessions"
         ],
         "operationId": "chatSessionBrowserNote",
-        "summary": "Note the API session browser",
+        "summary": "Add a note to the API session browser",
         "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
         "requestBody": {
           "required": true,
@@ -12484,7 +12484,7 @@
           "Chat sessions"
         ],
         "operationId": "chatSessionBrowserTrace",
-        "summary": "Trace the API session browser",
+        "summary": "Read the API session browser command trace",
         "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
         "requestBody": {
           "required": true,
@@ -12559,7 +12559,7 @@
           "Chat sessions"
         ],
         "operationId": "chatSessionBrowserArtifact",
-        "summary": "Artifact the API session browser",
+        "summary": "Read an API session browser screenshot URL",
         "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
         "requestBody": {
           "required": true,
@@ -26210,14 +26210,9 @@
             ]
           },
           "browser": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/SessionBrowser"
-              }
-            ],
-            "type": [
-              "object",
-              "null"
+            "anyOf": [
+              { "$ref": "#/components/schemas/SessionBrowser" },
+              { "type": "null" }
             ]
           },
           "usage": {
@@ -26291,7 +26286,12 @@
               "bootId": {
                 "type": "string"
               },
-              "box": {}
+              "box": {
+                  "oneOf": [
+                    { "type": "object", "properties": { "sandboxRowId": { "type": "string" } }, "required": ["sandboxRowId"], "additionalProperties": false },
+                    { "type": "object", "properties": { "computerId": { "type": "string" } }, "required": ["computerId"], "additionalProperties": false }
+                  ]
+                }
             },
             "required": [
               "browserSessionId"

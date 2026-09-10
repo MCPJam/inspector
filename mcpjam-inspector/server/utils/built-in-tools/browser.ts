@@ -55,6 +55,7 @@ import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { webmcpPageToolsMode } from "../../config.js";
 import { logger } from "../logger.js";
+import { observedToolBinding } from "../../services/browser-tool-binding";
 import { parkForHandoff } from "./browser-handoff.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
@@ -1225,7 +1226,7 @@ export function buildBrowserTools(
     }
     try {
       if (delivery.kind === "session-policy" && policy?.originAllowlist?.length && !recovering && !["observe", "navigate"].includes(action.kind)) {
-        const observed = await send({ kind: "observe", mode: "url" }, { ...(args.tabId ? { tabId: args.tabId } : {}), signal: args.signal, recovering: true, raw: true });
+        const observed = await send({ kind: "observe", mode: action.kind === "webmcp_invoke" ? "webmcp_tools" : "url" }, { ...(args.tabId ? { tabId: args.tabId } : {}), signal: args.signal, recovering: true, raw: true });
         if (!observed.ok) {
           if (/browser_in_use|lease_blocked/.test(observed.error ?? "")) {
             release?.(); release = undefined;
@@ -1237,6 +1238,25 @@ export function buildBrowserTools(
         const output = observed.output as { url?: string; page?: { url?: string } } | undefined;
         const url = output?.url ?? output?.page?.url;
         if (!url || !isOriginAllowed(url, policy.originAllowlist)) return { ok: false, error: "origin_not_allowed: the current page is outside the session policy", tabId };
+        if (action.kind === "webmcp_invoke") {
+          try {
+            const status = await handle.client.status({ signal: args.signal });
+            if (status.kind !== "ok" || !status.features?.includes("webmcp-binding"))
+              return { ok: false, error: "browser_unavailable: the daemon cannot enforce page-tool bindings", tabId };
+            const binding = observedToolBinding({
+              output: observed.output,
+              stateToken: observed.stateToken,
+              bootId: handle.bootId,
+              toolKey: action.toolKey,
+              frameId: action.expectedBinding?.frameId,
+              origins: policy.originAllowlist,
+            });
+            // First-class tools retain their original approval binding.
+            command.action = { ...action, expectedBinding: action.expectedBinding ?? binding };
+          } catch (error) {
+            return { ok: false, error: error instanceof Error ? error.message : String(error), tabId };
+          }
+        }
       }
       // A PAGE TOOL KEEPS RUNNING WHEN THE REQUEST IS ABORTED. Dropping the
       // HTTP connection stops us waiting; it does not stop the browser, which

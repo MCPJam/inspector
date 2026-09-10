@@ -1,3 +1,4 @@
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { PlaygroundBrowserOverrideContext } from "@/components/playground/playground-browser-override";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -346,7 +347,11 @@ vi.mock("@/components/chat-v2/thread", () => ({
     editDisabled,
     sendFollowUpMessage,
     onFullscreenChange,
+    interactive,
+    onToolApprovalResponse,
   }: {
+    interactive?: boolean;
+    onToolApprovalResponse?: (response: any) => unknown;
     messages: any[];
     isLoading: boolean;
     loadingIndicatorVariant?: string;
@@ -368,6 +373,8 @@ vi.mock("@/components/chat-v2/thread", () => ({
         editDisabled,
         sendFollowUpMessage,
         onFullscreenChange,
+        interactive,
+        onToolApprovalResponse,
       });
       return (
         <div data-testid="thread">
@@ -749,6 +756,7 @@ describe("PlaygroundMain", () => {
   };
 
   beforeEach(() => {
+    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false });
     vi.clearAllMocks();
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
@@ -3304,6 +3312,18 @@ describe("PlaygroundMain", () => {
       // Module-level store, not reset by the global `beforeEach`; the overlay
       // tests below change it and every other test assumes the default.
       mockUIPlaygroundStore.deviceType = "mobile";
+    });
+
+    it.each([null, { browserSessionId: "logical", state: "active" }])("makes API history view-only and describes available control: %j", async (browser) => {
+      mockUseChatSession.messages = [{ id: "m1", role: "assistant", parts: [{ type: "text", text: "Saved response" }] }];
+      render(<PlaygroundMain {...defaultProps} />);
+      act(() => useActiveChatSessionStore.getState().setRestoredSession({ sessionId: mockUseChatSession.chatSessionId, origin: "api", browser }));
+      expect(screen.getByText(/This conversation is driven by an agent/)).toBeInTheDocument();
+      expect(!!screen.queryByText(/You can take over its browser here/)).toBe(!!browser);
+      const thread = mockThread.mock.calls.at(-1)![0];
+      expect(thread.interactive).toBe(false);
+      await thread.onToolApprovalResponse({ id: "approval", approved: true });
+      expect(mockUseChatSession.addToolApprovalResponse).not.toHaveBeenCalled();
     });
 
     it("says nothing about a live chat the user started here", () => {

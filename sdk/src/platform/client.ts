@@ -1,4 +1,5 @@
-import type { PlatformSessionBrowserInput, PlatformSessionBrowserOperation, PlatformSessionBrowserOperationResult, PlatformSessionBrowserOpened, PlatformBrowserToolPolicy } from "./types.js";
+import type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";
+import type { PlatformSessionBrowserInput, PlatformSessionBrowserOperation, PlatformSessionBrowserOpened, PlatformBrowserToolPolicy } from "./types.js";
 import { PlatformApiError } from "./errors.js";
 import type {
   PlatformScenarioSummary,
@@ -638,8 +639,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-                ? "true"
-                : "false",
+              ? "true"
+              : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
@@ -994,10 +995,28 @@ export class PlatformApiClient {
    * session that named only a host is REFUSED without it, rather than run on
    * the other engine. The response's `engine` field always names what ran.
    */
-  chatSessionBrowser(sessionId: string, op: PlatformSessionBrowserOperation, body: Record<string, unknown> = {}, options?: RequestOptions): Promise<PlatformSessionBrowserOperationResult> {
-    return this.request("POST", `/chat-sessions/${encodeURIComponent(sessionId)}/browser/${op}`, { body }, options);
+  chatSessionBrowser<Op extends PlatformSessionBrowserOperation>(
+    sessionId: string,
+    op: Op,
+    body: PlatformSessionBrowserBodies[Op],
+    options?: RequestOptions
+  ): Promise<PlatformSessionBrowserResults[Op]> {
+    return this.request(
+      "POST",
+      `/chat-sessions/${encodeURIComponent(sessionId)}/browser/${op}`,
+      { body },
+      options
+    );
   }
-  createChatSessionBrowser(body: { projectId: string; policy: PlatformBrowserToolPolicy; profileId?: string; idempotencyKey: string }, options?: RequestOptions): Promise<PlatformSessionBrowserOpened> {
+  createChatSessionBrowser(
+    body: {
+      projectId: string;
+      policy: PlatformBrowserToolPolicy;
+      profileId?: string;
+      idempotencyKey: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSessionBrowserOpened> {
     return this.request("POST", "/chat-sessions/browser", { body }, options);
   }
   sendChatMessage(

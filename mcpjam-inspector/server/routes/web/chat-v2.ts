@@ -234,10 +234,10 @@ chatV2.post("/", async (c) => {
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
     if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
-      const allowed = await apiSessionWriteAllowed(rawBody.origin, async () => {
+      const allowed = await apiSessionWriteAllowed(rawBody.origin, async (signal) => {
         const service = new BrowserSessionService();
         if (!service.enabled) return { writable: true };
-        return service.agentRequest<{ writable: boolean }>("assert_web_writable", { bearer: bearerToken, projectId: hostedBody.projectId!, body: { conversationId: hostedBody.chatSessionId }, signal: c.req.raw.signal });
+        return service.agentRequest<{ writable: boolean }>("assert_web_writable", { bearer: bearerToken, projectId: hostedBody.projectId!, body: { conversationId: hostedBody.chatSessionId }, signal: AbortSignal.any([signal, c.req.raw.signal]) });
       });
       if (!allowed) return c.json({ code: "API_SESSION_READ_ONLY", error: "This API session is view-only in Playground. Continue it through the session API." }, 409);
     }

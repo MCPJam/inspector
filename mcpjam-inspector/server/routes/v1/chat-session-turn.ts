@@ -1065,6 +1065,7 @@ async function handleTurn(c: Context): Promise<Response> {
         { reason: "CONTINUATION_NOT_ALLOWED", origin: existing.origin ?? null },
       );
     }
+    if (configuring && body.modelId) assertUnambiguousModelId(body.modelId);
     const runtimeId = existing.chatSessionId;
     const resume = configuring
       ? {

@@ -1097,6 +1097,14 @@ describe("browser turn integration", () => {
     prepareChatV2Mock.mockImplementation(async args => ({ allTools: args.builtInTools ?? {}, enhancedSystemPrompt: "system" }));
     return firstTurn({ environmentId: ENVIRONMENT, browser: { policy: { mode: "allow_all" } } });
   }
+  it.each(["claude-sonnet-5", "cursor/auto"])("rejects unrunnable shell model %s before claiming or provisioning", async (modelId) => {
+    const input = browserFixture();
+    const response = await turn({ ...input, sessionId: "cs_1", modelId });
+    expect(response.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+    expect(sessionBrowser.provisionConversationBrowser).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
   it("provisions before engine execution and strips screenshots from persistence and response", async () => {
     const input = browserFixture();
     runUnifiedAssistantTurnMock.mockImplementation(async args => {

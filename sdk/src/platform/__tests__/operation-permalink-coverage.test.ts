@@ -185,6 +185,12 @@ describe("every catalog operation declares a permalink policy", () => {
     expect(byName.get("search_sessions")!.permalink.kind).toBe("response");
   });
 
+  it("omits trace links when an older response has no project scope", () => {
+    const operation = ALL_OPERATIONS.find(op => op.name === "get_chat_session_trace")!;
+    const errors: unknown[] = [];
+    expect(derivePermalinksFor(operation as never, { sessionId: "s", chatSessionId: "wire", turns: [] } as never, {} as never, { appOrigin: "https://app.mcpjam.com" }, error => errors.push(error))).toEqual([]);
+    expect(errors).toEqual([]);
+  });
   it("links a CONTINUED chat session, which resolves no scope of its own", () => {
     // `send_chat_message` deliberately skips `resolveProjectOrThrow` when
     // continuing an existing session, so there is no scope receipt and the

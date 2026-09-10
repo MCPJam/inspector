@@ -99,7 +99,7 @@ export const BROWSERD_PROFILE_ARCHIVE_PATH =
  * needs `sendCommand` still satisfies this.
  */
 export interface SessionClient {
-  status(): Promise<BrowserdStatus>;
+  status(options?: { signal?: AbortSignal }): Promise<BrowserdStatus>;
   sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
@@ -932,7 +932,7 @@ function withActivityTouches(
   // `BrowserdClient` INSTANCE, whose methods live on the prototype and would
   // not survive `{ ...client }`.
   return {
-    status: () => client.status(),
+    status: (options) => client.status(options),
     sendCommand: (command, expectedBootId) => {
       // UNTHROTTLED on purpose: this one is load-bearing. It advances the
       // browser session's own clock and, for a sandbox box, that box's

@@ -830,3 +830,6 @@ export type { PlatformBrowserToolPolicy, PlatformSessionBrowserInput, PlatformBr
 
 export { driveChatSessionBrowserOperation, observeChatSessionBrowserOperation, type DriveChatSessionBrowserInput, type ObserveChatSessionBrowserInput } from "./operations.js";
 export { collectSessionScreenshots } from "./browser-evidence.js";
+
+export { platformBrowserToolPolicySchema } from "./browser-policy.js";
+export type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";

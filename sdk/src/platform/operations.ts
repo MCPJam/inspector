@@ -1,3 +1,5 @@
+import { platformBrowserToolPolicySchema } from "./browser-policy.js";
+import type { PlatformSessionBrowserCommand } from "./types.js";
 import type { PlatformSessionBrowserOperationResult } from "./types.js";
 /**
  * Curated, task-shaped operations over the Platform API. Each operation is
@@ -8611,7 +8613,7 @@ export const listChatSessionsOperation: PlatformOperation<
 // everyone in this org has been talking about".
 
 const sendChatMessageInput = z.object({
-  browser: z.object({ policy: z.object({ mode: z.enum(["allow_all", "read_only", "allowlist"]), originAllowlist: z.array(z.string().min(1)).min(1).optional(), toolAllowlist: z.array(z.string().min(1)).min(1).optional() }).optional(), profileId: z.string().min(1).optional() }).optional().describe("Attach the session browser for this turn. The first attachment requires a policy; later turns can send {} to reuse it."),
+  browser: z.object({ policy: platformBrowserToolPolicySchema.optional(), profileId: z.string().min(1).optional() }).optional().describe("Attach the session browser for this turn. The first attachment requires a policy; later turns can send {} to reuse it."),
   idempotencyKey: z
     .string()
     .trim()
@@ -8802,24 +8804,94 @@ export const sendChatMessageOperation: PlatformOperation<
 const sessionBrowserInput = z.object({
   sessionId: z.string().min(1).optional(),
   project: z.string().min(1).optional(),
-  policy: z.object({ mode: z.enum(["allow_all", "read_only", "allowlist"]), originAllowlist: z.array(z.string()).min(1).optional(), toolAllowlist: z.array(z.string()).min(1).optional() }).optional(),
+  policy: platformBrowserToolPolicySchema.optional(),
   profileId: z.string().min(1).optional(),
   commandId: z.string().min(1).optional(),
   idempotencyKey: z.string().min(1).optional(),
   tabId: z.string().min(1).optional(),
 });
-const driveSessionBrowserInput = sessionBrowserInput.extend({
-  op: z.enum(["open", "navigate", "act", "invoke", "note", "close"]),
-  url: z.string().url().optional(),
-  command: z.record(z.string(), z.unknown()).optional().describe("For act: BrowserAgentCommand fields, including verb, target, value, and expectedState."),
-  toolKey: z.string().optional(), input: z.unknown().optional(), text: z.string().optional(),
-});
+const driveSessionBrowserInput = sessionBrowserInput
+  .extend({
+    op: z.enum(["open", "navigate", "act", "invoke", "note", "close"]),
+    url: z
+      .string()
+      .url()
+      .max(8192)
+      .refine(
+        (url) => ["http:", "https:"].includes(new URL(url).protocol),
+        "Expected an HTTP(S) URL"
+      )
+      .optional(),
+    command: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "For act: BrowserAgentCommand fields, including verb, target, value, and expectedState."
+      ),
+    toolKey: z.string().min(1).optional(),
+    input: z.unknown().optional(),
+    text: z.string().min(1).optional(),
+  })
+  .superRefine((input, ctx) => {
+    const require = (field: string, valid: boolean) => {
+      if (!valid)
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} is required for ${input.op}`,
+        });
+    };
+    if (input.op !== "open") require("sessionId", !!input.sessionId);
+    if (input.op === "open" && !input.sessionId) {
+      require("policy", !!input.policy);
+      require("idempotencyKey", !!input.idempotencyKey);
+    }
+    if (input.op === "navigate") require("url", !!input.url);
+    if (input.op === "act")
+      require("command.verb", !!input.command &&
+        [
+          "click",
+          "type",
+          "press",
+          "scroll",
+          "hover",
+          "drag",
+          "select",
+          "close_tab",
+          "activate_tab",
+          "accept_dialog",
+          "dismiss_dialog",
+        ].includes(String(input.command.verb)));
+    if (input.op === "invoke") {
+      require("toolKey", !!input.toolKey);
+      require("input", Object.hasOwn(input, "input"));
+    }
+    if (input.op === "note") require("text", !!input.text);
+  });
 const observeSessionBrowserInput = z.object({
-  sessionId: z.string().min(1), op: z.enum(["observe", "trace", "artifact"]),
-  mode: z.enum(["a11y", "screenshot", "text", "dom", "console", "network", "dialog", "url", "page_tools"]).optional(),
-  commandId: z.string().optional(), tabId: z.string().optional(), afterSeq: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).optional(),
+  sessionId: z.string().min(1),
+  op: z.enum(["observe", "trace", "artifact"]),
+  mode: z
+    .enum([
+      "a11y",
+      "screenshot",
+      "text",
+      "dom",
+      "console",
+      "network",
+      "dialog",
+      "url",
+      "page_tools",
+    ])
+    .optional(),
+  commandId: z.string().optional(),
+  tabId: z.string().optional(),
+  afterSeq: z.number().int().nonnegative().optional(),
+  limit: z.number().int().min(1).max(100).optional(),
 });
-export type DriveChatSessionBrowserInput = z.infer<typeof driveSessionBrowserInput>;
+export type DriveChatSessionBrowserInput = z.infer<
+  typeof driveSessionBrowserInput
+>;
 export type ObserveChatSessionBrowserInput = z.infer<typeof observeSessionBrowserInput>;
 export const driveChatSessionBrowserOperation: PlatformOperation<
   DriveChatSessionBrowserInput,
@@ -8851,9 +8923,12 @@ export const driveChatSessionBrowserOperation: PlatformOperation<
   }),
   inputSchema: driveSessionBrowserInput,
   async execute(input, { client, signal, onScopeResolved }) {
+    const validated = driveSessionBrowserInput.safeParse(input);
+    if (!validated.success) throw operationInputError(validated.error.message);
+
     if (!input.sessionId) {
       if (input.op !== "open" || !input.policy || !input.idempotencyKey)
-        throw new Error(
+        throw operationInputError(
           "Opening without a session requires policy and idempotencyKey"
         );
       const scope = await resolveProjectOrThrow(
@@ -8895,7 +8970,7 @@ export const driveChatSessionBrowserOperation: PlatformOperation<
       return client.chatSessionBrowser(
         input.sessionId,
         "note",
-        { ...common, text: input.text },
+        { ...common, text: input.text! },
         { signal }
       );
     const command =
@@ -8907,7 +8982,7 @@ export const driveChatSessionBrowserOperation: PlatformOperation<
     return client.chatSessionBrowser(
       input.sessionId,
       "command",
-      { ...common, command },
+      { ...common, command: command as PlatformSessionBrowserCommand },
       { signal }
     );
   },
@@ -9066,10 +9141,14 @@ export const getChatSessionTraceOperation: PlatformOperation<
   description:
     "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions.",
   readOnly: true,
-  permalink: derivePermalinks((result) => [
-    { type: "chat_session", id: result.sessionId, ...projectIdOf(result) },
-    ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: result.turns.some(turn => !!turn.browser), ...projectIdOf(result) }] : []),
-  ]),
+  permalink: derivePermalinks((result, _input, context) => {
+    const projectId = projectIdOf(result).projectId ?? context.resolvedScope?.projectId;
+    if (!projectId) return [];
+    return [
+      { type: "chat_session", id: result.sessionId, projectId },
+      ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: result.turns.some(turn => !!turn.browser), projectId }] : []),
+    ];
+  }),
   inputSchema: getChatSessionTraceInput,
   async execute(input, { client, signal, onScopeResolved }) {
     const projectSelector = input.project?.trim();
