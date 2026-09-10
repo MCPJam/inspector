@@ -30,6 +30,10 @@ the broader browser-attachment proposal.
 2. Deploy the companion Inspector change. Refresh the built-in catalog in an
    already-open client before testing. An old backend still reports the Computer
    prerequisite; do not override that verdict client-side.
+   Older packaged/Electron clients derive Browser visibility from the catalog's
+   Computer prerequisite alone: after the backend deploy, they may show Browser
+   outside the cohort, but saving is still rejected by the backend gate. Those
+   installations need a client upgrade, not just a catalog refresh.
 3. For hosted Browser, verify the backend desktop template and positive desktop
    credit rate via `projectComputers.getDesktopRuntimeTemplateConfig` / the deployment's
    runtime configuration. The relevant internal setters are
@@ -70,9 +74,10 @@ do not change deployment flags, rates, templates, or entitlements themselves.
   cause a second prompt. Failed grants offer an inline retry.
 - Hosted Browser-only host: open a conversation, launch/navigate, reload and
   reconnect, and confirm ownership, idle behavior, and metering still work.
-- Browser-only eval and journey with an explicit unattended policy: confirm a
-  per-run desktop is provisioned and Browser tools are usable. Policy-less runs
-  must not gain unrestricted browser access.
+- Browser-only eval and journey: first author an explicit `browserToolPolicy`
+  through the SDK/API (there is no policy editor in the UI for this launch),
+  then confirm a per-run desktop is provisioned and Browser tools are usable.
+  Policy-less runs must not gain unrestricted browser access.
 - Legacy Browser+Computer host still loads and runs; Browser+Bash still fails
   authored-config validation.
 
