@@ -16,6 +16,8 @@ interface ActiveChatSessionState {
   setRestoredSession: (
     session: NonNullable<ActiveChatSessionState["restoredSession"]>,
   ) => void;
+  approvalSettings: Record<string, boolean>;
+  setApprovalSetting: (id: string, enabled: boolean) => void;
   sessionId: string | null;
   browserLocation: BrowserLocation | null;
   setBrowserLocation: (location: BrowserLocation) => void;
@@ -38,6 +40,11 @@ export const useActiveChatSessionStore = create<ActiveChatSessionState>(
     restoredSession: null,
     setRestoredSession: (restoredSession) =>
       set({ restoredSession, sessionId: restoredSession.sessionId }),
+    approvalSettings: {},
+    setApprovalSetting: (id, enabled) =>
+      set((state) => ({
+        approvalSettings: { ...state.approvalSettings, [id]: enabled },
+      })),
     sessionId: null,
     browserLocation: null,
     setBrowserLocation: (browserLocation) => set({ browserLocation }),

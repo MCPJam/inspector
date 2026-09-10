@@ -1,3 +1,12 @@
+import { withKeyedLock } from "../../services/browserd/probe-lock.js";
+import { HTTPException } from "hono/http-exception";
+import {
+  authorizeLocalInspection,
+  inspectionNonceScope,
+  inspectionPartition,
+  type LocalInspectionScope,
+} from "../../services/webmcp-inspector/local-authorization.js";
+import { issueLocalNonce } from "../../utils/computers/local-terminal-auth.js";
 import { parsePaneCommand } from "../../services/browserd/daemon/pane-command";
 import {
   MIN_SESSION_VIEWPORT,
@@ -255,6 +264,7 @@ const commandSchema = z.discriminatedUnion("type", [
  * that drift apart invisibly, because each one's own tests keep passing.
  */
 function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
+  if (error instanceof HTTPException) return error.getResponse();
   if (error instanceof HostedIdentityError) {
     return error.response;
   }
@@ -548,6 +558,14 @@ webmcpInspector.post("/sessions", async (c) => {
     );
   }
 
+  let localScope: LocalInspectionScope | undefined;
+  if (transport === "local") {
+    try {
+      localScope = await authorizeLocalInspection(c, projectId);
+    } catch (error) {
+      return webMcpErrorResponse(c, error, "Browser permission required.");
+    }
+  }
   let provider;
   /** Set on the hosted path: the reserved daemon, and who it belongs to. */
   // COMPUTER-typed: this route opens the member's own browser for a person
@@ -664,6 +682,7 @@ webmcpInspector.post("/sessions", async (c) => {
 
   try {
     const session = await startWebMcpSession({
+      ...(localScope ? { localScope, ownerId: localScope.ownerKey } : {}),
       url,
       ...(provider ? { provider } : {}),
       // Omitted means `window`, so a caller that never heard of this field gets
@@ -699,7 +718,21 @@ async function resolveRuntime(
   sessionId: string,
 ): Promise<WebMcpSessionRuntime> {
   if (!HOSTED_MODE || !sessionId.startsWith("hosted:")) {
-    return webMcpSessions.get(sessionId);
+    const runtime = webMcpSessions.get(sessionId);
+    if (!sessionId.startsWith("hosted:")) {
+      const scope = await authorizeLocalInspection(c);
+      if (
+        !runtime.localAuthorization ||
+        !runtime.belongsTo(scope.ownerKey) ||
+        runtime.localAuthorization.scope.consentFingerprint !==
+          scope.consentFingerprint
+      )
+        throw new WebMcpSessionNotFoundError(
+          "That inspection session is not available.",
+        );
+      await runtime.assertAuthorized();
+    }
+    return runtime;
   }
   const identity = hostedIdentity(c);
   if (!identity.ok) throw new HostedIdentityError(identity.response);
@@ -813,6 +846,7 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
     // Already gone; `subscribe` below reports it to the client properly.
   }
 
+  let unsubscribeConsent: (() => void) | undefined;
   let unsubscribe: (() => void) | undefined;
   let keepalive: ReturnType<typeof setInterval> | undefined;
   /** Set by `start`, called by `pull`. See `pendingFrame`. */
@@ -824,6 +858,8 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
   // for the life of the process, enqueueing into a closed controller every 15
   // seconds with the throw swallowed.
   const teardown = () => {
+    unsubscribeConsent?.();
+    unsubscribeConsent = undefined;
     if (keepalive) clearInterval(keepalive);
     keepalive = undefined;
     unsubscribe?.();
@@ -853,6 +889,14 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
 
   const stream = new ReadableStream({
     start(controller) {
+      unsubscribeConsent = runtime?.localAuthorization?.lifetime.onRevoked(
+        () => {
+          teardown();
+          try {
+            controller.close();
+          } catch {}
+        },
+      );
       const write = (chunk: Uint8Array) => {
         try {
           controller.enqueue(chunk);
@@ -861,6 +905,7 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
         }
       };
       const send = (payload: unknown) => {
+        if (runtime && !runtime.isAuthorized()) return;
         const isFrame =
           typeof payload === "object" &&
           payload !== null &&
@@ -1148,10 +1193,69 @@ webmcpInspector.delete("/sessions/:id", async (c) => {
         return c.json({ closed: false });
       }
     }
+    if (!sessionId.startsWith("hosted:") && webMcpSessions.peek(sessionId))
+      await resolveRuntime(c, sessionId);
     const closed = await webMcpSessions.close(sessionId);
     return c.json({ closed });
   } catch (error) {
     return webMcpErrorResponse(c, error, "Could not close that session.");
+  }
+});
+
+webmcpInspector.post("/sessions/:id/stream-nonce", async (c) => {
+  try {
+    const runtime = await resolveRuntime(c, c.req.param("id"));
+    const scope = runtime.localAuthorization?.scope;
+    if (!scope) return c.json({ error: "Not found" }, 404);
+    return c.json(
+      issueLocalNonce({
+        kind: "webmcp-frames",
+        projectId: inspectionNonceScope(c.req.param("id"), scope),
+        consentFingerprint: scope.consentFingerprint,
+      }),
+    );
+  } catch (error) {
+    return webMcpErrorResponse(
+      c,
+      error,
+      "Could not open the inspection stream.",
+    );
+  }
+});
+
+webmcpInspector.delete("/profile", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const scope = await authorizeLocalInspection(
+      c,
+      typeof body.projectId === "string" ? body.projectId : undefined,
+    );
+    if (!process.versions.electron) return c.json({ cleared: true });
+    return await withKeyedLock(
+      `webmcp-profile:${scope.profileKey}`,
+      async () => {
+        const { session } = await import("electron");
+        for (const runtime of webMcpSessions.localRuntimes()) {
+          if (runtime.localAuthorization?.scope.profileKey === scope.profileKey)
+            await webMcpSessions.close(runtime.sessionId);
+        }
+        const partition =
+          body.legacy === true
+            ? "persist:webmcp-inspector"
+            : inspectionPartition(scope);
+        const profile = session.fromPartition(partition);
+        await profile.closeAllConnections();
+        await profile.clearStorageData();
+        await profile.clearCache();
+        return c.json({ cleared: true });
+      },
+    );
+  } catch (error) {
+    return webMcpErrorResponse(
+      c,
+      error,
+      "Could not clear inspection site data.",
+    );
   }
 });
 

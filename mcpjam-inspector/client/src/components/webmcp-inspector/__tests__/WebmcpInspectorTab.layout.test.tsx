@@ -1,3 +1,10 @@
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => ({
+    granted: true,
+    token: "test-consent",
+    grant: vi.fn(async () => true),
+  }),
+}));
 /**
  * The three-panel workspace: tools on the left, the page in the center,
  * activity as logs on the right.
@@ -95,7 +102,9 @@ describe("WebmcpInspectorTab — three-panel workspace", () => {
     expect(screen.getByText("add_topping")).toBeInTheDocument();
     expect(screen.queryByText("Open a page")).toBeNull();
     expect(
-      screen.getByText(/A live view of the page. Interact with it in the browser window/),
+      screen.getByText(
+        /A live view of the page. Interact with it in the browser window/,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Search logs")).toBeInTheDocument();
     expect(screen.getByText("sess")).toBeInTheDocument();
@@ -131,9 +140,13 @@ describe("WebmcpInspectorTab — three-panel workspace", () => {
     render(<WebmcpInspectorTab />);
     expect(screen.getByText("Open a page")).toBeInTheDocument();
     expect(
-      screen.getByText(/Enter a URL on the left to inspect the tools it registers/),
+      screen.getByText(
+        /Enter a URL on the left to inspect the tools it registers/,
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open browser" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open browser" }),
+    ).toBeInTheDocument();
   });
 
   it("switches between two tools that share a name by identity", async () => {

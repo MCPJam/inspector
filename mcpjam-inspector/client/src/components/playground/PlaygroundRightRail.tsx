@@ -3,6 +3,8 @@ import {
   usePlaygroundBrowserOverride,
 } from "./playground-browser-override";
 import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
+import { useAppNavigate } from "@/lib/app-navigation";
 import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -44,6 +46,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -114,7 +117,9 @@ function RightRailTabbed({
   hostConfig: HostConfigDtoV2 | null;
   hostId: string | null;
 }) {
+  const navigate = useAppNavigate();
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
+  const leftBrowserForLogs = useRef(false);
   const computersEnabled = useComputersEnabledState();
   const browsersEnabled = useBrowserEnabledState();
   const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
@@ -164,6 +169,10 @@ function RightRailTabbed({
     (state) => state.sessionId,
   );
   const browserSessionId = activeChatSessionId ?? undefined;
+  const browseRevealSeq = useBrowserWorkspaceStore((state) => state.revealSeq);
+  const browseRevealId = useBrowserWorkspaceStore(
+    (state) => state.revealConversationId,
+  );
   const mintHostedBrowserToken = useCallback(
     ({ projectId: tokenProjectId }: { projectId: string }) => {
       if (!browserSessionId)
@@ -185,9 +194,26 @@ function RightRailTabbed({
     )
       setActiveTab("logs");
   }, [hasBrowser, shellAvailable, activeTab]);
+
+  useEffect(() => {
+    leftBrowserForLogs.current = false;
+  }, [browserSessionId]);
+
+  // Follow the work until the person looks away. A live browser tool opens
+  // this tab the first time; switching to Logs (or Shell) is a choice we
+  // keep until they come back, or until this conversation is no longer
+  // the one browsing.
+  useEffect(() => {
+    if (!hasBrowser || !browserSessionId) return;
+    if (browseRevealId !== browserSessionId) return;
+    if (leftBrowserForLogs.current) return;
+    setActiveTab("browser");
+  }, [browseRevealSeq, browseRevealId, browserSessionId, hasBrowser]);
+
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
       if (next === activeTab) return;
+      leftBrowserForLogs.current = next !== "browser";
       track("playground_right_rail_tab_changed", {
         location: "playground_right_rail",
         from: activeTab,
@@ -251,7 +277,10 @@ function RightRailTabbed({
         ) : null}
         <div className="ml-auto flex items-center gap-1">
           {hasBrowser && activeTab === "browser" ? (
-            <BrowserRuntimeControls projectId={projectId} compact />
+            <>
+              <BrowserRuntimeControls projectId={projectId} compact />
+              {hostId && <button type="button" onClick={() => navigate(buildHostFocusTabPath(hostId, "browser"))} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">Browser settings</button>}
+            </>
           ) : null}
           <button
             type="button"

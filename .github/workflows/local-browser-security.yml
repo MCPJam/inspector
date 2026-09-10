@@ -1,0 +1,46 @@
+name: Local Browser Security
+on:
+  pull_request:
+    paths:
+      - "mcpjam-inspector/server/services/browserd/**"
+      - "mcpjam-inspector/server/services/webmcp-inspector/**"
+      - "mcpjam-inspector/server/routes/**"
+      - "mcpjam-inspector/server/utils/**"
+      - "mcpjam-inspector/src/**"
+      - "mcpjam-inspector/client/**"
+      - "mcpjam-inspector/shared/**"
+      - "mcpjam-inspector/scripts/*security-smoke*"
+      - "package-lock.json"
+      - ".github/workflows/local-browser-security.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: local-browser-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  real-engines:
+    name: Security / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0"
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - run: npm run sdk:build -w @mcpjam/inspector
+      - name: Install shipping Playwright browser
+        working-directory: mcpjam-inspector
+        run: npx playwright install --with-deps chromium
+      - name: Exercise Node and Electron security boundaries
+        if: runner.os != 'Linux'
+        run: node mcpjam-inspector/scripts/run-local-browser-security-smoke.mjs
+      - name: Exercise Linux with a real display and sandbox
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node mcpjam-inspector/scripts/run-local-browser-security-smoke.mjs
