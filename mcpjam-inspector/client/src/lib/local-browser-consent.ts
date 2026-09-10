@@ -6,12 +6,9 @@
  * module stores the plaintext in `localStorage`, and it rides the
  * `X-MCPJam-Browser-Consent` header on chat turns where the engine resolver
  * re-verifies it on every use. That server-side re-verification is the real
- * enforcement point — so the CLIENT treats a stored token as consent and does
- * NOT pre-verify. Pre-verifying (an async status racing grant/revoke and the
- * same-tab storage event) was a large, bug-prone race surface for zero real
- * safety: a stale/tampered token simply fails the next turn's server check.
- * localStorage is therefore the single source of truth here, read
- * synchronously.
+ * enforcement point. Reading stored consent is synchronous and never verifies
+ * on mount. Explicit shared-client setup verifies an existing token before
+ * reusing it, so retrying setup does not rotate an active browser capability.
  *
  * DEVICE-scoped (not per-project): the thing consented to is this machine
  * controlling a browser and its signed-in websites.
@@ -29,6 +26,21 @@ import { authFetch } from "@/lib/session-token";
 
 const STORAGE_KEY = "mcp-local-browser-consent-v1";
 const EVENT_NAME = "local-browser-consent-changed";
+const SETUP_KEY = "mcp-local-browser-setup-pending-v1";
+
+export function localBrowserSetupPending(): boolean {
+  try {
+    return localStorage.getItem(SETUP_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setSetupPending(pending: boolean): void {
+  if (pending) localStorage.setItem(SETUP_KEY, "true");
+  else localStorage.removeItem(SETUP_KEY);
+  window.dispatchEvent(new CustomEvent(EVENT_NAME));
+}
 
 /**
  * Header that carries the consent capability on a local-engine chat turn. The
@@ -80,11 +92,21 @@ function persist(consent: StoredLocalBrowserConsent | null): boolean {
 
 export function clearStoredLocalBrowserConsent(): void {
   persist(null);
+  try {
+    setSetupPending(false);
+  } catch {
+    /* Storage may be blocked. */
+  }
 }
 
 export function subscribeLocalBrowserConsent(callback: () => void): () => void {
   const onStorage = (event: StorageEvent) => {
-    if (event.key === STORAGE_KEY) callback();
+    if (
+      event.key === STORAGE_KEY ||
+      event.key === SETUP_KEY ||
+      event.key === null
+    )
+      callback();
   };
   window.addEventListener(EVENT_NAME, callback);
   window.addEventListener("storage", onStorage);
@@ -94,15 +116,32 @@ export function subscribeLocalBrowserConsent(callback: () => void): () => void {
   };
 }
 
-function consentRequest(
+class BrowserPermissionUnavailableError extends Error {}
+
+async function consentRequest(
   path: "grant" | "verify" | "revoke",
   body?: unknown,
 ): Promise<Response> {
-  return authFetch(`/api/mcp/computers/local-browser/consent/${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
+  const response = await authFetch(
+    `/api/mcp/computers/local-browser/consent/${path}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    },
+  );
+  if (!response.ok) {
+    const failure = await response
+      .clone()
+      .json()
+      .catch(() => null);
+    if (failure?.code === "browser_runtime_unavailable") {
+      throw new BrowserPermissionUnavailableError(
+        "Local Browser isn't enabled for this user or server.",
+      );
+    }
+  }
+  return response;
 }
 
 /**
@@ -111,7 +150,8 @@ function consentRequest(
  * Split from the persist step so a caller can keep the network wait
  * OUT of any "my own write" guard — an external revoke arriving mid-mint must
  * stay visible — and then persist (which dispatches the synchronous same-tab
- * event) in a tightly-scoped, guarded region. Returns null on any failure.
+ * event) in a tightly-scoped, guarded region. Rollout denials carry a readable
+ * error to the permission prompt; other failures return null.
  */
 export async function mintLocalBrowserConsent(): Promise<StoredLocalBrowserConsent | null> {
   try {
@@ -127,7 +167,8 @@ export async function mintLocalBrowserConsent(): Promise<StoredLocalBrowserConse
       grantedAt:
         typeof json.grantedAt === "string" ? json.grantedAt : "unknown",
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof BrowserPermissionUnavailableError) throw error;
     return null;
   }
 }
@@ -157,6 +198,53 @@ export async function grantLocalBrowserConsent(): Promise<boolean> {
   const stored = persistLocalBrowserConsent(minted);
   if (!stored) void revokeLocalBrowserConsentOnServer(minted.token);
   return stored;
+}
+
+let setupInFlight: Promise<boolean> | null = null;
+
+/** Only an explicit Allow calls this; retries reuse the saved capability. */
+export function enableLocalBrowserForAllClients(): Promise<boolean> {
+  if (setupInFlight) return setupInFlight;
+  setupInFlight = (async () => {
+    try {
+      setSetupPending(true);
+    } catch {
+      return false;
+    }
+    let stored = loadStoredLocalBrowserConsent();
+    if (stored) {
+      const verified = await consentRequest("verify", { token: stored.token });
+      if (!verified.ok)
+        throw new Error("Couldn't verify Browser permission. Retry setup.");
+      const result = (await verified.json()) as { valid?: boolean };
+      if (!result.valid) stored = null;
+    }
+    if (!stored) {
+      if (!(await grantLocalBrowserConsent())) return false;
+      stored = loadStoredLocalBrowserConsent();
+    }
+    if (!stored) return false;
+    const token = stored.token;
+    const response = await authFetch(
+      "/api/mcp/computers/local-browser/enable-clients",
+      {
+        method: "POST",
+        headers: { [BROWSER_CONSENT_HEADER]: token },
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        "Browser permission was saved, but clients could not be enabled. Retry setup.",
+      );
+    }
+    // A revoke or grant in another tab wins over this delayed completion.
+    if (loadStoredLocalBrowserConsent()?.token !== token) return false;
+    setSetupPending(false);
+    return true;
+  })().finally(() => {
+    setupInFlight = null;
+  });
+  return setupInFlight;
 }
 
 /**

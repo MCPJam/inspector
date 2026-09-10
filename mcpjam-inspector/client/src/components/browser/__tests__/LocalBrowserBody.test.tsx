@@ -1,3 +1,4 @@
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { useBrowserPageToolsStore } from "@/stores/browser-page-tools-store";
 import { beforeAll } from "vitest";
@@ -175,6 +176,7 @@ vi.mock("@/lib/local-browser/client", async () => {
 });
 
 import { LocalBrowserBody } from "../LocalBrowserBody";
+import { BrowserWorkspaceChrome } from "../BrowserWorkspaceChrome";
 
 beforeEach(() => {
   api.workspaceEnabled = true;
@@ -249,12 +251,37 @@ function renderBody(over: Record<string, unknown> = {}) {
 }
 
 describe("the agent browser pane", () => {
+  it("only attaches to existing sessions when viewing a comparison client", async () => {
+    render(
+      <BrowserWorkspaceChrome.Provider
+        value={{ clientName: "Cursor", holderId: "comparison-holder" }}
+      >
+        <LocalBrowserBody
+          projectId="proj-1"
+          sessionId="cursor-session"
+          consentGranted
+          consentToken="tok"
+        />
+      </BrowserWorkspaceChrome.Provider>,
+    );
+    await waitFor(() =>
+      expect(api.lookup).toHaveBeenCalledWith(
+        "proj-1",
+        "tok",
+        "cursor-session",
+      ),
+    );
+    expect(api.ensures).toEqual([]);
+    expect(api.streams).toEqual([]);
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+  });
+
   it("grants Browser-only consent from the Browser panel", async () => {
     const view = renderBody({ consentGranted: false });
     expect(await screen.findByTestId("rail-browser-unconsented")).toBeTruthy();
     expect(screen.queryByText(/Open the Computer tab/)).toBeNull();
     expect(
-      screen.getByText(/shell permission is separate/),
+      screen.getByText(/Allow agents to navigate, click, type, and read pages/),
     ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Allow" }));
     expect(grantConsent).toHaveBeenCalled();

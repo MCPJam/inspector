@@ -203,6 +203,7 @@ export function HostBuilderViewRedesigned({
     setDraftName(host.name);
     setDraftConfig({
       ...hostConfigDtoToInput(host.config),
+      ...(!HOSTED_MODE ? { localBrowserEnabled: host.config.localBrowserEnabled } : {}),
       optionalServerIds: [],
     });
     // draftName / draftConfig intentionally excluded: keying the effect on
@@ -246,7 +247,7 @@ export function HostBuilderViewRedesigned({
   const savedConfig = useMemo(
     () =>
       host
-        ? { ...hostConfigDtoToInput(host.config), optionalServerIds: [] }
+        ? { ...hostConfigDtoToInput(host.config), ...(!HOSTED_MODE ? { localBrowserEnabled: host.config.localBrowserEnabled } : {}), optionalServerIds: [] }
         : null,
     [host],
   );
@@ -476,10 +477,14 @@ export function HostBuilderViewRedesigned({
           savedConfig,
           config,
         );
+        const { localBrowserEnabled, ...input } = config;
         const { hostConfigId } = await updateHost({
           hostId,
           name,
-          input: config,
+          input,
+          ...(!HOSTED_MODE && localBrowserEnabled !== savedConfig?.localBrowserEnabled
+            ? { localBrowserEnabled }
+            : {}),
         });
         // The freshly persisted config id arrives via the Convex
         // subscription on the next tick; don't include it in this toast
