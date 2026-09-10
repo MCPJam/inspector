@@ -1371,6 +1371,7 @@ var BrowserdRequestHandler = class {
     this.lease = deps.lease ?? new HandoffLease();
     this.authority = deps.authority ?? "lease";
     this.features = [
+      "sharp-stream-v1",
       .../* @__PURE__ */ new Set([...deps.features ?? [], ...BROWSERD_WEBMCP_FEATURES])
     ];
     this.bundleHash = deps.bundleHash;
@@ -2288,7 +2289,7 @@ var BrowserdRequestHandler = class {
         return;
       }
       args.listener(frame);
-    });
+    }, args.maxFrameBytes);
     if (!live) unsubscribe();
     return {
       ok: true,
@@ -2547,6 +2548,24 @@ function isValidCommand(value) {
   return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
 }
 
+// shared/browser-viewport-policy.ts
+var BROWSER_VIEWPORT_POLICY = {
+  quality: 85,
+  maxFrameBytes: 256 * 1024,
+  minIntervalMs: 100,
+  inputIntervalMs: 33,
+  inputBoostWindowMs: 1500
+};
+var SHARP_JPEG_MAX_BYTES = 2 * 1024 * 1024;
+function jpegFrameLimit(sharp) {
+  return sharp ? SHARP_JPEG_MAX_BYTES : BROWSER_VIEWPORT_POLICY.maxFrameBytes;
+}
+var JPEG_RECOVERY_POLICY = {
+  qualities: [85, 75, 65, 55, 40],
+  probeMs: 1e4,
+  maxProbeMs: 6e4
+};
+
 // shared/browserd-frame-stream.ts
 var FRAME_STREAM_VERSION = 1;
 var FRAME_STREAM_VERSION_VIDEO = 2;
@@ -2703,12 +2722,21 @@ function createFrameStreamHost(handler, options = {}) {
       return true;
     }
     if (query?.get("codec") === "h264") {
-      void startVideoSubscription({ res, holder }).catch(() => {
+      void startVideoSubscription({
+        res,
+        holder,
+        sharp: query?.get("sharp") === "1"
+      }).catch(() => {
         writeEndAndClose(res, "video_unavailable");
       });
       return true;
     }
-    void startSubscription({ res, tabId, holder }).catch(() => {
+    void startSubscription({
+      res,
+      tabId,
+      holder,
+      sharp: query?.get("sharp") === "1"
+    }).catch(() => {
       writeEndAndClose(res, "tab_gone");
     });
     return true;
@@ -2817,7 +2845,7 @@ function createFrameStreamHost(handler, options = {}) {
         // next GOP, four seconds later, being sent units it cannot decode.
         unit.key ? { essential: true } : {}
       );
-    });
+    }, args.sharp);
     const failure = encoder.failure();
     if (failure) {
       end("video_unavailable");
@@ -2976,6 +3004,7 @@ function createFrameStreamHost(handler, options = {}) {
       pacer.close();
     });
     subscription = await handler.subscribeFrames({
+      maxFrameBytes: jpegFrameLimit(args.sharp),
       ...tabId ? { tabId } : {},
       ...holder ? { holder } : {},
       listener: (frame) => {
@@ -3072,6 +3101,7 @@ function createFrameStreamHost(handler, options = {}) {
 function statsFor(subscription, previousFramesIn) {
   const counters = subscription.counters();
   return {
+    jpeg: counters.jpeg,
     framesIn: counters.framesIn,
     framesOut: counters.framesOut,
     bytesOut: counters.bytesOut,
@@ -3350,7 +3380,16 @@ import { spawn as spawn2 } from "node:child_process";
 var NAL_AUD = 9;
 var NAL_IDR = 5;
 var MAX_RING_BYTES = 3 * 1024 * 1024;
-function tierArgs(tier) {
+function tierArgs(tier, sharp = false) {
+  if (sharp)
+    return [
+      "-crf",
+      tier === "sharp" ? "18" : tier === "saver" ? "23" : "20",
+      "-maxrate",
+      tier === "sharp" ? "6M" : "2500k",
+      "-bufsize",
+      tier === "sharp" ? "12M" : "5M"
+    ];
   switch (tier) {
     case "sharp":
       return ["-crf", "18", "-maxrate", "6M", "-bufsize", "12M"];
@@ -3370,7 +3409,8 @@ function tierArgs(tier) {
   }
 }
 function ffmpegArgs(options) {
-  const tier = tierArgs(options.tier);
+  const tier = tierArgs(options.tier, options.sharp);
+  const fps = options.sharp ? options.tier === "sharp" ? 30 : options.tier === "saver" ? 10 : 20 : 30;
   const filters = tier.includes("-vf") ? [] : ["-vf", "mpdecimate"];
   return [
     "-loglevel",
@@ -3378,7 +3418,7 @@ function ffmpegArgs(options) {
     "-f",
     "x11grab",
     "-framerate",
-    "30",
+    String(fps),
     "-video_size",
     `${options.width}x${options.height}`,
     "-draw_mouse",
@@ -3399,7 +3439,7 @@ function ffmpegArgs(options) {
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "120",
+    String(fps * 4),
     "-sc_threshold",
     "0",
     "-x264-params",
@@ -3482,6 +3522,8 @@ function createVideoEncoder(options) {
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const listeners = /* @__PURE__ */ new Set();
   let tier = options.tier ?? "auto";
+  const sharpSubscribers = /* @__PURE__ */ new Set();
+  let sharp = false;
   let width = Math.max(2, Math.round(options.width));
   let height = Math.max(2, Math.round(options.height));
   let child;
@@ -3539,7 +3581,8 @@ function createVideoEncoder(options) {
           // smaller silently captures a corner.
           width,
           height,
-          tier
+          tier,
+          sharp
         }),
         { stdio: ["ignore", "pipe", "pipe"] }
       );
@@ -3566,8 +3609,17 @@ function createVideoEncoder(options) {
     });
   };
   return {
-    subscribe(listener) {
+    subscribe(listener, wantsSharp = false) {
       listeners.add(listener);
+      if (wantsSharp) sharpSubscribers.add(listener);
+      const nextSharp = sharpSubscribers.size === listeners.size;
+      if (sharp !== nextSharp) {
+        sharp = nextSharp;
+        if (child) {
+          stop();
+          start();
+        }
+      }
       if (listeners.size === 1) start();
       for (const unit of ring) {
         try {
@@ -3577,7 +3629,16 @@ function createVideoEncoder(options) {
       }
       return () => {
         listeners.delete(listener);
+        sharpSubscribers.delete(listener);
         if (listeners.size === 0) stop();
+        else {
+          const nextSharp2 = sharpSubscribers.size === listeners.size;
+          if (sharp !== nextSharp2) {
+            sharp = nextSharp2;
+            stop();
+            start();
+          }
+        }
       };
     },
     subscriberCount: () => listeners.size,
@@ -5570,15 +5631,6 @@ function declaredToolsFromWebmcp(tools) {
   }));
 }
 
-// shared/browser-viewport-policy.ts
-var BROWSER_VIEWPORT_POLICY = {
-  quality: 75,
-  maxFrameBytes: 256 * 1024,
-  minIntervalMs: 100,
-  inputIntervalMs: 33,
-  inputBoostWindowMs: 1500
-};
-
 // server/services/webmcp-inspector/frame-throttle.ts
 function createFrameThrottle(options) {
   const now = options.now ?? Date.now;
@@ -5698,10 +5750,21 @@ var DEFAULT_MIN_INTERVAL_MS = BROWSER_VIEWPORT_POLICY.minIntervalMs;
 var DEFAULT_MAX_FRAME_BYTES = BROWSER_VIEWPORT_POLICY.maxFrameBytes;
 function createTabViewport(cdp, options) {
   let quality = options.quality ?? DEFAULT_QUALITY;
-  let oversizeRecoveryAttempted = false;
+  const requestedQuality = quality;
+  let recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+  let probing = false;
+  let recoveryTimer;
+  let captureError;
+  const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((id) => clearTimeout(id));
+  const cancelRecovery = () => {
+    if (recoveryTimer !== void 0) clearTimer(recoveryTimer);
+    recoveryTimer = void 0;
+  };
   const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const now = options.now ?? Date.now;
-  const listeners = /* @__PURE__ */ new Set();
+  const listeners = /* @__PURE__ */ new Map();
+  const effectiveLimit = () => Math.min(...listeners.values(), SHARP_JPEG_MAX_BYTES);
   let streaming = false;
   let startPending = Promise.resolve();
   let streamGeneration = 0;
@@ -5722,7 +5785,8 @@ function createTabViewport(cdp, options) {
   const publish = (frame) => {
     counters.framesOut += 1;
     counters.bytesOut += base64Bytes(frame.data);
-    for (const listener of listeners) {
+    for (const [listener, limit] of listeners) {
+      if (base64Bytes(frame.data) > limit) continue;
       try {
         listener(frame);
       } catch {
@@ -5749,24 +5813,31 @@ function createTabViewport(cdp, options) {
       return;
     }
     lastData = frame.data;
-    const bytes = Math.floor(frame.data.length * 3 / 4);
-    if (bytes > maxBytes) {
+    const bytes = base64Bytes(frame.data);
+    if (bytes > effectiveLimit()) {
       counters.dropped.oversize += 1;
-      if (!oversizeRecoveryAttempted) {
-        oversizeRecoveryAttempted = true;
-        quality = Math.min(quality, 40);
-        const run = resizeChain.then(async () => {
-          if (disposed || listeners.size === 0) return;
-          await stop();
-          if (disposed || listeners.size === 0) return;
-          await start();
-        });
-        resizeChain = run.catch(() => {
-        });
-        startPending = resizeChain;
+      cancelRecovery();
+      if (probing)
+        recoveryDelay = Math.min(
+          JPEG_RECOVERY_POLICY.maxProbeMs,
+          recoveryDelay * 2
+        );
+      probing = false;
+      const next = JPEG_RECOVERY_POLICY.qualities.find((q) => q < quality);
+      if (next === void 0) {
+        captureError = "jpeg_frame_limit";
+      } else {
+        quality = next;
+        restartCapture();
       }
       return;
     }
+    captureError = void 0;
+    if (probing) {
+      recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+      probing = false;
+    }
+    scheduleRecovery();
     const measured = measure(frame.data, options.surface);
     throttle.push({
       data: frame.data,
@@ -5777,11 +5848,21 @@ function createTabViewport(cdp, options) {
       seq: seq += 1
     });
   });
+  cdp.on("Page.frameNavigated", (payload) => {
+    const frame = payload.frame;
+    if (!frame || frame.parentId || disposed || listeners.size === 0) return;
+    if (quality < requestedQuality || captureError) {
+      resetQuality();
+      restartCapture();
+    }
+  });
   const start = async () => {
     if (streaming || disposed) return;
     streaming = true;
     const generation = ++streamGeneration;
     lastData = void 0;
+    void cdp.send("Page.enable").catch(() => {
+    });
     await cdp.send("Page.startScreencast", {
       format: "jpeg",
       quality,
@@ -5795,6 +5876,7 @@ function createTabViewport(cdp, options) {
     });
   };
   const stop = async () => {
+    cancelRecovery();
     if (!streaming) return;
     streaming = false;
     streamGeneration += 1;
@@ -5802,15 +5884,59 @@ function createTabViewport(cdp, options) {
     await cdp.send("Page.stopScreencast").catch(() => {
     });
   };
+  function restartCapture() {
+    const run = resizeChain.then(async () => {
+      if (disposed || listeners.size === 0) return;
+      await stop();
+      if (!disposed && listeners.size > 0) await start();
+    });
+    resizeChain = run.catch(() => {
+    });
+    startPending = resizeChain;
+  }
+  function scheduleRecovery() {
+    if (quality >= requestedQuality || recoveryTimer !== void 0 || disposed)
+      return;
+    recoveryTimer = setTimer(() => {
+      recoveryTimer = void 0;
+      if (disposed || listeners.size === 0) return;
+      quality = Math.min(
+        requestedQuality,
+        [...JPEG_RECOVERY_POLICY.qualities].reverse().find((q) => q > quality) ?? requestedQuality
+      );
+      probing = true;
+      restartCapture();
+    }, recoveryDelay);
+  }
+  function resetQuality() {
+    cancelRecovery();
+    quality = requestedQuality;
+    recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+    probing = false;
+    captureError = void 0;
+  }
   return {
-    subscribe(listener) {
-      listeners.add(listener);
+    subscribe(listener, frameLimit = maxBytes) {
+      const before = effectiveLimit();
+      listeners.set(
+        listener,
+        Math.min(SHARP_JPEG_MAX_BYTES, Math.max(1, frameLimit))
+      );
+      if (listeners.size === 1 || effectiveLimit() !== before || captureError) {
+        resetQuality();
+        if (listeners.size > 1) restartCapture();
+      }
       if (listeners.size === 1) {
         startPending = pendingResizes > 0 ? resizeChain : start();
       }
       return () => {
+        const before2 = effectiveLimit();
         listeners.delete(listener);
         if (listeners.size === 0) void stop();
+        else if (effectiveLimit() !== before2) {
+          resetQuality();
+          restartCapture();
+        }
       };
     },
     subscriberCount: () => listeners.size,
@@ -5820,6 +5946,10 @@ function createTabViewport(cdp, options) {
     },
     invalidate() {
       lastData = void 0;
+      if (quality < requestedQuality || captureError) {
+        resetQuality();
+        restartCapture();
+      }
     },
     resize(surface, apply) {
       pendingResizes++;
@@ -5830,6 +5960,7 @@ function createTabViewport(cdp, options) {
           await stop();
           if (disposed) return;
           await apply?.();
+          resetQuality();
           Object.assign(options.surface, surface);
         } finally {
           pendingResizes--;
@@ -5844,7 +5975,16 @@ function createTabViewport(cdp, options) {
       return run;
     },
     boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),
-    counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
+    counters: () => ({
+      ...counters,
+      dropped: { ...counters.dropped },
+      jpeg: {
+        requestedQuality,
+        quality,
+        maxFrameBytes: effectiveLimit(),
+        reason: captureError ?? (quality < requestedQuality ? "frame_size" : "default")
+      }
+    }),
     noteTransportDrop() {
       counters.dropped.pacer += 1;
     },
@@ -6242,6 +6382,16 @@ var ChromiumDriver = class {
   viewportSettling() {
     return this.barrier.busy;
   }
+  /** Resize an attached capture together with its page, including rollback. */
+  async resizePage(page, size) {
+    const tab = [...this.tabs].find(([, entry]) => entry.page === page);
+    const capture = tab ? await this.viewports.get(tab[0]) : void 0;
+    const apply = async () => {
+      await page.setViewportSize?.({ width: size.width, height: size.height });
+    };
+    if (capture) await capture.resize(size, apply);
+    else await apply();
+  }
   /**
    * Take every tab to a new size, or leave every tab where it was.
    *
@@ -6284,15 +6434,12 @@ var ChromiumDriver = class {
     const applied = [];
     try {
       for (const page of pages) {
-        await page.setViewportSize?.({
-          width: next.width,
-          height: next.height
-        });
+        await this.resizePage(page, next);
         applied.push(page);
       }
     } catch (error) {
       for (const page of applied) {
-        await page.setViewportSize?.({ width: previous.width, height: previous.height }).catch(() => {
+        await this.resizePage(page, previous).catch(() => {
         });
       }
       if (this.resizeDisplay) {
@@ -6308,7 +6455,7 @@ var ChromiumDriver = class {
       this.viewportPolicy = "fixed";
     for (const entry of this.tabs.values()) {
       if (applied.includes(entry.page) || entry.page.isClosed()) continue;
-      await entry.page.setViewportSize?.({ width: next.width, height: next.height }).catch(() => {
+      await this.resizePage(entry.page, next).catch(() => {
       });
     }
     try {
@@ -6393,6 +6540,11 @@ var ChromiumDriver = class {
               "this browser is shutting down; no new tab was opened"
             )
           };
+        }
+        if (command.source === "manual" && action.newTab && action.url === "about:blank" && action.observe === "none" && safeUrl(entry.page) === "about:blank") {
+          return permit() ? { ok: true } : this.leaseBlockedResult(
+            "browser control changed while opening the tab; nothing was observed"
+          );
         }
         return this.navigateVerb(
           tabId,

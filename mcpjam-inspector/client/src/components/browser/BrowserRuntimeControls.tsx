@@ -1,3 +1,9 @@
+import { Settings2 } from "lucide-react";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@mcpjam/design-system/popover";
 import { useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
@@ -7,8 +13,10 @@ import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 
 export function BrowserRuntimeControls({
   projectId,
+  compact = false,
 }: {
   projectId: string | null;
+  compact?: boolean;
 }) {
   const engine = useBrowserEngine(projectId);
   const bridge = usePlaygroundChatHistoryBridge();
@@ -41,9 +49,9 @@ export function BrowserRuntimeControls({
       setStarting(false);
     }
   };
-  return (
-    <div className="flex flex-col gap-2 border-b border-border p-2 text-xs">
-      <div className="flex items-center gap-2">
+  const controls = (
+    <div className="flex flex-col gap-2 p-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
         {engine.toggleVisible ? (
           <select
             aria-label="Browser location"
@@ -65,14 +73,14 @@ export function BrowserRuntimeControls({
           {!engine.resolved
             ? "Checking Browser…"
             : engine.selectedEngine === "local"
-            ? !engine.localAvailable
-              ? "Browser unavailable on this machine"
-              : engine.consent.granted
-              ? "Browser authorized"
-              : "Browser permission required"
-            : engine.cloudAvailable
-            ? "Cloud Browser"
-            : "Cloud Browser unavailable"}
+              ? !engine.localAvailable
+                ? "Browser unavailable on this machine"
+                : engine.consent.granted
+                  ? "Browser authorized"
+                  : "Browser permission required"
+              : engine.cloudAvailable
+                ? "Cloud Browser"
+                : "Cloud Browser unavailable"}
         </span>
         {engine.selectedEngine === "local" && engine.consent.granted ? (
           <Button
@@ -106,5 +114,24 @@ export function BrowserRuntimeControls({
         </p>
       ) : null}
     </div>
+  );
+  if (!compact) return controls;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6"
+          aria-label="Browser options"
+          title="Browser location and permissions"
+        >
+          <Settings2 className="size-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80 p-2">
+        {controls}
+      </PopoverContent>
+    </Popover>
   );
 }

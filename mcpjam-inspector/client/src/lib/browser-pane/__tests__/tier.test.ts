@@ -25,7 +25,12 @@ function stream(controller: ReturnType<typeof createTierController>) {
   return {
     feed(
       count: number,
-      reading: { frames: number; dropped: number; rtt?: number; idle?: boolean },
+      reading: {
+        frames: number;
+        dropped: number;
+        rtt?: number;
+        idle?: boolean;
+      },
     ) {
       let tier = controller.current();
       for (let i = 0; i < count; i += 1) {
@@ -60,7 +65,7 @@ describe("auto", () => {
     link.feed(1, { frames: 0, dropped: 0 });
     link.feed(3, { frames: 20, dropped: 10 });
     expect(controller.current()).toBe("saver");
-    expect(link.feed(2, { frames: 30, dropped: 0 })).toBe("saver");
+    expect(link.feed(4, { frames: 30, dropped: 0 })).toBe("saver");
     expect(link.feed(1, { frames: 30, dropped: 0 })).toBe("auto");
   });
 
@@ -82,19 +87,19 @@ describe("auto", () => {
     // inference drawn from counters that can also move for other reasons.
     const controller = createTierController();
     controller.observe({ framesIn: 0, dropped: 0 });
-    expect(stream(controller).feed(5, { frames: 1, dropped: 10, idle: true })).toBe(
-      "auto",
-    );
+    expect(
+      stream(controller).feed(5, { frames: 1, dropped: 10, idle: true }),
+    ).toBe("auto");
   });
 
-  it("counts a slow round trip too, but generously", () => {
+  it("does not sacrifice sharpness because of round trip alone", () => {
     // A transatlantic hop is ~150ms and perfectly watchable; the thing that
     // actually ruins a pane is loss.
     const controller = createTierController();
     const link = stream(controller);
     link.feed(1, { frames: 0, dropped: 0 });
     expect(link.feed(3, { frames: 30, dropped: 0, rtt: 150 })).toBe("auto");
-    expect(link.feed(3, { frames: 30, dropped: 0, rtt: 600 })).toBe("saver");
+    expect(link.feed(3, { frames: 30, dropped: 0, rtt: 600 })).toBe("auto");
   });
 
   it("does not flip while the link hovers between the thresholds", () => {

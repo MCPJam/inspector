@@ -1,3 +1,4 @@
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { beforeAll } from "vitest";
 beforeAll(() => {
   window.PointerEvent = MouseEvent as typeof PointerEvent;
@@ -29,6 +30,8 @@ const api = vi.hoisted(() => ({
   installs: 0,
   inputs: [] as unknown[],
   ensures: [] as string[],
+  ensureError: null as Error | null,
+  ensureGate: null as Promise<void> | null,
   lookup: vi.fn(
     async (
       _project: string,
@@ -85,6 +88,8 @@ vi.mock("@/lib/local-browser/client", async () => {
     },
     ensureLocalBrowser: async (projectId: string) => {
       api.ensures.push(projectId);
+      if (api.ensureGate) await api.ensureGate;
+      if (api.ensureError) throw api.ensureError;
       return {
         bootId: `boot-${projectId}`,
         contextMode: "persistent" as const,
@@ -182,6 +187,8 @@ beforeEach(() => {
   api.installs = 0;
   api.inputs = [];
   api.ensures = [];
+  api.ensureError = null;
+  api.ensureGate = null;
   api.lookup.mockReset().mockResolvedValue(null);
   api.streams = [];
   api.watches = [];
@@ -224,7 +231,7 @@ async function deliverFrame() {
 async function clickPicture() {
   const image = await deliverFrame();
   image.getBoundingClientRect = () =>
-    ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
+    ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
   fireEvent.click(image, { clientX: 10, clientY: 10 });
   return image;
 }
@@ -242,7 +249,7 @@ function renderBody(over: Record<string, unknown> = {}) {
 
 describe("the agent browser pane", () => {
   it("grants Browser-only consent from the Browser panel", async () => {
-    renderBody({ consentGranted: false });
+    const view = renderBody({ consentGranted: false });
     expect(await screen.findByTestId("rail-browser-unconsented")).toBeTruthy();
     expect(screen.queryByText(/Open the Computer tab/)).toBeNull();
     expect(
@@ -251,6 +258,46 @@ describe("the agent browser pane", () => {
     await userEvent.click(screen.getByRole("button", { name: "Allow" }));
     expect(grantConsent).toHaveBeenCalled();
     expect(api.ensures).toEqual([]);
+    view.rerender(
+      <LocalBrowserBody
+        projectId="proj-1"
+        consentGranted
+        consentToken="new-token"
+      />,
+    );
+    await waitFor(() => expect(api.ensures).toEqual(["proj-1"]));
+    expect(
+      screen.queryByRole("button", { name: "Open the browser" }),
+    ).toBeNull();
+  });
+
+  it("waits until the Browser tab is visible to launch", async () => {
+    const view = renderBody({ active: false });
+    await act(async () => {});
+    expect(api.ensures).toEqual([]);
+    view.rerender(
+      <LocalBrowserBody
+        projectId="proj-1"
+        consentGranted
+        consentToken="tok"
+        active
+      />,
+    );
+    await waitFor(() => expect(api.ensures).toEqual(["proj-1"]));
+  });
+
+  it("offers an explicit retry after startup fails without looping", async () => {
+    api.ensureError = new Error("Startup failed");
+    const view = renderBody();
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    view.rerender(
+      <LocalBrowserBody projectId="proj-1" consentGranted consentToken="tok" />,
+    );
+    expect(api.ensures).toEqual(["proj-1"]);
+    api.ensureError = null;
+    await userEvent.click(retry);
+    await waitFor(() => expect(api.streams).toContain("boot-proj-1"));
+    expect(api.ensures).toEqual(["proj-1", "proj-1"]);
   });
 
   it("shows a failed grant inline and allows retry", async () => {
@@ -294,15 +341,15 @@ describe("the agent browser pane", () => {
     // There is no "Take control" button any more. Clicking the picture IS
     // taking it, which is what every browser anybody has used does.
     renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     expect(await screen.findByText(/agent is driving/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /take control/i })).toBeNull();
 
     await clickPicture();
-    expect(await screen.findByText(/you have it/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /resume agent/i })).toBeTruthy();
+    expect(await screen.findByText(/you’re in control/i)).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /let agent browse/i }),
+    ).toBeNull();
   });
 
   it("takes the browser on a paste, and sends the text", async () => {
@@ -310,14 +357,12 @@ describe("the agent browser pane", () => {
     // is. Returning early while the agent held the lease dropped the paste
     // silently — no text, no takeover, and nothing on screen to say why.
     renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     const image = await deliverFrame();
     fireEvent.paste(image, {
       clipboardData: { getData: () => "hello from the clipboard" },
     });
-    expect(await screen.findByText(/you have it/i)).toBeTruthy();
+    expect(await screen.findByText(/you’re in control/i)).toBeTruthy();
     await waitFor(() =>
       expect(
         api.inputs
@@ -337,9 +382,7 @@ describe("the agent browser pane", () => {
     // the Alt modifier and typed a stray character into the page instead of
     // opening the menu the person asked for.
     renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     const image = await deliverFrame();
     fireEvent.keyDown(image, { key: "f", code: "KeyF", altKey: true });
     await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
@@ -354,9 +397,7 @@ describe("the agent browser pane", () => {
     // The server refuses it anyway; not sending is the honest UI of the same
     // rule, and keeps a stray mouse move off the wire entirely.
     renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await waitFor(() =>
       expect(screen.getByText(/agent is driving/i)).toBeTruthy(),
     );
@@ -365,13 +406,10 @@ describe("the agent browser pane", () => {
 
   it("hands the browser back so the agent can continue", async () => {
     renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await clickPicture();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /resume agent/i }),
-    );
+    await screen.findByText("You’re in control");
+    await act(async () => releaseBrowserForChat("proj-1"));
     expect(await screen.findByText(/agent is driving/i)).toBeTruthy();
   });
 });
@@ -379,11 +417,9 @@ describe("the agent browser pane", () => {
 describe("the agent browser pane — driving it", () => {
   async function takeControl() {
     renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await clickPicture();
-    await screen.findByText(/you have it/i);
+    await screen.findByText(/you’re in control/i);
     // The click that TOOK the browser is itself input, and it has already been
     // forwarded. A test counting what it sends afterwards must not count it.
     await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
@@ -407,7 +443,7 @@ describe("the agent browser pane — driving it", () => {
     const image = await deliverFrame();
     // jsdom lays nothing out, so the pane cannot map a point without one.
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
+      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
 
     mouseDown(image, { clientX: 10, clientY: 10, button: 2 });
     mouseUp(image, { clientX: 10, clientY: 10, button: 2 });
@@ -427,7 +463,7 @@ describe("the agent browser pane — driving it", () => {
     await takeControl();
     const image = await deliverFrame();
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
+      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
 
     mouseDown(image, { clientX: 10, clientY: 10, button: 1 });
     fireEvent.pointerCancel(image, { clientX: 10, clientY: 10 });
@@ -445,9 +481,7 @@ describe("the agent browser pane — driving it", () => {
     // them across a switch shows one project's page in another's rail, and
     // aims input at it.
     const view = renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await screen.findByText(/agent is driving/i);
     await deliverFrame();
 
@@ -458,7 +492,7 @@ describe("the agent browser pane — driving it", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("rail-browser-frame")).toBeNull(),
     );
-    expect(api.ensures).toEqual(["proj-1"]);
+    expect(api.ensures).toEqual(["proj-1", "proj-2"]);
   });
 
   it("drops the previous conversation's browser when the session changes", async () => {
@@ -476,9 +510,7 @@ describe("the agent browser pane — driving it", () => {
         consentToken="tok"
       />,
     );
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await screen.findByText(/agent is driving/i);
     await deliverFrame();
 
@@ -494,9 +526,12 @@ describe("the agent browser pane — driving it", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("rail-browser-frame")).toBeNull(),
     );
-    // Reset, NOT auto-resolved: `ensure` launches a Chromium, so opening one
-    // for a conversation nobody asked about would be worse than the bug.
-    await screen.findByRole("button", { name: /open the browser/i });
+    await screen.findByRole("button", { name: "Open the browser" });
+    expect(api.ensures).toEqual(["proj-1"]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open the browser" }),
+    );
+    await waitFor(() => expect(api.ensures).toEqual(["proj-1", "proj-1"]));
   });
 
   it("reattaches each chat's existing browser when switching A to B to A", async () => {
@@ -549,27 +584,27 @@ describe("the agent browser pane — driving it", () => {
         lease: { state: "free" },
       }),
     );
+    await screen.findByRole("button", { name: "Open the browser" });
     expect(api.streams).toEqual([]);
     expect(api.ensures).toEqual([]);
-    expect(
-      screen.getByRole("button", { name: /open the browser/i }),
-    ).toBeVisible();
   });
 
-  it("finds a browser the agent opens after the pane is mounted", async () => {
+  it("finds a browser the agent opens after automatic startup fails", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
+      api.ensureError = new Error("Browser busy");
       api.lookup.mockResolvedValueOnce(null).mockResolvedValue({
         bootId: "agent-boot",
         contextMode: "persistent",
         lease: { state: "free" },
       });
       renderBody({ sessionId: "chat-a" });
+      await screen.findByRole("button", { name: "Try again" });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2_100);
       });
       expect(api.streams.at(-1)).toBe("agent-boot");
-      expect(api.ensures).toEqual([]);
+      expect(api.ensures).toEqual(["proj-1"]);
     } finally {
       vi.useRealTimers();
     }
@@ -584,12 +619,10 @@ describe("the agent browser pane — driving it", () => {
     },
   );
 
-  it("keeps manual Open available when session lookup is unsupported", async () => {
+  it("opens automatically when session lookup is unsupported", async () => {
     api.lookup.mockRejectedValue(new Error("Not found"));
     renderBody({ sessionId: "chat-a" });
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await waitFor(() => expect(api.streams).toContain("boot-proj-1"));
   });
 
@@ -599,9 +632,7 @@ describe("the agent browser pane — driving it", () => {
     // and the pane says "You have control" of a browser that was torn down,
     // wiring its keyboard and mouse to nothing. Two visits are two browsers.
     const view = renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await screen.findByText(/agent is driving/i);
 
     let release!: () => void;
@@ -620,16 +651,38 @@ describe("the agent browser pane — driving it", () => {
       );
     }
 
-    release();
+    await waitFor(() =>
+      expect(api.ensures).toEqual(["proj-1", "proj-2", "proj-1"]),
+    );
+    await act(async () => release());
     api.leaseGate = null;
-    await waitFor(() => expect(api.ensures).toEqual(["proj-1"]));
 
     expect(screen.getByText(/agent is driving/i)).toBeTruthy();
-    expect(screen.queryByText(/you have it/i)).toBeNull();
+    expect(screen.queryByText(/you’re in control/i)).toBeNull();
   });
 });
 
 describe("the agent browser pane — when the grant goes away", () => {
+  it("ignores a pending startup when permission is revoked", async () => {
+    let finish!: () => void;
+    api.ensureGate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const view = renderBody();
+    await waitFor(() => expect(api.ensures).toEqual(["proj-1"]));
+    view.rerender(
+      <LocalBrowserBody
+        projectId="proj-1"
+        consentGranted={false}
+        consentToken={null}
+      />,
+    );
+    await act(async () => finish());
+    expect(screen.getByTestId("rail-browser-unconsented")).toBeTruthy();
+    expect(api.streams).toEqual([]);
+    expect(api.socket).toBeNull();
+  });
+
   it("STOPS SHOWING the browser the moment consent is revoked", async () => {
     // The picture is of somebody's signed-in browser. The pane's own
     // placeholder cannot enforce this — the surface renders a frame whenever
@@ -639,9 +692,7 @@ describe("the agent browser pane — when the grant goes away", () => {
     // never for the one already in state.
     const view = renderBody();
     // The socket only opens once a browser is running.
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await deliverFrame();
 
     view.rerender(
@@ -663,21 +714,17 @@ describe("the agent browser pane — a hold you can get back", () => {
     // parked under a holder that no longer existed: the agent blocked, every
     // new pane refused, and only restarting the server cleared it.
     const first = renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await clickPicture();
     await waitFor(() => expect(api.lease.holder).toBeTruthy());
 
     // A reload is a fresh mount against the same tab's sessionStorage.
     first.unmount();
     renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
 
     // Recognised as the same hands: control, not a refusal.
-    expect(await screen.findByText(/you have it/i)).toBeTruthy();
+    expect(await screen.findByText(/you’re in control/i)).toBeTruthy();
   });
 
   it("does not adopt a hold belonging to a different tab", async () => {
@@ -685,11 +732,11 @@ describe("the agent browser pane — a hold you can get back", () => {
     // reason it exists.
     api.lease = { state: "held", holder: "rail-someone-else" };
     renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     expect(await screen.findByText(/someone else is driving/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /resume agent/i })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /let agent browse/i }),
+    ).toBeNull();
   });
 });
 
@@ -723,10 +770,7 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     // ever draws.
     asDesktopApp();
     renderBody();
-    // The slot FIRST: `capability()` resolves a tick after mount, and the pane
-    // swaps component trees when it does — a button found before that is a
-    // detached node by the time a click reaches it.
-    await userEvent.click(await screen.findByText("Open the browser"));
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     expect(await screen.findByTestId("rail-browser-native-slot")).toBeTruthy();
     expect(screen.getByTestId("browser-new-tab")).toBeTruthy();
     await waitFor(() => expect(api.ensures).toContain("proj-1"));
@@ -742,7 +786,7 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     // it.
     asDesktopApp();
     renderBody();
-    await userEvent.click(await screen.findByText("Open the browser"));
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await screen.findByTestId("rail-browser-native-slot");
     await waitFor(() => expect(api.watches).toContain("boot-proj-1"));
   });
@@ -765,7 +809,7 @@ describe("the agent browser pane — the desktop app's own browser", () => {
       } as DOMRect);
     try {
       renderBody();
-      await userEvent.click(await screen.findByText("Open the browser"));
+      await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
       await screen.findByTestId("rail-browser-native-slot");
       await waitFor(() =>
         expect(api.viewports).toContainEqual({
@@ -789,7 +833,7 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (api.status as any).surface = "frames";
     renderBody();
-    await userEvent.click(await screen.findByText("Open the browser"));
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await deliverFrame();
     expect(screen.queryByTestId("rail-browser-native-slot")).toBeNull();
   });
@@ -799,7 +843,7 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     // as a new one does and has no `agentBrowser` at all.
     asDesktopApp({ api: false });
     renderBody();
-    await userEvent.click(await screen.findByText("Open the browser"));
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await deliverFrame();
     expect(screen.queryByTestId("rail-browser-native-slot")).toBeNull();
   });
@@ -807,7 +851,7 @@ describe("the agent browser pane — the desktop app's own browser", () => {
   it("falls back to frames when this Electron has no WebContentsView", async () => {
     asDesktopApp({ available: false });
     renderBody();
-    await userEvent.click(await screen.findByText("Open the browser"));
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     await deliverFrame();
     expect(screen.queryByTestId("rail-browser-native-slot")).toBeNull();
   });
@@ -823,9 +867,7 @@ describe("the agent browser pane — when somebody else is driving", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       renderBody();
-      await userEvent.click(
-        await screen.findByRole("button", { name: /open the browser/i }),
-      );
+      await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
       await screen.findByText(/agent is driving/i);
       api.socket?.onmessage?.({
         data: JSON.stringify({
@@ -836,7 +878,7 @@ describe("the agent browser pane — when somebody else is driving", () => {
       });
       await screen.findByText(/somebody else has taken control/i);
       // The pane says who has it; there is no button to withhold any more.
-      expect(screen.queryByText(/you have it/i)).toBeNull();
+      expect(screen.queryByText(/you’re in control/i)).toBeNull();
 
       api.lease = { state: "free", holder: undefined };
       const ensuresBefore = api.ensures.length;
@@ -866,9 +908,7 @@ describe("the agent browser pane — when somebody else is driving", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       renderBody();
-      await userEvent.click(
-        await screen.findByRole("button", { name: /open the browser/i }),
-      );
+      await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
       await screen.findByText(/agent is driving/i);
       await deliverFrame();
       api.socket?.onmessage?.({
@@ -899,9 +939,7 @@ describe("the agent browser pane — when somebody else is driving", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const view = renderBody();
-      await userEvent.click(
-        await screen.findByRole("button", { name: /open the browser/i }),
-      );
+      await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
       await screen.findByText(/agent is driving/i);
       api.socket?.onmessage?.({
         data: JSON.stringify({
@@ -939,9 +977,7 @@ describe("a browser whose daemon predates the pane endpoints", () => {
     // an address field that look live and do nothing.
     api.paneUnsupported = true;
     renderBody();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /open the browser/i }),
-    );
+    await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     const newTab = await screen.findByTestId("browser-new-tab");
     // Enabled first: nothing has refused yet, and the state poll cannot tell
     // us — it answers null for an old engine and a busy one alike.
@@ -962,7 +998,7 @@ describe("a browser whose daemon predates the pane endpoints", () => {
 it("keeps navigation when the workspace flag is off", async () => {
   api.workspaceEnabled = false;
   renderBody();
-  await userEvent.click(await screen.findByText("Open the browser"));
+  await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
   expect(await screen.findByTestId("browser-new-tab")).toBeInTheDocument();
   expect(screen.getByTestId("browser-address")).toBeInTheDocument();
 });
@@ -986,7 +1022,7 @@ it("takes control but drops the first click if the daemon cannot identify the pa
     control: { kind: "agent" },
   };
   renderBody();
-  await userEvent.click(await screen.findByText("Open the browser"));
+  await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
   await clickPicture();
   expect(await screen.findByTestId("browser-notice")).toBeTruthy();
   expect(api.inputs).toEqual([]);
@@ -1001,3 +1037,94 @@ function mouseUp(element: Element, init?: MouseEventInit) {
   fireEvent.pointerUp(element, init);
   fireEvent.mouseUp(element, init);
 }
+
+it("resizes the streamed browser to the rail even with workspace placement off", async () => {
+  api.workspaceEnabled = false;
+  let measure: ((width: number, height: number) => void) | undefined;
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private callback: (entries: unknown[]) => void) {}
+      observe(element: HTMLElement) {
+        if (element.dataset.testid === "browser-page-area") {
+          measure = (width, height) =>
+            this.callback([{ contentRect: { width, height } }]);
+        }
+      }
+      disconnect() {}
+      unobserve() {}
+    },
+  );
+  try {
+    renderBody();
+    await waitFor(() =>
+      expect(screen.getByTestId("browser-new-tab")).not.toBeDisabled(),
+    );
+    act(() => measure?.(620, 1160));
+    await waitFor(() =>
+      expect(api.viewports).toContainEqual({
+        width: 620,
+        height: 1160,
+        policy: "followPane",
+      }),
+    );
+    act(() => measure?.(820, 900));
+    await waitFor(() =>
+      expect(api.viewports.at(-1)).toEqual({
+        width: 820,
+        height: 900,
+        policy: "followPane",
+      }),
+    );
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("keeps profile saving in settings rather than the browser toolbar", async () => {
+  renderBody({ sessionId: "profile-chat" });
+  await waitFor(() =>
+    expect(screen.getByTestId("browser-new-tab")).not.toBeDisabled(),
+  );
+  expect(screen.queryByRole("button", { name: "Save profile" })).toBeNull();
+  expect(screen.queryByText("Save profile for other chats…")).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Browser view settings" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Save profile for other chats…",
+    }),
+  ).toBeVisible();
+});
+
+it("finishes automatic handoff when the pane unmounts during the request", async () => {
+  const view = renderBody();
+  await screen.findByText(/agent is driving/i);
+  await clickPicture();
+  await screen.findByText("You’re in control");
+  let finish!: () => void;
+  api.leaseGate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const handoff = releaseBrowserForChat("proj-1");
+  view.unmount();
+  finish();
+  await expect(handoff).resolves.toBeUndefined();
+  expect(api.lease.state).toBe("free");
+  await expect(releaseBrowserForChat("proj-1")).resolves.toBeUndefined();
+});
+
+it("uses cryptographic randomness for a new lease holder", async () => {
+  const random = vi.spyOn(crypto, "getRandomValues");
+  try {
+    renderBody();
+    await screen.findByText(/agent is driving/i);
+    expect(random).toHaveBeenCalledWith(expect.any(Uint8Array));
+    expect(window.sessionStorage.getItem("mcpjam.localBrowser.holder")).toMatch(
+      /^rail-[0-9a-f]{32}$/,
+    );
+  } finally {
+    random.mockRestore();
+  }
+});
