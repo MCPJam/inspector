@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { waitFor } from "@testing-library/react";
 /**
  * The pane's two jobs: ask for frames only while someone is looking, and show
@@ -645,6 +646,49 @@ describe("WebmcpInspectorTab — viewport", () => {
     // And Escape itself never reaches the page, in either transition, so it
     // cannot close a dialog there on the way out.
     expect(sendInput).not.toHaveBeenCalled();
+  });
+
+  it("keeps wheel input alive after Strict Mode replays effect setup", async () => {
+    const sendInput = vi.fn(async () => {});
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      liveFrame: liveFrame("scroll-frame"),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    const view = render(
+      <StrictMode>
+        <WebmcpInspectorTab />
+      </StrictMode>,
+    );
+    await act(async () => {});
+    await act(async () => {
+      useWebmcpInspectorStore.setState({
+        liveFrame: liveFrame("scroll-frame"),
+      });
+    });
+    const canvas = screen.getByRole("img", {
+      name: "Live view of the inspected page",
+    });
+    canvas.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
+    const wheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 200,
+      clientY: 200,
+      deltaY: 120,
+    });
+    act(() => canvas.dispatchEvent(wheel));
+    expect(wheel.defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(sendInput).toHaveBeenCalledWith([
+        expect.objectContaining({ kind: "wheel", deltaY: 120 }),
+      ]),
+    );
+    view.unmount();
   });
 
   it("sends a paste once, as text, and never as its keystrokes", async () => {

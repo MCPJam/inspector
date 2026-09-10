@@ -915,19 +915,27 @@ function ViewportPane({
       .getState()
       .sendCommand({ type: "set_viewport", ...size });
   }, behaviour.drivesPage);
-  const forwarder = useMemo(
-    () =>
-      createInputForwarder((events) =>
+  const inputLifecycle = useMemo(
+    () => ({
+      forwarder: createInputForwarder((events) =>
         onInput(events.map(fromBrowserPaneInput)),
       ),
+      attached: false,
+    }),
     [onInput],
   );
-  useEffect(
-    () => () => {
-      queueMicrotask(() => forwarder.cancel());
-    },
-    [forwarder],
-  );
+  const { forwarder } = inputLifecycle;
+  useEffect(() => {
+    inputLifecycle.attached = true;
+    return () => {
+      inputLifecycle.attached = false;
+      // Child cleanup still needs to release held input. Strict Mode may also
+      // reattach this same forwarder before the deferred cleanup runs.
+      queueMicrotask(() => {
+        if (!inputLifecycle.attached) inputLifecycle.forwarder.cancel();
+      });
+    };
+  }, [inputLifecycle]);
   const input = useCallback(
     (events: Parameters<typeof forwarder.push>[0]) => {
       if (behaviour.drivesPage) forwarder.push(events);
