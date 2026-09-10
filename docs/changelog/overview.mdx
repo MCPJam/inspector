@@ -13,11 +13,27 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Added
 
+- **Agent Browser** — a durable browser session surface with saved profiles, a three-panel WebMCP Inspector shaped like the Tools view, first-class page tools, session recordings, and viewport fidelity controls. The observation panel names what the model can actually click on the current page.
+
 - **Findings tab on User Testing scenario detail** — opening a User Testing scenario now lands on a **Findings** tab instead of Insights. The tab groups sessions by how users came across — Gave up, Frustrated, Neutral, Satisfied, or Uncategorized — and lists the goal clusters each group engaged with, ordered worst-first. Expanding a goal shows the per-goal user-value chain (Connection → Discovery → Selection → Call → Response → Value) once stage data is available. Click any goal's session count to jump to Sessions with the matching transcript pre-selected. Insights and Sessions remain reachable from the tab strip.
+
+- **User Testing two-step create with first-land consent** — creating a new User Testing study now uses a two-step flow. Consent is collected on first land. A blocked run now names the allowance that ran out instead of showing "Unknown error".
+
+- **Evaluate: negative-test flag on cases** — a case can now be explicitly marked as a negative test (no tool should be called) directly in the case workspace. The route question answers this: selecting **No tool should be called** marks the case negative. A check that requires a tool call contradicts this, and the form says so.
+
+- **Evaluate: org spend budget** — an owner or admin can cap what the whole organization spends on MCPJam-billed work — chat, evals, judges, and computer time — for each billing period from **Organization → Budget**. See [Hosted App → Spend budget](/hosted/overview#spend-budget).
+
+- **GitHub Checks: one way to connect an account** — the account connection flow now has a single path. You sign in to GitHub to confirm which accounts you administer, then pick one from the list. Per-repository approved-fork credential controls are available to org admins only; fork checkout and eval execution stay credential-free by default. Pickers require installation identity before offering a repository.
+
+- **Clients: Claude Desktop as its own client** — Claude Desktop is now a distinct client template with its own capability profile, separate from the generic Claude template. Claude Code and Codex are available in the Compare view. Saved client names are disambiguated when duplicates exist. The verification date on a client now reads as a verdict rather than a raw timestamp.
 
 #### Changed
 
 - **User Testing scenarios analyze themselves** — opening a User Testing scenario's Findings or Insights tab when sessions exist but no analysis has run now starts the analysis automatically. The "Analyze sessions" button and the "These sessions haven't been analyzed yet" state are gone; the tab shows an analyzing banner instead and fills in once the run completes. The cluster tuning control and the freshness chip still require an explicit action. Swarm and Benchmark scopes are unchanged — Swarm already queues analysis when a run settles, and Benchmark flow analysis remains explicitly requested.
+
+- **Tool approval: one mechanism and one setting** — tool approval is now a single setting with a single mechanism. `web_search` follows the switch — its query is your text leaving for a third party, and the call spends credits. A resumed tool call is answered only after it is re-introduced to the model. See [Clients → Agent behavior](/inspector/clients#agent-behavior).
+
+- **Evaluate: redesigned run and suite surface** — the run and suite views have been rebuilt. Scoped authoring uses client matrices. The Runs list groups multi-host runs into a single collapsible row. Client and server filters live in column headers. See [Evaluate](/inspector/evals).
 
 ### 2026-09-02
 
