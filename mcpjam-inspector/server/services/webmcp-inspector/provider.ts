@@ -167,6 +167,8 @@ export interface WebMcpBrowserSession {
    * this, and should not have to carry an empty method to say so.
    */
   noteFramePressure?(): void;
+  /** Refresh a polled provider after a definite stale-registration refusal. */
+  refreshTools?(): Promise<void>;
   /** Idempotent, and must not hang: teardown races a timeout internally. */
   dispose(): Promise<void>;
 }

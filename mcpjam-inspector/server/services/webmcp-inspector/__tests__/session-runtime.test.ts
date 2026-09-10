@@ -914,7 +914,7 @@ describe("input forwarding", () => {
 
 describe("registration bindings", () => {
   it("refuses a queued chat call after same-name replacement", async () => {
-    const { runtime, session } = makeRuntime();
+    const { runtime, session, activity } = makeRuntime();
     session.emitTools([fakeTool()]);
     const binding = runtime.currentTools()[0].binding!;
     session.hangOnInvoke = true;
@@ -935,6 +935,13 @@ describe("registration bindings", () => {
     session.pending!.resolve({ output: "first" });
     await first.settled;
     await expect(queued.settled).rejects.toBeInstanceOf(WebMcpToolGoneError);
+    expect(
+      activity().find(
+        (entry) =>
+          entry.kind === "invocation_settled" &&
+          entry.invokeId === queued.invokeId,
+      ),
+    ).toMatchObject({ state: "failed", errorCode: "tool-gone" });
     expect(session.invocations).toHaveLength(1);
     await runtime.close();
   });

@@ -114,6 +114,49 @@ describe("webmcp-inspector routes", () => {
     provider = new FakeProvider();
   });
 
+  it("refreshes a provider's tools on request without executing a tool", async () => {
+    const session = await openSession(provider);
+    const browser = provider.sessions.at(-1)!;
+    const refreshTools = vi.fn(async () => {
+      browser.emitTools([fakeTool({ registrationSeq: 2 })]);
+    });
+    Object.assign(browser, { refreshTools });
+    const result = await call(
+      `/api/mcp/webmcp/sessions/${session.sessionId}?refreshTools=1`,
+    );
+    expect(result.status).toBe(200);
+    expect(result.body.tools[0].binding.registrationSeq).toBe(2);
+    expect(refreshTools).toHaveBeenCalledTimes(1);
+    expect(browser.invocations).toHaveLength(0);
+  });
+
+  it("preserves the definite stale-refusal code in an inline recovered outcome", async () => {
+    const session = await openSession(provider);
+    const browser = provider.sessions.at(-1)!;
+    browser.emitTools([fakeTool({ registrationSeq: 2 })]);
+    await call(
+      `/api/mcp/webmcp/sessions/${session.sessionId}/command`,
+      json({
+        type: "invoke_tool",
+        toolKey: "https://example.test::echo",
+        source: "chat",
+        invokeId: "stale",
+        expectedBinding: { frameId: "old", registrationSeq: 1 },
+        input: {},
+      }),
+    );
+    await vi.waitFor(async () =>
+      expect(
+        await call(
+          `/api/mcp/webmcp/sessions/${session.sessionId}/invocations/stale`,
+        ),
+      ).toMatchObject({
+        body: { outcome: { state: "failed", errorCode: "tool-gone" } },
+      }),
+    );
+    expect(browser.invocations).toHaveLength(0);
+  });
+
   it("reads pending and settled outcomes without invoking again", async () => {
     const session = await openSession(provider);
     const browser = provider.sessions.at(-1)!;

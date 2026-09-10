@@ -49,6 +49,7 @@ function stubStore(
       : undefined,
     tools: [{ toolKey: ENTRY.toolKey, binding: ENTRY.binding }] as never,
     invokeToolForResult: invoke as never,
+    refreshToolsForChat: vi.fn(async () => true),
   } as ReturnType<typeof useWebmcpInspectorStore.getState>);
 }
 
@@ -133,6 +134,97 @@ describe("invokePageToolForChat", () => {
     await fulfillApprovedPageToolCall({ toolCallId: "reused", addToolOutput });
     expect(invoke).not.toHaveBeenCalled();
     expect(addToolOutput.mock.calls[0][0].output.isError).toBe(true);
+  });
+
+  it("automatically refreshes a definite queue refusal and advertises the replacement for a NEW approval", async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({ state: "failed", errorCode: "tool-gone" })
+      .mockResolvedValueOnce({ state: "succeeded", output: "updated" });
+    stubStore("session-1", invoke);
+    const state = useWebmcpInspectorStore.getState();
+    const replacement = {
+      toolKey: ENTRY.toolKey,
+      name: ENTRY.rawName,
+      origin: ENTRY.origin,
+      binding: { frameId: "frame-main", registrationSeq: 2 },
+      inputSchema: { type: "object", required: ["quantity"] },
+    };
+    const refresh = vi.fn(async () => {
+      vi.mocked(useWebmcpInspectorStore.getState).mockReturnValue({
+        ...state,
+        tools: [replacement] as never,
+        pageToolsLive: () => true,
+        refreshToolsForChat: refresh,
+      });
+      return true;
+    });
+    vi.mocked(useWebmcpInspectorStore.getState).mockReturnValue({
+      ...state,
+      refreshToolsForChat: refresh,
+    });
+    const result = await invokePageToolForChat(ENTRY.alias, { sku: "old" });
+    expect(textOf(result)).toContain("refreshed automatically");
+    expect(refresh).toHaveBeenCalledWith("session-1");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const [next] = snapshotPageToolsForTurn();
+    expect(next.binding).toEqual(replacement.binding);
+    expect(next.inputSchema).toEqual(replacement.inputSchema);
+    expect(next.alias).not.toBe(ENTRY.alias);
+    deferPageToolCallForApproval({
+      toolName: next.alias,
+      toolCallId: "fresh",
+      input: { quantity: 2 },
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    await fulfillApprovedPageToolCall({
+      toolCallId: "fresh",
+      addToolOutput: vi.fn(),
+    });
+    expect(invoke).toHaveBeenLastCalledWith(
+      ENTRY.toolKey,
+      { quantity: 2 },
+      replacement.binding,
+    );
+  });
+
+  it.each(["unknown", "failed", "cancelled", "timeout"])(
+    "does not refresh or retry a %s outcome without a definite refusal",
+    async (state) => {
+      const invoke = vi.fn(async () => ({ state, errorMessage: "tool-gone" }));
+      stubStore("session-1", invoke);
+      await invokePageToolForChat(ENTRY.alias, {});
+      expect(
+        useWebmcpInspectorStore.getState().refreshToolsForChat,
+      ).not.toHaveBeenCalled();
+      expect(invoke).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not tell the model to retry when refreshing tools fails", async () => {
+    stubStore("session-1", async () => ({
+      state: "failed",
+      errorCode: "tool-gone",
+    }));
+    vi.mocked(
+      useWebmcpInspectorStore.getState().refreshToolsForChat,
+    ).mockResolvedValue(false);
+    const result = await invokePageToolForChat(ENTRY.alias, {});
+    expect(textOf(result)).toContain("Do not retry this call automatically");
+    expect(textOf(result)).not.toContain("refreshed automatically");
+  });
+
+  it("bounds repeated stale recovery while a page is hot reloading continuously", async () => {
+    stubStore("session-1", async () => ({
+      state: "failed",
+      errorCode: "tool-gone",
+    }));
+    for (let i = 0; i < 3; i++) await invokePageToolForChat(ENTRY.alias, {});
+    const result = await invokePageToolForChat(ENTRY.alias, {});
+    expect(textOf(result)).toContain("Stop retrying automatically");
+    expect(
+      useWebmcpInspectorStore.getState().refreshToolsForChat,
+    ).toHaveBeenCalledTimes(3);
   });
 
   it("returns the tool's output on success", async () => {

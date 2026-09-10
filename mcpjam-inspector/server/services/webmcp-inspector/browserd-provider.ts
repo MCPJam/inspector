@@ -208,7 +208,7 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     // window EXPIRES: the lease can be handed back without any command being
     // sent, and the tool list has to catch up on its own.
     if (Date.now() < this.leaseBlockedUntil) return;
-    await this.refreshTools();
+    await this.pollTools();
   }
 
   /**
@@ -225,19 +225,19 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
       this.url = current;
       this.options.callbacks.onNavigated(current, originOf(current));
     }
-    await this.refreshTools();
+    await this.pollTools();
   }
 
   async navigate(url: string): Promise<void> {
     await this.run({ kind: "navigate", url });
     this.url = url;
     this.options.callbacks.onNavigated(url, originOf(url));
-    await this.refreshTools();
+    await this.pollTools();
   }
 
   async reload(): Promise<void> {
     await this.run({ kind: "reload" });
-    await this.refreshTools();
+    await this.pollTools();
   }
 
   async goBack(): Promise<void> {
@@ -247,7 +247,7 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
       this.url = next;
       this.options.callbacks.onNavigated(next, originOf(next));
     }
-    await this.refreshTools();
+    await this.pollTools();
   }
 
   async invokeTool(request: WebMcpInvokeRequest): Promise<{ output: unknown }> {
@@ -393,8 +393,13 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     // a browser a chat turn may still be driving.
   }
 
+  /** Explicit recovery must report failure instead of claiming a stale list is fresh. */
+  async refreshTools(): Promise<void> {
+    await this.pollTools(true);
+  }
+
   /** Read the page's current tool set and report it if it changed. */
-  private async refreshTools(): Promise<void> {
+  private async pollTools(throwOnError = false): Promise<void> {
     if (this.disposed) return;
     try {
       const result = await this.run(
@@ -414,6 +419,7 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
       this.lastToolsJson = json;
       this.options.callbacks.onToolsChanged(tools);
     } catch (error) {
+      if (throwOnError) throw error;
       if (this.disposed) return;
       logger.warn("[webmcp] hosted tool poll failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -492,6 +498,12 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     if (!response.result.ok) {
       if (response.result.error?.startsWith("webmcp_outcome_unknown:")) {
         throw new WebMcpOutcomeUnknownError(response.result.error);
+      }
+      if (
+        response.result.error?.startsWith("webmcp_tool_gone:") ||
+        response.result.error?.startsWith("stale_binding:")
+      ) {
+        throw new WebMcpToolGoneError(response.result.error);
       }
       throw new Error(
         response.result.error ?? "the browser could not complete the command",

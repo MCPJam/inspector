@@ -34,6 +34,9 @@ const settledPageToolCallIds = new Set<string>();
 const shippedPageToolAliases = new Set<string>();
 const MAX_SHIPPED_PAGE_ALIASES = 128;
 const MAX_SETTLED_PAGE_CALL_IDS = 256;
+// Bound hot-reload recovery when a page continuously replaces its tools.
+const staleRecoveries = new Map<string, number>();
+const MAX_STALE_RECOVERIES = 3;
 
 function markPageToolCallSettled(toolCallId: string): void {
   settledPageToolCallIds.add(toolCallId);
@@ -59,6 +62,7 @@ export function setAdvertisedPageTools(entries: PageToolSnapshotEntry[]): void {
 /** Test seam and session cleanup for client-fulfilled page calls. */
 export function __resetPageToolDispatchForTests(): void {
   advertised = [];
+  staleRecoveries.clear();
   deferredPageToolCalls.clear();
   settledPageToolCallIds.clear();
   shippedPageToolAliases.clear();
@@ -143,6 +147,42 @@ function textResult(text: string, isError = false): McpToolResult {
   };
 }
 
+/** Settle the old call so the SDK automatically continues with a fresh snapshot.
+ * The model chooses new arguments and the normal approval gate applies again.
+ * Never use this path for an invocation whose execution is uncertain.
+ */
+async function recoverStalePageTool(
+  entry: PageToolSnapshotEntry,
+): Promise<McpToolResult> {
+  const count = (staleRecoveries.get(entry.sessionId) ?? 0) + 1;
+  staleRecoveries.set(entry.sessionId, count);
+  if (staleRecoveries.size > 128)
+    staleRecoveries.delete(staleRecoveries.keys().next().value!);
+  if (count > MAX_STALE_RECOVERIES) {
+    return textResult(
+      "The page keeps replacing its tools. Nothing ran for this call. Stop retrying automatically and tell the user the page needs to settle before continuing.",
+      true,
+    );
+  }
+  const refreshed = await useWebmcpInspectorStore
+    .getState()
+    .refreshToolsForChat(entry.sessionId)
+    .catch(() => false);
+  if (!refreshed) {
+    return textResult(
+      "The page tool changed before execution; nothing ran. Its current tools could not be loaded. Do not retry this call automatically.",
+      true,
+    );
+  }
+  return textResult(
+    "The page tool registration changed before execution; nothing ran for this call. " +
+      "The tool list has been refreshed automatically. Continue the user's task using the current page tools supplied with this request. " +
+      "Read the current tool schema and issue a new call with appropriate arguments; do not reuse the old alias or approval. " +
+      "If the needed tool is no longer offered, explain that instead. The user does not need to refresh MCPJam.",
+    true,
+  );
+}
+
 export async function invokePageToolForChat(
   alias: string,
   input: Record<string, unknown>,
@@ -172,10 +212,7 @@ export async function invokePageToolForChat(
 
   const live = store.tools.find((tool) => tool.toolKey === entry.toolKey);
   if (!sameWebMcpRegistration(entry.binding, live?.binding)) {
-    return textResult(
-      `The registration of "${entry.rawName}" changed after it was offered. Refresh the page tools before calling it.`,
-      true,
-    );
+    return recoverStalePageTool(entry);
   }
   const result = await store.invokeToolForResult(
     entry.toolKey,
@@ -183,7 +220,11 @@ export async function invokePageToolForChat(
     entry.binding,
   );
 
+  if (result.state === "failed" && result.errorCode === "tool-gone") {
+    return recoverStalePageTool(entry);
+  }
   if (result.state === "succeeded") {
+    staleRecoveries.delete(entry.sessionId);
     const text =
       typeof result.output === "string"
         ? result.output

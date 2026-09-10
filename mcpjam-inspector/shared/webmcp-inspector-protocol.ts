@@ -424,6 +424,8 @@ export interface WebMcpInvocationOutcome {
   outputTruncated?: boolean;
   /** Total bytes before truncation, so the UI can say what was dropped. */
   outputBytes?: number;
+  /** Only a definite refusal before execution may request a fresh tool snapshot. */
+  errorCode?: "tool-gone";
   errorMessage?: string;
 }
 
@@ -476,6 +478,8 @@ export type WebMcpActivityEntry =
       outputTruncated?: boolean;
       /** Total bytes before truncation, so the UI can say what was dropped. */
       outputBytes?: number;
+      /** Only a definite refusal before execution may request a fresh tool snapshot. */
+      errorCode?: "tool-gone";
       errorMessage?: string;
       screenshotBase64?: string;
     }

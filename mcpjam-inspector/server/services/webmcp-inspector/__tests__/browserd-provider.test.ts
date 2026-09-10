@@ -589,3 +589,46 @@ it("pins hosted calls to the observed boot, tab, navigation and registration", a
   expect(commands).toHaveLength(before);
   await session.dispose();
 });
+
+it.each(["stale_binding: changed", "webmcp_tool_gone: removed"])(
+  "exposes definite hosted refusal %s for safe refresh",
+  async (error) => {
+    const { provider, callbacks, commands } = build((command) => ({
+      status: "ok",
+      bootId: "boot-1",
+      result:
+        command.action.kind === "webmcp_invoke"
+          ? { ok: false, error }
+          : { ok: true, output: {} },
+    }));
+    const session = await provider.createSession({
+      url: "https://x.test",
+      callbacks,
+    });
+    await expect(
+      session.invokeTool({
+        frameId: "f",
+        toolName: "pay",
+        input: {},
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({ name: "WebMcpToolGoneError" });
+    const before = commands.length;
+    await session.refreshTools!();
+    expect(commands.slice(before).map((command) => command.action)).toEqual([
+      { kind: "observe", mode: "webmcp_tools" },
+    ]);
+    await session.dispose();
+  },
+);
+
+it("reports an explicit tool-refresh failure instead of claiming success", async () => {
+  const { provider, callbacks, sendCommand } = build();
+  const session = await provider.createSession({
+    url: "https://x.test",
+    callbacks,
+  });
+  sendCommand.mockRejectedValueOnce(new Error("offline"));
+  await expect(session.refreshTools!()).rejects.toThrow("offline");
+  await session.dispose();
+});

@@ -338,6 +338,51 @@ describe("webmcp inspector store", () => {
     expect(FakeEventSource.instances).toHaveLength(0);
   });
 
+  it("refreshes tool metadata without navigating or invoking", async () => {
+    useWebmcpInspectorStore.setState({ session: SESSION, tools: [] });
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ session: SESSION, tools: [TOOL] }), {
+          status: 200,
+        }),
+      );
+    expect(
+      await useWebmcpInspectorStore
+        .getState()
+        .refreshToolsForChat(SESSION.sessionId),
+    ).toBe(true);
+    expect(useWebmcpInspectorStore.getState().tools).toEqual([TOOL]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0][0])).toContain("?refreshTools=1");
+    expect(fetchSpy.mock.calls[0][1]?.method).toBe("GET");
+  });
+
+  it("does not apply a tool refresh to a replacement session", async () => {
+    useWebmcpInspectorStore.setState({ session: SESSION, tools: [] });
+    let release!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const refreshing = useWebmcpInspectorStore
+      .getState()
+      .refreshToolsForChat(SESSION.sessionId);
+    await vi.waitFor(() => expect(release).toBeDefined());
+    useWebmcpInspectorStore.setState({
+      session: { ...SESSION, sessionId: "replacement" },
+    });
+    release(
+      new Response(JSON.stringify({ session: SESSION, tools: [TOOL] }), {
+        status: 200,
+      }),
+    );
+    expect(await refreshing).toBe(false);
+    expect(useWebmcpInspectorStore.getState().tools).toEqual([]);
+  });
+
   it("recovers a retained result through a read-only request", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -463,6 +508,32 @@ describe("webmcp inspector store", () => {
     await expect(
       useWebmcpInspectorStore.getState().invokeToolForResult(TOOL.toolKey, {}),
     ).resolves.toMatchObject({ state: "succeeded", output: "ok" });
+  });
+
+  it("preserves a definite stale refusal delivered on SSE for chat recovery", async () => {
+    const source = await openSession();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const invokeId = JSON.parse(String(init?.body)).invokeId;
+      source.emit(
+        activityEvent(
+          {
+            ...settled("stale", invokeId),
+            kind: "invocation_settled",
+            invokeId,
+            toolKey: TOOL.toolKey,
+            source: "chat",
+            durationMs: 0,
+            state: "failed",
+            errorCode: "tool-gone",
+          },
+          2,
+        ),
+      );
+      return new Response(JSON.stringify({ invokeId }), { status: 202 });
+    });
+    await expect(
+      useWebmcpInspectorStore.getState().invokeToolForResult(TOOL.toolKey, {}),
+    ).resolves.toMatchObject({ state: "failed", errorCode: "tool-gone" });
   });
 
   it("settles callers waiting on a session that closes underneath them", async () => {

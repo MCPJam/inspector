@@ -326,6 +326,8 @@ interface WebMcpInspectorState {
     input: Record<string, unknown>,
     expectedBinding?: WebMcpRegistrationBinding,
   ): Promise<PageToolInvocationResult>;
+  /** Refresh metadata without navigating or executing any page tool. */
+  refreshToolsForChat(sessionId: string): Promise<boolean>;
   /** Read only: an expired/missing outcome must never cause another invocation. */
   recoverInvocationResult(
     sessionId: string,
@@ -717,6 +719,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           outputTruncated: entry.outputTruncated,
           outputBytes: entry.outputBytes,
           errorMessage: entry.errorMessage,
+          errorCode: entry.errorCode,
         };
         const waiter = invocationWaiters.get(entry.invokeId);
         if (waiter) {
@@ -1444,6 +1447,26 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             );
           });
         });
+      },
+
+      async refreshToolsForChat(sessionId) {
+        const generation = sessionGeneration;
+        const response = await request<{
+          session: WebMcpSessionPublic;
+          tools: WebMcpToolDescriptor[];
+        }>(`/sessions/${encodeURIComponent(sessionId)}?refreshTools=1`, {
+          method: "GET",
+        });
+        if (
+          !response.ok ||
+          !response.data ||
+          generation !== sessionGeneration ||
+          get().session?.sessionId !== sessionId ||
+          response.data.session.sessionId !== sessionId
+        )
+          return false;
+        set({ tools: response.data.tools });
+        return true;
       },
 
       async recoverInvocationResult(sessionId, invokeId) {

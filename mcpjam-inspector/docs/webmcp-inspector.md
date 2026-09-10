@@ -762,6 +762,19 @@ and the provider checks it again at CDP dispatch. A missing binding prevents
 chat advertisement and invocation. Manual invocations capture the current
 binding at enqueue. Neither CDP adapter substitutes a different frame.
 
+A stale chat call is a **definite refusal before execution**, marked
+`errorCode: "tool-gone"` in both SSE and inline outcomes. The client refreshes
+the tool list through `GET /sessions/:id?refreshTools=1` (hosted providers read
+it from browserd) and returns the refusal to the model. The existing automatic
+client-tool continuation sends a fresh snapshot; the model can choose current
+arguments and issue a new call, which follows the normal approval gate. No
+manual MCPJam refresh is needed and old approvals are never transferred.
+This recovery is limited to three consecutive stale refusals per session,
+reset after a successful call. Unknown outcomes, cancellation, timeouts, and
+ordinary tool errors never trigger this refresh/retry guidance. Recovery does
+not itself execute a replacement tool; a model may explain that no suitable
+tool remains instead of issuing another call.
+
 Same-origin duplicate tool keys extend their frame-hash suffix until unique;
 a hash collision cannot make two selections execute the first frame's tool.
 
@@ -815,7 +828,8 @@ running two at once would interleave their effects.
   Nothing observable distinguishes this case from a page that is merely slow.
   Every other navigation shape is answered natively.
 - **Chat sees a per-turn snapshot** of the page's tools; a registration that
-  happens mid-turn surfaces on the next one.
+  happens mid-turn surfaces on the next one, including the automatic
+  continuation after a stale-registration refusal.
 - **Headed needs a display.** Over SSH, in a container, or on a bare WSL
   install, set `MCPJAM_WEBMCP_HEADLESS=true`: discovery, invocation and
   screenshots all still work, only driving the page by hand does not.

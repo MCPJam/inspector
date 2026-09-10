@@ -421,6 +421,10 @@ export class WebMcpSessionRuntime {
     };
   }
 
+  async refreshTools(): Promise<void> {
+    await this.session?.refreshTools?.();
+  }
+
   currentTools(): WebMcpToolDescriptor[] {
     return this.tools.map(({ frameId: _frameId, ...rest }) => rest);
   }
@@ -788,8 +792,11 @@ export class WebMcpSessionRuntime {
       (item.expectedBinding &&
         !sameWebMcpRegistration(item.expectedBinding, tool.binding))
     ) {
-      const message = `The page no longer offers the registration of "${item.toolKey}" that was selected. Refresh the tool list before calling it.`;
-      await this.settle(item, "failed", startedAt, { errorMessage: message });
+      const message = `The page no longer offers the registration of "${item.toolKey}" that was selected. Nothing ran for this call.`;
+      await this.settle(item, "failed", startedAt, {
+        errorMessage: message,
+        errorCode: "tool-gone",
+      });
       this.release(item);
       item.reject(new WebMcpToolGoneError(message));
       return;
@@ -853,7 +860,12 @@ export class WebMcpSessionRuntime {
             : "failed";
       const message =
         error instanceof Error ? error.message : "The tool failed.";
-      await this.settle(item, state, startedAt, { errorMessage: message });
+      await this.settle(item, state, startedAt, {
+        errorMessage: message,
+        ...(error instanceof WebMcpToolGoneError
+          ? { errorCode: "tool-gone" as const }
+          : {}),
+      });
       this.release(item);
       item.reject(error instanceof Error ? error : new Error(message));
     } finally {
@@ -880,6 +892,7 @@ export class WebMcpSessionRuntime {
       output?: unknown;
       outputTruncated?: boolean;
       outputBytes?: number;
+      errorCode?: "tool-gone";
       errorMessage?: string;
     },
   ): Promise<void> {

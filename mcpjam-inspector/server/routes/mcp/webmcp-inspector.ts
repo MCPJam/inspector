@@ -788,6 +788,7 @@ webmcpInspector.get("/sessions/:id", async (c) => {
   try {
     const runtime = await resolveRuntime(c, c.req.param("id"));
     webMcpSessions.touch(runtime);
+    if (c.req.query("refreshTools") === "1") await runtime.refreshTools();
     return c.json({
       session: runtime.toPublic(),
       tools: runtime.currentTools(),
@@ -1085,6 +1086,9 @@ async function outcomeOf(
     }
     return {
       state: "failed",
+      ...(error instanceof WebMcpToolGoneError
+        ? { errorCode: "tool-gone" as const }
+        : {}),
       errorMessage: error instanceof Error ? error.message : "The tool failed.",
     };
   }
