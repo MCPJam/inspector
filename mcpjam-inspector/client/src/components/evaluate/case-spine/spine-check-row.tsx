@@ -1,3 +1,5 @@
+import type { JoinedScorecardRow } from "../case-scorecard/trial-results";
+import { TrialScorecardRow } from "../case-scorecard/trial-scorecard-row";
 /**
  * One check, nested under the action it follows.
  *
@@ -30,6 +32,7 @@ import { StatusDot } from "../simple-case/status-dot";
 export function SpineCheckRow({
   step,
   row,
+  trialRow,
   availableTools,
   readOnly,
   checkPolicy,
@@ -39,6 +42,7 @@ export function SpineCheckRow({
   onRemove,
   onSelect,
 }: {
+  trialRow?: JoinedScorecardRow;
   step: AssertStep;
   /** The row `buildCaseScorecard` produced for this step, when it made one. */
   row: ScorecardRow | undefined;
@@ -52,6 +56,7 @@ export function SpineCheckRow({
   onSelect?: () => void;
 }) {
   if (!row) return null;
+  if (trialRow) return <TrialScorecardRow row={trialRow} />;
   // `ScorecardRowView` reads its status through the overlay map, so synthesize
   // one from the status the spine already resolved rather than passing two
   // sources of truth down.

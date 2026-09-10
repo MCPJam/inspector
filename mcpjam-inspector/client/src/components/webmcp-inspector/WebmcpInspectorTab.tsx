@@ -1,16 +1,19 @@
-import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Globe, RotateCw, X } from "lucide-react";
+import { BrowserShell } from "@/components/browser/BrowserShell";
+import {
+  useBrowserSession,
+  type BrowserSessionTransport,
+} from "@/lib/browser-shell/use-browser-session";
+import { decodeStateSnapshot } from "@/shared/browser-pane-wire";
+import { useViewportReporter } from "@/lib/browser-pane/use-viewport-reporter";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
+import { Globe, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
-import { cn } from "@/lib/utils";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { ThreePanelLayout } from "@/components/ui/three-panel-layout";
-import {
-  ElectronWebviewPane,
-  type ElectronWebviewHandle,
-} from "./ElectronWebviewPane";
+import { ElectronNativeBody } from "@/components/browser/ElectronNativeBody";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { WebmcpToolsSidebar } from "./WebmcpToolsSidebar";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -24,10 +27,9 @@ import {
   parseHostedSessionId,
   WEBMCP_VIEWPORT,
 } from "@/shared/webmcp-inspector-protocol";
-import {
-  createInputForwarder,
-  type InputForwarder,
-} from "@/lib/webmcp-inspector/input-forwarder";
+import { createInputForwarder, type PaneFrame } from "@/lib/browser-pane/input";
+import { fromBrowserPaneInput } from "@/shared/webmcp-input";
+import { BrowserPaneSurface } from "@/components/browser/BrowserPaneSurface";
 import type {
   WebMcpActivityEntry,
   WebMcpInputEvent,
@@ -57,7 +59,6 @@ const SCREENSHOT_POLL_MS = 1_000;
  * A frame is all it should take. This exists so a start that somehow never
  * mounts fails with a sentence instead of hanging on a promise nobody settles.
  */
-const PANE_MOUNT_TIMEOUT_MS = 2_000;
 
 /**
  * The WebMCP workspace, laid out like the Tools tab: URL and tools on the
@@ -75,9 +76,6 @@ export function WebmcpInspectorTab() {
     pending,
     starting,
     error,
-    lastScreenshot,
-    lastScreenshotAt,
-    liveFrame,
     frameTransport,
     noteScreenshotPolling,
     startSession,
@@ -91,7 +89,29 @@ export function WebmcpInspectorTab() {
     clearError,
     reconnect,
     disconnect,
-  } = useWebmcpInspectorStore();
+  } = useWebmcpInspectorStore(
+    useShallow((state) => ({
+      session: state.session,
+      tools: state.tools,
+      activity: state.activity,
+      pending: state.pending,
+      starting: state.starting,
+      error: state.error,
+      frameTransport: state.frameTransport,
+      noteScreenshotPolling: state.noteScreenshotPolling,
+      startSession: state.startSession,
+      closeSession: state.closeSession,
+      sendCommand: state.sendCommand,
+      invokeTool: state.invokeTool,
+      cancelInvocation: state.cancelInvocation,
+      captureScreenshot: state.captureScreenshot,
+      setScreencast: state.setScreencast,
+      sendInput: state.sendInput,
+      clearError: state.clearError,
+      reconnect: state.reconnect,
+      disconnect: state.disconnect,
+    })),
+  );
 
   const [url, setUrl] = useState("http://localhost:3000");
   const [selectedToolKey, setSelectedToolKey] = useState<string | undefined>();
@@ -152,91 +172,8 @@ export function WebmcpInspectorTab() {
    * pane than a JPEG stream is. A hosted session is excluded because its
    * viewport is the Browser panel's, not ours.
    */
-  const isElectron =
-    typeof window !== "undefined" && window.isElectron === true;
   const isPackaged =
     typeof window !== "undefined" && window.isElectronPackaged === true;
-  const useEmbeddedSurface = isElectron && inApp && !hosted;
-
-  /** The mounted surface, and which start attempt it belongs to. */
-  const [webviewMounted, setWebviewMounted] = useState(false);
-  const [webviewAttempt, setWebviewAttempt] = useState(0);
-  const webviewRef = useRef<ElectronWebviewHandle | null>(null);
-  /** Resolver for a caller waiting on the pane React has yet to commit. */
-  const paneWaiter = useRef<((handle: ElectronWebviewHandle) => void) | null>(
-    null,
-  );
-  /**
-   * True for the whole mount-attach-start flow, which the store's `starting`
-   * does not cover: it goes true only once the request goes out. Both the
-   * re-entry guard and the button's disabled state read this, so the guard and
-   * what the person sees can never disagree.
-   */
-  const [openingSurface, setOpeningSurface] = useState(false);
-  const openingSurfaceRef = useRef(false);
-  /**
-   * False once this screen has gone away.
-   *
-   * Needed because the unmount cleanup and the start request race: leaving the
-   * tab mid-start runs the cleanup while the POST is still out, so it sees no
-   * session and closes nothing — and the session then lands on a server whose
-   * surface React has already destroyed. `openBrowser` reads this after its
-   * await and closes what the cleanup could not have known about.
-   */
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    // Set in SETUP as well as cleared in cleanup. `<StrictMode>` — which this
-    // app really does use — mounts, unmounts and remounts every effect on the
-    // first commit, so an effect that only cleared this would leave it false
-    // for the life of the component, and every embedded start in development
-    // would close its own session the moment it arrived.
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-  /**
-   * An error this screen produced rather than the server.
-   *
-   * Kept beside the store's, because a surface that never came up is not a
-   * failed request — there was no request to fail.
-   */
-  const [localError, setLocalError] = useState<string | undefined>();
-
-  /**
-   * A callback ref rather than an object ref, because the MOUNT is the event
-   * being waited on: React calls this on the commit that puts the pane on
-   * screen, which is the earliest moment an id can be asked for.
-   */
-  const attachPane = useCallback((handle: ElectronWebviewHandle | null) => {
-    webviewRef.current = handle;
-    if (!handle) return;
-    const waiter = paneWaiter.current;
-    paneWaiter.current = null;
-    waiter?.(handle);
-  }, []);
-
-  /**
-   * Wait for the pane to mount, then for its guest to attach.
-   *
-   * Two waits, and they are different failures. The first is React's commit,
-   * which is a frame away; the second is Chromium bringing a guest up, which
-   * the pane bounds at five seconds of its own. Collapsing them into one
-   * timeout would report a slow guest as a mount failure.
-   */
-  const nextWebviewId = useCallback(async (): Promise<number> => {
-    const handle =
-      webviewRef.current ??
-      (await new Promise<ElectronWebviewHandle>((resolve, reject) => {
-        paneWaiter.current = resolve;
-        setTimeout(() => {
-          if (paneWaiter.current !== resolve) return;
-          paneWaiter.current = null;
-          reject(new Error("The embedded browser pane did not appear."));
-        }, PANE_MOUNT_TIMEOUT_MS);
-      }));
-    return handle.readyWebContentsId();
-  }, []);
 
   // The browser outlives this screen on purpose — a developer may tab away
   // mid-flow — so unmounting closes the event stream and nothing else. Coming
@@ -247,60 +184,6 @@ export function WebmcpInspectorTab() {
     reconnect();
     return () => disconnect();
   }, [reconnect, disconnect]);
-
-  /**
-   * The surface is TAB-SCOPED, deliberately diverging from every other session.
-   *
-   * A browser the server started outlives this screen on purpose — a developer
-   * may tab away mid-flow and come back to the same window. A surface this
-   * screen mounted cannot: unmounting the component destroys the guest, so a
-   * session left open would be attached to a `webContents` that no longer
-   * exists, and every later command would fail against a browser nobody can
-   * see. Closing it here is the honest end. (A persistent App-level webview
-   * host, so the surface survives leaving the tab, is a documented follow-up.)
-   */
-  const webviewSessionRef = useRef(false);
-  webviewSessionRef.current =
-    webviewMounted && transportKindOf(session) === "electron-webview";
-  const closeSessionRef = useRef(closeSession);
-  closeSessionRef.current = closeSession;
-  useEffect(
-    () => () => {
-      if (webviewSessionRef.current) void closeSessionRef.current();
-    },
-    [],
-  );
-
-  /**
-   * Take the surface down once the session that was attached to it is over — a
-   * crash, an idle sweep, or our own close all arrive the same way.
-   *
-   * The latch is what makes this correct. "No session" means two opposite
-   * things at two different moments: BEFORE the start it means "mid-start, the
-   * surface exists precisely so the request has something to attach to", and
-   * after it means "the session ended". Without remembering which, this effect
-   * unmounts the pane in the window between mounting it and the start request
-   * coming back — destroying the guest the request is about to name.
-   */
-  const surfaceAttached = useRef(false);
-  useEffect(() => {
-    if (!webviewMounted) {
-      surfaceAttached.current = false;
-      return;
-    }
-    if (session && session.status !== "closed") {
-      // Only OUR transport keeps the surface up. Any other kind means the
-      // server is painting the viewport itself, and the pane it gave us is the
-      // one the viewer needs to see.
-      if (session.viewportTransport.kind === "electron-webview") {
-        surfaceAttached.current = true;
-        return;
-      }
-      setWebviewMounted(false);
-      return;
-    }
-    if (surfaceAttached.current) setWebviewMounted(false);
-  }, [webviewMounted, session]);
 
   // A backgrounded tab is not watching anything. Tracked as state rather than
   // read inside the streaming effect so that becoming visible again RE-RUNS
@@ -330,7 +213,7 @@ export function WebmcpInspectorTab() {
   /**
    * Whether the pane is meant to be showing a picture the SERVER produces.
    *
-   * `electron-webview` is the kind that makes this more than a rename: its
+   * `electron-native` is the kind that makes this more than a rename: its
    * surface paints itself, so "streaming" is false for it no matter what the
    * Live view toggle or the document's visibility say — there is no stream to
    * turn on, and asking for one would start a poll that overwrites nothing.
@@ -449,99 +332,9 @@ export function WebmcpInspectorTab() {
     return inApp ? { display: "in-app" as const } : undefined;
   };
 
-  /**
-   * MOUNT, THEN START — the ordering the whole embedded path hangs on.
-   *
-   * The server attaches to a surface rather than creating one, so the surface
-   * has to exist and have a `webContentsId` BEFORE the start request is sent.
-   * Starting first and mounting after would send a request with nothing to
-   * attach to; mounting and starting in the same tick would send one with an
-   * id that `getWebContentsId()` cannot produce yet (it throws until the guest
-   * attaches). So: mount the pane, await its id, then start.
-   *
-   * `attempt` keys the pane so each start gets a FRESH element. Reusing one
-   * across attempts would mean reusing a guest whose previous session left it
-   * on the last page, and — worse — any code path that moved the element in the
-   * DOM would destroy the guest silently.
-   */
   const openBrowser = async () => {
-    // The Enter key in the URL field reaches this too, and it does NOT go
-    // through the button's `disabled`. Without this, hosted-with-no-project
-    // sends a start the server can only refuse, and the person gets an error
-    // banner where the tooltip and the empty state already said what to do.
     if (HOSTED_MODE && !hostedReady) return;
-    if (!useEmbeddedSurface) {
-      await startSession(url, startOptions());
-      return;
-    }
-    // RE-ENTRANCY is a real click, not a theoretical one. `starting` only goes
-    // true once the request goes out, which is AFTER the mount-and-attach wait
-    // — up to five seconds with the button still live. A second click in that
-    // window re-keys the pane out from under the first attempt, whose waiter
-    // then rejects and tears down the second attempt's surface, failing both
-    // with an error neither of them caused.
-    if (openingSurfaceRef.current) return;
-    openingSurfaceRef.current = true;
-    setOpeningSurface(true);
-    setLocalError(undefined);
-    // The previous attempt's handle, if any, must not answer for this one.
-    webviewRef.current = null;
-    setWebviewAttempt((attempt) => attempt + 1);
-    setWebviewMounted(true);
-    try {
-      const webContentsId = await nextWebviewId();
-      const startedId = await startSession(url, {
-        display: "in-app",
-        webContentsId,
-      });
-      // WHAT CAME BACK decides whether our surface is the viewport, and the
-      // test is POSITIVE: keep it only for a live session that actually
-      // attached to it. Everything else takes the surface down.
-      //
-      // Three ways to fail that, and each leaves a blank `about:blank` covering
-      // whatever the viewer should be seeing:
-      //   - a server too old to know `webContentsId` answers `frame-stream`,
-      //     the documented degrade, and its streamed pane is the one to render;
-      //   - a start that failed without throwing leaves no session at all;
-      //   - a start that failed leaves the PREVIOUS session in place, because
-      //     the store does not clear it on error — and if that one was a closed
-      //     `electron-webview` session, a kind check alone would read it as
-      //     ours and keep the dead surface up.
-      //
-      // Read from the store rather than the `session` in scope, which is the
-      // render-time value from before the await.
-      // Identified by ID, not just by kind. A continuation that outlived its
-      // screen reads whatever session the store holds NOW — and if a remounted
-      // tab already started a replacement, that is someone else's session.
-      // Acting on it would close a live session belonging to a screen that is
-      // on display.
-      const started = useWebmcpInspectorStore.getState().session;
-      const attached =
-        startedId !== undefined &&
-        started?.sessionId === startedId &&
-        started.viewportTransport.kind === "electron-webview" &&
-        started.status !== "closed";
-      if (!attached) {
-        setWebviewMounted(false);
-        return;
-      }
-      // The screen went away while the request was in flight. This is the ONLY
-      // place that can close the result: the unmount cleanup already ran, and
-      // at that moment there was no session to see. Left alone it holds a
-      // capacity slot until the idle sweep, attached to a `webContents` React
-      // destroyed with the component.
-      if (!mountedRef.current) void closeSession();
-    } catch (error) {
-      setWebviewMounted(false);
-      setLocalError(
-        error instanceof Error
-          ? error.message
-          : "The embedded browser did not start.",
-      );
-    } finally {
-      openingSurfaceRef.current = false;
-      setOpeningSurface(false);
-    }
+    await startSession(url, startOptions());
   };
 
   const pendingForSelected = pending.find(
@@ -625,7 +418,8 @@ export function WebmcpInspectorTab() {
       ? [
           {
             label: "Copy diagnostics",
-            onSelect: () =>
+            onSelect: () => {
+              const { liveFrame } = useWebmcpInspectorStore.getState();
               void copyWebMcpDiagnostics({
                 session,
                 frameTransport,
@@ -636,7 +430,8 @@ export function WebmcpInspectorTab() {
                       seq: liveFrame.seq,
                     }
                   : undefined,
-              }),
+              });
+            },
           },
         ]
       : []),
@@ -647,22 +442,13 @@ export function WebmcpInspectorTab() {
     ((frameTransport.rung === "sse-frames" && frameTransport.latched) ||
       frameTransport.rung === "poll");
 
-  const showViewport = webviewMounted || live;
+  const showViewport = live;
   const hostedBlocked = HOSTED_MODE && !hostedReady;
 
   const centerContent = showViewport ? (
     <div className="flex h-full min-h-0 flex-col">
       {live ? (
         <div className="flex min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            onClick={() => void sendCommand({ type: "reload" })}
-          >
-            <RotateCw className="h-3 w-3" />
-            <span className="ml-1">Reload</span>
-          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -694,20 +480,7 @@ export function WebmcpInspectorTab() {
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col">
-        {/* The client-owned surface renders INSTEAD of the viewport pane, not
-            inside it: the pane's aspect lock, image element and input
-            forwarder are all wrong for a live Chromium view, and mounting it
-            alongside would put two things on screen claiming to be the page.
-            It also stays mounted while the start request is in flight, which
-            is what makes mount-then-start possible. */}
-        {webviewMounted ? (
-          <ElectronWebviewPane
-            key={webviewAttempt}
-            ref={attachPane}
-            onNavigate={setUrl}
-            onError={setLocalError}
-          />
-        ) : live && behaviour.embedsBrowserPanel && sessionProjectId ? (
+        {live && behaviour.embedsBrowserPanel && sessionProjectId ? (
           /* The remote browser's own live view, in the pane rather than
              somewhere else to go and find.
 
@@ -721,10 +494,8 @@ export function WebmcpInspectorTab() {
             <BrowserPanel projectId={sessionProjectId} ensure={false} />
           </div>
         ) : live ? (
-          <ViewportPane
-            frame={liveFrame}
-            fallbackScreenshot={lastScreenshot}
-            fallbackScreenshotAt={lastScreenshotAt}
+          <WebMcpBrowserShell
+            key={session?.sessionId}
             streaming={streaming}
             transport={session?.viewportTransport}
             behaviour={behaviour}
@@ -739,7 +510,9 @@ export function WebmcpInspectorTab() {
         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
           <Globe className="h-5 w-5 text-muted-foreground" />
         </div>
-        <p className="mb-1 text-xs font-semibold text-foreground">Open a page</p>
+        <p className="mb-1 text-xs font-semibold text-foreground">
+          Open a page
+        </p>
         <p className="text-xs font-medium text-muted-foreground">
           {hostedBlocked
             ? "A hosted browser runs on your own MCPJam computer, so it needs a signed-in account and a project to run under. Pick a project to get started — and note it cannot reach anything on your own network, including localhost."
@@ -751,12 +524,11 @@ export function WebmcpInspectorTab() {
 
   return (
     <div className="flex h-full flex-col">
-      {error || localError ? (
+      {error ? (
         <ErrorBanner
-          message={error?.message ?? localError!}
+          message={error!.message}
           code={error?.code}
           onDismiss={() => {
-            setLocalError(undefined);
             clearError();
           }}
         />
@@ -778,18 +550,10 @@ export function WebmcpInspectorTab() {
             onSelectTool={setSelectedToolKey}
             hasSession={live}
             live={live}
-            starting={starting || openingSurface}
+            starting={starting}
             pendingInvokeId={pendingForSelected?.invokeId}
-            primaryLabel={
-              live
-                ? "Go"
-                : starting || openingSurface
-                  ? "Opening…"
-                  : "Open browser"
-            }
-            primaryDisabled={
-              starting || openingSurface || hostedBlocked
-            }
+            primaryLabel={live ? "Go" : starting ? "Opening…" : "Open browser"}
+            primaryDisabled={starting || hostedBlocked}
             primaryTitle={
               hostedBlocked
                 ? "Sign in and pick a project first — the browser runs on that project's computer."
@@ -844,6 +608,100 @@ export function WebmcpInspectorTab() {
  * during a resize, and that is exactly when a stale aspect ratio would letterbox
  * the picture wrongly.
  */
+function WebMcpBrowserShell(
+  props: Parameters<typeof SubscribedViewportPane>[0],
+) {
+  const transport = useMemo<BrowserSessionTransport>(
+    () => ({
+      readState: async () => {
+        const result = (await useWebmcpInspectorStore
+          .getState()
+          .sendCommand({ type: "browser_state" })) as { state: unknown };
+        return decodeStateSnapshot(result.state);
+      },
+      sendCommand: async ({ command }) => {
+        await useWebmcpInspectorStore
+          .getState()
+          .sendCommand({ type: "browser_command", command });
+        return { ok: true };
+      },
+    }),
+    [],
+  );
+  const native =
+    props.transport?.kind === "electron-native" ? props.transport : undefined;
+  const shell = useBrowserSession({
+    transport: props.behaviour.drivesPage || native ? transport : null,
+    holderId: null,
+    active: true,
+    pollMs: 500,
+  });
+  const sendToTab = useCallback(
+    (events: WebMcpInputEvent[]) => {
+      const send = useWebmcpInspectorStore.getState().sendInput;
+      return shell.state.activeTabId
+        ? send(events, shell.state.activeTabId)
+        : send(events);
+    },
+    [shell.state.activeTabId],
+  );
+  if (!props.behaviour.drivesPage && !native)
+    return <SubscribedViewportPane {...props} />;
+  return (
+    <BrowserShell
+      enabled
+      authority={{ kind: "shared" }}
+      state={shell.state}
+      holderId={null}
+      onCommand={shell.run}
+      ready={shell.supported}
+      notice={shell.notice}
+      error={shell.error}
+    >
+      {native ? (
+        <ElectronNativeBody
+          session={{ bootId: native.bootId }}
+          holder="webmcp-inspector"
+          control="agent"
+          holding={false}
+          consentGranted
+          chrome="none"
+        />
+      ) : (
+        <SubscribedViewportPane
+          key={shell.state.activeTabId}
+          {...props}
+          onInput={sendToTab}
+        />
+      )}
+    </BrowserShell>
+  );
+}
+
+/** Frames update only the viewport, never the tools and activity workspace. */
+function SubscribedViewportPane(
+  props: Omit<
+    Parameters<typeof ViewportPane>[0],
+    "frame" | "fallbackScreenshot" | "fallbackScreenshotAt"
+  >,
+) {
+  const frame = useWebmcpInspectorStore((state) => state.liveFrame);
+  const fallbackScreenshot = useWebmcpInspectorStore(
+    (state) => state.lastScreenshot,
+  );
+  const fallbackScreenshotAt = useWebmcpInspectorStore(
+    (state) => state.lastScreenshotAt,
+  );
+  return (
+    <ViewportPane
+      {...props}
+      frame={frame}
+      fallbackScreenshot={fallbackScreenshot}
+      fallbackScreenshotAt={fallbackScreenshotAt}
+    />
+  );
+}
+
 function ViewportPane({
   frame,
   fallbackScreenshot,
@@ -860,308 +718,112 @@ function ViewportPane({
   streaming: boolean;
   transport: WebMcpViewportTransport | undefined;
   behaviour: ViewportBehaviour;
-  /**
-   * RETURNS the store's promise, and that return value is load-bearing: the
-   * forwarder uses it as its in-flight clock for wheel flushing. Wrapping this
-   * in `void` would leave every scroll looking instantaneous to the forwarder
-   * and put one request on the wire per wheel event.
-   */
+  /** The promise bounds outstanding batches; the ordered socket pipelines them. */
   onInput: (events: WebMcpInputEvent[]) => void | Promise<void>;
 }) {
-  // The screenshot is a FALLBACK for a stream that is meant to be running, not
-  // a still to leave up once it stops. With Live view off, holding it would
-  // freeze the pane on an old picture still labelled "live" — and the "Live
-  // view is off" placeholder would never appear, because a source was present.
-  // The frame carries a ready-to-render `src` — a data URI when it came over
-  // SSE, a blob URL when it came over the socket — so the pane is indifferent
-  // to which transport delivered it. The screenshot fallback is still bare
-  // base64 and is wrapped here.
-  const source =
-    frame?.src ??
-    (streaming && fallbackScreenshot
-      ? `data:image/jpeg;base64,${fallbackScreenshot}`
-      : undefined);
-  /**
-   * Whether this pane drives the page. Read from the one exhaustive table
-   * rather than re-derived here, so a new transport kind cannot answer this
-   * question differently from the rest of the screen.
-   */
-  const interactive = behaviour.drivesPage;
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const paneRef = useRef<HTMLDivElement | null>(null);
-  const [focused, setFocused] = useState(false);
-
-  /**
-   * Aspect ratio, from the frame when there is one and from the transport
-   * before that.
-   *
-   * The transport reports the surface at session start precisely so the box is
-   * the right shape before the first frame: a pane that resizes a moment after
-   * it appears scales any click landing in that moment against the wrong box.
-   */
   const surface = frame
-    ? // CSS pixels, not the frame's device pixels: the aspect ratio is the same
-      // either way, but this box is also what pointer coordinates are scaled
-      // against, and the page's own coordinate space is CSS pixels. A frame
-      // captured at 2x reported in device pixels would double every click.
-      { width: frame.cssWidth, height: frame.cssHeight }
+    ? { width: frame.cssWidth, height: frame.cssHeight }
     : transportSurface(transport);
-
-  const frameSizeRef = useRef(surface);
-  frameSizeRef.current = surface;
-  /**
-   * Keys whose key-DOWN was withheld, so the matching key-up can be withheld
-   * too. See the paste handling in `onKeyDown`.
-   *
-   * Remembered rather than recomputed, because the modifier snapshot on the
-   * key-up is not the one from the key-down: releasing Ctrl before V makes the
-   * `v` key-up look like an ordinary keystroke, and forwarding it hands the
-   * page a release for a key it never saw pressed. The mirror case — pressing
-   * V, then Ctrl, then releasing V — is the same bug the other way round, and
-   * a set gets both right where a predicate cannot.
-   */
-  const withheldKeys = useRef(new Set<string>());
-
-  const forwarder = useMemo<InputForwarder>(
-    () =>
-      createInputForwarder({
-        send: onInput,
-        geometry: () => {
-          const element = imageRef.current;
-          if (!element) return undefined;
-          const rect = element.getBoundingClientRect();
-          return { rect, frame: frameSizeRef.current };
-        },
-      }),
+  // ViewportPane is keyed by sessionId; a retired pane cancels its report.
+  const resize = useViewportReporter((size) => {
+    if (!behaviour.drivesPage) return;
+    return useWebmcpInspectorStore
+      .getState()
+      .sendCommand({ type: "set_viewport", ...size });
+  }, behaviour.drivesPage);
+  const inputLifecycle = useMemo(
+    () => ({
+      forwarder: createInputForwarder((events) =>
+        onInput(events.map(fromBrowserPaneInput)),
+      ),
+      attached: false,
+    }),
     [onInput],
   );
-
-  /**
-   * Give up every piece of input state at once: the forwarder's held keys and
-   * buttons, and the paste keys whose release is still owed.
-   *
-   * One function rather than two calls at four sites, because forgetting the
-   * second half reintroduces exactly what withholding exists to prevent. A
-   * `withheldKeys` left populated across a blur swallows the NEXT ordinary `v`
-   * key-up — whose key-down WAS forwarded — and the page holds that key down
-   * for the rest of the session.
-   */
-  const releaseAll = useCallback(() => {
-    withheldKeys.current.clear();
-    forwarder.releaseHeld();
-  }, [forwarder]);
-
-  useEffect(
-    () => () => {
-      // RELEASE, then dispose. Unmounting is not a blur — tabbing away from
-      // this screen fires no blur on the pane — so disposing alone would clear
-      // the held set locally while the page went on believing a key or button
-      // was still down, for the rest of the session.
-      releaseAll();
-      forwarder.dispose();
-    },
-    [forwarder, releaseAll],
-  );
-
-  /**
-   * Wheel, attached natively and NON-PASSIVELY.
-   *
-   * React registers `wheel` as a passive listener at its root, so
-   * `preventDefault()` inside an `onWheel` prop is ignored — and without it the
-   * same gesture scrolls the inspector's own column, sliding the pane out from
-   * under the person while the page inside it also scrolls. The only way to
-   * consume the event is to register it directly.
-   */
+  const { forwarder } = inputLifecycle;
   useEffect(() => {
-    const element = paneRef.current;
-    if (!element || !interactive) return;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      forwarder.wheel(event);
+    inputLifecycle.attached = true;
+    return () => {
+      inputLifecycle.attached = false;
+      // Child cleanup still needs to release held input. Strict Mode may also
+      // reattach this same forwarder before the deferred cleanup runs.
+      queueMicrotask(() => {
+        if (!inputLifecycle.attached) inputLifecycle.forwarder.cancel();
+      });
     };
-    element.addEventListener("wheel", onWheel, { passive: false });
-    return () => element.removeEventListener("wheel", onWheel);
-  }, [interactive, forwarder]);
-
-  // A pane that is no longer being driven must not leave keys held in the page.
-  useEffect(() => {
-    if (interactive) return;
-    releaseAll();
-  }, [interactive, releaseAll]);
-
-  const pointerHandlers = interactive
-    ? {
-        onPointerMove: (event: React.PointerEvent) =>
-          forwarder.mouseMove(event.nativeEvent),
-        onPointerDown: (event: React.PointerEvent) => {
-          // Captured so a drag that leaves the pane still reports its motion and
-          // its release here, rather than ending in whatever it passed over.
-          event.currentTarget.setPointerCapture?.(event.pointerId);
-          (event.currentTarget as HTMLElement).focus();
-          forwarder.mouseDown(event.nativeEvent);
-        },
-        onPointerUp: (event: React.PointerEvent) => {
-          event.currentTarget.releasePointerCapture?.(event.pointerId);
-          forwarder.mouseUp(event.nativeEvent);
-        },
-        onPointerCancel: (event: React.PointerEvent) => {
-          // The browser can cancel a pointer mid-drag (a touch interrupted, a
-          // gesture taken over) with no pointerup to follow. Without this the
-          // page keeps the button held and every later move reads as a drag.
-          event.currentTarget.releasePointerCapture?.(event.pointerId);
-          releaseAll();
-        },
-        // Suppressed rather than forwarded: a native context menu opens in the
-        // browser running the page, which is headless — so the menu would exist
-        // nowhere and never appear in a frame, while this browser's own menu
-        // covered the pane.
-        onContextMenu: (event: React.MouseEvent) => event.preventDefault(),
-        onKeyDown: (event: React.KeyboardEvent) => {
-          // Only while the pane holds focus, so the app's own shortcuts keep
-          // working everywhere else.
-          if (isComposing(event)) return;
-          // ESCAPE IS THE WAY OUT, and is never forwarded. Tab IS forwarded —
-          // tabbing between fields is most of what people do to a form — which
-          // means Tab cannot also be the way out, and a keyboard-only user
-          // would otherwise be trapped in the pane with no key that leaves it.
-          // The caption says so while the pane has focus.
-          if (event.key === "Escape") {
-            event.preventDefault();
-            (event.currentTarget as HTMLElement).blur();
-            return;
-          }
-          // Paste is the one shortcut NOT swallowed locally: preventing its
-          // default cancels the clipboard action, so no `paste` event fires and
-          // the text never reaches the page. But its keystrokes must not be
-          // FORWARDED either — `onPaste` already sends the clipboard as a text
-          // event, and a `v` key-down with ctrl held would make the remote page
-          // run its own paste as well, from a clipboard that is not the one the
-          // person copied into.
-          if (isPasteShortcut(event)) {
-            withheldKeys.current.add(event.key.toLowerCase());
-            return;
-          }
-          event.preventDefault();
-          forwarder.keyDown(event.nativeEvent);
-        },
-        onKeyUp: (event: React.KeyboardEvent) => {
-          if (isComposing(event)) return;
-          // Matched to the keydown above: forwarding a lone key-up for a press
-          // the page never saw would leave it releasing a key it never got.
-          if (event.key === "Escape") return;
-          // Paired with the key-down, not re-derived from this event's own
-          // modifiers: whether Ctrl is still held when V comes up says nothing
-          // about whether the V going down was forwarded.
-          if (withheldKeys.current.delete(event.key.toLowerCase())) return;
-          event.preventDefault();
-          forwarder.keyUp(event.nativeEvent);
-        },
-        onPaste: (event: React.ClipboardEvent) => {
-          event.preventDefault();
-          forwarder.text(event.clipboardData.getData("text"));
-        },
-        onCompositionEnd: (event: React.CompositionEvent) => {
-          // An IME commits its result here, and only here. Its key events carry
-          // placeholder values like "Process", so a pane forwarding only keys
-          // types nothing at all in Japanese, Chinese or Korean.
-          forwarder.text(event.data);
-        },
-        onFocus: () => setFocused(true),
-        onBlur: () => {
-          setFocused(false);
-          // The page never sees that focus left, so a modifier held at this
-          // moment would stay held in it for the rest of the session and turn
-          // every later click into a ctrl-click.
-          releaseAll();
-        },
-      }
-    : {};
-
+  }, [inputLifecycle]);
+  const input = useCallback(
+    (events: Parameters<typeof forwarder.push>[0]) => {
+      if (behaviour.drivesPage) forwarder.push(events);
+    },
+    [behaviour.drivesPage, forwarder],
+  );
+  const picture = useMemo<PaneFrame | null>(() => {
+    if (frame)
+      return {
+        src: frame.src,
+        deviceWidth: frame.deviceWidth,
+        deviceHeight: frame.deviceHeight,
+        scale: frame.deviceWidth / frame.cssWidth,
+        ts: frame.ts,
+        seq: frame.seq,
+      };
+    if (streaming && fallbackScreenshot)
+      return {
+        data: fallbackScreenshot,
+        deviceWidth: surface.width,
+        deviceHeight: surface.height,
+        scale: 1,
+        ts: fallbackScreenshotAt ?? Date.now(),
+        seq: -1,
+      };
+    return null;
+  }, [
+    frame,
+    streaming,
+    fallbackScreenshot,
+    fallbackScreenshotAt,
+    surface.width,
+    surface.height,
+  ]);
+  const painted = useCallback(() => {
+    if (frame) notePainted(frame);
+    else if (fallbackScreenshotAt !== undefined)
+      notePainted({ ts: fallbackScreenshotAt, rung: "poll" });
+  }, [frame, fallbackScreenshotAt]);
   return (
     <figure className="m-0 flex h-full min-h-0 flex-col bg-muted/20 p-3">
-      <div
-        ref={paneRef}
-        // Focusable only when it drives something: a tab stop that does nothing
-        // is a trap for anyone navigating by keyboard.
-        {...(interactive ? { tabIndex: 0 } : {})}
-        {...pointerHandlers}
-        aria-label={
-          interactive ? "The inspected page — click to interact" : undefined
+      <BrowserPaneSurface
+        frame={picture}
+        authority={
+          behaviour.drivesPage
+            ? { kind: "shared" }
+            : { kind: "lease", holding: false }
         }
-        className={cn(
-          "relative mx-auto w-full max-w-3xl overflow-hidden rounded border bg-black/80",
-          interactive && "cursor-default touch-none",
-          interactive && focused && "ring-2 ring-primary",
-        )}
-        style={{ aspectRatio: `${surface.width} / ${surface.height}` }}
-      >
-        {source ? (
-          <img
-            // Distinct from the manual-capture thumbnail's alt below: two
-            // images described identically would give a screen reader no way
-            // to tell the live view from a snapshot someone took.
-            ref={imageRef}
-            src={source}
-            alt="Live view of the inspected page"
-            className="pointer-events-none h-full w-full object-contain select-none"
-            draggable={false}
-            // The one place a paint is observable. Dark unless the frame-stats
-            // flag is set; see lib/webmcp-inspector/frame-stats.
-            //
-            // Deferred to the next animation frame, because `load` fires when
-            // the image has DECODED, not when the compositor has shown it —
-            // recording there would report a number consistently smaller than
-            // the thing being measured. Re-checked after the wait, so a frame
-            // superseded before it was ever shown is not counted as one that
-            // was.
-            onLoad={(event) => {
-              const image = event.currentTarget;
-              // What this load represents. A polled screenshot is a paint too,
-              // and the one the report is usually opened to look at: the poll
-              // is the slowest rung, so a `byTransport` that could never fill
-              // its bucket would be silent exactly where somebody is
-              // investigating. It carries no `seq` — see `notePainted` for why
-              // the input echo is not a number this transport can honestly
-              // produce.
-              const sample = frame
-                ? image.currentSrc === frame.src
-                  ? frame
-                  : undefined
-                : fallbackScreenshotAt === undefined
-                  ? undefined
-                  : { ts: fallbackScreenshotAt, rung: "poll" as const };
-              if (!sample) return;
-              const shown = image.currentSrc;
-              requestAnimationFrame(() => {
-                // `isConnected` as well as the src: the pane can unmount
-                // between the decode and this frame, and a detached element
-                // was never shown — recording it would put a paint that never
-                // happened into the percentiles.
-                if (image.isConnected && image.currentSrc === shown) {
-                  notePainted(sample);
-                }
-              });
-            }}
-            // Frames arrive faster than a decode; letting the browser paint the
-            // previous one until this decodes is what keeps the pane from
-            // flashing black between frames.
-            decoding="async"
-          />
-        ) : (
-          <p className="absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
+        control="you"
+        chrome="none"
+        label="Live view of the inspected page"
+        interactionLabel={
+          behaviour.drivesPage
+            ? "The inspected page — click to interact"
+            : undefined
+        }
+        onInput={input}
+        onPainted={painted}
+        onViewportSize={behaviour.drivesPage ? resize : undefined}
+        placeholder={
+          <p className="text-center text-xs text-muted-foreground">
             {streaming
               ? "Waiting for the first frame…"
               : behaviour.serverPaints
                 ? "Live view is off. Turn it on to watch the page here."
                 : behaviour.viewOnlyCaption}
           </p>
-        )}
-      </div>
+        }
+      />
       <figcaption className="pt-1 text-center text-[11px] text-muted-foreground">
-        {interactive
-          ? focused
-            ? "Typing and clicking here goes to the page. Press Esc to leave."
-            : "Click to interact with the page."
+        {behaviour.drivesPage
+          ? "Click to interact with the page. Press Shift+Esc to leave."
           : behaviour.viewOnlyCaption}
       </figcaption>
     </figure>
@@ -1175,21 +837,6 @@ function ViewportPane({
  * expression; it runs on every render and must not allocate or branch on state
  * that could go stale between renders.
  */
-function transportKindOf(
-  session: { viewportTransport: WebMcpViewportTransport } | undefined,
-): WebMcpViewportTransport["kind"] | undefined {
-  return session?.viewportTransport.kind;
-}
-
-/** True while an IME is mid-composition; its key events are placeholders. */
-function isComposing(event: React.KeyboardEvent): boolean {
-  return event.nativeEvent.isComposing || event.key === "Process";
-}
-
-/** Ctrl-V / Cmd-V, whose default action is the only way to reach the clipboard. */
-function isPasteShortcut(event: React.KeyboardEvent): boolean {
-  return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v";
-}
 
 function StatusBadge({ status }: { status: WebMcpSessionStatus }) {
   // Typed against the protocol union rather than `string`: if a status is
@@ -1395,7 +1042,7 @@ function viewportBehaviour(
           "This page is running in the pane below — click and type into it there. Tools it registers appear as they register.",
         viewOnlyCaption: "A live view of the page.",
       };
-    case "electron-webview":
+    case "electron-native":
       return {
         // The one kind the client owns. Its pixels are a real Chromium surface
         // already on this screen, so there is nothing to encode, nothing to
@@ -1434,7 +1081,7 @@ function transportSurface(transport: WebMcpViewportTransport | undefined): {
     case "native-window":
     case "headless":
     case "remote-interactive-url":
-    case "electron-webview":
+    case "electron-native":
       return { width: WEBMCP_VIEWPORT.width, height: WEBMCP_VIEWPORT.height };
     default:
       transport satisfies never;

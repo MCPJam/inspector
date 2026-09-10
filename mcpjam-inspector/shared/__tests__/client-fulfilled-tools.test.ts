@@ -63,16 +63,24 @@ describe("client-fulfilled tool names", () => {
     const destructive = { readOnlyHint: false, destructiveHint: true };
     const readOnly = { readOnlyHint: true, destructiveHint: false };
 
-    it("gates destructive tools even when the flag is OFF", () => {
-      // The whole point of the annotation work: `requireToolApproval` is off
-      // by default, and a destructive action must still confirm.
+    it("leaves a destructive tool to the switch, in both directions", () => {
+      // `destructiveHint` decides whether this entry is a READ or an ACTION.
+      // It used to decide FOR the user as well, which made "Tool Approval:
+      // off" untrue.
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: false,
+          annotations: destructive,
+          requireToolApproval: true,
+        })
+      ).toBe(true);
       expect(
         uiToolCallNeedsApproval({
           readOnly: false,
           annotations: destructive,
           requireToolApproval: false,
         })
-      ).toBe(true);
+      ).toBe(false);
     });
 
     it("does not gate additive tools when the flag is OFF", () => {
@@ -109,38 +117,48 @@ describe("client-fulfilled tool names", () => {
       }
     });
 
-    it("treats an absent destructiveHint as destructive (protocol default)", () => {
-      // A tool added without annotating destructiveHint must fail SAFE.
-      expect(
-        uiToolCallNeedsApproval({
-          readOnly: false,
-          annotations: { readOnlyHint: false },
-          requireToolApproval: false,
-        })
-      ).toBe(true);
-      expect(
-        uiToolCallNeedsApproval({
-          readOnly: false,
-          annotations: {},
-          requireToolApproval: false,
-        })
-      ).toBe(true);
-    });
-
-    it("fails CLOSED on a contradictory read-only + destructive entry", () => {
-      // The validator rejects `readOnlyHint` disagreeing with `readOnly`, but
-      // nothing stops "read-only AND destructive". Resolving that in favor of
-      // "don't ask" is the one reading that can silently delete something, so
-      // destructive wins.
-      for (const requireToolApproval of [true, false]) {
+    it("treats an absent destructiveHint as an ACTION, not a read", () => {
+      // The protocol default still applies where it decides something: an
+      // unannotated entry is an action, so it follows the switch rather than
+      // joining the reads that never ask.
+      for (const annotations of [{ readOnlyHint: false }, {}]) {
         expect(
           uiToolCallNeedsApproval({
-            readOnly: true,
-            annotations: { readOnlyHint: true, destructiveHint: true },
-            requireToolApproval,
-          }),
+            readOnly: false,
+            annotations,
+            requireToolApproval: true,
+          })
         ).toBe(true);
+        expect(
+          uiToolCallNeedsApproval({
+            readOnly: false,
+            annotations,
+            requireToolApproval: false,
+          })
+        ).toBe(false);
       }
+    });
+
+    it("reads a contradictory read-only + destructive entry as an ACTION", () => {
+      // The validator rejects `readOnlyHint` disagreeing with `readOnly`, but
+      // nothing stops "read-only AND destructive". Resolving that in favor of
+      // "this is a read" is the one reading that can silently delete
+      // something, so destructive still wins the READ-or-ACTION question —
+      // and the switch then answers the only question left.
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: true,
+          annotations: { readOnlyHint: true, destructiveHint: true },
+          requireToolApproval: true,
+        }),
+      ).toBe(true);
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: true,
+          annotations: { readOnlyHint: true, destructiveHint: true },
+          requireToolApproval: false,
+        }),
+      ).toBe(false);
     });
 
     it("does not gate a read-only tool whose annotations omit readOnlyHint", () => {
@@ -202,13 +220,13 @@ describe("browser tool names", () => {
  * the one the entry alone decides, which is what a future setting will vary.
  */
 describe("uiToolApprovalFloor", () => {
-  it("reads destructive as `always` and read-only as `never`", () => {
+  it("reads destructive as `setting` and read-only as `never`", () => {
     expect(
       uiToolApprovalFloor({
         readOnly: false,
         annotations: { destructiveHint: true },
       }),
-    ).toBe("always");
+    ).toBe("setting");
     expect(
       uiToolApprovalFloor({
         readOnly: true,
@@ -229,15 +247,23 @@ describe("uiToolApprovalFloor", () => {
     expect(uiToolApprovalFloor({ readOnly: false })).toBe("setting");
   });
 
-  it("reads an ABSENT destructiveHint as `always` (protocol default)", () => {
+  it("reads an ABSENT destructiveHint as an action, not a read", () => {
+    // The protocol default is "assume destructive". That still keeps an
+    // unannotated entry out of the `never` bucket; it no longer promotes it
+    // above the user's switch.
     expect(uiToolApprovalFloor({ readOnly: false, annotations: {} })).toBe(
-      "always",
+      "setting",
     );
   });
 });
 
 describe("pageToolCallNeedsApproval", () => {
-  it("is `always`, and says so without consulting anything", () => {
-    expect(pageToolCallNeedsApproval()).toBe(true);
+  it("follows the user's switch, in both directions", () => {
+    // It was unconditional, and the page's annotations are still never read —
+    // they are claims by the party whose code would run. What the switch buys
+    // is that "off" means off: a family answering "not you" is a setting that
+    // does not work, which costs more trust than the pill bought safety.
+    expect(pageToolCallNeedsApproval(true)).toBe(true);
+    expect(pageToolCallNeedsApproval(false)).toBe(false);
   });
 });

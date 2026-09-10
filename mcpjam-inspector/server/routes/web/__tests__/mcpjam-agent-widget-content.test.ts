@@ -296,7 +296,7 @@ describe("POST /api/web/mcpjam-agent/widget-content", () => {
 });
 
 describe("eval-scoped agent requests", () => {
-  const scope = { kind: "evals", version: 1, id: "scope-1", projectId: "project-a", suiteId: "suite-a", suiteName: "Support" };
+  const scope = { kind: "evals", version: 1, id: "scope-1", projectId: "project-a", suiteId: "suite-a", suiteName: "Support", caseId: "draft:describe" };
   const request = (extra: Record<string, unknown> = {}) => makeApp().request("/api/web/mcpjam-agent", {
     method: "POST", headers: { "content-type": "application/json", authorization: "Bearer user-token" },
     body: JSON.stringify({ messages: [{ role: "user", parts: [{ type: "text", text: "Generate cases" }] }], model: { id: "anthropic/claude-haiku-4.5" }, chatSessionId: "eval-session", projectId: "project-a", evalScope: scope, ...extra }),
@@ -318,7 +318,7 @@ describe("eval-scoped agent requests", () => {
       expect(args.prepare.uiTools.map((t: any) => t.name)).toEqual(["ui_eval_context"]);
       expect(args.prepare.selectedServerIds).toEqual([]);
       expect(args.prepare.builtInTools).toBeUndefined();
-      expect(args.prepare.systemPrompt).toContain("Stay in this eval workspace");
+      expect(args.prepare.systemPrompt).toContain("available only in Describe");
       expect(args.prepare.systemPrompt).not.toContain("Navigate to Playground");
       expect(managerState.constructedConfigs[0]).not.toHaveProperty(MCPJAM_PLATFORM_SERVER_ID);
     } finally { delete process.env.MCPJAM_AGENT_PLATFORM_TOOLS; }

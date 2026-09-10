@@ -42,6 +42,7 @@ describe("toDaemonAction", () => {
       { op: "act", verb: "click" },
       { op: "navigate", url: "https://x.test" },
       { op: "back" },
+      { op: "forward" },
       { op: "reload" },
     ] as const) {
       const mapped = toDaemonAction(command);
@@ -157,6 +158,7 @@ describe("publishedOpFor — the reverse exhaustive check", () => {
     const cases: Array<[BrowserAction, string]> = [
       [{ kind: "navigate", url: "https://x.test" }, "navigate"],
       [{ kind: "back" }, "back"],
+      [{ kind: "forward" }, "forward"],
       [{ kind: "reload" }, "reload"],
       [{ kind: "act", verb: "click" }, "act"],
       [{ kind: "observe", mode: "url" }, "observe"],

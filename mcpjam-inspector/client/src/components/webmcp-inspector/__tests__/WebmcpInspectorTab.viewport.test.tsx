@@ -1,3 +1,5 @@
+import { StrictMode } from "react";
+import { waitFor } from "@testing-library/react";
 /**
  * The pane's two jobs: ask for frames only while someone is looking, and show
  * SOMETHING whatever the server can do.
@@ -31,6 +33,47 @@ vi.mock("@/components/ui/resizable", () => ({
   ),
   ResizableHandle: () => <div data-testid="resizable-handle" />,
 }));
+
+const loadedImages: Array<{ src: string; onload?: () => void }> = [];
+class TestImage {
+  private source = "";
+  get src() {
+    return this.source;
+  }
+  set src(value: string) {
+    this.source = value;
+    if (value) queueMicrotask(() => this.onload?.());
+  }
+  onload?: (() => void) | null;
+  constructor() {
+    loadedImages.push(this);
+  }
+}
+const panelRenders = vi.hoisted(() => ({ activity: 0, tools: 0 }));
+vi.mock("../ActivityTimeline", async (original) => {
+  const actual = await original<typeof import("../ActivityTimeline")>();
+  return {
+    ...actual,
+    ActivityTimeline: (
+      props: Parameters<typeof actual.ActivityTimeline>[0],
+    ) => {
+      panelRenders.activity += 1;
+      return <actual.ActivityTimeline {...props} />;
+    },
+  };
+});
+vi.mock("../WebmcpToolsSidebar", async (original) => {
+  const actual = await original<typeof import("../WebmcpToolsSidebar")>();
+  return {
+    ...actual,
+    WebmcpToolsSidebar: (
+      props: Parameters<typeof actual.WebmcpToolsSidebar>[0],
+    ) => {
+      panelRenders.tools += 1;
+      return <actual.WebmcpToolsSidebar {...props} />;
+    },
+  };
+});
 
 class FakeEventSource {
   onmessage: ((event: { data: string }) => void) | null = null;
@@ -83,6 +126,11 @@ describe("WebmcpInspectorTab — viewport", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+    loadedImages.length = 0;
+    vi.stubGlobal("Image", TestImage);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage: vi.fn(),
+    } as never);
     useWebmcpInspectorStore.setState({
       session: session(),
       tools: [],
@@ -100,6 +148,37 @@ describe("WebmcpInspectorTab — viewport", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+
+  it.each([0, 500])(
+    "isolates 30 viewport frames from a workspace with %i activity rows",
+    async (rows) => {
+      stubViewportActions({ screencastAccepted: true });
+      useWebmcpInspectorStore.setState({
+        session: session({
+          viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+        }),
+        activity: Array.from({ length: rows }, (_, i) => ({
+          id: `row-${i}`,
+          ts: i,
+          kind: "session_started" as const,
+          url: "https://shop.test/",
+        })),
+      });
+      render(<WebmcpInspectorTab />);
+      await act(async () => {});
+      const before = { ...panelRenders };
+      for (let seq = 1; seq <= 30; seq++) {
+        await act(async () => {
+          useWebmcpInspectorStore.setState({
+            liveFrame: liveFrame(`frame-${seq}`, seq),
+          });
+        });
+      }
+      expect(panelRenders.activity - before.activity).toBe(0);
+      expect(panelRenders.tools - before.tools).toBe(0);
+      await waitFor(() => expect(loadedImages.at(-1)?.src).toBe("frame-30"));
+    },
+  );
 
   it("asks for the stream while the pane is up, and withdraws on unmount", async () => {
     const { setScreencast, captureScreenshot } = stubViewportActions({
@@ -168,7 +247,7 @@ describe("WebmcpInspectorTab — viewport", () => {
     render(<WebmcpInspectorTab />);
     await act(async () => {});
     expect(
-      screen.getByAltText("Live view of the inspected page"),
+      screen.getByRole("img", { name: "Live view of the inspected page" }),
     ).toBeInTheDocument();
 
     const user = userEvent.setup();
@@ -178,7 +257,9 @@ describe("WebmcpInspectorTab — viewport", () => {
     // Holding the screenshot would freeze the pane on an old picture still
     // labelled "live", and the "Live view is off" line would never appear
     // because a source was present.
-    expect(screen.queryByAltText("Live view of the inspected page")).toBeNull();
+    expect(
+      screen.queryByRole("img", { name: "Live view of the inspected page" }),
+    ).toBeNull();
     expect(screen.getByText(/Live view is off/)).toBeInTheDocument();
   });
 
@@ -215,18 +296,18 @@ describe("WebmcpInspectorTab — viewport", () => {
     await act(async () => {});
     // No frame yet: the middle rung of the chain is what keeps the pane from
     // being a hole for the first few hundred milliseconds.
-    expect(
-      screen.getByAltText("Live view of the inspected page"),
-    ).toHaveAttribute("src", "data:image/jpeg;base64,manual");
+    await waitFor(() =>
+      expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,manual"),
+    );
 
     await act(async () => {
       useWebmcpInspectorStore.setState({
         liveFrame: liveFrame("data:image/jpeg;base64,paint"),
       });
     });
-    expect(
-      screen.getByAltText("Live view of the inspected page"),
-    ).toHaveAttribute("src", "data:image/jpeg;base64,paint");
+    await waitFor(() =>
+      expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,paint"),
+    );
     view.unmount();
   });
 
@@ -244,9 +325,9 @@ describe("WebmcpInspectorTab — viewport", () => {
         liveFrame: liveFrame("blob:http://localhost/abc-123"),
       });
     });
-    expect(
-      screen.getByAltText("Live view of the inspected page"),
-    ).toHaveAttribute("src", "blob:http://localhost/abc-123");
+    await waitFor(() =>
+      expect(loadedImages.at(-1)?.src).toBe("blob:http://localhost/abc-123"),
+    );
 
     // …and a data URI from SSE, through the same prop.
     await act(async () => {
@@ -254,9 +335,9 @@ describe("WebmcpInspectorTab — viewport", () => {
         liveFrame: liveFrame("data:image/jpeg;base64,sse", 2),
       });
     });
-    expect(
-      screen.getByAltText("Live view of the inspected page"),
-    ).toHaveAttribute("src", "data:image/jpeg;base64,sse");
+    await waitFor(() =>
+      expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,sse"),
+    );
     view.unmount();
   });
 
@@ -272,7 +353,9 @@ describe("WebmcpInspectorTab — viewport", () => {
     const { setScreencast } = stubViewportActions({ screencastAccepted: true });
     render(<WebmcpInspectorTab />);
     await act(async () => {});
-    expect(screen.queryByAltText("Live view of the inspected page")).toBeNull();
+    expect(
+      screen.queryByRole("img", { name: "Live view of the inspected page" }),
+    ).toBeNull();
     expect(setScreencast).not.toHaveBeenCalled();
   });
 
@@ -294,156 +377,6 @@ describe("WebmcpInspectorTab — viewport", () => {
       "The inspected page — click to interact",
     );
     expect(pane).toHaveAttribute("tabindex", "0");
-  });
-
-  it("hands the store's promise to the forwarder, as its in-flight clock", async () => {
-    let settle!: () => void;
-    const sendInput = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          settle = resolve;
-        }),
-    );
-    useWebmcpInspectorStore.setState({
-      session: session({
-        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
-      }),
-      sendInput,
-    });
-    stubViewportActions({ screencastAccepted: true });
-    render(<WebmcpInspectorTab />);
-    await act(async () => {});
-    // Seeded AFTER mount: the tab's `reconnect()` effect runs a full teardown
-    // for a session with no live stream, which clears the frame.
-    await act(async () => {
-      useWebmcpInspectorStore.setState({
-        liveFrame: liveFrame("data:image/jpeg;base64,paint"),
-      });
-    });
-
-    const pane = screen.getByLabelText(
-      "The inspected page — click to interact",
-    );
-    // The geometry closure reads the <img>'s rect, which jsdom reports as
-    // zero-sized; give it a real one so the wheel maps into the frame.
-    const image = screen.getByAltText("Live view of the inspected page");
-    image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
-
-    await act(async () => {
-      pane.dispatchEvent(
-        new WheelEvent("wheel", { deltaY: -100, bubbles: true }),
-      );
-    });
-    expect(sendInput).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      pane.dispatchEvent(
-        new WheelEvent("wheel", { deltaY: -50, bubbles: true }),
-      );
-      pane.dispatchEvent(
-        new WheelEvent("wheel", { deltaY: -50, bubbles: true }),
-      );
-    });
-    // Held, because the first request has not settled. If the tab wrapped
-    // `sendInput` in `void`, the forwarder would see no in-flight work and put
-    // one request on the wire per wheel event.
-    expect(sendInput).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      settle();
-    });
-    expect(sendInput).toHaveBeenCalledTimes(2);
-    expect(sendInput.mock.calls[1]![0]).toEqual([
-      expect.objectContaining({ kind: "wheel", deltaY: -100 }),
-    ]);
-  });
-
-  /**
-   * The three paint-recording tests differ only in their TAIL — what happens
-   * between the decode and the animation frame that would have shown it. The
-   * flag key, the stubbed `requestAnimationFrame` and the mount are stated
-   * once here so a change to any of them lands in one place.
-   */
-  describe("frame-stats paint recording", () => {
-    /** Callbacks the pane queued for the next frame, to run by hand. */
-    let queued: Array<() => void>;
-
-    beforeEach(() => {
-      localStorage.setItem("webmcp:frame-stats", "1");
-      resetFrameStatsFlagForTests();
-      queued = [];
-      vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
-        queued.push(() => cb(0));
-        return queued.length;
-      });
-    });
-
-    afterEach(() => {
-      vi.restoreAllMocks();
-      localStorage.removeItem("webmcp:frame-stats");
-      // Clears the cached flag AND the samples, so the next test starts empty.
-      resetFrameStatsFlagForTests();
-    });
-
-    /** jsdom leaves `currentSrc` unset; the pane reads it to name the frame. */
-    function setCurrentSrc(image: HTMLElement, value: string) {
-      Object.defineProperty(image, "currentSrc", {
-        value,
-        configurable: true,
-      });
-    }
-
-    /** Mount the pane with one frame decoded but not yet shown. */
-    async function mountDecodedFrame(src = "data:image/jpeg;base64,paint") {
-      stubViewportActions({ screencastAccepted: true });
-      const view = render(<WebmcpInspectorTab />);
-      await act(async () => {});
-      await act(async () => {
-        useWebmcpInspectorStore.setState({ liveFrame: liveFrame(src) });
-      });
-      const image = screen.getByAltText("Live view of the inspected page");
-      setCurrentSrc(image, src);
-      await act(async () => {
-        fireEvent.load(image);
-      });
-      return { view, image };
-    }
-
-    const runQueuedFrames = () =>
-      act(async () => {
-        queued.forEach((run) => run());
-      });
-
-    it("records a paint on the next animation frame, not on decode", async () => {
-      await mountDecodedFrame();
-
-      // `load` means DECODED, not shown. Recording there reports a number
-      // consistently smaller than the thing being measured.
-      expect(frameStatsReport().captureToPaint.n).toBe(0);
-      await runQueuedFrames();
-      expect(frameStatsReport().captureToPaint.n).toBe(1);
-    });
-
-    it("does not record a frame superseded before it was shown", async () => {
-      const { image } = await mountDecodedFrame();
-
-      // A newer frame replaced it before the compositor ever showed this one,
-      // so it never was a paint.
-      setCurrentSrc(image, "data:image/jpeg;base64,newer");
-      await runQueuedFrames();
-      expect(frameStatsReport().captureToPaint.n).toBe(0);
-    });
-
-    it("does not record a paint for a pane that unmounted before the frame", async () => {
-      const { view } = await mountDecodedFrame();
-
-      // The screen goes away between the decode and the frame that would have
-      // shown it. Nothing was painted, so nothing should be recorded.
-      view.unmount();
-      await runQueuedFrames();
-      expect(frameStatsReport().captureToPaint.n).toBe(0);
-    });
   });
 
   it("scales a click against the frame's CSS size, not its device pixels", async () => {
@@ -470,12 +403,14 @@ describe("WebmcpInspectorTab — viewport", () => {
     const pane = screen.getByLabelText(
       "The inspected page — click to interact",
     );
-    const image = screen.getByAltText("Live view of the inspected page");
+    const image = screen.getByRole("img", {
+      name: "Live view of the inspected page",
+    });
     image.getBoundingClientRect = () =>
       ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
 
     await act(async () => {
-      fireEvent.pointerDown(pane, { clientX: 640, clientY: 400, button: 0 });
+      mouseDown(image, { clientX: 640, clientY: 400, button: 0 });
     });
 
     // The middle of the pane is the middle of the PAGE — 640,400 — and not the
@@ -635,14 +570,20 @@ describe("WebmcpInspectorTab — viewport", () => {
     useWebmcpInspectorStore.setState({
       setScreencast,
       captureScreenshot,
-      session: session({ sessionId: "session-a", viewportTransport: streamKind }),
+      session: session({
+        sessionId: "session-a",
+        viewportTransport: streamKind,
+      }),
     });
     render(<WebmcpInspectorTab />);
     await act(async () => {});
     expect(setScreencast.mock.calls).toEqual([[true]]);
 
     useWebmcpInspectorStore.setState({
-      session: session({ sessionId: "session-b", viewportTransport: streamKind }),
+      session: session({
+        sessionId: "session-b",
+        viewportTransport: streamKind,
+      }),
     });
     await act(async () => {});
 
@@ -671,7 +612,7 @@ describe("WebmcpInspectorTab — viewport", () => {
     ).toBeInTheDocument();
   });
 
-  it("lets a keyboard user leave the pane with Escape", async () => {
+  it("lets a keyboard user leave the pane with Shift+Escape", async () => {
     const sendInput = vi.fn(async () => {});
     useWebmcpInspectorStore.setState({
       session: session({
@@ -692,10 +633,10 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(document.activeElement).toBe(pane);
 
     await act(async () => {
-      fireEvent.keyDown(pane, { key: "Escape" });
+      fireEvent.keyDown(pane, { key: "Escape", shiftKey: true });
       // The key-up too: a browser sends both, and forwarding only the release
       // would hand the page a key it never saw pressed.
-      fireEvent.keyUp(pane, { key: "Escape" });
+      fireEvent.keyUp(pane, { key: "Escape", shiftKey: true });
     });
 
     // Tab is FORWARDED — tabbing between fields is most of what people do to a
@@ -705,6 +646,49 @@ describe("WebmcpInspectorTab — viewport", () => {
     // And Escape itself never reaches the page, in either transition, so it
     // cannot close a dialog there on the way out.
     expect(sendInput).not.toHaveBeenCalled();
+  });
+
+  it("keeps wheel input alive after Strict Mode replays effect setup", async () => {
+    const sendInput = vi.fn(async () => {});
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      liveFrame: liveFrame("scroll-frame"),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    const view = render(
+      <StrictMode>
+        <WebmcpInspectorTab />
+      </StrictMode>,
+    );
+    await act(async () => {});
+    await act(async () => {
+      useWebmcpInspectorStore.setState({
+        liveFrame: liveFrame("scroll-frame"),
+      });
+    });
+    const canvas = screen.getByRole("img", {
+      name: "Live view of the inspected page",
+    });
+    canvas.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
+    const wheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 200,
+      clientY: 200,
+      deltaY: 120,
+    });
+    act(() => canvas.dispatchEvent(wheel));
+    expect(wheel.defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(sendInput).toHaveBeenCalledWith([
+        expect.objectContaining({ kind: "wheel", deltaY: 120 }),
+      ]),
+    );
+    view.unmount();
   });
 
   it("sends a paste once, as text, and never as its keystrokes", async () => {
@@ -838,8 +822,7 @@ describe("WebmcpInspectorTab — viewport", () => {
     // `v` held in the page for the rest of the session — the exact thing
     // withholding the paste transitions exists to prevent.
     expect(sent.map((event) => `${event.kind}:${event.key}`)).toEqual([
-      "key_down:v",
-      "key_up:v",
+      "text:undefined",
     ]);
   });
 
@@ -869,7 +852,9 @@ describe("WebmcpInspectorTab — viewport", () => {
     // Tabbing away from this screen fires no blur on the pane, so without an
     // explicit release the page would believe Shift was held for the rest of
     // the session and every later click would be a shift-click.
-    expect(sendInput).toHaveBeenCalledWith([{ kind: "key_up", key: "Shift" }]);
+    expect(sendInput).toHaveBeenCalledWith([
+      expect.objectContaining({ kind: "key_up", key: "Shift" }),
+    ]);
   });
 
   it("offers no Live view switch for a session that IS the pane", async () => {
@@ -917,3 +902,13 @@ describe("WebmcpInspectorTab — viewport", () => {
     );
   });
 });
+
+// jsdom does not generate the compatibility mouse event after a pointer event.
+function mouseDown(element: Element, init?: MouseEventInit) {
+  fireEvent.pointerDown(element, init);
+  fireEvent.mouseDown(element, init);
+}
+function mouseUp(element: Element, init?: MouseEventInit) {
+  fireEvent.pointerUp(element, init);
+  fireEvent.mouseUp(element, init);
+}

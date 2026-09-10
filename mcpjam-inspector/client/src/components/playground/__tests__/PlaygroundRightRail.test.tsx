@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
 /**
@@ -60,7 +60,15 @@ vi.mock("@/components/computer/useComputerTerminal", () => ({
 
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabledState: () => true,
+  useBrowserEnabledState: () => true,
+  // ON, so the rail is the two-tab one the tests below describe. The Browser
+  // tab is the FALLBACK for a workspace that is gated off, and it has its own
+  // suite at the bottom of this file.
+  useBrowserWorkspaceEnabled: () => workspaceFlag.enabled,
 }));
+
+/** Flipped by the fallback suite; on for everything else. */
+const workspaceFlag = vi.hoisted(() => ({ enabled: true }));
 
 vi.mock("@/components/logger-view", () => ({
   LoggerView: () => <div data-testid="logger-view" />,
@@ -116,8 +124,18 @@ vi.mock("@/components/browser/HostedBrowserBody", () => ({
   ),
 }));
 
+vi.mock("@/stores/active-chat-session-store", () => ({
+  useActiveChatSessionStore: (
+    select: (state: { sessionId: string }) => unknown,
+  ) => select({ sessionId: "chat-1" }),
+}));
+
 vi.mock("@/hooks/useProjectComputer", () => ({
   useMintBrowserToken: () => async () => ({
+    token: "tok",
+    expiresAt: Date.now() + 60_000,
+  }),
+  useMintConversationBrowserToken: () => async () => ({
     token: "tok",
     expiresAt: Date.now() + 60_000,
   }),
@@ -336,13 +354,60 @@ describe("PlaygroundRightRail — no computer attached", () => {
   });
 });
 
-describe("PlaygroundRightRail — the Browser tab", () => {
+/**
+ * The Browser tab's tests moved with the Browser tab.
+ *
+ * It is a panel beside chat now rather than the rail's third tab, and the
+ * properties these used to pin — which body each engine gets, when the panel
+ * is offered at all, and that a hidden pane stops claiming somebody is
+ * watching — are pinned in `PlaygroundBrowserPanel.test.tsx` against their new
+ * home. What is left here is the one thing that is about the RAIL: that the
+ * old tab comes back when the workspace is gated off.
+ */
+describe("PlaygroundRightRail — the gated-off fallback", () => {
   const browserHost = {
     computer: { workdir: "/home/user" },
     builtInToolIds: ["browser"],
   } as any;
 
-  function renderWithBrowser() {
+  afterEach(() => {
+    workspaceFlag.enabled = true;
+  });
+
+  it.each(["local", "cloud"] as const)(
+    "offers a %s Browser without Computer and never mounts a shell",
+    (engine) => {
+      workspaceFlag.enabled = false;
+      engineState.selectedEngine = engine;
+      // In particular, the local pane must be reachable BEFORE consent.
+      engineState.granted = false;
+      render(
+        <PlaygroundRightRail
+          onClose={() => {}}
+          hostConfig={{ builtInToolIds: ["browser"] } as any}
+          hostId="host-1"
+          projectId="proj-1"
+          isAuthenticated
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+      expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+        "data-engine",
+        engine === "local" ? "local" : "hosted",
+      );
+      expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+        "data-active",
+        "true",
+      );
+      expect(
+        screen.queryByRole("button", { name: /shell/i }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId("local-terminal")).not.toBeInTheDocument();
+      expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
+    },
+  );
+
+  function renderRail() {
     return render(
       <PlaygroundRightRail
         onClose={() => {}}
@@ -354,96 +419,40 @@ describe("PlaygroundRightRail — the Browser tab", () => {
     );
   }
 
-  it("tells the pane whether it is the tab being looked at", () => {
-    // Mounted-hidden is not "being watched": the pane heartbeats to defer the
-    // browser's idle reap, and one behind the Logs tab must stop claiming
-    // somebody is looking at it.
-    engineState.engine = "local";
+  it("offers no Browser tab while the workspace panel is on", () => {
+    // Two browsers on one screen is two panes claiming to be watched, on a
+    // metered box, showing the same page.
     engineState.selectedEngine = "local";
     engineState.granted = true;
-    renderWithBrowser();
-
-    expect(screen.getByTestId("browser-pane").dataset.active).toBe("false");
-    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
-    expect(screen.getByTestId("browser-pane").dataset.active).toBe("true");
-  });
-
-  it("SWAPS the body when the engine changes, keeping the tab", () => {
-    // Both engines have a browser. The tab used to vanish on a switch to
-    // cloud, which left `activeTab` on a hidden pane — all three hidden, and a
-    // rail that looked broken — and, once the hosted pane existed, hid a
-    // browser the person could perfectly well watch.
-    engineState.engine = "local";
-    engineState.selectedEngine = "local";
-    engineState.granted = true;
-    const { rerender } = renderWithBrowser();
-    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
-    expect(screen.getByTestId("browser-pane").dataset.engine).toBe("local");
-
-    engineState.engine = "cloud";
-    engineState.selectedEngine = "cloud";
-    rerender(
-      <PlaygroundRightRail
-        onClose={() => {}}
-        hostConfig={browserHost}
-        hostId="host-1"
-        projectId="proj-1"
-        isAuthenticated
-      />,
-    );
-
-    const pane = screen.getByTestId("browser-pane");
-    expect(pane.dataset.engine).toBe("hosted");
-    expect(pane.dataset.active).toBe("true");
-  });
-
-  it("offers no Browser tab at all when the host cannot drive one", () => {
-    // The capability, not the engine: a host without `browser` has nothing for
-    // the model to drive, so a pane would be showing something nothing can use.
-    engineState.engine = "cloud";
-    engineState.selectedEngine = "cloud";
-    render(
-      <PlaygroundRightRail
-        onClose={() => {}}
-        hostConfig={{ computer: { workdir: "/home/user" } } as any}
-        hostId="host-1"
-        projectId="proj-1"
-        isAuthenticated
-      />,
-    );
-    expect(screen.queryByTestId("browser-pane")).not.toBeInTheDocument();
+    renderRail();
     expect(
       screen.queryByRole("button", { name: /browser/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("offers no hosted browser before there is a signed-in user to mint for", () => {
-    // Every hosted call carries a minted browser token. Mounted before auth is
-    // ready the pane can only fail — into an "unreachable" state with nothing
-    // to retry it once auth arrives.
-    engineState.engine = "cloud";
-    engineState.selectedEngine = "cloud";
-    render(
-      <PlaygroundRightRail
-        onClose={() => {}}
-        hostConfig={browserHost}
-        hostId="host-1"
-        projectId="proj-1"
-        isAuthenticated={false}
-      />,
-    );
-    expect(screen.queryByTestId("browser-pane")).not.toBeInTheDocument();
-  });
-
-  it("keeps a hidden hosted pane from claiming somebody is watching", () => {
-    // On the hosted engine that claim keeps a METERED box awake, and the
-    // person pays for a picture nobody has on screen.
-    engineState.engine = "cloud";
-    engineState.selectedEngine = "cloud";
-    renderWithBrowser();
-    expect(screen.getByTestId("browser-pane").dataset.engine).toBe("hosted");
-    expect(screen.getByTestId("browser-pane").dataset.active).toBe("false");
-    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
-    expect(screen.getByTestId("browser-pane").dataset.active).toBe("true");
+  it("brings the old tab back when the workspace is gated off", () => {
+    // A flag that removed the panel and left nothing in its place would be
+    // worse than either state it is choosing between.
+    workspaceFlag.enabled = false;
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    renderRail();
+    expect(
+      screen.getByRole("button", { name: /browser/i }),
+    ).toBeInTheDocument();
   });
 });
+
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    engine: engineState.engine,
+    selectedEngine: engineState.selectedEngine,
+    consent: {
+      granted: engineState.granted,
+      token: engineState.granted ? "browser-token" : null,
+    },
+  }),
+}));
+vi.mock("@/components/browser/BrowserRuntimeControls", () => ({
+  BrowserRuntimeControls: () => null,
+}));

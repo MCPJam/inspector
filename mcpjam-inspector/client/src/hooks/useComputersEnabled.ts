@@ -1,4 +1,5 @@
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { HOSTED_MODE } from "@/lib/config";
 
 /**
  * PostHog rollout gate for ALL Project Computers UI (the host-editor computer
@@ -73,4 +74,61 @@ export const LOCAL_HARNESS_FEATURE_FLAG = "local-harness-enabled";
 
 export function useLocalHarnessEnabled(): boolean {
   return useFeatureFlagEnabled(LOCAL_HARNESS_FEATURE_FLAG) === true;
+}
+
+/**
+ * The Codex-style browser WORKSPACE — the panel beside chat, the tab strip,
+ * automatic takeover, and the responsive viewport.
+ *
+ * A SECOND, NARROWER FLAG inside the `computers-enabled` surface, like the
+ * local-engine one above, and it exists because the feature is not one thing
+ * that can be true on one engine: the same shell drives a local Chromium, a
+ * hosted one behind an H.264 stream, and Electron's native `WebContentsView`,
+ * and the three reach the release criteria at different times. The hosted half
+ * in particular waits on a new desktop image and a measurement of the
+ * streaming cost at the wider sizes people will actually drag to; shipping the
+ * panel before that is shipping a browser that resizes on two engines and
+ * pretends to on the third.
+ *
+ * The flag controls panel placement and responsive viewport sizing only.
+ * Both placements share tabs, URL/search navigation and implicit human takeover.
+ * Server routes and session authority are independent of panel placement.
+ */
+export const BROWSER_WORKSPACE_FLAG = "browser-workspace-enabled";
+
+/**
+ * Tri-state, like `useComputersEnabledState` and for the same reason: a
+ * workspace that flickered the browser panel in and out while PostHog resolved
+ * would move the chat pane under somebody's cursor on every page load.
+ */
+export function useBrowserWorkspaceEnabledState(): boolean | undefined {
+  return useFeatureFlagEnabled(BROWSER_WORKSPACE_FLAG);
+}
+
+export function useBrowserWorkspaceEnabled(): boolean {
+  return useBrowserWorkspaceEnabledState() === true;
+}
+
+/** Browser candidacy never depends on the shell cohort. */
+export const LOCAL_BROWSER_FEATURE_FLAG = "local-browser-enabled";
+export function useLocalBrowserEnabled(): boolean {
+  return useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG) === true;
+}
+
+export const HOSTED_BROWSER_FEATURE_FLAG = "hosted-browser-enabled";
+export function useHostedBrowserEnabled(): boolean {
+  return useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG) === true;
+}
+
+/** Browser has two location rollouts, neither nested under Computers. */
+export function useBrowserEnabledState(): boolean | undefined {
+  const local = useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG);
+  const hosted = useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG);
+  if (HOSTED_MODE) return hosted;
+  if (local === true || hosted === true) return true;
+  return local === undefined || hosted === undefined ? undefined : false;
+}
+
+export function useBrowserEnabled(): boolean {
+  return useBrowserEnabledState() === true;
 }

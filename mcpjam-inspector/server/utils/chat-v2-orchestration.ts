@@ -1058,12 +1058,13 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
  * the approval handshake, so routing execution back through the server would
  * add a round trip and a second approval path for no gain.
  *
- * `needsApproval` is unconditional — see `pageToolCallNeedsApproval`. The
- * description carries the origin because a model choosing between tools should
- * be able to see whose page each one belongs to.
+ * `needsApproval` follows the user's switch — see `pageToolCallNeedsApproval`.
+ * The description carries the origin because a model choosing between tools
+ * should be able to see whose page each one belongs to.
  */
 export function buildPageTools(
   pageTools: PageToolEntry[] | undefined,
+  requireToolApproval = false,
 ): ToolSet {
   if (!pageTools || pageTools.length === 0) return {};
   const out: ToolSet = {};
@@ -1073,8 +1074,8 @@ export function buildPageTools(
         entry.description ?? entry.rawName
       }`,
       inputSchema: entry.inputSchema,
-      // Floor: always.
-      needsApproval: pageToolCallNeedsApproval(),
+      // Floor: the switch.
+      needsApproval: pageToolCallNeedsApproval(requireToolApproval),
     });
   }
   return out;
@@ -1161,43 +1162,42 @@ export function buildUiToolsSystemPrompt(
 /**
  * The approval sentence for the turn.
  *
- * States the FLOOR RULE once, for every family, rather than only for `ui_*`.
- * The model is choosing between a browser tool, a shell and a UI action in the
- * same breath; a sentence about one namespace leaves it guessing about the
- * others — including the ones that pause whatever the settings say, which are
- * exactly the ones worth knowing about before it commits to a plan.
+ * States the rule once, for every family, rather than only for `ui_*`. The
+ * model is choosing between a browser tool, a shell and a UI action in the same
+ * breath, and a sentence about one namespace leaves it guessing about the rest.
  *
- * Told honestly for the snapshot that was actually sent. The destructive-`ui_*`
- * half of the promise only holds when EVERY entry is annotation-aware: a legacy
- * client sends bare `readOnly`, whose floor with the switch off is `setting`,
- * i.e. nothing pauses. The families above it do not depend on the snapshot and
- * are stated either way.
+ * It used to name the families that paused WHATEVER the settings said. There
+ * are none now: one switch decides for every tool that acts, so the honest
+ * sentence is about this conversation's setting rather than about a floor the
+ * model cannot see. Describing a checkpoint the turn does not have is the worse
+ * failure of the two — a model that expects to be stopped plans as if someone
+ * is reading along.
  */
 function approvalGuidance(
-  uiTools: UiToolEntry[],
+  _uiTools: UiToolEntry[],
   requireToolApproval: boolean,
 ): string {
-  const annotationAware = uiTools.every((t) => t.annotations !== undefined);
-  // Only families that pause on EVERY path belong here. Loading a skill an
-  // MCP server provided does not: the live SEP-2640 wrapper delegates to the
-  // base skill tool (`hostWantsApproval`), so with the switch off it can load
-  // without a prompt — what it always does is TAG the origin and bind the
-  // digest, which is not a pause. Promising one here would advertise a gate
-  // the turn may not have.
-  const alwaysPause = [
-    "anything driving a browser or a third-party web page",
-    "anything running on the user's own machine",
-    ...(annotationAware ? ["destructive `ui_*` actions"] : []),
-  ];
-  const always =
-    "Some actions always pause for the user's explicit approval before they " +
-    `run, whatever the settings say: ${alwaysPause
-      .slice(0, -1)
-      .join(", ")}, and ${alwaysPause[alwaysPause.length - 1]}.`;
-  const rest = requireToolApproval
-    ? "Tool approval is ON for this conversation, so most other tool calls pause too. Read-only lookups of the user's own project, the discovery meta-tools and read-only `ui_*` actions still run without asking — they are not covered by the switch in either direction."
-    : "Everything else applies immediately, so be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for.";
-  return `${always} ${rest} A denial is final — explain what you wanted to do instead of retrying the call.`;
+  // Named either way, because neither of these changes with the switch, and
+  // both are halves the model gets wrong in the expensive direction.
+  //
+  // `free` is why a read it expected to be gated simply happened. `alwaysAsks`
+  // is the opposite mistake and the worse one: loading a skill a connected MCP
+  // server provides pauses whatever this setting says (`effective-skill-tools`
+  // binds the digest and asks), so a model told "nothing will stop you" plans
+  // straight past a checkpoint that will stop it. Stated conditionally — "a
+  // skill a connected MCP server provides" — so a turn with no such skill is
+  // not promised a gate it will never meet.
+  const free =
+    "Read-only lookups of the user's own project, the discovery meta-tools, " +
+    "read-only `ui_*` actions and an open app's own `app_*` tools never pause, " +
+    "in either setting.";
+  const alwaysAsks =
+    "Loading a skill that a connected MCP server provides always asks for " +
+    "confirmation, in either setting — it brings that server's instructions " +
+    "into this conversation.";
+  return requireToolApproval
+    ? `Tool approval is ON for this conversation: every tool call that ACTS pauses for the user's explicit approval before it runs — MCP server tools, anything driving a browser or a third-party web page, anything running on the user's own machine, and mutating \`ui_*\` actions. ${free} ${alwaysAsks} A denial is final — explain what you wanted to do instead of retrying the call.`
+    : `Tool approval is OFF for this conversation: tool calls apply immediately, including anything driving a browser or a third-party web page and anything running on the user's own machine. Be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for. ${free} ${alwaysAsks}`;
 }
 
 /**
@@ -1579,7 +1579,10 @@ export async function prepareChatV2(
   // way, so `page_<8hex>` cannot collide with a server tool, a UI tool or an
   // app alias. A collision here would mean two sessions minted the same alias,
   // which is a bug rather than a conflict to resolve, so it throws below.
-  const pageToolEntries = buildPageTools(pageTools);
+  const pageToolEntries = buildPageTools(
+    pageTools,
+    requireToolApproval === true,
+  );
   // COPIED, because the page-tool policy below removes entries from it and the
   // caller's object is the resolver's own return value.
   const builtInToolEntries: ToolSet = { ...(builtInTools ?? {}) };

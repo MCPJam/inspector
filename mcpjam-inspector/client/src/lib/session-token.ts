@@ -403,6 +403,11 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // bearer before the consent check ever runs, and the terminal can never
   // open on a WorkOS-signed-in inspector.
   "/api/mcp/computers/local-terminal-token",
+  // Every local-browser route mounts bearerAuthMiddleware + requireVerifiedAuth,
+  // including status, launch, and activity reads. Local/Electron clients need
+  // the account bearer alongside their local session token.
+  "/api/mcp/computers/local-browser",
+  "/api/mcp/computers/browser-location",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
   // Registry catalog/star routes are Convex HTTP actions called via absolute

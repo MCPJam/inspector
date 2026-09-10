@@ -72,6 +72,8 @@ export type AnyPage = {
   goto(url: string, options?: unknown): Promise<unknown>;
   reload(options?: unknown): Promise<unknown>;
   goBack(options?: unknown): Promise<unknown>;
+  goForward(options?: unknown): Promise<unknown>;
+  setViewportSize(size: { width: number; height: number }): Promise<void>;
   waitForLoadState(state: string, options?: unknown): Promise<void>;
   evaluate<R>(fn: string): Promise<R>;
   screenshot(options?: unknown): Promise<Buffer>;
@@ -99,7 +101,19 @@ export type AnyPage = {
     options?: unknown,
   ): Promise<unknown>;
   on(event: string, handler: (payload: any) => void): void;
+  /**
+   * Frames, for the WebMCP per-frame session sweep.
+   *
+   * OPTIONAL because every unit-test fake would otherwise have to grow one, and
+   * a page with no frame surface simply has no cross-origin frames to inspect —
+   * the same "no WebMCP here" path a context without `newCDPSession` takes.
+   */
+  frames?(): AnyFrame[];
+  mainFrame?(): AnyFrame;
 };
+
+/** The little of a Playwright `Frame` the WebMCP sweep needs. */
+export type AnyFrame = { url(): string };
 
 /**
  * How many console entries a tab keeps. A ring buffer, because console
@@ -118,6 +132,19 @@ const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
  * dialog it is.
  */
 const DIALOG_MESSAGE_BYTES = 2_000;
+
+/**
+ * The daemon's diagnostic sink.
+ *
+ * `process.stderr`, not the server's `logger`: everything under `daemon/**` is
+ * bundled and uploaded into an E2B box, where `@/utils/logger` (and the Sentry
+ * and Axiom clients behind it) does not exist and must never be resolved. The
+ * daemon's own entry point logs the same way, and the sandbox's stderr is what
+ * a hosted session's logs are read from.
+ */
+function warn(message: string): void {
+  process.stderr.write(`[mcpjam-browserd] ${message}\n`);
+}
 
 /** The shapes Playwright's `Request`/`Response` give us. Structural, like `AnyPage`. */
 interface PlaywrightRequest {
@@ -163,20 +190,23 @@ export function wrapPage(page: AnyPage): DriverPage {
   // from a quiet one.
   let consoleTotal = 0;
   let errorsTotal = 0;
-  page.on("console", (message: { type?: () => string; text?: () => string }) => {
-    try {
-      const text = message.text?.() ?? "";
-      consoleRing.push({
-        type: message.type?.() ?? "log",
-        text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
-        at: Date.now(),
-      });
-      consoleTotal += 1;
-      if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
-    } catch {
-      // A console listener must never take the page down.
-    }
-  });
+  page.on(
+    "console",
+    (message: { type?: () => string; text?: () => string }) => {
+      try {
+        const text = message.text?.() ?? "";
+        consoleRing.push({
+          type: message.type?.() ?? "log",
+          text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
+          at: Date.now(),
+        });
+        consoleTotal += 1;
+        if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+      } catch {
+        // A console listener must never take the page down.
+      }
+    },
+  );
   // THE NETWORK RING. Playwright hands back objects rather than CDP ids, so
   // the ring's own id is minted here and remembered against the Request — the
   // same object the response reports, which is what folds the two events into
@@ -308,13 +338,40 @@ export function wrapPage(page: AnyPage): DriverPage {
   // attach, two consumers.
   const adapted: DriverPage = {
     async goto(url) {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS,
+      });
     },
     async reload() {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.reload({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS,
+      });
     },
     async goBack() {
-      await page.goBack({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goBack({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS,
+      });
+    },
+    async setViewportSize(size) {
+      // Playwright's own call, which resizes the page's CSS viewport WITHOUT
+      // touching the OS window. That separation is the point on Electron and
+      // the hosted box alike: moving a window must not change the coordinate
+      // space the agent reasons in, and changing the coordinate space must not
+      // depend on anybody being able to move a window.
+      await page.setViewportSize(size);
+    },
+    async goForward() {
+      // Playwright resolves with a null response rather than throwing when
+      // there is nothing ahead, which is the behaviour the verb wants: the
+      // pane disables the button from `canGoForward`, so reaching this with an
+      // empty forward history is a race and not a fault worth a message.
+      await page.goForward({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS,
+      });
     },
     async waitForNetworkIdle(signal) {
       // settle's maxWait (via the abort signal) is the SOLE budget — no inner
@@ -372,9 +429,11 @@ export function wrapPage(page: AnyPage): DriverPage {
       page.mouse.click(point.x, point.y, {
         ...(options?.button ? { button: options.button } : {}),
       }),
-    clickSelector: (selector) => page.click(selector, { timeout: ACT_TIMEOUT_MS }),
+    clickSelector: (selector) =>
+      page.click(selector, { timeout: ACT_TIMEOUT_MS }),
     hoverAt: (point) => page.mouse.move(point.x, point.y),
-    hoverSelector: (selector) => page.hover(selector, { timeout: ACT_TIMEOUT_MS }),
+    hoverSelector: (selector) =>
+      page.hover(selector, { timeout: ACT_TIMEOUT_MS }),
     typeText: (text) => page.keyboard.type(text),
     fillSelector: (selector, text) =>
       page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
@@ -451,7 +510,7 @@ export function wrapPage(page: AnyPage): DriverPage {
       cdpPromise ??= (async () => {
         const attach = cdpAttachers.get(page);
         if (!attach) return null;
-        return attach().catch(() => null);
+        return attach.page().catch(() => null);
       })();
       return cdpPromise;
     },
@@ -489,6 +548,7 @@ async function attachWebMcp(
     const bridge = new WebMcpBridge(session);
     bridge.resupport(probe);
     await bridge.start(probe);
+    attachFrameSessions(page, bridge);
     return bridge;
   } catch {
     return null;
@@ -496,18 +556,120 @@ async function attachWebMcp(
 }
 
 /**
+ * Keep one CDP session per separately-targeted frame, for the hosted box.
+ *
+ * The SAME change as the local inspector's, because the daemon drives
+ * Playwright inside the sandbox and ends at the same bridge: a cross-origin
+ * frame is a separate Chromium target, so its tools never reach the page's
+ * session and a page whose tools live in a cross-origin widget would inspect as
+ * having none.
+ *
+ * ATTEMPTED, never predicted from origins: Playwright throws a specific error
+ * when the frame has no session of its own, and that error — and only that one
+ * — means "nothing to attach here". Everything else is logged, because a frame
+ * we failed to reach is a frame whose tools are silently missing.
+ *
+ * NESTED TARGETS need no recursion here, for the same reason they do not in the
+ * local inspector: Playwright's own auto-attach already walks the tree, so
+ * `page.frames()` is a FLAT list that reaches a cross-origin frame inside a
+ * cross-origin frame and one sweep of it covers every depth. (The Electron
+ * adapter, which has no such list, has to re-issue `Target.setAutoAttach` per
+ * child session instead.)
+ *
+ * Fire-and-forget on purpose. Tool discovery is the cooperation layer; a driver
+ * waiting on frame attachment before it could navigate would make every page
+ * load pay for a feature most pages do not use.
+ */
+function attachFrameSessions(page: AnyPage, bridge: WebMcpBridge): void {
+  const attach = cdpAttachers.get(page)?.frame;
+  if (!attach || !page.frames || !page.mainFrame) return;
+  const tokens = new Map<AnyFrame, string>();
+  const busy = new Set<AnyFrame>();
+
+  const attachOne = async (frame: AnyFrame): Promise<void> => {
+    // The page's own session already covers the main frame; a second one on it
+    // would report every tool twice.
+    if (frame === page.mainFrame?.()) return;
+    if (tokens.has(frame) || busy.has(frame)) return;
+    busy.add(frame);
+    try {
+      const session = await attach(frame);
+      const tree = (await session.send("Page.getFrameTree")) as {
+        frameTree?: { frame?: { id?: string } };
+      };
+      const frameId = tree?.frameTree?.frame?.id;
+      if (!frameId) return;
+      const token = await bridge.addSession(frameId, session);
+      // The frame can go away DURING those two awaits, and its `framedetached`
+      // has then already run and found no token to remove — leaving a session
+      // wired to the bridge publishing tools for a frame that is off the page.
+      // The local inspector closes the same window with `frame.isDetached()`;
+      // `AnyFrame` exposes only `url()`, so membership in the CURRENT frame
+      // list is the equivalent question here.
+      if (!page.frames?.().includes(frame)) {
+        bridge.removeSession(token);
+        return;
+      }
+      tokens.set(frame, token);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/does not have a separate CDP session/i.test(message)) return;
+      warn(
+        `could not attach a CDP session to the frame at ${frame.url()}: ${message}`,
+      );
+    } finally {
+      busy.delete(frame);
+    }
+  };
+
+  const sweep = () => {
+    for (const frame of page.frames?.() ?? []) void attachOne(frame);
+  };
+  page.on("frameattached", (frame: AnyFrame) => void attachOne(frame));
+  // The sweep, not just the navigated frame: a cross-origin navigation can give
+  // a DESCENDANT its own target, and that frame gets no event of its own.
+  page.on("framenavigated", () => sweep());
+  // A detach that really is a removal — Playwright fires this one only when the
+  // frame goes away, never for the target swap that a frame becoming
+  // cross-origin produces. Teardown quotes the attachment's token, so a removal
+  // landing after a replacement has attached names an attachment already gone.
+  page.on("framedetached", (frame: AnyFrame) => {
+    const token = tokens.get(frame);
+    if (token === undefined) return;
+    tokens.delete(frame);
+    bridge.removeSession(token);
+  });
+  sweep();
+}
+
+/**
  * How a wrapped page opens a CDP session. Populated by `adaptContext` (which
  * holds the BrowserContext); a page wrapped without one — every unit test —
  * simply has no WebMCP, which is exactly the "page offers no tools" path.
+ *
+ * TWO attachers, because a cross-origin frame is a separate Chromium target:
+ * its tools never reach the page's session, so the WebMCP bridge needs one
+ * session per such frame. The frame attacher is the same `newCDPSession` call
+ * with a `Frame` instead of a `Page`.
  */
-const cdpAttachers = new WeakMap<AnyPage, () => Promise<CdpLike>>();
+const cdpAttachers = new WeakMap<
+  AnyPage,
+  {
+    page: () => Promise<CdpLike>;
+    frame?: (frame: AnyFrame) => Promise<CdpLike>;
+  }
+>();
 
-/** Record how a page opens its CDP session (called by `adaptContext`). */
+/** Record how a page (and its frames) open CDP sessions (called by `adaptContext`). */
 export function registerCdpAttacher(
   page: AnyPage,
   attach: () => Promise<CdpLike>,
+  attachFrame?: (frame: AnyFrame) => Promise<CdpLike>,
 ): void {
-  cdpAttachers.set(page, attach);
+  cdpAttachers.set(page, {
+    page: attach,
+    ...(attachFrame ? { frame: attachFrame } : {}),
+  });
 }
 
 export interface LaunchBrowserdContextOptions {
@@ -613,6 +775,7 @@ export async function launchBrowserdContext(
         // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
         // whatever the box says, so eval captures match across hosts.
         ...contextOptionsFor({ contextMode: "ephemeral" }),
+        deviceScaleFactor: options.deviceScaleFactor ?? 1,
       });
     } catch (error) {
       // Ownership of the browser transfers to `adaptContext` below. If we
@@ -677,17 +840,40 @@ export function adaptContext(
 ): DriverContext {
   const startup = [...context.pages()];
   let adopted = 0;
+  const listeners = new Set<
+    (event: { page: DriverPage; opener: DriverPage }) => void
+  >();
+  const wrapped = new WeakMap<AnyPage, DriverPage>();
+  function adopt(page: AnyPage): DriverPage {
+    const existing = wrapped.get(page);
+    if (existing) return existing;
+    if (context.newCDPSession) {
+      registerCdpAttacher(
+        page,
+        () => context.newCDPSession!(page),
+        (frame) => context.newCDPSession!(frame as unknown as AnyPage),
+      );
+    }
+    const driverPage = wrapPage(page);
+    wrapped.set(page, driverPage);
+    page.on("popup", (popup: AnyPage) => {
+      const child = adopt(popup);
+      for (const listener of listeners)
+        listener({ page: child, opener: driverPage });
+    });
+    return driverPage;
+  }
   return {
+    onPageCreated(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     async newPage() {
-      const page =
-        adopted < startup.length ? startup[adopted++] : await context.newPage();
-      // Register how this page opens a CDP session BEFORE wrapping, so the
-      // wrapper's lazy `webmcp()` can find it. A context without
-      // `newCDPSession` (test fakes) simply yields no WebMCP.
-      if (context.newCDPSession) {
-        registerCdpAttacher(page, () => context.newCDPSession!(page));
-      }
-      return wrapPage(page);
+      return adopt(
+        adopted < startup.length ? startup[adopted++] : await context.newPage(),
+      );
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;

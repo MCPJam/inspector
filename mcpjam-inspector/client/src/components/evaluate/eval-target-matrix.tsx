@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { ClientSelector } from "@/components/chat-v2/chat-input/client-selector";
@@ -103,12 +104,16 @@ export function EvalTargetMatrix({
   onHostsChange,
   onModelSelectionChange,
   onRemoveClient,
+  singleClient = false,
+  renderModels,
 }: {
   hostIds: readonly string[];
   hosts: readonly TargetMatrixHost[];
   modelSelection: ModelSelection | undefined;
   modelSelectionsByHost?: Record<string, ModelSelection>;
   availableModels: readonly TargetMatrixModel[];
+  singleClient?: boolean;
+  renderModels?: (hostId: string) => ReactNode;
   maxTargets: number;
   projectId: string;
   disabled?: boolean;
@@ -194,22 +199,26 @@ export function EvalTargetMatrix({
                       }
                     />
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => onRemoveClient(row.hostId)}
-                    disabled={disabled}
-                    aria-label={`Remove ${row.clientName}`}
-                    title={`Remove ${row.clientName} and its models`}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                  {!singleClient && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => onRemoveClient(row.hostId)}
+                      disabled={disabled}
+                      aria-label={`Remove ${row.clientName}`}
+                      title={`Remove ${row.clientName} and its models`}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  )}
                 </div>
               </td>
               <td className="py-2 pr-2 align-top">
-                {modelsEditable ? (
+                {renderModels ? (
+                  renderModels(row.hostId)
+                ) : modelsEditable ? (
                   <EvalModelPicker
                     inModal={inModal}
                     projectId={projectId}
@@ -241,20 +250,22 @@ export function EvalTargetMatrix({
             </motion.tr>
           ))}
         </tbody>
-        <tfoot>
-          <tr className="border-b border-border">
-            <td colSpan={2} className="py-2">
-              <ClientPicker
-                inModal={inModal}
-                hosts={hosts.filter((host) => !hostIds.includes(host.hostId))}
-                label="Add client"
-                add
-                disabled={disabled || hostIds.length >= maxTargets}
-                onSelect={(hostId) => onHostsChange([...hostIds, hostId])}
-              />
-            </td>
-          </tr>
-        </tfoot>
+        {!singleClient && (
+          <tfoot>
+            <tr className="border-b border-border">
+              <td colSpan={2} className="py-2">
+                <ClientPicker
+                  inModal={inModal}
+                  hosts={hosts.filter((host) => !hostIds.includes(host.hostId))}
+                  label="Add client"
+                  add
+                  disabled={disabled || hostIds.length >= maxTargets}
+                  onSelect={(hostId) => onHostsChange([...hostIds, hostId])}
+                />
+              </td>
+            </tr>
+          </tfoot>
+        )}
       </table>
       {targetCount > maxTargets ? (
         <p role="alert" className="text-xs text-destructive">
@@ -342,6 +353,38 @@ function EvalModelPicker({
   defaultModelId?: string;
 }) {
   const { availableModels } = useAvailableModels({ projectId });
+  return (
+    <EvalModelChoices
+      {...{
+        inModal,
+        value,
+        onChange,
+        disabled,
+        testId,
+        defaultModelId,
+        availableModels,
+      }}
+    />
+  );
+}
+
+export function EvalModelChoices({
+  inModal,
+  value,
+  onChange,
+  disabled,
+  testId,
+  defaultModelId,
+  availableModels,
+}: {
+  inModal?: boolean;
+  value: ModelSelection;
+  onChange: (value: ModelSelection) => void;
+  disabled: boolean;
+  testId: string;
+  defaultModelId?: string;
+  availableModels: ModelDefinition[];
+}) {
   const resolveModel = (id: string): ModelDefinition =>
     availableModels.find((model) => String(model.id) === id) ?? {
       id,

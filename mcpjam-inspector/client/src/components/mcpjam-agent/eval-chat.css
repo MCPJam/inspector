@@ -1,9 +1,9 @@
 /* Paper-inspired treatment, scoped to the embedded eval conversation. */
 [data-eval-chat="true"] .scenario-host-user-bubble {
-  background-color: var(--primary);
-  color: var(--primary-foreground);
-  border-color: var(--primary);
-  border-radius: 0.625rem;
+  background-color: var(--muted);
+  color: var(--foreground);
+  border-color: var(--border);
+  border-radius: 0.75rem;
   box-shadow: none;
 }
 
@@ -12,4 +12,9 @@
   color: var(--card-foreground);
   border-radius: 0.625rem;
   padding: 0.75rem;
+}
+
+/* Keep the bubble on the right, but read its contents naturally from the left. */
+[data-eval-chat="true"] .scenario-host-user-bubble .text-right {
+  text-align: left;
 }

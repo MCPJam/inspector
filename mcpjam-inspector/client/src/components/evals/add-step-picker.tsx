@@ -87,6 +87,8 @@ function itemMatchesQuery(item: PickerItem, query: string): boolean {
 export type AddStepPickerProps = {
   onSelect: (choice: AddStepPickerChoice) => void;
   className?: string;
+  triggerLabel?: string;
+  allowedPredicateKinds?: readonly string[];
   /**
    * Reveal tier-2 checks (more conversation, widget, health) by default instead
    * of hiding them behind the expander. The step list sets this once the case
@@ -98,6 +100,8 @@ export type AddStepPickerProps = {
 export function AddStepPicker({
   onSelect,
   className,
+  triggerLabel,
+  allowedPredicateKinds,
   defaultMoreExpanded = false,
 }: AddStepPickerProps) {
   const [open, setOpen] = useState(false);
@@ -110,8 +114,15 @@ export function AddStepPicker({
   const isSearching = query.length > 0;
 
   const filteredItems = useMemo(
-    () => PICKER_ITEMS.filter((item) => itemMatchesQuery(item, query)),
-    [query],
+    () =>
+      PICKER_ITEMS.filter(
+        (item) =>
+          itemMatchesQuery(item, query) &&
+          (item.choice.kind !== "check" ||
+            !allowedPredicateKinds ||
+            allowedPredicateKinds.includes(item.choice.predicateKind)),
+      ),
+    [query, allowedPredicateKinds],
   );
 
   const visibleItems = useMemo(() => {
@@ -205,18 +216,14 @@ export function AddStepPicker({
           size="sm"
           aria-expanded={open}
           aria-haspopup="dialog"
-          aria-label="Add step"
+          aria-label={triggerLabel ?? "Add step"}
           className={cn("h-8 gap-1.5 border-dashed text-xs", className)}
         >
           <Plus className="h-3.5 w-3.5" />
-          Add…
+          {triggerLabel ?? "Add"}
         </Button>
       </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        sideOffset={4}
-        className="w-64 p-1"
-      >
+      <PopoverContent align="start" sideOffset={4} className="w-64 p-1">
         <div className="px-1 pb-1">
           <Input
             ref={searchRef}
@@ -292,9 +299,7 @@ export function AddStepPicker({
             ) : null}
           </div>
         ) : (
-          <p className="px-2 py-3 text-xs text-muted-foreground">
-            No matches
-          </p>
+          <p className="px-2 py-3 text-xs text-muted-foreground">No matches</p>
         )}
       </PopoverContent>
     </Popover>

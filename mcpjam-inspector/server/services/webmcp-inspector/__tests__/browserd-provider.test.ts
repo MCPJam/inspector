@@ -85,6 +85,37 @@ const withTools =
   };
 
 describe("browserd WebMCP provider", () => {
+  it("preserves uncertain cancellation from the daemon", async () => {
+    const { provider, callbacks } = build((command) =>
+      command.action.kind === "webmcp_invoke"
+        ? {
+            status: "ok",
+            bootId: "b",
+            result: {
+              ok: false,
+              error:
+                "webmcp_outcome_unknown: Cancellation requested. Page execution may continue.",
+            },
+          }
+        : { status: "ok", bootId: "b", result: { ok: true, output: {} } },
+    );
+    const session = await provider.createSession({
+      url: "https://x.test/",
+      callbacks,
+    });
+    await expect(
+      session.invokeTool({
+        frameId: "f",
+        toolName: "echo",
+        input: {},
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({
+      name: "WebMcpOutcomeUnknownError",
+      message: expect.stringContaining("may continue"),
+    });
+    await session.dispose();
+  });
   it("reports a REMOTE viewport, not a window on the viewer's machine", async () => {
     // The one claim that would be actively wrong: this browser is in a
     // datacenter, and the UI decides what to render from this value.
@@ -282,6 +313,57 @@ describe("browserd WebMCP provider", () => {
     }
   });
 
+  it("carries a cross-document JSON-LD ARRAY across the daemon hop unchanged", async () => {
+    // THE EXTRA TRANSPORT BOUNDARY is what makes hosted worth measuring
+    // separately. Every provider ends at the same `WebMcpBridge.invoke` over
+    // CDP — hosted calls it INSIDE the daemon — so what differs here is not the
+    // invocation mechanism but the command protocol carrying the request and
+    // the response across the sandbox. That hop is JSON, and a top-level array
+    // is the shape most likely to be quietly re-wrapped or flattened by
+    // something on the way: the spike measured Blink answering a navigating
+    // tool with an ARRAY of every `application/ld+json` block, and this pins
+    // that the array is what a hosted caller receives.
+    const jsonLd = [
+      {
+        "@context": "https://schema.org",
+        "@type": "OrderConfirmation",
+        orderNumber: "A-1",
+      },
+      { "@context": "https://schema.org", "@type": "Receipt", total: "42.00" },
+    ];
+    const { provider, callbacks } = build((command) => {
+      const action = command.action as any;
+      if (action.kind === "webmcp_invoke") {
+        return {
+          status: "ok",
+          // Serialized and parsed, exactly as the real protocol does it: a
+          // structuredClone here would not exercise the hop at all.
+          result: JSON.parse(
+            JSON.stringify({
+              ok: true,
+              output: { invocationId: "inv-jsonld", result: jsonLd },
+            }),
+          ),
+          bootId: "b",
+        };
+      }
+      return { status: "ok", result: { ok: true, output: {} }, bootId: "b" };
+    });
+    const session = await provider.createSession({
+      url: "https://x.test/",
+      callbacks,
+    });
+    const out = await session.invokeTool({
+      frameId: "f1",
+      toolName: "submit_order",
+      input: { sku: "S1" },
+      signal: new AbortController().signal,
+    });
+    const result = out.output;
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toEqual(jsonLd);
+  });
+
   it("surfaces the invocation output and cancels on abort", async () => {
     const { provider, callbacks, commands } = build((command) => {
       const action = command.action as any;
@@ -313,7 +395,7 @@ describe("browserd WebMCP provider", () => {
       input: { q: "a" },
       signal: controller.signal,
     });
-    expect(out.output).toMatchObject({ result: 42 });
+    expect(out.output).toBe(42);
     // The tool's own NAME, with the frame beside it. This assertion used to
     // pin `f1::search`, which is what let the bug ship: the daemon resolves
     // `toolKey` by name against the live page, so a composite matched nothing
@@ -349,50 +431,43 @@ describe("browserd WebMCP provider", () => {
     expect(commands.length).toBe(before);
   });
 
-  it("cancels IN THE BROWSER when the caller aborts mid-invocation", async () => {
-    // Stopping our wait is not enough: a tool left running keeps acting on the
-    // page after the user hit stop.
-    const controller = new AbortController();
-    const { provider, callbacks, commands } = build((command) => {
-      const action = command.action as any;
-      if (action.kind === "webmcp_cancel") {
-        return {
-          status: "ok",
-          result: { ok: true, output: { cancelled: true } },
-          bootId: "b",
-        };
-      }
-      if (action.kind === "webmcp_invoke") {
-        return {
-          status: "ok",
-          result: { ok: true, output: { invocationId: "inv-7" } },
-          bootId: "b",
-        };
-      }
-      return { status: "ok", result: { ok: true, output: {} }, bootId: "b" };
+  it("cancels by command ID before the invocation responds, and reports an unknown outcome", async () => {
+    let finish!: (reply: Reply) => void;
+    const pending = new Promise<Reply>((resolve) => {
+      finish = resolve;
+    });
+    const { provider, callbacks, commands, sendCommand } = build();
+    sendCommand.mockImplementation(async (command) => {
+      commands.push(command);
+      if (command.action.kind === "webmcp_invoke") return pending;
+      return { status: "ok", bootId: "b", result: { ok: true, output: {} } };
     });
     const session = await provider.createSession({
       url: "https://x.test/",
       callbacks,
     });
+    const controller = new AbortController();
     const invoked = session.invokeTool({
       frameId: "f1",
       toolName: "slow",
       input: {},
+      invokeId: "test-call",
       signal: controller.signal,
     });
     controller.abort();
-    // The CALLER is freed at once. It has to be: the daemon's invoke is
-    // synchronous, so awaiting it would mean "stop" could not take effect
-    // until the thing being stopped had finished on its own.
-    await expect(invoked).rejects.toThrow(/cancelled/i);
-    // ...and the page is still told to stop, once the daemon's reply supplies
-    // the invocation id that the cancel needs.
-    await (session as unknown as { cancelWhenIdentified: Promise<void> })
-      .cancelWhenIdentified;
+    await expect(invoked).rejects.toMatchObject({
+      name: "WebMcpOutcomeUnknownError",
+      message: expect.stringContaining("may continue"),
+    });
     expect(
-      commands.some((c) => (c.action as any).kind === "webmcp_cancel"),
-    ).toBe(true);
+      commands.find((c) => c.action.kind === "webmcp_cancel")?.action,
+    ).toEqual({ kind: "webmcp_cancel", commandId: "hosted:test-call" });
+    finish({
+      status: "ok",
+      bootId: "b",
+      result: { ok: true, output: { invocationId: "inv-7" } },
+    });
+    await session.dispose();
   });
 
   it("says a person has the browser rather than reporting a generic failure", async () => {
@@ -437,4 +512,123 @@ describe("browserd WebMCP provider", () => {
     expect(commands).toHaveLength(before);
     await expect(session.reload()).rejects.toThrow(/disposed/);
   });
+});
+
+it("pins hosted calls to the observed boot, tab, navigation and registration", async () => {
+  const stateToken = {
+    tabId: "tab-observed",
+    navCounter: 4,
+    urlHash: "u",
+    domHash: "d",
+  };
+  const { provider, callbacks, commands, toolSets } = build((command) => ({
+    status: "ok",
+    bootId: "boot-1",
+    result: {
+      ok: true,
+      stateToken,
+      output:
+        command.action.kind === "observe"
+          ? {
+              tools: [
+                {
+                  frameId: "f",
+                  name: "pay",
+                  origin: "https://x.test",
+                  registrationSeq: 7,
+                },
+              ],
+            }
+          : {},
+    },
+  }));
+  const session = await provider.createSession({
+    url: "https://x.test/",
+    callbacks,
+  });
+  const expectedBinding = toolSets.at(-1)![0].binding!;
+  expect(expectedBinding).toEqual({
+    frameId: "f",
+    registrationSeq: 7,
+    browser: { bootId: "boot-1", tabId: "tab-observed", navCounter: 4 },
+  });
+  await session.invokeTool({
+    frameId: "f",
+    toolName: "pay",
+    input: {},
+    expectedBinding,
+    signal: new AbortController().signal,
+  });
+  expect(commands.find((c) => c.action.kind === "webmcp_invoke")).toMatchObject(
+    {
+      tabId: "tab-observed",
+      action: {
+        expectedBinding: {
+          frameId: "f",
+          registrationSeq: 7,
+          bootId: "boot-1",
+          tabId: "tab-observed",
+          navCounter: 4,
+        },
+      },
+    },
+  );
+  const before = commands.length;
+  await expect(
+    session.invokeTool({
+      frameId: "f",
+      toolName: "pay",
+      input: {},
+      expectedBinding: {
+        ...expectedBinding,
+        browser: { ...expectedBinding.browser!, bootId: "old-boot" },
+      },
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toMatchObject({ name: "WebMcpToolGoneError" });
+  expect(commands).toHaveLength(before);
+  await session.dispose();
+});
+
+it.each(["stale_binding: changed", "webmcp_tool_gone: removed"])(
+  "exposes definite hosted refusal %s for safe refresh",
+  async (error) => {
+    const { provider, callbacks, commands } = build((command) => ({
+      status: "ok",
+      bootId: "boot-1",
+      result:
+        command.action.kind === "webmcp_invoke"
+          ? { ok: false, error }
+          : { ok: true, output: {} },
+    }));
+    const session = await provider.createSession({
+      url: "https://x.test",
+      callbacks,
+    });
+    await expect(
+      session.invokeTool({
+        frameId: "f",
+        toolName: "pay",
+        input: {},
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({ name: "WebMcpToolGoneError" });
+    const before = commands.length;
+    await session.refreshTools!();
+    expect(commands.slice(before).map((command) => command.action)).toEqual([
+      { kind: "observe", mode: "webmcp_tools" },
+    ]);
+    await session.dispose();
+  },
+);
+
+it("reports an explicit tool-refresh failure instead of claiming success", async () => {
+  const { provider, callbacks, sendCommand } = build();
+  const session = await provider.createSession({
+    url: "https://x.test",
+    callbacks,
+  });
+  sendCommand.mockRejectedValueOnce(new Error("offline"));
+  await expect(session.refreshTools!()).rejects.toThrow("offline");
+  await session.dispose();
 });

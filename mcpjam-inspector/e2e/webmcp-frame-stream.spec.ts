@@ -10,19 +10,20 @@
  *
  * Driven through the HTTP + WebSocket API rather than the inspector's own UI,
  * because the `/webmcp` screen sits behind a PostHog rollout flag that a
- * headless run cannot resolve. What that leaves uncovered — the pane's `<img>`
+ * headless run cannot resolve. What that leaves uncovered — the pane's canvas
  * and the store's ladder — is covered by the store, presenter and tab suites,
  * which is the right place for it: those are decisions, not integrations.
  */
 import { expect, test } from "@playwright/test";
 import { WebSocket } from "ws";
+import sharp from "sharp";
+import os from "node:os";
+import { writeFile } from "node:fs/promises";
 import {
   decodeWebMcpBinaryFrame,
   WEBMCP_FRAME_BOOST_INTERVAL_MS,
   WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_FRAME_MIN_INTERVAL_MS,
-  WEBMCP_SETTLE_QUIET_MS,
-  WEBMCP_STREAM_QUALITY_LADDER,
   type WebMcpBinaryFrame,
 } from "../shared/webmcp-inspector-protocol";
 import { readJpegDimensions } from "../shared/jpeg-dimensions";
@@ -87,12 +88,19 @@ async function command(
 
 /** A frame socket that records what it decodes, with arrival times. */
 function openFrameSocket(token: string, sessionId: string) {
-  const url = `${BASE.replace(/^http/, "ws")}/api/web/webmcp/sessions/${sessionId}/frames`;
+  const url = `${BASE.replace(
+    /^http/,
+    "ws",
+  )}/api/web/webmcp/sessions/${sessionId}/frames`;
   const ws = new WebSocket(url, [token], { origin: ORIGIN });
   const frames: Array<WebMcpBinaryFrame & { receivedAt: number }> = [];
   const undecodable: number[] = [];
+  const controls: Array<Record<string, unknown>> = [];
   ws.on("message", (data, isBinary) => {
-    if (!isBinary) return;
+    if (!isBinary) {
+      controls.push(JSON.parse(data.toString()));
+      return;
+    }
     const bytes = data as Buffer;
     const frame = decodeWebMcpBinaryFrame(
       bytes.buffer.slice(
@@ -110,6 +118,7 @@ function openFrameSocket(token: string, sessionId: string) {
     ws,
     frames,
     undecodable,
+    controls,
     opened: new Promise<void>((resolve, reject) => {
       ws.on("open", resolve);
       ws.on("close", (code) =>
@@ -179,16 +188,6 @@ function parseSseEvents(text: string): Array<Record<string, unknown>> {
     }
   }
   return events;
-}
-
-/** The quality the newest session event reports, if any. */
-function latestStreamQuality(text: string): number | undefined {
-  const sessions = parseSseEvents(text).filter(
-    (event) => event.type === "session",
-  );
-  const newest = sessions.at(-1)?.session as
-    { streamQuality?: number } | undefined;
-  return newest?.streamQuality;
 }
 
 /**
@@ -403,7 +402,10 @@ test.describe("WebMCP viewport frame stream", () => {
       const period = medianGap(socket.frames.map((frame) => frame.receivedAt));
       console.log(
         `[frame-stream] capture→arrival over ${latencies.length} frames: ` +
-          `p50 ${percentile(latencies, 50)}ms, p95 ${percentile(latencies, 95)}ms ` +
+          `p50 ${percentile(latencies, 50)}ms, p95 ${percentile(
+            latencies,
+            95,
+          )}ms ` +
           `(frame period ${period}ms)`,
       );
       // Bounded against a baseline from the SAME run, for the reason the rate
@@ -429,6 +431,139 @@ test.describe("WebMCP viewport frame stream", () => {
         }).catch(() => {});
       }
       await page.close();
+    }
+  });
+
+  test("matches HTTP and socket scroll input to pixels in a real Chrome frame", async ({}, testInfo) => {
+    const fixture = await startWebMcpFixturePage({ variant: "interaction" });
+    const token = await sessionToken();
+    let sessionId: string | undefined;
+    let socket: ReturnType<typeof openFrameSocket> | undefined;
+    const samples: Array<{
+      transport: string;
+      inputToDispatchMs: number;
+      inputToFrameArrivalMs: number;
+    }> = [];
+    try {
+      ({ sessionId } = await openSession(token, {
+        url: fixture.url,
+        display: "in-app",
+      }));
+      socket = openFrameSocket(token, sessionId);
+      await socket.opened;
+      await expect
+        .poll(() => socket!.controls.some((c) => c.type === "capabilities"))
+        .toBe(true);
+      await command(token, sessionId, {
+        type: "set_screencast",
+        enabled: true,
+      });
+      await expect.poll(() => socket!.frames.length).toBeGreaterThan(0);
+      let gesture = 0;
+      // Alternate paths to avoid attributing a warmed-up encoder to WebSocket.
+      for (let trial = 0; trial < 5; trial++) {
+        for (const transport of ["http", "socket"]) {
+          gesture++;
+          socket.frames.length = 0;
+          const startedAt = Date.now();
+          const events = [
+            { kind: "wheel", x: 400, y: 300, deltaX: 0, deltaY: 40 },
+          ];
+          let dispatchedAt: number;
+          if (transport === "http") {
+            await command(token, sessionId, { type: "input", events });
+            dispatchedAt = Date.now();
+          } else {
+            const ack = new Promise<number>((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                socket!.ws.off("message", receive);
+                reject(new Error("missing input ack"));
+              }, 5000);
+              const receive = (data: Buffer, binary: boolean) => {
+                if (binary) return;
+                const message = JSON.parse(data.toString());
+                if (message.type !== "input_ack" || message.seq !== gesture)
+                  return;
+                clearTimeout(timeout);
+                socket!.ws.off("message", receive);
+                if (message.refused) reject(new Error(message.refused));
+                else resolve(Date.now());
+              };
+              socket!.ws.on("message", receive);
+            });
+            socket.ws.send(
+              JSON.stringify({ type: "input", seq: gesture, events }),
+            );
+            dispatchedAt = await ack;
+          }
+          let receivedAt: number | undefined;
+          let scanned = 0;
+          await expect
+            .poll(
+              async () => {
+                while (scanned < socket!.frames.length) {
+                  const frame = socket!.frames[scanned++];
+                  const { data, info } = await sharp(frame.jpeg)
+                    .extract({
+                      left: frame.deviceWidth - 128,
+                      top: 0,
+                      width: 128,
+                      height: 16,
+                    })
+                    .removeAlpha()
+                    .raw()
+                    .toBuffer({ resolveWithObject: true });
+                  let marker = 0;
+                  for (let bit = 0; bit < 8; bit++) {
+                    if (
+                      data[(8 * info.width + bit * 16 + 8) * info.channels] >
+                      128
+                    )
+                      marker |= 1 << bit;
+                  }
+                  if (marker === gesture) {
+                    receivedAt = frame.receivedAt;
+                    return true;
+                  }
+                }
+                return false;
+              },
+              { timeout: 5000, intervals: [10, 25, 50] },
+            )
+            .toBe(true);
+          samples.push({
+            transport,
+            inputToDispatchMs: dispatchedAt - startedAt,
+            inputToFrameArrivalMs: receivedAt! - startedAt,
+          });
+        }
+      }
+      const report = JSON.stringify(
+        {
+          platform: os.platform(),
+          arch: os.arch(),
+          cpu: os.cpus()[0]?.model,
+          viewport: { width: 1280, height: 800 },
+          samples,
+          note: "Input to marker-bearing JPEG arrival; excludes viewer decoding/display and is not a physical screen latency measurement.",
+        },
+        null,
+        2,
+      );
+      const reportPath = testInfo.outputPath("node-browser-input-samples.json");
+      await writeFile(reportPath, report);
+      await testInfo.attach("node-browser-input-samples", {
+        contentType: "application/json",
+        path: reportPath,
+      });
+    } finally {
+      socket?.close();
+      if (sessionId)
+        await fetch(`${BASE}/api/mcp/webmcp/sessions/${sessionId}`, {
+          method: "DELETE",
+          headers: authed(token),
+        });
+      await fixture.close();
     }
   });
 
@@ -531,13 +666,8 @@ test.describe("WebMCP viewport frame stream", () => {
     }
   });
 
-  test("sharpens the picture once the page stops painting", async () => {
-    // The whole chain for the settle still: a real screencast, a page that
-    // stops, a capture the server takes on its own, and the pane's transport
-    // carrying it. What the unit suites cannot show is that the still SURVIVES
-    // the round trip — Chromium answers every capture with a repaint of the
-    // same picture, and publishing that would undo the sharpening a tenth of a
-    // second later.
+  test("keeps a settled picture stable and permits explicit screenshots", async () => {
+    // Static page: no automatic screenshot may create a repeated capture loop.
     const page = await startWebMcpFixturePage({ variant: "static" });
     const token = await sessionToken();
     let sessionId: string | undefined;
@@ -561,7 +691,7 @@ test.describe("WebMCP viewport frame stream", () => {
         .toBeGreaterThan(0);
       // Let the page finish loading and settle once, so what follows is not
       // measuring the difference between a half-painted page and a whole one.
-      await sleep(WEBMCP_SETTLE_QUIET_MS + 2_500);
+      await sleep(3000);
 
       // Scroll, which is the gesture this whole trade is about: motion the
       // stream carries at its own quality, and then a page at rest showing
@@ -575,33 +705,15 @@ test.describe("WebMCP viewport frame stream", () => {
         .toBeGreaterThan(0);
       await sleep(500);
       const streamedCount = socket.frames.length;
-      const streamed = socket.frames.at(-1)!;
-
-      // The fixture never repaints on its own, so anything arriving now is the
-      // still — or the repaint Chromium produces to satisfy the capture, which
-      // is dropped as redundant before it reaches this socket.
-      await sleep(WEBMCP_SETTLE_QUIET_MS + 2_500);
+      await sleep(2500);
       expect(
-        socket.frames.length,
-        "a still after the page settled",
-      ).toBeGreaterThan(streamedCount);
-
-      // The same scrolled page, in more bytes. Taken as the largest frame that
-      // arrived after it settled rather than as the last one, so a build that
-      // answers a capture with one extra repaint does not turn this into a
-      // flake — what must hold is that the sharp still got through.
-      const settled = socket.frames.slice(streamedCount);
-      const sharpest = Math.max(...settled.map((f) => f.jpeg.byteLength));
-      expect(sharpest).toBeGreaterThan(streamed.jpeg.byteLength);
-      expect(sharpest).toBeLessThanOrEqual(WEBMCP_FRAME_MAX_BYTES);
-
-      // And the stream then goes quiet. A still induces a repaint, and a
-      // repaint counted as activity would take another still, and another —
-      // so this is the assertion that pins the loop shut. One stray frame is
-      // tolerated; a loop delivers one per second.
-      const after = socket.frames.length;
-      await sleep(3_000);
-      expect(socket.frames.length - after, "no capture loop").toBeLessThan(2);
+        socket.frames.length - streamedCount,
+        "no automatic still captures",
+      ).toBeLessThan(2);
+      const shot = await command(token, sessionId, {
+        type: "capture_screenshot",
+      });
+      expect(shot.screenshotBase64).toBeTruthy();
     } finally {
       socket?.close();
       if (sessionId) {
@@ -694,7 +806,7 @@ test.describe("WebMCP viewport frame stream", () => {
     }
   });
 
-  test("steps quality down on a slow consumer, and back up after", async () => {
+  test("resumes frames after a slow consumer drains", async () => {
     test.slow();
     // The `busy` fixture repaints an incompressible mosaic, so frames are
     // large but still under the cap: the pressure this measures comes from a
@@ -732,19 +844,7 @@ test.describe("WebMCP viewport frame stream", () => {
       // — the case this whole mechanism exists for.
       (socket.ws as unknown as { _socket: { pause(): void } })._socket.pause();
       paused = true;
-      await expect
-        .poll(
-          async () =>
-            latestStreamQuality(
-              await readSse(token, sessionId!, "replay=200&frames=off", 800),
-            ) ?? WEBMCP_STREAM_QUALITY_LADDER[0],
-          {
-            message: "the stream should step down for a consumer that stalled",
-            timeout: 45_000,
-          },
-        )
-        .toBeLessThan(WEBMCP_STREAM_QUALITY_LADDER[0]);
-
+      await sleep(3000);
       // Read again, and the picture comes back. Asserted as a floor rather
       // than an exact rung: the governor keeps stepping while the socket is
       // paused, so how far down it got is a property of the machine.
@@ -756,18 +856,6 @@ test.describe("WebMCP viewport frame stream", () => {
       await expect
         .poll(() => socket!.frames.length, { timeout: 20_000 })
         .toBeGreaterThan(beforeResume + 2);
-      await expect
-        .poll(
-          async () =>
-            latestStreamQuality(
-              await readSse(token, sessionId!, "replay=200&frames=off", 800),
-            ) ?? 0,
-          {
-            message: "the stream should climb back once the link recovers",
-            timeout: 45_000,
-          },
-        )
-        .toBe(WEBMCP_STREAM_QUALITY_LADDER[0]);
     } finally {
       if (paused && socket) {
         // Before the close, or the teardown blocks on a socket nobody is
@@ -807,7 +895,10 @@ test.describe("WebMCP viewport frame stream", () => {
           ws.on("close", (code) => resolve(code));
         });
 
-      const url = `${BASE.replace(/^http/, "ws")}/api/web/webmcp/sessions/${sessionId}/frames`;
+      const url = `${BASE.replace(
+        /^http/,
+        "ws",
+      )}/api/web/webmcp/sessions/${sessionId}/frames`;
       // The token IS the auth on this route: it is reachable without the
       // session-auth middleware, so a wrong token has to be refused here.
       expect(
@@ -821,7 +912,10 @@ test.describe("WebMCP viewport frame stream", () => {
       expect(
         await closed(
           new WebSocket(
-            `${BASE.replace(/^http/, "ws")}/api/web/webmcp/sessions/nope/frames`,
+            `${BASE.replace(
+              /^http/,
+              "ws",
+            )}/api/web/webmcp/sessions/nope/frames`,
             [token],
             { origin: ORIGIN },
           ),

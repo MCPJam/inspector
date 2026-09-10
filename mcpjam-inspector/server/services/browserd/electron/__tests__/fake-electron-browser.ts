@@ -14,7 +14,7 @@
  * without a DOM.
  */
 import { EventEmitter } from "node:events";
-import { FakeDebugger } from "../../../webmcp-inspector/__tests__/fake-electron";
+import { FakeDebugger } from "./fake-debugger";
 import type { ElectronLike, ElectronWindowLike } from "../electron-context";
 
 export { FakeDebugger };
@@ -32,7 +32,9 @@ export function elementAt(
    * — which is refused, not filled. Defaults to a plain text input, the shape
    * the click and hover fixtures want.
    */
-  describe: { nodeName?: string; attributes?: string[] } = { nodeName: "INPUT" },
+  describe: { nodeName?: string; attributes?: string[] } = {
+    nodeName: "INPUT",
+  },
 ): Map<string, unknown> {
   return new Map<string, unknown>([
     ["DOM.getDocument", { root: { nodeId: 1 } }],
@@ -92,6 +94,8 @@ export class FakeBrowserWebContents extends EventEmitter {
   private url: string;
   private readonly options: FakeBrowserWebContentsOptions;
   private historyDepth = 0;
+  /** How many entries are AHEAD of the current one; `goBack` creates them. */
+  private forwardDepth = 0;
 
   constructor(options: FakeBrowserWebContentsOptions = {}) {
     super();
@@ -106,6 +110,9 @@ export class FakeBrowserWebContents extends EventEmitter {
     const committed = this.redirectTo ?? url;
     this.url = committed;
     this.historyDepth += 1;
+    // A fresh navigation truncates the forward history, as every browser does:
+    // go back twice, then follow a link, and there is nothing ahead any more.
+    this.forwardDepth = 0;
     this.emit("did-navigate", { preventDefault() {} }, committed);
     return undefined;
   }
@@ -152,6 +159,14 @@ export class FakeBrowserWebContents extends EventEmitter {
     goBack: () => {
       this.navigations.push("goBack");
       this.historyDepth -= 1;
+      this.forwardDepth += 1;
+      queueMicrotask(() => this.emit("did-finish-load"));
+    },
+    canGoForward: () => this.forwardDepth > 0,
+    goForward: () => {
+      this.navigations.push("goForward");
+      this.historyDepth += 1;
+      this.forwardDepth -= 1;
       queueMicrotask(() => this.emit("did-finish-load"));
     },
   };
@@ -196,6 +211,11 @@ export class FakeBrowserWindow implements ElectronWindowLike {
   readonly id: number;
   destroyed = false;
   focusCount = 0;
+  contentSize: { width: number; height: number } | undefined;
+
+  setContentSize(width: number, height: number): void {
+    this.contentSize = { width, height };
+  }
 
   constructor(
     readonly options: Record<string, unknown>,
@@ -236,8 +256,17 @@ export class FakeWebContentsView {
     this.webContents = contents ?? new FakeBrowserWebContents();
   }
 
-  setBounds(next: { x: number; y: number; width: number; height: number }): void {
+  setBounds(next: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }): void {
     this.bounds = next;
+  }
+
+  getBounds() {
+    return this.bounds ?? { x: 0, y: 0, width: 0, height: 0 };
   }
 }
 

@@ -12,6 +12,8 @@
  */
 import { randomUUID, createHash } from "node:crypto";
 import {
+  sameWebMcpRegistration,
+  type WebMcpRegistrationBinding,
   capInputEcho,
   capResult,
   WEBMCP_INVOKE_QUEUE_LIMIT,
@@ -110,9 +112,10 @@ interface TrackedTool extends WebMcpToolDescriptor {
 function invocationIdentity(
   toolKey: string,
   input: Record<string, unknown>,
+  binding?: WebMcpRegistrationBinding,
 ): string {
   try {
-    return `${toolKey}\u0000${JSON.stringify(input ?? {})}`;
+    return `${toolKey}\u0000${JSON.stringify(input ?? {})}\u0000${JSON.stringify(binding ?? null)}`;
   } catch {
     return `${toolKey}\u0000<unserializable:${Math.random()}>`;
   }
@@ -145,6 +148,8 @@ interface QueuedInvocation {
   toolKey: string;
   input: Record<string, unknown>;
   source: WebMcpInvocationSource;
+  expectedBinding?: WebMcpRegistrationBinding;
+  identity: string;
   controller: AbortController;
   resolve: (result: WebMcpSettledOutput) => void;
   reject: (error: Error) => void;
@@ -208,6 +213,9 @@ export class WebMcpSessionRuntime {
   readonly createdAt: number;
 
   private session: WebMcpBrowserSession | undefined;
+  private inputTail: Promise<void> = Promise.resolve();
+  private readonly socketInputDrains = new Set<() => Promise<void>>();
+  private inputClosed = false;
   private status: WebMcpSessionStatus = "starting";
   private statusDetail: string | undefined;
   private url: string;
@@ -335,7 +343,7 @@ export class WebMcpSessionRuntime {
         this.pushActivity({
           kind: "popup_opened",
           url,
-          note: "Popups are left open so sign-in flows keep working. Their tools are not inspected.",
+          note: "Opened as a managed browser tab, preserving its opener for sign-in flows.",
         }),
       onExternalInvocation: (note, toolName) =>
         this.pushActivity({
@@ -362,6 +370,13 @@ export class WebMcpSessionRuntime {
         // remembered either way, and rides the first session event the
         // registry does publish.
         if (this.session) this.publishSession();
+      },
+      onSessionNotice: (message) => {
+        // NOT `setStatus("error")`: the session is still working, and one
+        // unreachable frame must not present a live browser as failed. It goes
+        // on the timeline because the alternative is a page that silently
+        // looks like it registered nothing.
+        this.pushActivity({ kind: "session_error", message });
       },
       onCrashed: (message) => {
         this.setStatus("error", message);
@@ -409,6 +424,10 @@ export class WebMcpSessionRuntime {
     };
   }
 
+  async refreshTools(): Promise<void> {
+    await this.session?.refreshTools?.();
+  }
+
   currentTools(): WebMcpToolDescriptor[] {
     return this.tools.map(({ frameId: _frameId, ...rest }) => rest);
   }
@@ -451,6 +470,28 @@ export class WebMcpSessionRuntime {
     }
   }
 
+  async browserState() {
+    return this.requireSession().browserState?.() ?? null;
+  }
+
+  async browserCommand(
+    command: import("@/shared/browser-pane-command").BrowserPaneCommand,
+  ): Promise<void> {
+    const session = this.requireSession();
+    if (!session.browserCommand)
+      throw new Error("This browser does not support pane navigation.");
+    await Promise.all([...this.socketInputDrains].map((drain) => drain()));
+    const pending = this.inputTail.then(async () => {
+      if (this.inputClosed || this.session !== session)
+        throw new Error("The browser session is no longer available.");
+      await session.browserCommand!(command);
+    });
+    this.inputTail = pending.catch(() => {});
+    await pending;
+    this.url = session.currentUrl();
+    this.onActivity();
+  }
+
   // ---------------------------------------------------------- navigation
 
   /** Drive the page. Status flips to `navigating` so the UI can say so. */
@@ -481,6 +522,26 @@ export class WebMcpSessionRuntime {
     const shot = await this.requireSession().captureScreenshot();
     this.onActivity();
     return shot;
+  }
+
+  /** Resize the embedded viewport on the same dispatch tail as input. */
+  async resizeViewport(width: number, height: number): Promise<void> {
+    const session = this.requireSession();
+    // Drain before joining the tail: queued relay batches must retain the
+    // geometry their coordinates were captured against.
+    await Promise.all([...this.socketInputDrains].map((drain) => drain()));
+    const pending = this.inputTail.then(async () => {
+      if (this.inputClosed || this.session !== session) return;
+      try {
+        await session.resizeViewport?.(width, height);
+      } catch (error) {
+        if (this.inputClosed || this.session !== session) return;
+        throw error;
+      }
+      if (this.session === session) this.publishSession();
+    });
+    this.inputTail = pending.catch(() => {});
+    await pending;
   }
 
   /**
@@ -521,9 +582,35 @@ export class WebMcpSessionRuntime {
    * `external_invocation` — so logging the clicks themselves would bury those
    * under a mouse trail.
    */
-  async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
-    await this.requireSession().dispatchInput(events);
-    this.onActivity();
+  registerSocketInputDrain(drain: () => Promise<void>): () => void {
+    this.socketInputDrains.add(drain);
+    return () => {
+      this.socketInputDrains.delete(drain);
+    };
+  }
+
+  async dispatchInput(
+    events: WebMcpInputEvent[],
+    isCancelled: () => boolean = () => false,
+    source: "http" | "socket" = "http",
+    tabId?: string,
+  ): Promise<void> {
+    const session = this.requireSession();
+    // Capture the existing relay work before joining the dispatch tail. Doing
+    // this inside the tail would deadlock the very socket dispatches we await.
+    if (source === "http" && this.socketInputDrains.size > 0) {
+      await Promise.all([...this.socketInputDrains].map((drain) => drain()));
+    }
+    const pending = this.inputTail.then(async () => {
+      if (this.inputClosed || this.session !== session || isCancelled()) {
+        throw new Error("The browser session is no longer available.");
+      }
+      this.onActivity();
+      await session.dispatchInput(events, tabId);
+    });
+    // Every transport/viewer shares this tail. A failure must not wedge it.
+    this.inputTail = pending.catch(() => {});
+    await pending;
   }
 
   private requireSession(): WebMcpBrowserSession {
@@ -555,6 +642,7 @@ export class WebMcpSessionRuntime {
      * which is right for a local caller that cannot retry.
      */
     requestedInvokeId?: string,
+    expectedBinding?: WebMcpRegistrationBinding,
   ): {
     invokeId: string;
     settled: Promise<WebMcpSettledOutput>;
@@ -567,7 +655,7 @@ export class WebMcpSessionRuntime {
     // Computed for EVERY invocation, reused id or not, because the replay
     // record needs it too — and computing it here means the one serializer
     // that tolerates cyclic input is the only one that ever sees the input.
-    const identity = invocationIdentity(toolKey, input);
+    const identity = invocationIdentity(toolKey, input, expectedBinding);
     if (requestedInvokeId) {
       // Already running or queued: hand back the SAME promise, so both callers
       // watch one execution.
@@ -576,7 +664,7 @@ export class WebMcpSessionRuntime {
           ? this.running
           : this.queue.find((item) => item.invokeId === requestedInvokeId);
       if (live) {
-        if (invocationIdentity(live.toolKey, live.input) !== identity) {
+        if (live.identity !== identity) {
           throw new WebMcpInvokeIdReusedError(requestedInvokeId);
         }
         return { invokeId: live.invokeId, settled: live.settled };
@@ -617,7 +705,17 @@ export class WebMcpSessionRuntime {
     // Never rejects unhandled: the map hands this promise to a later retry,
     // which may attach long after the original caller stopped watching.
     settled.catch(() => {});
+    if (source === "chat" && !expectedBinding) {
+      throw new WebMcpToolGoneError(
+        "This page tool has no registration binding. Refresh the tool list before calling it.",
+      );
+    }
+    const binding =
+      expectedBinding ??
+      this.tools.find((tool) => tool.toolKey === toolKey)?.binding;
     this.queue.push({
+      identity,
+      expectedBinding: binding ? structuredClone(binding) : undefined,
       invokeId,
       toolKey,
       input,
@@ -678,6 +776,18 @@ export class WebMcpSessionRuntime {
       if (oldest === undefined) break;
       this.settledByInvokeId.delete(oldest);
     }
+  }
+
+  /** Read a retained result without ever enqueueing another execution. */
+  invocationResult(
+    invokeId: string,
+  ): { pending: true } | { settled: Promise<WebMcpSettledOutput> } | undefined {
+    const entry = this.settledByInvokeId.get(invokeId);
+    if (!entry || this.now() - entry.at >= INVOKE_REPLAY_TTL_MS)
+      return undefined;
+    return entry.at === Number.POSITIVE_INFINITY
+      ? { pending: true }
+      : { settled: entry.settled };
   }
 
   /** Cancel a queued or running invocation. Idempotent by design: cancelling
@@ -748,9 +858,16 @@ export class WebMcpSessionRuntime {
     const tool = this.tools.find(
       (candidate) => candidate.toolKey === item.toolKey,
     );
-    if (!tool) {
-      const message = `The page no longer offers "${item.toolKey}".`;
-      await this.settle(item, "failed", startedAt, { errorMessage: message });
+    if (
+      !tool ||
+      (item.expectedBinding &&
+        !sameWebMcpRegistration(item.expectedBinding, tool.binding))
+    ) {
+      const message = `The page no longer offers the registration of "${item.toolKey}" that was selected. Nothing ran for this call.`;
+      await this.settle(item, "failed", startedAt, {
+        errorMessage: message,
+        errorCode: "tool-gone",
+      });
       this.release(item);
       item.reject(new WebMcpToolGoneError(message));
       return;
@@ -764,7 +881,7 @@ export class WebMcpSessionRuntime {
       source: item.source,
       input: echo.value,
       ...(echo.truncated ? { inputTruncated: true } : {}),
-      ...(await this.screenshot()),
+      ...(await this.screenshot(item.expectedBinding?.browser?.tabId)),
     });
 
     const timeout = setTimeout(
@@ -772,7 +889,8 @@ export class WebMcpSessionRuntime {
       this.invokeTimeoutMs,
     );
     try {
-      const { output } = await session.invokeTool({
+      const { output, truncated } = await session.invokeTool({
+        expectedBinding: item.expectedBinding,
         frameId: tool.frameId,
         toolName: tool.name,
         input: item.input,
@@ -782,6 +900,7 @@ export class WebMcpSessionRuntime {
         invokeId: item.invokeId,
       });
       const capped = capResult(output);
+      capped.truncated ||= truncated === true;
       await this.settle(item, "succeeded", startedAt, {
         output: capped.value,
         ...(capped.truncated
@@ -813,7 +932,12 @@ export class WebMcpSessionRuntime {
             : "failed";
       const message =
         error instanceof Error ? error.message : "The tool failed.";
-      await this.settle(item, state, startedAt, { errorMessage: message });
+      await this.settle(item, state, startedAt, {
+        errorMessage: message,
+        ...(error instanceof WebMcpToolGoneError
+          ? { errorCode: "tool-gone" as const }
+          : {}),
+      });
       this.release(item);
       item.reject(error instanceof Error ? error : new Error(message));
     } finally {
@@ -840,10 +964,11 @@ export class WebMcpSessionRuntime {
       output?: unknown;
       outputTruncated?: boolean;
       outputBytes?: number;
+      errorCode?: "tool-gone";
       errorMessage?: string;
     },
   ): Promise<void> {
-    const shot = await this.screenshot();
+    const shot = await this.screenshot(item.expectedBinding?.browser?.tabId);
     this.pushActivity({
       kind: "invocation_settled",
       invokeId: item.invokeId,
@@ -856,8 +981,12 @@ export class WebMcpSessionRuntime {
     });
   }
 
-  private async screenshot(): Promise<{ screenshotBase64?: string }> {
-    const shot = await this.session?.captureScreenshot().catch(() => undefined);
+  private async screenshot(
+    tabId?: string,
+  ): Promise<{ screenshotBase64?: string }> {
+    const shot = await this.session
+      ?.captureScreenshot(tabId)
+      .catch(() => undefined);
     return shot ? { screenshotBase64: shot } : {};
   }
 
@@ -871,11 +1000,11 @@ export class WebMcpSessionRuntime {
   private setStatus(status: WebMcpSessionStatus, detail?: string): void {
     this.status = status;
     this.statusDetail = detail;
-    this.publish({
-      type: "session",
-      seq: this.nextSeq(),
-      session: this.toPublic(),
-    });
+    // Initial navigation fires inside the provider's createSession, before
+    // attach supplies the real transport. Replaying that provisional
+    // native-window snapshot would make the client destroy its webview.
+    // Retain the status; the registry publishes once the browser is attached.
+    if (this.session) this.publishSession();
   }
 
   /**
@@ -945,6 +1074,7 @@ export class WebMcpSessionRuntime {
   }
 
   async close(reason: "closed" | "detached" = "closed"): Promise<void> {
+    this.inputClosed = true;
     this.failAllPending(
       new Error(
         reason === "detached"
@@ -988,14 +1118,45 @@ export function assignToolKeys(
     const base = `${tool.origin}::${tool.name}`;
     counts.set(base, (counts.get(base) ?? 0) + 1);
   }
+  const identities = new Map<string, string[]>();
+  for (const tool of incoming) {
+    const base = `${tool.origin}::${tool.name}`;
+    const frames = identities.get(base) ?? [];
+    frames.push(tool.frameId);
+    identities.set(base, frames);
+  }
   return incoming.map((tool) => {
     const base = `${tool.origin}::${tool.name}`;
     const collides = (counts.get(base) ?? 0) > 1;
-    const toolKey = collides
-      ? `${base}#${createHash("sha256").update(tool.frameId).digest("hex").slice(0, 4)}`
-      : base;
+    const hash = (frameId: string) =>
+      createHash("sha256").update(frameId).digest("hex");
+    const digest = hash(tool.frameId);
+    let length = 4;
+    while (
+      length < digest.length &&
+      identities
+        .get(base)!
+        .some(
+          (frameId) =>
+            frameId !== tool.frameId &&
+            hash(frameId).slice(0, length) === digest.slice(0, length),
+        )
+    )
+      length += 4;
+    // Even a full digest collision must not make two frames addressable by one key.
+    const suffix = identities
+      .get(base)!
+      .some((frameId) => frameId !== tool.frameId && hash(frameId) === digest)
+      ? encodeURIComponent(tool.frameId)
+      : digest.slice(0, length);
+    const toolKey = collides ? `${base}#${suffix}` : base;
     return {
       toolKey,
+      binding:
+        tool.binding ??
+        (tool.registrationSeq !== undefined
+          ? { frameId: tool.frameId, registrationSeq: tool.registrationSeq }
+          : undefined),
       name: tool.name,
       origin: tool.origin,
       fromSubframe: !tool.isMainFrame,

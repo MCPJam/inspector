@@ -3,7 +3,7 @@
 
 // server/services/browserd/daemon/server.ts
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
@@ -21,9 +21,6 @@ var HOSTED_DISPLAY = {
   width: BROWSERD_OBSERVATION_VIEWPORT.width,
   height: BROWSERD_OBSERVATION_VIEWPORT.height
 };
-function isPointInViewport(x, y) {
-  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 && y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1;
-}
 function wantsFor(observe) {
   const mode = observe ?? "screenshot";
   return {
@@ -181,6 +178,13 @@ var CommandQueue = class {
         `maxCommandsPerBoot must be an integer >= maxRetained (${this.maxRetained}), got ${this.maxCommandsPerBoot}`
       );
     }
+  }
+  /** Whether every per-tab FIFO is drained. Used for profile snapshots. */
+  isIdle() {
+    for (const count of this.depth.values()) {
+      if (count > 0) return false;
+    }
+    return true;
   }
   async submit(command) {
     if (isOutOfBand(command)) return this.runOutOfBand(command);
@@ -357,6 +361,7 @@ function redactAction(action, options = {}) {
         ...sanitizeLedgerUrl(action.url) ? { url: sanitizeLedgerUrl(action.url) } : {}
       };
     case "back":
+    case "forward":
     case "reload":
       return { kind: action.kind };
     case "act": {
@@ -659,6 +664,169 @@ function asRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
 }
 
+// server/services/browserd/daemon/pane-command.ts
+import { randomUUID } from "node:crypto";
+
+// shared/browser-pane-command.ts
+var BROWSER_PANE_OPS = [
+  "navigate",
+  "back",
+  "forward",
+  "reload",
+  "create_tab",
+  "activate_tab",
+  "close_tab"
+];
+function normalizePaneUrl(input) {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const schemeless = !hasExplicitScheme(trimmed);
+  let parsed;
+  try {
+    parsed = new URL(schemeless ? `https://${trimmed}` : trimmed);
+  } catch {
+    return null;
+  }
+  if (schemeless && isLoopbackHost(parsed.hostname)) {
+    try {
+      parsed = new URL(`http://${trimmed}`);
+    } catch {
+      return null;
+    }
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  if (!parsed.hostname) return null;
+  const bare = !parsed.hostname.includes(".");
+  if (bare && !isLoopbackHost(parsed.hostname) && !parsed.port) return null;
+  return parsed.toString();
+}
+function hasExplicitScheme(input) {
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(input)) return false;
+  return !/^[a-zA-Z][a-zA-Z0-9+.-]*:\d+(?:[/?#]|$)/.test(input);
+}
+function isLoopbackHost(hostname2) {
+  return hostname2 === "localhost" || hostname2.endsWith(".localhost") || hostname2 === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname2);
+}
+
+// server/services/browserd/daemon/pane-command.ts
+var PANE_NEW_TAB_URL = "about:blank";
+var PANE_OPS = new Set(BROWSER_PANE_OPS);
+var MAX_TAB_ID_CHARS = 200;
+function parsePaneCommand(raw) {
+  if (typeof raw !== "object" || raw === null) return null;
+  const value = raw;
+  const op = value.op;
+  if (typeof op !== "string" || !PANE_OPS.has(op)) return null;
+  const tabId = typeof value.tabId === "string" && value.tabId.length <= MAX_TAB_ID_CHARS ? value.tabId : void 0;
+  switch (op) {
+    case "navigate": {
+      if (typeof value.url !== "string") return null;
+      const url = normalizePaneUrl(value.url);
+      if (!url) return null;
+      return { op: "navigate", url, ...tabId ? { tabId } : {} };
+    }
+    case "back":
+    case "forward":
+    case "reload":
+      return { op, ...tabId ? { tabId } : {} };
+    case "create_tab": {
+      if (value.url === void 0) return { op: "create_tab" };
+      if (typeof value.url !== "string") return null;
+      const url = normalizePaneUrl(value.url);
+      if (!url) return null;
+      return { op: "create_tab", url };
+    }
+    case "activate_tab":
+    case "close_tab":
+      if (!tabId) return null;
+      return { op, tabId };
+    default:
+      return null;
+  }
+}
+function parseAnchor(raw) {
+  if (typeof raw !== "object" || raw === null) return void 0;
+  const value = raw;
+  if (typeof value.tabId !== "string" || typeof value.url !== "string" || typeof value.navCounter !== "number") {
+    return void 0;
+  }
+  return {
+    tabId: value.tabId,
+    url: value.url,
+    navCounter: value.navCounter,
+    ...typeof value.bootId === "string" ? { bootId: value.bootId } : {},
+    ...typeof value.viewportRevision === "number" ? { viewportRevision: value.viewportRevision } : {}
+  };
+}
+function paneCommandToAction(command) {
+  switch (command.op) {
+    case "navigate":
+      return {
+        action: { kind: "navigate", url: command.url, observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "back":
+      return {
+        action: { kind: "back", observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "forward":
+      return {
+        action: { kind: "forward", observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "reload":
+      return {
+        action: { kind: "reload", observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "create_tab":
+      return {
+        action: {
+          kind: "navigate",
+          url: command.url ?? PANE_NEW_TAB_URL,
+          newTab: true,
+          observe: "none"
+        },
+        tabId: `pane-${randomUUID().slice(0, 8)}`
+      };
+    case "activate_tab":
+      return {
+        action: { kind: "act", verb: "activate_tab", observe: "none" },
+        tabId: command.tabId
+      };
+    case "close_tab":
+      return {
+        action: { kind: "act", verb: "close_tab", observe: "none" },
+        tabId: command.tabId
+      };
+    default: {
+      const exhaustive = command;
+      throw new Error(
+        `pane command ${JSON.stringify(exhaustive)} has no daemon action`
+      );
+    }
+  }
+}
+
+// server/services/browserd/daemon/state-token.ts
+import { createHash } from "node:crypto";
+function shortHash(value) {
+  return createHash("sha1").update(value, "utf8").digest("hex").slice(0, 16);
+}
+function computeStateToken(inputs) {
+  return {
+    tabId: inputs.tabId,
+    navCounter: inputs.navCounter,
+    urlHash: shortHash(inputs.url),
+    domHash: shortHash(inputs.domSignal),
+    ...inputs.viewportRevision !== void 0 ? { viewportRevision: inputs.viewportRevision } : {}
+  };
+}
+
+// server/services/browserd/daemon/request-handler.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+
 // server/services/browserd/daemon/auth.ts
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 function presentedBearer(headerValue2) {
@@ -810,8 +978,8 @@ function createVideoRecorder(options) {
     }
     let settleExit = () => {
     };
-    const exited = new Promise((resolve) => {
-      settleExit = resolve;
+    const exited = new Promise((resolve2) => {
+      settleExit = resolve2;
     });
     const entry = {
       id: args.id,
@@ -903,13 +1071,13 @@ function createVideoRecorder(options) {
       let timer;
       await Promise.race([
         entry.exited,
-        new Promise((resolve) => {
+        new Promise((resolve2) => {
           timer = setTimer(() => {
             try {
               entry.child.kill("SIGKILL");
             } catch {
             }
-            resolve();
+            resolve2();
           }, graceMs);
         })
       ]);
@@ -1140,6 +1308,7 @@ var ACTIVITY_BOOST_WINDOW_MS = 1500;
 var MOTION_ACTIONS = /* @__PURE__ */ new Set([
   "navigate",
   "back",
+  "forward",
   "reload",
   "act"
 ]);
@@ -1154,6 +1323,7 @@ var BrowserdRequestHandler = class {
   bootId;
   token;
   lease;
+  authority;
   features;
   bundleHash;
   contextMode;
@@ -1162,6 +1332,7 @@ var BrowserdRequestHandler = class {
   ledger;
   captureTypedText;
   recorder;
+  profileExport;
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -1181,12 +1352,24 @@ var BrowserdRequestHandler = class {
    * the very thing this whole compatibility mechanism exists to avoid).
    */
   lastActivityAt = null;
+  retiring = false;
+  suspensionId = null;
+  completedSuspensions = /* @__PURE__ */ new Set();
+  activeOperations = 0;
+  /** Atomic admission barrier held through teardown; a read of isIdle alone races. */
+  tryRetireIfIdle(disconnected = false) {
+    if (this.retiring || this.activeOperations > 0 || !this.queue.isIdle?.() || !disconnected && this.lease.state().state === "held")
+      return false;
+    this.retiring = true;
+    return true;
+  }
   constructor(deps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
+    this.authority = deps.authority ?? "lease";
     this.features = [
       .../* @__PURE__ */ new Set([...deps.features ?? [], ...BROWSERD_WEBMCP_FEATURES])
     ];
@@ -1197,6 +1380,7 @@ var BrowserdRequestHandler = class {
     this.ledger = deps.ledger;
     this.captureTypedText = deps.captureTypedText === true;
     this.recorder = deps.recorder;
+    this.profileExport = deps.profileExport;
   }
   /**
    * What is open and which tab is on screen, for a stream's heartbeat.
@@ -1240,9 +1424,28 @@ var BrowserdRequestHandler = class {
     if (req.origin !== void 0) {
       return { status: 403, body: { error: "cross_origin_forbidden" } };
     }
+    if (this.retiring)
+      return {
+        status: 503,
+        body: { error: "browser_stopped", bootId: this.bootId }
+      };
+    if (this.suspensionId && req.path !== "/v1/status" && req.path !== "/v1/lifecycle")
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId }
+      };
     return void 0;
   }
   async handle(req) {
+    const operation = req.method === "POST" && req.path !== "/v1/lifecycle";
+    if (operation) this.activeOperations += 1;
+    try {
+      return await this.dispatch(req);
+    } finally {
+      if (operation) this.activeOperations -= 1;
+    }
+  }
+  async dispatch(req) {
     if (req.path === "/healthz") {
       if (req.method !== "GET" && req.method !== "HEAD") {
         return { status: 405, headers: { allow: "GET, HEAD" } };
@@ -1252,6 +1455,46 @@ var BrowserdRequestHandler = class {
     }
     const refusal = this.authorize(req);
     if (refusal) return refusal;
+    if (req.path === "/v1/lifecycle" && req.method === "POST") {
+      let body;
+      try {
+        body = JSON.parse(req.body ?? "");
+      } catch {
+        return { status: 400 };
+      }
+      if (!body || body.bootId !== this.bootId)
+        return { status: 409, body: { error: "stale_boot" } };
+      if (typeof body.operationId !== "string" || !body.operationId || body.operationId.length > 128)
+        return { status: 400 };
+      if (body.action === "resume") {
+        if (this.suspensionId && this.suspensionId !== body.operationId)
+          return { status: 409 };
+        if (!this.suspensionId && !this.completedSuspensions.has(body.operationId) && this.completedSuspensions.size >= 4096)
+          return { status: 409 };
+        this.suspensionId = null;
+        this.completedSuspensions.add(body.operationId);
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      }
+      if (body.action !== "prepare_sleep") return { status: 400 };
+      if (this.completedSuspensions.has(body.operationId) || this.completedSuspensions.size >= 4096)
+        return { status: 409 };
+      if (this.suspensionId === body.operationId)
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      if (this.suspensionId || this.activeOperations > 0 || !this.queue.isIdle?.() || this.lease.state().state === "held") {
+        return {
+          status: 409,
+          body: { error: "browser_busy", bootId: this.bootId }
+        };
+      }
+      this.suspensionId = body.operationId;
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
+    }
+    if (this.suspensionId && req.path !== "/v1/status") {
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId }
+      };
+    }
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -1274,10 +1517,12 @@ var BrowserdRequestHandler = class {
         // never as a verdict: the caller applies its own quiet threshold, so
         // changing that threshold does not need a daemon deploy.
         lease: this.lease.state().state,
+        leaseHeld: this.lease.state().state !== "free",
         ...this.watchers ? { watchers: this.watchers() } : {},
-        ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) }
+        ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) },
+        ...this.tabsSnapshot()?.list ? { tabs: this.tabsSnapshot().list } : {}
       };
-      return health.ok ? { status: 200, body: { ok: true, ...identity } } : {
+      return health.ok && !this.suspensionId ? { status: 200, body: { ok: true, ...identity } } : {
         status: 503,
         body: { ok: false, detail: health.detail, ...identity }
       };
@@ -1300,6 +1545,12 @@ var BrowserdRequestHandler = class {
       }
       return this.handleRecord(req);
     }
+    if (req.path === "/v1/profile/export") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleProfileExport();
+    }
     if (req.path === "/v1/input") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -1319,7 +1570,239 @@ var BrowserdRequestHandler = class {
       }
       return this.handleArtifact(req);
     }
+    if (req.path === "/v1/state") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      return this.handleState(req);
+    }
+    if (req.path === "/v1/pane-command") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handlePaneCommand(req);
+    }
+    if (req.path === "/v1/viewport") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleViewport(req);
+    }
     return { status: 404 };
+  }
+  /**
+   * The browser's whole state, for the pane's shell.
+   *
+   * LEASE-GATED exactly as the frames are, and for exactly the same reason:
+   * the tab titles and URLs of a browser somebody has taken over describe the
+   * page they are signing into. "Reset your password | Acme" is not a
+   * screenshot, but it is not nothing either, and a second pane that could
+   * read it while the frames were withheld would be a hole in a wall that is
+   * otherwise complete.
+   */
+  async handleState(req) {
+    const holder = req.query?.get("holder") ?? void 0;
+    const refusal = this.watcherRefusal(holder);
+    if (refusal) {
+      return { status: 423, body: { error: refusal, bootId: this.bootId } };
+    }
+    if (!this.driver.stateSnapshot) {
+      return {
+        status: 501,
+        body: { error: "state_unsupported", bootId: this.bootId }
+      };
+    }
+    const snapshot = await this.driver.stateSnapshot();
+    const lease = this.lease.state();
+    return {
+      status: 200,
+      body: {
+        bootId: this.bootId,
+        ...snapshot,
+        control: lease.state === "free" ? { kind: "agent" } : {
+          kind: lease.holderKind === "script" ? "script" : "human",
+          holder: lease.holder,
+          ...lease.state === "parked" ? { parked: true } : {}
+        }
+      }
+    };
+  }
+  /**
+   * One human navigation, taking the browser first if it is free.
+   *
+   * The order is the whole design and it is not negotiable: acquire, THEN
+   * re-check the anchor, THEN dispatch. Acquiring is a round trip — to another
+   * continent on the hosted engine — and a page that finished loading during
+   * it is a different page. Dispatching first would race the agent; checking
+   * the anchor first would check a page that could still move.
+   */
+  async handlePaneCommand(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    const body = parsed;
+    if (typeof body?.holder !== "string" || !body.holder) {
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId }
+      };
+    }
+    const command = parsePaneCommand(body.command);
+    if (!command) {
+      return {
+        status: 400,
+        body: { error: "invalid_command", bootId: this.bootId }
+      };
+    }
+    const holder = body.holder;
+    const lease = this.authority === "shared" ? this.lease.state() : this.lease.acquire(holder);
+    if (this.authority === "lease" && (lease.state === "free" || lease.holder !== holder)) {
+      return {
+        status: 423,
+        body: {
+          error: "lease_held",
+          holder: lease.state === "free" ? void 0 : {
+            kind: lease.holderKind === "script" ? "script" : "human",
+            id: lease.holder
+          },
+          bootId: this.bootId
+        }
+      };
+    }
+    this.lastActivityAt = Date.now();
+    const anchor = parseAnchor(body.anchor);
+    if (anchor) {
+      const fresh = await this.currentAnchor(anchor.tabId);
+      const moved = fresh !== "unsupported" && // HASHED on this side. The pane sends the URL it saw; the daemon's
+      // token carries a digest of the URL it has. Comparing in the digest's
+      // space keeps the hashing scheme internal — the pane never learns it —
+      // and costs one hash of a string the pane already sent.
+      (!fresh || fresh.urlHash !== shortHash(anchor.url) || fresh.navCounter !== anchor.navCounter);
+      if (moved) {
+        return {
+          status: 409,
+          body: { error: "page_changed", bootId: this.bootId }
+        };
+      }
+    }
+    const mapped = paneCommandToAction(command);
+    mapped.tabId ??= this.driver.tabsSnapshot?.().active;
+    const outcome = await this.queue.submit({
+      // `manual` is the one source `leaseRefusalFor` admits while a lease is
+      // held, which is what lets this run at all now that the pane owns the
+      // browser.
+      source: "manual",
+      holder,
+      commandId: typeof body.commandId === "string" && body.commandId ? body.commandId : `pane-${Math.random().toString(36).slice(2)}-${Date.now()}`,
+      ...mapped.tabId !== void 0 ? { tabId: mapped.tabId } : {},
+      action: mapped.action
+    });
+    const viewport = this.driver.sessionViewportState ? this.driver.sessionViewportState() : void 0;
+    if (outcome.status !== "ok") {
+      return {
+        status: outcome.status === "busy" ? 429 : 409,
+        body: {
+          error: `command_${outcome.status}`,
+          ...viewport ? { viewport } : {},
+          bootId: this.bootId
+        }
+      };
+    }
+    return {
+      status: outcome.result.ok ? 200 : 409,
+      body: {
+        ok: outcome.result.ok,
+        ...outcome.result.ok ? {} : { error: outcome.result.error },
+        ...viewport ? { viewport } : {},
+        bootId: this.bootId
+      }
+    };
+  }
+  /**
+   * The tab's identity as the pane's anchor describes it.
+   *
+   * The DRIVER's token rather than a fresh CDP read: it already carries the
+   * nav counter and the URL, it is the number the staleness guard compares,
+   * and asking twice would let the two disagree.
+   */
+  async currentAnchor(tabId) {
+    if (!this.driver.currentStateToken) return "unsupported";
+    const token = await this.driver.currentStateToken(tabId);
+    if (!token) return null;
+    return { urlHash: token.urlHash, navCounter: token.navCounter };
+  }
+  /** The panel measured a size; answer with the size the session is at. */
+  async handleViewport(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    const body = parsed;
+    if (typeof body?.width !== "number" || typeof body?.height !== "number") {
+      return {
+        status: 400,
+        body: { error: "invalid_viewport", bootId: this.bootId }
+      };
+    }
+    if (!this.driver.requestViewport) {
+      return {
+        status: 501,
+        body: { error: "viewport_unsupported", bootId: this.bootId }
+      };
+    }
+    const viewport = await this.driver.requestViewport({
+      ...body.policy === "fixed" || body.policy === "followPane" ? { policy: body.policy } : {},
+      width: body.width,
+      height: body.height
+    });
+    return { status: 200, body: { viewport, bootId: this.bootId } };
+  }
+  async handleProfileExport() {
+    if (!this.profileExport) {
+      return { status: 501, body: { error: "profile_export_unavailable" } };
+    }
+    if (!this.queue.isIdle?.()) {
+      return { status: 409, body: { error: "profile_busy" } };
+    }
+    if (this.lease.state().state !== "free") {
+      return { status: 423, body: { error: "lease_held" } };
+    }
+    const holder = `profile-export:${randomUUID2()}`;
+    const claim = this.lease.acquire(holder, void 0, "script");
+    if (claim.state === "free" || claim.holder !== holder) {
+      return { status: 423, body: { error: "lease_held" } };
+    }
+    try {
+      const archive = await this.profileExport();
+      return {
+        status: 200,
+        body: archive,
+        headers: {
+          "content-type": "application/gzip",
+          "content-disposition": "attachment; filename=browser-profile.tar.gz"
+        }
+      };
+    } catch (error) {
+      return {
+        status: 500,
+        body: {
+          error: error instanceof Error ? error.message : "profile_export_failed"
+        }
+      };
+    } finally {
+      this.lease.resume(holder);
+    }
   }
   handleTrace(req) {
     if (!this.ledger) {
@@ -1540,7 +2023,7 @@ var BrowserdRequestHandler = class {
         body: { error: "invalid_input", bootId: this.bootId }
       };
     }
-    const { holder, tabId, events } = parsed;
+    const { holder, tabId, events, anchor } = parsed;
     if (typeof holder !== "string" || holder.length === 0) {
       return {
         status: 400,
@@ -1563,12 +2046,13 @@ var BrowserdRequestHandler = class {
     const outcome = await this.dispatchInput({
       ...typeof tabId === "string" ? { tabId } : {},
       holder,
-      events
+      events,
+      ...anchor !== void 0 ? { anchor } : {}
     });
     if (outcome.ok)
       return { status: 200, body: { ok: true, bootId: this.bootId } };
     return {
-      status: outcome.error === "unknown_tab" ? 404 : 423,
+      status: outcome.error === "page_changed" ? 409 : outcome.error === "unknown_tab" ? 404 : 423,
       body: { error: outcome.error, bootId: this.bootId }
     };
   }
@@ -1591,10 +2075,7 @@ var BrowserdRequestHandler = class {
     }
     this.lastActivityAt = Date.now();
     const leaseState = this.lease.state();
-    const refusal = leaseRefusalFor(
-      leaseState,
-      parsed.command
-    );
+    const refusal = this.authority === "shared" ? void 0 : leaseRefusalFor(leaseState, parsed.command);
     if (refusal) {
       this.recordRow(parsed.command, startedAt, {
         outcome: "refused",
@@ -1684,7 +2165,10 @@ var BrowserdRequestHandler = class {
       return;
     }
     if (outcome.deduped) {
-      const known = this.ledger.read({ commandId: command.commandId, limit: 1 });
+      const known = this.ledger.read({
+        commandId: command.commandId,
+        limit: 1
+      });
       if (known.entries.length > 0) return;
       this.recordRow(command, startedAt, {
         outcome: "executed",
@@ -1717,11 +2201,27 @@ var BrowserdRequestHandler = class {
       ...what.deduped ? { deduped: true } : {},
       ...what.capturePage && result ? { output: result.output } : {},
       ...what.capturePage && result?.stateToken ? { stateToken: result.stateToken } : {},
-      ...what.capturePage ? { viewport: { ...BROWSERD_OBSERVATION_VIEWPORT } } : {},
+      // The SESSION's size, not the constant. The ledger row is what a replay
+      // is reconstructed from, so a row that recorded 1024x768 for a command
+      // executed at 1400x900 would produce an artifact whose coordinates
+      // cannot be read back — and there would be nothing in the row to say so.
+      ...what.capturePage ? { viewport: this.publishedViewport() } : {},
       ...result?.cursors ? { cursors: result.cursors } : {},
       ...what.capturePage ? { capturePage: true } : {},
       ...this.captureTypedText ? { captureTypedText: true } : {}
     });
+  }
+  /**
+   * The size to stamp on a published result.
+   *
+   * From the DRIVER, which is the only thing that knows whether a resize
+   * landed. A driver that cannot answer — a unit fake, an engine with no
+   * session viewport — falls back to the constant, which is the size it is
+   * necessarily running at.
+   */
+  publishedViewport() {
+    const session = this.driver.sessionViewportState ? this.driver.sessionViewportState() : void 0;
+    return session ? { width: session.width, height: session.height } : { ...BROWSERD_OBSERVATION_VIEWPORT };
   }
   /**
    * Raise the frame rate for a moment after a command that moved the page.
@@ -1876,21 +2376,40 @@ var BrowserdRequestHandler = class {
    * reached the endpoint".
    */
   async dispatchInput(args) {
-    const stillTheirs = () => leaseRefusalFor(this.lease.state(), {
-      source: "manual",
-      holder: args.holder
-    });
+    const stillTheirs = () => {
+      const refused = this.authority === "shared" ? void 0 : leaseRefusalFor(this.lease.state(), {
+        source: "manual",
+        holder: args.holder
+      });
+      if (refused) return refused;
+      if (args.anchor !== void 0) {
+        const before = parseAnchor(args.anchor);
+        const after = this.driver.interactionAnchor?.();
+        if (!before || !after || before.bootId !== this.bootId || before.tabId !== after.tabId || before.url !== after.url || before.navCounter !== after.navCounter || before.viewportRevision !== after.viewportRevision) {
+          return "page_changed";
+        }
+      }
+      return void 0;
+    };
     const refusal = stillTheirs();
     if (refusal) return { ok: false, error: refusal };
-    const viewport = await this.driver.viewport?.(args.tabId);
+    const viewport = await this.driver.viewport?.(
+      parseAnchor(args.anchor)?.tabId ?? args.tabId
+    );
     if (!viewport) return { ok: false, error: "unknown_tab" };
     const afterAwait = stillTheirs();
     if (afterAwait) return { ok: false, error: afterAwait };
+    let inputRefusal;
     await viewport.dispatchInput(
       args.events,
-      () => stillTheirs() === void 0,
+      () => {
+        inputRefusal = stillTheirs();
+        return inputRefusal === void 0;
+      },
       args.holder
     );
+    if (inputRefusal === "page_changed")
+      return { ok: false, error: inputRefusal };
     if (args.events.length > 0) {
       viewport.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
     }
@@ -1898,6 +2417,7 @@ var BrowserdRequestHandler = class {
   }
   /** May this watcher see frames right now? */
   watcherRefusal(holder) {
+    if (this.authority === "shared") return void 0;
     const lease = this.lease.state();
     if (lease.state === "free") return void 0;
     return holder && holder === lease.holder ? void 0 : lease.state === "held" ? "lease_held" : "lease_parked";
@@ -1907,6 +2427,11 @@ var BrowserdRequestHandler = class {
    * cannot be released by another tab that happens to know the endpoint.
    */
   handleLease(req) {
+    if (this.authority === "shared" && req.method !== "GET")
+      return {
+        status: 409,
+        body: { error: "shared_authority", bootId: this.bootId }
+      };
     if (req.method === "GET") {
       return { status: 200, body: this.leaseBody(this.lease.state()) };
     }
@@ -2201,11 +2726,17 @@ function createFrameStreamHost(handler, options = {}) {
     let unsubscribe;
     let release;
     let seq = 0;
-    const size = options.displaySize ?? {
-      width: BROWSERD_OBSERVATION_VIEWPORT.width,
-      height: BROWSERD_OBSERVATION_VIEWPORT.height
+    const geometry = () => {
+      const size = options.displaySize?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height
+      };
+      const css = options.cssViewport?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height
+      };
+      return { size, css, scale: size.width / css.width };
     };
-    const scale = size.width / BROWSERD_OBSERVATION_VIEWPORT.width;
     const entry = { end: (reason) => end(reason) };
     const end = (reason) => {
       if (ended) return;
@@ -2270,12 +2801,13 @@ function createFrameStreamHost(handler, options = {}) {
       if (ended) return;
       gate.revalidate();
       if (ended) return;
+      const geo = geometry();
       pacer.push(
         encodeFrameStreamRecord({
           kind: unit.key ? FRAME_STREAM_KIND.video_key : FRAME_STREAM_KIND.video_delta,
-          deviceWidth: size.width,
-          deviceHeight: size.height,
-          scale,
+          deviceWidth: geo.size.width,
+          deviceHeight: geo.size.height,
+          scale: geo.scale,
           ts: Date.now(),
           seq: seq += 1,
           au: unit.bytes
@@ -2549,13 +3081,72 @@ function statsFor(subscription, previousFramesIn) {
   };
 }
 
+// shared/browser-viewport.ts
+var DEFAULT_SESSION_VIEWPORT = { width: 1024, height: 768 };
+var MIN_SESSION_VIEWPORT = { width: 400, height: 300 };
+var MAX_SESSION_VIEWPORT = { width: 2560, height: 1600 };
+var INITIAL_SESSION_VIEWPORT = {
+  width: DEFAULT_SESSION_VIEWPORT.width,
+  height: DEFAULT_SESSION_VIEWPORT.height,
+  revision: 0
+};
+function normalizeViewportSize(size) {
+  return {
+    width: clampDimension(
+      size.width,
+      MIN_SESSION_VIEWPORT.width,
+      MAX_SESSION_VIEWPORT.width
+    ),
+    height: clampDimension(
+      size.height,
+      MIN_SESSION_VIEWPORT.height,
+      MAX_SESSION_VIEWPORT.height
+    )
+  };
+}
+function clampDimension(value, min, max) {
+  const numeric = typeof value === "number" ? value : Number.NaN;
+  if (!Number.isFinite(numeric)) return min;
+  return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+function advanceViewport(current, requested, policy) {
+  if (policy === "fixed") return current;
+  const next = normalizeViewportSize(requested);
+  if (next.width === current.width && next.height === current.height) {
+    return current;
+  }
+  return {
+    width: next.width,
+    height: next.height,
+    revision: current.revision + 1
+  };
+}
+function isPointInSessionViewport(x, y, viewport) {
+  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= viewport.width - 1 && y <= viewport.height - 1;
+}
+function negotiateViewport(policy, capability) {
+  if (policy === "fixed") return { ok: true, policy };
+  if (capability?.responsiveViewport === true) return { ok: true, policy };
+  return { ok: false, reason: "responsive_viewport_required" };
+}
+function parseViewportPolicy(value) {
+  return value === "followPane" ? "followPane" : "fixed";
+}
+
 // server/services/browserd/daemon/browser-driver.ts
 function stateTokensMatch(a, b) {
-  return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash;
+  const viewportAgrees = a.viewportRevision === void 0 || b.viewportRevision === void 0 || a.viewportRevision === b.viewportRevision;
+  return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash && viewportAgrees;
 }
 function guardStaleness(driver, lease) {
   return async (command) => {
     const { action } = command;
+    if (command.source !== "manual" && action.kind !== "webmcp_cancel" && !negotiateViewport(driver.sessionViewportPolicy?.() ?? "fixed", command).ok) {
+      return {
+        ok: false,
+        error: "responsive_viewport_required: this session follows an interactive pane; use a fixed session or declare responsiveViewport support"
+      };
+    }
     if (action.kind !== "act" || action.expectedState === void 0) {
       return driver.execute(command);
     }
@@ -2602,7 +3193,7 @@ var DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
 var BodyTooLargeError = class extends Error {
 };
 function readRequestBody(req, limitBytes) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const chunks = [];
     let size = 0;
     let refused = false;
@@ -2617,7 +3208,7 @@ function readRequestBody(req, limitBytes) {
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => resolve2(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
@@ -2628,6 +3219,16 @@ function writeResponse(res, response) {
       ...response.headers
     });
     res.end();
+    return;
+  }
+  if (response.body instanceof Uint8Array) {
+    const payload2 = Buffer.from(response.body);
+    res.writeHead(response.status, {
+      "content-type": "application/octet-stream",
+      "content-length": payload2.byteLength,
+      ...response.headers
+    });
+    res.end(payload2);
     return;
   }
   const payload = JSON.stringify(response.body);
@@ -2699,11 +3300,11 @@ function headerValue(value) {
   return Array.isArray(value) ? value[0] : value;
 }
 function buildBrowserdStack(driver, config) {
-  const bootId = config.bootId ?? randomUUID();
+  const bootId = config.bootId ?? randomUUID3();
   const ledger = new CommandLedger({ bootId });
   const lease = config.lease ?? new HandoffLease();
   const queue = new CommandQueue(
-    guardLease(lease, guardStaleness(driver, lease)),
+    config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease)),
     bootId
   );
   const handler = new BrowserdRequestHandler({
@@ -2711,6 +3312,7 @@ function buildBrowserdStack(driver, config) {
     driver,
     bootId,
     token: config.token,
+    authority: config.authority,
     lease,
     ...config.features ? { features: config.features } : {},
     ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
@@ -2719,14 +3321,16 @@ function buildBrowserdStack(driver, config) {
     ledger,
     ...config.captureTypedText ? { captureTypedText: true } : {},
     ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {},
-    ...config.recorder ? { recorder: config.recorder } : {}
+    ...config.recorder ? { recorder: config.recorder } : {},
+    ...config.profileExport ? { profileExport: config.profileExport } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
     frames: {
       ...config.frames ?? {},
       ...config.video ? { video: config.video } : {},
-      ...config.displaySize ? { displaySize: config.displaySize } : {}
+      ...config.displaySize ? { displaySize: config.displaySize } : {},
+      ...config.cssViewport ? { cssViewport: config.cssViewport } : {}
     }
   });
   handler.attachFrameCounters(() => frames.count());
@@ -2878,6 +3482,8 @@ function createVideoEncoder(options) {
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const listeners = /* @__PURE__ */ new Set();
   let tier = options.tier ?? "auto";
+  let width = Math.max(2, Math.round(options.width));
+  let height = Math.max(2, Math.round(options.height));
   let child;
   let splitter = createAccessUnitSplitter();
   let failure;
@@ -2926,8 +3532,13 @@ function createVideoEncoder(options) {
         ffmpegPath,
         ffmpegArgs({
           display: options.display,
-          width: options.width,
-          height: options.height,
+          // The CURRENT geometry, not the one this encoder was built with: a
+          // `followPane` session moves the display, and an ffmpeg restarted
+          // after that must grab the screen that is actually there. `x11grab`
+          // with a `-video_size` larger than the screen fails outright; one
+          // smaller silently captures a corner.
+          width,
+          height,
           tier
         }),
         { stdio: ["ignore", "pipe", "pipe"] }
@@ -2972,6 +3583,16 @@ function createVideoEncoder(options) {
     subscriberCount: () => listeners.size,
     failure: () => failure,
     tier: () => tier,
+    resize(size) {
+      const nextWidth = Math.max(2, Math.round(size.width));
+      const nextHeight = Math.max(2, Math.round(size.height));
+      if (nextWidth === width && nextHeight === height) return;
+      width = nextWidth;
+      height = nextHeight;
+      if (!child) return;
+      stop();
+      start();
+    },
     setTier(next) {
       if (next === tier) return;
       tier = next;
@@ -2988,6 +3609,16 @@ function createVideoEncoder(options) {
       stop();
     }
   };
+}
+
+// shared/browser-session-state.ts
+var BROWSER_TAB_CAP = 8;
+function tabAfterClose(tabs, closingId, activeId) {
+  if (activeId !== closingId) return activeId;
+  const index = tabs.findIndex((tab) => tab.id === closingId);
+  if (index < 0) return activeId;
+  const openerId = tabs[index].openerId;
+  return (openerId && tabs.some((tab) => tab.id === openerId && tab.id !== closingId) ? openerId : void 0) ?? tabs[index + 1]?.id ?? tabs[index - 1]?.id ?? null;
 }
 
 // server/services/browserd/daemon/network.ts
@@ -3455,17 +4086,229 @@ async function resolveObjectId(cdp, backendNodeId) {
   return resolved?.object?.objectId;
 }
 
-// server/services/browserd/daemon/state-token.ts
-import { createHash } from "node:crypto";
-function shortHash(value) {
-  return createHash("sha1").update(value, "utf8").digest("hex").slice(0, 16);
+// server/services/browserd/daemon/session-barrier.ts
+var DEFAULT_DEBOUNCE_MS = 150;
+var DEFAULT_MAX_WAIT_MS = 5e3;
+var SessionBarrier = class {
+  constructor(apply, options = {}) {
+    this.apply = apply;
+    this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    this.maxWaitMs = options.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
+    this.now = options.now ?? (() => Date.now());
+    this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+    this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
+  }
+  inFlight = 0;
+  /**
+   * Is a person's pointer down on the page right now?
+   *
+   * Separate from `inFlight` because it is not work the barrier can wait for:
+   * a drag has no promise to await, it ends when somebody lifts a finger, and
+   * a resize during one corrupts a value rather than merely disturbing it.
+   */
+  dragging = false;
+  /**
+   * The transition in progress, or null.
+   *
+   * A PROMISE rather than a boolean plus a waiter list, because the two lists
+   * a naive version needs — "waiting for this resize to end" and "waiting for
+   * my measurement to land" — are refilled at different moments, and a `run()`
+   * that queued itself on the second one waits for the NEXT resize instead of
+   * the current one. That is a deadlock when there is no next resize, which is
+   * the ordinary case: somebody stops dragging.
+   */
+  resizing = null;
+  /** The newest measurement, waiting for the debounce. */
+  pending = null;
+  debounceHandle;
+  pendingSince = 0;
+  /**
+   * Everyone whose `request` has not landed yet.
+   *
+   * Resolved together when the resize that supersedes them all completes: they
+   * are waiting for the same transition, and a caller that got its own promise
+   * would resolve at a different moment from the others for no reason.
+   */
+  requestWaiters = [];
+  /**
+   * Armed when a resize is deferred, so the ceiling can enforce itself.
+   *
+   * Without it `maxWaitMs` was only ever CHECKED, never awaited: `maybeResize`
+   * runs on the debounce firing, on work finishing and on a drag ending, and a
+   * command that hangs while nobody is dragging produces none of the three. The
+   * pending resize then waited on an event that was never coming, which is the
+   * opposite of what a ceiling is for — the one case it exists for is the one
+   * where the session never goes quiet.
+   */
+  expiryHandle;
+  debounceMs;
+  maxWaitMs;
+  now;
+  setTimer;
+  clearTimer;
+  /**
+   * Run one piece of page work, held off while a resize is transitioning.
+   *
+   * Wrapping rather than a bare `enter`/`leave` pair, because the thing being
+   * guarded can throw and a `leave` that a rejection skipped would wedge the
+   * barrier closed for the life of the session — every subsequent resize
+   * waiting out `maxWaitMs` for work that finished long ago.
+   */
+  async run(work) {
+    while (this.resizing) await this.resizing;
+    this.inFlight += 1;
+    try {
+      return await work();
+    } finally {
+      this.inFlight -= 1;
+      this.maybeResize();
+    }
+  }
+  /** A pointer went down on the page; hold resizes until it comes up. */
+  beginDrag() {
+    this.dragging = true;
+  }
+  endDrag() {
+    if (!this.dragging) return;
+    this.dragging = false;
+    this.maybeResize();
+  }
+  /**
+   * Ask for a size. Coalesces with anything already waiting.
+   *
+   * Returns a promise that settles when a resize carrying AT LEAST this
+   * measurement's intent has been applied — which for a coalesced burst is one
+   * resize for all of them. It deliberately does not promise that the applied
+   * size equals the requested one: a later measurement supersedes an earlier
+   * one, and the earlier caller wanted "the panel is now the right size", not
+   * "my particular number was used".
+   */
+  request(size) {
+    this.pending = size;
+    if (this.pendingSince === 0) this.pendingSince = this.now();
+    const settled = new Promise((resolve2) => {
+      this.requestWaiters.push(resolve2);
+    });
+    this.clearTimer(this.debounceHandle);
+    this.debounceHandle = this.setTimer(() => {
+      this.debounceHandle = void 0;
+      this.maybeResize();
+    }, this.debounceMs);
+    return settled;
+  }
+  /** Is a resize waiting or running? For the pane's "settling" affordance. */
+  get busy() {
+    return this.resizing !== null || this.pending !== null;
+  }
+  /**
+   * Wake up in `ms` and reconsider, replacing any timer already waiting.
+   *
+   * Replacing rather than stacking: the budget is a property of the pending
+   * measurement, not of the calls that noticed it, and several deferrals in a
+   * row must not each add a wake-up.
+   */
+  armExpiry(ms) {
+    this.clearTimer(this.expiryHandle);
+    this.expiryHandle = this.setTimer(() => {
+      this.expiryHandle = void 0;
+      this.maybeResize();
+    }, Math.max(0, ms));
+  }
+  /**
+   * Run the pending resize only when the session is quiet.
+   *
+   * Called from three places (the debounce firing, work finishing, a drag
+   * ending) because those are the three ways the answer can change, and a
+   * version that only checked on the timer would leave a resize parked behind
+   * a command that outlived its debounce.
+   */
+  maybeResize() {
+    if (this.resizing || this.pending === null) return;
+    if (this.debounceHandle !== void 0) return;
+    const waited = this.now() - this.pendingSince;
+    const expired = waited >= this.maxWaitMs;
+    if (this.inFlight > 0 || this.dragging) {
+      if (!expired) this.armExpiry(this.maxWaitMs - waited);
+      return;
+    }
+    this.clearTimer(this.expiryHandle);
+    this.expiryHandle = void 0;
+    const size = this.pending;
+    this.pending = null;
+    this.pendingSince = 0;
+    const waiters = this.requestWaiters;
+    this.requestWaiters = [];
+    this.resizing = this.apply(size).catch(() => {
+    }).then(() => {
+      this.resizing = null;
+      for (const resolve2 of waiters) resolve2();
+      this.maybeResize();
+    });
+  }
+};
+
+// server/services/browserd/daemon/tab-metadata.ts
+async function navigationHistory(cdp) {
+  try {
+    const raw = await cdp.send("Page.getNavigationHistory");
+    if (typeof raw?.currentIndex !== "number" || !Array.isArray(raw?.entries)) {
+      return null;
+    }
+    return { currentIndex: raw.currentIndex, entries: raw.entries };
+  } catch {
+    return null;
+  }
 }
-function computeStateToken(inputs) {
+var FAVICON_EXPRESSION = `(() => {
+  const link = document.querySelector(
+    'link[rel~="icon" i], link[rel="shortcut icon" i], link[rel~="apple-touch-icon" i]'
+  );
+  return link ? link.href : "";
+})()`;
+var MAX_FAVICON_CHARS = 2048;
+var MAX_TITLE_CHARS = 256;
+async function favicon(cdp) {
+  try {
+    const raw = await cdp.send("Runtime.evaluate", {
+      expression: FAVICON_EXPRESSION,
+      returnByValue: true,
+      // A page that has installed a Proxy on `document.querySelector` cannot
+      // make this hang the strip; a page that throws is simply a page with no
+      // icon.
+      timeout: 1e3
+    });
+    const value = raw?.result?.value;
+    if (typeof value !== "string" || !value) return void 0;
+    if (!value.startsWith("https://") && !value.startsWith("http://") && !value.startsWith("data:image/")) {
+      return void 0;
+    }
+    if (value.length > MAX_FAVICON_CHARS) return void 0;
+    return value;
+  } catch {
+    return void 0;
+  }
+}
+async function readTabMetadata(cdp, fallbackUrl, options = {}) {
+  if (!cdp) {
+    return {
+      url: fallbackUrl,
+      title: "",
+      canGoBack: false,
+      canGoForward: false
+    };
+  }
+  const history = await navigationHistory(cdp);
+  const current = history?.entries[history.currentIndex];
+  const icon = options.favicon === false ? void 0 : await favicon(cdp);
   return {
-    tabId: inputs.tabId,
-    navCounter: inputs.navCounter,
-    urlHash: shortHash(inputs.url),
-    domHash: shortHash(inputs.domSignal)
+    url: current?.url ?? fallbackUrl,
+    title: (current?.title ?? "").slice(0, MAX_TITLE_CHARS),
+    ...icon ? { faviconUrl: icon } : {},
+    // A history of one entry is a tab that has been nowhere. Chromium counts
+    // the current document as an entry, so `currentIndex > 0` — not
+    // `entries.length > 1` — is the question "is there something behind me".
+    canGoBack: !!history && history.currentIndex > 0,
+    canGoForward: !!history && history.currentIndex < history.entries.length - 1
   };
 }
 
@@ -3929,7 +4772,9 @@ var WebMcpBridgeError = class extends Error {
     this.name = "WebMcpBridgeError";
   }
 };
+var MAIN_SESSION_KEY = "\0main";
 var MAX_EARLY_RESPONSES = 16;
+var MAX_SETTLED_IDS = 32;
 var DEFAULT_INVOCATION_TIMEOUT_MS = 6e4;
 var DEFAULT_CANCEL_SETTLE_GRACE_MS = 1e3;
 function originOf(url) {
@@ -3942,10 +4787,23 @@ function originOf(url) {
 var WebMcpBridge = class {
   constructor(cdp, options = {}) {
     this.cdp = cdp;
+    this.sessions.set(MAIN_SESSION_KEY, {
+      key: MAIN_SESSION_KEY,
+      frameId: "",
+      cdp,
+      isMain: true
+    });
     this.invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
     this.cancelSettleGraceMs = options.cancelSettleGraceMs ?? DEFAULT_CANCEL_SETTLE_GRACE_MS;
     this.onChange = options.onChange;
     this.onExternalInvocation = options.onExternalInvocation;
+  }
+  externalSubscribers = /* @__PURE__ */ new Set();
+  subscribeExternalInvocation(listener) {
+    this.externalSubscribers.add(listener);
+    return () => {
+      this.externalSubscribers.delete(listener);
+    };
   }
   /**
    * Tools keyed `${frameId} ${name}` — the browser's own notion of identity —
@@ -3960,9 +4818,23 @@ var WebMcpBridge = class {
   nextRegistrationSeq = 1;
   /** frameId → last known URL, for origin labelling. */
   frames = /* @__PURE__ */ new Map();
+  /** Every session this bridge listens on, keyed by its attachment token. */
+  sessions = /* @__PURE__ */ new Map();
+  /**
+   * frameId → the token of the session that owns that frame.
+   *
+   * The routing table for invocation: `WebMCP.invokeTool` rejects a frame id
+   * that belongs to another target ("FrameId does not belong to current
+   * target"), so the session is part of addressing a tool, not an optimisation.
+   */
+  frameSessions = /* @__PURE__ */ new Map();
   pending = /* @__PURE__ */ new Map();
   /** Responses that arrived before their invocation was registered. */
   earlyResponses = /* @__PURE__ */ new Map();
+  /** Invocation ids already settled, so a duplicate response is dropped. */
+  settledIds = /* @__PURE__ */ new Set();
+  /** Next attachment number, so no two attachments ever share a key. */
+  nextSessionSeq = 1;
   mainFrameId = "";
   /** `WebMCP.invokeTool` calls whose reply has not come back yet. See `wire`. */
   outstandingSends = 0;
@@ -4010,6 +4882,7 @@ var WebMcpBridge = class {
    * responsible for the bridge's own bookkeeping.
    */
   announce() {
+    if (this.disposed) return;
     if (!this.onChange && this.subscribers.size === 0) return;
     const tools = this.list();
     for (const listener of [this.onChange, ...this.subscribers]) {
@@ -4052,7 +4925,7 @@ var WebMcpBridge = class {
    * is never the probe.
    */
   async start(probeSupported) {
-    this.wire();
+    this.wireSession(this.mainSession());
     await this.cdp.send("Page.enable").catch(() => {
     });
     let domainEnabled = true;
@@ -4107,38 +4980,76 @@ var WebMcpBridge = class {
       if (generation === this.probeGeneration) this.probing = null;
     });
   }
-  wire() {
-    this.cdp.on("WebMCP.toolsAdded", (payload) => {
+  mainSession() {
+    return this.sessions.get(MAIN_SESSION_KEY);
+  }
+  /**
+   * Whether events from this session still count.
+   *
+   * `CdpLike` has deliberately no `off`, so nothing can UNSUBSCRIBE a session's
+   * handlers — `removeSession` and `dispose` drop the bridge's bookkeeping and
+   * leave the wiring in place. Without this check a `toolsAdded` arriving after
+   * either one would find the frame unowned, claim it, re-populate the map the
+   * teardown just cleared, and publish it: tools resurrected for a session the
+   * provider has already closed.
+   *
+   * Identity, not just presence: a replacement attachment for the same frame is
+   * a DIFFERENT session object under a different key, so a stale one must not
+   * pass by having a live namesake.
+   */
+  live(session) {
+    if (this.disposed) return false;
+    return this.sessions.get(session.key) === session;
+  }
+  /**
+   * Subscribe one session's events. Every handler closes over the session it
+   * belongs to, because almost every one of them has to answer "whose?" —
+   * which frames this session owns, whose tools a removal may delete, and
+   * whether a navigation is the PAGE's or a subframe target's.
+   */
+  wireSession(session) {
+    session.cdp.on("WebMCP.toolsAdded", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = payload ?? {};
       const registrationSeq = this.nextRegistrationSeq++;
       for (const tool of tools ?? []) {
+        const owner = this.frameSessions.get(tool.frameId);
+        if (owner !== void 0 && owner !== session.key) continue;
         this.tools.set(this.key(tool.frameId, tool.name), {
           tool,
-          registrationSeq
+          registrationSeq,
+          sessionKey: session.key
         });
+        this.frameSessions.set(tool.frameId, session.key);
       }
       this.announce();
     });
-    this.cdp.on("WebMCP.toolsRemoved", (payload) => {
+    session.cdp.on("WebMCP.toolsRemoved", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = payload ?? {};
       for (const tool of tools ?? []) {
-        this.tools.delete(this.key(tool.frameId, tool.name));
+        const key = this.key(tool.frameId, tool.name);
+        if (this.tools.get(key)?.sessionKey !== session.key) continue;
+        this.tools.delete(key);
       }
       this.announce();
     });
-    this.cdp.on("WebMCP.toolInvoked", (payload) => {
+    session.cdp.on("WebMCP.toolInvoked", (payload) => {
       const invoked = payload ?? {};
       if (!invoked.invocationId) return;
       if (this.pending.has(invoked.invocationId)) return;
       if (this.outstandingSends > 0) return;
       this.onExternalInvocation?.(invoked.toolName ?? "");
+      for (const listener of this.externalSubscribers)
+        listener(invoked.toolName ?? "");
     });
-    this.cdp.on("WebMCP.toolResponded", (payload) => {
+    session.cdp.on("WebMCP.toolResponded", (payload) => {
       const responded = payload ?? {};
       const id = responded.invocationId;
       if (!id) return;
       const waiter = this.pending.get(id);
       if (!waiter) {
+        if (this.settledIds.has(id)) return;
         if (this.earlyResponses.size >= MAX_EARLY_RESPONSES) {
           const oldest = this.earlyResponses.keys().next().value;
           if (oldest !== void 0) this.earlyResponses.delete(oldest);
@@ -4149,38 +5060,162 @@ var WebMcpBridge = class {
       this.settle(id);
       this.deliver(waiter, responded);
     });
-    this.cdp.on("Page.frameNavigated", (payload) => {
+    session.cdp.on("Page.frameNavigated", (payload) => {
+      if (!this.live(session)) return;
       const { frame } = payload ?? {};
       if (!frame) return;
       this.frames.set(frame.id, frame.url);
-      this.dropFrame(frame.id);
-      if (!frame.parentId) {
+      this.dropFrame(frame.id, session.key);
+      if (session.isMain && !frame.parentId) {
         this.mainFrameId = frame.id;
         this.reprobe();
       }
       this.announce();
     });
-    this.cdp.on("Page.frameDetached", (payload) => {
-      const { frameId } = payload ?? {};
+    session.cdp.on("Page.frameDetached", (payload) => {
+      if (!this.live(session)) return;
+      const { frameId, reason } = payload ?? {};
       if (!frameId) return;
+      if (reason === "swap") {
+        this.dropFrame(frameId, session.key);
+        if (this.frameSessions.get(frameId) === session.key) {
+          this.frameSessions.delete(frameId);
+        }
+        this.announce();
+        return;
+      }
       this.frames.delete(frameId);
+      this.frameSessions.delete(frameId);
       this.dropFrame(frameId);
       this.announce();
     });
   }
+  /**
+   * Listen on one more CDP session — a frame that turned out to be its own
+   * Chromium target — and answer with the TOKEN that names this attachment.
+   *
+   * The token is per attachment, not per frame, and that is the whole point.
+   * A frame keeps its id across a cross-origin navigation (measured: an OOPIF
+   * navigated cross-origin reports the same CDP frame id), so a frame id names
+   * the FRAME, never one particular session on it. Teardown quotes the token,
+   * so a removal that arrives after the frame has already been re-attached
+   * names an attachment that is gone and does nothing — instead of emptying a
+   * frame that is working.
+   *
+   * Attaching again for the same frame RETIRES the previous attachment first,
+   * so a replaced frame is never listened to twice.
+   *
+   * The domains are enabled here rather than by the caller so a provider only
+   * has to know how to open a session, and the frame tree is read back so a
+   * frame that finished navigating BEFORE we attached still has an origin —
+   * `Page.frameNavigated` has already been and gone for it.
+   */
+  async addSession(frameId, cdp) {
+    const key = `${frameId}#${this.nextSessionSeq++}`;
+    if (this.disposed) return key;
+    for (const existing of [...this.sessions.values()]) {
+      if (!existing.isMain && existing.frameId === frameId) {
+        this.removeSession(existing.key);
+      }
+    }
+    const session = { key, frameId, cdp, isMain: false };
+    this.sessions.set(key, session);
+    this.frameSessions.set(frameId, key);
+    this.wireSession(session);
+    await cdp.send("Page.enable").catch(() => {
+    });
+    await cdp.send("WebMCP.enable").catch(() => {
+    });
+    await this.seedFrames(cdp).catch(() => {
+    });
+    if (!this.live(session)) return key;
+    this.announce();
+    return key;
+  }
+  /**
+   * Stop listening on one attachment and drop what IT registered.
+   *
+   * Takes the token {@link addSession} answered with, never a frame id: a
+   * removal can arrive after the frame has been re-attached, and anything
+   * scoped to the frame would delete the live session's tools.
+   */
+  removeSession(sessionKey) {
+    if (sessionKey === MAIN_SESSION_KEY) return;
+    if (!this.sessions.delete(sessionKey)) return;
+    for (const [toolKey, entry] of [...this.tools]) {
+      if (entry.sessionKey === sessionKey) this.tools.delete(toolKey);
+    }
+    for (const [frameId, owner] of [...this.frameSessions]) {
+      if (owner === sessionKey) this.frameSessions.delete(frameId);
+    }
+    this.announce();
+  }
+  /** Frame ids with their own attached session. Exists for tests and logging. */
+  attachedFrameIds() {
+    return [...this.sessions.values()].filter((session) => !session.isMain).map((session) => session.frameId);
+  }
+  /** Record a session's frame URLs, for origins we missed by attaching late. */
+  async seedFrames(cdp) {
+    const tree = await cdp.send("Page.getFrameTree");
+    const walk = (node) => {
+      if (!node?.frame) return;
+      if (!this.frames.has(node.frame.id)) {
+        this.frames.set(node.frame.id, node.frame.url ?? "");
+      }
+      for (const child of node.childFrames ?? []) walk(child);
+    };
+    walk(tree?.frameTree);
+  }
+  /**
+   * The session that can run a tool in this frame.
+   *
+   * No fallback to the page's session. `WebMCP.invokeTool` rejects a frame id
+   * belonging to another target ("FrameId does not belong to current target"),
+   * so a plausible-looking default is not a degraded call — it is a call to the
+   * wrong renderer, which for a same-named tool would run something the caller
+   * never named.
+   */
+  sessionForFrame(frameId, toolName) {
+    const key = this.frameSessions.get(frameId);
+    const session = key ? this.sessions.get(key) : void 0;
+    if (!session) {
+      throw new WebMcpBridgeError(
+        "webmcp_tool_gone",
+        `The frame that offered "${toolName}" is no longer attached to this session.`
+      );
+    }
+    return session.cdp;
+  }
   key(frameId, name) {
     return `${frameId} ${name}`;
   }
-  dropFrame(frameId) {
-    for (const key of [...this.tools.keys()]) {
-      if (key.startsWith(`${frameId} `)) this.tools.delete(key);
+  /**
+   * Forget a frame's tools. With `sessionKey`, only the ones THAT session
+   * registered — the ordering-safe form, for anything a single session says
+   * about a frame it may no longer own.
+   */
+  dropFrame(frameId, sessionKey) {
+    for (const [key, entry] of [...this.tools]) {
+      if (!key.startsWith(`${frameId} `)) continue;
+      if (sessionKey !== void 0 && entry.sessionKey !== sessionKey) continue;
+      this.tools.delete(key);
     }
   }
+  /**
+   * The ONE terminal transition for an invocation: clear its timers, stop
+   * tracking it, and remember that it is done so a later duplicate response
+   * cannot be mistaken for an early one.
+   */
   settle(invocationId) {
     const waiter = this.pending.get(invocationId);
     if (waiter?.timer) clearTimeout(waiter.timer);
     if (waiter?.cancelTimer) clearTimeout(waiter.cancelTimer);
     this.pending.delete(invocationId);
+    if (this.settledIds.size >= MAX_SETTLED_IDS) {
+      const oldest = this.settledIds.values().next().value;
+      if (oldest !== void 0) this.settledIds.delete(oldest);
+    }
+    this.settledIds.add(invocationId);
   }
   /** Resolve or reject a waiter from the page's response. */
   deliver(waiter, responded) {
@@ -4192,8 +5227,8 @@ var WebMcpBridge = class {
       const reason = waiter.cancelReason ?? "cancelled";
       waiter.reject(
         new WebMcpBridgeError(
-          "webmcp_cancelled",
-          reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+          "webmcp_outcome_unknown",
+          reason === "timeout" ? "Stopped waiting for the page tool after a timeout. Execution may continue; verify the page state before retrying." : "Cancellation requested. Page execution may continue; verify the page state before retrying.",
           reason
         )
       );
@@ -4308,12 +5343,13 @@ var WebMcpBridge = class {
         );
       }
     }
+    const owner = this.sessionForFrame(frameId, args.toolName);
     let invocationId;
     try {
       this.outstandingSends += 1;
       let result;
       try {
-        result = await this.cdp.send("WebMCP.invokeTool", {
+        result = await owner.send("WebMCP.invokeTool", {
           frameId,
           toolName: args.toolName,
           input: args.input
@@ -4343,11 +5379,12 @@ var WebMcpBridge = class {
       }
       throw error;
     }
-    const output = await new Promise((resolve, reject) => {
-      const waiter = { resolve, reject };
+    const output = await new Promise((resolve2, reject) => {
+      const waiter = { resolve: resolve2, reject, cdp: owner };
       const early = this.earlyResponses.get(invocationId);
       if (early) {
         this.earlyResponses.delete(invocationId);
+        this.settle(invocationId);
         this.deliver(waiter, early);
         return;
       }
@@ -4359,16 +5396,16 @@ var WebMcpBridge = class {
         waiter.cancelReason = reason;
         if (waiter.timer) clearTimeout(waiter.timer);
         void Promise.resolve(
-          this.cdp.send("WebMCP.cancelInvocation", { invocationId })
+          owner.send("WebMCP.cancelInvocation", { invocationId })
         ).catch(() => {
         });
         waiter.cancelTimer = setTimeout(() => {
           if (!this.pending.has(invocationId)) return;
-          this.pending.delete(invocationId);
+          this.settle(invocationId);
           reject(
             new WebMcpBridgeError(
-              "webmcp_cancelled",
-              reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+              "webmcp_outcome_unknown",
+              reason === "timeout" ? "Stopped waiting for the page tool after a timeout. Execution may continue; verify the page state before retrying." : "Cancellation requested. Page execution may continue; verify the page state before retrying.",
               reason
             )
           );
@@ -4400,10 +5437,15 @@ var WebMcpBridge = class {
   async cancel(invocationId) {
     const waiter = this.pending.get(invocationId);
     if (waiter) waiter.cancelReason = "cancelled";
-    await Promise.resolve(
-      this.cdp.send("WebMCP.cancelInvocation", { invocationId })
-    ).catch(() => {
-    });
+    const targets = waiter ? [waiter.cdp] : [...this.sessions.values()].map((session) => session.cdp);
+    await Promise.all(
+      targets.map(
+        (cdp) => Promise.resolve(
+          cdp.send("WebMCP.cancelInvocation", { invocationId })
+        ).catch(() => {
+        })
+      )
+    );
     return Boolean(waiter);
   }
   /** Reject every waiter; called when the tab or daemon goes away. */
@@ -4411,14 +5453,20 @@ var WebMcpBridge = class {
     if (this.disposed) return;
     this.disposed = true;
     this.subscribers.clear();
+    this.externalSubscribers.clear();
     this.probe = void 0;
+    for (const key of [...this.sessions.keys()]) {
+      if (key !== MAIN_SESSION_KEY) this.sessions.delete(key);
+    }
+    this.frameSessions.clear();
+    this.tools.clear();
     for (const [id, waiter] of this.pending) {
       if (waiter.timer) clearTimeout(waiter.timer);
       if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);
       waiter.reject(
         new WebMcpBridgeError(
-          "webmcp_cancelled",
-          "The browser tab was closed.",
+          "webmcp_outcome_unknown",
+          "The browser session ended before the page tool's outcome was known. Verify the page state before retrying.",
           "cancelled"
         )
       );
@@ -4521,6 +5569,15 @@ function declaredToolsFromWebmcp(tools) {
     ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {}
   }));
 }
+
+// shared/browser-viewport-policy.ts
+var BROWSER_VIEWPORT_POLICY = {
+  quality: 75,
+  maxFrameBytes: 256 * 1024,
+  minIntervalMs: 100,
+  inputIntervalMs: 33,
+  inputBoostWindowMs: 1500
+};
 
 // server/services/webmcp-inspector/frame-throttle.ts
 function createFrameThrottle(options) {
@@ -4636,19 +5693,23 @@ function base64Bytes(data) {
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
 }
-var DEFAULT_QUALITY = 75;
-var DEFAULT_MIN_INTERVAL_MS = 100;
-var DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
+var DEFAULT_QUALITY = BROWSER_VIEWPORT_POLICY.quality;
+var DEFAULT_MIN_INTERVAL_MS = BROWSER_VIEWPORT_POLICY.minIntervalMs;
+var DEFAULT_MAX_FRAME_BYTES = BROWSER_VIEWPORT_POLICY.maxFrameBytes;
 function createTabViewport(cdp, options) {
-  const quality = options.quality ?? DEFAULT_QUALITY;
+  let quality = options.quality ?? DEFAULT_QUALITY;
+  let oversizeRecoveryAttempted = false;
   const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const now = options.now ?? Date.now;
   const listeners = /* @__PURE__ */ new Set();
   let streaming = false;
+  let startPending = Promise.resolve();
   let streamGeneration = 0;
   let disposed = false;
   let buttonMask = 0;
   let inputChain = Promise.resolve();
+  let resizeChain = Promise.resolve();
+  let pendingResizes = 0;
   let inputHolder;
   let lastData;
   let seq = 0;
@@ -4691,6 +5752,19 @@ function createTabViewport(cdp, options) {
     const bytes = Math.floor(frame.data.length * 3 / 4);
     if (bytes > maxBytes) {
       counters.dropped.oversize += 1;
+      if (!oversizeRecoveryAttempted) {
+        oversizeRecoveryAttempted = true;
+        quality = Math.min(quality, 40);
+        const run = resizeChain.then(async () => {
+          if (disposed || listeners.size === 0) return;
+          await stop();
+          if (disposed || listeners.size === 0) return;
+          await start();
+        });
+        resizeChain = run.catch(() => {
+        });
+        startPending = resizeChain;
+      }
       return;
     }
     const measured = measure(frame.data, options.surface);
@@ -4731,13 +5805,44 @@ function createTabViewport(cdp, options) {
   return {
     subscribe(listener) {
       listeners.add(listener);
-      if (listeners.size === 1) void start();
+      if (listeners.size === 1) {
+        startPending = pendingResizes > 0 ? resizeChain : start();
+      }
       return () => {
         listeners.delete(listener);
         if (listeners.size === 0) void stop();
       };
     },
     subscriberCount: () => listeners.size,
+    ready: async () => {
+      await startPending;
+      return streaming && !disposed;
+    },
+    invalidate() {
+      lastData = void 0;
+    },
+    resize(surface, apply) {
+      pendingResizes++;
+      const run = resizeChain.then(async () => {
+        try {
+          if (disposed || options.surface.width === surface.width && options.surface.height === surface.height)
+            return;
+          await stop();
+          if (disposed) return;
+          await apply?.();
+          Object.assign(options.surface, surface);
+        } finally {
+          pendingResizes--;
+          if (pendingResizes === 0 && !disposed && listeners.size > 0) {
+            await start();
+          }
+        }
+      });
+      resizeChain = run.catch(() => {
+      });
+      startPending = resizeChain;
+      return run;
+    },
     boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),
     counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
     noteTransportDrop() {
@@ -5047,8 +6152,49 @@ var ChromiumDriver = class {
    * running command is live for as long as the command is.
    */
   activeInvocations = /* @__PURE__ */ new Set();
+  /**
+   * How big this session's page is, and its revision.
+   *
+   * The DRIVER owns it rather than the launch args, because it is the thing
+   * that knows every open tab and can therefore be the one place that
+   * guarantees they all agree. A per-tab answer would let two tabs in one
+   * session render at different sizes while one number was published for both.
+   */
+  sessionViewport;
+  /** Monotonic per boot, so two snapshots in one millisecond still order. */
+  stateSeq = 0;
+  stopPageCreated;
+  nextPopupId = 0;
+  maxTabs;
+  onExternalInvocation;
+  allowPaneResize;
+  viewportPolicy;
+  latestViewportRequest;
+  onViewportChange;
+  barrier;
+  resizeDisplay;
   constructor(context, options = {}) {
     this.context = context;
+    this.onExternalInvocation = options.onExternalInvocation;
+    this.maxTabs = Math.max(1, options.maxTabs ?? BROWSER_TAB_CAP);
+    this.stopPageCreated = context.onPageCreated?.(
+      ({ page, opener, background }) => {
+        const openerId = [...this.tabs].find(
+          ([, entry]) => entry.page === opener
+        )?.[0];
+        if (this.closing || !openerId || this.tabs.size + this.pendingTabs.size >= this.maxTabs) {
+          void page.close().catch(() => {
+          });
+          return;
+        }
+        let id;
+        do {
+          id = `popup-${++this.nextPopupId}`;
+        } while (this.tabs.has(id) || this.pendingTabs.has(id));
+        void this.registerTab(id, page, openerId, background).then(() => options.onPopupOpened?.(safeUrl(page))).catch(() => page.close().catch(() => {
+        }));
+      }
+    );
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
@@ -5057,8 +6203,154 @@ var ChromiumDriver = class {
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
+    this.viewportPolicy = options.viewport?.policy ?? "fixed";
+    this.allowPaneResize = options.viewport?.allowPaneResize === true;
+    const initial = options.viewport?.initial;
+    this.sessionViewport = initial ? { width: initial.width, height: initial.height, revision: 0 } : INITIAL_SESSION_VIEWPORT;
+    this.onViewportChange = options.viewport?.onChange;
+    this.resizeDisplay = options.viewport?.resizeDisplay;
+    this.barrier = new SessionBarrier(
+      (size) => this.applyViewport(size),
+      options.viewport?.debounceMs !== void 0 ? { debounceMs: options.viewport.debounceMs } : {}
+    );
   }
+  /** This session's page size and revision, for everything that publishes it. */
+  sessionViewportState() {
+    return this.sessionViewport;
+  }
+  /**
+   * Ask for a new size, and resolve once the request has been dealt with.
+   *
+   * "Dealt with" rather than "applied": a burst of measurements from a drag
+   * collapses into one transition, and every caller in the burst resolves when
+   * that transition lands, whatever size it carried. A `fixed` session
+   * resolves immediately, having changed nothing.
+   */
+  sessionViewportPolicy() {
+    return this.viewportPolicy;
+  }
+  async requestViewport(size) {
+    if (size.policy === "followPane" && this.allowPaneResize)
+      this.viewportPolicy = "followPane";
+    if (this.viewportPolicy === "fixed") return this.sessionViewport;
+    const request = size.policy === "fixed" ? { ...size, width: 1024, height: 768 } : size;
+    this.latestViewportRequest = request;
+    await this.barrier.request(request);
+    return this.sessionViewport;
+  }
+  /** Is a resize waiting or transitioning? Surfaces as the pane's affordance. */
+  viewportSettling() {
+    return this.barrier.busy;
+  }
+  /**
+   * Take every tab to a new size, or leave every tab where it was.
+   *
+   * ALL OR NOTHING, and rolled back by hand rather than left half-applied. A
+   * session whose tabs render at two different sizes has no honest number to
+   * publish for either — and the pane would draw the one that was written
+   * last, over a page that is not that size. The rollback is best-effort
+   * because a page that just refused a resize may refuse the way back too; what
+   * matters is that `sessionViewport` is not advanced unless every page took
+   * the new size, so the published number never runs ahead of the picture.
+   */
+  async applyViewport(size) {
+    const next = advanceViewport(this.sessionViewport, size, "followPane");
+    if (next === this.sessionViewport) {
+      if (size.policy === "fixed" && this.latestViewportRequest === size)
+        this.viewportPolicy = "fixed";
+      return;
+    }
+    const pages = [...this.tabs.values()].map((entry) => entry.page).filter((page) => !page.isClosed());
+    const unable = pages.find(
+      (page) => typeof page.setViewportSize !== "function"
+    );
+    if (unable) {
+      throw new Error(
+        "viewport_unsupported: this engine cannot resize its pages"
+      );
+    }
+    const previous = this.sessionViewport;
+    if (this.resizeDisplay) {
+      const moved = await this.resizeDisplay(
+        { width: next.width, height: next.height },
+        { width: previous.width, height: previous.height }
+      );
+      if (!moved) {
+        throw new Error(
+          "display_resize_failed: the box would not change its display size"
+        );
+      }
+    }
+    const applied = [];
+    try {
+      for (const page of pages) {
+        await page.setViewportSize?.({
+          width: next.width,
+          height: next.height
+        });
+        applied.push(page);
+      }
+    } catch (error) {
+      for (const page of applied) {
+        await page.setViewportSize?.({ width: previous.width, height: previous.height }).catch(() => {
+        });
+      }
+      if (this.resizeDisplay) {
+        await this.resizeDisplay(
+          { width: previous.width, height: previous.height },
+          { width: next.width, height: next.height }
+        ).catch(() => false);
+      }
+      throw error;
+    }
+    this.sessionViewport = next;
+    if (size.policy === "fixed" && this.latestViewportRequest === size)
+      this.viewportPolicy = "fixed";
+    for (const entry of this.tabs.values()) {
+      if (applied.includes(entry.page) || entry.page.isClosed()) continue;
+      await entry.page.setViewportSize?.({ width: next.width, height: next.height }).catch(() => {
+      });
+    }
+    try {
+      this.onViewportChange?.(next);
+    } catch {
+    }
+  }
+  /**
+   * Is this coordinate on the page?
+   *
+   * The SESSION's numbers, not the module constant. The two agree exactly when
+   * the session is `fixed`, which is every caller that predates this — so the
+   * refusals a caller sees today do not move, and a resized session refuses
+   * the coordinates that are genuinely off ITS page rather than off a 1024x768
+   * one it is not.
+   */
+  inViewport(x, y) {
+    return isPointInSessionViewport(x, y, this.sessionViewport);
+  }
+  /** How this session's size reads in an error a caller has to act on. */
+  get viewportLabel() {
+    return `${this.sessionViewport.width}x${this.sessionViewport.height}`;
+  }
+  /**
+   * Run one command, never across a resize.
+   *
+   * The barrier is here rather than around the queue because the queue is
+   * per-TAB and a resize is per-SESSION: two tabs' FIFOs can each be mid-act
+   * while the display changes underneath both. Wrapping the one place every
+   * verb passes through is what makes "never resize midway through an action"
+   * true for all of them at once — including the ones added later.
+   */
   async execute(command) {
+    return this.barrier.run(() => this.executeInBarrier(command));
+  }
+  async executeInBarrier(command) {
+    if (command.source !== "manual" && command.action.kind !== "webmcp_cancel" && !negotiateViewport(this.viewportPolicy, command).ok) {
+      return {
+        ok: false,
+        error: "responsive_viewport_required: read the session viewport before acting"
+      };
+    }
     this.purgeHandoffRings();
     const permit = this.permitFor(command);
     if (!permit()) {
@@ -5066,7 +6358,7 @@ var ChromiumDriver = class {
         "a person took control of this browser before this action ran; nothing was run and nothing was observed"
       );
     }
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const action = command.action;
     const blocked = await this.answerOrRefuseDialog(
       tabId,
@@ -5111,15 +6403,17 @@ var ChromiumDriver = class {
         );
       }
       case "back":
+      case "forward":
       case "reload": {
         const entry = this.tabs.get(tabId);
         if (!entry || entry.page.isClosed()) {
           return { ok: false, error: `unknown_tab: ${tabId}` };
         }
+        const kind = action.kind;
         return this.navigateVerb(
           tabId,
           entry,
-          (page) => action.kind === "back" ? page.goBack() : page.reload(),
+          (page) => kind === "back" ? page.goBack() : kind === "forward" ? page.goForward() : page.reload(),
           permit,
           action.observe
         );
@@ -5160,6 +6454,8 @@ var ChromiumDriver = class {
       await page.close().catch(() => {
       });
       await this.dropTab(tabId);
+      if (!this.closing && this.tabs.size === 0)
+        await this.getOrCreateTab(DEFAULT_TAB);
       return { ok: true, output: { closed: tabId } };
     }
     if (action.verb === "accept_dialog" || action.verb === "dismiss_dialog") {
@@ -5356,10 +6652,10 @@ var ChromiumDriver = class {
       refNode.backendNodeId,
       label
     );
-    if (!isPointInViewport(point.x, point.y)) {
+    if (!this.inViewport(point.x, point.y)) {
       throw new ActError(
         "target_not_found",
-        `${label} is at (${point.x}, ${point.y}), outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} viewport even after scrolling; observe again to see where it is now`
+        `${label} is at (${point.x}, ${point.y}), outside the ${this.viewportLabel} viewport even after scrolling; observe again to see where it is now`
       );
     }
     if (check === "occlusion") {
@@ -5379,9 +6675,9 @@ var ChromiumDriver = class {
     };
     const target = action.target;
     const point = target && "coordinates" in target ? { x: target.coordinates[0], y: target.coordinates[1] } : null;
-    if (point && !isPointInViewport(point.x, point.y)) {
+    if (point && !this.inViewport(point.x, point.y)) {
       throw new Error(
-        `out_of_viewport: (${point.x}, ${point.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport; coordinates are CSS pixels with (0, 0) at the top-left of the last screenshot`
+        `out_of_viewport: (${point.x}, ${point.y}) is outside the ${this.viewportLabel} observation viewport; coordinates are CSS pixels with (0, 0) at the top-left of the last screenshot`
       );
     }
     const selector = target && "selector" in target ? target.selector : null;
@@ -5484,9 +6780,9 @@ var ChromiumDriver = class {
             'drag needs a destination in `value` as "x,y" (viewport coordinates)'
           );
         }
-        if (!isPointInViewport(to.x, to.y)) {
+        if (!this.inViewport(to.x, to.y)) {
           throw new Error(
-            `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport`
+            `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${this.viewportLabel} observation viewport`
           );
         }
         return page.dragTo(from, to);
@@ -5604,7 +6900,13 @@ var ChromiumDriver = class {
     }
     const binding = action.expectedBinding;
     if (binding) {
-      const stale = this.bindingRefusal(tabId, entry, bridge, action.toolKey, binding);
+      const stale = this.bindingRefusal(
+        tabId,
+        entry,
+        bridge,
+        action.toolKey,
+        binding
+      );
       if (stale) {
         return {
           ok: false,
@@ -5645,7 +6947,18 @@ var ChromiumDriver = class {
         output,
         this.webmcpOutputBudgetBytes
       );
-      const frame = await this.snapshot(entry.page);
+      const frame = await this.snapshot(entry.page).catch(() => void 0);
+      if (!frame)
+        return permit() ? {
+          ok: true,
+          output: {
+            invocationId,
+            result: capped,
+            ...omitted ? { omitted } : {}
+          }
+        } : this.leaseBlockedResult(
+          "The tool ran, but control changed before its result could be read."
+        );
       return {
         ...this.observation(
           tabId,
@@ -5685,7 +6998,10 @@ var ChromiumDriver = class {
       );
     }
     const known = await bridge.cancel(invocationId);
-    return { ok: true, output: { cancelled: known, known: true, invocationId } };
+    return {
+      ok: true,
+      output: { cancelled: known, known: true, invocationId }
+    };
   }
   /**
    * Why this binding does not describe the tool that is here now, or undefined
@@ -6013,13 +7329,14 @@ var ChromiumDriver = class {
     };
   }
   async currentStateToken(tabId) {
-    const entry = this.tabs.get(tabId ?? DEFAULT_TAB);
+    const entry = this.tabs.get(tabId ?? this.activeTabId ?? DEFAULT_TAB);
     if (!entry) return void 0;
     return computeStateToken({
-      tabId: tabId ?? DEFAULT_TAB,
+      tabId: tabId ?? this.activeTabId ?? DEFAULT_TAB,
       navCounter: entry.navCounter,
       url: entry.page.url(),
-      domSignal: await entry.page.domStructureSignal()
+      domSignal: await entry.page.domStructureSignal(),
+      viewportRevision: this.sessionViewport.revision
     });
   }
   /**
@@ -6045,6 +7362,74 @@ var ChromiumDriver = class {
    * than asking Chromium — because it runs on every heartbeat of every open
    * stream.
    */
+  /**
+   * The whole truth about this browser, for the pane's shell.
+   *
+   * A SEPARATE READ from `tabsSnapshot`, not a richer version of it, and the
+   * two are kept apart on purpose. `tabsSnapshot` rides the frame heartbeat:
+   * it is synchronous, budgeted to a few kilobytes, and drops tabs from the
+   * end when a session has more than fit — which is exactly right for a
+   * caption over a video and exactly wrong for a tab strip, where the tab that
+   * got dropped is the one somebody is looking for.
+   *
+   * This one is asynchronous (it asks each tab's CDP session for its title,
+   * icon and history), complete, and fetched on its own endpoint. Nothing is
+   * truncated: a browser with thirty tabs has thirty tabs, and a strip that
+   * silently showed sixteen of them would be lying about a thing the person
+   * can count.
+   *
+   * `seq` is a monotonic counter rather than a timestamp: two snapshots taken
+   * inside the same millisecond are ordinary on a fast box, and a reducer that
+   * cannot order them would drop one at random.
+   */
+  interactionAnchor() {
+    const tabId = this.activeTabId;
+    const entry = tabId ? this.tabs.get(tabId) : void 0;
+    if (!tabId || !entry || entry.page.isClosed()) return void 0;
+    return {
+      tabId,
+      url: safeUrl(entry.page),
+      navCounter: entry.navCounter,
+      viewportRevision: this.sessionViewport.revision
+    };
+  }
+  async stateSnapshot() {
+    const hadTabs = this.tabs.size > 0;
+    for (const [id, entry] of [...this.tabs]) {
+      if (entry.page.isClosed()) await this.dropTab(id);
+    }
+    if (hadTabs && this.tabs.size === 0 && !this.closing)
+      await this.getOrCreateTab(DEFAULT_TAB);
+    const live = [...this.tabs.entries()];
+    const read = await Promise.all(
+      live.map(async ([id, entry]) => {
+        const cdp = await entry.page.cdp().catch(() => null);
+        const meta = await readTabMetadata(cdp, safeUrl(entry.page));
+        return { id, meta, entry };
+      })
+    );
+    const activeTabId = this.activeTabId && read.some(({ id }) => id === this.activeTabId) ? this.activeTabId : read[0]?.id ?? null;
+    const active = read.find(({ id }) => id === activeTabId);
+    this.stateSeq += 1;
+    return {
+      seq: this.stateSeq,
+      tabs: read.map(({ id, meta, entry }) => ({
+        id,
+        navCounter: entry.navCounter,
+        ...entry.openerId ? { openerId: entry.openerId } : {},
+        url: meta.url,
+        title: meta.title,
+        ...meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {},
+        loading: entry.loading ?? false
+      })),
+      activeTabId,
+      // The ACTIVE tab's history, which is what the two buttons act on.
+      canGoBack: active?.meta.canGoBack ?? false,
+      canGoForward: active?.meta.canGoForward ?? false,
+      viewport: this.sessionViewport,
+      policy: this.viewportPolicy
+    };
+  }
   tabsSnapshot() {
     const live = [...this.tabs.entries()].filter(([, entry]) => !entry.page.isClosed());
     const activeAt = this.activeTabId ? live.findIndex(([id]) => id === this.activeTabId) : -1;
@@ -6086,7 +7471,7 @@ var ChromiumDriver = class {
     return this.viewports.get(tabId ?? DEFAULT_TAB) ?? null;
   }
   async viewport(tabId) {
-    const key = tabId ?? DEFAULT_TAB;
+    const key = tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
     if (live && !live.page.isClosed()) {
       const cached = this.viewports.get(key);
@@ -6102,7 +7487,10 @@ var ChromiumDriver = class {
       const cdp = await entry.page.cdp();
       if (!cdp) return null;
       return createTabViewport(cdp, {
-        surface: BROWSERD_OBSERVATION_VIEWPORT
+        surface: {
+          width: this.sessionViewport.width,
+          height: this.sessionViewport.height
+        }
       });
     })();
     this.viewports.set(key, created);
@@ -6113,10 +7501,11 @@ var ChromiumDriver = class {
   }
   async close() {
     this.closing = true;
+    this.stopPageCreated?.();
     await Promise.race([
       Promise.allSettled([...this.pendingTabs.values()]),
-      new Promise((resolve) => {
-        const timer = setTimeout(resolve, CLOSE_PENDING_TAB_GRACE_MS);
+      new Promise((resolve2) => {
+        const timer = setTimeout(resolve2, CLOSE_PENDING_TAB_GRACE_MS);
         timer.unref?.();
       })
     ]);
@@ -6174,7 +7563,24 @@ var ChromiumDriver = class {
       // still wins; today it is the same value.
       output: this.withDialogNote(
         tabId,
-        this.withHandoffNote({ url: frame.url, ...output })
+        this.withHandoffNote({
+          url: frame.url,
+          // THE SIZE THIS WAS SEEN AT, on every observation without exception.
+          // It is what the model's coordinates are read in, and on a session
+          // that can be resized it is the only honest way to know: the tool
+          // schema states a range rather than a size, precisely so that it
+          // does not have to be regenerated — and its hash rotated — every
+          // time somebody drags a panel.
+          //
+          // In `output` rather than beside it, unlike `stateToken` and
+          // `cursors`, because this one IS for the model: it is the number it
+          // has to compute against.
+          viewport: {
+            width: this.sessionViewport.width,
+            height: this.sessionViewport.height
+          },
+          ...output
+        })
       ),
       stateToken: this.tokenFor(tabId, entry, frame)
     };
@@ -6291,7 +7697,12 @@ var ChromiumDriver = class {
       tabId,
       navCounter: entry.navCounter,
       url: frame.url,
-      domSignal: frame.domSignal
+      domSignal: frame.domSignal,
+      // The revision AT THE MOMENT OF THE OBSERVATION, which is what makes the
+      // comparison mean anything: an act decided from this token is refused
+      // once the layout has been re-flowed underneath it, even when the DOM
+      // came out structurally identical.
+      viewportRevision: this.sessionViewport.revision
     });
   }
   /** Read a tab's URL and DOM signal together, as one frame snapshot. */
@@ -6311,6 +7722,46 @@ var ChromiumDriver = class {
     const { settled } = await settlePage(steps, this.settleOptions);
     return settled;
   }
+  async registerTab(tabId, page, openerId, background = false) {
+    const entry = {
+      page,
+      ...openerId ? { openerId } : {},
+      navCounter: 0,
+      webmcp: emptyWebmcpState()
+    };
+    this.tabs.set(tabId, entry);
+    void page.cdp().then(async (cdp) => {
+      if (!cdp || this.tabs.get(tabId) !== entry) return;
+      const frames = /* @__PURE__ */ new Set();
+      cdp.on("Page.frameStartedLoading", (raw) => {
+        if (this.tabs.get(tabId) !== entry) return;
+        frames.add(raw.frameId);
+        entry.loading = true;
+      });
+      cdp.on("Page.frameStoppedLoading", (raw) => {
+        if (this.tabs.get(tabId) !== entry) return;
+        frames.delete(raw.frameId);
+        entry.loading = frames.size > 0;
+      });
+      await cdp.send("Page.enable");
+    }).catch(() => {
+    });
+    await entry.page.setViewportSize?.({
+      width: this.sessionViewport.width,
+      height: this.sessionViewport.height
+    }).catch(() => {
+    });
+    void this.attachWebmcp(tabId, entry);
+    if (!background) {
+      this.activeTabId = tabId;
+      if (openerId) await page.bringToFront?.().catch(() => {
+      });
+    } else if (this.activeTabId) {
+      await this.tabs.get(this.activeTabId)?.page.bringToFront?.().catch(() => {
+      });
+    }
+    return entry;
+  }
   /** `null` means teardown has begun and no new page will be opened. */
   async getOrCreateTab(tabId) {
     const existing = this.tabs.get(tabId);
@@ -6318,6 +7769,11 @@ var ChromiumDriver = class {
     const inFlight = this.pendingTabs.get(tabId);
     if (inFlight) return inFlight;
     if (this.closing) return null;
+    if (this.tabs.size + this.pendingTabs.size >= this.maxTabs) {
+      throw new Error(
+        `not found: this browser is at its limit of ${this.maxTabs} tabs \u2014 close one first`
+      );
+    }
     const creating = (async () => {
       await this.dropTab(tabId);
       const page = await this.context.newPage();
@@ -6326,15 +7782,7 @@ var ChromiumDriver = class {
         });
         return null;
       }
-      const entry = {
-        page,
-        navCounter: 0,
-        webmcp: emptyWebmcpState()
-      };
-      this.tabs.set(tabId, entry);
-      void this.attachWebmcp(tabId, entry);
-      this.activeTabId = tabId;
-      return entry;
+      return this.registerTab(tabId, page);
     })();
     this.pendingTabs.set(tabId, creating);
     try {
@@ -6506,7 +7954,7 @@ var ChromiumDriver = class {
    * spends the very round trip the state token exists to save.
    */
   async observeForRefusal(command, wants) {
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -6620,11 +8068,18 @@ var ChromiumDriver = class {
     entry.webmcp.attaching ??= (async () => {
       const bridge = await entry.page.webmcp().catch(() => null);
       if (!bridge || this.tabs.get(tabId) !== entry) return;
-      entry.webmcp.unsubscribe = bridge.subscribe((tools) => {
+      const unsubscribeTools = bridge.subscribe((tools) => {
         entry.webmcp.tools = tools;
         entry.webmcp.supported = bridge.isSupported();
         this.bumpWebmcpRevision(entry);
       });
+      const unsubscribeExternal = bridge.subscribeExternalInvocation?.(
+        (name) => this.onExternalInvocation?.(tabId, name)
+      );
+      entry.webmcp.unsubscribe = () => {
+        unsubscribeTools();
+        unsubscribeExternal?.();
+      };
     })().catch(() => {
     });
     return entry.webmcp.attaching;
@@ -6677,11 +8132,16 @@ var ChromiumDriver = class {
   async dropTab(tabId) {
     const going = this.tabs.get(tabId);
     going?.webmcp.unsubscribe?.();
+    const next = tabAfterClose(
+      [...this.tabs].map(([id, tab]) => ({ id, openerId: tab.openerId })),
+      tabId,
+      this.activeTabId ?? null
+    );
     this.tabs.delete(tabId);
-    if (this.activeTabId === tabId) {
-      const remaining = [...this.tabs.keys()];
-      this.activeTabId = remaining[remaining.length - 1];
-    }
+    this.activeTabId = next ?? void 0;
+    if (!this.closing && next)
+      await this.tabs.get(next)?.page.bringToFront?.().catch(() => {
+      });
     this.refs.delete(tabId);
     await this.dropViewport(tabId);
   }
@@ -6904,25 +8364,32 @@ function abortPromise(signal) {
 var CONSOLE_RING_SIZE = 200;
 var CONSOLE_ENTRY_CAPTURE_BYTES = 4e3;
 var DIALOG_MESSAGE_BYTES = 2e3;
+function warn(message) {
+  process.stderr.write(`[mcpjam-browserd] ${message}
+`);
+}
 var ACT_TIMEOUT_MS = 15e3;
 var SCREENSHOT_JPEG_QUALITY = 70;
 function wrapPage(page) {
   const consoleRing = [];
   let consoleTotal = 0;
   let errorsTotal = 0;
-  page.on("console", (message) => {
-    try {
-      const text = message.text?.() ?? "";
-      consoleRing.push({
-        type: message.type?.() ?? "log",
-        text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
-        at: Date.now()
-      });
-      consoleTotal += 1;
-      if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
-    } catch {
+  page.on(
+    "console",
+    (message) => {
+      try {
+        const text = message.text?.() ?? "";
+        consoleRing.push({
+          type: message.type?.() ?? "log",
+          text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
+          at: Date.now()
+        });
+        consoleTotal += 1;
+        if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+      } catch {
+      }
     }
-  });
+  );
   const network = new NetworkRing();
   const requestIds = /* @__PURE__ */ new WeakMap();
   let nextRequestId = 0;
@@ -7007,13 +8474,31 @@ function wrapPage(page) {
   let cdpPromise = null;
   const adapted = {
     async goto(url) {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async reload() {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.reload({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async goBack() {
-      await page.goBack({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goBack({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
+    },
+    async setViewportSize(size) {
+      await page.setViewportSize(size);
+    },
+    async goForward() {
+      await page.goForward({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async waitForNetworkIdle(signal) {
       const idle = page.waitForLoadState("networkidle", { timeout: 0 });
@@ -7118,7 +8603,7 @@ function wrapPage(page) {
       cdpPromise ??= (async () => {
         const attach = cdpAttachers.get(page);
         if (!attach) return null;
-        return attach().catch(() => null);
+        return attach.page().catch(() => null);
       })();
       return cdpPromise;
     }
@@ -7134,14 +8619,61 @@ async function attachWebMcp(page, session) {
     const bridge = new WebMcpBridge(session);
     bridge.resupport(probe);
     await bridge.start(probe);
+    attachFrameSessions(page, bridge);
     return bridge;
   } catch {
     return null;
   }
 }
+function attachFrameSessions(page, bridge) {
+  const attach = cdpAttachers.get(page)?.frame;
+  if (!attach || !page.frames || !page.mainFrame) return;
+  const tokens = /* @__PURE__ */ new Map();
+  const busy = /* @__PURE__ */ new Set();
+  const attachOne = async (frame) => {
+    if (frame === page.mainFrame?.()) return;
+    if (tokens.has(frame) || busy.has(frame)) return;
+    busy.add(frame);
+    try {
+      const session = await attach(frame);
+      const tree = await session.send("Page.getFrameTree");
+      const frameId = tree?.frameTree?.frame?.id;
+      if (!frameId) return;
+      const token = await bridge.addSession(frameId, session);
+      if (!page.frames?.().includes(frame)) {
+        bridge.removeSession(token);
+        return;
+      }
+      tokens.set(frame, token);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/does not have a separate CDP session/i.test(message)) return;
+      warn(
+        `could not attach a CDP session to the frame at ${frame.url()}: ${message}`
+      );
+    } finally {
+      busy.delete(frame);
+    }
+  };
+  const sweep = () => {
+    for (const frame of page.frames?.() ?? []) void attachOne(frame);
+  };
+  page.on("frameattached", (frame) => void attachOne(frame));
+  page.on("framenavigated", () => sweep());
+  page.on("framedetached", (frame) => {
+    const token = tokens.get(frame);
+    if (token === void 0) return;
+    tokens.delete(frame);
+    bridge.removeSession(token);
+  });
+  sweep();
+}
 var cdpAttachers = /* @__PURE__ */ new WeakMap();
-function registerCdpAttacher(page, attach) {
-  cdpAttachers.set(page, attach);
+function registerCdpAttacher(page, attach, attachFrame) {
+  cdpAttachers.set(page, {
+    page: attach,
+    ...attachFrame ? { frame: attachFrame } : {}
+  });
 }
 function contextOptionsFor(options) {
   const dpr = options.deviceScaleFactor ?? 1;
@@ -7170,7 +8702,8 @@ async function launchBrowserdContext(options) {
         permissions: [],
         // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
         // whatever the box says, so eval captures match across hosts.
-        ...contextOptionsFor({ contextMode: "ephemeral" })
+        ...contextOptionsFor({ contextMode: "ephemeral" }),
+        deviceScaleFactor: options.deviceScaleFactor ?? 1
       });
     } catch (error) {
       await browser.close().catch(() => {
@@ -7203,13 +8736,38 @@ async function launchBrowserdContext(options) {
 function adaptContext(context, options = {}) {
   const startup = [...context.pages()];
   let adopted = 0;
+  const listeners = /* @__PURE__ */ new Set();
+  const wrapped = /* @__PURE__ */ new WeakMap();
+  function adopt(page) {
+    const existing = wrapped.get(page);
+    if (existing) return existing;
+    if (context.newCDPSession) {
+      registerCdpAttacher(
+        page,
+        () => context.newCDPSession(page),
+        (frame) => context.newCDPSession(frame)
+      );
+    }
+    const driverPage = wrapPage(page);
+    wrapped.set(page, driverPage);
+    page.on("popup", (popup) => {
+      const child = adopt(popup);
+      for (const listener of listeners)
+        listener({ page: child, opener: driverPage });
+    });
+    return driverPage;
+  }
   return {
+    onPageCreated(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     async newPage() {
-      const page = adopted < startup.length ? startup[adopted++] : await context.newPage();
-      if (context.newCDPSession) {
-        registerCdpAttacher(page, () => context.newCDPSession(page));
-      }
-      return wrapPage(page);
+      return adopt(
+        adopted < startup.length ? startup[adopted++] : await context.newPage()
+      );
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;
@@ -7226,6 +8784,103 @@ function adaptContext(context, options = {}) {
 
 // server/services/browserd/daemon/main.ts
 import { mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { readFile as readFile2, unlink as unlink2 } from "node:fs/promises";
+
+// server/services/browserd/daemon/display-resize.ts
+function displayGeometryFor(size, options = {}) {
+  const dpr = options.deviceScaleFactor ?? 1;
+  const even = (value) => {
+    const scaled = Math.round(value * dpr);
+    return scaled % 2 === 0 ? scaled : scaled + 1;
+  };
+  return {
+    width: even(size.width),
+    height: even(size.height),
+    depth: options.depth ?? 24
+  };
+}
+function shellSafeDisplay(display) {
+  return /^:[0-9]+(\.[0-9]+)?$/.test(display) ? display : null;
+}
+async function resizeHostedDisplay(deps, next, previous) {
+  const display = shellSafeDisplay(deps.display);
+  if (!display) {
+    return {
+      ok: false,
+      reason: `refusing to resize a display named ${JSON.stringify(
+        deps.display
+      )}`,
+      restored: true
+    };
+  }
+  const geometry = displayGeometryFor(next, {
+    ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
+  });
+  const applyDisplay = async (size) => {
+    const { width, height } = size;
+    if (![width, height].every(
+      (value) => Number.isInteger(value) && value >= 32 && value <= 32768
+    )) {
+      return { ok: false, reason: "invalid display geometry" };
+    }
+    const mode = `mcpjam-${width}x${height}`;
+    const clock = ((width + 160) * (height + 45) * 60 / 1e6).toFixed(3);
+    const randr = `xrandr --display ${display}`;
+    const command = [
+      `${randr} --newmode ${mode} ${clock} ${width} ${width + 48} ${width + 80} ${width + 160} ${height} ${height + 3} ${height + 6} ${height + 45} 2>/dev/null || true`,
+      `${randr} --addmode VNC-0 ${mode} &&`,
+      `${randr} --output VNC-0 --mode ${mode} --fb ${width}x${height} &&`,
+      `${randr} --current | awk '$1 == "VNC-0" && $2 == "connected" && $3 == "${width}x${height}+0+0" { found = 1 } END { exit !found }'`
+    ].join("\n");
+    try {
+      const result = await deps.run(command);
+      return result.exitCode === 0 ? { ok: true } : {
+        ok: false,
+        reason: result.stderr?.trim() || `xrandr exited ${result.exitCode} resizing to ${size.width}x${size.height}`
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error)
+      };
+    }
+  };
+  const restore = async () => {
+    const back = displayGeometryFor(previous, {
+      ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
+    });
+    const result = await applyDisplay(back);
+    if (!result.ok) return false;
+    let pageRestored = true;
+    await deps.resizePage?.(previous).catch(() => {
+      pageRestored = false;
+    });
+    if (!pageRestored) return false;
+    await deps.restartEncoder?.(previous).catch(() => {
+    });
+    return true;
+  };
+  const display_ = await applyDisplay(geometry);
+  if (!display_.ok) {
+    return {
+      ok: false,
+      reason: display_.reason ?? "the display refused the new size",
+      restored: await restore()
+    };
+  }
+  try {
+    await deps.resizePage?.(next);
+    await deps.restartEncoder?.(next);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+      restored: await restore()
+    };
+  }
+  return { ok: true, applied: next };
+}
 
 // server/services/browserd/daemon/config.ts
 import { createHash as createHash2, randomBytes as randomBytes3 } from "node:crypto";
@@ -7269,6 +8924,12 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // contradictory rather than merely unusual, so the one that decides
     // whether there is a picture wins.
     kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
+    // NEVER WITHOUT KIOSK on a hosted box, and the guard is the same shape as
+    // kiosk's own: a display that resized under a Chromium that is not filling
+    // it leaves the page one size and the capture another, which is the exact
+    // disagreement between the number and the picture this whole path exists
+    // to prevent.
+    viewportPolicy: parseViewportPolicy(env.MCPJAM_BROWSERD_VIEWPORT_POLICY),
     deviceScaleFactor: readDeviceScaleFactor(env),
     recordDir: env.MCPJAM_BROWSERD_RECORD_DIR?.trim() || `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
     recordMaxBytes: readRecordMaxBytes(env),
@@ -7276,6 +8937,7 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // typo must not silently cost a run its evidence.
     recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...tokenFile ? { tokenFile } : {},
+    ...env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim() ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() } : {},
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
   };
@@ -7287,7 +8949,8 @@ function readDeviceScaleFactor(env) {
 }
 function readRecordMaxBytes(env) {
   const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
-  if (!Number.isFinite(raw) || raw < 1) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  if (!Number.isFinite(raw) || raw < 1)
+    return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
   return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 function defaultMintToken(path) {
@@ -7340,13 +9003,302 @@ function defaultHashFile(path) {
   return createHash2("sha256").update(readFileSync(path)).digest("hex");
 }
 
+// server/services/browserd/profile-archive.ts
+import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { join as join3, relative, resolve, sep } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
+var MAX_BROWSER_PROFILE_ARCHIVE_BYTES = 256 * 1024 * 1024;
+var MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES = MAX_BROWSER_PROFILE_ARCHIVE_BYTES * 4;
+var TAR_BLOCK_BYTES = 512;
+var EXCLUDED_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
+  "cache",
+  "code cache",
+  "gpucache",
+  "dawncache",
+  "grshadercache",
+  "shadercache",
+  "singletonlock",
+  "singletoncookie",
+  "singletonsock"
+]);
+function isExcludedProfilePath(path) {
+  return path.split(/[\\/]+/).some((segment) => EXCLUDED_PROFILE_SEGMENTS.has(segment.toLowerCase()));
+}
+function assertSafeArchivePath(path) {
+  const normalized = path.replaceAll("\\", "/");
+  if (normalized.startsWith("/") || normalized.split("/").some((segment) => segment === "..")) {
+    throw new Error("browser profile archive contains an unsafe path");
+  }
+}
+function writeTarString(header, value, offset, length) {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.byteLength > length) {
+    throw new Error("browser profile path is too long for a portable archive");
+  }
+  bytes.copy(header, offset);
+}
+function writeTarOctal(header, value, offset, length) {
+  const encoded = `${Math.max(0, value).toString(8).padStart(length - 1, "0")}\0`;
+  if (encoded.length > length) {
+    throw new Error("browser profile archive metadata is too large");
+  }
+  header.write(encoded, offset, length, "ascii");
+}
+function makeTarHeader(path, kind, size, mode) {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
+  assertSafeArchivePath(normalized);
+  const header = Buffer.alloc(TAR_BLOCK_BYTES);
+  let name = normalized;
+  let prefix = "";
+  if (Buffer.byteLength(name) > 100) {
+    const slash = normalized.lastIndexOf("/");
+    if (slash <= 0) {
+      throw new Error(
+        "browser profile path is too long for a portable archive"
+      );
+    }
+    prefix = normalized.slice(0, slash);
+    name = normalized.slice(slash + 1);
+    if (Buffer.byteLength(prefix) > 155 || Buffer.byteLength(name) > 100) {
+      throw new Error(
+        "browser profile path is too long for a portable archive"
+      );
+    }
+  }
+  writeTarString(header, name, 0, 100);
+  writeTarOctal(header, mode & 4095, 100, 8);
+  writeTarOctal(header, 0, 108, 8);
+  writeTarOctal(header, 0, 116, 8);
+  writeTarOctal(header, size, 124, 12);
+  writeTarOctal(header, 0, 136, 12);
+  header.fill(32, 148, 156);
+  header[156] = kind === "directory" ? 53 : 48;
+  header.write("ustar\0", 257, "ascii");
+  header.write("00", 263, "ascii");
+  writeTarString(header, "mcpjam", 265, 32);
+  writeTarString(header, "mcpjam", 297, 32);
+  writeTarString(header, prefix, 345, 155);
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+  return header;
+}
+async function collectProfileEntries(profileDir, currentDir, entries, uncompressedBytes) {
+  const children = await readdir(currentDir, { withFileTypes: true });
+  for (const child of children) {
+    const absolutePath = join3(currentDir, child.name);
+    const archivePath = relative(profileDir, absolutePath).split(sep).join("/");
+    assertSafeArchivePath(archivePath);
+    if (isExcludedProfilePath(archivePath)) continue;
+    const stat2 = await lstat(absolutePath);
+    if (stat2.isDirectory()) {
+      const header2 = makeTarHeader(archivePath, "directory", 0, stat2.mode);
+      entries.push(header2);
+      uncompressedBytes.value += header2.byteLength;
+      if (uncompressedBytes.value > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+        throw new Error(
+          "browser profile archive exceeds the expanded size limit"
+        );
+      }
+      await collectProfileEntries(
+        profileDir,
+        absolutePath,
+        entries,
+        uncompressedBytes
+      );
+      continue;
+    }
+    if (!stat2.isFile()) continue;
+    if (uncompressedBytes.value + stat2.size > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+      throw new Error("browser profile archive exceeds the expanded size limit");
+    }
+    const contents = await readFile(absolutePath);
+    const header = makeTarHeader(
+      archivePath,
+      "file",
+      contents.byteLength,
+      stat2.mode
+    );
+    const padding = Buffer.alloc(
+      (TAR_BLOCK_BYTES - contents.byteLength % TAR_BLOCK_BYTES) % TAR_BLOCK_BYTES
+    );
+    entries.push(header, contents, padding);
+    uncompressedBytes.value += header.byteLength + contents.byteLength + padding.byteLength;
+    if (uncompressedBytes.value > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
+    }
+  }
+}
+function parseTarNumber(header, offset, length) {
+  const raw = header.subarray(offset, offset + length).toString("ascii").replace(/\0.*$/, "").trim();
+  if (!raw) return 0;
+  const value = Number.parseInt(raw, 8);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error("browser profile archive contains invalid metadata");
+  }
+  return value;
+}
+function parseTarString(header, offset, length) {
+  return header.subarray(offset, offset + length).toString("utf8").replace(/\0.*$/, "");
+}
+function isZeroTarBlock(block) {
+  for (const byte of block) {
+    if (byte !== 0) return false;
+  }
+  return true;
+}
+function assertTarChecksum(header) {
+  const expected = parseTarNumber(header, 148, 8);
+  const actual = header.reduce(
+    (sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte),
+    0
+  );
+  if (actual !== expected) {
+    throw new Error("browser profile archive has an invalid checksum");
+  }
+}
+async function ensureSafeDirectory(profileDir, directory) {
+  const absoluteProfileDir = resolve(profileDir);
+  const absoluteDirectory = resolve(directory);
+  if (absoluteDirectory !== absoluteProfileDir && !absoluteDirectory.startsWith(`${absoluteProfileDir}${sep}`)) {
+    throw new Error("browser profile archive contains an unsafe path");
+  }
+  const relativeDirectory = relative(absoluteProfileDir, absoluteDirectory);
+  let current = absoluteProfileDir;
+  for (const segment of relativeDirectory ? relativeDirectory.split(sep) : []) {
+    current = join3(current, segment);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) {
+        throw new Error("browser profile archive targets a symbolic link");
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      await mkdir(current, { mode: 448 });
+    }
+  }
+}
+async function exportBrowserProfileArchive(profileDir) {
+  const entries = [];
+  const uncompressedBytes = { value: 0 };
+  await collectProfileEntries(
+    profileDir,
+    profileDir,
+    entries,
+    uncompressedBytes
+  );
+  entries.push(Buffer.alloc(TAR_BLOCK_BYTES * 2));
+  const archive = gzipSync(Buffer.concat(entries), {
+    portable: true,
+    mtime: 0
+  });
+  if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
+    throw new Error("browser profile archive exceeds the 256 MB limit");
+  }
+  return new Uint8Array(archive);
+}
+async function importBrowserProfileArchive(profileDir, archive, options = {}) {
+  const maxUncompressed = options.maxUncompressedBytes ?? MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES;
+  if (archive.byteLength <= 0) {
+    throw new Error("browser profile archive is empty");
+  }
+  if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
+    throw new Error("browser profile archive exceeds the 256 MB limit");
+  }
+  let tarball;
+  try {
+    tarball = gunzipSync(Buffer.from(archive), {
+      maxOutputLength: maxUncompressed
+    });
+  } catch (error) {
+    if (error.code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
+    }
+    throw error;
+  }
+  await mkdir(profileDir, { recursive: true, mode: 448 });
+  await ensureSafeDirectory(profileDir, profileDir);
+  let offset = 0;
+  let sawEnd = false;
+  while (offset + TAR_BLOCK_BYTES <= tarball.byteLength) {
+    const header = tarball.subarray(offset, offset + TAR_BLOCK_BYTES);
+    offset += TAR_BLOCK_BYTES;
+    if (isZeroTarBlock(header)) {
+      if (sawEnd) break;
+      sawEnd = true;
+      continue;
+    }
+    if (sawEnd) {
+      throw new Error("browser profile archive has data after its end marker");
+    }
+    assertTarChecksum(header);
+    const name = parseTarString(header, 0, 100);
+    const prefix = parseTarString(header, 345, 155);
+    const archivePath = prefix ? `${prefix}/${name}` : name;
+    assertSafeArchivePath(archivePath);
+    const size = parseTarNumber(header, 124, 12);
+    if (size > tarball.byteLength - offset) {
+      throw new Error("browser profile archive is truncated");
+    }
+    if (!archivePath || archivePath === "." || isExcludedProfilePath(archivePath)) {
+      offset += Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+      continue;
+    }
+    const kind = header[156];
+    const target = join3(profileDir, ...archivePath.split("/"));
+    if (kind === 53) {
+      if (size !== 0)
+        throw new Error("browser profile directory has file data");
+      await ensureSafeDirectory(profileDir, target);
+    } else if (kind === 48 || kind === 0) {
+      const parent = resolve(target, "..");
+      await ensureSafeDirectory(profileDir, parent);
+      try {
+        if ((await lstat(target)).isSymbolicLink()) {
+          throw new Error("browser profile archive targets a symbolic link");
+        }
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      await writeFile(target, tarball.subarray(offset, offset + size), {
+        mode: 384
+      });
+    } else {
+      throw new Error("browser profile archive contains an unsupported entry");
+    }
+    offset += Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+  }
+  if (!sawEnd) {
+    throw new Error("browser profile archive is missing its end marker");
+  }
+}
+
 // server/services/browserd/daemon/main.ts
 function log(message) {
   process.stderr.write(`[mcpjam-browserd] ${message}
 `);
 }
+function runShell(command) {
+  return new Promise((resolve2) => {
+    execFile(
+      "/bin/sh",
+      ["-c", command],
+      { timeout: 1e4 },
+      (error, _stdout, stderr) => {
+        resolve2({
+          exitCode: error ? error.code ?? 1 : 0,
+          stderr: typeof stderr === "string" ? stderr : void 0
+        });
+      }
+    );
+  });
+}
 function displayWidth(config) {
-  return Math.round(BROWSERD_OBSERVATION_VIEWPORT.width * config.deviceScaleFactor);
+  return Math.round(
+    BROWSERD_OBSERVATION_VIEWPORT.width * config.deviceScaleFactor
+  );
 }
 function displayHeight(config) {
   return Math.round(
@@ -7356,6 +9308,15 @@ function displayHeight(config) {
 async function main() {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
+  if (config.profileArchivePath && config.contextMode === "persistent") {
+    const archive = await readFile2(config.profileArchivePath);
+    await importBrowserProfileArchive(
+      config.userDataDir,
+      new Uint8Array(archive)
+    );
+    await unlink2(config.profileArchivePath).catch(() => {
+    });
+  }
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
     headless: config.headless,
@@ -7364,13 +9325,62 @@ async function main() {
     deviceScaleFactor: config.deviceScaleFactor
   });
   const lease = new HandoffLease();
-  const driver = new ChromiumDriver(context, { lease });
+  let encoder;
+  const canResize = config.contextMode === "persistent" && config.kiosk && (await runShell(
+    `xrandr --display ${process.env.DISPLAY || ":0"} --current | awk '$1 == "VNC-0" { found = 1 } END { exit !found }'`
+  )).exitCode === 0;
+  const driver = new ChromiumDriver(context, {
+    lease,
+    viewport: {
+      /**
+       * The DAEMON's default is `fixed`, and the door widens it.
+       *
+       * Every existing opener — an eval, a swarm, a CLI run, an SDK consumer —
+       * gets exactly the 1024x768 session it has always had, and only a caller
+       * that negotiated a responsive one moves off it. A daemon that defaulted
+       * the other way would silently change the size of every recorded eval
+       * the first time somebody dragged a panel.
+       */
+      policy: config.viewportPolicy,
+      allowPaneResize: canResize,
+      // KIOSK IS THE TEST for "does this box have a display of its own". It is
+      // the switch that makes "the display IS the page" true for the encoder,
+      // and it is set only on the hosted image; a local Chromium's page is a
+      // window, and resizing it is the whole job.
+      ...config.kiosk ? {
+        resizeDisplay: async (next, previous) => {
+          const outcome = await resizeHostedDisplay(
+            {
+              display: process.env.DISPLAY || ":0",
+              run: runShell,
+              deviceScaleFactor: config.deviceScaleFactor,
+              restartEncoder: async (size) => {
+                const { width, height } = displayGeometryFor(size, {
+                  deviceScaleFactor: config.deviceScaleFactor
+                });
+                await encoder?.resize?.({ width, height });
+              }
+            },
+            next,
+            previous
+          );
+          if (!outcome.ok) {
+            log(
+              `display resize failed (${outcome.reason}); ${outcome.restored ? "restored" : "COULD NOT RESTORE"} ${previous.width}x${previous.height}`
+            );
+          }
+          return outcome.ok;
+        }
+      } : {}
+    }
+  });
   const features = announcedFeatures(config);
   const video = features.includes("h264") ? createVideoEncoder({
     display: process.env.DISPLAY || ":0",
     width: displayWidth(config),
     height: displayHeight(config)
   }) : void 0;
+  encoder = video;
   const recorder = features.includes("record") ? createVideoRecorder({
     display: process.env.DISPLAY || ":0",
     width: displayWidth(config),
@@ -7387,6 +9397,14 @@ async function main() {
       );
     }
   }
+  const liveDisplaySize = () => {
+    const session = driver.sessionViewportState?.();
+    const css = session ? { width: session.width, height: session.height } : { ...BROWSERD_OBSERVATION_VIEWPORT };
+    const { width, height } = displayGeometryFor(css, {
+      deviceScaleFactor: config.deviceScaleFactor
+    });
+    return { width, height };
+  };
   const stack = buildBrowserdStack(driver, {
     token: config.token,
     lease,
@@ -7400,9 +9418,29 @@ async function main() {
     features,
     ...video ? { video } : {},
     ...recorder ? { recorder } : {},
-    displaySize: {
-      width: displayWidth(config),
-      height: displayHeight(config)
+    ...config.contextMode === "persistent" ? {
+      profileExport: async () => {
+        await context.close();
+        await driver.close();
+        return exportBrowserProfileArchive(config.userDataDir);
+      }
+    } : {},
+    // THE DISPLAY AS IT IS NOW, not as it booted.
+    //
+    // `cssViewport` below already follows the session, and these two are one
+    // contract: the frame stream divides them to get the scale a watcher maps
+    // its clicks through. A `displaySize` pinned to the boot geometry made the
+    // two diverge at precisely the moment something moved, so every click after
+    // a resize was scaled by a ratio built from one live number and one stale
+    // one.
+    //
+    // Through `displayGeometryFor`, which is what `xrandr --fb` was actually
+    // given — parity bump included. Multiplying by the scale factor a second
+    // time here would be off by a pixel on every odd dimension.
+    displaySize: liveDisplaySize,
+    cssViewport: () => {
+      const session = driver.sessionViewportState?.();
+      return session ? { width: session.width, height: session.height } : { ...BROWSERD_OBSERVATION_VIEWPORT };
     }
   });
   let shuttingDown = false;

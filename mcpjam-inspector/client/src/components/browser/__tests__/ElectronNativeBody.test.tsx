@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ElectronNativeBody } from "../ElectronNativeBody";
 import {
   BROWSER_PANE_STATS_FLAG,
@@ -80,6 +80,7 @@ describe("the native Electron browser pane", () => {
     expect(await lastAsk()).toEqual({
       bootId: "boot-1",
       holder: "rail-1",
+      takeover: false,
       visible: true,
       bounds: { x: RECT.x, y: RECT.y, width: RECT.width, height: RECT.height },
     });
@@ -100,6 +101,41 @@ describe("the native Electron browser pane", () => {
     expect(document.querySelector("canvas")).toBeNull();
     expect(document.querySelector("img")).toBeNull();
   });
+
+  it("reports the visible slot on mount and after a resize", async () => {
+    const onViewportSize = vi.fn();
+    renderBody({ onViewportSize });
+    await waitFor(() =>
+      expect(onViewportSize).toHaveBeenCalledWith({
+        width: RECT.width,
+        height: RECT.height,
+      }),
+    );
+    const slot = screen.getByTestId("rail-browser-native-slot");
+    const rect = vi.spyOn(slot, "getBoundingClientRect").mockReturnValue({
+      ...slot.getBoundingClientRect(),
+      width: 480,
+      height: 600,
+    });
+    fireEvent(window, new Event("resize"));
+    await waitFor(() =>
+      expect(onViewportSize).toHaveBeenLastCalledWith({
+        width: 480,
+        height: 600,
+      }),
+    );
+    rect.mockRestore();
+  });
+
+  it.each([{ active: false }, { consentGranted: false }, { session: null }])(
+    "does not resize a browser the pane cannot show: %j",
+    async (props) => {
+      const onViewportSize = vi.fn();
+      renderBody({ ...props, onViewportSize });
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      expect(onViewportSize).not.toHaveBeenCalled();
+    },
+  );
 
   it("takes the view out of the window when the pane stops being visible", async () => {
     // A native view is a SIBLING of the renderer: it keeps painting a live

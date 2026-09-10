@@ -179,6 +179,9 @@ export const ANALYTICS_EVENTS = {
   // local_terminal_unavailable: the local terminal could not be offered
   //   {reason} — an enum, never a node-pty error string.
   computer_engine_selected: { source: "client" },
+  local_browser_consent_denied: { source: "client" },
+  local_browser_consent_gate_shown: { source: "client" },
+  local_browser_consent_granted: { source: "client" },
   local_computer_consent_denied: { source: "client" },
   local_computer_consent_gate_shown: { source: "client" },
   local_computer_consent_granted: { source: "client" },
@@ -346,6 +349,9 @@ export const ANALYTICS_EVENTS = {
   plan_limit_sign_in_clicked: { source: "client" },
   plan_limit_buy_credits_clicked: { source: "client" },
   plan_limit_byok_clicked: { source: "client" },
+  // The swarm variant's tertiary link. `surface` on the impression says which
+  // variant was on screen, so it needs no wall_kind of its own.
+  plan_limit_explore_plans_clicked: { source: "client" },
   plan_limit_interval_selected: { source: "client" },
   plan_limit_upgrade_clicked: { source: "client" },
   plan_limit_upgrade_failed: { source: "client" },

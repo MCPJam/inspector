@@ -299,6 +299,10 @@ describe("web chat-v2 — environment execution target", () => {
     expect(fetchHostRuntimeConfigMock).toHaveBeenCalledWith(
       expect.objectContaining({ hostId: "host_legacy" })
     );
+    expect(
+      persistChatSessionToConvexMock.mock.calls[0][0].resumeConfig
+        .executionTarget,
+    ).toEqual({ kind: "host", hostId: "host_legacy" });
     // No ENVIRONMENT was resolved — which is what this test is about. A host
     // target does now query the project's skill catalog, because its skills
     // reach the turn as a live capability set rather than through a separate
@@ -350,6 +354,10 @@ describe("web chat-v2 — environment execution target", () => {
     // plugin lifecycle check — a plugin server belongs to its environment at
     // launch, never to a stored session list.
     expect(persistArgs.resumeConfig.selectedServers).toEqual(["linear"]);
+    expect(persistArgs.resumeConfig.executionTarget).toEqual({
+      kind: "environment",
+      environmentId: "env_1",
+    });
     expect(JSON.stringify(persistArgs)).not.toContain("body-server-9");
   });
 

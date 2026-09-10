@@ -157,6 +157,8 @@ export interface PageWebContents {
   navigationHistory?: {
     canGoBack(): boolean;
     goBack(): void;
+    canGoForward(): boolean;
+    goForward(): void;
   };
 }
 
@@ -165,6 +167,8 @@ export interface ElectronPageDeps {
   onClose(): Promise<void> | void;
   /** Bring the page's window forward — what `activate_tab` means here. */
   onBringToFront?(): void;
+  /** Resize the native view or window when the session barrier accepts it. */
+  onResize?(size: { width: number; height: number }): void;
 }
 
 /**
@@ -858,6 +862,13 @@ export function createElectronPage(
   }
 
   const page: DriverPage = {
+    ...(deps.onResize
+      ? {
+          async setViewportSize(size: { width: number; height: number }) {
+            deps.onResize!(size);
+          },
+        }
+      : {}),
     async goto(url) {
       // BEFORE the load, not inside the settle that follows it: `Network.enable`
       // does not replay, so a request this navigation starts before the monitor
@@ -902,6 +913,22 @@ export function createElectronPage(
         navigationSettled(wc, () => history.goBack()),
         NAV_TIMEOUT_MS,
         "going back",
+        () => wc.stop?.(),
+      );
+    },
+    async goForward() {
+      await session();
+      const history = wc.navigationHistory;
+      // Electron's `goForward()` on an empty forward history does nothing and
+      // fires no navigation event, so `navigationSettled` would wait out the
+      // full timeout for a commit that is never coming. Returning early is
+      // what makes this a no-op rather than a ten-second stall — the same
+      // outcome Playwright reaches by resolving with a null response.
+      if (!history?.canGoForward()) return;
+      await deadline(
+        navigationSettled(wc, () => history.goForward()),
+        NAV_TIMEOUT_MS,
+        "going forward",
         () => wc.stop?.(),
       );
     },
@@ -1240,14 +1267,21 @@ export function createElectronPage(
         if (!cdp) return null;
         try {
           const bridge = new Bridge(cdp);
-          await bridge.start(async () => {
-            // `WebMCP.enable` resolves even where the feature is off; the page
-            // API is the only honest probe. Same rule as every other engine.
-            const supported = await wc
-              .executeJavaScript(`(() => ${PAGE_API_PROBE})()`)
-              .catch(() => false);
-            return supported === true;
-          });
+          const probe = async () => {
+            // Electron's executeJavaScript waits for the first load. The
+            // driver awaits this bridge BEFORE navigating, so using it here
+            // deadlocks a fresh tab. CDP evaluates the current document
+            // directly while preserving discovery before the first load.
+            const result = (await cdp.send("Runtime.evaluate", {
+              expression: PAGE_API_PROBE,
+              returnByValue: true,
+            })) as { result?: { value?: unknown }; exceptionDetails?: unknown };
+            return !result.exceptionDetails && result.result?.value === true;
+          };
+          // The initial document may lack the API. Recheck each destination
+          // rather than retaining about:blank's answer for the whole session.
+          bridge.resupport(probe);
+          await bridge.start(probe);
           return bridge;
         } catch {
           return null;

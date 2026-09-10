@@ -50,7 +50,8 @@ afterEach(() => {
 
 it("adds all staged cases explicitly and clears the draft section after saving", async () => {
   renderWithProviders(<EvalGeneratedDrafts {...scope} />);
-  expect(screen.getByText("Unsaved generated drafts")).toBeVisible();
+  expect(screen.queryByText("Draft Test Cases Generated")).toBeNull();
+  expect(screen.getByRole("button", { name: "Review Draft Cases" })).toBeVisible();
   expect(save).not.toHaveBeenCalled();
   await userEvent
     .setup()
@@ -108,25 +109,118 @@ it("disables duplicate saves while requests are pending", async () => {
   ).toBeDisabled();
   finish();
   await waitFor(() =>
-    expect(screen.queryByText("Unsaved generated drafts")).toBeNull(),
+    expect(screen.queryByText("Draft Test Cases Generated")).toBeNull(),
   );
 });
 
-it("opens the first review card and provides an explicit review action for the next draft", async () => {
+it("starts every draft collapsed and opens only the selected draft", async () => {
   renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  expect(screen.queryByLabelText("Generated case title")).toBeNull();
+  expect(screen.queryByText(/waiting to be added/)).toBeNull();
+  const buttons = screen.getAllByRole("button", { name: "Review case" });
+  expect(buttons).toHaveLength(2);
+  expect(buttons[0]).toHaveAttribute("aria-expanded", "false");
+  const user = userEvent.setup();
+  await user.click(buttons[0]);
   expect(screen.getByLabelText("Generated case title")).toHaveValue("First");
-  await userEvent.setup().click(screen.getByRole("button", { name: "Review case" }));
+  await user.click(screen.getByRole("button", { name: "Close editor" }));
+  expect(screen.queryByLabelText("Generated case title")).toBeNull();
+  await user.click(screen.getAllByRole("button", { name: "Review case" })[1]);
   expect(screen.getByLabelText("Generated case title")).toHaveValue("Second");
   expect(save).not.toHaveBeenCalled();
 });
 
-it("opens the shared chat with a refinement prompt naming the selected draft", async () => {
-  const { useAgentPanelStore } = await import("@/stores/agent-panel/agent-panel-store");
-  const { useEvalPromptQueue } = await import("@/lib/mcpjam-agent/eval-scope");
+it("does not expose refinement chat outside Describe", () => {
   renderWithProviders(<EvalGeneratedDrafts {...scope} />);
-  await userEvent.setup().click(screen.getAllByRole("button", { name: "Refine with chat" })[0]);
-  const panel = useAgentPanelStore.getState();
-  expect(panel.isOpen).toBe(true);
-  expect(useEvalPromptQueue.getState().pending[panel.activeSessionId!].text).toContain('"First"');
+  expect(screen.queryByRole("button", {name:"Refine with chat"})).toBeNull();
   expect(save).not.toHaveBeenCalled();
+});
+
+it("saves only the current Describe batch when other staged drafts exist", async () => {
+  const ids = useEvalGeneration.getState().suites[evalSuiteKey(scope)].drafts;
+  renderWithProviders(<EvalGeneratedDrafts {...scope} visibleDraftIds={new Set([ids[0].id])} saveVisibleOnly hideChat />);
+  await userEvent.setup().click(screen.getByRole("button", {name:"Save all"}));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0][0].title).toBe("First");
+  await waitFor(() => expect(screen.getByText("All tests in this batch are saved.")).toBeVisible());
+});
+
+it("hides an empty draft section even when a previous generation failed", () => {
+  useEvalGeneration.setState({
+    suites: {
+      [key]: {
+        status: "error",
+        drafts: [],
+        error: "Re-authenticate with Monday to generate test cases.",
+      },
+    },
+  });
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  expect(
+    screen.queryByRole("heading", { name: "Draft Test Cases Generated" }),
+  ).toBeNull();
+  expect(screen.queryByText(/0 drafts/)).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("saves shared case-body outcome edits without losing generated actions", async () => {
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  const user = userEvent.setup();
+  await user.click(screen.getAllByRole("button", { name: "Review case" })[0]);
+  await user.type(
+    screen.getByLabelText("Expected Outcome"),
+    "Ticket is displayed",
+  );
+  await user.click(screen.getByRole("button", { name: "Add First to suite" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedOutput: "Ticket is displayed",
+        steps: [{ id: "prompt", kind: "prompt", prompt: "Find ticket" }],
+      }),
+    ),
+  );
+});
+
+it("keeps retained drafts collapsed on return without losing them", async () => {
+  const user = userEvent.setup();
+  const view = renderWithProviders(<EvalGeneratedDrafts {...scope} defaultOpen={false} />);
+  expect(screen.getByRole("button", { name: "Review Draft Cases" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("article", { name: "Draft: First" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Review Draft Cases" }));
+  expect(screen.getByRole("article", { name: "Draft: First" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Review Draft Cases" }));
+  expect(screen.queryByRole("article", { name: "Draft: First" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Review Draft Cases" }));
+  view.unmount();
+  renderWithProviders(<EvalGeneratedDrafts {...scope} defaultOpen={false} />);
+  expect(screen.getByRole("button", { name: "Review Draft Cases" })).toHaveAttribute("aria-expanded", "false");
+  expect(useEvalGeneration.getState().suites[key].drafts).toHaveLength(2);
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("removes unwanted drafts without saving and persists the remaining drafts", async () => {
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  expect(screen.queryByText("Draft", { exact: true })).toBeNull();
+  expect(screen.queryByText(/steps · .* checks/)).toBeNull();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Remove First" }));
+  expect(screen.queryByRole("article", { name: "Draft: First" })).toBeNull();
+  expect(screen.getByRole("article", { name: "Draft: Second" })).toBeVisible();
+  expect(useEvalGeneration.getState().suites[key].drafts.map((draft) => draft.id)).toEqual(["Second"]);
+  expect(JSON.parse(localStorage.getItem("mcpjam:eval-generated-drafts:v1")!)[key].drafts.map((draft: { id: string }) => draft.id)).toEqual(["Second"]);
+  expect(save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Remove Second" }));
+  expect(screen.queryByRole("region", { name: "Generated case drafts" })).toBeNull();
+});
+
+it("prevents removing a draft while it is being saved", async () => {
+  let finish!: () => void;
+  save.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+  renderWithProviders(<EvalGeneratedDrafts {...scope} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Add First to suite" }));
+  expect(screen.getByRole("button", { name: "Remove First" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Remove Second" })).toBeEnabled();
+  finish();
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Remove First" })).toBeNull());
 });

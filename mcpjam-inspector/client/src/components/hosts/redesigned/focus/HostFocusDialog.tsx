@@ -34,6 +34,7 @@ import {
 } from "./host-focus-shell";
 
 interface HostFocusDialogProps {
+  projectId?: string;
   open: boolean;
   /**
    * Stable host identifier. Used as a React key on the JSON-native tabs so
@@ -72,6 +73,7 @@ interface HostFocusDialogProps {
 }
 
 export function HostFocusDialog({
+  projectId,
   open,
   hostId,
   tab,
@@ -264,10 +266,18 @@ export function HostFocusDialog({
               />
             ) : null}
             {activeTab === "tools" ? (
-              <ToolsTab draft={draft} onDraftChange={onDraftChange} />
+              <ToolsTab
+                projectId={projectId}
+                draft={draft}
+                onDraftChange={onDraftChange}
+              />
             ) : null}
             {activeTab === "computer" ? (
-              <ComputerTab draft={draft} onDraftChange={onDraftChange} />
+              <ComputerTab
+                projectId={projectId}
+                draft={draft}
+                onDraftChange={onDraftChange}
+              />
             ) : null}
             {activeTab === "protocol" ? (
               <ProtocolTab

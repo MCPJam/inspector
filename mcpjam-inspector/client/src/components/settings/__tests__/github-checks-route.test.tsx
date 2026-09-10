@@ -17,12 +17,15 @@ const {
   mockSetRepoSuite,
   mockSetRepoOutagePolicy,
   mockSetRepoConformance,
+  mockSetRepoForkCredentials,
+  mockSetRepoPrServerOAuth,
   mockSetRepoFeedbackComments,
   mockDisconnectRepo,
   mockConnectRepo,
   mockConnectVerifiedRepo,
   mockListInstallationRepos,
   mockBindings,
+  mockPrServerOAuthSources,
   mockStartInstallation,
   mockStartDirectClaim,
   mockUnbindInstallation,
@@ -39,6 +42,12 @@ const {
   mockSetRepoEnabled: vi.fn(async () => ({ changed: true })),
   mockSetRepoSuite: vi.fn(async () => ({ changed: true })),
   mockSetRepoOutagePolicy: vi.fn(async () => ({ changed: true })),
+  mockSetRepoForkCredentials: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
+  mockSetRepoPrServerOAuth: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
   mockSetRepoConformance: vi.fn(async () => ({ changed: true })),
   mockSetRepoFeedbackComments: vi.fn(async () => ({ changed: true })),
   mockDisconnectRepo: vi.fn(async () => ({ removed: true })),
@@ -62,6 +71,7 @@ const {
     },
   ]),
   mockBindings: { value: undefined as unknown[] | undefined },
+  mockPrServerOAuthSources: { value: [] as unknown[] },
   mockStartInstallation: vi.fn(async () => ({
     installUrl: "https://github.com/apps/mcpjam/installations/new?state=abc",
   })),
@@ -88,12 +98,15 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     repos: mockRepos.value,
     suites: mockSuites.value,
     bindings: mockBindings.value,
+    prServerOAuthSources: mockPrServerOAuthSources.value,
     connectRepo: mockConnectRepo,
     connectVerifiedRepo: mockConnectVerifiedRepo,
     setRepoEnabled: mockSetRepoEnabled,
     setRepoSuite: mockSetRepoSuite,
     setRepoOutagePolicy: mockSetRepoOutagePolicy,
     setRepoConformance: mockSetRepoConformance,
+    setRepoForkCredentials: mockSetRepoForkCredentials,
+    setRepoPrServerOAuth: mockSetRepoPrServerOAuth,
     setRepoFeedbackComments: mockSetRepoFeedbackComments,
     disconnectRepo: mockDisconnectRepo,
     listInstallationRepos: mockListInstallationRepos,
@@ -1264,6 +1277,37 @@ describe("GithubChecksRoute organization switching", () => {
       "Fail open",
     );
   });
+
+  it("drops an OAuth failure that arrives after the organization changed", async () => {
+    mockRepos.value = [ROW];
+    mockPrServerOAuthSources.value = [
+      {
+        serverId: "server-oauth",
+        projectId: ROW.projectId,
+        name: "Test OAuth server",
+        authorized: true,
+      },
+    ];
+    mockListInstallationRepos.mockResolvedValue([]);
+    let rejectStaleWrite: ((error: unknown) => void) | undefined;
+    mockSetRepoPrServerOAuth.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectStaleWrite = reject;
+        }),
+    );
+
+    const { rerender } = render(routeTree("org-1"));
+    await chooseOption(
+      userEvent.setup(),
+      `Server authentication for ${ROW.repoFullName}`,
+      "Test OAuth server",
+    );
+    rerender(routeTree("org-2"));
+    await act(async () => rejectStaleWrite?.(new Error("stale failure")));
+
+    expect(toast.error).not.toHaveBeenCalled();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1884,5 +1928,51 @@ describe("GithubChecksRoute permissions", () => {
     expect(
       screen.queryByText(/only an organization owner or admin can change it/i)
     ).not.toBeInTheDocument();
+  });
+});
+
+it("Settings opts in only the selected repository", async () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [ROW];
+  renderRoute();
+  const toggle = screen.getByRole("switch", {
+    name: /Allow suite credentials in approved forks/,
+  });
+  expect(toggle).not.toBeChecked();
+  await userEvent.setup().click(toggle);
+  expect(mockSetRepoForkCredentials).toHaveBeenCalledWith({
+    configId: ROW._id,
+    enabled: true,
+  });
+});
+
+it("Settings selects an authorized project-shared OAuth source", async () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [ROW];
+  mockPrServerOAuthSources.value = [
+    {
+      serverId: "server-oauth",
+      projectId: ROW.projectId,
+      name: "Test OAuth server",
+      authorized: true,
+    },
+  ];
+  renderRoute();
+
+  await chooseOption(
+    userEvent.setup(),
+    `Server authentication for ${ROW.repoFullName}`,
+    "Test OAuth server",
+  );
+
+  expect(mockSetRepoPrServerOAuth).toHaveBeenCalledWith({
+    configId: ROW._id,
+    sourceServerId: "server-oauth",
   });
 });

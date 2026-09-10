@@ -15,6 +15,7 @@ import {
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
 import {
+  useEnsureFirstAnalysis,
   useInsightsFlowController,
   useInsightsRebuild,
   type InsightsView,
@@ -211,6 +212,28 @@ export function InsightsWorkbench({
     rebuild,
     cohortKey,
   );
+
+  /**
+   * User Testing analyzes itself (BB-196).
+   *
+   * Keyed on the scope, not a prop: this mirrors a backend rule keyed on the
+   * same fact (`scenarioWindowFreshness`'s first-analysis fast path), and two
+   * ways to say it would let a caller turn off half of a guarantee. Swarms are
+   * excluded because a settling run already queues theirs (journeyRuns.ts);
+   * the benchmark flow because it is the one paid analysis and waits to be
+   * asked.
+   */
+  const scopeAnalyzesItself = scope?.kind === "scenario";
+  const { failed: firstAnalysisRefused } = useEnsureFirstAnalysis({
+    enabled: scopeAnalyzesItself,
+    cohortKey,
+    breakdown,
+    rebuild,
+  });
+  // A refused start withdraws the promise: with no run ever coming, keeping it
+  // would leave the viewer watching a spinner with the only control that could
+  // fix it hidden behind it.
+  const analysisIsAutomatic = scopeAnalyzesItself && !firstAnalysisRefused;
 
   const { setView } = flow;
   const handleViewChange = useCallback(
@@ -409,6 +432,7 @@ export function InsightsWorkbench({
           onRebuild={handleRebuild}
           rebuildBusy={rebuildBusy}
           onApplyTuning={handleApplyTuning}
+          analysisIsAutomatic={analysisIsAutomatic}
           showLinkThreshold
           fillHeight={fillBody}
           scrollLayout={!fillBody}

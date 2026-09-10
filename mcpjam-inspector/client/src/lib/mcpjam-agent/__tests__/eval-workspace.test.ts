@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   registerEvalSuite,
+  registerEvalDraft,
+  isEvalContextReady,
+  useEvalContextVersion,
   startEvalGeneration,
   useEvalGeneration,
   evalSuiteKey,
@@ -100,4 +103,37 @@ describe("reviewable eval generation", () => {
     ).toMatchObject({ saving: false, error: "Offline" });
     cleanup();
   });
+});
+
+it("waits for the exact case context and recovers when its bridges register", () => {
+  const target = {
+    ...scope,
+    suiteId: "loading-suite",
+    caseId: "draft:describe",
+  };
+  expect(isEvalContextReady(target)).toBe(false);
+  const changed = vi.fn();
+  const unsubscribe = useEvalContextVersion.subscribe(changed);
+  const removeSuite = registerEvalSuite(target, {
+    read: () => ({}),
+    generate: vi.fn(),
+    save: vi.fn(),
+  });
+  expect(isEvalContextReady(target)).toBe(false);
+  const removeDraft = registerEvalDraft(target, {
+    read: () => ({
+      draft: { title: "New case", steps: [] },
+      revision: "1",
+      tools: [],
+    }),
+    edit: vi.fn(),
+    undo: vi.fn(),
+  });
+  expect(isEvalContextReady(target)).toBe(true);
+  expect(isEvalContextReady({ ...target, caseId: "another-case" })).toBe(false);
+  removeDraft();
+  expect(isEvalContextReady(target)).toBe(false);
+  removeSuite();
+  expect(changed).toHaveBeenCalledTimes(4);
+  unsubscribe();
 });

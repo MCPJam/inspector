@@ -48,6 +48,15 @@ function appInventory(): Set<string> {
 
 /** Route -> the `PlatformApiClient` method that calls it. */
 const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
+  // The browser operation transport is shared by all agent-session routes.
+  "post /browser-sessions/session": "browserSession",
+  "post /browser-sessions/sessions": "browserSession",
+  "post /browser-sessions/command": "browserSession",
+  "post /browser-sessions/trace": "browserSession",
+  "post /browser-sessions/note": "browserSession",
+  "post /browser-sessions/artifact": "browserSession",
+  "post /browser-sessions/close": "browserSession",
+
   // Identity and catalogs
   // Spend budget — the organization's ceiling on MCPJam-billed spend.
   "get /organizations/{organizationId}/spend-budget": "getSpendBudget",

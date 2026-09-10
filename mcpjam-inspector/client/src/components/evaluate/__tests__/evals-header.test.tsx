@@ -1,8 +1,83 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { EvalsHeader } from "../evals-header";
 
 describe("EvalsHeader", () => {
+  it("offers run setup and creation actions on Runs", async () => {
+    const user = userEvent.setup();
+    const setup = vi.fn(),
+      create = vi.fn(),
+      add = vi.fn();
+    render(
+      <EvalsHeader
+        landingView="runs"
+        onSetupRun={setup}
+        onCreateSuite={create}
+        onAddCase={add}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    expect(setup).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "More evaluate actions" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Create suite" }));
+    expect(create).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "More evaluate actions" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Add test case" }));
+    expect(add).toHaveBeenCalledOnce();
+  });
+
+  it("defaults to Create suite on Suites with secondary run and case actions", async () => {
+    const user = userEvent.setup();
+    const create = vi.fn(),
+      setup = vi.fn(),
+      add = vi.fn();
+    render(
+      <EvalsHeader
+        landingView="suites"
+        onCreateSuite={create}
+        onSetupRun={setup}
+        onAddCase={add}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Create suite" }));
+    expect(create).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "More evaluate actions" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Setup run" }));
+    expect(setup).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "More evaluate actions" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Add test case" }));
+    expect(add).toHaveBeenCalledOnce();
+  });
+
+  it("links back to the case from the UVC checks breadcrumb", () => {
+    const back = vi.fn();
+    render(
+      <EvalsHeader
+        parentCrumb={{ label: "Suite", onClick: vi.fn() }}
+        detailCrumb={{ label: "UVC checks" }}
+        onCurrentCrumbClick={back}
+      >
+        Case title
+      </EvalsHeader>,
+    );
+    const caseLink = screen.getByRole("button", { name: "Case title" });
+    expect(caseLink).toBeEnabled();
+    fireEvent.click(caseLink);
+    expect(back).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("link", { name: "UVC checks", current: "page" }),
+    ).toBeInTheDocument();
+  });
+
   it("renders the Evaluate landing chrome and wires Create suite", () => {
     const onCreateSuite = vi.fn();
     render(<EvalsHeader onCreateSuite={onCreateSuite} />);
@@ -38,7 +113,9 @@ describe("EvalsHeader", () => {
     const row = screen.getByTestId("evals-header-title-row");
     const suites = screen.getByRole("button", { name: /^suites$/i });
     const runs = screen.getByRole("button", { name: /^runs$/i });
-    expect(row).toContainElement(screen.getByRole("heading", { name: "Evaluate" }));
+    expect(row).toContainElement(
+      screen.getByRole("heading", { name: "Evaluate" }),
+    );
     expect(row).toContainElement(screen.getByTestId("evals-header-title-rule"));
     expect(row).toContainElement(suites);
     expect(row).toContainElement(runs);

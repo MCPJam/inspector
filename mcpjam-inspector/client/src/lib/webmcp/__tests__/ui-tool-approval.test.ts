@@ -86,10 +86,10 @@ describe("createUiAwareApprovalResponseHandler", () => {
 
     expect(def.execute).toHaveBeenCalledWith(
       { target: "servers" },
-      { toolCallId: "tc-1" }
+      { toolCallId: "tc-1" },
     );
     expect(addToolOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ tool: "ui_navigate", toolCallId: "tc-1" })
+      expect.objectContaining({ tool: "ui_navigate", toolCallId: "tc-1" }),
     );
     expect(addToolApprovalResponse).not.toHaveBeenCalled();
   });
@@ -180,11 +180,18 @@ describe("createUiAwareApprovalResponseHandler", () => {
     vi.spyOn(useWebmcpInspectorStore, "getState").mockReturnValue({
       ...initial,
       session: { sessionId: "session-1" } as typeof initial.session,
+      tools: [
+        {
+          toolKey: "https://shop.test::add_to_cart",
+          binding: { frameId: "main", registrationSeq: 1 },
+        } as never,
+      ],
       invokeToolForResult: invoke as never,
     });
     setAdvertisedPageTools([
       {
         alias: "page_1a2b3c4d",
+        binding: { frameId: "main", registrationSeq: 1 },
         sessionId: "session-1",
         toolKey: "https://shop.test::add_to_cart",
         rawName: "add_to_cart",
@@ -217,9 +224,13 @@ describe("createUiAwareApprovalResponseHandler", () => {
     handler({ id: "appr-page", approved: true });
     await flushMicrotasks();
 
-    expect(invoke).toHaveBeenCalledWith("https://shop.test::add_to_cart", {
-      sku: "ABC-123",
-    });
+    expect(invoke).toHaveBeenCalledWith(
+      "https://shop.test::add_to_cart",
+      {
+        sku: "ABC-123",
+      },
+      { frameId: "main", registrationSeq: 1 },
+    );
     expect(addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({ tool: "page_1a2b3c4d", toolCallId: "tc-page" }),
     );
@@ -258,7 +269,7 @@ describe("fulfillOrphanedDeferredUiToolCalls", () => {
 
     expect(def.execute).toHaveBeenCalledWith(
       { target: "servers" },
-      expect.objectContaining({ toolCallId: expect.any(String) })
+      expect.objectContaining({ toolCallId: expect.any(String) }),
     );
     expect(addToolOutput).toHaveBeenCalled();
   });

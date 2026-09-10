@@ -72,6 +72,7 @@ import {
   originsForFilters,
   runAgentName,
   RUN_ORIGIN_FILTERS,
+  resolveRunOrigin,
 } from "@/lib/evals/run-origin";
 import type { EvalSuiteRun } from "./types";
 import {
@@ -203,10 +204,12 @@ export function ProjectRunsTable({
   decisionSummaryEnabled = false,
   embedded = false,
   historyMetricsEnabled = false,
+  metricBars = false,
   emptyState,
 }: {
   projectId: string;
   historyMetricsEnabled?: boolean;
+  metricBars?: boolean;
   /** Use the parent page scroll when shown below the suite cards. */
   embedded?: boolean;
   /**
@@ -237,16 +240,9 @@ export function ProjectRunsTable({
   const [branchFilter, setBranchFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [commitFilter, setCommitFilter] = useState("");
 
-  /**
-   * The chip selection, as the backend's `origins` argument.
-   *
-   * SENT TO THE QUERY, not applied to the rows it returns. Filtering the
-   * loaded page was a false negative with real consequences: a suite whose only
-   * GitHub runs were older than the first 50 rows answered "No runs match these
-   * filters", which reads as "we never ran this from CI" rather than "they are
-   * further down". An empty selection sends no argument at all, so an older
-   * backend that does not know it is unaffected.
-   */
+  // Legacy feeds support a server-side origins query. Evaluate history keeps
+  // its query stable: some deployed backends reject that optional argument.
+  // Filter loaded rows locally and retain pagination for older matches.
   const origins = useMemo(
     () => originsForFilters([...sourceFilter]),
     [sourceFilter],
@@ -256,7 +252,7 @@ export function ProjectRunsTable({
     "testSuites:listProjectRuns" as any,
     {
       projectId,
-      ...(origins.length > 0 ? { origins } : {}),
+      ...(!historyMetricsEnabled && origins.length > 0 ? { origins } : {}),
     } as any,
     { initialNumItems: PROJECT_RUNS_PAGE_SIZE },
   );
@@ -275,13 +271,18 @@ export function ProjectRunsTable({
 
   const sourceAndSuiteRows = useMemo(
     () =>
-      // Suite only. Origin is decided by the query above, so a row that got
-      // here already matches the chips — re-checking it client-side would be a
-      // second predicate free to disagree with the one that chose the page.
       rows.filter(
-        (row) => suiteFilter === ALL_SUITES || row.suiteId === suiteFilter,
+        (row) =>
+          (suiteFilter === ALL_SUITES || row.suiteId === suiteFilter) &&
+          (!historyMetricsEnabled ||
+            origins.length === 0 ||
+            // Resolve the DISPLAYED origin (verified attribution, then the
+            // declared launcher, then the stamp) so a chip matches the badge.
+            origins.includes(
+              (resolveRunOrigin(row) ?? "ui") as (typeof origins)[number],
+            )),
       ),
-    [rows, suiteFilter],
+    [rows, suiteFilter, historyMetricsEnabled, origins],
   );
 
   // Hydrate loaded history before display filters: options and comparison baselines
@@ -445,7 +446,7 @@ export function ProjectRunsTable({
                 : data.latest,
               label: `${
                 launch.runs[0].suiteName ?? "Deleted suite"
-              } · Run #${Math.min(...runs.map((run) => run.runNumber))}`,
+              } · #${Math.min(...runs.map((run) => run.runNumber))}`,
             },
           ]
         : [];
@@ -544,6 +545,7 @@ export function ProjectRunsTable({
     serverFilter !== ALL_EVAL_FILTER_VALUES ||
     hasGitFilter;
   const hasClientSideFilter =
+    (historyMetricsEnabled && sourceFilter.size > 0) ||
     suiteFilter !== ALL_SUITES ||
     clientFilter !== ALL_EVAL_FILTER_VALUES ||
     serverFilter !== ALL_EVAL_FILTER_VALUES ||
@@ -607,20 +609,46 @@ export function ProjectRunsTable({
         aria-label="Project run history"
       >
         <div className={runHistoryToolbarClass}>
-          {embedded && !historyMetricsEnabled ? (
-            <h2 className="text-xs font-semibold text-secondary-foreground">
-              Run history
-            </h2>
-          ) : (
-            <h2 className="text-xs font-semibold text-foreground">All Runs</h2>
-          )}
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-3">
+            {embedded && !historyMetricsEnabled ? (
+              <h2 className="text-xs font-semibold text-secondary-foreground">
+                Run history
+              </h2>
+            ) : (
+              <h2 className="text-xs font-semibold text-foreground">
+                All Runs
+              </h2>
+            )}
+          </div>
+          <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5">
+            {isFiltering && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-[11px]"
+                onClick={() => {
+                  setSourceFilter(new Set());
+                  setSuiteFilter(ALL_SUITES);
+                  setClientFilter(ALL_EVAL_FILTER_VALUES);
+                  setServerFilter(ALL_EVAL_FILTER_VALUES);
+                  setRepositoryFilter(ALL_EVAL_FILTER_VALUES);
+                  setBranchFilter(ALL_EVAL_FILTER_VALUES);
+                  setCommitFilter("");
+                }}
+              >
+                Clear filters
+              </Button>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
                   size="sm"
-                  className={runHistoryFilterClass}
+                  className={cn(
+                    runHistoryFilterClass,
+                    sourceFilter.size > 0 &&
+                      "border-primary/40 ring-1 ring-primary/15",
+                  )}
                   aria-label="Filter by platform"
                 >
                   Platform
@@ -645,19 +673,30 @@ export function ProjectRunsTable({
               <SelectTrigger
                 size="sm"
                 aria-label="Filter by suite"
-                className={runHistoryFilterClass}
+                title={suiteOptions.find(([id]) => id === suiteFilter)?.[1]}
+                className={cn(
+                  runHistoryFilterClass,
+                  "min-w-0 max-w-44 [&>svg]:shrink-0",
+                  suiteFilter !== ALL_SUITES &&
+                    "border-primary/40 ring-1 ring-primary/15",
+                )}
               >
-                <span className="truncate">
+                <span className="min-w-0 flex-1 truncate text-left">
                   {suiteFilter === ALL_SUITES
                     ? "Suite"
                     : suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
                       "Suite"}
                 </span>
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-w-[min(24rem,calc(100vw-2rem))]">
                 <SelectItem value={ALL_SUITES}>All suites</SelectItem>
                 {suiteOptions.map(([id, name]) => (
-                  <SelectItem key={id} value={id}>
+                  <SelectItem
+                    key={id}
+                    value={id}
+                    className="whitespace-normal break-words"
+                    title={name}
+                  >
                     {name}
                   </SelectItem>
                 ))}
@@ -667,6 +706,11 @@ export function ProjectRunsTable({
               <>
                 <EvalListFilter
                   label="Client"
+                  className={
+                    clientFilter !== ALL_EVAL_FILTER_VALUES
+                      ? "border-primary/40 ring-1 ring-primary/15"
+                      : undefined
+                  }
                   value={clientFilter}
                   options={clientOptions}
                   onChange={setClientFilter}
@@ -674,6 +718,11 @@ export function ProjectRunsTable({
                 />
                 <EvalListFilter
                   label="Server"
+                  className={
+                    serverFilter !== ALL_EVAL_FILTER_VALUES
+                      ? "border-primary/40 ring-1 ring-primary/15"
+                      : undefined
+                  }
                   value={serverFilter}
                   options={serverOptions}
                   onChange={setServerFilter}
@@ -685,12 +734,22 @@ export function ProjectRunsTable({
               <>
                 <EvalListFilter
                   label="Repository"
+                  className={
+                    repositoryFilter !== ALL_EVAL_FILTER_VALUES
+                      ? "border-primary/40 ring-1 ring-primary/15"
+                      : undefined
+                  }
                   value={repositoryFilter}
                   options={repositoryOptions}
                   onChange={setRepositoryFilter}
                 />
                 <EvalListFilter
                   label="Branch"
+                  className={
+                    branchFilter !== ALL_EVAL_FILTER_VALUES
+                      ? "border-primary/40 ring-1 ring-primary/15"
+                      : undefined
+                  }
                   value={branchFilter}
                   options={branchOptions}
                   onChange={setBranchFilter}
@@ -700,27 +759,13 @@ export function ProjectRunsTable({
                   placeholder="Commit SHA"
                   value={commitFilter}
                   onChange={(event) => setCommitFilter(event.target.value)}
-                  className="h-7 w-32 rounded-full text-[11px]"
+                  className={cn(
+                    "h-7 w-32 rounded-full text-[11px]",
+                    commitFilter.trim() &&
+                      "border-primary/40 ring-1 ring-primary/15",
+                  )}
                 />
               </>
-            )}
-            {isFiltering && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-[11px]"
-                onClick={() => {
-                  setSourceFilter(new Set());
-                  setSuiteFilter(ALL_SUITES);
-                  setClientFilter(ALL_EVAL_FILTER_VALUES);
-                  setServerFilter(ALL_EVAL_FILTER_VALUES);
-                  setRepositoryFilter(ALL_EVAL_FILTER_VALUES);
-                  setBranchFilter(ALL_EVAL_FILTER_VALUES);
-                  setCommitFilter("");
-                }}
-              >
-                Clear filters
-              </Button>
             )}
           </div>
         </div>
@@ -782,6 +827,8 @@ export function ProjectRunsTable({
             )}
             {metricData && (
               <MetricStrip
+                bars={metricBars}
+                showCost={!metricBars || metricData.latest.costUsd != null}
                 data={metricData}
                 surface="embedded"
                 context="history"
@@ -828,9 +875,7 @@ export function ProjectRunsTable({
                 >
                   {historyMetricsEnabled ? "Iteration pass" : "Results"}
                 </TableHead>
-                <TableHead>
-                  {historyMetricsEnabled ? "Platform" : "Date"}
-                </TableHead>
+                {!historyMetricsEnabled && <TableHead>Date</TableHead>}
                 <TableHead className="text-right">
                   {historyMetricsEnabled ? "Latency p50" : "Duration"}
                 </TableHead>
@@ -840,7 +885,10 @@ export function ProjectRunsTable({
                   {historyMetricsEnabled ? "Total tokens" : "Run by"}
                 </TableHead>
                 {historyMetricsEnabled && (
-                  <TableHead className="text-right">Tool calls</TableHead>
+                  <>
+                    <TableHead className="text-right">Tool calls</TableHead>
+                    <TableHead>Platform</TableHead>
+                  </>
                 )}
               </TableRow>
             </TableHeader>
@@ -1072,7 +1120,7 @@ function ProjectRunTableRow({
         <div className={grouped ? (nested ? "pl-12" : "pl-5") : undefined}>
           <span className="block truncate font-medium">
             {grouped
-              ? `Run #${row.runNumber}`
+              ? `#${row.runNumber}`
               : row.suiteName ?? (
                   <span
                     className="text-muted-foreground"
@@ -1220,6 +1268,15 @@ function ProjectRunTableRow({
       )}
       {historyMetricsEnabled ? (
         <>
+          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+            {formatRunHistoryMetric(historyRow?.latencyMs ?? null, "duration")}
+          </TableCell>
+          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+            {formatRunHistoryMetric(historyRow?.tokens ?? null, "number")}
+          </TableCell>
+          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+            {formatRunHistoryMetric(historyRow?.toolCalls ?? null, "number")}
+          </TableCell>
           <TableCell>
             <div className="flex flex-col items-start gap-1">
               <RunPlatformBadge run={row} metadata={row.ciMetadata} />
@@ -1232,15 +1289,6 @@ function ProjectRunTableRow({
                 />
               )}
             </div>
-          </TableCell>
-          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-            {formatRunHistoryMetric(historyRow?.latencyMs ?? null, "duration")}
-          </TableCell>
-          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-            {formatRunHistoryMetric(historyRow?.tokens ?? null, "number")}
-          </TableCell>
-          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-            {formatRunHistoryMetric(historyRow?.toolCalls ?? null, "number")}
           </TableCell>
         </>
       ) : (

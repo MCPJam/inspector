@@ -1973,6 +1973,11 @@ describe("mcpjam-stream-handler", () => {
       // that waits forever. There is nothing to thread now: the tool
       // `buildPageTools` produces carries the answer, and this drives the
       // engine with exactly that tool and nothing else.
+      //
+      // The switch is ON here so the built tool's answer is `true` and the
+      // pill below is a real assertion. What it pins is that the ENGINE reads
+      // the tool's own declaration — the OFF direction is pinned in the
+      // approval matrix, which drives every family through both settings.
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -1998,11 +2003,11 @@ describe("mcpjam-stream-handler", () => {
             origin: "https://shop.test",
             description: "Check out",
           },
-        ] as never) as any,
+        ] as never, true) as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
-        requireToolApproval: false,
+        requireToolApproval: true,
       });
 
       await lastExecution;
