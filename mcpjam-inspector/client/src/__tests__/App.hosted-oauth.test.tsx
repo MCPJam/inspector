@@ -913,12 +913,16 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     // Status, entitlements, both premiumness states and the plan catalog now
-    // ride on one bundled subscription.
-    const bundleCall = mockUseQuery.mock.calls.find(
+    // ride on one bundled subscription. Every one of its calls must be
+    // skipped, not just the first App happens to issue.
+    const bundleCalls = mockUseQuery.mock.calls.filter(
       ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(bundleCall?.[1]).toBe("skip");
+    expect(bundleCalls.length).toBeGreaterThan(0);
+    for (const [, bundleArgs] of bundleCalls) {
+      expect(bundleArgs).toBe("skip");
+    }
   });
 
   it("skips billing queries while a project org id is still unvalidated", () => {
@@ -939,12 +943,16 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     // Status, entitlements, both premiumness states and the plan catalog now
-    // ride on one bundled subscription.
-    const bundleCall = mockUseQuery.mock.calls.find(
+    // ride on one bundled subscription. Every one of its calls must be
+    // skipped, not just the first App happens to issue.
+    const bundleCalls = mockUseQuery.mock.calls.filter(
       ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(bundleCall?.[1]).toBe("skip");
+    expect(bundleCalls.length).toBeGreaterThan(0);
+    for (const [, bundleArgs] of bundleCalls) {
+      expect(bundleArgs).toBe("skip");
+    }
   });
 
   it("skips project billing and clears stale synced selection when the active project is missing", async () => {

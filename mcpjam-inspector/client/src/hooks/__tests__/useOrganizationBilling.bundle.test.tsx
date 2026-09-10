@@ -87,6 +87,16 @@ describe("useOrganizationBilling bundled subscription", () => {
       projectId: "project-1",
     });
 
+    // Nothing else may hold a live subscription: the whole non-skipped set is
+    // this one call. Catches a regression that adds a sixth query back.
+    const liveCalls = mockState.queryCalls.filter(
+      (call) => call.args !== "skip",
+    );
+    expect(liveCalls.map((call) => call.name)).toEqual([
+      "billing:getOrganizationBillingBundle",
+    ]);
+
+    // And the five it replaced are gone entirely, skipped or not.
     for (const name of LEGACY_QUERY_NAMES) {
       expect(mockState.queryCalls.some((call) => call.name === name)).toBe(
         false,
