@@ -57,12 +57,14 @@ const LIVE_STATES: ReadonlySet<string> = new Set([
  * starts" means when browsing never stopped.
  */
 export function useOpenBrowserOnBrowsing(args: {
+  conversationId?: string;
   toolName: string | undefined;
   state: string | undefined;
 }): void {
   const openBrowser = useBrowserWorkspaceStore((store) => store.openBrowser);
-  const live = isBrowserToolName(args.toolName) && LIVE_STATES.has(args.state ?? "");
+  const live =
+    isBrowserToolName(args.toolName) && LIVE_STATES.has(args.state ?? "");
   useEffect(() => {
-    if (live) openBrowser();
-  }, [live, openBrowser]);
+    if (live && args.conversationId) openBrowser(args.conversationId);
+  }, [live, args.conversationId, openBrowser]);
 }

@@ -36,6 +36,7 @@ import {
   sendLocalPaneCommand,
   createInputForwarder,
   ensureLocalBrowser,
+  fetchLocalBrowserSession,
   fetchLocalBrowserStatus,
   mintLocalBrowserFrameNonce,
   noteLocalBrowserWatch,
@@ -320,6 +321,60 @@ export function LocalBrowserBody({
     setFrame(null);
     setError(null);
   }, [projectId, sessionId]);
+
+  // The browser outlives this pane. Returning to a conversation reconnects to
+  // its live tabs; it must not create a new browser or reload the saved URL.
+  // While empty, also notice a browser started by the agent after the pane
+  // opened. Hidden panes do not poll, and failures leave manual Open available.
+  useEffect(() => {
+    if (!active || !consentGranted || !projectId || !sessionId || session)
+      return;
+    const generation = railGeneration.current;
+    let cancelled = false;
+    let retryMs = 2_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      if (document.visibilityState !== "visible") {
+        timer = setTimeout(() => void refresh(), 2_000);
+        return;
+      }
+      try {
+        const next = await fetchLocalBrowserSession(
+          projectId,
+          consentToken,
+          sessionId,
+        );
+        if (cancelled || railGeneration.current !== generation) return;
+        if (next) {
+          railGeneration.current += 1;
+          setSession({ bootId: next.bootId });
+          setLease(next.lease);
+          markBrowserSessionActive(sessionId);
+          setError(null);
+        } else {
+          timer = setTimeout(() => void refresh(), 2_000);
+        }
+      } catch {
+        if (cancelled || railGeneration.current !== generation) return;
+        // An unavailable read is not evidence that this conversation is empty.
+        retryMs = Math.min(retryMs * 2, 30_000);
+        timer = setTimeout(() => void refresh(), retryMs);
+      }
+    };
+    void refresh();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    active,
+    consentGranted,
+    consentToken,
+    projectId,
+    sessionId,
+    session,
+    markBrowserSessionActive,
+  ]);
 
   const start = useCallback(async () => {
     if (!projectId) return;
@@ -677,7 +732,7 @@ export function LocalBrowserBody({
    * must not claim to be.
    */
   useEffect(() => {
-    if (!native || !session || !consentGranted) return;
+    if (!session || !consentGranted) return;
     const bootId = session.bootId;
     const beat = () => {
       if (!activeRef.current) return;
@@ -695,6 +750,7 @@ export function LocalBrowserBody({
   useEffect(() => {
     if (!holding || !session) return;
     const timer = setInterval(() => {
+      if (!activeRef.current || document.visibilityState !== "visible") return;
       void actOnLocalBrowserLease(
         { bootId: session.bootId, action: "heartbeat", holder },
         consentToken,
@@ -796,27 +852,6 @@ export function LocalBrowserBody({
     };
   }, [session, projectId, consentToken, consentGranted, holding, lease.state]);
 
-  // Hand the browser back when this tab goes away.
-  //
-  // Best-effort, and deliberately not the only defence: `keepalive` lets the
-  // request outlive the page, but a hard crash or a dropped connection sends
-  // nothing — which is why the holder identity is stable across reloads too.
-  // Releasing here is the difference between the agent carrying on at once and
-  // it waiting out a hold nobody is on the other end of.
-  useEffect(() => {
-    if (!holding || !session) return;
-    const bootId = session.bootId;
-    const release = () => {
-      void actOnLocalBrowserLease(
-        { bootId, action: "resume", holder },
-        consentToken,
-        { keepalive: true },
-      ).catch(() => {});
-    };
-    window.addEventListener("pagehide", release);
-    return () => window.removeEventListener("pagehide", release);
-  }, [holding, session, holder, consentToken]);
-
   // One POST in flight, the rest queued and consecutive moves collapsed. A
   // drag otherwise fires a request per animation frame, and requests that
   // overtake each other put the pointer somewhere it never went.
@@ -841,10 +876,12 @@ export function LocalBrowserBody({
   );
 
   const forwarder = useMemo(() => {
-    if (!session || !holding) return null;
+    if (!active || !session || !holding) return null;
     const bootId = session.bootId;
     return createInputForwarder(
       (events, seq) => {
+        if (!activeRef.current || document.visibilityState !== "visible")
+          return;
         paneFrameStats.noteInputSent(frameSeqRef.current, seq);
         if (socketSendable()) {
           socketRef.current!.send(
@@ -861,7 +898,7 @@ export function LocalBrowserBody({
       // nobody aimed, and an unordered press/release leaves a button held.
       { serialize: () => !socketSendable() },
     );
-  }, [session, holding, holder, consentToken, socketSendable]);
+  }, [active, session, holding, holder, consentToken, socketSendable]);
   useEffect(() => () => forwarder?.cancel(), [forwarder]);
 
   const send = useCallback(
@@ -878,7 +915,7 @@ export function LocalBrowserBody({
   // apart, and a report that called them the same thing could not say whether
   // the native surface helped.
   const engineRef = useRef<string>("local");
-  engineRef.current = native ? "local-native" : (status?.runtime ?? "local");
+  engineRef.current = native ? "local-native" : status?.runtime ?? "local";
   useEffect(
     () => () => captureBrowserPaneSessionSummary(engineRef.current),
     [],
@@ -931,7 +968,9 @@ export function LocalBrowserBody({
       return (
         <PaneMessage dashed>
           <span data-testid="rail-browser-idle">
-            No browser is running for this project yet.
+            {sessionId
+              ? "Open a browser for this conversation."
+              : "No browser is running for this project yet."}
           </span>
           <Button
             size="sm"
@@ -964,10 +1003,10 @@ export function LocalBrowserBody({
     lease.state === "free"
       ? "agent"
       : holding
-        ? "you"
-        : lease.holderKind === "script"
-          ? "script"
-          : "other";
+      ? "you"
+      : lease.holderKind === "script"
+      ? "script"
+      : "other";
 
   /**
    * The shell's transport, for this engine.
@@ -1016,7 +1055,7 @@ export function LocalBrowserBody({
   }, [bootId, holder, consentToken, setLeaseAction]);
 
   useEffect(() => {
-    if (!workspaceEnabled && bootId)
+    if (!workspaceEnabled && !native && bootId)
       void reportLocalPaneViewport({
         bootId,
         consentToken,
@@ -1024,10 +1063,26 @@ export function LocalBrowserBody({
         height: 768,
         policy: "fixed",
       });
-  }, [workspaceEnabled, bootId, consentToken]);
+  }, [workspaceEnabled, native, bootId, consentToken]);
+
+  // Native views cannot be scaled by the renderer's CSS like streamed frames.
+  // Fit the actual page to its slot even when the workspace chrome is disabled.
+  const reportNativeViewport = useCallback(
+    (size: { width: number; height: number }) => {
+      if (!bootId) return;
+      void reportLocalPaneViewport({
+        bootId,
+        consentToken,
+        ...size,
+        policy: "followPane",
+      });
+    },
+    [bootId, consentToken],
+  );
 
   const shell = useBrowserSession({
     transport: workspaceEnabled ? shellTransport : null,
+    sessionKey: JSON.stringify([projectId, sessionId, bootId]),
     holderId: holder,
     active,
   });
@@ -1108,6 +1163,7 @@ export function LocalBrowserBody({
           <ElectronNativeBody
             consentToken={consentToken}
             session={session}
+            onViewportSize={reportNativeViewport}
             holder={holder}
             control={control}
             holding={holding}
@@ -1163,8 +1219,8 @@ export function LocalBrowserBody({
               lease.state === "free"
                 ? "agent"
                 : lease.holderKind === "script"
-                  ? "script"
-                  : "human",
+                ? "script"
+                : "human",
             ...(lease.state !== "free" && lease.holder
               ? { holder: lease.holder }
               : {}),
@@ -1173,9 +1229,8 @@ export function LocalBrowserBody({
           onCommand={shell.run}
           {...(session && holding ? { onResumeAgent: shell.resume } : {})}
           resuming={shell.resuming}
-          // The shell owns the picture's SIZE, so it is the shell that
-          // measures. @see BrowserShellProps.onViewportMeasured
-          onViewportMeasured={shell.reportViewport}
+          // Native bodies measure their own slot, including any stats strip.
+          onViewportMeasured={native ? undefined : shell.reportViewport}
           // Not just "is there a browser": an engine too old to answer pane
           // commands has a perfectly real session, and controls that look live
           // and swallow every click read as broken rather than old.
@@ -1209,6 +1264,7 @@ export function LocalBrowserBody({
             <ElectronNativeBody
               consentToken={consentToken}
               session={session}
+              onViewportSize={reportNativeViewport}
               holder={holder}
               control={control}
               holding={holding}

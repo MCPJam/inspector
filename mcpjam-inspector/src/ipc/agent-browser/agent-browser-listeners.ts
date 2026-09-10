@@ -276,9 +276,9 @@ export function registerAgentBrowserListeners(
       return {
         shown,
         inputAllowed: surface.inputAllowed(),
-        // Not shown despite a good rectangle means the LEASE refused it, which
-        // is the one refusal the pane has something to say about.
-        ...(shown ? {} : { reason: "lease" as const }),
+        // A surface may exist before its first tab does. Only blame another
+        // holder when the lease actually refuses observation.
+        ...(surface.visibilityAllowed() ? {} : { reason: "lease" as const }),
       };
     },
   );

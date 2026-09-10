@@ -209,6 +209,11 @@ export class FakeBrowserWindow implements ElectronWindowLike {
   readonly id: number;
   destroyed = false;
   focusCount = 0;
+  contentSize: { width: number; height: number } | undefined;
+
+  setContentSize(width: number, height: number): void {
+    this.contentSize = { width, height };
+  }
 
   constructor(
     readonly options: Record<string, unknown>,
@@ -251,6 +256,10 @@ export class FakeWebContentsView {
 
   setBounds(next: { x: number; y: number; width: number; height: number }): void {
     this.bounds = next;
+  }
+
+  getBounds() {
+    return this.bounds ?? { x: 0, y: 0, width: 0, height: 0 };
   }
 }
 

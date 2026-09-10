@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  BrowserdRequestHandler,
-  type DaemonRequest,
-} from "../request-handler";
+import { BrowserdRequestHandler, type DaemonRequest } from "../request-handler";
 import { HandoffLease } from "../lease";
 import {
   BROWSERD_PROTOCOL_VERSION,
@@ -13,16 +10,18 @@ import {
 const TOKEN = "s3cr3t-per-boot-token";
 const BOOT = "boot-abc";
 
-function makeHandler(over: {
-  outcome?: BrowserCommandOutcome;
-  submit?: (c: BrowserCommand) => Promise<BrowserCommandOutcome>;
-  health?: () => Promise<{ ok: boolean; detail?: string }>;
-  lease?: HandoffLease;
-  setVideoTier?: (tier: "auto" | "sharp" | "saver") => void;
-  viewport?: (tabId?: string) => Promise<unknown>;
-  viewportIfWatched?: (tabId?: string) => unknown;
-  recorder?: unknown;
-} = {}) {
+function makeHandler(
+  over: {
+    outcome?: BrowserCommandOutcome;
+    submit?: (c: BrowserCommand) => Promise<BrowserCommandOutcome>;
+    health?: () => Promise<{ ok: boolean; detail?: string }>;
+    lease?: HandoffLease;
+    setVideoTier?: (tier: "auto" | "sharp" | "saver") => void;
+    viewport?: (tabId?: string) => Promise<unknown>;
+    viewportIfWatched?: (tabId?: string) => unknown;
+    recorder?: unknown;
+  } = {},
+) {
   const submit: (c: BrowserCommand) => Promise<BrowserCommandOutcome> =
     over.submit ??
     vi.fn(
@@ -32,7 +31,7 @@ function makeHandler(over: {
   const health = over.health ?? (async () => ({ ok: true as const }));
   const lease = over.lease ?? new HandoffLease();
   const handler = new BrowserdRequestHandler({
-    queue: { submit },
+    queue: { submit, isIdle: () => true },
     driver: {
       health,
       ...(over.viewport ? { viewport: over.viewport as never } : {}),
@@ -170,13 +169,20 @@ describe("BrowserdRequestHandler — bootId staleness", () => {
     const res = await handler.handle(
       req({
         body: JSON.stringify({
-          command: { commandId: "c1", source: "chat", action: { kind: "reload" } },
+          command: {
+            commandId: "c1",
+            source: "chat",
+            action: { kind: "reload" },
+          },
           expectedBootId: "boot-OLD",
         }),
       }),
     );
     expect(res.status).toBe(409);
-    expect(res.body).toMatchObject({ error: "command_unknown_boot", bootId: BOOT });
+    expect(res.body).toMatchObject({
+      error: "command_unknown_boot",
+      bootId: BOOT,
+    });
     expect(submit).not.toHaveBeenCalled(); // never re-run across a restart
   });
 
@@ -185,7 +191,11 @@ describe("BrowserdRequestHandler — bootId staleness", () => {
     const res = await handler.handle(
       req({
         body: JSON.stringify({
-          command: { commandId: "c1", source: "chat", action: { kind: "reload" } },
+          command: {
+            commandId: "c1",
+            source: "chat",
+            action: { kind: "reload" },
+          },
           expectedBootId: BOOT,
         }),
       }),
@@ -199,7 +209,11 @@ describe("BrowserdRequestHandler — outcome mapping", () => {
   const cases: Array<[BrowserCommandOutcome, number, unknown]> = [
     [{ status: "busy", bootId: BOOT }, 429, { status: "busy", bootId: BOOT }],
     [{ status: "expired", bootId: BOOT }, 409, { error: "command_expired" }],
-    [{ status: "at_capacity", bootId: BOOT }, 503, { error: "daemon_at_capacity" }],
+    [
+      { status: "at_capacity", bootId: BOOT },
+      503,
+      { error: "daemon_at_capacity" },
+    ],
   ];
   for (const [outcome, status, body] of cases) {
     it(`maps ${outcome.status} → ${status}`, async () => {
@@ -211,7 +225,12 @@ describe("BrowserdRequestHandler — outcome mapping", () => {
   }
 
   it("maps a stale-observation result (L3) to 409 with the fresh state", async () => {
-    const fresh = { tabId: "tab-1", navCounter: 9, urlHash: "u9", domHash: "d9" };
+    const fresh = {
+      tabId: "tab-1",
+      navCounter: 9,
+      urlHash: "u9",
+      domHash: "d9",
+    };
     const { handler } = makeHandler({
       outcome: {
         status: "ok",
@@ -443,7 +462,11 @@ describe("BrowserdRequestHandler — handoff lease gate (W4)", () => {
     const res = await handler.handle(
       req({
         body: JSON.stringify({
-          command: { commandId: "c1", source: "chat", action: { kind: "reload" } },
+          command: {
+            commandId: "c1",
+            source: "chat",
+            action: { kind: "reload" },
+          },
           expectedBootId: "boot-OLD",
         }),
       }),
@@ -478,9 +501,12 @@ describe("BrowserdRequestHandler — /v1/lease", () => {
   it("requires the bearer like every other authenticated endpoint", async () => {
     const { handler } = makeHandler();
     const res = await handler.handle(
-      leaseReq({ action: "acquire", holder: "panel-a" }, {
-        authorization: undefined,
-      }),
+      leaseReq(
+        { action: "acquire", holder: "panel-a" },
+        {
+          authorization: undefined,
+        },
+      ),
     );
     expect(res.status).toBe(401);
   });
@@ -504,7 +530,9 @@ describe("BrowserdRequestHandler — /v1/lease", () => {
       leaseReq({ action: "acquire", holder: "panel-a", ttlMs: 60_000 }),
     );
     expect(acquired.status).toBe(200);
-    expect(acquired.body).toMatchObject({ lease: { state: "held", holder: "panel-a" } });
+    expect(acquired.body).toMatchObject({
+      lease: { state: "held", holder: "panel-a" },
+    });
 
     const beat = await handler.handle(
       leaseReq({ action: "heartbeat", holder: "panel-a", ttlMs: 60_000 }),
@@ -528,7 +556,9 @@ describe("BrowserdRequestHandler — /v1/lease", () => {
       leaseReq({ action: "acquire", holder: "panel-b" }),
     );
     expect(res.status).toBe(409);
-    expect(res.body).toMatchObject({ lease: { state: "held", holder: "panel-a" } });
+    expect(res.body).toMatchObject({
+      lease: { state: "held", holder: "panel-a" },
+    });
   });
 
   it("ignores a resume from anyone but the holder", async () => {
@@ -538,7 +568,9 @@ describe("BrowserdRequestHandler — /v1/lease", () => {
       leaseReq({ action: "resume", holder: "panel-b" }),
     );
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ lease: { state: "held", holder: "panel-a" } });
+    expect(res.body).toMatchObject({
+      lease: { state: "held", holder: "panel-a" },
+    });
     expect(lease.state().state).toBe("held");
   });
 
@@ -805,7 +837,7 @@ describe("BrowserdRequestHandler — the lease moves mid-stream", () => {
     lease.acquire("rail-1", 60_000);
 
     const events = ["h", "u", "n", "t"].map(
-      (text) => ({ type: "text", text }) as const,
+      (text) => ({ type: "text", text } as const),
     );
     const result = await handler.dispatchInput({ holder: "rail-1", events });
 
@@ -814,7 +846,6 @@ describe("BrowserdRequestHandler — the lease moves mid-stream", () => {
     expect(delivered).toHaveLength(2);
   });
 });
-
 
 /**
  * V-7. The tier endpoint. Not lease-gated on purpose — it changes how the
@@ -846,7 +877,9 @@ describe("BrowserdRequestHandler — POST /v1/policy", () => {
     const { handler } = makeHandler({
       setVideoTier: (tier: string) => tiers.push(tier),
     });
-    expect((await handler.handle(policyReq({ tier: "mjpeg" }))).status).toBe(400);
+    expect((await handler.handle(policyReq({ tier: "mjpeg" }))).status).toBe(
+      400,
+    );
     expect((await handler.handle(policyReq({}))).status).toBe(400);
     expect(tiers).toEqual([]);
   });
@@ -856,7 +889,9 @@ describe("BrowserdRequestHandler — POST /v1/policy", () => {
     // govern; reporting a failure would send a pane looking for a problem it
     // does not have.
     const { handler } = makeHandler();
-    expect((await handler.handle(policyReq({ tier: "sharp" }))).status).toBe(200);
+    expect((await handler.handle(policyReq({ tier: "sharp" }))).status).toBe(
+      200,
+    );
   });
 
   it("still needs the bearer", async () => {
@@ -1022,7 +1057,12 @@ describe("BrowserdRequestHandler — the frame rate follows the page, not the ha
   function commandReq(action: BrowserCommand["action"], tabId?: string) {
     return req({
       body: JSON.stringify({
-        command: { commandId: `c-${Math.random()}`, tabId, source: "chat", action },
+        command: {
+          commandId: `c-${Math.random()}`,
+          tabId,
+          source: "chat",
+          action,
+        },
       }),
     });
   }
@@ -1152,7 +1192,11 @@ describe("BrowserdRequestHandler — the frame rate follows the page, not the ha
     const { handler } = makeHandler({
       outcome: {
         status: "ok",
-        result: { ok: false, staleObservation: true, error: "stale_observation" },
+        result: {
+          ok: false,
+          staleObservation: true,
+          error: "stale_observation",
+        },
         bootId: BOOT,
       },
       viewportIfWatched: () => Promise.resolve(viewport),
@@ -1222,16 +1266,16 @@ describe("BrowserdRequestHandler — the frame rate follows the page, not the ha
       viewportIfWatched: () => Promise.reject(new Error("page closed")),
     });
 
-    const res = await handler.handle(
-      commandReq({ kind: "reload" }),
-    );
+    const res = await handler.handle(commandReq({ kind: "reload" }));
 
     expect(res.status).toBe(200);
   });
 
   it("works against a driver too old to answer the question", async () => {
     const { handler } = makeHandler();
-    expect((await handler.handle(commandReq({ kind: "reload" }))).status).toBe(200);
+    expect((await handler.handle(commandReq({ kind: "reload" }))).status).toBe(
+      200,
+    );
   });
 });
 
@@ -1280,7 +1324,9 @@ describe("BrowserdRequestHandler — /v1/record", () => {
     const { recorder, started } = fakeRecorder();
     const { handler } = makeHandler({ recorder });
 
-    const res = await handler.handle(recordReq({ action: "start", id: "run-1", fps: 15 }));
+    const res = await handler.handle(
+      recordReq({ action: "start", id: "run-1", fps: 15 }),
+    );
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, id: "run-1", fps: 15 });
@@ -1291,7 +1337,9 @@ describe("BrowserdRequestHandler — /v1/record", () => {
     const { recorder, started } = fakeRecorder();
     const { handler } = makeHandler({ recorder });
 
-    const res = await handler.handle(recordReq({ action: "start", id: "run-1" }));
+    const res = await handler.handle(
+      recordReq({ action: "start", id: "run-1" }),
+    );
 
     expect(res.body).toMatchObject({ fps: 15 });
     expect(started).toEqual([{ id: "run-1", fps: 15 }]);
@@ -1317,7 +1365,14 @@ describe("BrowserdRequestHandler — /v1/record", () => {
     const { recorder, start } = fakeRecorder();
     const { handler } = makeHandler({ recorder });
 
-    for (const id of ["../etc/passwd", "a/b", "", "x".repeat(65), 7, undefined]) {
+    for (const id of [
+      "../etc/passwd",
+      "a/b",
+      "",
+      "x".repeat(65),
+      7,
+      undefined,
+    ]) {
       const res = await handler.handle(
         recordReq({ action: "start", id, fps: 15 }),
       );
@@ -1331,7 +1386,9 @@ describe("BrowserdRequestHandler — /v1/record", () => {
     const { recorder, start } = fakeRecorder();
     const { handler } = makeHandler({ recorder });
 
-    expect((await handler.handle(recordReq({ action: "pause" }))).status).toBe(400);
+    expect((await handler.handle(recordReq({ action: "pause" }))).status).toBe(
+      400,
+    );
     expect((await handler.handle(recordReq({}))).status).toBe(400);
     expect((await handler.handle(recordReq(null))).status).toBe(400);
     expect(
@@ -1344,9 +1401,14 @@ describe("BrowserdRequestHandler — /v1/record", () => {
     // The honest answer: `features` omits `"record"` in the first place, so a
     // caller that reads the status before asking never gets here.
     const { handler } = makeHandler();
-    const res = await handler.handle(recordReq({ action: "start", id: "run-1" }));
+    const res = await handler.handle(
+      recordReq({ action: "start", id: "run-1" }),
+    );
     expect(res.status).toBe(503);
-    expect(res.body).toMatchObject({ error: "record_unavailable", id: "run-1" });
+    expect(res.body).toMatchObject({
+      error: "record_unavailable",
+      id: "run-1",
+    });
   });
 
   it("maps a refused second start to 409", async () => {
@@ -1354,7 +1416,9 @@ describe("BrowserdRequestHandler — /v1/record", () => {
       start: () => ({ ok: false, error: "record_active" }),
     });
     const { handler } = makeHandler({ recorder });
-    const res = await handler.handle(recordReq({ action: "start", id: "run-2" }));
+    const res = await handler.handle(
+      recordReq({ action: "start", id: "run-2" }),
+    );
     expect(res.status).toBe(409);
     expect(res.body).toMatchObject({ error: "record_active", id: "run-2" });
   });
@@ -1365,7 +1429,8 @@ describe("BrowserdRequestHandler — /v1/record", () => {
     });
     const { handler } = makeHandler({ recorder });
     expect(
-      (await handler.handle(recordReq({ action: "start", id: "run-1" }))).status,
+      (await handler.handle(recordReq({ action: "start", id: "run-1" })))
+        .status,
     ).toBe(503);
   });
 
@@ -1423,9 +1488,12 @@ describe("BrowserdRequestHandler — /v1/record", () => {
     const { handler } = makeHandler({ lease, recorder });
 
     expect(
-      (await handler.handle(recordReq({ action: "start", id: "run-1" }))).status,
+      (await handler.handle(recordReq({ action: "start", id: "run-1" })))
+        .status,
     ).toBe(200);
-    expect((await handler.handle(recordReq({ action: "stop" }))).status).toBe(200);
+    expect((await handler.handle(recordReq({ action: "stop" }))).status).toBe(
+      200,
+    );
     expect(start).toHaveBeenCalledTimes(1);
     expect(stop).toHaveBeenCalledTimes(1);
   });
@@ -1459,5 +1527,67 @@ describe("BrowserdRequestHandler — /v1/record", () => {
     const res = await handler.handle(recordReq({}, "DELETE"));
     expect(res.status).toBe(405);
     expect(res.headers).toEqual({ allow: "GET, POST" });
+  });
+});
+
+describe("runtime lifecycle admission", () => {
+  const lifecycle = (action: string, operationId = "sleep-1", bootId = BOOT) =>
+    req({
+      path: "/v1/lifecycle",
+      body: JSON.stringify({ action, operationId, bootId }),
+    });
+
+  it("does not reap a command in flight and closes admission through teardown", async () => {
+    let finish!: (v: BrowserCommandOutcome) => void;
+    const { handler } = makeHandler({
+      submit: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    });
+    const pending = handler.handle(req());
+    expect(handler.tryRetireIfIdle()).toBe(false);
+    finish({ status: "ok", result: { ok: true }, bootId: BOOT });
+    await pending;
+    expect(handler.tryRetireIfIdle()).toBe(true);
+    expect((await handler.handle(req())).status).toBe(503);
+    expect(
+      (
+        await handler.handle(
+          req({
+            path: "/v1/lease",
+            body: JSON.stringify({ action: "acquire", holder: "human" }),
+          }),
+        )
+      ).status,
+    ).toBe(503);
+  });
+
+  it("refuses sleep during human control and never frees a parked lease", async () => {
+    let now = 0;
+    const lease = new HandoffLease({ now: () => now });
+    lease.acquire("human", 1000);
+    const { handler } = makeHandler({ lease });
+    expect((await handler.handle(lifecycle("prepare_sleep"))).status).toBe(409);
+    now = 1_000_000;
+    expect(lease.state().state).toBe("parked");
+    expect((await handler.handle(lifecycle("prepare_sleep"))).status).toBe(200);
+    expect((await handler.handle(req())).status).toBe(503);
+    expect((await handler.handle(lifecycle("resume"))).status).toBe(200);
+    expect(lease.state().state).toBe("parked");
+  });
+
+  it("rejects another boot, another sleep owner, and delayed prepare after resume", async () => {
+    const { handler } = makeHandler();
+    expect(
+      (await handler.handle(lifecycle("prepare_sleep", "sleep-1", "old-boot")))
+        .status,
+    ).toBe(409);
+    expect((await handler.handle(lifecycle("prepare_sleep"))).status).toBe(200);
+    expect((await handler.handle(lifecycle("resume", "other"))).status).toBe(
+      409,
+    );
+    expect((await handler.handle(lifecycle("resume"))).status).toBe(200);
+    expect((await handler.handle(lifecycle("prepare_sleep"))).status).toBe(409);
   });
 });

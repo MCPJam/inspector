@@ -115,8 +115,8 @@ function leaseBackedBy(lease: HandoffLease): LeaseActionFn {
       args.action === "acquire"
         ? lease.acquire(args.holder, args.ttlMs, args.kind)
         : args.action === "heartbeat"
-          ? lease.heartbeat(args.holder, args.ttlMs)
-          : lease.resume(args.holder);
+        ? lease.heartbeat(args.holder, args.ttlMs)
+        : lease.resume(args.holder);
     // Mirrors request-handler.ts: only an acquire can fail to take.
     const took =
       args.action !== "acquire" ||
@@ -1315,6 +1315,21 @@ describe("ensureBrowserSession — sandbox target", () => {
     );
   });
 
+  it("never boots or kills while attaching a missing watched boot", async () => {
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    await expect(
+      ensureBrowserSession(f.deps, {
+        ...SANDBOX_ARGS,
+        contextMode: "persistent",
+        target: { ...SANDBOX_ARGS.target, watched: true },
+        expectedExistingBootId: "saved-boot",
+      }),
+    ).rejects.toThrow(/not ready/);
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.deps.reserveDesktop).not.toHaveBeenCalled();
+  });
+
   it("does NOT reuse a daemon whose bootId has moved", async () => {
     const f = makeFakes({
       lookups: [liveSandboxLookup()],
@@ -1852,8 +1867,8 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
             bootId: ROW.bootId,
             protocolVersion: BROWSERD_PROTOCOL_VERSION,
             bundleHash: HASH,
-          }) as BrowserdStatus,
-        sendCommand: async () => ({ kind: "ok" }) as never,
+          } as BrowserdStatus),
+        sendCommand: async () => ({ kind: "ok" } as never),
         ...spies,
       }),
     );
@@ -1888,8 +1903,8 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
             bootId: ROW.bootId,
             protocolVersion: BROWSERD_PROTOCOL_VERSION,
             bundleHash: HASH,
-          }) as BrowserdStatus,
-        sendCommand: async () => ({ kind: "ok" }) as never,
+          } as BrowserdStatus),
+        sendCommand: async () => ({ kind: "ok" } as never),
         exportProfile,
       }),
     );
@@ -1916,8 +1931,8 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
             bootId: ROW.bootId,
             protocolVersion: BROWSERD_PROTOCOL_VERSION,
             bundleHash: HASH,
-          }) as BrowserdStatus,
-        sendCommand: async () => ({ kind: "ok" }) as never,
+          } as BrowserdStatus),
+        sendCommand: async () => ({ kind: "ok" } as never),
       }),
     );
 

@@ -102,6 +102,7 @@ export interface ElectronLike {
     id?: number;
   };
   WebContentsView?: new (options: Record<string, unknown>) => SurfaceView & {
+    getBounds(): { x: number; y: number; width: number; height: number };
     webContents: PageWebContents & {
       setWindowOpenHandler?(
         handler: (details: { url: string }) => { action: "deny" | "allow" },
@@ -131,6 +132,7 @@ export interface ElectronWindowLike {
   isDestroyed(): boolean;
   destroy(): void;
   focus?(): void;
+  setContentSize?(width: number, height: number): void;
 }
 
 /**
@@ -260,6 +262,8 @@ export async function launchElectronContext(
     const shim: ElectronWindowLike = {
       ...(view.webContents.id !== undefined ? { id: view.webContents.id } : {}),
       webContents: view.webContents,
+      setContentSize: (width, height) =>
+        view.setBounds({ ...view.getBounds(), width, height }),
       isDestroyed: () => view.webContents.isDestroyed?.() ?? false,
       destroy: () => {
         options.surface?.forget(view);
@@ -320,12 +324,29 @@ export async function launchElectronContext(
   }
 
   async function adopt(window: ElectronWindowLike): Promise<DriverPage> {
+    // A newly constructed Electron view has no loaded document. Debugger
+    // commands (including DOM.enable) can wait indefinitely in that state,
+    // while the driver waits for its WebMCP bridge before navigating. Load a
+    // blank document first so attachment can finish before the requested URL.
+    try {
+      await window.webContents.loadURL("about:blank");
+    } catch (error) {
+      forget(window);
+      if (!window.isDestroyed()) window.destroy();
+      throw error;
+    }
     const page = createElectronPage(window.webContents, {
       onClose() {
         forget(window);
         if (!window.isDestroyed()) window.destroy();
       },
       onBringToFront: () => window.focus?.(),
+      ...(window.setContentSize
+        ? {
+            onResize: (size: { width: number; height: number }) =>
+              window.setContentSize!(size.width, size.height),
+          }
+        : {}),
     });
 
     // Denied, and that is the honest v1 answer rather than a limitation being
