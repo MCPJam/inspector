@@ -55,9 +55,10 @@ export interface FramePacer {
  * rather than a simplification. A threshold branch can wedge: the send
  * callback fires while `bufferedAmount` is still above the line, nothing is
  * shipped, and no later event ever wakes the held frame — the pane freezes
- * with the stream healthy. Waiting on the callback bounds kernel-side
- * buffering to a single frame (≤256 KiB by `WEBMCP_FRAME_MAX_BYTES`) with no
- * such branch to get wrong.
+ * with the stream healthy. Waiting on the callback bounds this pacer's work
+ * to one outstanding write and one pending frame. It does not bound frames
+ * already accepted into kernel/browser buffers or prove the viewer painted
+ * them. A slow renderer needs client coalescing or explicit viewer feedback.
  *
  * One pending slot, newest wins — the same philosophy as the SSE route's held
  * frame and the hub's coalesced slot. A queue would make a slow consumer

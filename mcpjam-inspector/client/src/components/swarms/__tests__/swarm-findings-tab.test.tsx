@@ -406,6 +406,91 @@ describe("SwarmFindingsTab", () => {
     );
   });
 
+  it("gives a single session a link rather than something to expand", () => {
+    const onOpenSession = vi.fn();
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [
+          {
+            _id: "sess-only",
+            firstMessagePreview: "Pull the proposal-stage prospects",
+            lastActivityAt: NOW,
+          },
+        ],
+        nextBefore: null,
+        total: 1,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    const oneSession = run({
+      summary: { total: 1, succeeded: 0, failed: 1, rateLimited: 0 },
+      goalScoreSummary: { gradedCount: 1, passedCount: 0, avgScore: 0 },
+    });
+    render(
+      <SwarmFindingsTab
+        wave={groupRunsIntoSwarmWaves([oneSession])[0]!}
+        waveSignals={waveSignals}
+        personas={personas}
+        onOpenSession={onOpenSession}
+        projectId="proj-1"
+      />
+    );
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
+    // The link is there; the expander is not.
+    expect(screen.getByTestId("findings-goal-sessions")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("findings-evidence-sessions-toggle")
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("findings-goal-session"));
+    expect(onOpenSession).toHaveBeenCalledWith("sess-only");
+  });
+
+  it("offers no session control at all when the goal has no sessions", () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: { sessions: [], nextBefore: null, total: 0 },
+      isLoading: false,
+    });
+    const noSessions = run({
+      summary: { total: 0, succeeded: 0, failed: 0, rateLimited: 0 },
+    });
+    render(
+      <SwarmFindingsTab
+        wave={groupRunsIntoSwarmWaves([noSessions])[0]!}
+        waveSignals={waveSignals}
+        personas={personas}
+        onOpenSession={vi.fn()}
+        projectId="proj-1"
+      />
+    );
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
+    expect(
+      screen.queryByTestId("findings-evidence-sessions-toggle")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("findings-goal-sessions")
+    ).not.toBeInTheDocument();
+  });
+
+  it("tells a finished legacy wave that it finished", () => {
+    // No signals means no `terminal` flag, so the runs themselves have to say
+    // it. Passing "unknown" here hid that the run was over.
+    const { swarmRunGroupId: _drop, ...legacy } = run({
+      status: "completed",
+      summary: { total: 2, succeeded: 2, failed: 0, rateLimited: 0 },
+    });
+    render(
+      <SwarmFindingsTab
+        wave={groupRunsIntoSwarmWaves([legacy as SwarmOverviewRun])[0]!}
+        waveSignals={null}
+        personas={personas}
+      />
+    );
+    expect(screen.getByTestId("findings-summary").textContent).toContain(
+      "This run finished with nothing graded."
+    );
+  });
+
   it("survives a legacy wave with no signals (no crash)", () => {
     const legacyRuns = overview.runs.map((r) => {
       const { swarmRunGroupId: _drop, ...rest } = r;
@@ -425,7 +510,7 @@ describe("SwarmFindingsTab", () => {
     );
   });
 
-  it("renders the finding summary headline above the persona picker", () => {
+  it("renders the finding summary above the persona picker", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -433,9 +518,14 @@ describe("SwarmFindingsTab", () => {
         personas={personas}
       />
     );
+    // The lead names the goal, the stage and the persona; the supporting
+    // lines carry the cause and the feeling.
     expect(screen.getByTestId("findings-headline").textContent).toBe(
-      '"Export the board" broke at discovery.'
+      '"Export the board" broke at discovery for Maya Chen.'
     );
+    const summary = screen.getByTestId("findings-summary").textContent ?? "";
+    expect(summary).toContain("Maya Chen left lost.");
+    expect(summary).not.toContain("No findings yet");
     expect(screen.getByText(/Choose a persona/i)).toBeInTheDocument();
   });
 });

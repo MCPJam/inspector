@@ -1,3 +1,5 @@
+import { buildEvalServerPreview } from "../evaluate/eval-server-preview-model";
+import { readEvalServerPreviewDraft } from "../evaluate/eval-server-preview-state";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
@@ -42,6 +44,15 @@ const mocks = vi.hoisted(() => ({
     | undefined,
 }));
 
+vi.mock("../evaluate/suite-list-run-review", () => ({
+  SuiteListRunReview: ({ suite, onClose, onStart }: any) => (
+    <div role="dialog" aria-label={`Run ${suite.name}`}>
+      <button onClick={onClose}>Close run review</button>
+      <button onClick={() => onStart(suite, { iterationOverride: 3 })}>Start reviewed run</button>
+    </div>
+  ),
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     user: { id: "user-1" },
@@ -49,7 +60,12 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({ hosts: [], isLoading: false }),
+}));
+
 vi.mock("convex/react", () => ({
+  useAction: () => vi.fn(),
   useConvexAuth: () => ({
     isAuthenticated: mocks.isAuthenticated,
     isLoading: false,
@@ -354,16 +370,43 @@ describe("EvaluateTab", () => {
     mocks.evaluateFlag.enabled = undefined;
     mocks.evalIterationQuota = undefined;
     mocks.getEffectiveSuiteServers.mockImplementation(() => []);
-    mocks.useQuery.mockImplementation((name: unknown) =>
-      name === "billing:getEvalIterationQuota"
-        ? mocks.evalIterationQuota
-        : undefined
-    );
+    mocks.useQuery.mockImplementation((name: unknown) => {
+      if (name === "billing:getEvalIterationQuota")
+        return mocks.evalIterationQuota;
+      if (name === "evalPreparations:get")
+        return {
+          status: "ready",
+          suites: buildEvalServerPreview({ id: "srv-a", name: "server-a" })
+            .suites,
+          dueAt: 0,
+        };
+      if (name === "evalPreparations:getReview") {
+        const draft = readEvalServerPreviewDraft("srv-a");
+        return draft ? { revision: 1, draft } : null;
+      }
+      return undefined;
+    });
     mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
+    sessionStorage.clear();
     mocks.useEvalQueries.mockImplementation(
       ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
-        makeQueryState(selectedSuiteId)
+        makeQueryState(selectedSuiteId),
     );
+  });
+
+  it("opens and closes run review over the list without navigating", async () => {
+    mocks.route.current = { type: "list" };
+    mocks.getEffectiveSuiteServers.mockReturnValue(["server-a"]);
+    render(<EvaluateTab projectId="ws-1" />);
+    await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
+    expect(screen.getByRole("dialog", { name: "Run Suite suite-a" })).toBeInTheDocument();
+    expect(screen.getByTestId("evals-suites-overview")).toBeInTheDocument();
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    expect(mocks.suiteIterationsView).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Close run review" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
   });
 
   it("renders from suite-driven route state without depending on an active server", () => {
@@ -371,14 +414,14 @@ describe("EvaluateTab", () => {
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     expect(screen.queryByRole("heading", { name: "Evaluate" })).toBeNull();
-    expect(screen.getByRole("button", { name: /^evaluate$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^evaluate$/i }),
+    ).toBeInTheDocument();
     expect(screen.getByText("/")).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Suite suite-a", current: "page" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Switch suite/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Switch suite/ })).toBeNull();
     expect(mocks.suiteIterationsView).toHaveBeenCalled();
     expect(
       screen.queryByRole("navigation", { name: "Evaluate view" }),
@@ -393,7 +436,11 @@ describe("EvaluateTab", () => {
   });
 
   it.each([false, true])("tracks only launched case runs unless the case skips judging (%s)", async (skipJudge) => {
-    mocks.handleRerun.mockResolvedValueOnce(["new-a", "new-b"]);
+    mocks.handleRerun.mockResolvedValueOnce({
+      status: "started",
+      runIds: ["new-a", "new-b"],
+      failedCount: 0,
+    });
     const view = render(<EvaluateTab projectId="ws-1" />);
     const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0] as any;
     await act(async () => {
@@ -414,7 +461,13 @@ describe("EvaluateTab", () => {
   });
 
   it("does not request judging for a refused launch or ordinary suite rerun", async () => {
-    mocks.handleRerun.mockResolvedValueOnce(undefined).mockResolvedValueOnce(["full-suite-run"]);
+    mocks.handleRerun
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        status: "started",
+        runIds: ["full-suite-run"],
+        failedCount: 0,
+      });
     render(<EvaluateTab projectId="ws-1" />);
     const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0] as any;
     await act(async () => {
@@ -432,33 +485,16 @@ describe("EvaluateTab", () => {
     });
   });
 
-  it("keeps the bare eval list route on the suites overview instead of jumping into a suite", () => {
+  it("defaults the bare Evaluate route to Runs, with Runs first", () => {
     mocks.route.current = { type: "list" };
     render(<EvaluateTab projectId="ws-1" />);
-
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
-    expect(screen.getByTestId("evals-suites-landing")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Evaluate" })).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "We generate cases from live discovery, or describe behaviors in chat, or import your existing tests.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", {
-        name: /Switch suite \(current: Suite suite-a\)/,
-      }),
-    ).toBeNull();
-    expect(screen.getByTestId("evals-suites-overview")).toBeInTheDocument();
-    expect(screen.getByText("Suite suite-a")).toBeInTheDocument();
-    expect(screen.getByText("Suite suite-b")).toBeInTheDocument();
-    expect(screen.queryByTestId("project-runs-table")).toBeNull();
-    expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
-    expect(screen.getByRole("button", { name: /^suites$/i })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
+    expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
+    expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
+    expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
+    const tabs = screen.getByRole("navigation", { name: "Evaluate view" });
+    expect(tabs.querySelector("button")).toHaveTextContent("Runs");
+    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute("aria-current", "page");
   });
 
   /**
@@ -512,11 +548,14 @@ describe("EvaluateTab", () => {
     });
   });
 
-  it("switches the list landing to the runs table via the header tabs", async () => {
+  it("switches between Suites and Runs via the header tabs", async () => {
     mocks.route.current = { type: "list" };
     const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
 
+    await user.click(screen.getByRole("button", { name: /^suites$/i }));
+    expect(screen.getByTestId("evals-suites-landing")).toBeInTheDocument();
+    expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
     await user.click(screen.getByRole("button", { name: /^runs$/i }));
 
     expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
@@ -528,7 +567,7 @@ describe("EvaluateTab", () => {
     );
   });
 
-  it("does not auto-navigate to the most recently run suite on the list route", () => {
+  it("does not auto-navigate to the most recently run suite on the list route", async () => {
     mocks.route.current = { type: "list" };
     mocks.useEvalQueries.mockImplementation(() => {
       const suiteA = makeSuiteEntry(["server-a"], "suite-a");
@@ -540,6 +579,7 @@ describe("EvaluateTab", () => {
     });
 
     render(<EvaluateTab projectId="ws-1" />);
+    await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     expect(screen.getByTestId("evals-suites-landing")).toBeInTheDocument();
@@ -550,6 +590,7 @@ describe("EvaluateTab", () => {
     mocks.route.current = { type: "list" };
     const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
+    await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
 
     await user.click(screen.getByText("Suite suite-a"));
 
@@ -559,7 +600,23 @@ describe("EvaluateTab", () => {
     });
   });
 
-  it("shows the empty hero on the list route when there are no suites", () => {
+  it("reviews a run requested from the suite list before executing it", async () => {
+    mocks.route.current = { type: "list" };
+    mocks.getEffectiveSuiteServers.mockImplementation(() => ["server-a"]);
+    const user = userEvent.setup();
+    render(<EvaluateTab projectId="ws-1" />);
+    await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
+    await user.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
+    expect(mocks.handleRerun).not.toHaveBeenCalled();
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Start reviewed run" }));
+    expect(mocks.handleRerun).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "suite-a" }),
+      { iterationOverride: 3 },
+    );
+  });
+
+  it("shows the empty hero on the list route when there are no suites", async () => {
     mocks.route.current = { type: "list" };
     mocks.useEvalQueries.mockImplementation(() => ({
       ...makeQueryState(null),
@@ -568,11 +625,12 @@ describe("EvaluateTab", () => {
     }));
 
     render(<EvaluateTab projectId="ws-1" />);
+    await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     expect(screen.getByTestId("evals-empty-hero")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Create suite from server-a" }),
+      screen.getByRole("button", { name: "Eval my server: server-a" }),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
     expect(screen.queryByTestId("project-runs-table")).toBeNull();
@@ -585,7 +643,7 @@ describe("EvaluateTab", () => {
     );
   });
 
-  it("shows the runs table from the empty landing when Runs is selected", async () => {
+  it("shows the empty hero on Runs when there are no suites", () => {
     mocks.route.current = { type: "list" };
     mocks.useEvalQueries.mockImplementation(() => ({
       ...makeQueryState(null),
@@ -593,17 +651,21 @@ describe("EvaluateTab", () => {
       suiteOverview: [],
     }));
 
-    const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
 
-    await user.click(screen.getByRole("button", { name: /^runs$/i }));
-
-    expect(screen.queryByTestId("evals-empty-hero")).toBeNull();
-    expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
-    expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
+    expect(screen.getByTestId("evals-empty-hero")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Eval my server: server-a" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
+    expect(screen.queryByTestId("project-runs-table")).toBeNull();
+    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
-  it("opens create-suite from an empty-hero server card with that server prefilled", async () => {
+  it("opens Create suite from Eval my server with that server prefilled, and header Create suite stays blank", async () => {
     mocks.route.current = { type: "list" };
     mocks.useEvalQueries.mockImplementation(() => ({
       ...makeQueryState(null),
@@ -613,11 +675,11 @@ describe("EvaluateTab", () => {
 
     const user = userEvent.setup();
     const view = render(<EvaluateTab projectId="ws-1" />);
+    await user.click(screen.getByRole("button", { name: /^suites$/i }));
 
     await user.click(
-      screen.getByRole("button", { name: "Create suite from server-a" }),
+      screen.getByRole("button", { name: "Eval my server: server-a" }),
     );
-
     expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
       type: "create",
     });
@@ -627,12 +689,81 @@ describe("EvaluateTab", () => {
 
     expect(screen.getByTestId("create-suite-page")).toBeInTheDocument();
     expect(screen.queryByTestId("evals-empty-hero")).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Evaluate" })).toBeNull();
-    await waitFor(() => {
-      expect(mocks.createSuitePage.mock.calls.at(-1)?.[0]).toMatchObject({
+    expect(mocks.createSuitePage).toHaveBeenCalledWith(
+      expect.objectContaining({
         initialName: "server-a",
         initialServerId: "srv-a",
-      });
+      }),
+    );
+
+    mocks.route.current = { type: "list" };
+    view.rerender(<EvaluateTab projectId="ws-1" />);
+    await user.click(screen.getByRole("button", { name: /^suites$/i }));
+    await user.click(screen.getByRole("button", { name: /^create suite$/i }));
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+      type: "create",
+    });
+
+    mocks.route.current = { type: "create" };
+    view.rerender(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.createSuitePage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialName: null,
+        initialServerId: null,
+      }),
+    );
+  });
+
+  it("opens today's case editor from a first-run case and can return", async () => {
+    const { writeEvalServerPreviewDraft } =
+      await import("../evaluate/eval-server-preview-state");
+    const { buildEvalServerPreview } =
+      await import("../evaluate/eval-server-preview-model");
+    const preview = buildEvalServerPreview({
+      id: "srv-a",
+      name: "server-a",
+    });
+    const suiteId = preview.suites[0]!.id;
+    const caseId = preview.suites[0]!.cases[0]!.id;
+    writeEvalServerPreviewDraft("srv-a", {
+      suites: preview.suites,
+      openSuiteIds: [suiteId],
+      step: "suites",
+      clients: [],
+      iterationsPerCase: 10,
+    });
+
+    mocks.route.current = {
+      type: "test-edit",
+      suiteId,
+      testId: caseId,
+      fromEvalServer: "srv-a",
+    };
+    mocks.useEvalQueries.mockImplementation(() => ({
+      ...makeQueryState(null),
+      sortedSuites: [],
+      suiteOverview: [],
+    }));
+
+    const user = userEvent.setup();
+    render(<EvaluateTab projectId="ws-1" />);
+
+    // Preview IDs must never reach queries that validate persisted suite IDs.
+    for (const [args] of mocks.useEvalQueries.mock.calls) {
+      expect(args.selectedSuiteId).toBeNull();
+    }
+    expect(screen.getByTestId("eval-server-case-edit")).toBeInTheDocument();
+    expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: preview.suites[0]!.cases[0]!.title,
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+      type: "eval-server",
+      serverId: "srv-a",
     });
   });
 
@@ -670,7 +801,7 @@ describe("EvaluateTab", () => {
               : undefined,
           suiteRuns: selectedSuiteId === "suite-sdk" ? [] : undefined,
         };
-      }
+      },
     );
 
     render(<EvaluateTab projectId="ws-1" />);
@@ -715,9 +846,7 @@ describe("EvaluateTab", () => {
     expect(
       screen.getByRole("link", { name: "Test case", current: "page" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Switch suite/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Switch suite/ })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Suite suite-a" }));
     expect(mocks.toSuiteOverview).toHaveBeenCalledWith("suite-a");
@@ -737,7 +866,7 @@ describe("EvaluateTab", () => {
     await waitFor(() => {
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
         { type: "list" },
-        { replace: true }
+        { replace: true },
       );
     });
   });
@@ -755,7 +884,7 @@ describe("EvaluateTab", () => {
     expect(screen.queryByText(/eval iterations/i)).not.toBeInTheDocument();
     expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
       evalRunsDisabledReason: expect.stringMatching(
-        /^Eval iteration limit reached\. Resets /
+        /^Eval iteration limit reached\. Resets /,
       ),
     });
   });
@@ -767,7 +896,7 @@ describe("EvaluateTab", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "billing:getEvalIterationQuota",
-      { organizationId: "org-1" }
+      { organizationId: "org-1" },
     );
   });
 
@@ -778,7 +907,7 @@ describe("EvaluateTab", () => {
     try {
       mocks.useEvalQueries.mockImplementation(() => {
         throw new Error(
-          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error"
+          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error",
         );
       });
 
@@ -786,7 +915,7 @@ describe("EvaluateTab", () => {
 
       expect(screen.getByText("Could not load Testing")).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Try again" })
+        screen.getByRole("button", { name: "Try again" }),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("suite-sidebar")).toBeNull();
     } finally {
@@ -845,8 +974,7 @@ describe("EvaluateTab", () => {
         status: "error",
         error: { code: "execution_failed" },
       });
-      const message =
-        response.status === "error" ? response.error.message : "";
+      const message = response.status === "error" ? response.error.message : "";
       expect(message).toMatch(/Eval iteration limit reached/);
       expect(message).toMatch(/25\/25 eval iterations used/);
       // The raw un-gated run path must not have been touched.
@@ -913,9 +1041,9 @@ describe("EvaluateTab", () => {
       );
       expect(mocks.confirmDelete).toHaveBeenCalledTimes(1);
       // Staged before committed, and the staging dialog is closed after.
-      expect(
-        mocks.setSuiteToDelete.mock.invocationCallOrder[0],
-      ).toBeLessThan(mocks.confirmDelete.mock.invocationCallOrder[0]);
+      expect(mocks.setSuiteToDelete.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.confirmDelete.mock.invocationCallOrder[0],
+      );
       expect(mocks.setSuiteToDelete).toHaveBeenLastCalledWith(null);
     });
 

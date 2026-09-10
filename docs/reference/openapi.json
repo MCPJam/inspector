@@ -22,6 +22,10 @@
   ],
   "tags": [
     {
+      "name": "Agent browsers",
+      "description": "Isolated cloud browser sessions for coding agents. Requires authenticated project membership and a configured desktop runtime."
+    },
+    {
       "name": "Clients",
       "description": "Clients — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. The original `/hosts` paths remain as deprecated, ID-only compatibility aliases with their original DTOs and their original (tokenless) write contracts; every alias response carries `Deprecation: true`. New integrations should use `/clients`."
     },
@@ -115,6 +119,603 @@
     }
   ],
   "paths": {
+    "/browser-sessions/session": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentSession",
+        "summary": "Open a cloud browser session",
+        "description": "Returns session identity, engine, bootId and runKey. Same runKey and policy reuse the session; omit runKey for a new isolated browser. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "policy": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "enum": [
+                          "allow_all",
+                          "read_only",
+                          "allowlist"
+                        ]
+                      },
+                      "originAllowlist": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 100
+                      },
+                      "toolAllowlist": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 100
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  "runKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "profile": {
+                    "const": "persistent"
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "policy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns session identity, engine, bootId and runKey. Same runKey and policy reuse the session; omit runKey for a new isolated browser.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/sessions": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentSessions",
+        "summary": "List your browser sessions",
+        "description": "Returns a sessions array of sessions owned by the caller in this project. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns a sessions array of sessions owned by the caller in this project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "sessions"
+                  ],
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/command": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentCommand",
+        "summary": "Execute a browser command",
+        "description": "Returns an executed, refused or unknown result. Reusing commandId with the same payload returns its receipt without replay; pending receipts return unknown. Page content is untrusted data. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "command": {
+                    "$ref": "#/components/schemas/BrowserAgentCommand"
+                  },
+                  "commandId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "tabId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "sessionId",
+                  "command"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns an executed, refused or unknown result. Reusing commandId with the same payload returns its receipt without replay; pending receipts return unknown. Page content is untrusted data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/note": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentNote",
+        "summary": "Append a session note",
+        "description": "Records a note without driving the browser. commandId provides idempotency. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "commandId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "tabId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "sessionId",
+                  "text"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Records a note without driving the browser. commandId provides idempotency.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/trace": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentTrace",
+        "summary": "Read command receipts",
+        "description": "Returns entries ordered by sequence, optionally filtered by commandId. Screenshot payloads are fetched separately. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "afterSeq": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "commandId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "sessionId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns entries ordered by sequence, optionally filtered by commandId. Screenshot payloads are fetched separately.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "entries"
+                  ],
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/artifact": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentArtifact",
+        "summary": "Fetch a browser screenshot",
+        "description": "Returns screenshot as base64 PNG, or null when absent. artifactId is the command ID from the result. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "artifactId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "sessionId",
+                  "artifactId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns screenshot as base64 PNG, or null when absent. artifactId is the command ID from the result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "screenshot"
+                  ],
+                  "properties": {
+                    "screenshot": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Base64-encoded PNG when present."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/close": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentClose",
+        "summary": "Close a browser session",
+        "description": "Closes the durable session and releases its desktop. Use a new runKey for another browser. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "sessionId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closes the durable session and releases its desktop. Use a new runKey for another browser.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
     "/host-catalog": {
       "get": {
         "operationId": "getHostCompatCatalog",
@@ -11647,6 +12248,519 @@
           }
         }
       }
+    },
+    "/chat-sessions/{sessionId}/browser/open": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserOpen",
+        "summary": "Open the API session browser",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "policy": {
+                    "$ref": "#/components/schemas/BrowserToolPolicy"
+                  },
+                  "profileId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionBrowserOpened"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/{sessionId}/browser/command": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserCommand",
+        "summary": "Command the API session browser",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "commandId": {
+                    "type": "string"
+                  },
+                  "tabId": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "$ref": "#/components/schemas/BrowserAgentCommand"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/{sessionId}/browser/note": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserNote",
+        "summary": "Add a note to the API session browser",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "commandId": {
+                    "type": "string"
+                  },
+                  "tabId": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "text"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/{sessionId}/browser/trace": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserTrace",
+        "summary": "Read the API session browser command trace",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "afterSeq": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/{sessionId}/browser/artifact": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserArtifact",
+        "summary": "Read an API session browser screenshot URL",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "commandId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "commandId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/{sessionId}/browser/close": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserClose",
+        "summary": "Close the API session browser",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/browser": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "createChatSessionBrowser",
+        "summary": "Create an API session shell and open its browser",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string"
+                  },
+                  "policy": {
+                    "$ref": "#/components/schemas/BrowserToolPolicy"
+                  },
+                  "profileId": {
+                    "type": "string"
+                  },
+                  "idempotencyKey": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "policy",
+                  "idempotencyKey"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionBrowserOpened"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -11921,6 +13035,264 @@
       }
     },
     "schemas": {
+      "BrowserAgentCommand": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "back"
+              },
+              "observeAfter": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "forward"
+              },
+              "observeAfter": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "reload"
+              },
+              "observeAfter": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "navigate"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "maxLength": 8192
+              },
+              "newTab": {
+                "type": "boolean"
+              },
+              "observeAfter": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op",
+              "url"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "observe"
+              },
+              "mode": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "text",
+                  "dom",
+                  "console",
+                  "network",
+                  "dialog",
+                  "url",
+                  "page_tools"
+                ]
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "rootRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "rootSelector": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "filter": {
+                "enum": [
+                  "interactive",
+                  "all"
+                ]
+              }
+            },
+            "required": [
+              "op",
+              "mode"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "act"
+              },
+              "verb": {
+                "enum": [
+                  "click",
+                  "type",
+                  "press",
+                  "scroll",
+                  "hover",
+                  "drag",
+                  "select",
+                  "close_tab",
+                  "activate_tab",
+                  "accept_dialog",
+                  "dismiss_dialog"
+                ]
+              },
+              "target": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "ref": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      }
+                    },
+                    "required": [
+                      "ref"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "selector": {
+                        "type": "string",
+                        "maxLength": 4096
+                      }
+                    },
+                    "required": [
+                      "selector"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "coordinates": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      }
+                    },
+                    "required": [
+                      "coordinates"
+                    ]
+                  }
+                ]
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 16000
+              },
+              "expectedState": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "observeAfter": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op",
+              "verb"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "invoke_page_tool"
+              },
+              "toolKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "frameId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "input": {}
+            },
+            "required": [
+              "op",
+              "toolKey",
+              "input"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "cancel_page_tool"
+              },
+              "invocationId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "op",
+              "invocationId"
+            ]
+          }
+        ]
+      },
       "Error": {
         "type": "object",
         "required": ["code", "message"],
@@ -12059,12 +13431,57 @@
           "import": {
             "$ref": "#/components/schemas/EvalCaseImportClaim"
           },
+          "source": {
+            "$ref": "#/components/schemas/EvalCaseSource"
+          },
           "createdAt": {
             "type": ["number", "null"]
           },
           "updatedAt": {
             "type": ["number", "null"]
           }
+        }
+      },
+      "EvalCaseSource": {
+        "type": "object",
+        "description": "Where an AI-assisted Markdown case was authored from. Provenance only: the file, its hash, and the line range the extractor read, so a reader can trace a case back to its source document. It is not an import claim (see `EvalCaseImportClaim`) and carries no approval semantics.",
+        "required": [
+          "format",
+          "method",
+          "fileName",
+          "fileHash",
+          "excerpt",
+          "startLine",
+          "endLine",
+          "extractorVersion"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "format": { "type": "string", "enum": ["markdown"] },
+          "method": {
+            "type": "string",
+            "enum": ["ai"],
+            "description": "How the case was derived from the document. `ai`: an extractor model proposed it and a person reviewed it before it was saved."
+          },
+          "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "fileHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 of the source document, lowercase hex."
+          },
+          "excerpt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 102400,
+            "description": "The passage the case was extracted from."
+          },
+          "startLine": { "type": "integer", "minimum": 1 },
+          "endLine": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Inclusive; never less than `startLine`."
+          },
+          "extractorVersion": { "type": "string", "minLength": 1, "maxLength": 100 }
         }
       },
       "EvalCaseImportClaim": {
@@ -12293,6 +13710,9 @@
           },
           "import": {
             "$ref": "#/components/schemas/EvalCaseImportClaim"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EvalCaseSource"
           }
         },
         "additionalProperties": false
@@ -15985,6 +17405,288 @@
           "stageResultsUnverified": {
             "type": "boolean",
             "enum": [true]
+          },
+          "frictionSignals": {
+            "$ref": "#/components/schemas/EvalTrialFrictionSignals"
+          },
+          "frictionSignalsUnverified": {
+            "type": "boolean",
+            "enum": [true],
+            "description": "The server stored a friction document that failed validation. The signals themselves are withheld rather than partially trusted."
+          },
+          "suspectedConditionVerdict": {
+            "$ref": "#/components/schemas/EvalSuspectedConditionVerdict"
+          },
+          "suspectedConditionUnverified": {
+            "type": "boolean",
+            "enum": [true],
+            "description": "The server stored a suspected-condition verdict that failed validation. The verdict is withheld rather than partially trusted."
+          }
+        }
+      },
+      "EvalSuspectedConditionVerdict": {
+        "type": "object",
+        "description": "Which server-controlled condition is SUSPECTED of contributing to one observed friction pattern, from an advisory per-trial judge. REPORT-ONLY and NEVER a claim about cause: nothing here entered the trial\u2019s `result`, its stage chain or its `failureCategory`, and only a controlled rewrite that changes the suspected response and holds the rest comparable could establish causation. ABSENT means no judge ran \u2014 the trial predates it, nothing was flagged, or the deployment has it off.",
+        "required": [
+          "status",
+          "gradingKey",
+          "signalKind",
+          "informationCallIndex",
+          "observedAtCallIndex",
+          "judgeTemplateVersion",
+          "judgeTemplateHash",
+          "model",
+          "generatedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["scored", "skipped", "error"],
+            "description": "`scored` \u2014 a verdict was produced. `skipped` \u2014 the judge did not reach this trial; `reason` says why. `error` \u2014 the pass threw for this trial. A skipped or errored trial carries NO condition, so \u201cwe never looked\u201d is never rendered as \u201cwe looked and could not say\u201d."
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["spendBlocked", "traceIncomplete", "noEvidence", "cap"],
+            "description": "Present only when `status` is `skipped`. `spendBlocked` \u2014 the internal-LLM spend gate refused the call. `traceIncomplete` \u2014 a referenced trace blob could not be read. `noEvidence` \u2014 the judge\u2019s window could not be built, most often because the information call\u2019s result never reached the trace. `cap` \u2014 the run had more flagged trials than the per-run cap."
+          },
+          "condition": {
+            "type": "string",
+            "enum": [
+              "unclear",
+              "idBuriedInPayload",
+              "idNameCollision",
+              "missingQueryEcho",
+              "silentTruncation",
+              "ambiguousErrorSemantics",
+              "missingUnits",
+              "responseWasClear",
+              "descriptionMisleading"
+            ],
+            "description": "Which server-controlled condition is SUSPECTED of contributing. A CLOSED vocabulary. SUSPECTED, not established: the judge saw one window of one trial and named a plausible contributor, and only a controlled rewrite could turn that into a claim about cause. `unclear` — could not attribute: the judge could not identify a condition from what it was shown, which is also where a low-confidence or unsupported verdict is demoted to. `idBuriedInPayload` — identifier buried in payload: the identifier a later call needed was not where a caller would look for it. `idNameCollision` — identifier name collision: two different identifiers share a name, or one name means different things across tools. `missingQueryEcho` — response does not echo the query: a caller cannot tell a narrowed result from a fresh one. `silentTruncation` — response truncated without saying so. `ambiguousErrorSemantics` — error text does not say whether to retry. `missingUnits` — value has no stated unit. `responseWasClear` — the response was clear: the server's output does not explain the pattern. This is the honest negative and a real answer. `descriptionMisleading` — tool description points the wrong way."
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+            "description": "How sure the judge was. `low` — low confidence: never reaches a reader as a named condition, because a low-confidence verdict is demoted to `unclear` before it is persisted. `medium` — medium confidence. `high` — high confidence."
+          },
+          "remediation": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "ONE sentence naming a lever the SERVER OWNER controls. Absent for `unclear` and `responseWasClear`, which name no server problem to remediate, and absent from any verdict whose remediation named no server lever \u2014 that verdict is demoted to `unclear`."
+          },
+          "evidence": {
+            "type": "object",
+            "description": "Where in the window the judge was pointing. Dropped rather than guessed when it fell outside the window or named the wrong tool; the verdict survives, the pointer does not.",
+            "required": ["callIndex", "toolName"],
+            "properties": {
+              "callIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "fieldPath": {
+                "type": "string",
+                "maxLength": 120
+              }
+            }
+          },
+          "gradingKey": {
+            "type": "string"
+          },
+          "signalKind": {
+            "type": "string",
+            "description": "The friction signal that triggered the judge."
+          },
+          "informationCallIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Where the information was surfaced. The judge saw calls 0 through `observedAtCallIndex` and nothing after."
+          },
+          "observedAtCallIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The call that made the pattern observable, and the judge\u2019s evidence bound."
+          },
+          "judgeTemplateVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "judgeTemplateHash": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "EvalFrictionSignal": {
+        "type": "object",
+        "description": "One observed pattern in a trial's tool calls. Identifier kinds carry `informationCallIndex` (where the identifiers appeared) and `observedAtCallIndex` (the later call that made the pattern visible); adjacency kinds carry `callIndex` and `priorCallIndex`. Every index addresses `actualToolCalls` on the same iteration.",
+        "required": ["kind", "toolName"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "identifierSurfacedUnused",
+              "searchRepeatedAfterIdentifier",
+              "identicalRetry",
+              "changedRetry",
+              "paginationContinuation"
+            ],
+            "description": "Which observable pattern this is. A CLOSED vocabulary; a reader that does not know a member must not guess at it. Every member has a benign reading, so none of them is a verdict about the trial. `identifierSurfacedUnused` — Identifiers surfaced, none used later: a result carried identifiers and no later call passed one, which is also what a search that already answered the question looks like. `searchRepeatedAfterIdentifier` — Same tool searched again after identifiers: the tool that surfaced them was called again with a different question, which is also what a sensible refinement looks like. `identicalRetry` — Repeated with identical arguments: the same call ran twice byte for byte, which is what recovery after a transient error looks like. `changedRetry` — Same tool called again with changed arguments: ordinary exploration, and most useful work looks like this. `paginationContinuation` — Pagination continued: only the pagination keys changed, which is a cursor doing its job and is never counted as a repeat."
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "informationCallIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "observedAtCallIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "callIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "priorCallIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "afterError": {
+            "type": "boolean",
+            "description": "Whether the call this one repeats returned an error."
+          },
+          "identifierKeyPaths": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            },
+            "description": "Where in the result the identifiers were found (`results[].id`). KEY PATHS ONLY — an identifier VALUE never leaves the deployment."
+          },
+          "identifierCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "laterCallCount": {
+            "type": "integer",
+            "minimum": 2
+          },
+          "repeatCallIndexes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "paginationKeys": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": {
+              "type": "string",
+              "enum": [
+                "cursor",
+                "nextCursor",
+                "page",
+                "pageToken",
+                "offset",
+                "after",
+                "before",
+                "start",
+                "limit"
+              ]
+            }
+          }
+        }
+      },
+      "EvalTrialFrictionSignals": {
+        "type": "object",
+        "description": "Observable patterns in one trial's tool calls. REPORT-ONLY: nothing here decided the trial's `result`, and every pattern has a benign reading. `state` is `notMeasured` when the trial could not be looked at at all; `identifierSignals.state` is separate because a trial whose tool results were not retained still has measurable retries but cannot be asked whether an identifier went unused. An ABSENT document means the trial predates the measurement — never read it as zero.",
+        "required": [
+          "version",
+          "state",
+          "callCount",
+          "resultAvailableCount",
+          "timedCallCount",
+          "identifierSignals",
+          "signals"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [1],
+            "description": "Derivation semantics version. Bumped when a counting RULE changes, even if the shape does not."
+          },
+          "state": {
+            "type": "string",
+            "enum": ["measured", "notMeasured"]
+          },
+          "notMeasuredReason": {
+            "type": "string",
+            "enum": [
+              "noToolCalls",
+              "resultsUnavailable",
+              "orderingUnknown",
+              "evidenceIncomplete",
+              "truncated"
+            ],
+            "description": "Present only when `state` is `notMeasured`. `noToolCalls` — no tool calls to look at. `resultsUnavailable` — tool results were not retained. `orderingUnknown` — the calls cannot be placed in a causal order. `evidenceIncomplete` — the evidence for this trial has a known hole. `truncated` — too many tool calls to measure."
+          },
+          "callCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resultAvailableCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timedCallCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "identifierSignals": {
+            "type": "object",
+            "description": "Whether the two identifier-dependent kinds were measured at all. `notMeasured` here beside `state: measured` above is the normal shape for a run whose tool results were not retained: the retries were measured, the identifiers were never looked for.",
+            "required": ["state"],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": ["measured", "notMeasured"]
+              },
+              "reason": {
+                "type": "string",
+                "description": "Why the identifier kinds were not measured. `noToolCalls` — no tool calls to look at. `resultsUnavailable` — tool results were not retained. `orderingUnknown` — the calls cannot be placed in a causal order. `evidenceIncomplete` — the evidence for this trial has a known hole. `truncated` — too many tool calls to measure.",
+                "enum": [
+                  "noToolCalls",
+                  "resultsUnavailable",
+                  "orderingUnknown",
+                  "evidenceIncomplete",
+                  "truncated"
+                ]
+              }
+            }
+          },
+          "signals": {
+            "type": "array",
+            "maxItems": 24,
+            "items": {
+              "$ref": "#/components/schemas/EvalFrictionSignal"
+            },
+            "description": "Ordered by the call that made each pattern observable. Empty on a `measured` document means nothing fired; empty on a `notMeasured` one means nothing was looked for."
           }
         }
       },
@@ -24014,7 +25716,10 @@
       },
       "SendChatMessageRequest": {
         "type": "object",
-        "required": ["idempotencyKey", "message"],
+        "required": [
+          "idempotencyKey",
+          "message"
+        ],
         "additionalProperties": false,
         "properties": {
           "idempotencyKey": {
@@ -24075,7 +25780,10 @@
           },
           "toolMode": {
             "type": "string",
-            "enum": ["read_only", "auto"],
+            "enum": [
+              "read_only",
+              "auto"
+            ],
             "default": "read_only",
             "description": "`read_only` advertises only tools annotated `readOnlyHint: true`. `auto` advertises everything and MAY CAUSE REAL EXTERNAL SIDE EFFECTS. First turn only."
           },
@@ -24100,6 +25808,9 @@
             "minimum": 0,
             "maximum": 16,
             "description": "Cap the tool calls this turn may make, enforced at DISPATCH rather than by bounding steps (one step can emit several parallel calls). `0` advertises no tools at all."
+          },
+          "browser": {
+            "$ref": "#/components/schemas/SessionBrowserInput"
           }
         }
       },
@@ -24148,10 +25859,19 @@
       },
       "ChatTurn": {
         "type": "object",
-        "required": ["sessionId", "turnId", "projectId", "persisted", "origin"],
+        "required": [
+          "sessionId",
+          "turnId",
+          "projectId",
+          "persisted",
+          "origin"
+        ],
         "properties": {
           "sessionId": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "The one public session id. Pass it back to continue, and to the trace/detail reads. NULL only when the turn ran but its transcript did not persist — which `persisted.outcome` reports, and which must not be read as \"nothing happened\": the turn already spent."
           },
           "turnId": {
@@ -24166,7 +25886,10 @@
             "type": "string"
           },
           "finishReason": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "toolCalls": {
             "type": "array",
@@ -24208,7 +25931,10 @@
           },
           "toolMode": {
             "type": "string",
-            "enum": ["read_only", "auto"]
+            "enum": [
+              "read_only",
+              "auto"
+            ]
           },
           "engine": {
             "type": "string",
@@ -24239,7 +25965,9 @@
           },
           "origin": {
             "type": "string",
-            "enum": ["api"]
+            "enum": [
+              "api"
+            ]
           },
           "replay": {
             "type": "boolean",
@@ -24247,6 +25975,117 @@
           },
           "message": {
             "type": "string"
+          },
+          "chatSessionId": {
+            "type": "string"
+          },
+          "browser": {
+            "type": "object",
+            "properties": {
+            "effectivePolicy": {
+              "type": "object",
+              "description": "Permissions after intersecting the stored grant, current host ceiling, and read-only tool mode. Null is unrestricted; an empty list denies all.",
+              "properties": {
+                "tools": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "origins": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "tools",
+                "origins"
+              ]
+            },
+              "browserSessionId": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "sleeping",
+                  "closed"
+                ]
+              },
+              "policy": {
+                "$ref": "#/components/schemas/BrowserToolPolicy"
+              },
+              "profileId": {
+                "type": "string"
+              },
+              "bootId": {
+                "type": "string"
+              },
+              "controlledBy": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "human",
+                  null
+                ]
+              },
+              "box": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lastActiveAt": {
+                "type": "number"
+              },
+              "attached": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "screenshots": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BrowserScreenshot"
+                }
+              },
+              "notices": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "handoff": {
+                "type": "object",
+                "properties": {
+                  "waited": {
+                    "type": "boolean"
+                  },
+                  "resumed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "waited",
+                  "resumed"
+                ]
+              }
+            },
+            "required": [
+              "attached"
+            ]
           }
         }
       },
@@ -24289,32 +26128,63 @@
             "type": "string"
           },
           "projectId": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "origin": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "modelId": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "version": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "startedAt": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "lastActivityAt": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "toolMode": {
-            "type": ["string", "null"],
-            "enum": ["read_only", "auto", null]
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "read_only",
+              "auto",
+              null
+            ]
           },
           "environmentId": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "messageCount": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "description": "NULL — never 0 — when the transcript could not be read. Zero would claim the conversation is empty."
           },
           "transcriptUnavailable": {
@@ -24328,6 +26198,33 @@
           },
           "nextMessageIndex": {
             "type": "integer"
+          },
+          "chatSessionId": {
+            "type": "string"
+          },
+          "apiConfigState": {
+            "type": "string",
+            "enum": [
+              "unconfigured",
+              "configured"
+            ]
+          },
+          "browser": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/SessionBrowser" },
+              { "type": "null" }
+            ]
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "cumulativeInputTokens": {
+                "type": "number"
+              },
+              "cumulativeOutputTokens": {
+                "type": "number"
+              }
+            }
           }
         }
       },
@@ -24379,6 +26276,32 @@
           "spansTruncated": {
             "type": "boolean",
             "description": "Fewer spans came back than the turn recorded."
+          },
+          "browser": {
+            "type": "object",
+            "properties": {
+              "browserSessionId": {
+                "type": "string"
+              },
+              "bootId": {
+                "type": "string"
+              },
+              "box": {
+                  "oneOf": [
+                    { "type": "object", "properties": { "sandboxRowId": { "type": "string" } }, "required": ["sandboxRowId"], "additionalProperties": false },
+                    { "type": "object", "properties": { "computerId": { "type": "string" } }, "required": ["computerId"], "additionalProperties": false }
+                  ]
+                }
+            },
+            "required": [
+              "browserSessionId"
+            ]
+          },
+          "screenshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserScreenshot"
+            }
           }
         }
       },
@@ -24392,15 +26315,21 @@
           "turns"
         ],
         "properties": {
+          "projectId": { "type": ["string", "null"] },
           "sessionId": {
             "type": "string"
           },
           "origin": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "traceVersion": {
             "type": "integer",
-            "enum": [1]
+            "enum": [
+              1
+            ]
           },
           "turnCount": {
             "type": "integer",
@@ -24414,6 +26343,9 @@
           },
           "latestPromptIndex": {
             "type": "integer"
+          },
+          "chatSessionId": {
+            "type": "string"
           }
         }
       },
@@ -25362,6 +27294,168 @@
             "$ref": "#/components/schemas/ServerSkillRefusal"
           }
         }
+      },
+      "BrowserToolPolicy": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "allow_all",
+              "read_only",
+              "allowlist"
+            ]
+          },
+          "originAllowlist": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "string"
+            }
+          },
+          "toolAllowlist": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "SessionBrowserInput": {
+        "type": "object",
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/BrowserToolPolicy"
+          },
+          "profileId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserScreenshot": {
+        "type": "object",
+        "properties": {
+          "turnId": {
+            "type": "string"
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "stepIndex": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_captured",
+              "unavailable"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "mediaType": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/jpeg"
+            ]
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "ts": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "toolCallId",
+          "stepIndex"
+        ]
+      },
+      "SessionBrowser": {
+        "type": "object",
+        "properties": {
+          "browserSessionId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "sleeping",
+              "closed"
+            ]
+          },
+          "policy": {
+            "$ref": "#/components/schemas/BrowserToolPolicy"
+          },
+          "profileId": {
+            "type": "string"
+          },
+          "bootId": {
+            "type": "string"
+          },
+          "controlledBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "human",
+              null
+            ]
+          },
+          "box": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastActiveAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "browserSessionId",
+          "state"
+        ]
+      },
+      "SessionBrowserOpened": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "chatSessionId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "browser": {
+            "$ref": "#/components/schemas/SessionBrowser"
+          }
+        },
+        "required": [
+          "sessionId",
+          "chatSessionId",
+          "projectId",
+          "browser"
+        ]
       }
     },
     "responses": {

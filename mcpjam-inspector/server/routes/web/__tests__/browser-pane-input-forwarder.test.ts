@@ -353,3 +353,16 @@ describe("bursts the daemon would refuse whole", () => {
     for (let at = 0; at < 200; at += 1) await tick();
   });
 });
+
+it("settles a drain when a disconnected viewer cancels pending work", async () => {
+  const f = build();
+  f.hold();
+  f.forwarder.submit({ seq: 1, events: [{ type: "text", text: "first" }] });
+  f.forwarder.submit({ seq: 2, events: [{ type: "text", text: "second" }] });
+  const drained = f.forwarder.drain();
+  f.forwarder.cancel();
+  await drained;
+  f.release();
+  await tick();
+  expect(f.dispatched).toHaveLength(1);
+});

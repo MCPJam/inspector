@@ -17,23 +17,41 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { useComputerEngine } from "@/hooks/useComputerEngine";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useHost } from "@/hooks/useClients";
 import { resolveEffectiveHost } from "@/lib/effective-client";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
-import { useMintBrowserToken } from "@/hooks/useProjectComputer";
+import {
+  useMintBrowserToken,
+  useMintConversationBrowserToken,
+} from "@/hooks/useProjectComputer";
 import {
   createBrowserTokenCache,
   type MintBrowserToken,
 } from "@/lib/hosted-browser/client";
 import {
   fetchBrowserToolDefinitions,
+  fetchHostedPageToolInvoke,
   fetchHostedPageTools,
+  fetchLocalPageToolInvoke,
   fetchLocalPageTools,
 } from "@/lib/browser-page-tools/client";
-import type { BrowserPageToolsResponse } from "@/shared/browser-page-tools";
+import type {
+  BrowserPageToolInvokeResponse,
+  BrowserPageToolsResponse,
+} from "@/shared/browser-page-tools";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import { usePaneHolderId } from "@/lib/local-browser/pane-holder";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import {
+  browserPageToolsKey,
+  useLiveWebmcpSignal,
+  useWebmcpEpoch,
+} from "@/stores/browser-page-tools-store";
+
+/** How many times to re-read after a lease blocks the catalog. */
+const LEASE_HELD_RETRIES = 3;
 
 /**
  * Definitions are static per engine, so one fetch serves every mount for the
@@ -56,8 +74,22 @@ export interface BrowserToolsState {
    * flashing "no browser running" at a browser that is starting.
    */
   page: BrowserPageToolsResponse | null;
+  /**
+   * The daemon's own change signal for this page's tools, when a browser
+   * stream is open. Absent means "no news", never "no tools".
+   */
+  live?: { revision: number; hash: string; count: number; url?: string };
   /** Re-read the page. The definitions never change; only this does. */
   refreshPage: () => void;
+  /**
+   * Run a page tool the pane is showing, the way the WebMCP Inspector does.
+   * `browser_*` verbs are not on this path.
+   */
+  invokePage: (args: {
+    rawName: string;
+    frameId?: string;
+    input: Record<string, unknown>;
+  }) => Promise<BrowserPageToolInvokeResponse>;
 }
 
 export function useBrowserTools(args: {
@@ -92,8 +124,19 @@ export function useBrowserTools(args: {
     explicitHostConfig: host?.config ?? null,
     projectDefaultHostConfig: projectDefaultHostConfig ?? null,
   });
-  const engineState = useComputerEngine(args.projectId);
+  const engineState = useBrowserEngine(args.projectId);
   const mintToken = useMintBrowserToken();
+  const mintConversationToken = useMintConversationBrowserToken();
+  // THE CONVERSATION the Browser pane is driving. Chat ensures
+  // `<project>:session:<id>`; a read that omits it still looks at the legacy
+  // project-wide Chromium, which is why this list stayed empty while the
+  // model was already calling the page's tools.
+  const conversationId = useActiveChatSessionStore((state) => state.sessionId);
+  // THE SAME HOLDER the Browser pane acquires under. Without it a hold that
+  // is ours — a click that took the page, a leftover parked lease — makes
+  // this list say someone else has the browser, while the model can still
+  // call the tools after the next hand-back.
+  const paneHolder = usePaneHolderId();
   const attached = (hostConfig?.builtInToolIds ?? []).includes(
     BROWSER_BUILT_IN_TOOL_ID,
   );
@@ -107,6 +150,9 @@ export function useBrowserTools(args: {
     () => DEFINITIONS_CACHE.get(engine) ?? [],
   );
   const [page, setPage] = useState<BrowserPageToolsResponse | null>(null);
+  const liveKey = browserPageToolsKey(args.projectId, engine);
+  const webmcpEpoch = useWebmcpEpoch(liveKey);
+  const live = useLiveWebmcpSignal(liveKey);
   const [pageNonce, setPageNonce] = useState(0);
   const refreshPage = useCallback(() => setPageNonce((n) => n + 1), []);
 
@@ -118,9 +164,22 @@ export function useBrowserTools(args: {
   const tokens = useMemo(() => {
     if (engine !== "hosted" || !args.projectId || !isAuthenticated) return null;
     const projectId = args.projectId;
-    const mint: MintBrowserToken = () => mintToken({ projectId });
+    const mint: MintBrowserToken = conversationId
+      ? () =>
+          mintConversationToken({
+            projectId,
+            conversationId,
+          })
+      : () => mintToken({ projectId });
     return createBrowserTokenCache(mint);
-  }, [engine, args.projectId, isAuthenticated, mintToken]);
+  }, [
+    engine,
+    args.projectId,
+    isAuthenticated,
+    mintToken,
+    mintConversationToken,
+    conversationId,
+  ]);
   /**
    * The cache, readable from the page effect WITHOUT being one of its
    * dependencies.
@@ -193,10 +252,26 @@ export function useBrowserTools(args: {
     const controller = new AbortController();
     const serial = (latestRead.current += 1);
     const projectId = args.projectId;
+    // THE TAB THE SIGNAL CAME FROM. The heartbeat measures the ACTIVE tab, so
+    // a read sent without one observes `@session` — a literal key, not
+    // "whichever tab is active" — and the pane would show the default tab's
+    // definitions, labelled live, beside a view of the tab the person is
+    // actually in. Absent (an older daemon, a beat with no `tabs`) the read
+    // falls back to today's behaviour rather than guessing.
+    const signalTabId = live?.tabId;
     const read =
       engine === "hosted" && cache
-        ? fetchHostedPageTools(cache, controller.signal)
-        : fetchLocalPageTools({ projectId }, consentToken, controller.signal);
+        ? fetchHostedPageTools(cache, controller.signal, signalTabId)
+        : fetchLocalPageTools(
+            {
+              projectId,
+              ...(conversationId ? { sessionId: conversationId } : {}),
+              ...(paneHolder ? { holder: paneHolder } : {}),
+              ...(signalTabId ? { tabId: signalTabId } : {}),
+            },
+            consentToken,
+            controller.signal,
+          );
     read
       .then((answer) => {
         if (latestRead.current === serial) setPage(answer);
@@ -215,11 +290,110 @@ export function useBrowserTools(args: {
   }, [
     attached,
     args.projectId,
+    conversationId,
+    paneHolder,
     engine,
     consentToken,
     hostedReadable,
     pageNonce,
+    // LIVE. The daemon's heartbeat carries a `{revision, hash, count}` change
+    // signal, and this epoch moves exactly when the page's tool set does — so
+    // the list follows the model's navigation instead of going stale the
+    // moment it matters. It is not a poll: an unchanged page never moves this,
+    // and re-reading the page on a timer would be an observation with side
+    // effects on the thing it observes.
+    //
+    // AND IT COVERS `live.tabId`, which the read above uses. `live` itself is
+    // deliberately NOT a dependency: it moves on a URL-only beat too, and a
+    // client-side route change leaves every registration in place — depending
+    // on it would refetch definitions the pane already has, on every such
+    // change. The store folds the tab into the equality that bumps this
+    // epoch, so a tab that moves moves this and a URL that moves does not.
+    webmcpEpoch,
   ]);
 
-  return { attached, engine, tools, page, refreshPage };
+  /**
+   * A hold is often a blink — takeover, chat handoff, a command in flight.
+   * The catalog used to keep the refusal forever because the tool set itself
+   * did not change, so the live signal never bumped the epoch. A few retries
+   * cover the blink; a hold that lasts is still named after the last one.
+   */
+  const leaseHeldTries = useRef(0);
+  useEffect(() => {
+    leaseHeldTries.current = 0;
+  }, [webmcpEpoch, conversationId]);
+  useEffect(() => {
+    if (!page || page.ok || page.error !== "lease_held") {
+      leaseHeldTries.current = 0;
+      return;
+    }
+    if (leaseHeldTries.current >= LEASE_HELD_RETRIES) return;
+    const attempt = (leaseHeldTries.current += 1);
+    const timer = window.setTimeout(
+      () => setPageNonce((n) => n + 1),
+      400 * attempt,
+    );
+    return () => window.clearTimeout(timer);
+  }, [page]);
+
+  const invokePage = useCallback(
+    async (call: {
+      rawName: string;
+      frameId?: string;
+      input: Record<string, unknown>;
+    }): Promise<BrowserPageToolInvokeResponse> => {
+      if (!attached || !call.rawName) {
+        return { ok: false, error: "no_browser_session" };
+      }
+      const signalTabId = live?.tabId;
+      if (engine === "hosted") {
+        const cache = tokensRef.current;
+        if (!cache) return { ok: false, error: "no_browser_session" };
+        return fetchHostedPageToolInvoke(cache, {
+          toolKey: call.rawName,
+          input: call.input,
+          ...(call.frameId ? { frameId: call.frameId } : {}),
+          ...(signalTabId ? { tabId: signalTabId } : {}),
+        });
+      }
+      const projectId = args.projectId;
+      if (!projectId) return { ok: false, error: "no_browser_session" };
+      return fetchLocalPageToolInvoke(
+        {
+          projectId,
+          toolKey: call.rawName,
+          input: call.input,
+          ...(conversationId ? { sessionId: conversationId } : {}),
+          ...(paneHolder ? { holder: paneHolder } : {}),
+          ...(call.frameId ? { frameId: call.frameId } : {}),
+          ...(signalTabId ? { tabId: signalTabId } : {}),
+        },
+        consentToken,
+      );
+    },
+    [
+      attached,
+      engine,
+      args.projectId,
+      conversationId,
+      paneHolder,
+      consentToken,
+      live?.tabId,
+    ],
+  );
+
+  const available =
+    engine !== "local" ||
+    (engineState.localAvailable && engineState.consent.granted);
+  return {
+    attached,
+    engine,
+    tools: available ? tools : [],
+    page: available
+      ? page
+      : { ok: false as const, error: "no_browser_session" as const },
+    live: available ? live : undefined,
+    refreshPage,
+    invokePage,
+  };
 }

@@ -230,7 +230,7 @@ describe("blind review", () => {
   it("prints no score when withheld", () => {
     render(<JudgeAnswerRow state={{ kind: "withheld" }} />);
     expect(screen.queryByTestId("judge-answer-word")).toBeNull();
-    expect(screen.getByText("Hidden until you label this trial")).toBeTruthy();
+    expect(screen.getByText("Hidden until you label this iteration")).toBeTruthy();
   });
 
   it("still hosts the review control, which is the point", () => {

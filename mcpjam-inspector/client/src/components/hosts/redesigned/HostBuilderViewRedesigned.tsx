@@ -42,7 +42,8 @@ import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
 import { emitClientSaveTelemetry } from "./client-save-telemetry";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useBrowserProfileName } from "@/hooks/useBrowserProfileName";
+import { useComputersEnabled, useBrowserEnabled } from "@/hooks/useComputersEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { HOSTED_MODE } from "@/lib/config";
 import { useComputerStatus } from "@/hooks/useProjectComputer";
@@ -70,7 +71,7 @@ interface HostBuilderViewRedesignedProps {
    */
   onReconnect?: (
     serverName: string,
-    options?: { forceOAuthFlow?: boolean; allowInteractiveOAuthFlow?: boolean }
+    options?: { forceOAuthFlow?: boolean; allowInteractiveOAuthFlow?: boolean },
   ) => Promise<unknown> | void;
 }
 
@@ -83,7 +84,7 @@ interface HostBuilderViewRedesignedProps {
  */
 export function toolCallCancellationChanged(
   saved: HostConfigInputV2 | null | undefined,
-  draft: HostConfigInputV2
+  draft: HostConfigInputV2,
 ): boolean {
   return (
     JSON.stringify(saved?.mcpProfile?.toolCallCancellation) !==
@@ -101,10 +102,13 @@ export function toolCallCancellationChanged(
  */
 export function serversNeedingCancellationReconnect(
   hostServerNames: ReadonlyArray<string>,
-  connectionStatusByName: Record<string, { connectionStatus?: string } | undefined>
+  connectionStatusByName: Record<
+    string,
+    { connectionStatus?: string } | undefined
+  >,
 ): string[] {
   return hostServerNames.filter(
-    (name) => connectionStatusByName[name]?.connectionStatus === "connected"
+    (name) => connectionStatusByName[name]?.connectionStatus === "connected",
   );
 }
 
@@ -128,6 +132,7 @@ export function HostBuilderViewRedesigned({
   });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
   const computersEnabled = useComputersEnabled();
+  const browsersEnabled = useBrowserEnabled();
   // Mirrors ConnectViewHeader's gating: Skills is flagged in hosted mode only,
   // local filesystem skills are ungated.
   const skillsEnabled = useSkillsEnabled();
@@ -142,8 +147,9 @@ export function HostBuilderViewRedesigned({
 
   const [draftName, setDraftName] = useState("");
   const [draftConfig, setDraftConfig] = useState<HostConfigInputV2 | null>(
-    null
+    null,
   );
+  const browserProfileName = useBrowserProfileName(projectId, draftConfig?.browserProfileId);
   const [isSaving, setIsSaving] = useState(false);
   const saveInFlightRef = useRef(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -155,7 +161,7 @@ export function HostBuilderViewRedesigned({
   });
   const requestedFocusTab = useMemo(
     () => parseHostVerifyTabParam(location.search),
-    [location.search]
+    [location.search],
   );
   const appliedFocusTabRef = useRef<string | null>(null);
   // Diff snapshot — populated for ONE render after a host switch so the
@@ -242,7 +248,7 @@ export function HostBuilderViewRedesigned({
       host
         ? { ...hostConfigDtoToInput(host.config), optionalServerIds: [] }
         : null,
-    [host]
+    [host],
   );
 
   useEffect(() => {
@@ -264,7 +270,7 @@ export function HostBuilderViewRedesigned({
       !hostConfigInputsEqual(draftConfig, savedConfig) ||
       !serverConnectionOverridesEqual(
         draftConfig.serverConnectionOverrides,
-        savedConfig.serverConnectionOverrides
+        savedConfig.serverConnectionOverrides,
       )
     );
   }, [host, draftName, draftConfig, savedConfig]);
@@ -275,7 +281,7 @@ export function HostBuilderViewRedesigned({
     draftName,
     // The SAVED model, so clearing a pinned model blocks Save while a legacy
     // host that never had one keeps saving unrelated edits.
-    { savedModelId: savedConfig?.modelId }
+    { savedModelId: savedConfig?.modelId },
   );
 
   // Runtime connection state lives in `appState.servers` keyed by server
@@ -320,7 +326,7 @@ export function HostBuilderViewRedesigned({
         connectionStatus:
           connectionStatusByName[s.name]?.connectionStatus ?? "disconnected",
       })),
-    [servers, connectionStatusByName]
+    [servers, connectionStatusByName],
   );
 
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -332,10 +338,10 @@ export function HostBuilderViewRedesigned({
         ? getScenarioShellStyle(
             draftConfig.hostStyle,
             themeMode,
-            draftConfig.chatUiOverride
+            draftConfig.chatUiOverride,
           )
         : undefined,
-    [draftConfig?.hostStyle, draftConfig?.chatUiOverride, themeMode]
+    [draftConfig?.hostStyle, draftConfig?.chatUiOverride, themeMode],
   );
   const liveSnapshotId = host?.config?.id ?? "";
   if (liveSnapshotId) lastSnapshotIdRef.current = liveSnapshotId;
@@ -357,7 +363,7 @@ export function HostBuilderViewRedesigned({
     // appear in that list.
     const connectedNames = serversNeedingCancellationReconnect(
       Object.keys(connectionStatusByName),
-      connectionStatusByName
+      connectionStatusByName,
     );
     void (async () => {
       for (const name of connectedNames) {
@@ -365,7 +371,7 @@ export function HostBuilderViewRedesigned({
           await onReconnect(name, { allowInteractiveOAuthFlow: false });
         } catch {
           toast.warning(
-            `Saved, but "${name}" did not reconnect — its tool-cancellation setting still reflects the previous connection.`
+            `Saved, but "${name}" did not reconnect — its tool-cancellation setting still reflects the previous connection.`,
           );
         }
       }
@@ -388,10 +394,12 @@ export function HostBuilderViewRedesigned({
         projectServers: availableServersForCanvas,
         prev: prevHostSnapshot ?? undefined,
         computersEnabled,
+        browsersEnabled,
+        browserProfileName,
         computerStatus,
         builtInToolCatalog,
       },
-      attention
+      attention,
     );
   }, [
     draftName,
@@ -402,6 +410,8 @@ export function HostBuilderViewRedesigned({
     attention,
     prevHostSnapshot,
     computersEnabled,
+    browsersEnabled,
+    browserProfileName,
     computerStatus,
     builtInToolCatalog,
   ]);
@@ -410,7 +420,7 @@ export function HostBuilderViewRedesigned({
     (
       tab: HostFocusTabId,
       selectedServerId: string | null = null,
-      focusSubKey?: SandboxConfigSubKey
+      focusSubKey?: SandboxConfigSubKey,
     ) => {
       setFocusState({
         open: true,
@@ -419,7 +429,7 @@ export function HostBuilderViewRedesigned({
         ...(focusSubKey ? { focusSubKey } : {}),
       });
     },
-    []
+    [],
   );
 
   const closeFocus = useCallback(() => {
@@ -433,88 +443,87 @@ export function HostBuilderViewRedesigned({
       if (target)
         openFocus(target.tab, target.selectedServerId, target.focusSubKey);
     },
-    [openFocus]
+    [openFocus],
   );
 
-  const persistClient = useCallback(async (
-    name: string,
-    config: HostConfigInputV2,
-    showSuccessToast: boolean
-  ): Promise<boolean> => {
-    if (!host || host.hostId !== hostId || saveInFlightRef.current) {
-      return false;
-    }
-    const nextAttention = collectHostAttentionIssues(config, name, {
-      savedModelId: savedConfig?.modelId,
-    });
-    if (hasBlockingErrors(nextAttention)) {
-      toast.error(
-        computeSaveDisabledReason({
-          isDirty: true,
-          isSaving: false,
-          issues: nextAttention,
-        }) ?? "Fix validation errors before saving"
-      );
-      return false;
-    }
-    saveInFlightRef.current = true;
-    setIsSaving(true);
-    try {
-      // Compare the same persisted and draft snapshots used by save telemetry.
-      const cancellationChanged = toolCallCancellationChanged(
-        savedConfig,
-        config
-      );
-      const { hostConfigId } = await updateHost({
-        hostId,
-        name,
-        input: config,
+  const persistClient = useCallback(
+    async (
+      name: string,
+      config: HostConfigInputV2,
+      showSuccessToast: boolean,
+    ): Promise<boolean> => {
+      if (!host || host.hostId !== hostId || saveInFlightRef.current) {
+        return false;
+      }
+      const nextAttention = collectHostAttentionIssues(config, name, {
+        savedModelId: savedConfig?.modelId,
       });
-      // The freshly persisted config id arrives via the Convex
-      // subscription on the next tick; don't include it in this toast
-      // because `host?.config?.id` is still the *previous* saved config here.
-      if (showSuccessToast) toast.success("Client saved");
-      // Tool cancellation is read from the connection's config at CONNECT
-      // time, so a saved toggle would otherwise sit inert until the user
-      // happened to reconnect — which reads as the switch doing nothing.
-      // Reconnect the host's live servers so the just-saved value governs
-      // them, the same reason the per-server protocol pin reconnects after
-      // its save (`ServersTab`).
-      //
-      // DEFERRED, not run here. The reconnect builds its connection defaults
-      // from the active host's profile as the app currently sees it, and at
-      // this point the Convex subscription still holds the PREVIOUS config
-      // (see the toast note above). Reconnecting now would apply the value
-      // the user just replaced — one save behind, every time. The effect
-      // below waits until the saved config id is the one the app is showing.
-      if (cancellationChanged && onReconnect) {
-        setPendingCancellationReconnect(hostConfigId);
+      if (hasBlockingErrors(nextAttention)) {
+        toast.error(
+          computeSaveDisabledReason({
+            isDirty: true,
+            isSaving: false,
+            issues: nextAttention,
+          }) ?? "Fix validation errors before saving",
+        );
+        return false;
       }
-      if (host && savedConfig) {
-        emitClientSaveTelemetry(track, {
-          clientId: hostId,
-          clientConfigId: hostConfigId,
-          savedName: host.name,
-          draftName: name,
+      saveInFlightRef.current = true;
+      setIsSaving(true);
+      try {
+        // Compare the same persisted and draft snapshots used by save telemetry.
+        const cancellationChanged = toolCallCancellationChanged(
           savedConfig,
-          draftConfig: config,
+          config,
+        );
+        const { hostConfigId } = await updateHost({
+          hostId,
+          name,
+          input: config,
         });
+        // The freshly persisted config id arrives via the Convex
+        // subscription on the next tick; don't include it in this toast
+        // because `host?.config?.id` is still the *previous* saved config here.
+        if (showSuccessToast) toast.success("Client saved");
+        // Tool cancellation is read from the connection's config at CONNECT
+        // time, so a saved toggle would otherwise sit inert until the user
+        // happened to reconnect — which reads as the switch doing nothing.
+        // Reconnect the host's live servers so the just-saved value governs
+        // them, the same reason the per-server protocol pin reconnects after
+        // its save (`ServersTab`).
+        //
+        // DEFERRED, not run here. The reconnect builds its connection defaults
+        // from the active host's profile as the app currently sees it, and at
+        // this point the Convex subscription still holds the PREVIOUS config
+        // (see the toast note above). Reconnecting now would apply the value
+        // the user just replaced — one save behind, every time. The effect
+        // below waits until the saved config id is the one the app is showing.
+        if (cancellationChanged && onReconnect) {
+          setPendingCancellationReconnect(hostConfigId);
+        }
+        if (host && savedConfig) {
+          emitClientSaveTelemetry(track, {
+            clientId: hostId,
+            clientConfigId: hostConfigId,
+            savedName: host.name,
+            draftName: name,
+            savedConfig,
+            draftConfig: config,
+          });
+        }
+        return true;
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to save client",
+        );
+        return false;
+      } finally {
+        saveInFlightRef.current = false;
+        setIsSaving(false);
       }
-      return true;
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save client");
-      return false;
-    } finally {
-      saveInFlightRef.current = false;
-      setIsSaving(false);
-    }
-  }, [
-    hostId,
-    savedConfig,
-    host,
-    updateHost,
-    onReconnect,
-  ]);
+    },
+    [hostId, savedConfig, host, updateHost, onReconnect],
+  );
 
   const handleSave = useCallback(async () => {
     if (!draftConfig) return;
@@ -524,7 +533,7 @@ export function HostBuilderViewRedesigned({
   const handleSaveLatest = useCallback(
     (name: string, config: HostConfigInputV2) =>
       persistClient(name, config, false),
-    [persistClient]
+    [persistClient],
   );
 
   const handleAddServer = useCallback(
@@ -556,7 +565,7 @@ export function HostBuilderViewRedesigned({
         toast.error(getBillingErrorMessage(err, "Failed to add server"));
       }
     },
-    [createServer, projectId]
+    [createServer, projectId],
   );
 
   // Only show the skeleton on the very first mount when there's nothing
@@ -733,11 +742,12 @@ export function HostBuilderViewRedesigned({
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={45} minSize={35} maxSize={70}>
                   <HostFocusPanel
+                    projectId={projectId}
                     hostId={hostId}
                     tab={focusState.tab}
                     onTabChange={(next) =>
                       setFocusState((prev) =>
-                        prev.open ? { ...prev, tab: next } : prev
+                        prev.open ? { ...prev, tab: next } : prev,
                       )
                     }
                     focusSubKey={focusState.focusSubKey}

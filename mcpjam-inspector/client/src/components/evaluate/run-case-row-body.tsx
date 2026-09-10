@@ -33,7 +33,16 @@ import type {
 import { buildStageFixPrompt } from "./stage-fix-prompt";
 import { remedyForReason, type StageRemedy } from "./stage-remedy";
 import { EvaluateToolList } from "./evaluate-tool-list";
-import { variantLabel } from "./route-facts-model";
+import {
+  frictionHeadingFor,
+  frictionLineForTrial,
+  iterationsForRow,
+  readTrialFrictionSignals,
+  readTrialSuspectedCondition,
+  suspectedConditionLineForTrial,
+  suspectedConditionUnavailable,
+  variantLabel,
+} from "./route-facts-model";
 import { RouteFactsSection } from "./route-facts-section";
 
 function groupHeading(group: CaseFailureGroup, count: number): string {
@@ -49,7 +58,7 @@ function groupHeading(group: CaseFailureGroup, count: number): string {
 async function copyPrompt(text: string) {
   const ok = await copyToClipboard(text);
   if (ok) {
-    toast.success("Fix prompt copied — paste it into your coding agent");
+    toast.success("Fix prompt copied. Paste it into your coding agent");
   } else {
     toast.error("Copy failed");
   }
@@ -272,6 +281,78 @@ function FailureGroup({
   );
 }
 
+/**
+ * The per-trial friction lines, one per trial that produced signals.
+ *
+ * REPORT-ONLY, and the copy says so: a heading that names the pattern, and
+ * specifics behind a `<details>` so the row does not grow a paragraph for
+ * every trial. A trial with no signals contributes nothing — "no friction
+ * signals" on the overwhelming majority of trials is noise, not information.
+ *
+ * "Open iteration trace" below remains the way to look at the trial itself;
+ * this line is a pointer at where to look, never a substitute for looking.
+ */
+function FrictionSignalsSection({
+  iterations,
+}: {
+  iterations: readonly EvalIteration[];
+}) {
+  const rows = iterations
+    .map((iteration) => {
+      const signals = readTrialFrictionSignals(iteration);
+      const line = frictionLineForTrial(signals);
+      if (!line || !signals) return null;
+      const heading =
+        signals.state === "measured" && signals.signals.length > 0
+          ? frictionHeadingFor(signals.signals)
+          : "Friction signals";
+      // Step 2's advisory verdict, read beside the signals rather than
+      // inside them: the two are written by different systems at different
+      // times, and a reader must be able to tell "flagged, not yet judged"
+      // from "judged, and it could not attribute".
+      const suspected = suspectedConditionLineForTrial(
+        readTrialSuspectedCondition(iteration),
+      );
+      const unavailable = suspectedConditionUnavailable(iteration);
+      return { id: iteration._id, heading, line, suspected, unavailable };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-1" data-testid="friction-signals-section">
+      {rows.map((row) => (
+        <details
+          key={row.id}
+          className="group rounded-lg border border-border/40 bg-muted/20 px-3.5 py-2.5"
+        >
+          <summary className="cursor-pointer list-none text-[12.5px] text-muted-foreground marker:content-none hover:text-foreground">
+            {row.heading}
+          </summary>
+          <p className="mt-2 text-[12.5px] text-foreground">{row.line}</p>
+          {row.suspected ? (
+            <p
+              className="mt-1 text-[12.5px] text-muted-foreground"
+              data-testid="suspected-condition"
+            >
+              {row.suspected.line}
+              {row.suspected.next ? (
+                <span className="ml-1 text-foreground">
+                  Next: {row.suspected.next}
+                </span>
+              ) : null}
+            </p>
+          ) : row.unavailable ? (
+            <p className="mt-1 text-[12.5px] text-muted-foreground">
+              Suspected condition: not available
+            </p>
+          ) : null}
+        </details>
+      ))}
+    </div>
+  );
+}
+
 export function RunCaseRowBody({
   row,
   iterations,
@@ -345,6 +426,8 @@ export function RunCaseRowBody({
           />
         ))
       )}
+
+      <FrictionSignalsSection iterations={iterationsForRow(row, iterations)} />
 
       {routeFacts?.map((facts) => {
         const label = routeFacts.length > 1 ? variantLabel(facts) : null;

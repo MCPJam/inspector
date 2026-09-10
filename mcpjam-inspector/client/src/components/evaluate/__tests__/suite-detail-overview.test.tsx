@@ -1,7 +1,35 @@
-import { describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
+import {
+  SuiteRunReviewContent,
+  type SuiteRunReviewProps,
+} from "../suite-run-review";
+import {
+  useEvalGeneration,
+  evalSuiteKey,
+  registerEvalSuite,
+} from "@/lib/mcpjam-agent/eval-workspace";
+import { openEvalChat } from "@/lib/mcpjam-agent/eval-scope";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../../evals/types";
+import { formatRunHistoryDate } from "../suite-detail-model";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../../evals/types";
+
+vi.mock("../suite-run-matrix", () => ({
+  ConfiguredSuiteRunReview: (props: SuiteRunReviewProps) => (
+    <SuiteRunReviewContent {...props} />
+  ),
+}));
+
+vi.mock("@/lib/mcpjam-agent/eval-scope", async (original) => ({
+  ...(await original<object>()),
+  openEvalChat: vi.fn(() => "eval-generation-test"),
+}));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
@@ -82,6 +110,112 @@ function makeIteration(
 const hostNamesById = new Map<string, string | null>([["host-1", "Claude"]]);
 
 describe("SuiteDetailOverview", () => {
+  it("consolidates pairings into one run and filters complete runs and their trends", async () => {
+    const user = userEvent.setup();
+    const onRunClick = vi.fn();
+    const runs = [
+      makeRun({
+        _id: "one",
+        runNumber: 1,
+        runGroupId: "together",
+        namedHostId: "host-1",
+        createdAt: 1000,
+      }),
+      makeRun({
+        _id: "two",
+        runNumber: 2,
+        runGroupId: "together",
+        namedHostId: "host-2",
+        createdAt: 1001,
+      }),
+      makeRun({
+        _id: "solo",
+        runNumber: 3,
+        namedHostId: "host-1",
+        createdAt: 2000,
+      }),
+    ];
+    const iterations = [
+      makeIteration({
+        _id: "pass",
+        suiteRunId: "one",
+        resultSource: "reported",
+      }),
+      ...[1, 2, 3].map((id) =>
+        makeIteration({
+          _id: `fail-${id}`,
+          suiteRunId: "two",
+          result: "failed",
+          resultSource: "reported",
+        }),
+      ),
+      makeIteration({
+        _id: "solo-pass",
+        suiteRunId: "solo",
+        resultSource: "reported",
+      }),
+    ];
+    renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite()}
+        cases={[]}
+        runs={runs}
+        runsLoading={false}
+        allIterations={iterations}
+        hostNamesById={
+          new Map([
+            ["host-1", "Claude"],
+            ["host-2", "Cursor"],
+          ])
+        }
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onRunClick={onRunClick}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+      />,
+    );
+    const table = within(
+      screen.getByRole("table", { name: "Suite run history" }),
+    );
+    const headers = table
+      .getAllByRole("columnheader")
+      .map((header) => header.textContent);
+    expect(headers.slice(0, 2)).toEqual(["Date", "Run"]);
+    expect(table.getAllByRole("button", { name: /^#/ })).toHaveLength(2);
+    expect(screen.queryByTestId("suite-run-row-two")).toBeNull();
+    const row = within(screen.getByTestId("suite-run-row-one"));
+    const cells = screen
+      .getByTestId("suite-run-row-one")
+      .querySelectorAll("td");
+    expect(cells[0]).toHaveTextContent(formatRunHistoryDate(1000));
+    expect(cells[0]).not.toHaveTextContent("#");
+    expect(cells[1]).toHaveTextContent("#1");
+    expect(cells[1]).not.toHaveTextContent(formatRunHistoryDate(1000));
+    expect(row.getByText("25%")).toBeVisible();
+    expect(row.getByText("1/4 passed")).toBeVisible();
+    expect(row.getByText(/Claude/)).toBeVisible();
+    expect(
+      row.queryByRole("button", { name: /Client model mapping/ }),
+    ).toBeNull();
+    expect(row.queryByText(/client : model pairings/i)).toBeNull();
+    expect(screen.getByTestId("suite-run-history-snapshot")).toBeVisible();
+    expect(screen.queryByText(/trends across/)).toBeNull();
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "Cursor", exact: true }),
+    );
+    expect(screen.queryByTestId("suite-run-row-solo")).toBeNull();
+    expect(row.getByText("1/4 passed")).toBeVisible();
+    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
+      "1/4 passed",
+    );
+    await user.click(table.getByRole("button", { name: "#1", exact: true }));
+    expect(onRunClick).toHaveBeenCalledWith("one");
+  });
+
   it("renders identity counts, run history, and clickable cases", async () => {
     const user = userEvent.setup();
     const onRerun = vi.fn();
@@ -92,6 +226,7 @@ describe("SuiteDetailOverview", () => {
 
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[
           makeCase({ _id: "case-1" }),
@@ -146,21 +281,19 @@ describe("SuiteDetailOverview", () => {
       "2 cases",
     );
 
-    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
-    expect(screen.getByLabelText("Filter by verdict")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Runs" })).toBeTruthy();
+    expect(screen.queryByLabelText("Filter by verdict")).toBeNull();
     expect(screen.getByLabelText("Filter by client")).toBeTruthy();
     expect(screen.getByLabelText("Filter by model")).toBeTruthy();
-    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
-      "1 failing",
-    );
+    expect(screen.getByTestId("suite-run-history-snapshot")).toBeVisible();
     expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
       "0/1 passed",
     );
     expect(screen.queryByTestId("suite-metric-strip")).toBeNull();
     expect(screen.queryByText("card declined")).toBeNull();
     expect(screen.queryByText("Top failure signature")).toBeNull();
-    expect(screen.getByText("GitHub #4188")).toBeTruthy();
-    expect(screen.getByText("Hold")).toBeTruthy();
+    expect(screen.getByText("GitHub")).toBeTruthy();
+    expect(screen.getAllByText("Finished").length).toBeGreaterThan(0);
 
     await user.click(screen.getByTestId("suite-run-row-run-1"));
     expect(onRunClick).toHaveBeenCalledWith("run-1");
@@ -181,9 +314,12 @@ describe("SuiteDetailOverview", () => {
     await user.click(screen.getByRole("button", { name: "Add case" }));
     expect(onEditCases).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: "Run this suite" }));
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    expect(onRerun).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(onRerun).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "suite-1" }),
+      { iterationOverride: 5 },
     );
   });
 
@@ -195,6 +331,7 @@ describe("SuiteDetailOverview", () => {
 
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[]}
         runs={[]}
@@ -216,7 +353,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-detail-empty-cases")).toHaveTextContent(
       "No cases yet",
     );
-    expect(screen.queryByRole("heading", { name: "Run History" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Runs" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Test Cases" })).toBeNull();
     // A suite with no cases cannot have run, so it gets the hero alone — not
     // an empty run history stacked on top of an empty case list.
@@ -225,15 +362,68 @@ describe("SuiteDetailOverview", () => {
 
     await user.click(screen.getByTestId("suite-empty-action-describe"));
     expect(onEditCases).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByTestId("suite-empty-action-generate"));
-    expect(onGenerateTestCases).toHaveBeenCalledTimes(1);
     await user.click(screen.getByTestId("suite-empty-action-import"));
     expect(onImportCases).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByTestId("suite-empty-action-generate"));
+    expect(openEvalChat).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.queryByTestId("suite-case-generation-workspace")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Generate cases" }));
+    expect(screen.getByTestId("suite-case-generation-workspace")).toBeVisible();
+    expect(onGenerateTestCases).not.toHaveBeenCalled();
+  });
+
+  it("starts generation directly without opening a chat", async () => {
+    const user = userEvent.setup();
+    const onGenerateTestCases = vi.fn().mockResolvedValue(undefined);
+    const generate = vi.fn(() => new Promise<void>(() => {}));
+    const unregister = registerEvalSuite(
+      {
+        projectId: "project-1",
+        suiteId: "suite-1",
+        suiteName: "Checkout reliability",
+      },
+      { read: () => ({}), generate, save: vi.fn() },
+    );
+
+    renderWithProviders(
+      <SuiteDetailOverview
+        projectId="project-1"
+        suite={makeSuite({ name: "Checkout reliability" })}
+        cases={[]}
+        runs={[]}
+        runsLoading={false}
+        allIterations={[]}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onEditCases={vi.fn()}
+        onGenerateTestCases={onGenerateTestCases}
+        canGenerateTestCases
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+      />,
+    );
+
+    await user.click(screen.getByTestId("suite-empty-action-generate"));
+    expect(generate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Generate cases" }));
+
+    expect(
+      screen.getByTestId("suite-case-generation-workspace"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByTestId("generating-case-skeleton")).toHaveLength(5);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
+    unregister();
+    expect(onGenerateTestCases).not.toHaveBeenCalled();
   });
 
   it("keeps run history when a suite has runs but no cases", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[]}
         runs={[makeRun({ _id: "run-1" })]}
@@ -251,7 +441,7 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Runs" })).toBeTruthy();
     expect(screen.getByTestId("suite-detail-empty-cases")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Test Cases" })).toBeNull();
   });
@@ -259,6 +449,7 @@ describe("SuiteDetailOverview", () => {
   it("omits client and model filters when those fields are absent", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={[makeRun({ _id: "run-1", namedHostId: undefined })]}
@@ -285,7 +476,7 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Filter by verdict")).toBeTruthy();
+    expect(screen.queryByLabelText("Filter by verdict")).toBeNull();
     expect(screen.queryByLabelText("Filter by client")).toBeNull();
     expect(screen.queryByLabelText("Filter by model")).toBeNull();
   });
@@ -302,6 +493,7 @@ describe("SuiteDetailOverview", () => {
 
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={runs}
@@ -327,12 +519,10 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-run-row-run-0")).toBeTruthy();
   });
 
-  it("says a runnable suite has no runs yet instead of hiding run history", () => {
-    // A suite that has cases can be run, so the card is its run surface even
-    // before the first run: "never run" and "runs failed to load" must not
-    // both render as an absent card.
+  it("hides run history until the suite has actual runs", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
@@ -348,17 +538,9 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
-    expect(screen.getByTestId("suite-run-history-empty")).toHaveTextContent(
-      "No runs yet.",
-    );
-    // The filtered-to-nothing copy would be a lie here — nothing is filtered.
-    expect(screen.queryByText("No runs match these filters.")).toBeNull();
-    // Nothing to summarize and nothing to filter, so neither chrome appears.
-    expect(screen.queryByTestId("suite-run-history-snapshot")).toBeNull();
-    expect(
-      screen.queryByRole("combobox", { name: "Filter by verdict" }),
-    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Runs" })).toBeNull();
+    expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
+    expect(screen.queryByTestId("suite-run-history-empty")).toBeNull();
     expect(screen.getByRole("heading", { name: "Test Cases" })).toBeTruthy();
   });
 
@@ -369,6 +551,7 @@ describe("SuiteDetailOverview", () => {
 
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
@@ -390,15 +573,20 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByTestId("suite-empty-action-generate")).toBeNull();
 
     await user.click(screen.getByTestId("suite-detail-generate-cases"));
-    expect(onGenerateTestCases).toHaveBeenCalledTimes(1);
+    expect(openEvalChat).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.queryByTestId("suite-case-generation-workspace")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Generate cases" }));
+    expect(screen.getByTestId("suite-case-generation-workspace")).toBeVisible();
+    expect(onGenerateTestCases).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Add case" }));
-    expect(onEditCases).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Back to suite" })).toBeNull();
   });
 
   it("disables the card's Generate while a generation is already running", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
@@ -423,6 +611,7 @@ describe("SuiteDetailOverview", () => {
   it("hides both case-authoring controls on a read-only suite", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
@@ -448,6 +637,7 @@ describe("SuiteDetailOverview", () => {
   it("disables Generate in the empty state until servers can be discovered", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite({ environment: { servers: [] } })}
         cases={[]}
         runs={[]}
@@ -467,8 +657,10 @@ describe("SuiteDetailOverview", () => {
     );
 
     expect(screen.getByTestId("suite-empty-action-generate")).toBeDisabled();
-    expect(screen.getByTestId("suite-empty-action-describe")).not.toBeDisabled();
-    expect(screen.getByTestId("suite-empty-action-import")).not.toBeDisabled();
+    expect(
+      screen.getByTestId("suite-empty-action-describe"),
+    ).not.toBeDisabled();
+    expect(screen.getByTestId("suite-empty-action-import")).toBeDisabled();
   });
 
   it("holds the run-history frame while runs are still loading", () => {
@@ -481,6 +673,7 @@ describe("SuiteDetailOverview", () => {
     // would pass without testing anything.
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[]}
         runs={[]}
@@ -496,7 +689,7 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Runs" })).toBeTruthy();
     expect(screen.getByText("Loading runs\u2026")).toBeTruthy();
     expect(screen.queryByText("No runs match these filters.")).toBeNull();
   });
@@ -517,6 +710,7 @@ describe("SuiteDetailOverview", () => {
     ];
     const view = (runs: EvalSuiteRun[]) => (
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={runs}
@@ -541,7 +735,7 @@ describe("SuiteDetailOverview", () => {
     await user.click(screen.getByRole("option", { name: "Cursor" }));
 
     // The trigger names the selection, not just the dimension.
-    expect(clientFilter).toHaveTextContent("Client \u00b7 Cursor");
+    expect(clientFilter).toHaveTextContent("Cursor");
     expect(screen.queryByTestId("suite-run-row-run-1")).toBeNull();
     expect(screen.getByTestId("suite-run-row-run-2")).toBeTruthy();
 
@@ -553,12 +747,77 @@ describe("SuiteDetailOverview", () => {
     expect(
       screen.getByRole("combobox", { name: "Filter by client" }),
     ).toHaveTextContent("Client");
-    expect(
-      screen.queryByText("No runs match these filters."),
-    ).toBeNull();
+    expect(screen.queryByText("No runs match these filters.")).toBeNull();
     expect(screen.getByTestId("suite-run-row-run-1")).toBeTruthy();
   });
+});
 
+beforeEach(() => useEvalGeneration.setState({ suites: {} }));
+it("shows generated drafts and explains why they cannot run yet", async () => {
+  useEvalGeneration.setState({
+    suites: {
+      [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
+        status: "ready",
+        drafts: [
+          {
+            id: "draft-1",
+            revision: "r1",
+            input: {
+              suiteId: "suite-1",
+              title: "Generated flowchart case",
+              steps: [],
+            } as any,
+          },
+        ],
+      },
+    },
+  });
+  renderWithProviders(
+    <SuiteDetailOverview
+      projectId="project-1"
+      suite={makeSuite()}
+      cases={[]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={hostNamesById}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onEditCases={vi.fn()}
+      onGenerateTestCases={vi.fn()}
+      canGenerateTestCases
+      onImportCases={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      rerunningSuiteId={null}
+    />,
+  );
+  expect(screen.queryByText("Generated flowchart case")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Review Draft Cases" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Review Draft Cases" }));
+  expect(screen.getByText("Generated flowchart case")).toBeVisible();
+  expect(screen.queryByText("No cases yet")).toBeNull();
+  expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Describe another case" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Generate", exact: true }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Import cases" })).toBeVisible();
+  await userEvent
+    .setup()
+    .hover(
+      screen.getByRole("button", { name: "Setup Run", exact: true })
+        .parentElement!,
+    );
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "1 generated draft is waiting to be added",
+  );
 });
 
 /**
@@ -604,9 +863,7 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
     expect(screen.getByTestId("suite-detail-ci-owned")).toHaveTextContent(
       /Managed by CI/i,
     );
-    expect(
-      screen.getByTestId("suite-detail-duplicate-to-edit"),
-    ).toBeTruthy();
+    expect(screen.getByTestId("suite-detail-duplicate-to-edit")).toBeTruthy();
   });
 
   it("takes an editable copy when Duplicate is used", async () => {
@@ -657,4 +914,53 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
     // …and the escape hatch is not offered where there is nothing to escape.
     expect(screen.queryByTestId("suite-detail-duplicate-to-edit")).toBeNull();
   });
+});
+
+it("offers Markdown import in populated editable suites", async () => {
+  const onImportCases = vi.fn();
+  renderWithProviders(
+    <SuiteDetailOverview
+      suite={makeSuite()}
+      cases={[makeCase({ _id: "case-import" })]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={new Map()}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onImportCases={onImportCases}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      rerunningSuiteId={null}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Import cases" }));
+  expect(onImportCases).toHaveBeenCalledOnce();
+});
+
+it("opens SDK setup from the suite header", async () => {
+  const onSetupSdk = vi.fn();
+  renderWithProviders(
+    <SuiteDetailOverview
+      suite={makeSuite()}
+      cases={[]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={new Map()}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onSetupSdk={onSetupSdk}
+      onEditCases={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      rerunningSuiteId={null}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Setup SDK" }));
+  expect(onSetupSdk).toHaveBeenCalledTimes(1);
 });

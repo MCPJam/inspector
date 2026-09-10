@@ -169,7 +169,7 @@ export function TrialScorecardRow({
               className="ml-2 text-[11px] text-muted-foreground"
               data-testid="judge-result-withheld"
             >
-              hidden until you label this trial
+              hidden until you label this iteration
             </span>
           ) : null}
         </span>

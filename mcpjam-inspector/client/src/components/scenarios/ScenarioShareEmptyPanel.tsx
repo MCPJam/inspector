@@ -191,7 +191,9 @@ function ShareActions({
   className?: string;
 }) {
   return (
-    <div className={cn("flex shrink-0 flex-wrap items-center gap-2", className)}>
+    <div
+      className={cn("flex shrink-0 flex-wrap items-center gap-2", className)}
+    >
       {showInvite ? (
         <InviteByEmailControl
           id={id}
@@ -224,9 +226,10 @@ function ShareActions({
  * Insights empty state — the two ways to get a first session, in the order
  * they cost the reader: run it yourself, or send it to a tester.
  *
- * The header's `Share` button is always there too; this panel repeats copy /
- * invite because a first-run page whose only next step is behind a button in
- * the corner reads as a dead end.
+ * The header's `Share` button is always there too; this panel repeats copy —
+ * and, unless the link is already open to anyone, invite — because a first-run
+ * page whose only next step is behind a button in the corner reads as a dead
+ * end.
  *
  * The composer is a LINK dressed as a chat input, not an input. Typing into a
  * real field whose text we then discard (the guest runtime takes no prefill)
@@ -304,9 +307,29 @@ export function ScenarioShareEmptyPanel({
             className="mt-6 rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
             data-testid="user-testing-share-empty-blocked"
           >
-            {share.shareLink
-              ? "This scenario can't be opened right now — its environment isn't resolving, so the link won't load for you or a tester."
-              : "No share link yet."}
+            {share.shareLink ? (
+              <>
+                This scenario can&apos;t be opened right now — its environment
+                isn&apos;t resolving, so the link won&apos;t load for you or a
+                tester.
+                {/* The BACKEND'S OWN reason, not just the fact of a failure.
+                    It already distinguishes "resolves to no servers", "is
+                    archived", and "references a host that no longer exists" —
+                    each with a different fix — and this panel used to
+                    flatten all of them into the sentence above, leaving the
+                    creator to guess. */}
+                {scenario.environmentError?.message ? (
+                  <span
+                    className="mt-1.5 block text-foreground"
+                    data-testid="user-testing-share-empty-blocked-reason"
+                  >
+                    {scenario.environmentError.message}
+                  </span>
+                ) : null}
+              </>
+            ) : (
+              "No share link yet."
+            )}
           </p>
         )}
 
@@ -327,7 +350,11 @@ export function ScenarioShareEmptyPanel({
           </span>
           <ShareActions
             id="user-testing-share-empty"
-            showInvite={isAuthenticated}
+            // This is the screen a study lands on right after it is created.
+            // Having already chosen "anyone with the link", being asked for an
+            // email here reads as a second, redundant step — copying the link
+            // is the whole job (BB-205).
+            showInvite={isAuthenticated && scenario.mode !== "anyone_with_link"}
             {...share}
           />
         </div>

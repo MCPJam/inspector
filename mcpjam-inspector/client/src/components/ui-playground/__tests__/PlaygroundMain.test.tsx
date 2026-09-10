@@ -1,3 +1,4 @@
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
@@ -42,6 +43,7 @@ const mockReactiveHistoryState = vi.hoisted(() => ({
 }));
 
 const mockHostQueryState = vi.hoisted(() => ({ result: null as unknown }));
+const mockDefaultHostConfig = vi.hoisted(() => ({ result: null as unknown }));
 // Non-null `harnessId` means the chat executes inside a harness runtime
 // (Claude Code, Codex). Default null = an ordinary model host.
 const mockHarnessState = vi.hoisted(() => ({
@@ -203,6 +205,9 @@ vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     if (name === "hosts:getHost") return mockHostQueryState.result;
+    if (name === "hostConfigsV2:getProjectDefault") {
+      return mockDefaultHostConfig.result;
+    }
     // The reactive chat-history subscription. `useResumedThreadPersistence`
     // reconciles a failed/absent persist receipt against this, so it needs a
     // real cell rather than the blanket null the other queries get.
@@ -341,7 +346,11 @@ vi.mock("@/components/chat-v2/thread", () => ({
     editDisabled,
     sendFollowUpMessage,
     onFullscreenChange,
+    interactive,
+    onToolApprovalResponse,
   }: {
+    interactive?: boolean;
+    onToolApprovalResponse?: (response: any) => unknown;
     messages: any[];
     isLoading: boolean;
     loadingIndicatorVariant?: string;
@@ -363,6 +372,8 @@ vi.mock("@/components/chat-v2/thread", () => ({
         editDisabled,
         sendFollowUpMessage,
         onFullscreenChange,
+        interactive,
+        onToolApprovalResponse,
       });
       return (
         <div data-testid="thread">
@@ -744,10 +755,12 @@ describe("PlaygroundMain", () => {
   };
 
   beforeEach(() => {
+    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false });
     vi.clearAllMocks();
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
     mockHostQueryState.result = null;
+    mockDefaultHostConfig.result = null;
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
     mockHarnessState.harnessId = null;
@@ -804,6 +817,40 @@ describe("PlaygroundMain", () => {
   });
 
   describe("rendering", () => {
+    it("sends the project default's browser capability when no host is selected", () => {
+      mockConvexAuthState.isAuthenticated = true;
+      mockDefaultHostConfig.result = { builtInToolIds: ["browser"] };
+      mockSharedAppState.projects = { default: { sharedProjectId: "project-1" } };
+      try {
+        render(<PlaygroundMain {...defaultProps} />);
+        expect(capturedChatSessionOptions.builtInToolIds).toEqual(["browser"]);
+      } finally {
+        mockSharedAppState.projects = {};
+      }
+    });
+
+    it("does not inherit default capabilities while an explicit host loads or disables them", () => {
+      const hostId = "hlk3m9x2q7v5b8n1t4r6s0dc";
+      mockConvexAuthState.isAuthenticated = true;
+      mockDefaultHostConfig.result = { builtInToolIds: ["browser"] };
+      localStorage.setItem(
+        "mcp-previewed-host-id",
+        JSON.stringify({ "project-1": hostId })
+      );
+      mockHostQueryState.result = undefined;
+      const props = { ...defaultProps, activeProjectId: "project-1" };
+      const { rerender } = render(<PlaygroundMain {...props} />);
+      expect(capturedChatSessionOptions.builtInToolIds).toBeUndefined();
+
+      mockHostQueryState.result = {
+        hostId,
+        name: "Explicit host",
+        config: { builtInToolIds: [] },
+      };
+      rerender(<PlaygroundMain {...props} />);
+      expect(capturedChatSessionOptions.builtInToolIds).toEqual([]);
+    });
+
     it("renders the component", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
@@ -1196,6 +1243,19 @@ describe("PlaygroundMain", () => {
       expect(
         screen.getByRole("heading", {
           name: /This is your playground for MCP./i,
+        })
+      ).toBeInTheDocument();
+    });
+
+    it("keeps the logo and swaps the heading for the guide copy during the guided first run", () => {
+      render(
+        <PlaygroundMain {...defaultProps} showPostConnectGuideCopy={true} />
+      );
+
+      expect(screen.getByRole("img", { name: /MCPJam/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", {
+          name: /Try asking Excalidraw to draw something./i,
         })
       ).toBeInTheDocument();
     });
@@ -3236,11 +3296,34 @@ describe("PlaygroundMain", () => {
       mockUIPlaygroundStore.deviceType = "mobile";
     });
 
+    it.each([null, { browserSessionId: "logical", state: "active" }])("makes API history view-only and describes available control: %j", async (browser) => {
+      mockUseChatSession.messages = [{ id: "m1", role: "assistant", parts: [{ type: "text", text: "Saved response" }] }];
+      render(<PlaygroundMain {...defaultProps} />);
+      act(() => useActiveChatSessionStore.getState().setRestoredSession({ sessionId: mockUseChatSession.chatSessionId, origin: "api", browser }));
+      expect(screen.getByText(/This conversation is driven by an agent/)).toBeInTheDocument();
+      expect(!!screen.queryByText(/You can take over its browser here/)).toBe(!!browser);
+      const thread = mockThread.mock.calls.at(-1)![0];
+      expect(thread.interactive).toBe(false);
+      await thread.onToolApprovalResponse({ id: "approval", approved: true });
+      expect(mockUseChatSession.addToolApprovalResponse).not.toHaveBeenCalled();
+    });
+
     it("says nothing about a live chat the user started here", () => {
       render(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
 
       expect(
-        screen.queryByTestId("conversation-target-notice")
+        screen.queryByTestId("conversation-target-notice"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
+    });
+
+    it("reopens an explicitly ad-hoc conversation without the unavailable-configuration gate", async () => {
+      await openRestoredConversation({ executionTarget: { kind: "adhoc" } });
+      await waitFor(() =>
+        expect(mockUseChatSession.loadChatSession).toHaveBeenCalled(),
+      );
+      expect(
+        screen.queryByTestId("conversation-target-notice"),
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
     });

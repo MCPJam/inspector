@@ -9,11 +9,9 @@
  * globals, and the exact report shape its diagnostics payload and its tests
  * already read.
  *
- * The report is DELIBERATELY NARROWER than the shared one. The pane's instance
- * also tracks input→ack, rtt and decode time, none of which this transport can
- * produce: its frames come over a socket with no ack message and no separate
- * decode step. A report carrying three permanently empty buckets would invite
- * somebody to read them as zeros.
+ * Socket input acknowledgements split dispatch waiting from the next-frame
+ * latency proxy. HTTP fallback has no socket ack samples. Neither metric proves
+ * a particular input caused the next frame; use a gesture marker for that.
  *
  * Enabled by `localStorage["webmcp:frame-stats"]`, read once. Off, every
  * function here is an immediate return.
@@ -30,17 +28,28 @@ export type { FrameStatsBucket, FrameTransportRung };
 
 export interface FrameStatsReport {
   captureToPaint: FrameStatsBucket;
+  /** Queue-inclusive store-entry to next-frame proxy. */
   inputToPaint: FrameStatsBucket;
+  dispatchToPaint: FrameStatsBucket;
+  /** Socket acknowledgements measure dispatch completion, not visible effect. */
+  inputToAck: FrameStatsBucket;
   byTransport: Partial<Record<FrameTransportRung, FrameStatsBucket>>;
 }
 
 const stats = createFrameStats({
   flag: "webmcp:frame-stats",
-  globalName: "webmcpFrameStats",
 });
 
+const dispatchedStats = createFrameStats({ flag: "webmcp:frame-stats" });
+
 export function frameStatsEnabled(): boolean {
-  return stats.enabled();
+  const enabled = stats.enabled();
+  if (enabled && typeof window !== "undefined") {
+    const scope = window as unknown as Record<string, unknown>;
+    scope.webmcpFrameStats = frameStatsReport;
+    scope.webmcpFrameStatsReset = resetFrameStats;
+  }
+  return enabled;
 }
 
 /**
@@ -50,12 +59,25 @@ export function frameStatsEnabled(): boolean {
  * when it is on, because a rung recorded late tags the wrong samples.
  */
 export function noteFrameTransportRung(rung: FrameTransportRung): void {
+  frameStatsEnabled();
   stats.noteTransport(rung);
+  dispatchedStats.noteTransport(rung);
 }
 
-/** Called when a gesture leaves the client, with the seq currently on screen. */
+/** Legacy headline: stamp when input enters the store, before its queue. */
 export function noteInputSent(afterSeq: number): void {
+  frameStatsEnabled();
   stats.noteInputSent(afterSeq);
+}
+
+/** Separate post-queue measurement; acknowledgements use this clock. */
+export function noteInputDispatched(afterSeq: number, seq?: number): void {
+  frameStatsEnabled();
+  dispatchedStats.noteInputSent(afterSeq, seq);
+}
+
+export function noteInputAck(seq: number): void {
+  dispatchedStats.noteInputAck(seq);
 }
 
 /**
@@ -75,23 +97,30 @@ export function notePainted(frame: {
   seq?: number;
   rung?: FrameTransportRung;
 }): void {
+  frameStatsEnabled();
   stats.notePainted(frame);
+  dispatchedStats.notePainted(frame);
 }
 
 export function frameStatsReport(): FrameStatsReport {
   const full = stats.report();
+  const dispatched = dispatchedStats.report();
   return {
     captureToPaint: full.captureToPaint,
     inputToPaint: full.inputToPaint,
+    dispatchToPaint: dispatched.inputToPaint,
+    inputToAck: dispatched.inputToAck,
     byTransport: full.byTransport,
   };
 }
 
 export function resetFrameStats(): void {
   stats.reset();
+  dispatchedStats.reset();
 }
 
 /** Test seam: the flag is read once and cached for the tab's lifetime. */
 export function resetFrameStatsFlagForTests(): void {
   stats.resetFlagForTests();
+  dispatchedStats.resetFlagForTests();
 }

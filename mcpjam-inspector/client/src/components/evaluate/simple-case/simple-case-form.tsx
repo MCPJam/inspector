@@ -13,6 +13,7 @@ import {
 import { isInteractStep, newStepId, type TestStep } from "@/shared/steps";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { authorablePredicateKinds } from "@/components/evals/suite-scorer-table-model";
 import type {
   EvalJudgeConfig,
   EvalJudgeConfigOverride,
@@ -61,7 +62,8 @@ export type SimpleCaseFormProps = {
   suiteDefaultPredicates?: Predicate[];
   availableTools?: string[];
   isNegativeTest?: boolean;
-  onOpenDeepEditor: () => void;
+  /** Absent on surfaces with no deep step editor; the Steps buttons hide. */
+  onOpenDeepEditor?: () => void;
   /**
    * The tool question's stored answer. Controlled by the editor on the
    * Evaluate surface, because it is what decides `isNegativeTest` on save —
@@ -307,17 +309,19 @@ export function SimpleCaseForm({
   return (
     <div className="space-y-6" data-testid="simple-case-form">
       {inspectHeader}
-      <div className="flex items-start justify-end gap-3">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs text-muted-foreground"
-          onClick={onOpenDeepEditor}
-        >
-          Steps
-        </Button>
-      </div>
+      {onOpenDeepEditor ? (
+        <div className="flex items-start justify-end gap-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs text-muted-foreground"
+            onClick={onOpenDeepEditor}
+          >
+            Steps
+          </Button>
+        </div>
+      ) : null}
 
       <section className="space-y-2">
         <Label className="text-[11px] font-medium text-foreground">
@@ -411,6 +415,9 @@ export function SimpleCaseForm({
         availableTools={availableTools}
         readOnly={readOnly}
         checkPolicy={capabilities?.scorers?.checkPolicy === true}
+        authorableKinds={authorablePredicateKinds(
+          capabilities?.scorers?.predicateKinds,
+        )}
         overlay={overlay}
         validationAttempted={validationAttempted}
         addedRowKey={addedRowKey}
@@ -509,4 +516,3 @@ function InAppRow({
     </div>
   );
 }
-

@@ -222,44 +222,91 @@ describe("painting", () => {
   });
 });
 
-describe("frames that decode out of order", () => {
-  it("drops a picture a newer one already overtook", async () => {
-    // `createImageBitmap` runs concurrently for every record and resolves in
-    // whatever order the image pipeline finishes them. Without a guard a slow
-    // older JPEG lands after a fast newer one and paints the page backwards —
-    // taking the click mapping with it, because the geometry travels with the
-    // frame.
-    const settle: Array<(bitmap: ImageBitmap) => void> = [];
-    const closed: number[] = [];
-    let made = 0;
-    vi.stubGlobal("createImageBitmap", () => {
-      const id = made++;
-      return new Promise<ImageBitmap>((resolve) => {
-        settle.push(() =>
-          resolve({
-            close: () => closed.push(id),
-          } as unknown as ImageBitmap),
-        );
-      });
-    });
-    try {
-      const seen: number[] = [];
-      const reader = createFrameWireReader({
-        onFrame: (frame) => seen.push(frame.seq),
-      });
-      reader.push(frameRecord({ seq: 1 }));
-      reader.push(frameRecord({ seq: 2 }));
-      // The SECOND decode finishes first.
-      settle[1]!({} as never);
-      await Promise.resolve();
-      settle[0]!({} as never);
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(seen).toEqual([2]);
-      // And the overtaken picture is released rather than leaked.
-      expect(closed).toEqual([0]);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+it("ignores a replay older than the frame already delivered", async () => {
+  const seen: number[] = [];
+  const reader = createFrameWireReader({
+    onFrame: (frame) => seen.push(frame.seq),
+  });
+  reader.push(frameRecord({ seq: 2 }));
+  await settle();
+  reader.push(frameRecord({ seq: 1 }));
+  await settle();
+  expect(seen).toEqual([2]);
+  expect(bitmaps).toHaveLength(1);
+});
+
+describe("shared bounded JPEG decoding", () => {
+  it("keeps one decode active and only the newest waiting JPEG", async () => {
+    const resolutions: Array<(bitmap: ImageBitmap) => void> = [];
+    const decode = vi.fn(
+      () => new Promise<ImageBitmap>((resolve) => resolutions.push(resolve)),
+    );
+    vi.stubGlobal("createImageBitmap", decode);
+    const onFrame = vi.fn();
+    const reader = createFrameWireReader({ onFrame });
+    reader.push(frameRecord({ seq: 1 }));
+    for (let seq = 2; seq <= 100; seq++) reader.push(frameRecord({ seq }));
+    reader.push(frameRecord({ seq: 5 }));
+    expect(decode).toHaveBeenCalledTimes(1);
+    const first = { close: vi.fn() } as unknown as ImageBitmap;
+    resolutions[0](first);
+    await settle();
+    expect(decode).toHaveBeenCalledTimes(2);
+    expect(onFrame.mock.calls[0][0].seq).toBe(1);
+    const last = { close: vi.fn() } as unknown as ImageBitmap;
+    resolutions[1](last);
+    await settle();
+    expect(onFrame.mock.calls[1][0].seq).toBe(100);
+    expect(decode).toHaveBeenCalledTimes(2);
+    reader.close();
+    first.close();
+    last.close();
+  });
+
+  it("discards pending work on close and releases the in-flight bitmap", async () => {
+    let resolve!: (bitmap: ImageBitmap) => void;
+    const decode = vi.fn(
+      () =>
+        new Promise<ImageBitmap>((done) => {
+          resolve = done;
+        }),
+    );
+    vi.stubGlobal("createImageBitmap", decode);
+    const onFrame = vi.fn();
+    const reader = createFrameWireReader({ onFrame });
+    reader.push(frameRecord({ seq: 1 }));
+    reader.push(frameRecord({ seq: 2 }));
+    reader.close();
+    const bitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    resolve(bitmap);
+    await settle();
+    expect(bitmap.close).toHaveBeenCalledOnce();
+    expect(onFrame).not.toHaveBeenCalled();
+    expect(decode).toHaveBeenCalledOnce();
+  });
+
+  it("recovers to the final frame after a decode rejects", async () => {
+    let reject!: (reason: Error) => void;
+    const bitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    const decode = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, fail) => {
+            reject = fail;
+          }),
+      )
+      .mockResolvedValue(bitmap);
+    vi.stubGlobal("createImageBitmap", decode);
+    const onFrame = vi.fn();
+    const reader = createFrameWireReader({ onFrame });
+    reader.push(frameRecord({ seq: 1 }));
+    reader.push(frameRecord({ seq: 2 }));
+    reject(new Error("bad JPEG"));
+    await settle();
+    expect(onFrame).toHaveBeenCalledOnce();
+    expect(onFrame.mock.calls[0][0].seq).toBe(2);
+    reader.close();
+    bitmap.close();
   });
 });

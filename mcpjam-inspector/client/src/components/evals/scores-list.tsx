@@ -186,7 +186,7 @@ function statusBadge(joined: JoinedScore) {
       label: "UNRESOLVED",
       icon: AlertTriangle,
       className:
-        "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30",
+        "bg-warning/15 text-warning border border-warning/30",
     };
   }
   if (status === "scored") {
@@ -199,7 +199,7 @@ function statusBadge(joined: JoinedScore) {
       label: "ERROR",
       icon: AlertTriangle,
       className:
-        "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30",
+        "bg-warning/15 text-warning border border-warning/30",
     };
   }
   if (status === "skipped") {
@@ -207,7 +207,7 @@ function statusBadge(joined: JoinedScore) {
       label: "SKIPPED",
       icon: CircleSlash,
       className:
-        "bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20",
+        "bg-warning/10 text-warning border border-warning/20",
     };
   }
   return {
@@ -337,7 +337,7 @@ export function ScoresList({
       </div>
 
       {integrity === "score_integrity_invalid" ? (
-        <div className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-800 dark:text-amber-200">
+        <div className="flex items-start gap-2 rounded border border-warning/40 bg-warning/10 p-2 text-[11px] text-warning-foreground">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>
             This iteration&rsquo;s verdict was downgraded at ingest: its gating
@@ -424,7 +424,7 @@ function ScoreRow({ row }: { row: JoinedScore }) {
     <li
       className={`rounded border ${
         failing
-          ? "border-red-500/40 bg-red-500/5"
+          ? "border-destructive/40 bg-destructive/5"
           : "border-border/40 bg-background/40"
       }`}
     >
@@ -457,7 +457,7 @@ function ScoreRow({ row }: { row: JoinedScore }) {
         </summary>
         <div className="space-y-1 px-2 pb-2 text-[11px] text-muted-foreground">
           {row.score.error ? (
-            <div className="text-amber-700 dark:text-amber-300">
+            <div className="text-warning">
               {row.score.error}
             </div>
           ) : null}

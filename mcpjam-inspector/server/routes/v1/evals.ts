@@ -24,6 +24,10 @@ import {
 } from "./eval-score-projection.js";
 import { toStageProjection } from "./eval-stage-projection.js";
 import {
+  toFrictionSignalsProjection,
+  toSuspectedConditionProjection,
+} from "./eval-friction-projection.js";
+import {
   buildEvalRunDecisionSummaryResponse,
   decisionSummaryPageIsComplete,
   parseDecisionSummaryLimit,
@@ -54,22 +58,26 @@ import {
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
 import {
+  caseSourceSchema,
   caseIntentSchema,
   caseIntentUpdateSchema,
   descriptionExperimentReportSchema,
   EVAL_VERDICT_POLICY_VERSION,
   evalRunRouteFactsSchema,
+  evalRunServerFactsSchema,
   evalStageAnalyticsSchema,
   evalSuiteFileCaseImportSchema,
   IMPORT_MAPPING_STATUSES,
   isEvalVerdictPolicyV2,
   opaqueIdSchema,
   parseSuiteGatePolicyForAuthoring,
+  PREDICATE_KINDS,
   suiteGatePolicySchema,
   suiteGateReportSchema,
 } from "@mcpjam/sdk/contract";
 import type {
   EvalRunRouteFacts,
+  EvalRunServerFactsV1,
   EvalStageAnalyticsV1,
   SuiteGatePolicyV1,
   SuiteGateReportV1,
@@ -1816,6 +1824,13 @@ function toIterationDto(iteration: IterationDoc) {
     error: iteration.error ?? null,
     ...toScoreProjection(iteration.metadata),
     ...toStageProjection(iteration.metadata),
+    // Observable patterns in this trial's tool calls — a report beside the
+    // verdict, never an input to one. ABSENT for every iteration that
+    // predates the measurement; a reader must not render that as zero.
+    ...toFrictionSignalsProjection(iteration.metadata),
+    // The SUSPECTED condition behind one of those patterns, when step 2's
+    // advisory judge ran. Never a cause, never a verdict input.
+    ...toSuspectedConditionProjection(iteration.metadata),
   };
 }
 
@@ -1829,7 +1844,14 @@ function toStepResultDto(step: EvalStepReplay) {
     ? {
         ...(ev.toolCalls?.length ? { toolCalls: ev.toolCalls } : {}),
         ...(ev.screenshotUrl ? { screenshotUrl: ev.screenshotUrl } : {}),
-        ...(ev.videoUrl ? { videoUrl: ev.videoUrl } : {}),
+        ...(ev.videoUrl
+          ? {
+              videoUrl: ev.videoUrl,
+              // With the URL, never without: metadata for a video this row
+              // does not carry describes a recording nobody can reach.
+              ...(ev.videoMeta ? { videoMeta: ev.videoMeta } : {}),
+            }
+          : {}),
         ...(typeof ev.videoOffsetMs === "number"
           ? { videoOffsetMs: ev.videoOffsetMs }
           : {}),
@@ -1904,7 +1926,27 @@ function toPublicMatchOptions(internal: any): PublicMatchOptions | null {
 
 // Public "checks" are whole-run global gates (`defaultPredicates` / case
 // `predicates` envelope). Scenario checks belong in `steps` as assert steps.
-const publicCheckSchema = z.object({ type: z.string().min(1) }).passthrough();
+//
+// `type` is CLOSED against the kinds this build can evaluate. It used to be
+// any non-empty string, which meant a typo or a kind from a newer client was
+// accepted, persisted, and then failed closed as "unknown predicate type" on
+// every trial of every run of that suite — a red suite whose cause is three
+// layers away from the mistake. A 400 at the write boundary names it where it
+// happened. The rest of the object stays `passthrough`: the per-kind fields
+// are validated by the Convex mutation's own `assertValidPredicate`, and
+// restating them here is a second copy that will drift.
+const publicCheckSchema = z
+  .object({
+    type: z
+      .string()
+      .min(1)
+      .refine((type) => (PREDICATE_KINDS as readonly string[]).includes(type), {
+        message:
+          "unknown check type; this deployment evaluates: " +
+          [...PREDICATE_KINDS].sort().join(", "),
+      }),
+  })
+  .passthrough();
 
 // ── Case DTO ─────────────────────────────────────────────────────────
 
@@ -2062,6 +2104,7 @@ function toCaseDto(testCase: CaseDoc) {
     ...(testCase.kind === "capability" || testCase.kind === "regression"
       ? { kind: testCase.kind }
       : {}),
+    ...(testCase.source ? { source: testCase.source } : {}),
     ...(importClaim ? { import: importClaim } : {}),
     createdAt: testCase.createdAt ?? null,
     updatedAt: testCase.updatedAt ?? null,
@@ -2650,6 +2693,7 @@ const createCaseSchema = z.strictObject({
   kind: z.enum(["capability", "regression"]).optional(),
   /** The converter's claim for this case. See {@link publicCaseImportSchema}. */
   import: publicCaseImportSchema.optional(),
+  source: caseSourceSchema.optional(),
 });
 const updateCaseSchema = z.strictObject({
   ...publicCaseBodyShape,
@@ -3145,6 +3189,7 @@ function buildCaseMutationArgs(
   // on create, where `createCaseSchema` rejects it before this runs — so
   // `undefined` is the only "leave it alone", exactly as the mutation reads it.
   if (body.import !== undefined) args.import = body.import;
+  if (opts.forCreate && body.source !== undefined) args.source = body.source;
 
   return args;
 }
@@ -6115,6 +6160,111 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
   }
 
   return v1Resource(c, parsed.data as EvalRunRouteFacts);
+});
+
+// GET /v1/projects/:projectId/eval-runs/:runId/server-facts
+//
+// ONE run's SERVER FACTS: what the snapshot it ran against looked like, and
+// what the setup phase observed. Computed on read (there is no table), so
+// unlike route facts this never 404s for "no document" — a run with no
+// snapshot answers `state: "unavailable"` with a reason, which is the honest
+// difference between "we did not measure" and "there is nothing here".
+//
+// The 404 is therefore about VISIBILITY only, and its message says nothing a
+// caller holding a run id could use to learn that the run exists somewhere
+// else.
+const RUN_SERVER_FACTS_NOT_FOUND = "Eval run server facts not found";
+
+evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let document: unknown;
+  let runSuiteId: string | undefined;
+  try {
+    // Project-matched FIRST, same as route facts: a valid run id from another
+    // of the caller's projects reads as NOT_FOUND here rather than relying on
+    // the backend's fail-soft null, which is defense in depth and not the
+    // answer.
+    const run = await convex.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+    requireProjectMatch(run, projectId, "Eval run");
+    const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
+    runSuiteId = typeof suiteId === "string" ? suiteId : undefined;
+    document = await convex.query("testSuites:getEvalRunServerFacts" as any, {
+      runId,
+    });
+  } catch (error) {
+    // The backend deploys FIRST, but "first" is a window, not an instant: an
+    // inspector rolled out during it reaches a deployment with no such
+    // function. That is a fact about the deployment, and a generic 500 sends
+    // the reader looking at their run for a cause that is not there.
+    if (isConvexFunctionMissing(error)) {
+      throw convexFunctionUnavailableError(
+        "This MCPJam deployment does not serve eval run server facts. That is a fact about the deployment, not about the run — do not report the run as having no server to describe.",
+      );
+    }
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        RUN_SERVER_FACTS_NOT_FOUND,
+      );
+    }
+    throw error;
+  }
+
+  if (document === null || document === undefined) {
+    // A null is the backend's FAIL-SOFT AUTHORIZATION answer, not "no
+    // document": `getEvalRunServerFacts` returns null when `authorizeForRun`
+    // refuses, precisely so a caller cannot learn which run ids exist. An
+    // authorized run always builds a document — a run with no snapshot
+    // answers `state: "unavailable"` inside a valid one. So 404 is right
+    // here, and it is still a statement about visibility only.
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      RUN_SERVER_FACTS_NOT_FOUND,
+    );
+  }
+
+  const parsed = evalRunServerFactsSchema.safeParse(document);
+  if (!parsed.success) {
+    // A 502, not a silent pass-through. The backend builder is hand-mirrored
+    // from this contract, so a parse failure means the two have drifted — and
+    // serving a half-understood document would put numbers on a page whose
+    // basis nobody can vouch for.
+    logger.warn("[v1 evals] run server facts failed contract validation", {
+      projectId,
+      runId,
+      issue: parsed.error.issues[0]?.message ?? "unknown",
+      path: parsed.error.issues[0]?.path?.join(".") ?? "",
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Server facts payload failed validation",
+    );
+  }
+
+  const identityMismatch =
+    parsed.data.runId !== runId ||
+    (runSuiteId !== undefined && parsed.data.suiteId !== runSuiteId);
+  if (identityMismatch) {
+    logger.warn("[v1 evals] run server facts identity does not match", {
+      projectId,
+      runId,
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Server facts payload failed validation",
+    );
+  }
+
+  return v1Resource(c, parsed.data as EvalRunServerFactsV1);
 });
 
 // ── Description experiments (PR-E3) ──────────────────────────────────

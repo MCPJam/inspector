@@ -145,6 +145,10 @@ interface MultiModelPlaygroundCardProps {
    * comparison column runs bash on the same engine ("This machine") the tab
    * root does — omitted ⇒ cloud, like every other surface.
    */
+  personalBrowserEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
   personalComputerEngine?: {
     engine: "local" | "cloud";
     consentToken: string | null;
@@ -251,6 +255,7 @@ export function MultiModelPlaygroundCard({
   hostedContext,
   hostedOrgModelConfig,
   personalComputerEngine,
+  personalBrowserEngine,
   localHarnessExecution,
   displayMode,
   onDisplayModeChange,
@@ -371,6 +376,7 @@ export function MultiModelPlaygroundCard({
     hostedContext,
     hostedOrgModelConfig,
     ...(personalComputerEngine ? { personalComputerEngine } : {}),
+    ...(personalBrowserEngine ? { personalBrowserEngine } : {}),
     ...(localHarnessExecution ? { localHarnessExecution } : {}),
     executionConfig: {
       ...executionConfig,
@@ -443,7 +449,7 @@ export function MultiModelPlaygroundCard({
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming
       ? liveTraceEnvelope
-      : (preludeTraceEnvelope ?? liveTraceEnvelope);
+      : preludeTraceEnvelope ?? liveTraceEnvelope;
   const showTraceTabs = traceViewsSupported && !isThreadEmpty;
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceTabs
     ? traceViewMode

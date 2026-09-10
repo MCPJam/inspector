@@ -1,0 +1,35 @@
+{
+  "id": "arguments-schema-valid-wrong-intent",
+  "title": "Every argument valid, and the wrong search entirely",
+  "rationale": "The documented limit of `argumentsMatchToolSchema`: schema validity does not establish that the arguments match the user's intent. The user asked for open bugs in the mobile app; the model searched closed tickets in the web app.",
+  "transcript": {
+    "toolCalls": [
+      { "toolCallId": "c1", "toolName": "search_issues", "arguments": { "query": "web app", "state": "closed", "limit": 10 } }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "I found 10 closed web-app tickets.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "search_issues",
+        "description": "Search issues.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "query": { "type": "string" }, "state": { "enum": ["open", "closed"] }, "limit": { "type": "number" } },
+          "required": ["query"]
+        },
+        "annotations": { "readOnlyHint": true }
+      }
+    ],
+    "toolResults": [
+      { "toolCallId": "c1", "toolName": "search_issues", "text": "[…10 closed web tickets…]", "isError": false, "size": { "bytes": 25, "basis": "model_visible_output", "complete": true } }
+    ],
+    "toolCallTimings": [
+      { "toolCallId": "c1", "toolName": "search_issues", "durationMs": 220, "provenance": "span" }
+    ],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    { "predicate": { "type": "argumentsMatchToolSchema" }, "observation": "pass", "relevance": "neutral", "note": "correct and useless here: the check grades the schema, not the intent. Semantic mismatch is a judged question and is not in v1." }
+  ]
+}

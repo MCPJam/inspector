@@ -163,6 +163,25 @@ The Chat/Trace tab renders widget tool calls as the same app-attributed cards yo
 - **JSON tool results** — Tool outputs that are JSON (including JSON wrapped in a text block) render as structured data in the card's **Data** tab rather than as a raw text block. There is no duplicate result row below the card.
 - **Frozen widget diagnostics** — When a widget was captured as a screenshot during the run, the card's **Sandbox** tab shows the recorded policy: resource URI, CSP declaration, permissions, permissive mode, and any console errors or blocked requests logged during that run. Live-only fields (sandbox attributes, lifecycle, view origin) show as **not recorded** because they are not available after the run completes.
 
+### The screen recording
+
+The **Replay** tab plays a recording of the run beside the screenshot
+filmstrip, and every step that captured an offset seeks the video to it.
+
+Unattended runs on a hosted browser are recorded at **15 fps**. Idle time is
+held rather than dropped, so the file's duration matches the run's wall clock
+even when the page sat still for a minute — the frame count above the player
+is the number of *distinct* frames, which is small on a page that did not move
+and is not a sign of a fault.
+
+Recordings stop at **60 MiB** and say so. A capped take is a complete, playable
+*beginning* of the run, not a corrupt file and not the whole run: the player
+shows a **Stopped at the size limit** badge, so a twelve-minute recording of a
+forty-minute run is never mistaken for the run itself. Long runs that routinely
+cap are the signal to shorten the case rather than to distrust the video.
+
+A run that never uses a browser tool records nothing, and costs nothing.
+
 
 
 Checks are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
@@ -261,6 +280,10 @@ A run needs three things, all picked from the suite header:
 <Tip>
   If **Run all** is disabled, a connected server is missing, no models are selected, or a run for that suite is already in progress. The header pickers will tell you which condition applies.
 </Tip>
+
+### Run review
+
+When you click **Run** on a suite from the **Suites** landing list, a review sheet opens before the run launches. It shows the suite's current configuration — clients, iteration count, and settings — so you can confirm or adjust before committing. The run only starts when you confirm in the sheet; closing it leaves the suite unchanged.
 
 ### Pre-run credit estimate
 
@@ -393,19 +416,21 @@ The delete button in the suite switcher is hidden for any suite that is CI-activ
 
 ### Suite navigation
 
-Opening the Evaluate tab takes you directly into the most recent suite's dashboard. To switch suites, use the **suite switcher** in the breadcrumb — it lists all your suites and lets you jump to one, create a new suite, or delete the current suite. If no suites exist yet, the empty-state create prompt appears instead.
+Opening the Evaluate tab lands on the **Runs** view by default, showing run history across all suites with grouped runs, pass-rate changes, and filters. Switch to **Suites** using the header tabs to see the suites overview. To drill into a suite, click its name; the **suite switcher** in the breadcrumb lets you jump between suites, create a new one, or delete the current one. If no suites exist yet, the same empty-state hero appears on both the Runs and Suites tabs — click **Eval my server: &lt;server name&gt;** to open the create-suite form with that server and a name already filled in, or click **Create suite** to start blank.
 
 ### Suite view
 
 - **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
 - **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole.
-- **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown.
+- **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown. The table shows **Date** first, then **Run**; suite group rows show a date range and a chevron on the left. Client/model pairings are shown inline per run row; when there are more than two, a **+N** badge appears — hover it to see all pairings in a tooltip.
 - **Cases tab** — every case with its latest verdict and a quick replay button.
 - **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
 
 When you run a suite against multiple host configurations at once, the Runs list groups them into a single collapsible **run group** row showing mean accuracy and longest duration across all hosts. Expand it to inspect each host's individual run.
 
 The **Runs / Cases** segmented control switches between the run history list and the test-cases overview. **Performance by Model** in the run summary appears only when more than one model was used. To compare two runs, check their boxes in the Runs list and click **Compare**.
+
+Client and server filters on the **Suites** tab live in the column headers rather than as separate filter pills.
 
 #### Where a run came from
 
@@ -461,6 +486,12 @@ alongside the cost and a cost gate treats partial coverage as non-gateable
 rather than as a pass.
 
 ### Run view
+
+The run header shows a **HOLD** or **SHIP** pill for each client/model pairing in the launch. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client that did not pass, and a **SHIP** pill lists every client that did. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. The **Compare runs** and **Run again** buttons are visible directly in the header.
+
+Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts. When a previous launch exists, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. The first launch of a suite shows no deltas.
+
+The **Test cases** section (formerly the matrix) lists every test case with a search box and **Status**, **Client**, and **Model** filters on one row. There is no master pass/fail bar or "RUN RESULTS" eyebrow label in this section.
 
 - **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
@@ -547,6 +578,15 @@ The downloaded file is named `mcpjam-traces-<scope>-<timestamp>.json`.
 ## What to author first
 
 If you're new to the surface, the shortest useful loop is:
+
+1. Connect a server in the Inspector.
+2. On the **Suites** or **Runs** landing, click **Eval my server: &lt;server name&gt;** to open the create-suite form with that server and a name already filled in.
+3. Review the generated cases, confirm the clients and iteration count, then click **Run** to launch.
+4. Open the failures, and decide whether the bug is in your server, your prompt, or the model.
+
+New suites are named **Suite 1**, **Suite 2**, and so on — the form picks the next unused number automatically. You can rename the suite at any time.
+
+Alternatively, click **Create suite** to start from a blank suite and author cases manually:
 
 1. Attach the server you're shipping.
 2. **Generate** a starting set of cases.

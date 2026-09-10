@@ -1,3 +1,4 @@
+import { jpegFrameLimit } from "@/shared/browser-viewport-policy";
 /**
  * `GET /v1/frames` — the daemon's way of getting screencast frames out of its
  * sandbox.
@@ -46,7 +47,8 @@ const WRITE_STALL_MS = 15_000;
  * How many streams one daemon will serve.
  *
  * Each holds a viewport subscription (keeping the screencast and its encoder
- * alive) plus an in-flight write of up to 256 KiB. The cap is what stops an
+ * alive) plus one in-flight and one pending JPEG (each up to the negotiated
+ * 2 MiB ceiling). The cap is what stops an
  * abandoned pane from taxing a box the agent is still driving.
  */
 const MAX_CONCURRENT_STREAMS = 4;
@@ -81,8 +83,26 @@ export interface FrameStreamOptions {
    * screencast, exactly as a client without `VideoDecoder` does.
    */
   video?: VideoEncoder;
-  /** The captured display's size, for the video records' geometry. */
-  displaySize?: { width: number; height: number };
+  /**
+   * The captured display's size, for the video records' geometry.
+   *
+   * A FUNCTION rather than a value, because on a responsive session it moves:
+   * the display, the kiosk browser, the page viewport and the capture geometry
+   * are resized as one coordinated transition, and a stream that had captured
+   * the boot-time number would keep stamping it on frames of a differently
+   * shaped picture. A client scales its click coordinates by what these
+   * records say, so a stale number is a mis-aimed click rather than a cosmetic
+   * error.
+   */
+  displaySize?: () => { width: number; height: number };
+  /**
+   * The session's CSS viewport, for the capture-to-page scale.
+   *
+   * Also a function, and for the same reason. The two move TOGETHER — that is
+   * what makes the transition coordinated — but they are read at different
+   * moments by different code, so each has to be able to say what it is now.
+   */
+  cssViewport?: () => { width: number; height: number };
   /**
    * How often to prove liveness and re-ask the two questions a one-way stream
    * cannot answer by itself. Injectable because the behaviour it drives — a
@@ -95,10 +115,37 @@ export interface FrameStreamOptions {
   timers?: Timers;
 }
 
+/**
+ * The page-tool signal, reduced to what a heartbeat can carry.
+ *
+ * A CHANGE SIGNAL, not a list: the definitions are big (a declarative
+ * `<select>` becomes an `anyOf` branch per option) and this rides an 8 KiB
+ * record several times a second. `supported` is dropped for the same reason —
+ * a pane that sees a revision at all is on an engine that has WebMCP, and
+ * `count` already says whether the page offers anything.
+ */
+function statsWebmcp(revision: {
+  revision: number;
+  hash: string;
+  count: number;
+  url?: string;
+}): { revision: number; hash: string; count: number; url?: string } {
+  return {
+    revision: revision.revision,
+    hash: revision.hash,
+    count: revision.count,
+    ...(revision.url ? { url: revision.url } : {}),
+  };
+}
+
 export function createFrameStreamHost(
   handler: Pick<
     BrowserdRequestHandler,
-    "authorize" | "subscribeFrames" | "watchLease" | "tabsSnapshot"
+    | "authorize"
+    | "subscribeFrames"
+    | "watchLease"
+    | "tabsSnapshot"
+    | "webmcpSnapshot"
   >,
   options: FrameStreamOptions = {},
 ): FrameStreamHost {
@@ -156,7 +203,11 @@ export function createFrameStreamHost(
     // JPEG, and the pane draws its own tab strip because kiosk hides
     // Chromium's.
     if (query?.get("codec") === "h264") {
-      void startVideoSubscription({ res, holder }).catch(() => {
+      void startVideoSubscription({
+        res,
+        holder,
+        sharp: query?.get("sharp") === "1",
+      }).catch(() => {
         writeEndAndClose(res, "video_unavailable");
       });
       return true;
@@ -169,7 +220,12 @@ export function createFrameStreamHost(
     // later caller inherits it. Unhandled, that ends the daemon process. Left
     // merely unfinished it is nearly as bad: the response never ends and its
     // entry holds one of four cap slots until the client gives up.
-    void startSubscription({ res, tabId, holder }).catch(() => {
+    void startSubscription({
+      res,
+      tabId,
+      holder,
+      sharp: query?.get("sharp") === "1",
+    }).catch(() => {
       writeEndAndClose(res, "tab_gone");
     });
     return true;
@@ -190,6 +246,7 @@ export function createFrameStreamHost(
    * about who is encoding.
    */
   async function startVideoSubscription(args: {
+    sharp: boolean;
     res: ServerResponse;
     holder: string | undefined;
   }): Promise<void> {
@@ -208,13 +265,33 @@ export function createFrameStreamHost(
     let unsubscribe: (() => void) | undefined;
     let release: (() => void) | undefined;
     let seq = 0;
-    const size = options.displaySize ?? {
-      width: BROWSERD_OBSERVATION_VIEWPORT.width,
-      height: BROWSERD_OBSERVATION_VIEWPORT.height,
+    // Read PER RECORD, not once per subscription.
+    //
+    // A resize does not end the stream: `encoder.resize()` restarts ffmpeg but
+    // keeps its listeners, so this subscription goes on emitting across the
+    // transition. Geometry captured at connect time therefore describes the
+    // display the pane joined at, and every frame after a resize carries the
+    // old numbers — which is not a cosmetic error, because the watcher divides
+    // by exactly these to map a click back into the page. A stale scale is a
+    // mis-aimed click, silently.
+    const geometry = (): {
+      size: { width: number; height: number };
+      css: { width: number; height: number };
+      scale: number;
+    } => {
+      const size = options.displaySize?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height,
+      };
+      const css = options.cssViewport?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height,
+      };
+      // Capture pixels per CSS pixel, so a click maps through exactly as it
+      // does for a JPEG. The pane never has to know which codec drew the
+      // picture.
+      return { size, css, scale: size.width / css.width };
     };
-    // Capture pixels per CSS pixel, so a click maps through exactly as it does
-    // for a JPEG. The pane never has to know which codec drew the picture.
-    const scale = size.width / BROWSERD_OBSERVATION_VIEWPORT.width;
 
     const entry = { end: (reason: FrameStreamEndReason) => end(reason) };
     const end = (reason: FrameStreamEndReason): void => {
@@ -291,14 +368,15 @@ export function createFrameStreamHost(
       // window is not a smaller version of it.
       gate.revalidate();
       if (ended) return; // revalidate may have revoked us
+      const geo = geometry();
       pacer.push(
         encodeFrameStreamRecord({
           kind: unit.key
             ? FRAME_STREAM_KIND.video_key
             : FRAME_STREAM_KIND.video_delta,
-          deviceWidth: size.width,
-          deviceHeight: size.height,
-          scale,
+          deviceWidth: geo.size.width,
+          deviceHeight: geo.size.height,
+          scale: geo.scale,
           ts: Date.now(),
           seq: (seq += 1),
           au: unit.bytes,
@@ -308,7 +386,7 @@ export function createFrameStreamHost(
         // next GOP, four seconds later, being sent units it cannot decode.
         unit.key ? { essential: true } : {},
       );
-    });
+    }, args.sharp);
 
     // Checked AFTER subscribing: a spawn that fails does so synchronously
     // inside `subscribe`, and asking first would race the answer.
@@ -323,6 +401,14 @@ export function createFrameStreamHost(
     const beat = (): void => {
       if (ended) return;
       const tabs = handler.tabsSnapshot?.();
+      // THE ACTIVE TAB, named explicitly. This is the video stream, which grabs
+      // the X display and therefore always shows whichever tab is active — but
+      // an unargued `webmcpSnapshot()` answers for `DEFAULT_TAB`, and after an
+      // `activate_tab` those are two different pages. Reporting one tab's tool
+      // revision beside a picture of another is the mismatch the JPEG path
+      // threads its own tabId to avoid; this is the same bug wearing the
+      // opposite mistake.
+      const webmcp = handler.webmcpSnapshot?.(tabs?.active);
       const emitted = encoder.emitted();
       const idle = emitted === lastEmitted;
       lastEmitted = emitted;
@@ -336,6 +422,7 @@ export function createFrameStreamHost(
             // under them — and kiosk hides Chromium's own tab strip, so nothing
             // else here would say so.
             ...(tabs ? { tabs } : {}),
+            ...(webmcp ? { webmcp: statsWebmcp(webmcp) } : {}),
             // `mpdecimate` means an idle page produces NO frames at all, so
             // silence here is a quiet page rather than a stall. Saying which
             // is what stops an adaptive client stepping the quality down on a
@@ -447,6 +534,7 @@ export function createFrameStreamHost(
   }
 
   async function startSubscription(args: {
+    sharp: boolean;
     res: ServerResponse;
     tabId: string | undefined;
     holder: string | undefined;
@@ -465,7 +553,8 @@ export function createFrameStreamHost(
      * itself to, and is skipped rather than guessed at.
      */
     let subscription:
-      Awaited<ReturnType<typeof handler.subscribeFrames>> | undefined;
+      | Awaited<ReturnType<typeof handler.subscribeFrames>>
+      | undefined;
 
     const entry = {
       end: (reason: FrameStreamEndReason) => end(reason),
@@ -542,6 +631,7 @@ export function createFrameStreamHost(
     });
 
     subscription = await handler.subscribeFrames({
+      maxFrameBytes: jpegFrameLimit(args.sharp),
       ...(tabId ? { tabId } : {}),
       ...(holder ? { holder } : {}),
       listener: (frame) => {
@@ -600,7 +690,17 @@ export function createFrameStreamHost(
             const stats = statsFor(live, lastFramesIn);
             lastFramesIn = stats.framesIn;
             const tabs = handler.tabsSnapshot?.();
-            return tabs ? { ...stats, tabs } : stats;
+            // THE TAB THIS STREAM WATCHES, not the default one. A JPEG
+            // subscriber names its tab, and reporting the default tab's
+            // revision to a watcher of another page would make the Tools pane
+            // miss that page's changes and then read definitions for a
+            // document nobody is looking at.
+            const webmcp = handler.webmcpSnapshot?.(tabId);
+            return {
+              ...stats,
+              ...(tabs ? { tabs } : {}),
+              ...(webmcp ? { webmcp: statsWebmcp(webmcp) } : {}),
+            };
           })(),
         }),
       );
@@ -660,6 +760,7 @@ export function createFrameStreamHost(
 function statsFor(
   subscription: {
     counters: () => {
+      jpeg?: FrameStreamStats["jpeg"];
       framesIn: number;
       framesOut: number;
       bytesOut: number;
@@ -672,6 +773,7 @@ function statsFor(
 ): FrameStreamStats {
   const counters = subscription.counters();
   return {
+    jpeg: counters.jpeg,
     framesIn: counters.framesIn,
     framesOut: counters.framesOut,
     bytesOut: counters.bytesOut,

@@ -54,6 +54,25 @@ gets the check run and no comment. The per-repository toggle is visible before
 then and records your choice; nothing is posted until the rollout reaches you.
 </Note>
 
+## Suite credentials in approved forks
+
+Each connected repository has **Allow suite credentials in approved forks** in
+Settings and in its suite's connected-repository section. It is off by default;
+only organization admins can change it.
+
+- **Off:** approved fork runs require a credential-free suite. Checks needing
+  saved credentials report **Action required**.
+- **On:** approved fork runs can use that suite's existing credentials and
+  connected services. Only approve code you trust. This does not inject saved
+  secrets into the PR server.
+
+Every new commit needs maintainer approval. Enabling the setting does not upgrade
+old approvals or running jobs: approve again. Changes to selected credentials
+also require fresh approval. Disabling blocks further credential access and
+stops affected runs; credentials already delivered cannot be taken back.
+Changing the connected suite resets the setting off. Environments with plugin
+credential grants that cannot be verified remain blocked.
+
 ## `mcpjam.yaml`
 
 MCPJam can usually work out how to build and start a server on its own. When it
@@ -213,6 +232,16 @@ writes there is deliberately bounded.
 If a case title or a tool name is itself sensitive, treat it as published: those
 are the two fields that carry your own words into a public comment.
 
+## Per-repository switches
+
+Each connected repository has three labeled switches:
+
+| Switch | What it controls |
+|--------|-----------------|
+| **Checks** | Whether the eval suite runs on pull requests to this repository. |
+| **Conformance** | Whether a conformance check runs alongside the eval suite. Disabled and dimmed while **Checks** is off, because it is a sub-setting of checks. |
+| **Comments** | Whether MCPJam posts a pull-request comment with the result. Independent of **Checks** — you can pause checks while still allowing MCPJam to comment, or turn comments off while checks keep running. |
+
 ## Turning comments off
 
 Comments are **on for every connected repository by default**, including
@@ -220,7 +249,7 @@ repositories connected before the feature existed. An admin opts a repository
 out; there is nothing to opt in to.
 
 Go to **Settings → Integrations → GitHub**, find the repository in **Connected
-repositories**, and turn off **Post feedback comments on pull requests**.
+repositories**, and turn off the **Comments** switch.
 
 This setting changes nothing about the check itself — whether it runs, what it
 measures, and how it reports are all decided elsewhere. Only the comment stops.

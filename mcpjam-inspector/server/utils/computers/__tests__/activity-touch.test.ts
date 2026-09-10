@@ -11,7 +11,9 @@ import {
   MAX_TRACKED_COMPUTERS,
   resetActivityThrottleForTests,
   shouldTouchActivity,
+  shouldTouchSessionCommand,
   trackedComputerCountForTests,
+  trackedSessionCountForTests,
 } from "../activity-touch";
 
 beforeEach(() => resetActivityThrottleForTests());
@@ -86,5 +88,52 @@ describe("shouldTouchActivity", () => {
     expect(shouldTouchActivity("comp-1", ACTIVITY_TOUCH_THROTTLE_MS)).toBe(
       true,
     );
+  });
+});
+
+describe("shouldTouchSessionCommand", () => {
+  it("throttles a per-input storm down to one write a minute", () => {
+    // THE REGRESSION: the once-a-minute gate came to guard only the computer
+    // touch, leaving `touchSession({kind:'command'})` firing on every landed
+    // input flush. A mouse drag is 10-20 of those a second per viewer, and each
+    // one is a control-plane write.
+    expect(shouldTouchSessionCommand("sess-1", 0)).toBe(true);
+    for (let i = 1; i < 40; i++) {
+      expect(shouldTouchSessionCommand("sess-1", i * 50)).toBe(false);
+    }
+    expect(
+      shouldTouchSessionCommand("sess-1", ACTIVITY_TOUCH_THROTTLE_MS),
+    ).toBe(true);
+  });
+
+  it("is LEADING EDGE, so somebody coming back is never made to wait", () => {
+    // The first input after an idle stretch has to write immediately — that is
+    // the one that must not let a box be slept out from under a person.
+    expect(shouldTouchSessionCommand("sess-idle", 0)).toBe(true);
+    const longAfter = 10 * ACTIVITY_TOUCH_THROTTLE_MS;
+    expect(shouldTouchSessionCommand("sess-idle", longAfter)).toBe(true);
+  });
+
+  it("keeps its own key space, so a session cannot evict a computer", () => {
+    // Two clocks over ids from two different tables. Sharing one map would let
+    // a busy key space push the other out of a single eviction budget.
+    expect(shouldTouchActivity("comp-x", 0)).toBe(true);
+    expect(shouldTouchSessionCommand("comp-x", 0)).toBe(true);
+    expect(trackedComputerCountForTests()).toBe(1);
+    expect(trackedSessionCountForTests()).toBe(1);
+  });
+
+  it("is cleared by the shared test reset", () => {
+    shouldTouchSessionCommand("sess-reset", 0);
+    expect(trackedSessionCountForTests()).toBe(1);
+    resetActivityThrottleForTests();
+    expect(trackedSessionCountForTests()).toBe(0);
+  });
+
+  it("evicts oldest-first, like the computer clock", () => {
+    for (let i = 0; i < MAX_TRACKED_COMPUTERS + 10; i++) {
+      shouldTouchSessionCommand(`sess-${i}`, i);
+    }
+    expect(trackedSessionCountForTests()).toBe(MAX_TRACKED_COMPUTERS);
   });
 });

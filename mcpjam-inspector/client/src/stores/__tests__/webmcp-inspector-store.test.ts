@@ -24,20 +24,49 @@ import type {
   WebMcpToolDescriptor,
 } from "@/shared/webmcp-inspector-protocol";
 
+// Socket messages and display ticks are separate. Existing transport tests
+// advance a display tick with each frame; burst coalescing has dedicated tests.
+let displayId = 0;
+const displayCallbacks = new Map<number, FrameRequestCallback>();
+function paintTick() {
+  const callbacks = [...displayCallbacks.values()];
+  displayCallbacks.clear();
+  for (const callback of callbacks) callback(performance.now());
+}
+beforeEach(() => {
+  displayCallbacks.clear();
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    displayCallbacks.set(++displayId, callback);
+    return displayId;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) =>
+    displayCallbacks.delete(id),
+  );
+});
+
 /** Captured EventSource instances, so a test can push frames at the store. */
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
   onmessage: ((event: { data: string }) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
   closed = false;
+  controller?: ReadableStreamDefaultController<Uint8Array>;
   constructor(readonly url: string) {
     FakeEventSource.instances.push(this);
   }
   close() {
     this.closed = true;
+    try {
+      this.controller?.close();
+    } catch {}
   }
-  emit(payload: unknown) {
+  async emit(payload: unknown) {
+    this.controller?.enqueue(
+      new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`),
+    );
     this.onmessage?.({ data: JSON.stringify(payload) });
+    await Promise.resolve();
+    await Promise.resolve();
   }
 }
 
@@ -64,10 +93,7 @@ class FakeWebSocket {
   sent: string[] = [];
   closedByClient = false;
 
-  constructor(
-    readonly url: string,
-    readonly protocols?: string[],
-  ) {
+  constructor(readonly url: string, readonly protocols?: string[]) {
     FakeWebSocket.instances.push(this);
   }
 
@@ -86,7 +112,10 @@ class FakeWebSocket {
     this.onopen?.();
   }
 
-  emitFrame(frame: Parameters<typeof encodeWebMcpBinaryFrame>[0]) {
+  emitFrame(
+    frame: Parameters<typeof encodeWebMcpBinaryFrame>[0],
+    paint = true,
+  ) {
     const encoded = encodeWebMcpBinaryFrame(frame);
     this.onmessage?.({
       data: encoded.buffer.slice(
@@ -94,6 +123,10 @@ class FakeWebSocket {
         encoded.byteOffset + encoded.byteLength,
       ),
     });
+    if (paint) {
+      paintTick();
+      if (vi.isFakeTimers()) vi.advanceTimersByTime(17);
+    }
   }
 
   emitClose(code: number, reason = "") {
@@ -216,6 +249,7 @@ async function openSession(session: WebMcpSessionPublic = SESSION) {
     new Response(JSON.stringify(session), { status: 201 }),
   );
   await useWebmcpInspectorStore.getState().startSession("https://shop.test/");
+  for (let i = 0; i < 20; i++) await Promise.resolve();
   return FakeEventSource.instances.at(-1)!;
 }
 
@@ -277,8 +311,8 @@ describe("webmcp inspector store", () => {
 
   it("applies session, tools and activity frames", async () => {
     const source = await openSession();
-    source.emit({ type: "tools", seq: 2, tools: [TOOL] });
-    source.emit(activityEvent(started("a1", "inv-1"), 3));
+    await source.emit({ type: "tools", seq: 2, tools: [TOOL] });
+    await source.emit(activityEvent(started("a1", "inv-1"), 3));
 
     const state = useWebmcpInspectorStore.getState();
     expect(state.session?.sessionId).toBe("session-1");
@@ -289,21 +323,21 @@ describe("webmcp inspector store", () => {
 
   it("clears pending once an invocation settles", async () => {
     const source = await openSession();
-    source.emit(activityEvent(started("a1", "inv-1")));
-    source.emit(activityEvent(settled("a2", "inv-1"), 2));
+    await source.emit(activityEvent(started("a1", "inv-1")));
+    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
     expect(useWebmcpInspectorStore.getState().pending).toEqual([]);
   });
 
   it("ignores an activity entry it has already applied", async () => {
     const source = await openSession();
-    source.emit(activityEvent(started("a1", "inv-1")));
-    source.emit(activityEvent(settled("a2", "inv-1"), 2));
+    await source.emit(activityEvent(started("a1", "inv-1")));
+    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
     // EventSource reconnects on its own and the server replays the ring, so the
     // same entries arrive again. Appending them would double the timeline, hand
     // React duplicate keys, and re-add a pending invocation that already
     // finished — leaving Invoke disabled forever.
-    source.emit(activityEvent(started("a1", "inv-1")));
-    source.emit(activityEvent(settled("a2", "inv-1"), 2));
+    await source.emit(activityEvent(started("a1", "inv-1")));
+    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
 
     const state = useWebmcpInspectorStore.getState();
     expect(state.activity.map((entry) => entry.id)).toEqual(["a1", "a2"]);
@@ -312,10 +346,10 @@ describe("webmcp inspector store", () => {
 
   it("does not resurrect pending when only the start is replayed", async () => {
     const source = await openSession();
-    source.emit(activityEvent(started("a1", "inv-1")));
-    source.emit(activityEvent(settled("a2", "inv-1"), 2));
+    await source.emit(activityEvent(started("a1", "inv-1")));
+    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
     // The settle has scrolled out of the replay window; only the start returns.
-    source.emit(activityEvent(started("a1", "inv-1")));
+    await source.emit(activityEvent(started("a1", "inv-1")));
     expect(useWebmcpInspectorStore.getState().pending).toEqual([]);
   });
 
@@ -329,7 +363,7 @@ describe("webmcp inspector store", () => {
     useWebmcpInspectorStore.getState().reconnect();
     const resumed = FakeEventSource.instances.at(-1)!;
     expect(resumed.closed).toBe(false);
-    resumed.emit({ type: "tools", seq: 9, tools: [TOOL] });
+    await resumed.emit({ type: "tools", seq: 9, tools: [TOOL] });
     expect(useWebmcpInspectorStore.getState().tools).toHaveLength(1);
   });
 
@@ -338,9 +372,93 @@ describe("webmcp inspector store", () => {
     expect(FakeEventSource.instances).toHaveLength(0);
   });
 
+  it("refreshes tool metadata without navigating or invoking", async () => {
+    useWebmcpInspectorStore.setState({ session: SESSION, tools: [] });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ session: SESSION, tools: [TOOL] }), {
+        status: 200,
+      }),
+    );
+    expect(
+      await useWebmcpInspectorStore
+        .getState()
+        .refreshToolsForChat(SESSION.sessionId),
+    ).toBe(true);
+    expect(useWebmcpInspectorStore.getState().tools).toEqual([TOOL]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0][0])).toContain("?refreshTools=1");
+    expect(fetchSpy.mock.calls[0][1]?.method).toBe("GET");
+  });
+
+  it("does not apply a tool refresh to a replacement session", async () => {
+    useWebmcpInspectorStore.setState({ session: SESSION, tools: [] });
+    let release!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const refreshing = useWebmcpInspectorStore
+      .getState()
+      .refreshToolsForChat(SESSION.sessionId);
+    await vi.waitFor(() => expect(release).toBeDefined());
+    useWebmcpInspectorStore.setState({
+      session: { ...SESSION, sessionId: "replacement" },
+    });
+    release(
+      new Response(JSON.stringify({ session: SESSION, tools: [TOOL] }), {
+        status: 200,
+      }),
+    );
+    expect(await refreshing).toBe(false);
+    expect(useWebmcpInspectorStore.getState().tools).toEqual([]);
+  });
+
+  it("recovers a retained result through a read-only request", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          invokeId: "recover",
+          outcome: { state: "succeeded", output: "paid" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const result = await useWebmcpInspectorStore
+      .getState()
+      .recoverInvocationResult("original-session", "recover");
+    expect(result).toMatchObject({
+      state: "succeeded",
+      output: "paid",
+      invokeId: "recover",
+    });
+    expect(String(fetchSpy.mock.calls[0][0])).toContain(
+      "/sessions/original-session/invocations/recover",
+    );
+    expect(fetchSpy.mock.calls[0][1]?.method).toBe("GET");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a pending recovery unknown without issuing an invoke", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ invokeId: "recover", pending: true }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await expect(
+      useWebmcpInspectorStore
+        .getState()
+        .recoverInvocationResult("original-session", "recover"),
+    ).resolves.toMatchObject({ state: "unknown", invokeId: "recover" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][1]?.method).toBe("GET");
+  });
+
   it("reports a session that went away and drops its state", async () => {
     const source = await openSession();
-    source.emit({ type: "session_gone", error: "That session is gone." });
+    await source.emit({ type: "session_gone", error: "That session is gone." });
 
     const state = useWebmcpInspectorStore.getState();
     expect(state.session).toBeUndefined();
@@ -350,7 +468,7 @@ describe("webmcp inspector store", () => {
   it("survives a malformed frame and an unknown event type", async () => {
     const source = await openSession();
     source.onmessage?.({ data: "not json at all" });
-    source.emit({ type: "something-new", seq: 4 });
+    await source.emit({ type: "something-new", seq: 4 });
     // A frame we cannot read is not worth tearing the stream down over.
     expect(useWebmcpInspectorStore.getState().session?.sessionId).toBe(
       "session-1",
@@ -413,7 +531,7 @@ describe("webmcp inspector store", () => {
     // twice). The server echoes whatever it was sent.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
       const invokeId = JSON.parse(String((init as RequestInit).body)).invokeId;
-      source.emit(activityEvent(settled("a2", invokeId), 2));
+      await source.emit(activityEvent(settled("a2", invokeId), 2));
       return new Response(JSON.stringify({ invokeId }), { status: 202 });
     });
 
@@ -422,6 +540,32 @@ describe("webmcp inspector store", () => {
     await expect(
       useWebmcpInspectorStore.getState().invokeToolForResult(TOOL.toolKey, {}),
     ).resolves.toMatchObject({ state: "succeeded", output: "ok" });
+  });
+
+  it("preserves a definite stale refusal delivered on SSE for chat recovery", async () => {
+    const source = await openSession();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const invokeId = JSON.parse(String(init?.body)).invokeId;
+      await source.emit(
+        activityEvent(
+          {
+            ...settled("stale", invokeId),
+            kind: "invocation_settled",
+            invokeId,
+            toolKey: TOOL.toolKey,
+            source: "chat",
+            durationMs: 0,
+            state: "failed",
+            errorCode: "tool-gone",
+          },
+          2,
+        ),
+      );
+      return new Response(JSON.stringify({ invokeId }), { status: 202 });
+    });
+    await expect(
+      useWebmcpInspectorStore.getState().invokeToolForResult(TOOL.toolKey, {}),
+    ).resolves.toMatchObject({ state: "failed", errorCode: "tool-gone" });
   });
 
   it("settles callers waiting on a session that closes underneath them", async () => {
@@ -442,7 +586,10 @@ describe("webmcp inspector store", () => {
 
     // A model turn must not block for the full timeout on a browser that has
     // already gone away.
-    await expect(pending).resolves.toMatchObject({ state: "failed" });
+    await expect(pending).resolves.toMatchObject({
+      state: "unknown",
+      invokeId: expect.any(String),
+    });
   });
 
   it("settles waiters when the server reports the session is gone", async () => {
@@ -455,13 +602,16 @@ describe("webmcp inspector store", () => {
       .invokeToolForResult(TOOL.toolKey, {});
     await Promise.resolve();
 
-    source.emit({ type: "session_gone", error: "That session is gone." });
-    await expect(pending).resolves.toMatchObject({ state: "failed" });
+    await source.emit({ type: "session_gone", error: "That session is gone." });
+    await expect(pending).resolves.toMatchObject({
+      state: "unknown",
+      invokeId: expect.any(String),
+    });
   });
 
   it("does not hand one session's cached result to the next", async () => {
     const source = await openSession();
-    source.emit(activityEvent(settled("a2", "inv-1"), 2));
+    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
 
     await openSession();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -482,19 +632,19 @@ describe("webmcp inspector store", () => {
 
   it("handles an empty tool set", async () => {
     const source = await openSession();
-    source.emit({ type: "tools", seq: 2, tools: [TOOL] });
-    source.emit({ type: "tools", seq: 3, tools: [] });
+    await source.emit({ type: "tools", seq: 2, tools: [TOOL] });
+    await source.emit({ type: "tools", seq: 3, tools: [] });
     expect(useWebmcpInspectorStore.getState().tools).toEqual([]);
   });
 
   it("keeps the newest frame, and keeps it out of the timeline", async () => {
     const source = await openSession();
-    source.emit({
+    await source.emit({
       type: "frame",
       seq: 2,
       frame: { data: "one", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
     });
-    source.emit({
+    await source.emit({
       type: "frame",
       seq: 3,
       frame: { data: "two", deviceWidth: 640, deviceHeight: 400, ts: 2 },
@@ -514,7 +664,7 @@ describe("webmcp inspector store", () => {
   it("keeps the live frame separate from the manual screenshot", async () => {
     const source = await openSession();
     useWebmcpInspectorStore.setState({ lastScreenshot: "manual-capture" });
-    source.emit({
+    await source.emit({
       type: "frame",
       seq: 2,
       frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
@@ -529,24 +679,24 @@ describe("webmcp inspector store", () => {
 
   it("ignores an event type it does not know, without losing the stream", async () => {
     const source = await openSession();
-    source.emit({ type: "invented_later", seq: 2, payload: { a: 1 } });
+    await source.emit({ type: "invented_later", seq: 2, payload: { a: 1 } });
     // The old shape fell through to the activity branch for anything that was
     // not `session` or `tools`, so a newer server's first new event type threw
     // on `event.entry` — swallowed by onmessage's catch, which turns "your
     // client is older than your server" into an unexplained gap.
-    source.emit({ type: "tools", seq: 3, tools: [TOOL] });
+    await source.emit({ type: "tools", seq: 3, tools: [TOOL] });
     expect(useWebmcpInspectorStore.getState().tools).toHaveLength(1);
     expect(useWebmcpInspectorStore.getState().activity).toEqual([]);
   });
 
   it("drops the live frame when the session goes away", async () => {
     const source = await openSession();
-    source.emit({
+    await source.emit({
       type: "frame",
       seq: 2,
       frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
     });
-    source.emit({ type: "session_gone", error: "That session is gone." });
+    await source.emit({ type: "session_gone", error: "That session is gone." });
     // Nothing is going to correct that picture now, so showing it would be a
     // page the viewer believes is current and is not.
     expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
@@ -668,7 +818,7 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().session).toEqual(SESSION);
   });
 
-  it("tells the server the viewer's pixel ratio, and only for an in-app session", async () => {
+  it("uses server DPR 1 even when the viewer uses a Retina display", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(
@@ -683,46 +833,7 @@ describe("webmcp inspector store", () => {
       await useWebmcpInspectorStore
         .getState()
         .startSession("https://shop.test/", { display: "in-app" });
-      // The browser runs headless on the server, with no display to ask.
       expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toEqual({
-        url: "https://shop.test/",
-        display: "in-app",
-        devicePixelRatio: 2,
-      });
-
-      // A window session paints on a real display that already knows its own
-      // ratio, so the field is left off entirely.
-      await useWebmcpInspectorStore
-        .getState()
-        .startSession("https://shop.test/");
-      expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toEqual({
-        url: "https://shop.test/",
-      });
-
-      // A ratio with more precision than the wire carries. Three decimals,
-      // because that is what a frame's own `scale` carries — the two describe
-      // the same ratio and should not disagree in the third place.
-      Object.defineProperty(window, "devicePixelRatio", {
-        configurable: true,
-        value: 1.3333333,
-      });
-      await useWebmcpInspectorStore
-        .getState()
-        .startSession("https://shop.test/", { display: "in-app" });
-      expect(
-        JSON.parse(String(fetchSpy.mock.calls[2][1]?.body)).devicePixelRatio,
-      ).toBe(1.333);
-
-      Object.defineProperty(window, "devicePixelRatio", {
-        configurable: true,
-        value: 1,
-      });
-      await useWebmcpInspectorStore
-        .getState()
-        .startSession("https://shop.test/", { display: "in-app" });
-      // Omitted at 1: the server's own default, so the common case puts
-      // nothing new on the wire and an older server strips nothing.
-      expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).toEqual({
         url: "https://shop.test/",
         display: "in-app",
       });
@@ -732,6 +843,20 @@ describe("webmcp inspector store", () => {
         value: original,
       });
     }
+  });
+
+  it("does not publish a store change to clear an already empty error", async () => {
+    await openSession();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    const changed = vi.fn();
+    const unsubscribe = useWebmcpInspectorStore.subscribe(changed);
+    await useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "mouse_move", x: 1, y: 1 }]);
+    expect(changed).not.toHaveBeenCalled();
+    unsubscribe();
   });
 
   it("sends an input batch as one command, and nothing for an empty one", async () => {
@@ -981,7 +1106,9 @@ describe("webmcp inspector store", () => {
         ),
     );
 
-    await useWebmcpInspectorStore.getState().captureScreenshot({ silent: true });
+    await useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
 
     // The measurement needs the same definition of "captured" a streamed
     // frame's `ts` carries. Timed from arrival here instead, the poll's
@@ -1006,7 +1133,9 @@ describe("webmcp inspector store", () => {
         ),
     );
 
-    await useWebmcpInspectorStore.getState().captureScreenshot({ silent: true });
+    await useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
     expect(useWebmcpInspectorStore.getState().lastScreenshotAt).toBe(1_234);
 
     // Somebody presses the Screenshot button. The picture changes; the poll
@@ -1217,6 +1346,117 @@ describe("webmcp inspector store — frame transport", () => {
     vi.useRealTimers();
   });
 
+  it("uses negotiated socket input, records its ack, and does not dirty the workspace", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "capabilities", features: ["input"] }),
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    fetchSpy.mockClear();
+    const changed = vi.fn();
+    const unsubscribe = useWebmcpInspectorStore.subscribe(changed);
+    const pending = useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "wheel", x: 1, y: 1, deltaX: 0, deltaY: 20 }]);
+    await Promise.resolve();
+    const message = JSON.parse(ws.sent.at(-1)!);
+    expect(message.type).toBe("input");
+    ws.onmessage?.({
+      data: JSON.stringify({
+        type: "input_ack",
+        seq: message.seq,
+        dispatched: 1,
+      }),
+    });
+    await pending;
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it("sends the next ordered socket batch before the previous ack", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "capabilities", features: ["input"] }),
+    });
+    const first = useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "text", text: "first" }]);
+    const second = useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "text", text: "second" }]);
+    await vi.waitFor(() =>
+      expect(
+        ws.sent.filter((s) => JSON.parse(s).type === "input"),
+      ).toHaveLength(2),
+    );
+    const messages = ws.sent
+      .map((s) => JSON.parse(s))
+      .filter((s) => s.type === "input");
+    expect(messages.map((m) => m.events[0].text)).toEqual(["first", "second"]);
+    for (const message of messages)
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "input_ack",
+          seq: message.seq,
+          dispatched: 1,
+        }),
+      });
+    await Promise.all([first, second]);
+  });
+
+  it("keeps binary frames after an ack timeout and sends only later input over HTTP", async () => {
+    const { ws, sse } = await openFrameSession();
+    vi.useFakeTimers();
+    ws.open();
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "capabilities", features: ["input"] }),
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    fetchSpy.mockClear();
+    const pending = useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "text", text: "uncertain" }]);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(5001);
+    await pending;
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sse.url).toContain("frames=off");
+    const count = ws.sent.length;
+    await useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "text", text: "later" }]);
+    expect(ws.sent).toHaveLength(count);
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(
+      fetchSpy.mock.calls.some(([, init]) =>
+        String(init?.body).includes("uncertain"),
+      ),
+    ).toBe(false);
+  });
+
+  it("surfaces interrupted socket input without replaying it over HTTP", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "capabilities", features: ["input"] }),
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    fetchSpy.mockClear();
+    const pending = useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "text", text: "only once" }]);
+    await Promise.resolve();
+    ws.emitClose(4401);
+    await pending;
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(useWebmcpInspectorStore.getState().error?.message).toContain(
+      "not replayed",
+    );
+  });
+
   it("opens the socket and takes frames off SSE, for a frame-stream session", async () => {
     const { sse, ws } = await openFrameSession();
 
@@ -1227,7 +1467,7 @@ describe("webmcp inspector store — frame transport", () => {
       "ws://localhost:3000/api/web/webmcp/sessions/session-1/frames",
     );
     // The token rides the subprotocol so it never lands in an access log.
-    expect(ws.protocols).toEqual(["test-token"]);
+    expect(ws.protocols).toEqual(["test-nonce"]);
     expect(ws.binaryType).toBe("arraybuffer");
   });
 
@@ -1251,7 +1491,7 @@ describe("webmcp inspector store — frame transport", () => {
     expect(FakeWebSocket.instances).toHaveLength(0);
     expect(sse.url).not.toContain("frames=off");
 
-    sse.emit({
+    await sse.emit({
       type: "frame",
       seq: 2,
       frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
@@ -1290,7 +1530,7 @@ describe("webmcp inspector store — frame transport", () => {
     // the CURRENT transport when this paints would file it under whichever
     // rung the ladder had reached by then.
     ws.emitClose(1006);
-    sse.emit({
+    await FakeEventSource.instances.at(-1)!.emit({
       type: "frame",
       seq: 8,
       frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
@@ -1326,7 +1566,7 @@ describe("webmcp inspector store — frame transport", () => {
     // refused `set_screencast`. A frame that arrived on the event stream did
     // not arrive on the poll, whatever else is running.
     useWebmcpInspectorStore.getState().noteScreenshotPolling(true);
-    sse.emit({
+    await sse.emit({
       type: "frame",
       seq: 9,
       frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
@@ -1359,7 +1599,7 @@ describe("webmcp inspector store — frame transport", () => {
       cssHeight: 800,
     });
 
-    sse.emit({
+    await sse.emit({
       type: "frame",
       seq: 9,
       frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
@@ -1394,7 +1634,7 @@ describe("webmcp inspector store — frame transport", () => {
     // The exact overlap the ladder creates: SSE frames are flipped back on
     // while a frame from the socket is already on screen. Painting the older
     // one would drag the pane backwards, with nothing to correct it.
-    sse.emit({
+    await sse.emit({
       type: "frame",
       seq: 9,
       frame: { data: "older", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
@@ -1407,7 +1647,7 @@ describe("webmcp inspector store — frame transport", () => {
 
     // …and a NEWER SSE frame is still accepted, which is what makes the
     // fallback work at all.
-    sse.emit({
+    await sse.emit({
       type: "frame",
       seq: 11,
       frame: { data: "newer", deviceWidth: 1280, deviceHeight: 800, ts: 2 },
@@ -1450,7 +1690,7 @@ describe("webmcp inspector store — frame transport", () => {
       [3, 1_000],
       [4, 2_000],
     ] as const) {
-      vi.advanceTimersByTime(delay);
+      await vi.advanceTimersByTimeAsync(delay);
       expect(transport().attempts).toBe(attempt);
       FakeWebSocket.instances.at(-1)!.emitClose(1006);
     }
@@ -1526,9 +1766,9 @@ describe("webmcp inspector store — frame transport", () => {
       [3, 1_000],
       [4, 2_000],
     ] as const) {
-      vi.advanceTimersByTime(delay - 1);
+      await vi.advanceTimersByTimeAsync(delay - 1);
       expect(FakeWebSocket.instances).toHaveLength(attempt - 1);
-      vi.advanceTimersByTime(1);
+      await vi.advanceTimersByTimeAsync(1);
       expect(FakeWebSocket.instances).toHaveLength(attempt);
       FakeWebSocket.instances.at(-1)!.emitClose(1006);
     }
@@ -1536,7 +1776,7 @@ describe("webmcp inspector store — frame transport", () => {
     // FOUR attempts total, then never again for this session: the failure this
     // ladder is really for is structural, and a socket churning forever behind
     // a pane that works fine on SSE helps nobody.
-    vi.advanceTimersByTime(60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(FakeWebSocket.instances).toHaveLength(4);
   });
 
@@ -1548,7 +1788,7 @@ describe("webmcp inspector store — frame transport", () => {
     let current = ws;
     for (let i = 0; i < 3; i += 1) {
       current.emitClose(1006);
-      vi.advanceTimersByTime(500);
+      await vi.advanceTimersByTimeAsync(500);
       current = FakeWebSocket.instances.at(-1)!;
       current.open();
     }
@@ -1558,7 +1798,7 @@ describe("webmcp inspector store — frame transport", () => {
     // structural case and latch a session that has been working all along —
     // reverting it to the SSE latency this change exists to remove.
     current.emitClose(1006);
-    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(500);
     expect(FakeWebSocket.instances).toHaveLength(5);
     FakeWebSocket.instances.at(-1)!.open();
   });
@@ -1570,10 +1810,10 @@ describe("webmcp inspector store — frame transport", () => {
     // answers 1006 every time and never opens, so the ladder still stops.
     ws.emitClose(1006);
     for (const delay of [500, 1_000, 2_000]) {
-      vi.advanceTimersByTime(delay);
+      await vi.advanceTimersByTimeAsync(delay);
       FakeWebSocket.instances.at(-1)!.emitClose(1006);
     }
-    vi.advanceTimersByTime(60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(FakeWebSocket.instances).toHaveLength(4);
   });
 
@@ -1583,7 +1823,7 @@ describe("webmcp inspector store — frame transport", () => {
     ws.emitClose(1006);
     expect(FakeEventSource.instances.at(-1)!.url).not.toContain("frames=off");
 
-    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(500);
     const retried = FakeWebSocket.instances.at(-1)!;
     retried.open();
     expect(FakeEventSource.instances.at(-1)!.url).toContain("frames=off");
@@ -1605,7 +1845,7 @@ describe("webmcp inspector store — frame transport", () => {
     // that blanked the pane — or that revoked the blob it is painted from —
     // would make the ladder visible as a flicker.
     expect(useWebmcpInspectorStore.getState().liveFrame).toBe(before);
-    FakeEventSource.instances.at(-1)!.emit({
+    await FakeEventSource.instances.at(-1)!.emit({
       type: "frame",
       seq: 11,
       frame: { data: "stale", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
@@ -1626,7 +1866,7 @@ describe("webmcp inspector store — frame transport", () => {
       expect(FakeEventSource.instances.at(-1)!.url, String(code)).toContain(
         "frames=off",
       );
-      vi.advanceTimersByTime(60_000);
+      await vi.advanceTimersByTimeAsync(60_000);
       expect(FakeWebSocket.instances, String(code)).toHaveLength(1);
     }
   });
@@ -1644,7 +1884,7 @@ describe("webmcp inspector store — frame transport", () => {
       expect(FakeEventSource.instances.at(-1)!.url, String(code)).not.toContain(
         "frames=off",
       );
-      vi.advanceTimersByTime(60_000);
+      await vi.advanceTimersByTimeAsync(60_000);
       expect(FakeWebSocket.instances, String(code)).toHaveLength(1);
     }
   });
@@ -1660,7 +1900,7 @@ describe("webmcp inspector store — frame transport", () => {
 
     // Nothing is left armed…
     expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     // …and had one somehow fired, the generation it captured no longer
     // matches, so it could not have opened a socket for the dead session.
     expect(FakeWebSocket.instances).toHaveLength(newSocketCount);
@@ -1683,7 +1923,7 @@ describe("webmcp inspector store — frame transport", () => {
     stale.emitClose(1006);
 
     expect(useWebmcpInspectorStore.getState().liveFrame).toBe(painted);
-    vi.advanceTimersByTime(60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(FakeWebSocket.instances.at(-1)).toBe(current);
   });
 
@@ -1712,14 +1952,14 @@ describe("webmcp inspector store — frame transport", () => {
     const { ws } = await openFrameSession();
     ws.open();
 
-    vi.advanceTimersByTime(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(ws.sent).toEqual([JSON.stringify({ type: "ping" })]);
 
     // The keepalive is a timer on a socket that is gone otherwise — and on the
     // server it is also what refreshes the session's idle deadline, so a
     // stopped one is a session reaped under a pane nobody closed.
     ws.emitClose(1006);
-    vi.advanceTimersByTime(120_000);
+    await vi.advanceTimersByTimeAsync(120_000);
     expect(ws.sent).toHaveLength(1);
   });
 
@@ -1742,13 +1982,13 @@ describe("webmcp inspector store — frame transport", () => {
       // existed anywhere in the browser. Hidden already means "not watching"
       // to the rest of this feature: the pane stops the screencast on the very
       // same signal.
-      vi.advanceTimersByTime(120_000);
+      await vi.advanceTimersByTimeAsync(120_000);
       expect(ws.sent).toHaveLength(0);
 
       // The socket stayed open, so coming back needs no handshake and is at
       // most one interval from telling the server someone is watching again.
       setVisibility("visible");
-      vi.advanceTimersByTime(30_000);
+      await vi.advanceTimersByTimeAsync(30_000);
       expect(ws.sent).toEqual([JSON.stringify({ type: "ping" })]);
     } finally {
       delete (document as { visibilityState?: unknown }).visibilityState;
@@ -1781,6 +2021,19 @@ describe("webmcp inspector store — frame transport", () => {
     expect(revokedUrls).toContain("blob:only");
     // The socket is NOT closed: a screencast toggle follows tab visibility,
     // and a handshake per flip is pure cost.
+    expect(ws.closedByClient).toBe(false);
+  });
+
+  it("does not resurrect a queued frame after live view stops", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    ws.emitFrame(binaryFrame(2), false);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ streaming: false }), { status: 200 }),
+    );
+    await useWebmcpInspectorStore.getState().setScreencast(false);
+    paintTick();
+    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
     expect(ws.closedByClient).toBe(false);
   });
 
@@ -1830,7 +2083,7 @@ describe("webmcp inspector store — frame transport", () => {
     ws.open();
     ws.emitFrame(binaryFrame(2));
 
-    sse.emit({ type: "session_gone", error: "That session is gone." });
+    await sse.emit({ type: "session_gone", error: "That session is gone." });
     expect(ws.closedByClient).toBe(true);
     expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
   });
@@ -1843,10 +2096,68 @@ describe("webmcp inspector store — frame transport", () => {
     expect(ws.closedByClient).toBe(true);
 
     useWebmcpInspectorStore.getState().reconnect();
+    for (let i = 0; i < 20; i++) await Promise.resolve();
     const resumed = FakeWebSocket.instances.at(-1)!;
     expect(resumed).not.toBe(ws);
     resumed.open();
     resumed.emitFrame(binaryFrame(1));
     expect(useWebmcpInspectorStore.getState().liveFrame?.seq).toBe(1);
   });
+});
+
+it("allows the server queue budget, then returns unknown with the original id on a lost settle", async () => {
+  vi.useFakeTimers();
+  const before = useWebmcpInspectorStore.getState();
+  let acceptedId: string | undefined;
+  useWebmcpInspectorStore.setState({
+    sendCommand: async (command) => {
+      if (command.type !== "invoke_tool") throw new Error("unexpected command");
+      acceptedId = command.invokeId;
+      return { invokeId: acceptedId };
+    },
+  });
+  try {
+    const settled = vi.fn();
+    const result = useWebmcpInspectorStore
+      .getState()
+      .invokeToolForResult("origin::pay", {});
+    void result.then(settled);
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(500_000);
+    await expect(result).resolves.toMatchObject({
+      state: "unknown",
+      invokeId: acceptedId,
+      errorMessage: expect.stringContaining("before retrying"),
+    });
+  } finally {
+    useWebmcpInspectorStore.setState(before);
+    vi.useRealTimers();
+  }
+});
+
+// Authenticated fetch streams replace EventSource. Keep the existing transport
+// fixture's emit/close controls, with actual SSE bytes flowing through the reader.
+vi.mock("@/lib/session-token", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/session-token")>();
+  return {
+    ...original,
+    authFetch: async (input: string, init?: RequestInit) => {
+      if (input.includes("/events")) {
+        const stream = new FakeEventSource(input);
+        init?.signal?.addEventListener("abort", () => stream.close());
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              stream.controller = controller;
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      }
+      if (input.endsWith("/stream-nonce"))
+        return new Response(JSON.stringify({ nonce: "test-nonce" }));
+      return fetch(input, init);
+    },
+  };
 });

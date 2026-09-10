@@ -12,13 +12,18 @@
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { CommandQueue } from "./command-queue";
+import { CommandLedger } from "./command-ledger";
 import { BrowserdRequestHandler, type DaemonResponse } from "./request-handler";
 import {
   createFrameStreamHost,
   type FrameStreamHost,
   type FrameStreamOptions,
 } from "./frame-stream-route";
-import { guardLease, guardStaleness, type BrowserDriver } from "./browser-driver";
+import {
+  guardLease,
+  guardStaleness,
+  type BrowserDriver,
+} from "./browser-driver";
 import { HandoffLease } from "./lease";
 
 /** Requests bigger than this are refused with 413 before they reach the queue. */
@@ -63,6 +68,16 @@ function writeResponse(
       ...response.headers,
     });
     res.end();
+    return;
+  }
+  if (response.body instanceof Uint8Array) {
+    const payload = Buffer.from(response.body);
+    res.writeHead(response.status, {
+      "content-type": "application/octet-stream",
+      "content-length": payload.byteLength,
+      ...response.headers,
+    });
+    res.end(payload);
     return;
   }
   const payload = JSON.stringify(response.body);
@@ -165,6 +180,15 @@ export interface BrowserdStack {
   server: Server;
   handler: BrowserdRequestHandler;
   queue: CommandQueue;
+  /**
+   * The command ledger this boot is writing.
+   *
+   * Exposed on the stack because the LOCAL engine reaches the daemon by
+   * function call rather than over a socket, and its mirror wants the ring
+   * directly — going out through `/v1/trace` and back to copy rows into a file
+   * in the same process would be a JSON round trip for nothing.
+   */
+  ledger: CommandLedger;
   bootId: string;
   /** The human-handoff lease this stack's handler and driver share. */
   lease: HandoffLease;
@@ -189,20 +213,44 @@ export function buildBrowserdStack(
   driver: BrowserDriver,
   config: {
     token: string;
+    authority?: "lease" | "shared";
     bootId?: string;
     lease?: HandoffLease;
     /** Announced on `/v1/status`; never assumed by a caller. */
     features?: readonly string[];
     /** The display encoder, when this box has one. See the frame-stream host. */
     video?: import("./video-encoder").VideoEncoder;
-    displaySize?: { width: number; height: number };
+    /**
+     * The file recorder, when this box has one.
+     *
+     * A SEPARATE process from `video` above, deliberately: the live encoder is
+     * demand-driven and restarts on a tier change, either of which would
+     * truncate a file the run is still filling.
+     */
+    recorder?: import("./video-recorder").VideoRecorder;
+    displaySize?: () => { width: number; height: number };
+    cssViewport?: () => { width: number; height: number };
     /** Observability and the lazy-upgrade decision, never admission. */
     bundleHash?: string;
     contextMode?: "persistent" | "ephemeral";
     startedBy?: "prelaunch" | "inspector";
+    /**
+     * Record `type` values verbatim in the ledger instead of their shape.
+     *
+     * A session-level decision made by the door — ephemeral profiles only —
+     * and passed in at construction so no command envelope can ask for it.
+     */
+    captureTypedText?: boolean;
+    /** Export the persistent profile while the command queue is drained. */
+    profileExport?: () => Promise<Uint8Array>;
   } & DaemonServerOptions,
 ): BrowserdStack {
   const bootId = config.bootId ?? randomUUID();
+  // One ledger per boot, sharing the boot's id: its `seq` is monotonic within
+  // a boot and meaningless across one, which is exactly why a relaunch shows up
+  // in the durable mirror as a `daemon_restart` gap rather than as a sequence
+  // that quietly starts over.
+  const ledger = new CommandLedger({ bootId });
   // ONE lease instance, shared THREE ways: the handler refuses commands that
   // arrive while it is held, the queue's executor re-refuses the ones already
   // admitted when it is taken, and the driver reads it both to refuse a
@@ -214,7 +262,9 @@ export function buildBrowserdStack(
   // reading a tab's current state token to compare it IS an observation of the
   // page, so it must not happen for a command the lease is about to refuse.
   const queue = new CommandQueue(
-    guardLease(lease, guardStaleness(driver, lease)),
+    config.authority === "shared"
+      ? guardStaleness(driver)
+      : guardLease(lease, guardStaleness(driver, lease)),
     bootId,
   );
   const handler = new BrowserdRequestHandler({
@@ -222,14 +272,19 @@ export function buildBrowserdStack(
     driver,
     bootId,
     token: config.token,
+    authority: config.authority,
     lease,
     ...(config.features ? { features: config.features } : {}),
     ...(config.bundleHash ? { bundleHash: config.bundleHash } : {}),
     ...(config.contextMode ? { contextMode: config.contextMode } : {}),
     ...(config.startedBy ? { startedBy: config.startedBy } : {}),
+    ledger,
+    ...(config.captureTypedText ? { captureTypedText: true } : {}),
     ...(config.video
       ? { setVideoTier: (tier) => config.video?.setTier(tier) }
       : {}),
+    ...(config.recorder ? { recorder: config.recorder } : {}),
+    ...(config.profileExport ? { profileExport: config.profileExport } : {}),
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
@@ -237,6 +292,7 @@ export function buildBrowserdStack(
       ...(config.frames ?? {}),
       ...(config.video ? { video: config.video } : {}),
       ...(config.displaySize ? { displaySize: config.displaySize } : {}),
+      ...(config.cssViewport ? { cssViewport: config.cssViewport } : {}),
     },
   });
   // AFTER, because the stream host is built FROM the handler. Until this runs
@@ -248,6 +304,7 @@ export function buildBrowserdStack(
     server,
     handler,
     queue,
+    ledger,
     bootId,
     lease,
     closeStreams: (reason = "shutting_down") => frames.closeAll(reason),

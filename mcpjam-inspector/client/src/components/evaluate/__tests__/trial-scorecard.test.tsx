@@ -56,17 +56,184 @@ const rowFor = (label: string) =>
     .find((row) => row.textContent?.includes(label))!;
 
 describe("TrialScorecard", () => {
-  it("shows the same rows the left pane authored, in the same order", () => {
-    // The whole point: what you asked for and what happened line up row for
-    // row, so a reader never has to map one list onto another.
+  it.each(["pending", "running"] as const)(
+    "withholds stage results while %s and reveals them when complete",
+    (status) => {
+      const chain = {
+        status: "verified",
+        stages: [{ stage: "connection", state: "passed", reason: "observed" }],
+      } as never;
+      const { rerender } = renderCard({
+        iteration: { ...iteration(), status },
+        chain,
+      });
+      expect(screen.getByTestId("trial-scorecard-loading")).toHaveAttribute(
+        "aria-busy",
+        "true",
+      );
+      expect(screen.queryByTestId("trial-chain-panel")).toBeNull();
+      expect(screen.queryByTestId("trial-scorecard-row")).toBeNull();
+      rerender(
+        <TrialScorecard
+          authored={authored}
+          iteration={iteration()}
+          steps={steps}
+          chain={chain}
+        />,
+      );
+      expect(screen.queryByTestId("trial-scorecard-loading")).toBeNull();
+      expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+    },
+  );
+  it("shows a skeleton before a live iteration exists", () => {
+    renderCard({ iteration: null, isRunning: true });
+    expect(screen.getByTestId("trial-scorecard-loading")).toBeInTheDocument();
+  });
+  it("keeps each stage's recorded checks in its selected detail panel", async () => {
+    const chain = {
+      status: "verified",
+      firstFailedStage: "selection",
+      stages: [
+        {
+          stage: "connection",
+          state: "passed",
+          reason: "impliedByLaterEvidence",
+        },
+        { stage: "selection", state: "failed", reason: "missingToolCall" },
+        {
+          stage: "userValue",
+          state: "notReached",
+          reason: "earlierStageFailed",
+        },
+      ],
+    } as never;
+    renderCard({ chain });
+    expect(
+      screen.queryByRole("heading", { name: "User value chain" }),
+    ).toBeNull();
+    const report = screen.getByRole("region", {
+      name: "User value chain — default assertions",
+    });
+    expect(within(report).queryByTestId("scorecard-group-state")).toBeNull();
+    expect(
+      within(screen.getByTestId("trial-stage-detail-card")).getAllByTestId(
+        "trial-scorecard-row",
+      ).length,
+    ).toBeGreaterThan(0);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /01 Connection:/ }));
+    expect(screen.getByTestId("trial-stage-detail-card")).toHaveTextContent(
+      "No separate connection assertion was recorded.",
+    );
+    expect(within(report).queryByTestId("trial-scorecard-row")).toBeNull();
+  });
+
+  it("puts default chain assertions above explicitly added assertions", () => {
     renderCard();
-    const authoredKeys = buildCaseScorecard(authored)
-      .groups.flatMap((group) => group.rows)
-      .map((row) => row.key);
-    const shownKeys = screen
+    const defaults = screen.getByRole("region", {
+      name: "User value chain — default assertions",
+    });
+    const added = screen.getByRole("region", { name: "Added assertions" });
+    const defaultKeys = within(defaults)
       .getAllByTestId("trial-scorecard-row")
       .map((row) => row.getAttribute("data-row-key"));
-    expect(shownKeys).toEqual(authoredKeys);
+    expect(defaultKeys).toEqual(["route", "judge:goalCompletion"]);
+    const addedKeys = within(added)
+      .getAllByTestId("trial-scorecard-row")
+      .map((row) => row.getAttribute("data-row-key"));
+    const authoredKeys = buildCaseScorecard(authored)
+      .groups.flatMap((group) => group.rows)
+      .filter((row) => row.provenance === "step" || row.provenance === "case")
+      .map((row) => row.key);
+    expect(addedKeys).toEqual(authoredKeys);
+    expect(
+      defaults.compareDocumentPosition(added) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("shows an empty added-assertions section for a prompt-only case", () => {
+    renderCard({
+      authored: { steps: [steps[0]], toolsChoice: "unset" },
+      steps: [steps[0]],
+    });
+    expect(
+      within(
+        screen.getByRole("region", { name: "Added assertions" }),
+      ).getByText("No extra assertions added."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the judge's recorded passing rationale without expanding a row", () => {
+    renderCard({
+      judgeCase: {
+        status: "completed",
+        passed: true,
+        score: 1,
+        reason:
+          "The rendered diagram contains Begin, Decision, and End with connecting lines.",
+      } as never,
+    });
+    expect(screen.getByTestId("user-value-pass-evidence")).toHaveTextContent(
+      "The rendered diagram contains Begin, Decision, and End with connecting lines.",
+    );
+  });
+
+  it("shows supporting stage evidence and makes missing evidence explicit", async () => {
+    const chain = {
+      status: "verified",
+      stages: [
+        {
+          stage: "userValue",
+          state: "passed",
+          evidence: {
+            predicateReasons: ["All three diagram labels were visible."],
+          },
+        },
+      ],
+    } as never;
+    const { rerender } = renderCard({ chain });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /User value:/ }));
+    expect(screen.getByTestId("user-value-pass-evidence")).toHaveTextContent(
+      "All three diagram labels were visible.",
+    );
+    rerender(
+      <TrialScorecard
+        authored={authored}
+        iteration={iteration()}
+        steps={steps}
+        chain={
+          {
+            status: "verified",
+            stages: [{ stage: "userValue", state: "passed" }],
+          } as never
+        }
+      />,
+    );
+    expect(screen.getByTestId("user-value-pass-evidence")).toHaveTextContent(
+      "This run recorded a pass without supporting evidence.",
+    );
+  });
+
+  it("does not reveal passing evidence during blind judge review", () => {
+    renderCard({
+      judgeHidden: true,
+      judgeCase: {
+        status: "completed",
+        passed: true,
+        score: 1,
+        reason: "Private judge rationale",
+      } as never,
+    });
+    expect(
+      screen.queryByTestId("user-value-pass-evidence"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Private judge rationale"),
+    ).not.toBeInTheDocument();
   });
 
   it("says a scorer was not measured rather than showing it as passed", () => {
@@ -186,9 +353,7 @@ describe("TrialScorecard", () => {
       .filter((row) => row.getAttribute("data-state") === "notMeasured");
     expect(unmeasured.length).toBeGreaterThan(0);
     for (const row of unmeasured) {
-      expect(
-        within(row).getByLabelText("Not measured"),
-      ).toBeInTheDocument();
+      expect(within(row).getByLabelText("Not measured")).toBeInTheDocument();
     }
     expect(container.textContent).not.toMatch(/toolCalledAtLeastOnce/);
   });
@@ -241,10 +406,10 @@ describe("the chain lives inside the Scorecard", () => {
     firstFailedStage: "selection",
   } as never;
 
-  it("renders the strip above the rows", () => {
+  it("renders the shared iteration stage report above the rows", () => {
     renderCard({ chain });
     const card = screen.getByTestId("trial-scorecard");
-    expect(within(card).getByTestId("stage-strip")).toBeTruthy();
+    expect(within(card).getByTestId("trial-chain-panel")).toBeTruthy();
   });
 
   it("puts the verdict WORD on the group heading, not on the chip", () => {
@@ -254,14 +419,14 @@ describe("the chain lives inside the Scorecard", () => {
       .map((el) => el.textContent);
     expect(states).toContain("failed");
     expect(
-      screen.getByTestId("stage-chip-selection").textContent,
+      screen.getByRole("button", { name: /03 Selection:/ }).textContent,
     ).not.toContain("failed");
   });
 
   it("shows no group state when the trial has no chain", () => {
     renderCard({});
     expect(screen.queryAllByTestId("scorecard-group-state")).toHaveLength(0);
-    expect(screen.queryByTestId("stage-strip")).toBeNull();
+    expect(screen.queryByTestId("trial-chain-panel")).toBeNull();
   });
 });
 

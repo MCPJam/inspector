@@ -19,6 +19,9 @@ const state = vi.hoisted(() => ({
   definitions: [{ name: "browser_navigate", description: "Open a URL." }],
   definitionCalls: [] as string[],
   pageCalls: [] as string[],
+  pageTabIds: [] as Array<string | undefined>,
+  pageSessionIds: [] as Array<string | undefined>,
+  pageHolders: [] as Array<string | undefined>,
 }));
 
 vi.mock("convex/react", () => ({
@@ -31,8 +34,9 @@ vi.mock("@/hooks/useClients", () => ({
   useHost: () => ({ host: state.explicitHost, isLoading: false }),
 }));
 
-vi.mock("@/hooks/useComputerEngine", () => ({
-  useComputerEngine: () => ({
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    localAvailable: true,
     engine: state.selectedEngine,
     selectedEngine: state.selectedEngine,
     consent: { token: state.consentToken, granted: !!state.consentToken },
@@ -43,6 +47,11 @@ vi.mock("@/hooks/useProjectComputer", () => ({
   useMintBrowserToken: () =>
     vi.fn(async () => ({
       token: "tok",
+      expiresAt: Date.now() + 60_000,
+    })),
+  useMintConversationBrowserToken: () =>
+    vi.fn(async () => ({
+      token: "tok-conversation",
       expiresAt: Date.now() + 60_000,
     })),
 }));
@@ -60,8 +69,9 @@ vi.mock("@/lib/browser-page-tools/client", () => ({
     state.definitionCalls.push(engine);
     return state.definitions;
   }),
-  fetchHostedPageTools: vi.fn(async () => {
+  fetchHostedPageTools: vi.fn(async (_tokens: unknown, _signal: unknown, tabId?: string) => {
     state.pageCalls.push("hosted");
+    state.pageTabIds.push(tabId);
     return {
       ok: true,
       url: "https://webmcp.dev/",
@@ -69,8 +79,15 @@ vi.mock("@/lib/browser-page-tools/client", () => ({
       tools: [],
     };
   }),
-  fetchLocalPageTools: vi.fn(async () => {
+  fetchLocalPageTools: vi.fn(async (args: {
+    tabId?: string;
+    sessionId?: string;
+    holder?: string;
+  }) => {
     state.pageCalls.push("local");
+    state.pageTabIds.push(args?.tabId);
+    state.pageSessionIds.push(args?.sessionId);
+    state.pageHolders.push(args?.holder);
     return {
       ok: true,
       url: "http://localhost/",
@@ -78,9 +95,23 @@ vi.mock("@/lib/browser-page-tools/client", () => ({
       tools: [],
     };
   }),
+  fetchHostedPageToolInvoke: vi.fn(async () => ({
+    ok: true,
+    output: {},
+  })),
+  fetchLocalPageToolInvoke: vi.fn(async () => ({
+    ok: true,
+    output: {},
+  })),
 }));
 
 import { useBrowserTools } from "../useBrowserTools";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import {
+  browserPageToolsKey,
+  noteWebmcpStats,
+  useBrowserPageToolsStore,
+} from "@/stores/browser-page-tools-store";
 
 const WITH_BROWSER = { builtInToolIds: ["browser", "bash"] };
 const WITHOUT_BROWSER = { builtInToolIds: ["bash"] };
@@ -92,6 +123,16 @@ beforeEach(() => {
   state.consentToken = null;
   state.definitionCalls = [];
   state.pageCalls = [];
+  state.pageTabIds = [];
+  state.pageSessionIds = [];
+  state.pageHolders = [];
+  sessionStorage.clear();
+  useBrowserPageToolsStore.setState({ live: {}, epoch: {} });
+  useActiveChatSessionStore.setState({
+    sessionId: null,
+    browserLocation: null,
+    browserSessionId: null,
+  });
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -173,6 +214,20 @@ describe("useBrowserTools — which browser it reads", () => {
     expect(result.current.engine).toBe("local");
   });
 
+  it("names the conversation whose browser the pane is listing", async () => {
+    // Chat drives `<project>:session:<id>`. A read that omitted the id still
+    // looked at the leftover project-wide Chromium, so the list stayed empty
+    // while the model was already calling that page's tools.
+    state.projectDefault = WITH_BROWSER;
+    state.selectedEngine = "local";
+    state.consentToken = "consent-tok";
+    useActiveChatSessionStore.setState({ sessionId: "chat-1" });
+    renderHook(() => useBrowserTools({ projectId: "proj_1", hostId: null }));
+    await waitFor(() => expect(state.pageCalls).toEqual(["local"]));
+    expect(state.pageSessionIds).toEqual(["chat-1"]);
+    expect(state.pageHolders[0]).toMatch(/^rail-/);
+  });
+
   it("does not read the local browser before consent is granted", async () => {
     // The Browser pane is where a person authorizes this machine. Until they
     // do there is nothing to read, and asking would 403 on every render.
@@ -205,5 +260,34 @@ describe("useBrowserTools — which browser it reads", () => {
 
     await waitFor(() => expect(state.pageCalls).toEqual(["hosted", "hosted"]));
     expect(state.definitionCalls).toHaveLength(definitionsBefore);
+  });
+});
+
+describe("useBrowserTools — the read follows the tab the signal came from", () => {
+  it("sends the beat's active tab, so the pane is not the default tab's list", async () => {
+    // The heartbeat measures the ACTIVE tab. The page-tools read is a separate
+    // request, and one sent with no tab observes `@session` — a literal key,
+    // not "whichever tab is active". Without this the pane refreshed to the
+    // DEFAULT tab's definitions and put a live badge on them, beside a view of
+    // the tab the person was actually in.
+    state.projectDefault = WITH_BROWSER;
+    const { result } = renderHook(() =>
+      useBrowserTools({ projectId: "proj_1", hostId: null }),
+    );
+    await waitFor(() => expect(state.pageCalls.length).toBeGreaterThan(0));
+    // The opening read has no signal yet, so no tab: today's behaviour.
+    expect(state.pageTabIds.at(-1)).toBeUndefined();
+
+    const before = state.pageCalls.length;
+    noteWebmcpStats(
+      browserPageToolsKey("proj_1", "hosted"),
+      { webmcp: { revision: 7, hash: "h7", count: 1 }, tabs: { active: "t2" } },
+      "boot-1",
+    );
+    await waitFor(() =>
+      expect(state.pageCalls.length).toBeGreaterThan(before),
+    );
+    expect(state.pageTabIds.at(-1)).toBe("t2");
+    expect(result.current.attached).toBe(true);
   });
 });

@@ -197,14 +197,20 @@ export function buildHostComparePath(
 export const userTestingCreatePath = `${routePaths.userTesting}/new`;
 
 /**
- * Detail sub-tabs on `/user-testing/:scenarioId`. Insights is the landing tab.
+ * Detail sub-tabs on `/user-testing/:scenarioId`. Findings is the landing tab.
  * Edit is a sibling route (`/edit`), not a tab.
+ *
+ * Findings took the landing spot from Insights (BB-146). Both the parser's
+ * fallback and the builder's omission rule below have to agree on which tab
+ * that is, or a link either carries a redundant `?tab=` or silently drops the
+ * one it meant.
  */
-export type UserTestingDetailTab = "sessions" | "insights";
+export type UserTestingDetailTab = "sessions" | "insights" | "findings";
 
 const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
   "sessions",
   "insights",
+  "findings",
 ]);
 
 /**
@@ -230,7 +236,10 @@ export function buildUserTestingScenarioPath(
 ): string {
   const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;
   const search = new URLSearchParams();
-  if (opts.tab && opts.tab !== "insights") search.set("tab", opts.tab);
+  // Omit the landing tab, name every other one. This must track the parser's
+  // fallback: naming the default would put a redundant `?tab=findings` on every
+  // link, and omitting a non-default would drop the reader back to Findings.
+  if (opts.tab && opts.tab !== "findings") search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
   if (opts.sel) search.set("sel", opts.sel);
   // `flow` is the default; only the non-default view needs saying.
@@ -254,10 +263,14 @@ export function isLegacyUserTestingEditTab(search: string): boolean {
 }
 
 /**
- * Parse the sub-tab query on a scenario path. Missing / unknown → insights.
+ * Parse the sub-tab query on a scenario path. Missing / unknown → findings.
  * A `session` deep-link without an explicit tab still opens Sessions.
  * Legacy edit/share/preview queries are NOT returned here — use
  * {@link isLegacyUserTestingEditTab} and redirect to `/edit`.
+ *
+ * `?tab=insights` stays an explicit, honoured value: links handed out while
+ * Insights was the landing tab must still land on Insights rather than being
+ * silently rehomed by the change of default.
  */
 export function parseUserTestingDetailTab(
   search: string,
@@ -269,7 +282,7 @@ export function parseUserTestingDetailTab(
     return tab as UserTestingDetailTab;
   }
   if (params.get("session")) return "sessions";
-  return "insights";
+  return "findings";
 }
 
 /** The Swarms create route. Static, so it outranks `:swarmId`. */
@@ -479,6 +492,12 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       return prefix;
     case "create":
       return `${prefix}/create`;
+    case "eval-server":
+      // The first-run preview is Evaluate (New) only. /evals has no home
+      // for it, so degrade to that prefix's list the same way commit-detail
+      // degrades on /evaluate.
+      if (prefix !== routePaths.evaluate) return prefix;
+      return `${prefix}/eval-server/${encodeURIComponent(route.serverId)}`;
     case "suite-overview": {
       const params = new URLSearchParams();
       if (route.view && route.view !== "runs") params.set("view", route.view);
@@ -497,7 +516,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
         route.suiteId,
-      )}/runs/${encodeURIComponent(route.runId)}${query ? `?${query}` : ""}`;
+      )}/runs/${encodeURIComponent(route.runId)}${route.comparison ? "/compare" : ""}${query ? `?${query}` : ""}`;
     }
     case "test-detail": {
       const params = new URLSearchParams();
@@ -510,7 +529,9 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
     case "test-edit": {
       const params = new URLSearchParams();
       if (route.openCompare) params.set("compare", "1");
+      if (route.checks) params.set("checks", "1");
       if (route.iteration) params.set("iteration", route.iteration);
+      if (route.fromEvalServer) params.set("fromEvalServer", route.fromEvalServer);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
         route.suiteId,

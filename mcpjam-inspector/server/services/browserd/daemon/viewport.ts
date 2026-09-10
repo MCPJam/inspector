@@ -1,3 +1,8 @@
+import {
+  BROWSER_VIEWPORT_POLICY,
+  SHARP_JPEG_MAX_BYTES,
+  JPEG_RECOVERY_POLICY,
+} from "@/shared/browser-viewport-policy";
 /**
  * Watching the page, and touching it — over CDP, for every engine.
  *
@@ -65,30 +70,7 @@ export interface ViewportFrame {
 
 /** A pointer/keyboard event forwarded from the pane. */
 export type ViewportInputEvent =
-  | { type: "mouse_move"; x: number; y: number; modifiers?: number }
-  | {
-      type: "mouse_down" | "mouse_up";
-      x: number;
-      y: number;
-      button: "left" | "middle" | "right";
-      clickCount?: number;
-      modifiers?: number;
-    }
-  | {
-      type: "wheel";
-      x: number;
-      y: number;
-      deltaX: number;
-      deltaY: number;
-      modifiers?: number;
-    }
-  | {
-      type: "key_down" | "key_up";
-      key: string;
-      code?: string;
-      modifiers?: number;
-    }
-  | { type: "text"; text: string };
+  import("@/shared/browser-pane-input").BrowserPaneInputEvent;
 
 export interface TabViewportOptions {
   /** The CSS-pixel surface the frames describe (the canonical viewport). */
@@ -104,9 +86,9 @@ export interface TabViewportOptions {
   clearTimer?: (handle: unknown) => void;
 }
 
-const DEFAULT_QUALITY = 75;
-const DEFAULT_MIN_INTERVAL_MS = 100;
-const DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
+const DEFAULT_QUALITY = BROWSER_VIEWPORT_POLICY.quality;
+const DEFAULT_MIN_INTERVAL_MS = BROWSER_VIEWPORT_POLICY.minIntervalMs;
+const DEFAULT_MAX_FRAME_BYTES = BROWSER_VIEWPORT_POLICY.maxFrameBytes;
 
 export type ViewportListener = (frame: ViewportFrame) => void;
 
@@ -120,6 +102,12 @@ export type ViewportListener = (frame: ViewportFrame) => void;
  * outside the box.
  */
 export interface ViewportCounters {
+  jpeg?: {
+    requestedQuality: number;
+    quality: number;
+    maxFrameBytes: number;
+    reason: string;
+  };
   /** Screencast frames Chromium handed us. */
   framesIn: number;
   /** Frames that reached a subscriber. */
@@ -144,15 +132,23 @@ export interface TabViewport {
    * after the last one leaves, so a browser nobody is looking at is not
    * encoding JPEGs.
    */
-  subscribe(listener: ViewportListener): () => void;
+  subscribe(listener: ViewportListener, maxFrameBytes?: number): () => void;
   subscriberCount(): number;
+  /** Resolve the current start attempt, allowing the caller to report failure. */
+  ready(): Promise<boolean>;
+  /** A new document must publish its first frame even if its pixels match. */
+  invalidate(): void;
+  resize(
+    surface: { width: number; height: number },
+    apply?: () => Promise<void>,
+  ): Promise<void>;
   /**
    * Forward a person's input.
    *
    * `stillPermitted` is re-asked before every event rather than once for the
    * batch: 64 keystrokes and pointer moves can span a handoff, and the events
    * after it belong to whoever holds the lease now, not to whoever sent them.
-   * Omitted by callers that have no lease to consult (tests, fakes).
+   * Omitted by shared-authority local inspection, which has no exclusive lease.
    *
    * `holder` names whose input this is. A change of hand drops the button
    * mask, because the release for anything the last hand was holding is never
@@ -184,11 +180,29 @@ export function createTabViewport(
   cdp: CdpLike,
   options: TabViewportOptions,
 ): TabViewport {
-  const quality = options.quality ?? DEFAULT_QUALITY;
+  let quality = options.quality ?? DEFAULT_QUALITY;
+  const requestedQuality = quality;
+  let recoveryDelay: number = JPEG_RECOVERY_POLICY.probeMs;
+  let probing = false;
+  let recoveryTimer: unknown;
+  let captureError: string | undefined;
+  const setTimer =
+    options.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer =
+    options.clearTimer ??
+    ((id: unknown) => clearTimeout(id as ReturnType<typeof setTimeout>));
+  const cancelRecovery = () => {
+    if (recoveryTimer !== undefined) clearTimer(recoveryTimer);
+    recoveryTimer = undefined;
+  };
+
   const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const now = options.now ?? Date.now;
-  const listeners = new Set<ViewportListener>();
+  const listeners = new Map<ViewportListener, number>();
+  const effectiveLimit = () =>
+    Math.min(...listeners.values(), SHARP_JPEG_MAX_BYTES);
   let streaming = false;
+  let startPending: Promise<void> = Promise.resolve();
   let streamGeneration = 0;
   let disposed = false;
   /**
@@ -213,6 +227,8 @@ export function createTabViewport(
    * sequence; this is what makes it one.
    */
   let inputChain: Promise<void> = Promise.resolve();
+  let resizeChain: Promise<void> = Promise.resolve();
+  let pendingResizes = 0;
   /** Whose input the current `buttonMask` describes. */
   let inputHolder: string | undefined;
   let lastData: string | undefined;
@@ -227,7 +243,8 @@ export function createTabViewport(
   const publish = (frame: ViewportFrame) => {
     counters.framesOut += 1;
     counters.bytesOut += base64Bytes(frame.data);
-    for (const listener of listeners) {
+    for (const [listener, limit] of listeners) {
+      if (base64Bytes(frame.data) > limit) continue;
       try {
         listener(frame);
       } catch {
@@ -266,13 +283,31 @@ export function createTabViewport(
     }
     lastData = frame.data;
 
-    // A frame is transient — the next paint replaces it — so an oversized one
-    // is dropped rather than re-encoded in the hot path.
-    const bytes = Math.floor((frame.data.length * 3) / 4);
-    if (bytes > maxBytes) {
+    const bytes = base64Bytes(frame.data);
+    if (bytes > effectiveLimit()) {
       counters.dropped.oversize += 1;
+      cancelRecovery();
+      if (probing)
+        recoveryDelay = Math.min(
+          JPEG_RECOVERY_POLICY.maxProbeMs,
+          recoveryDelay * 2,
+        );
+      probing = false;
+      const next = JPEG_RECOVERY_POLICY.qualities.find((q) => q < quality);
+      if (next === undefined) {
+        captureError = "jpeg_frame_limit";
+      } else {
+        quality = next;
+        restartCapture();
+      }
       return;
     }
+    captureError = undefined;
+    if (probing) {
+      recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+      probing = false;
+    }
+    scheduleRecovery();
 
     const measured = measure(frame.data, options.surface);
     throttle.push({
@@ -283,6 +318,15 @@ export function createTabViewport(
       ts: now(),
       seq: (seq += 1),
     });
+  });
+
+  cdp.on("Page.frameNavigated", (payload) => {
+    const frame = (payload as { frame?: { parentId?: string } }).frame;
+    if (!frame || frame.parentId || disposed || listeners.size === 0) return;
+    if (quality < requestedQuality || captureError) {
+      resetQuality();
+      restartCapture();
+    }
   });
 
   const start = async () => {
@@ -298,6 +342,7 @@ export function createTabViewport(
     // not be dropped as a duplicate of the last frame of the previous one —
     // that frame is exactly what a newly arrived watcher is waiting for.
     lastData = undefined;
+    void cdp.send("Page.enable").catch(() => {});
     await cdp
       .send("Page.startScreencast", {
         format: "jpeg",
@@ -318,6 +363,7 @@ export function createTabViewport(
   };
 
   const stop = async () => {
+    cancelRecovery();
     if (!streaming) return;
     streaming = false;
     streamGeneration += 1;
@@ -325,19 +371,119 @@ export function createTabViewport(
     await cdp.send("Page.stopScreencast").catch(() => {});
   };
 
+  function restartCapture() {
+    const run = resizeChain.then(async () => {
+      if (disposed || listeners.size === 0) return;
+      await stop();
+      if (!disposed && listeners.size > 0) await start();
+    });
+    resizeChain = run.catch(() => {});
+    startPending = resizeChain;
+  }
+  function scheduleRecovery() {
+    if (quality >= requestedQuality || recoveryTimer !== undefined || disposed)
+      return;
+    recoveryTimer = setTimer(() => {
+      recoveryTimer = undefined;
+      if (disposed || listeners.size === 0) return;
+      quality = Math.min(
+        requestedQuality,
+        [...JPEG_RECOVERY_POLICY.qualities]
+          .reverse()
+          .find((q) => q > quality) ?? requestedQuality,
+      );
+      probing = true;
+      restartCapture();
+    }, recoveryDelay);
+  }
+  function resetQuality() {
+    cancelRecovery();
+    quality = requestedQuality;
+    recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+    probing = false;
+    captureError = undefined;
+  }
+
   return {
-    subscribe(listener) {
-      listeners.add(listener);
-      if (listeners.size === 1) void start();
+    subscribe(listener, frameLimit = maxBytes) {
+      const before = effectiveLimit();
+      listeners.set(
+        listener,
+        Math.min(SHARP_JPEG_MAX_BYTES, Math.max(1, frameLimit)),
+      );
+      if (listeners.size === 1 || effectiveLimit() !== before || captureError) {
+        resetQuality();
+        if (listeners.size > 1) restartCapture();
+      }
+      if (listeners.size === 1) {
+        // Resize owns stop/apply/start, including subscribers arriving while
+        // apply is awaiting the browser. Its finalizer starts the latest size.
+        startPending = pendingResizes > 0 ? resizeChain : start();
+      }
       return () => {
+        const before = effectiveLimit();
         listeners.delete(listener);
         // Property 4's other half: nobody is watching, so stop painting.
         if (listeners.size === 0) void stop();
+        else if (effectiveLimit() !== before) {
+          resetQuality();
+          restartCapture();
+        }
       };
     },
     subscriberCount: () => listeners.size,
+    ready: async () => {
+      await startPending;
+      return streaming && !disposed;
+    },
+    invalidate() {
+      lastData = undefined;
+      if (quality < requestedQuality || captureError) {
+        resetQuality();
+        restartCapture();
+      }
+    },
+    resize(surface, apply) {
+      pendingResizes++;
+      const run = resizeChain.then(async () => {
+        try {
+          if (
+            disposed ||
+            (options.surface.width === surface.width &&
+              options.surface.height === surface.height)
+          )
+            return;
+          await stop();
+          if (disposed) return;
+          await apply?.();
+          resetQuality();
+          Object.assign(options.surface, surface);
+        } finally {
+          pendingResizes--;
+          // Release ownership even after failure/disposal. Only the final
+          // resize may restart, using the surface that actually applied.
+          if (pendingResizes === 0 && !disposed && listeners.size > 0) {
+            await start();
+          }
+        }
+      });
+      resizeChain = run.catch(() => {});
+      startPending = resizeChain;
+      return run;
+    },
     boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),
-    counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
+    counters: () => ({
+      ...counters,
+      dropped: { ...counters.dropped },
+      jpeg: {
+        requestedQuality,
+        quality,
+        maxFrameBytes: effectiveLimit(),
+        reason:
+          captureError ??
+          (quality < requestedQuality ? "frame_size" : "default"),
+      },
+    }),
     noteTransportDrop() {
       counters.dropped.pacer += 1;
     },
@@ -354,7 +500,19 @@ export function createTabViewport(
       disposed = true;
       buttonMask = 0;
       listeners.clear();
-      await stop();
+      // A renderer navigating during teardown can leave stopScreencast
+      // unanswered. Let the owner close the page/context after a bounded grace.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          stop(),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, 1_000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
 
@@ -398,8 +556,8 @@ export function createTabViewport(
         event.type === "mouse_down"
           ? buttonMask | (BUTTON_MASK[event.button] ?? 1)
           : event.type === "mouse_up"
-            ? buttonMask & ~(BUTTON_MASK[event.button] ?? 1)
-            : buttonMask;
+          ? buttonMask & ~(BUTTON_MASK[event.button] ?? 1)
+          : buttonMask;
       try {
         // Each event under its own catch: one exotic key must not swallow
         // the click behind it.

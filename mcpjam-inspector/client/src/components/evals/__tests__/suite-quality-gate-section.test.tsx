@@ -89,6 +89,35 @@ function renderGate(
 }
 
 describe("SuiteQualityGateSection", () => {
+  it("simplifies settings without changing hidden policy values", () => {
+    const policy = {
+      baseline: { kind: "run" as const, runId: "baseline-run" },
+      maximumPassRateDrop: 0.05,
+      noDeterministicRegressions: true,
+      maximumP95LatencyIncreaseMs: 100,
+      noGatingScoreErrors: true,
+    };
+    const { onChange } = renderGate({ simplified: true, policy });
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByText(/Gate, Warn, and Report/)).toBeNull();
+    expect(screen.queryByText(/Applied by mcpjam/)).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+    const drop = screen.getByLabelText("Maximum gating scorer pass-rate drop");
+    fireEvent.change(drop, { target: { value: "10" } });
+    fireEvent.blur(drop);
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...policy,
+      maximumPassRateDrop: 0.1,
+    });
+    fireEvent.change(screen.getByLabelText("Baseline run id"), {
+      target: { value: "another-run" },
+    });
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...policy,
+      baseline: { kind: "run", runId: "another-run" },
+    });
+  });
+
   it("lets the absolute error switch work without a baseline", async () => {
     const user = userEvent.setup();
     const { onChange } = renderGate();
@@ -210,9 +239,9 @@ describe("SuiteQualityGateSection", () => {
         },
       }),
     });
-    expect(
-      container.querySelector("[data-disabled-reason]")?.textContent,
-    ).toBe(PERMISSION_REASON_COPY);
+    expect(container.querySelector("[data-disabled-reason]")?.textContent).toBe(
+      PERMISSION_REASON_COPY,
+    );
     expect(screen.getByLabelText("Quality gate baseline")).toBeDisabled();
   });
 
@@ -220,9 +249,9 @@ describe("SuiteQualityGateSection", () => {
     const { container } = renderGate({
       capabilities: readyCapabilities({ qualityGate: { storage: true } }),
     });
-    expect(
-      container.querySelector("[data-disabled-reason]")?.textContent,
-    ).toBe(DEPLOYMENT_REASON_COPY);
+    expect(container.querySelector("[data-disabled-reason]")?.textContent).toBe(
+      DEPLOYMENT_REASON_COPY,
+    );
   });
 
   it("degrades without stamping a reason when capabilities are unavailable", () => {

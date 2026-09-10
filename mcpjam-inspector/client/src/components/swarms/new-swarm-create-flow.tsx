@@ -414,13 +414,6 @@ export function NewSwarmCreateFlow({
     sessionId: string;
     swarmRunGroupId: string | null;
     runLabels: Map<string, string>;
-    /**
-     * Rubric criterion the finding was about, when the click came from one.
-     * Carried so the destination can STATE what was found: a viewer who
-     * followed a finding and landed on a bare transcript was handed the
-     * evidence with the claim removed.
-     */
-    criterionId?: string;
   }) => void;
   /** Leave create flow and open Personas for an existing persona. */
   /**
@@ -1025,14 +1018,21 @@ export function NewSwarmCreateFlow({
       setStep("confirm");
     } catch (err) {
       setMaterializing(false);
-      setDescribeStepError(err);
+      // A model limit is owned by its dialog, which carries the same sentence
+      // plus the actions that clear it. Repeating it as a card under the form
+      // would say the same thing twice with nothing to act on.
+      const limitDialogRaised =
+        err instanceof SwarmGenerateError && err.limitDialogRaised;
+      setDescribeStepError(limitDialogRaised ? null : err);
       setErrorMessage(
-        err instanceof SwarmTargetMaterializeError ||
-          err instanceof ComposerResolveError ||
-          err instanceof SwarmGenerateError ||
-          err instanceof WebApiError
-          ? err.message
-          : errorMessageOf(err, "Failed to generate personas."),
+        limitDialogRaised
+          ? null
+          : err instanceof SwarmTargetMaterializeError ||
+              err instanceof ComposerResolveError ||
+              err instanceof SwarmGenerateError ||
+              err instanceof WebApiError
+            ? err.message
+            : errorMessageOf(err, "Failed to generate personas."),
       );
     } finally {
       inFlightRef.current = false;
@@ -1085,14 +1085,28 @@ export function NewSwarmCreateFlow({
         return;
       }
 
+      // Claim the in-flight latch BEFORE the first await. `resolveTargets` can
+      // create environment rows, and until it settles the exits (Cancel and the
+      // ← Swarms link) stay live — leaving there would fire the discard toast
+      // while this launch keeps running. `disabled={launching}` only closes that
+      // window if the flag is held for the whole of it, preflight included.
+      inFlightRef.current = true;
+      setLaunching(true);
+
+      // The preflight has two bail-outs — a `resolveTargets` throw, and no
+      // resolvable host — and BOTH must release the latch or the exits stay
+      // disabled forever. `finally` releases it on every exit that doesn't set
+      // `readyToLaunch`, so no early return here (now or added later) can leak
+      // it. The launch path below carries its own finally.
       let envPayload: { environmentIds: string[]; hostIds: string[] } | null =
         null;
-      if (
-        proposed.length > 0 ||
-        composeMode ||
-        targetState.environmentIds.length > 0
-      ) {
-        try {
+      let readyToLaunch = false;
+      try {
+        if (
+          proposed.length > 0 ||
+          composeMode ||
+          targetState.environmentIds.length > 0
+        ) {
           const resolved = await resolveTargets();
           envPayload = resolved
             ? {
@@ -1100,28 +1114,29 @@ export function NewSwarmCreateFlow({
                 hostIds: resolved.hostIds,
               }
             : null;
-        } catch (err) {
+        }
+        if (!envPayload && proposed.length > 0) {
           setErrorMessage(
-            err instanceof SwarmTargetMaterializeError ||
-              err instanceof ComposerResolveError
-              ? err.message
-              : errorMessageOf(
-                  err,
-                  "Could not resolve environments for launch.",
-                ),
+            "The selected environments can't be resolved to hosts. Go back and pick an environment or clients with a compatible host.",
           );
-          return;
+        } else {
+          readyToLaunch = true;
+        }
+      } catch (err) {
+        setErrorMessage(
+          err instanceof SwarmTargetMaterializeError ||
+            err instanceof ComposerResolveError
+            ? err.message
+            : errorMessageOf(err, "Could not resolve environments for launch."),
+        );
+      } finally {
+        if (!readyToLaunch) {
+          inFlightRef.current = false;
+          setLaunching(false);
         }
       }
-      if (!envPayload && proposed.length > 0) {
-        setErrorMessage(
-          "The selected environments can't be resolved to hosts. Go back and pick an environment or clients with a compatible host.",
-        );
-        return;
-      }
+      if (!readyToLaunch) return;
 
-      inFlightRef.current = true;
-      setLaunching(true);
       setErrorMessage(null);
 
       let firstError: string | null = null;
@@ -1144,20 +1159,22 @@ export function NewSwarmCreateFlow({
       const runLabels = new Map<string, string>();
       const launchedBatch: SwarmLaunchedRun[] = [];
 
-      // Minted OUTSIDE the retry branch below: a retry has to reuse the wave
-      // the first attempt's runs were stamped with, or one swarm lands as two
-      // rows in the Overview.
-      persistedRunGroupIdRef.current ??= crypto.randomUUID();
-      const swarmRunGroupId = persistedRunGroupIdRef.current;
-      // Same reason, same placement: keys derived from this must be identical
-      // across a retry or the backend can't recognise the replay.
-      flowIdRef.current ??= crypto.randomUUID();
-      const flowId = flowIdRef.current;
-
       // Every exit from here has to clear the latch. Without the finally, an
       // unexpected throw would leave the button spinning on "Creating &
       // launching…" with Cancel disabled — the user's only escape a reload.
       try {
+        // Minted INSIDE the try so the finally covers them. `crypto.randomUUID`
+        // is undefined outside a secure context (e.g. http://<lan-ip>:6274, the
+        // self-hosted address the app now supports), so it throws there — and a
+        // throw out beyond the finally would strand the latch. Still OUTSIDE the
+        // retry branch below: a retry has to reuse the same wave and keys, or one
+        // swarm lands as two rows in the Overview and the backend can't recognise
+        // the replay.
+        persistedRunGroupIdRef.current ??= crypto.randomUUID();
+        const swarmRunGroupId = persistedRunGroupIdRef.current;
+        flowIdRef.current ??= crypto.randomUUID();
+        const flowId = flowIdRef.current;
+
         // The authoring container, written ONCE per launch and — critically —
         // OUTSIDE the retry branch below. That branch is skipped wholesale on a
         // retry, so anything placed inside it never runs on the attempt that
@@ -1520,6 +1537,22 @@ export function NewSwarmCreateFlow({
     targetState.stack.hostIds.length > 0;
 
   /**
+   * Whether the USER has started a draft — the gate for the discard toast, and
+   * deliberately NARROWER than `hasResumableWork`. That flag counts the
+   * auto-seeded target (so a remount restores it), but the seed is not the
+   * user's doing: opening the flow and leaving without typing, picking a
+   * persona, or generating discards nothing worth announcing.
+   */
+  const hasUserDraft =
+    step !== "describe" ||
+    nameEdited ||
+    draft.trim().length > 0 ||
+    reusedIds.length > 0 ||
+    proposed.length > 0 ||
+    launchedRuns.length > 0 ||
+    generatingSince !== null;
+
+  /**
    * Mirror the resumable flow into session storage on every change, so a
    * remount picks up where the user was instead of at Describe.
    *
@@ -1576,9 +1609,42 @@ export function NewSwarmCreateFlow({
 
   /** Leaving the flow ends it — the draft is for remounts, not for history. */
   const leaveFlow = useCallback(() => {
+    // The chokepoint every exit shares — Cancel, the ← Swarms link, and any
+    // added later. A row-creating operation in flight must not be abandoned
+    // here: `handleGenerate`/`handleLaunch` await `resolveTargets` (which mints
+    // ad-hoc environment rows) and then write personas/runs, so navigating away
+    // — and firing the discard toast — while they run would leave rows created
+    // after the UI said the draft was gone. The exit buttons are disabled for
+    // this too, but guarding at the chokepoint is what keeps the NEXT exit safe
+    // without anyone remembering to gate it.
+    if (launching || generating || materializing) return;
+    // Read the "is there anything to discard" signal BEFORE clearing the draft.
+    const hadDraft = hasUserDraft;
+    const keptGoals = (persistedTargetsRef.current?.length ?? 0) > 0;
     clearNewSwarmFlowDraft();
+    // Only announce a discard when there was actually a draft to discard.
+    // Opening the flow and leaving it untouched discards nothing, and a notice
+    // for that is just noise — the sibling discard toast one component over
+    // (new-swarm-confirm-step.tsx) is gated on dirtiness the same way. Both
+    // exits (Cancel and the ← Swarms header link) land here, and a discard is
+    // not a success, so `toast.info`. After a failed launch the rows that
+    // landed are real and stay, so the copy then names the draft, not the goals.
+    if (hadDraft) {
+      toast.info(
+        keptGoals
+          ? "New swarm draft discarded — created goals were kept"
+          : "New swarm draft discarded",
+      );
+    }
     onCancel();
-  }, [onCancel]);
+  }, [launching, generating, materializing, hasUserDraft, onCancel]);
+
+  /**
+   * Set once the launched runs all reach a terminal state, so the rail can
+   * draw a checkmark on "Run swarm" instead of leaving it mid-flight. Owned
+   * here because the rail is the wizard's, not the running step's.
+   */
+  const [runsComplete, setRunsComplete] = useState(false);
 
   const leaveRunning = useCallback(() => {
     clearNewSwarmFlowDraft();
@@ -1591,12 +1657,11 @@ export function NewSwarmCreateFlow({
   // Labels ride along exactly as they do on `leaveRunning`: this is a leave
   // too, so the Sessions grouping must still be able to name the runs.
   const openRunningSession = useCallback(
-    (sessionId: string, criterionId?: string) => {
+    (sessionId: string) => {
       onOpenSession({
         sessionId,
         swarmRunGroupId: persistedRunGroupIdRef.current,
         runLabels: launchedRunLabelsRef.current,
-        ...(criterionId ? { criterionId } : {}),
       });
     },
     [onOpenSession],
@@ -1644,7 +1709,20 @@ export function NewSwarmCreateFlow({
       <button
         type="button"
         onClick={leaveFlow}
-        className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline"
+        // Disabled for the whole of any row-creating operation, not just
+        // launch. `flowHeader` also renders on Describe, where `handleGenerate`
+        // awaits `resolveTargets` and writes personas — leaving mid-generation
+        // would fire the discard toast over a running batch, the same race this
+        // guards for launch. Matches `goToStep`'s own gate. A disabled button is
+        // skipped by most screen readers, so point at the visible progress line
+        // for the reason (a `title` can't: `pointer-events-none` suppresses it).
+        disabled={launching || generating || materializing}
+        aria-describedby={
+          generating || materializing
+            ? "new-swarm-generate-progress"
+            : undefined
+        }
+        className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline disabled:pointer-events-none disabled:opacity-50"
         data-testid="new-swarm-back-to-swarms"
       >
         <ChevronLeft className="size-3.5" />
@@ -1709,6 +1787,7 @@ export function NewSwarmCreateFlow({
             <ProgressStepper
               steps={CREATE_STEPS}
               activeIndex={activeStepIndex}
+              activeComplete={runsComplete}
               onStepSelect={goToStep}
               isStepSelectable={canReturnToStep}
               ariaLabel="New swarm progress"
@@ -1746,6 +1825,7 @@ export function NewSwarmCreateFlow({
             hosts={hosts}
             onLeave={leaveRunning}
             onOpenSession={openRunningSession}
+            onRunsComplete={() => setRunsComplete(true)}
           />
         ) : step === "confirm" ? (
           <NewSwarmConfirmStep
@@ -1934,6 +2014,7 @@ export function NewSwarmCreateFlow({
             <div className="flex flex-wrap items-center justify-end gap-3 pt-4">
               {generating || materializing ? (
                 <p
+                  id="new-swarm-generate-progress"
                   className="mr-auto text-sm leading-relaxed text-muted-foreground"
                   data-testid="new-swarm-generate-progress"
                 >
@@ -1959,7 +2040,20 @@ export function NewSwarmCreateFlow({
                   {continueHint}
                 </p>
               ) : null}
-              <Button type="button" variant="ghost" onClick={leaveFlow}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={leaveFlow}
+                // Same gate as the ← Swarms link: leaving mid-generation would
+                // strand a running batch (`leaveFlow` refuses it either way, but
+                // the button has to LOOK unavailable too).
+                disabled={launching || generating || materializing}
+                aria-describedby={
+                  generating || materializing
+                    ? "new-swarm-generate-progress"
+                    : undefined
+                }
+              >
                 Cancel
               </Button>
               <Button

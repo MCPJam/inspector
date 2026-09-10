@@ -188,9 +188,46 @@ export {
   GRADER_STAGE,
   PREDICATE_KINDS,
   PREDICATE_STAGE,
+  RECOMMENDED_DEFAULT_PREDICATES,
+  isRecommendedDefaultPredicateKind,
   isSelectionStagePredicateKind,
   type PredicateKind,
 } from "./grader-stage.js";
+
+// ── server facts (F1) ────────────────────────────────────────────────────────
+/**
+ * What the SERVER SNAPSHOT a run was taken against looked like, and what the
+ * setup phase observed. Facts, not checks: nothing here becomes a stage state.
+ */
+export {
+  MAX_SERVER_FACTS_PRECHECKS,
+  MAX_SERVER_FACTS_RELATED,
+  MAX_SERVER_FACTS_SERVERS,
+  SERVER_FACTS_PAYLOAD_BASES,
+  SERVER_FACTS_PRECHECK_CLASSES,
+  SERVER_FACTS_REFERENCE_WINDOW_TOKENS,
+  SERVER_FACTS_SCHEMA_VERSION,
+  SERVER_FACTS_SOURCE_VERSION,
+  SERVER_FACTS_TOKEN_METHOD,
+  SERVER_FACTS_TOKEN_NOTE,
+  SERVER_FACTS_UNAVAILABLE_REASONS,
+  estimateTokensFromJson,
+  evalRunServerFactsSchema,
+  parseEvalRunServerFacts,
+  referenceWindowShare,
+  serverFactsPrecheckSchema,
+  serverFactsRelatedAssessmentSchema,
+  serverFactsServerSchema,
+  serverFactsSetupPhaseSchema,
+  type EvalRunServerFactsV1,
+  type ServerFactsPayloadBasis,
+  type ServerFactsPrecheck,
+  type ServerFactsPrecheckClass,
+  type ServerFactsRelatedAssessment,
+  type ServerFactsServer,
+  type ServerFactsSetupPhase,
+  type ServerFactsUnavailableReason,
+} from "./server-facts.js";
 
 // ── stage analytics (D5) ─────────────────────────────────────────────────────
 /**
@@ -508,6 +545,10 @@ export {
   EVAL_VERDICT_DECISION_REASON_LABELS,
   EXCLUDED_TRIAL_DETAIL_LABELS,
   FAILURE_CATEGORY_LABELS,
+  FRICTION_NOT_MEASURED_REASON_LABELS,
+  FRICTION_SIGNAL_LABELS,
+  SUSPECTED_CONDITION_CONFIDENCE_LABELS,
+  SUSPECTED_CONDITION_LABELS,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
   STAGE_REASONS_WITHOUT_REMEDY,
   STAGE_REASON_LABELS,
@@ -578,6 +619,7 @@ export type {
   EvalOtherRoutes,
   EvalRouteCaseTruncation,
   EvalRouteCatalogState,
+  EvalRouteFrictionSignals,
   EvalRouteLoopedOn,
   EvalRouteMismatchFacts,
   EvalRouteMismatchState,
@@ -625,6 +667,75 @@ export {
   readToolName,
   rollupCaseRoutes,
 } from "./route-facts.js";
+
+// ── friction signals (observable patterns; never a verdict) ──────────────────
+export type {
+  ChangedRetrySignal,
+  EvalTrialFrictionSignals,
+  FrictionCallRecord,
+  FrictionCallResult,
+  FrictionIdentifierSignals,
+  FrictionNotMeasuredReason,
+  FrictionOrdering,
+  FrictionResultEntry,
+  FrictionSignal,
+  FrictionSignalKind,
+  FrictionSignalsVersion,
+  IdenticalRetrySignal,
+  IdentifierSurfacedUnusedSignal,
+  PaginationArgKey,
+  PaginationContinuationSignal,
+  SearchRepeatedAfterIdentifierSignal,
+  SuspectedCondition,
+  SuspectedConditionConfidence,
+  SuspectedConditionEvidence,
+  SuspectedConditionSkipReason,
+  SuspectedConditionVerdict,
+} from "./friction-signals.js";
+export {
+  FRICTION_NOT_MEASURED_REASONS,
+  FRICTION_ORDERINGS,
+  FRICTION_SIGNAL_KINDS,
+  FRICTION_SIGNALS_VERSION,
+  IDENTIFIER_WALK_ARRAY_ITEMS,
+  IDENTIFIER_WALK_DEPTH,
+  MAX_FRICTION_CALLS,
+  MAX_FRICTION_SIGNALS,
+  MAX_IDENTIFIER_CANDIDATES,
+  MAX_IDENTIFIER_KEY_PATHS,
+  MAX_PAGINATION_KEYS,
+  MAX_REPEAT_CALL_INDEXES,
+  MIN_IDENTIFIER_LENGTH,
+  PAGINATION_ARG_KEYS,
+  availableBefore,
+  buildFrictionCallRecords,
+  buildResultsByToolCallIdFromMessages,
+  deriveTrialFrictionSignals,
+  deriveTrialFrictionSignalsFromCalls,
+  evalTrialFrictionSignalsSchema,
+  evalTrialFrictionSignalsStructuralSchema,
+  extractResultIdentifiers,
+  frictionIdentifierSignalsSchema,
+  frictionNotMeasuredReasonSchema,
+  frictionResultIsError,
+  frictionSignalKindSchema,
+  frictionSignalObservationIndex,
+  frictionSignalSchema,
+  isFrictionNotMeasuredReason,
+  isFrictionSignalKind,
+  MAX_SUSPECTED_CONDITION_FIELD_PATH_CHARS,
+  MAX_SUSPECTED_CONDITION_REMEDIATION_CHARS,
+  SUSPECTED_CONDITIONS,
+  SUSPECTED_CONDITION_CONFIDENCES,
+  SUSPECTED_CONDITION_SKIP_REASONS,
+  isSuspectedCondition,
+  normalizeFrictionResult,
+  projectFrictionSignals,
+  projectSuspectedConditionVerdict,
+  suspectedConditionConfidenceSchema,
+  suspectedConditionSchema,
+  suspectedConditionVerdictSchema,
+} from "./friction-signals.js";
 
 // ── description-experiment report (report-only; never a verdict input) ───────
 export type {
@@ -824,3 +935,5 @@ export {
   scorerRollupsComparable,
   stampScorerRollupIdentities,
 } from "./scorer-rollup.js";
+
+export { caseSourceSchema, type CaseSource } from "./case-source.js";

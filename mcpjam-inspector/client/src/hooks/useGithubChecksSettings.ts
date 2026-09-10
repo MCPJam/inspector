@@ -47,7 +47,8 @@ import { useIsMemberActor } from "@/hooks/use-is-member-actor";
  * would bounce a legitimately-flagged user who cold-loads the URL directly.
  */
 export type GithubChecksAvailability =
-  { state: "enabled" | "disabled" } | undefined;
+  | { state: "enabled" | "disabled"; canManage?: boolean }
+  | undefined;
 
 /**
  * What the check concludes when MCPJam cannot run the suite — an outage, or a
@@ -104,7 +105,10 @@ export type GithubCheckConnectionStatus =
 
 export type GithubInstallationAccountType = "Organization" | "User";
 export type GithubInstallationBindingStatus =
-  "active" | "suspended" | "removed" | "unbound";
+  | "active"
+  | "suspended"
+  | "removed"
+  | "unbound";
 
 /**
  * One GitHub App installation this organization holds.
@@ -188,6 +192,9 @@ export type GithubCheckRepoConfigRow = {
    * not silently add a required MCPJam Conformance check.
    */
   conformanceEnabled?: boolean;
+  allowSuiteCredentialsInForks?: boolean;
+  prServerOAuthSourceServerId?: string;
+  prServerOAuthPolicyRevision?: number;
   conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
   /**
    * ABSENT IS `on`, NOT `off`. See {@link GithubCheckFeedbackComments}: an
@@ -238,11 +245,19 @@ export type SuiteOption = {
   projectId?: string;
 };
 
+export type PrServerOAuthSource = {
+  serverId: string;
+  projectId: string;
+  name: string;
+  authorized: boolean;
+};
+
 const AVAILABILITY_QUERY =
   "github/checkRepoConfigs:getGithubChecksSettingsAvailability";
 const LIST_QUERY = "github/checkRepoConfigs:listForOrganization";
 const SUITES_QUERY = "testSuites:getTestSuitesOverview";
 const BINDINGS_QUERY = "github/appInstallLink:listBindingsForOrganization";
+const OAUTH_SOURCES_QUERY = "github/checkRepoConfigs:listPrServerOAuthSources";
 
 // The availability message and the rest of this surface's error copy live in
 // `@/lib/github-checks-errors`, which has no React and no Convex client in it.
@@ -307,6 +322,11 @@ export function useGithubChecksSettings(
     ?.map((entry) => entry.suite)
     .filter((suite): suite is SuiteOption => Boolean(suite?._id));
 
+  const prServerOAuthSources = useQuery(
+    OAUTH_SOURCES_QUERY as any,
+    canQuery ? ({ organizationId } as any) : "skip",
+  ) as PrServerOAuthSource[] | undefined;
+
   // The SERVER-VERIFIED connect, and the only connect path this app uses. It is
   // an action because proving the selected organization-owned installation can
   // reach the repository takes a GitHub round trip, which a mutation cannot
@@ -322,6 +342,26 @@ export function useGithubChecksSettings(
   );
   const setRepoOutagePolicyMutation = useMutation(
     "github/checkRepoConfigs:setRepoOutagePolicy" as any,
+  );
+  const setRepoForkCredentialsMutation = useMutation(
+    "github/checkRepoConfigs:setRepoForkCredentials" as any,
+  );
+  const setRepoPrServerOAuthMutation = useMutation(
+    "github/checkRepoConfigs:setRepoPrServerOAuth" as any,
+  );
+  const setRepoPrServerOAuth = useCallback(
+    (args: { configId: string; sourceServerId: string | null }) =>
+      setRepoPrServerOAuthMutation({ organizationId, ...args }) as Promise<{
+        changed: boolean;
+      }>,
+    [organizationId, setRepoPrServerOAuthMutation],
+  );
+  const setRepoForkCredentials = useCallback(
+    (args: { configId: string; enabled: boolean }) =>
+      setRepoForkCredentialsMutation({ organizationId, ...args }) as Promise<{
+        changed: boolean;
+      }>,
+    [organizationId, setRepoForkCredentialsMutation],
   );
   const setRepoConformanceMutation = useMutation(
     "github/checkRepoConfigs:setRepoConformance" as any,
@@ -497,12 +537,15 @@ export function useGithubChecksSettings(
     isEnabled,
     repos,
     suites,
+    prServerOAuthSources,
     bindings,
     connectVerifiedRepo,
     setRepoEnabled,
     setRepoSuite,
     setRepoOutagePolicy,
     setRepoConformance,
+    setRepoForkCredentials,
+    setRepoPrServerOAuth,
     setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,

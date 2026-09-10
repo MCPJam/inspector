@@ -24,11 +24,18 @@ const {
     ] as Array<{ _id: string; name: string; serverIds: string[] }>,
   },
   hostsRef: {
-    current: [
-      { hostId: "host-1", name: "Claude", modelId: "gpt-4" },
-    ] as Array<{ hostId: string; name: string; modelId: string }>,
+    current: [{ hostId: "host-1", name: "Claude", modelId: "gpt-4" }] as Array<{
+      hostId: string;
+      name: string;
+      modelId: string;
+    }>,
   },
   toastError: vi.fn(),
+}));
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
+    selector({ themeMode: "light" }),
 }));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
@@ -80,7 +87,10 @@ vi.mock("@/hooks/use-model-matrix-capability", () => ({
 }));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
-    availableModels: [{ id: "gpt-4", name: "GPT-4", provider: "openai" }],
+    availableModels: [
+      { id: "gpt-4", name: "GPT-4", provider: "openai" },
+      { id: "claude-test", name: "Claude Haiku", provider: "anthropic" },
+    ],
   }),
 }));
 vi.mock("@/components/hosts/ServerGroupPicker", () => ({
@@ -114,9 +124,9 @@ vi.mock("@/lib/app-navigation", () => ({
 import { DEFAULT_CREATE_SUITE_NAME } from "../create-suite-prefill";
 import {
   CreateSuitePage,
-  EVALS_CREATE_RUNS_SLOTS,
   EVALS_CREATE_SERVER_SLOTS,
 } from "../create-suite-page";
+import { buildEvalTargetMatrixRows } from "../eval-target-matrix";
 
 describe("CreateSuitePage", () => {
   const onCancel = vi.fn();
@@ -161,21 +171,18 @@ describe("CreateSuitePage", () => {
       screen.getByRole("heading", { name: "Create a new eval suite" }),
     ).toBeTruthy();
     expect(
-      screen.getByText("Set up the environment you will be evaluating."),
+      screen.getByText("Set up the client you will be evaluating."),
     ).toBeTruthy();
     expect(screen.getByText("Evaluate")).toBeTruthy();
     expect(screen.getByText("New suite")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: /^continue$/i }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^continue$/i })).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: /^create suite$/i }),
     ).toBeNull();
   });
 
-  it("maps Servers and Where it runs onto separate lego-strip slot lists", () => {
+  it("uses the Where it runs table to configure client rows and model overrides", async () => {
     expect(EVALS_CREATE_SERVER_SLOTS).toEqual(["servers"]);
-    expect(EVALS_CREATE_RUNS_SLOTS).toEqual(["clients", "models"]);
 
     render(
       <CreateSuitePage
@@ -187,10 +194,107 @@ describe("CreateSuitePage", () => {
     );
 
     expect(screen.getByTestId("create-suite-servers-lego-strip")).toBeTruthy();
-    expect(screen.getByTestId("create-suite-lego-strip")).toBeTruthy();
-    expect(screen.getByTestId("create-suite-clients-picker")).toBeTruthy();
-    expect(screen.getByTestId("create-suite-models-picker")).toBeTruthy();
-    expect(screen.getByTestId("create-suite-servers-servers-picker")).toBeTruthy();
+    expect(
+      screen.getByTestId("create-suite-servers-servers-picker"),
+    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Claude", exact: true }),
+      ).toBeTruthy();
+    });
+    expect(screen.getByTestId("create-suite-target-matrix")).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "Claude" })).toBeTruthy();
+    expect(screen.getByTestId("create-suite-model-host-1")).toBeTruthy();
+    expect(screen.getByTestId("create-suite-add-client")).toHaveTextContent(
+      "Add client",
+    );
+    expect(screen.queryByText("Execution matrix")).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Targets" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove Claude" }));
+    expect(screen.queryByRole("button", { name: "Remove Claude" })).toBeNull();
+    expect(screen.getByRole("table")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("create-suite-add-client"));
+    fireEvent.click(screen.getByTestId("client-row-host-1"));
+    expect(screen.getByRole("button", { name: "Remove Claude" })).toBeTruthy();
+  });
+
+  it("adds and removes models through the playground's searchable picker", async () => {
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("create-suite-model-host-1")).toHaveTextContent(
+        "GPT-4",
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add model", exact: true }),
+    );
+    expect(screen.getByPlaceholderText("Search models")).toBeTruthy();
+    fireEvent.click(screen.getByRole("option", { name: /Claude Haiku/ }));
+    expect(screen.getByTestId("create-suite-model-host-1")).toHaveTextContent(
+      "Claude Haiku",
+    );
+    expect(screen.getByTestId("create-suite-model-host-1")).toHaveTextContent(
+      "GPT-4",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove Claude Haiku model" }),
+    );
+    expect(
+      screen.getByTestId("create-suite-model-host-1"),
+    ).not.toHaveTextContent("Claude Haiku");
+    expect(screen.getByTestId("create-suite-model-host-1")).toHaveTextContent(
+      "GPT-4",
+    );
+  });
+
+  it("keeps each client's model overrides independent", () => {
+    expect(
+      buildEvalTargetMatrixRows({
+        hostIds: ["claude", "cursor"],
+        hosts: [
+          { hostId: "claude", name: "Claude", modelId: "claude-default" },
+          { hostId: "cursor", name: "Cursor", modelId: "gpt-default" },
+        ],
+        modelSelection: {
+          includeClientDefaults: true,
+          explicitModelIds: [],
+        },
+        modelSelectionsByHost: {
+          claude: {
+            includeClientDefaults: true,
+            explicitModelIds: ["gpt-5.1"],
+          },
+          cursor: {
+            includeClientDefaults: false,
+            explicitModelIds: ["claude-sonnet"],
+          },
+        },
+        availableModels: [
+          { id: "claude-default", name: "Claude Default" },
+          { id: "gpt-default", name: "GPT Default" },
+          { id: "gpt-5.1", name: "GPT-5.1" },
+          { id: "claude-sonnet", name: "Claude Sonnet" },
+        ],
+      }),
+    ).toEqual([
+      {
+        hostId: "claude",
+        clientName: "Claude",
+        modelLabels: ["Client default · Claude Default", "GPT-5.1"],
+      },
+      {
+        hostId: "cursor",
+        clientName: "Cursor",
+        modelLabels: ["Claude Sonnet"],
+      },
+    ]);
   });
 
   it("labels the models pill with the seeded client's default model", async () => {
@@ -204,7 +308,7 @@ describe("CreateSuitePage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("create-suite-models-picker")).toHaveTextContent(
+      expect(screen.getByTestId("create-suite-model-host-1")).toHaveTextContent(
         "GPT-4",
       );
     });
@@ -222,10 +326,7 @@ describe("CreateSuitePage", () => {
 
     const nameInput = screen.getByTestId("create-suite-name");
     expect(nameInput).toHaveValue(DEFAULT_CREATE_SUITE_NAME);
-    expect(nameInput).toHaveAttribute(
-      "placeholder",
-      DEFAULT_CREATE_SUITE_NAME,
-    );
+    expect(nameInput).toHaveAttribute("placeholder", DEFAULT_CREATE_SUITE_NAME);
 
     await waitFor(() => {
       expect(screen.getByTestId("create-suite-continue")).not.toBeDisabled();
@@ -238,6 +339,33 @@ describe("CreateSuitePage", () => {
         expect.objectContaining({ name: DEFAULT_CREATE_SUITE_NAME }),
       );
     });
+  });
+
+  it("increments Suite N from existing numbered suite names", () => {
+    const { rerender } = render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        existingSuiteNames={["Suite 1", "Checkout", "Suite 2"]}
+      />,
+    );
+
+    const nameInput = screen.getByTestId("create-suite-name");
+    expect(nameInput).toHaveValue("Suite 3");
+    expect(nameInput).toHaveAttribute("placeholder", "Suite 3");
+
+    rerender(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        existingSuiteNames={["Suite 1", "Checkout", "Suite 2", "Suite 3"]}
+      />,
+    );
+    expect(screen.getByTestId("create-suite-name")).toHaveValue("Suite 4");
   });
 
   it("disables Continue again if the default name is cleared", async () => {
@@ -275,11 +403,46 @@ describe("CreateSuitePage", () => {
         projectId="proj-1"
         initialName="checkout-server"
         initialServerId="srv-a"
+        existingSuiteNames={["Suite 1"]}
       />,
     );
 
     expect(screen.getByTestId("create-suite-name")).toHaveValue(
       "checkout-server",
+    );
+  });
+
+  it("keeps an edited suite name when a later initialName arrives", () => {
+    const { rerender } = render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        existingSuiteNames={["Suite 1"]}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("create-suite-name"), {
+      target: { value: "My checkout suite" },
+    });
+    expect(screen.getByTestId("create-suite-name")).toHaveValue(
+      "My checkout suite",
+    );
+
+    rerender(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        initialName="checkout-server"
+        existingSuiteNames={["Suite 1"]}
+      />,
+    );
+
+    expect(screen.getByTestId("create-suite-name")).toHaveValue(
+      "My checkout suite",
     );
   });
 

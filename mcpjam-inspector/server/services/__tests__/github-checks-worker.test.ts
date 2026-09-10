@@ -1,4 +1,8 @@
 import {
+  githubExecutionPolicy,
+  verifyGithubCredentialAccess,
+} from "../github-checks/credential-policy.js";
+import {
   afterEach,
   beforeEach,
   describe,
@@ -18,6 +22,7 @@ import {
   CloneTokenUnavailableError,
   LeaseLostError,
   mintCloneTokenForTests,
+  resolvePrServerOAuthTokenForTests,
   startGithubChecksWorker,
   type CheckExecutionDeps,
   type PlanlessCheckReport,
@@ -56,6 +61,10 @@ const CLAIM: ClaimedGithubCheck = {
   createdByExternalId: "user_workos_1",
   suiteId: "suite-1",
   repoPrivate: false,
+  credentialPolicyVersion: 2,
+  isFork: false,
+  githubCredentialPolicy: "same_repository",
+  allowedBuiltInToolIds: [],
 };
 
 /** The same check, on a repository that needs a credential to clone. */
@@ -94,6 +103,9 @@ type Harness = {
   completions: Completion[];
   events: string[];
   heartbeats: string[];
+  liveSandboxes: Set<string>;
+  liveServers: Set<string>;
+  savedEvalResults: Set<string>;
   /**
    * The box `resolveAndStart` hands back. Exposed so a test can wrap its
    * command channel — the post-failure liveness diagnostic is the one thing the
@@ -114,13 +126,17 @@ function harness(
     beginThrows?: unknown;
     attemptThrows?: (input: AttemptInput) => unknown;
     evalAction?: "complete" | "run_conformance";
-  }
+    authorizationRequired?: boolean;
+  },
 ): Harness {
   const reports: PlanlessCheckReport[] = [];
   const attempts: AttemptInput[] = [];
   const completions: Completion[] = [];
   const events: string[] = [];
   const heartbeats: string[] = [];
+  const liveSandboxes = new Set(["sb_1", "sb_unrelated"]);
+  const liveServers = new Set(["server_unrelated"]);
+  const savedEvalResults = new Set(["run_unrelated"]);
   const resolveArgs: Array<{ cloneToken?: string }> = [];
   const {
     runEvalSuite: runEvalSuiteOverride,
@@ -196,6 +212,9 @@ function harness(
           url: "https://3001-sb_1.e2b.app/mcp",
           readStderrTail: async () => "",
           spawn: { pid: 1234, pgrp: 1234 },
+          ...(planOptions?.authorizationRequired
+            ? { authorizationRequired: true }
+            : {}),
         },
         provenance: {
           recipeRung: RECIPE.rung,
@@ -203,19 +222,34 @@ function harness(
         },
       };
     },
-    killSandbox: async () => {
+    killSandbox: async (box) => {
+      if (box) liveSandboxes.delete(box.sandboxId);
       events.push("killSandbox");
     },
+    reportCredentialBlocked: async () => {
+      events.push("credentialBlocked");
+    },
+    resolvePrServerOAuthToken: async () => {
+      events.push("resolvePrServerOAuthToken");
+      return "oauth-marker-token";
+    },
+    reportPrServerAuthorizationRequired: async (_claim, _holder, reason) => {
+      events.push(`authorizationRequired:${reason}`);
+    },
+    credentialPreflight: async (_claim, _holder, mint) =>
+      mint ? "bearer" : null,
     getBearer: async () => {
       events.push("getBearer");
       return "delegated-jwt";
     },
     createEphemeralServer: async (args) => {
       events.push(`createServer:${args.name}:${args.url}`);
+      liveServers.add("server-1");
       return "server-1";
     },
     deleteEphemeralServer: async (args) => {
       events.push(`deleteServer:${args.serverId}`);
+      liveServers.delete(args.serverId);
     },
     recordServer: async (triggerId, serverId) => {
       events.push(`recordServer:${triggerId}:${serverId}`);
@@ -244,6 +278,7 @@ function harness(
       heartbeats.push(triggerId);
     },
     heartbeatIntervalMs: 1_000,
+    cleanupTimeoutMs: 15_000,
     ...restOverrides,
   };
 
@@ -255,11 +290,58 @@ function harness(
     completions,
     events,
     heartbeats,
+    liveSandboxes,
+    liveServers,
+    savedEvalResults,
     sandbox,
   };
 }
 
+function expectOnlyCheckResourcesRemoved(h: Harness): void {
+  expect(h.liveSandboxes.has("sb_1")).toBe(false);
+  expect(h.liveServers.has("server-1")).toBe(false);
+  expect(h.liveSandboxes).toEqual(new Set(["sb_unrelated"]));
+  expect(h.liveServers).toEqual(new Set(["server_unrelated"]));
+  expect(h.savedEvalResults).toEqual(new Set(["run_unrelated"]));
+}
+
 describe("executeClaimedCheck — happy path", () => {
+  it("uses a resource-specific OAuth token for an authenticated PR server", async () => {
+    const runEvalSuite = vi.fn(async (args) => {
+      expect(args.oauthAccessToken).toBe("oauth-marker-token");
+      await args.onRunStarted?.("run-oauth");
+      return { runId: "run-oauth", result: "passed" };
+    });
+    const h = harness({ runEvalSuite }, undefined, {
+      authorizationRequired: true,
+    });
+    await executeClaimedCheck(
+      { ...CLAIM, prServerOAuthSourceServerId: "source-server" },
+      "worker-1",
+      h.deps,
+    );
+    expect(h.events).toContain("resolvePrServerOAuthToken");
+    expect(runEvalSuite).toHaveBeenCalledOnce();
+    expectOnlyCheckResourcesRemoved(h);
+  });
+
+  it("stops with action required when no OAuth source was selected", async () => {
+    const h = harness(undefined, undefined, { authorizationRequired: true });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    expect(h.events).toContain(
+      "authorizationRequired:oauth_connection_not_selected",
+    );
+    expect(h.events).not.toContain("runEvalSuite");
+    expect(h.events).not.toContain("getBearer");
+    expect(h.events.some((event) => event.startsWith("createServer:"))).toBe(
+      false,
+    );
+    expect(h.events.some((event) => event.startsWith("recordServer:"))).toBe(
+      false,
+    );
+    expectOnlyCheckResourcesRemoved(h);
+  });
+
   it("begins the plan FIRST, runs the suite, completes with no outcome, cleans up", async () => {
     const h = harness();
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
@@ -305,12 +387,12 @@ describe("executeClaimedCheck — happy path", () => {
         },
       },
       undefined,
-      { evalAction: "run_conformance" }
+      { evalAction: "run_conformance" },
     );
     await executeClaimedCheck(
       { ...CLAIM, conformanceEnabled: true },
       "worker-1",
-      h.deps
+      h.deps,
     );
 
     expect(h.events).toEqual(
@@ -320,10 +402,10 @@ describe("executeClaimedCheck — happy path", () => {
         "runConformance",
         "attempt:conformance:ok",
         "complete",
-      ])
+      ]),
     );
     expect(h.events.indexOf("runEvalSuite")).toBeLessThan(
-      h.events.indexOf("runConformance")
+      h.events.indexOf("runConformance"),
     );
     expect(h.completions[0]).toMatchObject({
       runId: "run-2",
@@ -385,16 +467,11 @@ describe("executeClaimedCheck — happy path", () => {
     const h = harness();
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.events.indexOf("recordServer:trig-1:server-1")).toBeLessThan(
-      h.events.indexOf("runEvalSuite")
+      h.events.indexOf("runEvalSuite"),
     );
   });
 
-  it("targets the run at THIS check's server and refreshes the suite snapshot", async () => {
-    // `serverIds` alone is not enough: it never reaches the run-start mutation,
-    // so the run's configSnapshot.environment comes from the suite's persisted
-    // environment — which names the PREVIOUS check's deleted server unless the
-    // snapshot is refreshed. Without this the runner fails on a dead reference
-    // instead of testing the PR.
+  it("passes this check's temporary server identity to the suite runner", async () => {
     const prepared: Array<Record<string, unknown>> = [];
     const h = harness({
       runEvalSuite: async (args) => {
@@ -404,10 +481,6 @@ describe("executeClaimedCheck — happy path", () => {
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
 
-    // The suite-snapshot refresh itself lives in `defaultRunEvalSuite`, which
-    // needs a live Convex + connected manager and is covered by the end-to-end
-    // pass; what is checkable here is that the run is handed THIS check's
-    // freshly-created server rather than anything the suite has stored.
     expect(prepared[0]).toMatchObject({
       serverId: "server-1",
       serverName: "gh-check-trig-1",
@@ -422,7 +495,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
         throw new CheckStoppedByPlan(
           "no_candidates",
           "Add `mcpjam.yaml` at the repository root:",
-          true
+          true,
         );
       },
     });
@@ -444,7 +517,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
         throw new CheckStepError(
           "build_failed",
           "build command exited 1",
-          "```text\nnpm ERR! missing script: build\n```"
+          "```text\nnpm ERR! missing script: build\n```",
         );
       },
     });
@@ -588,7 +661,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
     const h = harness(evalDies, "MCPJAM_CHECK_HTTP_ANSWERED 200\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.completions[0].detailsMarkdown ?? "").not.toContain(
-      "stopped answering"
+      "stopped answering",
     );
   });
 
@@ -617,7 +690,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
     const h = harness(evalDies, "MCPJAM_CHECK_HTTP_ANSWERED 400\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.completions[0].detailsMarkdown ?? "").not.toContain(
-      "stopped answering"
+      "stopped answering",
     );
   });
 
@@ -627,7 +700,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
     const h = harness(evalDies, "throws");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.completions[0].detailsMarkdown ?? "").not.toContain(
-      "stopped answering"
+      "stopped answering",
     );
   });
 
@@ -637,7 +710,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
     const h = harness(evalDies, "");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.completions[0].detailsMarkdown ?? "").not.toContain(
-      "stopped answering"
+      "stopped answering",
     );
   });
 
@@ -665,6 +738,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
     expect(h.completions).toHaveLength(0);
     expect(h.reports).toHaveLength(0);
     expect(h.events).toContain("killSandbox");
+    expectOnlyCheckResourcesRemoved(h);
   });
 
   it("abandons the check when the lease is lost during the liveness diagnostic", async () => {
@@ -685,7 +759,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
         },
         heartbeatIntervalMs: 1,
       },
-      "MCPJAM_CHECK_PORT_CLOSED\n"
+      "MCPJAM_CHECK_PORT_CLOSED\n",
     );
     const inner = h.sandbox.commands.run;
     h.sandbox.commands.run = async (command: string, opts?: unknown) => {
@@ -701,6 +775,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
     // Abandoned, not completed — and the box is still torn down.
     expect(h.completions).toHaveLength(0);
     expect(h.events).toContain("killSandbox");
+    expectOnlyCheckResourcesRemoved(h);
   });
 
   it("checks liveness over the command RPC, never the public URL", async () => {
@@ -717,7 +792,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
     };
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     const liveness = commands.find((c) =>
-      c.includes("MCPJAM_CHECK_HTTP_ANSWERED")
+      c.includes("MCPJAM_CHECK_HTTP_ANSWERED"),
     );
     expect(liveness).toBeDefined();
     expect(liveness).toContain("127.0.0.1");
@@ -769,6 +844,42 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
 });
 
 describe("executeClaimedCheck — cleanup and heartbeat", () => {
+  it.each([
+    ["successful run", "passed"],
+    ["failed assertions", "failed"],
+    ["run timeout", "timed_out"],
+    ["run cancellation", "cancelled"],
+  ])(
+    "removes only this check's resources after a %s",
+    async (_name, result) => {
+      const h = harness({
+        runEvalSuite: async (args) => {
+          await args.onRunStarted?.("run-1");
+          return { runId: "run-1", result };
+        },
+      });
+
+      await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+      expectOnlyCheckResourcesRemoved(h);
+      expect(h.completions[0].runId).toBe("run-1");
+    },
+  );
+
+  it("removes a sandbox left behind by a build or start failure", async () => {
+    const h = harness();
+    h.deps.resolveAndStart = async (_args, overrides) => {
+      overrides.onSandbox?.(h.sandbox);
+      throw new CheckStepError("build_failed", "build exited 1");
+    };
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.liveSandboxes).toEqual(new Set(["sb_unrelated"]));
+    expect(h.liveServers).toEqual(new Set(["server_unrelated"]));
+    expect(h.savedEvalResults).toEqual(new Set(["run_unrelated"]));
+  });
+
   it("deletes the ephemeral server row and kills the box even when the run throws", async () => {
     const h = harness({
       runEvalSuite: async () => {
@@ -778,6 +889,7 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.events).toContain("deleteServer:server-1");
     expect(h.events).toContain("killSandbox");
+    expectOnlyCheckResourcesRemoved(h);
   });
 
   it("kills the box even if deleting the server row fails", async () => {
@@ -793,15 +905,54 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
     expect(h.completions[0].runId).toBe("run-1");
   });
 
-  it("does not fail the check when recording the ephemeral server fails", async () => {
+  it("kills the sandbox when server deletion times out", async () => {
+    const h = harness({
+      deleteEphemeralServer: () => new Promise<void>(() => {}),
+      cleanupTimeoutMs: 5,
+    });
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.liveSandboxes).toEqual(new Set(["sb_unrelated"]));
+    expect(h.completions[0].runId).toBe("run-1");
+  });
+
+  it("deletes the server when sandbox cleanup fails", async () => {
+    const h = harness({
+      killSandbox: async () => {
+        throw new Error("E2B unavailable");
+      },
+    });
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.liveServers).toEqual(new Set(["server_unrelated"]));
+    expect(h.completions[0].runId).toBe("run-1");
+  });
+
+  it("deletes the server when sandbox cleanup times out", async () => {
+    const h = harness({
+      killSandbox: () => new Promise<void>(() => {}),
+      cleanupTimeoutMs: 5,
+    });
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.liveServers).toEqual(new Set(["server_unrelated"]));
+    expect(h.completions[0].runId).toBe("run-1");
+  });
+
+  it("does not start evaluation when recording the execution binding fails", async () => {
     const h = harness({
       recordServer: async () => {
         throw new Error("route 500");
       },
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    // Recovery loses its cleanup pointer, but the PR still gets its verdict.
-    expect(h.completions[0].runId).toBe("run-1");
+    // An unbound execution cannot receive a scoped bearer.
+    expect(h.completions[0].runId).toBeUndefined();
+    expect(h.events).not.toContain("runEvalSuite");
+    expect(h.events).toContain("killSandbox");
   });
 
   it("never throws, even when completing itself fails", async () => {
@@ -819,7 +970,7 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
     };
     h.deps.beginPlan = async () => session;
     await expect(
-      executeClaimedCheck(CLAIM, "worker-1", h.deps)
+      executeClaimedCheck(CLAIM, "worker-1", h.deps),
     ).resolves.toBeUndefined();
   });
 
@@ -872,12 +1023,12 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
           new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
             status: 401,
             headers: { "content-type": "application/json" },
-          })
-      )
+          }),
+      ),
     );
     const { sendHeartbeatForTests } = await import("../github-checks-worker");
     await sendHeartbeatForTests("trig-1", "worker-1").catch((error) =>
-      rejections.push(error)
+      rejections.push(error),
     );
     expect(rejections).toHaveLength(1);
     expect(String(rejections[0])).toMatch(/heartbeat rejected \(401\)/);
@@ -913,7 +1064,7 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
 describe("describeCheckFailure", () => {
   it("names no outcome at all — that is the backend's now", () => {
     const described = describeCheckFailure(
-      new CheckStepError("build_failed", "exit 1", "```text\nlog\n```")
+      new CheckStepError("build_failed", "exit 1", "```text\nlog\n```"),
     );
     expect(described).not.toHaveProperty("outcome");
     expect(described.failureReason).toBe("exit 1");
@@ -924,7 +1075,7 @@ describe("describeCheckFailure", () => {
     // Our prose, not clamped PR output: re-clamping would wrap a markdown block
     // — headings, a yaml example — in a `text` fence and render it as source.
     const described = describeCheckFailure(
-      new CheckStoppedByPlan("recipe_invalid", "# Your mcpjam.yaml", true)
+      new CheckStoppedByPlan("recipe_invalid", "# Your mcpjam.yaml", true),
     );
     expect(described).toMatchObject({
       failureReason: "recipe_invalid",
@@ -934,11 +1085,11 @@ describe("describeCheckFailure", () => {
 
   it("names only the canonical billing marker, never a loose substring", () => {
     expect(
-      describeCheckFailure(new Error("billing_limit_reached: iterations"))
+      describeCheckFailure(new Error("billing_limit_reached: iterations")),
     ).toMatchObject({ failureReason: "billing_limit_reached" });
     // An MCP server error that merely mentions billing must not be relabelled.
     expect(
-      describeCheckFailure(new Error("tool failed: check your billing page"))
+      describeCheckFailure(new Error("tool failed: check your billing page")),
     ).toMatchObject({
       failureReason: "tool failed: check your billing page",
     });
@@ -946,22 +1097,22 @@ describe("describeCheckFailure", () => {
 
   it("names the org spend budget from either canonical marker", () => {
     expect(
-      describeCheckFailure(new Error("spend_budget_reached"))
+      describeCheckFailure(new Error("spend_budget_reached")),
     ).toMatchObject({ failureReason: "spend_budget_reached" });
     expect(
       describeCheckFailure(
-        new Error('{"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}')
-      )
+        new Error('{"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}'),
+      ),
     ).toMatchObject({ failureReason: "spend_budget_reached" });
     // A build error that merely mentions a budget keeps its own message.
     expect(
-      describeCheckFailure(new Error("build failed: budget.ts not found"))
+      describeCheckFailure(new Error("build failed: budget.ts not found")),
     ).toMatchObject({ failureReason: "build failed: budget.ts not found" });
   });
 
   it("bounds the failure reason", () => {
     expect(
-      describeCheckFailure(new Error("x".repeat(1_000))).failureReason.length
+      describeCheckFailure(new Error("x".repeat(1_000))).failureReason.length,
     ).toBe(200);
   });
 });
@@ -1118,7 +1269,7 @@ describe("effectiveRunResult", () => {
         status: "completed",
         summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
         passCriteria: { minimumPassRate: 100 },
-      })
+      }),
     ).toBe("passed");
     // And a stored rate that disagrees with the counts does not get a vote.
     expect(
@@ -1126,7 +1277,7 @@ describe("effectiveRunResult", () => {
         status: "completed",
         summary: { total: 4, passed: 1, failed: 3, passRate: 99 },
         passCriteria: { minimumPassRate: 90 },
-      })
+      }),
     ).toBe("failed");
   });
 
@@ -1137,14 +1288,14 @@ describe("effectiveRunResult", () => {
         status: "completed",
         summary,
         passCriteria: { minimumPassRate: 80 },
-      })
+      }),
     ).toBe("passed");
     expect(
       effectiveRunResult({
         status: "completed",
         summary,
         passCriteria: { minimumPassRate: 90 },
-      })
+      }),
     ).toBe("failed");
     // No criteria ⇒ 100% required, matching the client's derivation.
     expect(effectiveRunResult({ status: "completed", summary })).toBe("failed");
@@ -1156,7 +1307,7 @@ describe("effectiveRunResult", () => {
         status: "completed",
         result: "failed",
         summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
-      })
+      }),
     ).toBe("failed");
   });
 
@@ -1171,7 +1322,7 @@ describe("effectiveRunResult", () => {
         status: "completed",
         result: "inconclusive",
         summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
-      })
+      }),
     ).toBe("inconclusive");
     // And it stays a verdict-bearing run: `inconclusive` is a result, not an
     // abandoned run, so the worker does not raise "did not complete".
@@ -1240,7 +1391,7 @@ describe("startGithubChecksWorker loop", () => {
       () =>
         new Promise((resolve) => {
           releaseClaim = resolve;
-        })
+        }),
     );
     const handle = startGithubChecksWorker({ claim, execute: vi.fn() });
     // Wait until the loop is parked inside claim().
@@ -1337,11 +1488,8 @@ describe("startGithubChecksWorker loop", () => {
 });
 
 describe("verifyRunSnapshot", () => {
-  // The dedicated suite is shared and `refreshSnapshot` rewrites its environment
-  // before the run freezes it, so two concurrent checks can interleave and one can
-  // end up evaluating the other's server. This cannot prevent that; it decides when
-  // the theft is PROVEN, and when we simply could not look — a verdict about
-  // somebody else's PR being worse than no verdict.
+  // The run-only environment override prevents the former shared-suite rewrite
+  // race. This remains a final defense against a malformed or regressed snapshot.
   const clientWith = (snapshot: unknown) =>
     ({
       query: async () => ({ configSnapshot: { environment: snapshot } }),
@@ -1353,7 +1501,7 @@ describe("verifyRunSnapshot", () => {
       serverBindings: [{ name: "gh-check-trig-1", id: "srv_1" }],
     };
     expect(
-      await verifyRunSnapshot(clientWith(snapshot), "run-1", "trig-1")
+      await verifyRunSnapshot(clientWith(snapshot), "run-1", "trig-1"),
     ).toBe("ours");
   });
 
@@ -1363,7 +1511,7 @@ describe("verifyRunSnapshot", () => {
       serverBindings: [{ name: "gh-check-trig-9", id: "srv_2" }],
     };
     expect(
-      await verifyRunSnapshot(clientWith(snapshot), "run-1", "trig-1")
+      await verifyRunSnapshot(clientWith(snapshot), "run-1", "trig-1"),
     ).toBe("stolen");
   });
 
@@ -1376,7 +1524,7 @@ describe("verifyRunSnapshot", () => {
       ],
     };
     expect(
-      await verifyRunSnapshot(clientWith(snapshot), "run-1", "trig-1")
+      await verifyRunSnapshot(clientWith(snapshot), "run-1", "trig-1"),
     ).toBe("ours");
   });
 
@@ -1387,11 +1535,11 @@ describe("verifyRunSnapshot", () => {
       await verifyRunSnapshot(
         clientWith({ servers: ["srv_manual"] }),
         "run-1",
-        "trig-1"
-      )
+        "trig-1",
+      ),
     ).toBe("ours");
     expect(
-      await verifyRunSnapshot(clientWith(undefined), "run-1", "trig-1")
+      await verifyRunSnapshot(clientWith(undefined), "run-1", "trig-1"),
     ).toBe("ours");
   });
 
@@ -1405,7 +1553,7 @@ describe("verifyRunSnapshot", () => {
       },
     } as unknown as Parameters<typeof verifyRunSnapshot>[0];
     expect(await verifyRunSnapshot(broken, "run-1", "trig-1")).toBe(
-      "unverifiable"
+      "unverifiable",
     );
   });
 });
@@ -1442,7 +1590,7 @@ describe("runReachedAVerdict", () => {
 describe("executeClaimedCheck — the private-repository clone credential", () => {
   /** Computed independently of the module under test. */
   const basic = Buffer.from(`x-access-token:${CLONE_TOKEN}`, "utf8").toString(
-    "base64"
+    "base64",
   );
   const credentialForms = [CLONE_TOKEN, basic, `AUTHORIZATION: basic ${basic}`];
 
@@ -1480,7 +1628,7 @@ describe("executeClaimedCheck — the private-repository clone credential", () =
     const h = harness({
       mintCloneToken: async () => {
         throw new CloneTokenUnavailableError(
-          "the backend could not mint a clone token (502)"
+          "the backend could not mint a clone token (502)",
         );
       },
     });
@@ -1588,7 +1736,7 @@ describe("executeClaimedCheck — the private-repository clone credential", () =
         throw new CheckStepError(
           "infra_error",
           `sandbox command failed: ${echoedCommand}`,
-          `\`\`\`text\n${echoedCommand}\n\`\`\``
+          `\`\`\`text\n${echoedCommand}\n\`\`\``,
         );
       },
     });
@@ -1617,7 +1765,7 @@ describe("executeClaimedCheck — the private-repository clone credential", () =
     const h = harness({
       mintCloneToken: async () => {
         throw new CloneTokenUnavailableError(
-          `mint failed while sending AUTHORIZATION: basic ${basic}`
+          `mint failed while sending AUTHORIZATION: basic ${basic}`,
         );
       },
     });
@@ -1628,13 +1776,13 @@ describe("executeClaimedCheck — the private-repository clone credential", () =
     expect(observable).not.toContain(`AUTHORIZATION: basic ${basic}`);
     // Redacted, not swallowed: the operator still gets a legible failure.
     expect(h.completions[0].terminalAttempt?.detailsClamped).toContain(
-      "mint failed"
+      "mint failed",
     );
     expect(h.completions[0].terminalAttempt?.detailsClamped).toContain(
-      "[redacted]"
+      "[redacted]",
     );
     expect(h.completions[0].detailsMarkdown).toContain(
-      "not a problem with the pull request"
+      "not a problem with the pull request",
     );
   });
 });
@@ -1650,7 +1798,7 @@ describe("the clone-token wire contract", () => {
         new Response(JSON.stringify(body), {
           status,
           headers: { "content-type": "application/json" },
-        })
+        }),
     );
     vi.stubGlobal("fetch", fetchMock);
     onTestFinished(() => {
@@ -1667,11 +1815,11 @@ describe("the clone-token wire contract", () => {
       expiresAt: 1_700_000_000,
     });
     await expect(mintCloneTokenForTests("trig-1", "worker-1")).resolves.toBe(
-      CLONE_TOKEN
+      CLONE_TOKEN,
     );
     const [url, init] = fetchMock.mock.calls[0] as unknown as [
       string,
-      RequestInit
+      RequestInit,
     ];
     expect(url).toContain("/internal/v1/github-checks/clone-token");
     expect(JSON.parse(String(init.body))).toEqual({
@@ -1683,14 +1831,14 @@ describe("the clone-token wire contract", () => {
   it("answers null when the backend says no token was needed", async () => {
     stubFetch(200, { ok: true, cloneToken: null });
     await expect(
-      mintCloneTokenForTests("trig-1", "worker-1")
+      mintCloneTokenForTests("trig-1", "worker-1"),
     ).resolves.toBeNull();
   });
 
   it("maps 409 to lease loss, not to a mint failure", async () => {
     stubFetch(409, { ok: false, error: "trigger_completed" });
     await expect(
-      mintCloneTokenForTests("trig-1", "worker-1")
+      mintCloneTokenForTests("trig-1", "worker-1"),
     ).rejects.toBeInstanceOf(LeaseLostError);
   });
 
@@ -1704,7 +1852,7 @@ describe("the clone-token wire contract", () => {
       "fetch",
       vi.fn(async () => {
         throw new Error("ECONNREFUSED 10.0.0.1:443");
-      })
+      }),
     );
     onTestFinished(() => {
       vi.unstubAllEnvs();
@@ -1712,7 +1860,7 @@ describe("the clone-token wire contract", () => {
     });
 
     const error = await mintCloneTokenForTests("trig-1", "worker-1").catch(
-      (e) => e
+      (e) => e,
     );
     expect(error).toBeInstanceOf(CloneTokenUnavailableError);
     expect(String(error)).toContain("ECONNREFUSED");
@@ -1721,7 +1869,7 @@ describe("the clone-token wire contract", () => {
   it("maps 502 to a mint failure, without echoing the backend's body", async () => {
     stubFetch(502, { ok: false, error: "Could not mint a clone token" });
     const error = await mintCloneTokenForTests("trig-1", "worker-1").catch(
-      (e) => e
+      (e) => e,
     );
     expect(error).toBeInstanceOf(CloneTokenUnavailableError);
     expect(String(error)).toContain("502");
@@ -1737,4 +1885,141 @@ describe("the clone-token wire contract", () => {
     const claimed = await claimNextForTests("worker-1");
     expect(claimed).toMatchObject({ triggerId: "trig-9", repoPrivate: true });
   });
+
+  it("rejects an empty PR-server OAuth token", async () => {
+    stubFetch(200, { ok: true, accessToken: "   " });
+    await expect(
+      resolvePrServerOAuthTokenForTests({
+        claimed: CLAIM,
+        claimedBy: "worker-1",
+        sourceServerId: "source-server",
+        targetServerId: "target-server",
+        targetResourceUrl: "https://preview.test/mcp",
+      }),
+    ).rejects.toThrow("PR server OAuth token unavailable");
+  });
+});
+
+describe("fork credential isolation", () => {
+  it("runs a clean approved fork with only its execution bearer", async () => {
+    let cleanupBearer: string | undefined;
+    const h = harness({
+      credentialPreflight: async (_c, _h, mint) =>
+        mint ? "restricted-bearer" : null,
+      runEvalSuite: async (args) => {
+        expect(args.bearer).toBe("restricted-bearer");
+        await args.onRunStarted?.("fork-run");
+        return { runId: "fork-run" };
+      },
+      deleteEphemeralServer: async (args) => {
+        cleanupBearer = args.bearer;
+      },
+    });
+    await executeClaimedCheck(
+      {
+        ...CLAIM,
+        isFork: true,
+        githubCredentialPolicy: "no_customer_credentials",
+      },
+      "worker",
+      h.deps,
+    );
+    expect(cleanupBearer).toBe("delegated-jwt");
+    expect(h.completions[0].runId).toBe("fork-run");
+  });
+
+  it("provisions nothing when credentials are required", async () => {
+    const h = harness({
+      credentialPreflight: async () => {
+        throw new Error("credential_policy_blocked");
+      },
+    });
+    await executeClaimedCheck(
+      {
+        ...CLAIM,
+        isFork: true,
+        githubCredentialPolicy: "no_customer_credentials",
+      },
+      "worker",
+      h.deps,
+    );
+    expect(h.events).toContain("credentialBlocked");
+    expect(h.resolveArgs).toEqual([]);
+    expect(h.events).not.toContain("runEvalSuite");
+    expect(h.completions).toEqual([]);
+  });
+
+  it("an access refusal during eval remains a policy verdict and always kills the sandbox", async () => {
+    const h = harness({
+      runEvalSuite: async () => {
+        throw new Error("credential_policy_blocked");
+      },
+    });
+    await executeClaimedCheck(
+      {
+        ...CLAIM,
+        isFork: true,
+        githubCredentialPolicy: "no_customer_credentials",
+      },
+      "worker",
+      h.deps,
+    );
+    expect(h.events).toContain("credentialBlocked");
+    expect(h.events).toContain("killSandbox");
+    expect(h.completions).toEqual([]);
+  });
+
+  it("an access refusal during conformance remains a policy verdict", async () => {
+    const h = harness(
+      {
+        runConformance: async () => {
+          throw new Error("credential_policy_blocked");
+        },
+      },
+      undefined,
+      { evalAction: "run_conformance" },
+    );
+    await executeClaimedCheck(
+      {
+        ...CLAIM,
+        isFork: true,
+        githubCredentialPolicy: "no_customer_credentials",
+        conformanceEnabled: true,
+      },
+      "worker",
+      h.deps,
+    );
+    expect(h.events).toContain("credentialBlocked");
+    expect(h.events).toContain("killSandbox");
+    expect(h.completions).toEqual([]);
+  });
+
+  it("a stale claim contract never reaches provisioning", async () => {
+    const h = harness();
+    await executeClaimedCheck(
+      { ...CLAIM, credentialPolicyVersion: undefined } as any,
+      "worker",
+      h.deps,
+    );
+    expect(h.resolveArgs).toEqual([]);
+    expect(h.events).not.toContain("runEvalSuite");
+  });
+});
+
+it("runs an opted-in fork under the scoped suite policy", async () => {
+  const h = harness({
+    runEvalSuite: async (args) => {
+      expect(githubExecutionPolicy()).toBe("suite_credentials");
+      await verifyGithubCredentialAccess();
+      await args.onRunStarted?.("opted-in-run");
+      return { runId: "opted-in-run" };
+    },
+  });
+  await executeClaimedCheck(
+    { ...CLAIM, isFork: true, githubCredentialPolicy: "suite_credentials" },
+    "worker",
+    h.deps,
+  );
+  expect(h.completions[0].runId).toBe("opted-in-run");
+  expect(h.events).toContain("killSandbox");
 });

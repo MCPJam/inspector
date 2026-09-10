@@ -82,17 +82,16 @@ describe("SuiteSettingsRow", () => {
     expect(screen.getByText("Not enabled for this organization")).toBeTruthy();
   });
 
-  it("shows Applies immediately in the section header", () => {
+  it("shows the client controls without an immediate-save badge", () => {
     render(
       <SuiteSettingsRow
         settingKey="environments"
         chained={false}
-        appliesImmediately
       >
         <div data-testid="suite-environment-bar" />
       </SuiteSettingsRow>,
     );
-    expect(screen.getByText("Applies immediately")).toBeTruthy();
+    expect(screen.queryByText("Applies immediately")).toBeNull();
     expect(
       screen.getByTestId("suite-environment-bar"),
     ).toBeVisible();

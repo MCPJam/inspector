@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  BROWSER_INTERACTIVE_TOOL_NAMES,
+  BROWSER_OBSERVATION_TOOL_NAMES,
   BROWSER_TOOL_NAMES,
-  classifyBrowserToolApprovals,
-  classifyPageToolApprovals,
   isBrowserToolName,
-  mergeUiToolApprovalClassifications,
-  classifyUiToolApprovals,
   isAppToolAlias,
   isClientFulfilledToolName,
   isUiToolName,
+  pageToolCallNeedsApproval,
+  uiToolApprovalFloor,
   uiToolCallNeedsApproval,
 } from "../client-fulfilled-tools";
 
@@ -63,16 +63,24 @@ describe("client-fulfilled tool names", () => {
     const destructive = { readOnlyHint: false, destructiveHint: true };
     const readOnly = { readOnlyHint: true, destructiveHint: false };
 
-    it("gates destructive tools even when the flag is OFF", () => {
-      // The whole point of the annotation work: `requireToolApproval` is off
-      // by default, and a destructive action must still confirm.
+    it("leaves a destructive tool to the switch, in both directions", () => {
+      // `destructiveHint` decides whether this entry is a READ or an ACTION.
+      // It used to decide FOR the user as well, which made "Tool Approval:
+      // off" untrue.
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: false,
+          annotations: destructive,
+          requireToolApproval: true,
+        })
+      ).toBe(true);
       expect(
         uiToolCallNeedsApproval({
           readOnly: false,
           annotations: destructive,
           requireToolApproval: false,
         })
-      ).toBe(true);
+      ).toBe(false);
     });
 
     it("does not gate additive tools when the flag is OFF", () => {
@@ -109,38 +117,48 @@ describe("client-fulfilled tool names", () => {
       }
     });
 
-    it("treats an absent destructiveHint as destructive (protocol default)", () => {
-      // A tool added without annotating destructiveHint must fail SAFE.
-      expect(
-        uiToolCallNeedsApproval({
-          readOnly: false,
-          annotations: { readOnlyHint: false },
-          requireToolApproval: false,
-        })
-      ).toBe(true);
-      expect(
-        uiToolCallNeedsApproval({
-          readOnly: false,
-          annotations: {},
-          requireToolApproval: false,
-        })
-      ).toBe(true);
-    });
-
-    it("fails CLOSED on a contradictory read-only + destructive entry", () => {
-      // The validator rejects `readOnlyHint` disagreeing with `readOnly`, but
-      // nothing stops "read-only AND destructive". Resolving that in favor of
-      // "don't ask" is the one reading that can silently delete something, so
-      // destructive wins.
-      for (const requireToolApproval of [true, false]) {
+    it("treats an absent destructiveHint as an ACTION, not a read", () => {
+      // The protocol default still applies where it decides something: an
+      // unannotated entry is an action, so it follows the switch rather than
+      // joining the reads that never ask.
+      for (const annotations of [{ readOnlyHint: false }, {}]) {
         expect(
           uiToolCallNeedsApproval({
-            readOnly: true,
-            annotations: { readOnlyHint: true, destructiveHint: true },
-            requireToolApproval,
-          }),
+            readOnly: false,
+            annotations,
+            requireToolApproval: true,
+          })
         ).toBe(true);
+        expect(
+          uiToolCallNeedsApproval({
+            readOnly: false,
+            annotations,
+            requireToolApproval: false,
+          })
+        ).toBe(false);
       }
+    });
+
+    it("reads a contradictory read-only + destructive entry as an ACTION", () => {
+      // The validator rejects `readOnlyHint` disagreeing with `readOnly`, but
+      // nothing stops "read-only AND destructive". Resolving that in favor of
+      // "this is a read" is the one reading that can silently delete
+      // something, so destructive still wins the READ-or-ACTION question —
+      // and the switch then answers the only question left.
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: true,
+          annotations: { readOnlyHint: true, destructiveHint: true },
+          requireToolApproval: true,
+        }),
+      ).toBe(true);
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: true,
+          annotations: { readOnlyHint: true, destructiveHint: true },
+          requireToolApproval: false,
+        }),
+      ).toBe(false);
     });
 
     it("does not gate a read-only tool whose annotations omit readOnlyHint", () => {
@@ -169,197 +187,83 @@ describe("client-fulfilled tool names", () => {
       ).toBe(false);
     });
   });
-
-  describe("classifyUiToolApprovals", () => {
-    const entries = [
-      {
-        name: "ui_snapshot_app",
-        readOnly: true,
-        annotations: { readOnlyHint: true, destructiveHint: false },
-      },
-      {
-        name: "ui_navigate",
-        readOnly: false,
-        annotations: { readOnlyHint: false, destructiveHint: false },
-      },
-      {
-        name: "ui_execute_tool",
-        readOnly: false,
-        annotations: { readOnlyHint: false, destructiveHint: true },
-      },
-    ];
-
-    it("splits destructive from free in default mode", () => {
-      const { requiredNames, freeNames } = classifyUiToolApprovals(
-        entries,
-        false
-      );
-      expect([...requiredNames]).toEqual(["ui_execute_tool"]);
-      expect([...freeNames].sort()).toEqual(["ui_navigate", "ui_snapshot_app"]);
-    });
-
-    it("moves every mutating tool to required in strict mode, keeping read-only free", () => {
-      const { requiredNames, freeNames } = classifyUiToolApprovals(
-        entries,
-        true
-      );
-      expect([...requiredNames].sort()).toEqual([
-        "ui_execute_tool",
-        "ui_navigate",
-      ]);
-      // Strict mode still must not pause a snapshot — this is why the engine
-      // needs `freeNames` and not just "absent from requiredNames".
-      expect([...freeNames]).toEqual(["ui_snapshot_app"]);
-    });
-
-    it("places every entry in exactly one set", () => {
-      for (const strict of [true, false]) {
-        const { requiredNames, freeNames } = classifyUiToolApprovals(
-          entries,
-          strict
-        );
-        expect(requiredNames.size + freeNames.size).toBe(entries.length);
-        for (const name of requiredNames) {
-          expect(freeNames.has(name)).toBe(false);
-        }
-      }
-    });
-
-    it("handles an absent snapshot", () => {
-      const { requiredNames, freeNames } = classifyUiToolApprovals(
-        undefined,
-        false
-      );
-      expect(requiredNames.size).toBe(0);
-      expect(freeNames.size).toBe(0);
-    });
-
-    it("classifies legacy entries (no annotations) by the flag alone", () => {
-      const legacy = [
-        { name: "ui_navigate", readOnly: false },
-        { name: "ui_snapshot_app", readOnly: true },
-      ];
-      expect([...classifyUiToolApprovals(legacy, false).requiredNames]).toEqual(
-        []
-      );
-      expect([...classifyUiToolApprovals(legacy, true).requiredNames]).toEqual([
-        "ui_navigate",
-      ]);
-    });
-  });
-
-  describe("classifyPageToolApprovals", () => {
-    it("puts every page alias in requiredNames, regardless of the approval flag", () => {
-      // Page tools always gate (pageToolCallNeedsApproval), so unlike UI tools
-      // the requireToolApproval flag never moves them to freeNames. This is the
-      // property the hosted engines rely on to emit an approval request instead
-      // of stranding the deferred call.
-      const aliases = ["page_ab12cd34", "page_ef56gh78"];
-      const { requiredNames, freeNames } = classifyPageToolApprovals(aliases);
-      expect([...requiredNames].sort()).toEqual([...aliases].sort());
-      expect(freeNames.size).toBe(0);
-    });
-
-    it("returns empty sets for no page tools, leaving other tools on the flag", () => {
-      for (const input of [undefined, []]) {
-        const { requiredNames, freeNames } = classifyPageToolApprovals(input);
-        expect(requiredNames.size).toBe(0);
-        expect(freeNames.size).toBe(0);
-      }
-    });
-
-    it("marks a page alias as requiring approval the way the hosted gate reads it", () => {
-      // Mirrors toolCallNeedsApproval in mcpjam-stream-handler:
-      //   if (uiToolApprovals?.requiredNames.has(name)) return true;
-      const { requiredNames } = classifyPageToolApprovals(["page_deadbeef"]);
-      expect(requiredNames.has("page_deadbeef")).toBe(true);
-    });
-  });
 });
 
-/**
- * W3: the hosted `browser_*` tools are name-classified like page tools, and
- * several namespaces now have to share the engines' ONE approval slot.
- */
-describe("classifyBrowserToolApprovals", () => {
-  it("gates everything by default — interactive AND observational", () => {
-    // There is nothing trustworthy to classify on: a page is third-party code
-    // and the browser is signed into things.
-    const { requiredNames, freeNames } = classifyBrowserToolApprovals(
-      BROWSER_TOOL_NAMES,
-    );
-    expect(requiredNames.size).toBe(BROWSER_TOOL_NAMES.length);
-    expect(freeNames.size).toBe(0);
-  });
-
-  it("frees ONLY observation tools under an explicit read-only policy", () => {
-    const { requiredNames, freeNames } = classifyBrowserToolApprovals(
-      BROWSER_TOOL_NAMES,
-      { readOnly: true },
-    );
-    expect([...freeNames].sort()).toEqual([
-      "browser_observe",
-      "browser_webmcp_tools",
-    ]);
-    // A policy cannot make clicking a button on a live, logged-in page safe.
-    expect([...requiredNames].sort()).toEqual([
-      "browser_act",
-      "browser_navigate",
-      "browser_tabs",
-      "browser_webmcp_invoke",
-    ]);
-  });
-
-  it("handles undefined and empty inputs", () => {
-    expect(classifyBrowserToolApprovals(undefined).requiredNames.size).toBe(0);
-    expect(classifyBrowserToolApprovals([]).freeNames.size).toBe(0);
-  });
-
+describe("browser tool names", () => {
   it("identifies browser tool names", () => {
     expect(isBrowserToolName("browser_act")).toBe(true);
     expect(isBrowserToolName("browser_observe")).toBe(true);
     expect(isBrowserToolName("bash")).toBe(false);
     expect(isBrowserToolName("page_1234abcd")).toBe(false);
   });
+
+  it("splits every verb into exactly one of observation / interactive", () => {
+    // The split is what lets an unattended read-only run be BUILT with only
+    // the tools that look — `buildBrowserTools` filters on it. A verb in
+    // neither set would be silently dropped from every run; one in both would
+    // make "read-only" mean whichever set was checked first.
+    for (const name of BROWSER_TOOL_NAMES) {
+      const observation = BROWSER_OBSERVATION_TOOL_NAMES.has(name);
+      const interactive = BROWSER_INTERACTIVE_TOOL_NAMES.has(name);
+      expect(observation !== interactive, name).toBe(true);
+    }
+    expect(BROWSER_TOOL_NAMES).toHaveLength(
+      BROWSER_OBSERVATION_TOOL_NAMES.size + BROWSER_INTERACTIVE_TOOL_NAMES.size,
+    );
+  });
 });
 
-describe("mergeUiToolApprovalClassifications", () => {
-  it("unions the namespaces that share the engines' single slot", () => {
-    const merged = mergeUiToolApprovalClassifications(
-      classifyPageToolApprovals(["page_1234abcd"]),
-      classifyBrowserToolApprovals(["browser_act"]),
-      { requiredNames: new Set(), freeNames: new Set(["ui_snapshot_app"]) },
-    );
-    expect([...merged.requiredNames].sort()).toEqual([
-      "browser_act",
-      "page_1234abcd",
-    ]);
-    expect([...merged.freeNames]).toEqual(["ui_snapshot_app"]);
+/**
+ * The floor each entry sits at, asserted apart from the switch.
+ *
+ * `uiToolCallNeedsApproval` above answers the combined question; this answers
+ * the one the entry alone decides, which is what a future setting will vary.
+ */
+describe("uiToolApprovalFloor", () => {
+  it("reads destructive as `setting` and read-only as `never`", () => {
+    expect(
+      uiToolApprovalFloor({
+        readOnly: false,
+        annotations: { destructiveHint: true },
+      }),
+    ).toBe("setting");
+    expect(
+      uiToolApprovalFloor({
+        readOnly: true,
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      }),
+    ).toBe("never");
+    expect(uiToolApprovalFloor({ readOnly: true })).toBe("never");
   });
 
-  it("REQUIRED wins over free — merging must never be why something stops gating", () => {
-    const merged = mergeUiToolApprovalClassifications(
-      { requiredNames: new Set(["shared_name"]), freeNames: new Set() },
-      { requiredNames: new Set(), freeNames: new Set(["shared_name"]) },
-    );
-    expect(merged.requiredNames.has("shared_name")).toBe(true);
-    // A name must never appear in both sets: an engine reads required first,
-    // but leaving it in `free` would mislead anything else that looks.
-    expect(merged.freeNames.has("shared_name")).toBe(false);
+  it("reads an additive annotated tool as `setting`", () => {
+    expect(
+      uiToolApprovalFloor({
+        readOnly: false,
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      }),
+    ).toBe("setting");
+    // Legacy (no annotations) mutating entry: the flag alone, as before.
+    expect(uiToolApprovalFloor({ readOnly: false })).toBe("setting");
   });
 
-  it("tolerates undefined contributors (a turn with no browser tools)", () => {
-    const merged = mergeUiToolApprovalClassifications(
-      undefined,
-      classifyPageToolApprovals(["page_abcd1234"]),
-      undefined,
+  it("reads an ABSENT destructiveHint as an action, not a read", () => {
+    // The protocol default is "assume destructive". That still keeps an
+    // unannotated entry out of the `never` bucket; it no longer promotes it
+    // above the user's switch.
+    expect(uiToolApprovalFloor({ readOnly: false, annotations: {} })).toBe(
+      "setting",
     );
-    expect([...merged.requiredNames]).toEqual(["page_abcd1234"]);
   });
+});
 
-  it("returns empty sets for no contributors at all", () => {
-    const merged = mergeUiToolApprovalClassifications();
-    expect(merged.requiredNames.size).toBe(0);
-    expect(merged.freeNames.size).toBe(0);
+describe("pageToolCallNeedsApproval", () => {
+  it("follows the user's switch, in both directions", () => {
+    // It was unconditional, and the page's annotations are still never read —
+    // they are claims by the party whose code would run. What the switch buys
+    // is that "off" means off: a family answering "not you" is a setting that
+    // does not work, which costs more trust than the pill bought safety.
+    expect(pageToolCallNeedsApproval(true)).toBe(true);
+    expect(pageToolCallNeedsApproval(false)).toBe(false);
   });
 });
