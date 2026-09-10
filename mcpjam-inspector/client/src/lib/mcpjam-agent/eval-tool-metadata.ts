@@ -137,6 +137,7 @@ export async function loadEvalToolMetadata(
             action: reconnect ? "reconnect" : "retry",
             updatedAt: Date.now(),
           });
+          return;
         }
       }
     })().finally(() => pending.delete(id));

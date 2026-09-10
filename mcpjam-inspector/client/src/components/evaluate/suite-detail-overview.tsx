@@ -326,10 +326,14 @@ export function SuiteDetailOverview({
   const showEmptyCasesHero = !hasCases && !hasGeneratedContent;
 
   const [generationOpen, setGenerationOpen] = useState(false);
-  const [generationConfig, setGenerationConfig] = useState<GenerateCasesConfig>();
+  const [generationConfig, setGenerationConfig] =
+    useState<GenerateCasesConfig>();
   const handleGenerateCases = () => {
     if (projectId) setGenerationOpen(true);
   };
+  // Generation needs a project to run against; without one the button can
+  // only fail silently.
+  const canGenerate = canGenerateTestCases && Boolean(projectId);
 
   const runButton = (
     <Button
@@ -608,7 +612,7 @@ export function SuiteDetailOverview({
           readOnly={readOnlyConfig || configLocked}
           onDescribe={onDescribeCases ?? onEditCases}
           onGenerate={() => void handleGenerateCases()}
-          canGenerate={canGenerateTestCases}
+          canGenerate={canGenerate}
           generateDisabledReason={generateTestCasesDisabledReason}
           isGenerating={isGeneratingTestCases}
           onImport={onImportCases}
@@ -637,7 +641,7 @@ export function SuiteDetailOverview({
                 {onGenerateTestCases ? (
                   <GenerateCasesButton
                     onGenerate={handleGenerateCases}
-                    canGenerate={canGenerateTestCases}
+                    canGenerate={canGenerate}
                     disabledReason={generateTestCasesDisabledReason}
                     isGenerating={isGeneratingTestCases}
                   />
@@ -704,7 +708,7 @@ export function SuiteDetailOverview({
           {onGenerateTestCases && (
             <GenerateCasesButton
               onGenerate={handleGenerateCases}
-              canGenerate={canGenerateTestCases}
+              canGenerate={canGenerate}
               disabledReason={generateTestCasesDisabledReason}
               isGenerating={
                 isGeneratingTestCases || generation?.status === "running"

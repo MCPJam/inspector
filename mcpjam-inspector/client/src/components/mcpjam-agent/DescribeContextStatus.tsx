@@ -14,6 +14,13 @@ export function DescribeContextStatus({ scope }: { scope: EvalAgentScope }) {
   const [retrying, setRetrying] = useState<string>();
   const [error, setError] = useState<string>();
   const servers = context.case?.metadata?.servers ?? [];
+  const retryTools = (() => {
+    try {
+      return getEvalDraft(scope).retryTools;
+    } catch {
+      return undefined;
+    }
+  })();
   const ready = servers.filter(
     (s) => s.status === "ready" || s.status === "empty",
   ).length;
@@ -26,13 +33,15 @@ export function DescribeContextStatus({ scope }: { scope: EvalAgentScope }) {
             ? "These servers have no tools available. Refresh tools or check the suite’s connections."
             : "Choose a server in the suite to describe a test."
           : context.status === "error"
-          ? "Couldn’t load tools. Your description is kept here."
-          : context.status === "partial"
-          ? `${ready} of ${servers.length} servers ready. You can use the tools already loaded.`
-          : "Loading tools… Your description will continue when tools are ready."}
+            ? "Couldn’t load tools. Your description is kept here."
+            : context.status === "partial"
+              ? `${ready} of ${servers.length} servers ready. You can use the tools already loaded.`
+              : "Loading tools… Your description will continue when tools are ready."}
       </p>
       {servers
-        .filter((s) => s.status === "error" || s.status === "empty")
+        .filter(
+          (s) => retryTools && (s.status === "error" || s.status === "empty"),
+        )
         .map((server) => (
           <Button
             key={server.serverId}
@@ -43,7 +52,7 @@ export function DescribeContextStatus({ scope }: { scope: EvalAgentScope }) {
               setError(undefined);
               setRetrying(server.serverId);
               try {
-                await getEvalDraft(scope).retryTools?.(server.serverId);
+                await retryTools?.(server.serverId);
               } catch {
                 setError(
                   `Could not ${

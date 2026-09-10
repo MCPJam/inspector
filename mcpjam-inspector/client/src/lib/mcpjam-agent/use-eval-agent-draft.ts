@@ -85,6 +85,13 @@ export function useEvalAgentDraft<T extends EvalDraft>({
       useAgentPanelStore.getState().setOpen(false);
     };
   }, [autoOpen, projectId, suiteId, caseId]);
+  // Metadata (suite name, case title, whether the case has content) changes
+  // without the target changing. Write the latest scope, with no cleanup, so a
+  // reopen never carries stale case metadata into the session.
+  useLayoutEffect(() => {
+    if (!autoOpen || !projectId) return;
+    useDescribeSurface.setState({ scope });
+  }, [autoOpen, projectId, suiteName, draft?.title, hasCaseContent]);
   const enteredDraft = useRef<string | null>(null);
   useEffect(() => {
     if (!projectId || !autoOpen) return;
@@ -200,8 +207,8 @@ export function useEvalAgentDraft<T extends EvalDraft>({
     change,
     canUndo: Boolean(
       change &&
-        current.current.draft === draft &&
-        change.revision === current.current.revision,
+      current.current.draft === draft &&
+      change.revision === current.current.revision,
     ),
     open: () => {
       if (!projectId || !autoOpen) return;

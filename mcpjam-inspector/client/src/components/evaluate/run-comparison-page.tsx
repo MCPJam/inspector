@@ -58,7 +58,10 @@ export function RunComparisonPage({
     .filter((run) => selected.includes(run._id))
     .map((run) => {
       const trials = iterations.filter((it) => it.suiteRunId === run._id);
+      // A run still in flight has partial totals; never present them as final.
+      const settled = run.status !== "pending" && run.status !== "running";
       const complete =
+        settled &&
         trials.length > 0 &&
         (!run.summary || trials.length === run.summary.total);
       const metrics = complete
@@ -273,8 +276,10 @@ export function RunComparisonPage({
                   >
                     {title}
                   </th>
-                  {columns.map(({ run, trials }) => {
-                    const matches = trials.filter((it) => caseKey(it) === id);
+                  {columns.map(({ run, trials, complete }) => {
+                    const matches = complete
+                      ? trials.filter((it) => caseKey(it) === id)
+                      : [];
                     const summary = computeIterationSummary(matches);
                     return (
                       <td

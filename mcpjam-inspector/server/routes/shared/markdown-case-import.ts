@@ -18,6 +18,11 @@ import {
   webErrorFromRoute,
 } from "../web/errors.js";
 
+/** Extraction runs a model over a document; give it room, but not forever. */
+const EXTRACTION_TIMEOUT_MS = 120_000;
+/** Matches the client's DEFAULTS.RUNS_PER_TEST for newly authored cases. */
+const IMPORTED_CASE_RUNS = 5;
+
 const inputSchema = z
   .object({
     projectId: z.string().min(1),
@@ -96,7 +101,11 @@ export async function handleMarkdownImport(
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(parsed.data),
-          signal: c.req.raw.signal,
+          // Client disconnect cancels; so does a stalled extraction service.
+          signal: AbortSignal.any([
+            c.req.raw.signal,
+            AbortSignal.timeout(EXTRACTION_TIMEOUT_MS),
+          ]),
         },
       );
       // Never advertise an upstream HTML/error document as JSON.
@@ -112,7 +121,10 @@ export async function handleMarkdownImport(
           requestId: response.headers.get("x-request-id"),
         };
         // Do not log document text, credentials, or the upstream response body.
-        logger.warn("Markdown extraction returned a non-JSON response", upstream);
+        logger.warn(
+          "Markdown extraction returned a non-JSON response",
+          upstream,
+        );
         return c.json(
           {
             code: "extraction_upstream_invalid_response",
@@ -137,7 +149,7 @@ export async function handleMarkdownImport(
         steps: [{ id: "prompt", kind: "prompt", prompt }],
         // Inherit the suite model at run time; this stays stable on retries.
         models: [],
-        runs: 1,
+        runs: IMPORTED_CASE_RUNS,
         isNegativeTest: false,
         changeSource: "manual",
       })),

@@ -661,7 +661,8 @@ function EvaluateTabContent({
       // explicit options continue using the suite's persisted configuration.
       const generateConfig = loadGenerateConfig(suite._id);
       const generationOptions =
-        options ?? (totalCases(generateConfig) >= 1
+        options ??
+        (totalCases(generateConfig) >= 1
           ? {
               ...toGenerationOptions(generateConfig),
               ...(refinement?.trim() ? { refinement: refinement.trim() } : {}),
@@ -673,7 +674,9 @@ function EvaluateTabContent({
         ...(stageCase
           ? {
               stageCase: (input: CreateEvalTestCaseInput) =>
-                stageCase(normalizeGeneratedDraft(input, suite.defaultPredicates)),
+                stageCase(
+                  normalizeGeneratedDraft(input, suite.defaultPredicates),
+                ),
             }
           : {}),
         ...(serverAttachment ? { serverAttachment } : {}),
@@ -1638,6 +1641,12 @@ function EvaluateTabContent({
                   key={suite._id}
                   variant="outline"
                   className="h-auto justify-start whitespace-normal py-3 text-left"
+                  disabled={suiteAction === "case" && isCiOwnedSuite(suite)}
+                  title={
+                    suiteAction === "case" && isCiOwnedSuite(suite)
+                      ? "Cases for this suite are managed in its repository."
+                      : undefined
+                  }
                   onClick={() => {
                     const action = suiteAction;
                     setSuiteAction(null);

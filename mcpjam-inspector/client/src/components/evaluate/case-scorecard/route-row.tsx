@@ -127,43 +127,45 @@ export function RouteRow({
               Strict order, no extra calls; arguments compared as pinned.
             </p>
           ) : null}
+        </details>
 
-          {route.kind === "locked" ? (
-            <p
-              className="text-[11px] text-muted-foreground"
-              data-testid="simple-case-route-locked"
+        {/* The route choice decides the route itself, so it stays visible
+            outside the collapsed matching options. */}
+        {route.kind === "locked" ? (
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid="simple-case-route-locked"
+          >
+            {route.reason === "modelFree"
+              ? "This case runs a pinned tool call, so no model route applies. Edit it in Steps."
+              : "This case does not start with a prompt. Edit it in Steps."}
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant={route.kind === "noTool" ? "secondary" : "outline"}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={onChooseNoTool}
+              disabled={readOnly}
             >
-              {route.reason === "modelFree"
-                ? "This case runs a pinned tool call, so no model route applies. Edit it in Steps."
-                : "This case does not start with a prompt. Edit it in Steps."}
-            </p>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
+              No tool should be called
+            </Button>
+            {route.kind === "noTool" ? (
               <Button
                 type="button"
-                variant={route.kind === "noTool" ? "secondary" : "outline"}
+                variant="ghost"
                 size="sm"
                 className="h-7 text-xs"
-                onClick={onChooseNoTool}
+                onClick={onChooseTools}
                 disabled={readOnly}
               >
-                No tool should be called
+                Use tools instead
               </Button>
-              {route.kind === "noTool" ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={onChooseTools}
-                  disabled={readOnly}
-                >
-                  Use tools instead
-                </Button>
-              ) : null}
-            </div>
-          )}
-        </details>
+            ) : null}
+          </div>
+        )}
 
         {showUnsetError ? (
           <p

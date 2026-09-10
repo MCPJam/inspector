@@ -99,7 +99,7 @@ export function authoredForTrial(input: {
         expectedOutput: launch.expectedOutput,
         toolsChoice: launch.isNegativeTest ? "noTool" : "unset",
       },
-      basis: "draft",
+      basis: "snapshot",
     };
   }
 

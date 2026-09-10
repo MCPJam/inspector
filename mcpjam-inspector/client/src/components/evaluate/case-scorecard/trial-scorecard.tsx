@@ -336,7 +336,9 @@ export function TrialScorecard({
             chain={chain}
             resetKey={iteration?._id}
             stageFooter={(stage) => {
-              const selected = groups.find((group) => group.stage === stage);
+              const selected = defaultGroups.find(
+                (group) => group.stage === stage,
+              );
               return selected ? (
                 <div
                   className="mt-3 space-y-2"
