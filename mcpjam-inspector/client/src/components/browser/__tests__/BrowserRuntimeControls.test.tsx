@@ -69,3 +69,10 @@ it("keeps runtime controls in the compact options menu", async () => {
   fireEvent.click(screen.getByText("Revoke Browser"));
   expect(state.revoke).toHaveBeenCalledOnce();
 });
+
+it("changes the personal preference without resetting or starting a chat", () => {
+  render(<BrowserRuntimeControls projectId="p" settings />);
+  fireEvent.change(screen.getByLabelText("Browser location"), { target: { value: "cloud" } });
+  expect(state.setEngine).toHaveBeenCalledWith("cloud");
+  expect(state.newChat).not.toHaveBeenCalled();
+});

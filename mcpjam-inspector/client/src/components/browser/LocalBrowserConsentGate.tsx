@@ -11,7 +11,7 @@ export function LocalBrowserConsentGate({
 }: {
   onAllow: () => Promise<boolean> | boolean;
   onUseCloud?: () => void;
-  location?: "computer_tab_local" | "playground_browser";
+  location?: "computer_tab_local" | "playground_browser" | "browser_settings";
 }) {
   const [granting, setGranting] = useState(false);
   const [error, setError] = useState(false);

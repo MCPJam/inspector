@@ -40,7 +40,6 @@ import { ComputerTerminal } from "./ComputerTerminal";
 import { ComputersUnavailableMessage } from "./ComputersUnavailableMessage";
 import { PaneMessage } from "./PaneMessage";
 import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
-import { BrowserProfilesSettings } from "./BrowserProfilesSettings";
 
 /**
  * The "Computer" tab — manage the project's personal cloud computer (one per
@@ -732,8 +731,6 @@ export function ComputerView({
       <UsageMeterBoundary>
         <ComputerUsageMeter projectId={projectId} />
       </UsageMeterBoundary>
-
-      <BrowserProfilesSettings projectId={projectId} />
 
       {liveStatus === "error" && status?.lastError ? (
         <div className="rounded border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">

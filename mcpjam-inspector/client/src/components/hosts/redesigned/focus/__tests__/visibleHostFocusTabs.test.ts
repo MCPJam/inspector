@@ -79,3 +79,11 @@ describe("activeHostFocusTab", () => {
     expect(activeHostFocusTab("computer", noComputer)).toBe("behavior");
   });
 });
+
+
+it("shows Browser only with candidacy or an existing configuration", () => {
+  const base = { computersEnabled: false, computerAttached: false, hasBuiltInTools: false };
+  expect(ids(base)).not.toContain("browser");
+  expect(ids({ ...base, browsersEnabled: true })).toContain("browser");
+  expect(ids({ ...base, browserConfigured: true })).toContain("browser");
+});
