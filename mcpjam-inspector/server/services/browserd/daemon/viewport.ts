@@ -500,7 +500,19 @@ export function createTabViewport(
       disposed = true;
       buttonMask = 0;
       listeners.clear();
-      await stop();
+      // A renderer navigating during teardown can leave stopScreencast
+      // unanswered. Let the owner close the page/context after a bounded grace.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          stop(),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, 1_000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
 
