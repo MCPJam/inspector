@@ -6382,6 +6382,16 @@ var ChromiumDriver = class {
   viewportSettling() {
     return this.barrier.busy;
   }
+  /** Resize an attached capture together with its page, including rollback. */
+  async resizePage(page, size) {
+    const tab = [...this.tabs].find(([, entry]) => entry.page === page);
+    const capture = tab ? await this.viewports.get(tab[0]) : void 0;
+    const apply = async () => {
+      await page.setViewportSize?.({ width: size.width, height: size.height });
+    };
+    if (capture) await capture.resize(size, apply);
+    else await apply();
+  }
   /**
    * Take every tab to a new size, or leave every tab where it was.
    *
@@ -6424,15 +6434,12 @@ var ChromiumDriver = class {
     const applied = [];
     try {
       for (const page of pages) {
-        await page.setViewportSize?.({
-          width: next.width,
-          height: next.height
-        });
+        await this.resizePage(page, next);
         applied.push(page);
       }
     } catch (error) {
       for (const page of applied) {
-        await page.setViewportSize?.({ width: previous.width, height: previous.height }).catch(() => {
+        await this.resizePage(page, previous).catch(() => {
         });
       }
       if (this.resizeDisplay) {
@@ -6448,7 +6455,7 @@ var ChromiumDriver = class {
       this.viewportPolicy = "fixed";
     for (const entry of this.tabs.values()) {
       if (applied.includes(entry.page) || entry.page.isClosed()) continue;
-      await entry.page.setViewportSize?.({ width: next.width, height: next.height }).catch(() => {
+      await this.resizePage(entry.page, next).catch(() => {
       });
     }
     try {
@@ -6533,6 +6540,11 @@ var ChromiumDriver = class {
               "this browser is shutting down; no new tab was opened"
             )
           };
+        }
+        if (command.source === "manual" && action.newTab && action.url === "about:blank" && action.observe === "none" && safeUrl(entry.page) === "about:blank") {
+          return permit() ? { ok: true } : this.leaseBlockedResult(
+            "browser control changed while opening the tab; nothing was observed"
+          );
         }
         return this.navigateVerb(
           tabId,
