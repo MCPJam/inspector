@@ -161,6 +161,19 @@ vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
   resetAutoConnectAttempts: vi.fn(),
 }));
 
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (
+    selector: (state: {
+      autoConnectServersEnabled: boolean;
+      setAutoConnectServersEnabled: (next: boolean) => void;
+    }) => unknown
+  ) =>
+    selector({
+      autoConnectServersEnabled: true,
+      setAutoConnectServersEnabled: vi.fn(),
+    }),
+}));
+
 vi.mock("@/lib/billing-gates", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/billing-gates")>();
   return {

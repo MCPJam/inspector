@@ -159,7 +159,7 @@ describe("useAutoConnectProjectServers", () => {
     const ensureServersReady = vi.fn();
     const appState = makeAppState(["alpha"]);
 
-    renderHook(
+    const { result } = renderHook(
       () =>
         useAutoConnectProjectServers({
           projectId: "proj-disabled",
@@ -173,6 +173,7 @@ describe("useAutoConnectProjectServers", () => {
     );
 
     await flushMicrotasks();
+    expect(result.current.enabled).toBe(false);
     expect(ensureServersReady).not.toHaveBeenCalled();
   });
 

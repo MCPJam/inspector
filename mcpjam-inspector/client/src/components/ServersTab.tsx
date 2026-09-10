@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
-import { Switch } from "@mcpjam/design-system/switch";
+import { ServersAutoConnectSwitch } from "./ServersAutoConnectSwitch";
 import {
   Plus,
   FileText,
@@ -731,8 +731,9 @@ export function ServersTab({
     [remoteServersByName, projects, moveServerToProject, onDisconnect, onRemove]
   );
 
-  // Project-wide auto-connect toggle. Single switch in the header that
-  // either enrolls every catalog server in project.serverIds (ON) or
+  // Project-wide auto-connect toggle. The header switch writes
+  // `autoConnectServersEnabled` (what `useAutoConnectProjectServers` reads)
+  // and also enrolls every catalog server in project.serverIds (ON) or
   // clears the set (OFF). Overrides on still-included servers are
   // preserved on ON so existing per-server header/timeout config isn't
   // wiped by a toggle round-trip. Per-server granularity is intentionally
@@ -771,12 +772,6 @@ export function ServersTab({
     () => (viewProjectServersList ?? []).map((s) => s._id),
     [viewProjectServersList]
   );
-  const autoConnectAll = useMemo(() => {
-    if (!projectServerConfigDto || catalogServerIds.length === 0) return false;
-    const enrolled = new Set(projectServerConfigDto.serverIds);
-    if (enrolled.size !== catalogServerIds.length) return false;
-    return catalogServerIds.every((id) => enrolled.has(id));
-  }, [projectServerConfigDto, catalogServerIds]);
   const handleToggleAutoConnect = useCallback(
     async (next: boolean) => {
       if (!sharedProjectIdForHostScope) return;
@@ -837,25 +832,11 @@ export function ServersTab({
     if (projectServerConfigDto === undefined) return null;
     const disabled = isTogglingAutoConnect || !canManageProjectServers;
     return (
-      <label
-        className={cn(
-          "flex items-center gap-2 text-xs text-muted-foreground select-none",
-          disabled ? "cursor-not-allowed" : "cursor-pointer"
-        )}
-        title={
-          canManageProjectServers
-            ? "Auto-connect every project server when a client opens"
-            : "Only project admins can change auto-connect"
-        }
-      >
-        <Switch
-          checked={autoConnectAll}
-          disabled={disabled}
-          onCheckedChange={handleToggleAutoConnect}
-          aria-label="Auto-connect project servers"
-        />
-        <span>Auto-connect</span>
-      </label>
+      <ServersAutoConnectSwitch
+        disabled={disabled}
+        canManage={canManageProjectServers}
+        onEnrollmentChange={handleToggleAutoConnect}
+      />
     );
   };
 

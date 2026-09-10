@@ -4,24 +4,28 @@ import type { ReactNode } from "react";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { AppStateProvider } from "@/state/app-state-context";
 import { ServerActionsProvider } from "@/state/server-actions-context";
+import { AUTO_CONNECT_SERVERS_KEY } from "@/stores/preferences/preferences-store";
+import { resetAutoConnectAttempts } from "@/hooks/useAutoConnectProjectServers";
 import { ActiveHostServerReconciler } from "../ActiveHostServerReconciler";
 
-// The reconciler reads the project catalog via this hook; the mirror under
-// test doesn't need it, so stub it to "no servers, loaded".
+const viewsMocks = vi.hoisted(() => ({
+  servers: [] as Array<{ _id: string; name: string }>,
+}));
+
 vi.mock("@/hooks/useViews", () => ({
-  useProjectServers: () => ({ servers: [] }),
+  useProjectServers: () => ({ servers: viewsMocks.servers }),
 }));
 
 function makeAppState(
   servers: Record<string, "connected" | "disconnected" | "connecting">,
-  selectedMultipleServers: string[]
+  selectedMultipleServers: string[],
 ) {
   return {
     servers: Object.fromEntries(
       Object.entries(servers).map(([name, connectionStatus]) => [
         name,
         { name, connectionStatus },
-      ])
+      ]),
     ),
     selectedMultipleServers,
   } as any;
@@ -30,21 +34,32 @@ function makeAppState(
 function renderReconciler({
   appState,
   setSelectedServerNames,
+  ensureServersReady = vi.fn().mockResolvedValue({
+    readyServerNames: [],
+    failedServerNames: [],
+    missingServerNames: [],
+    reauthServerNames: [],
+  }),
+  activeHost,
+  activeHostId = null,
 }: {
   appState: ReturnType<typeof makeAppState>;
   setSelectedServerNames: (names: string[]) => void;
+  ensureServersReady?: (names: string[]) => Promise<{
+    readyServerNames: string[];
+    failedServerNames: string[];
+    missingServerNames: string[];
+    reauthServerNames: string[];
+  }>;
+  activeHost?: { id: string; serverIds: string[] };
+  activeHostId?: string | null;
 }) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <PreferencesStoreProvider themeMode="light" themePreset="default">
       <AppStateProvider appState={appState}>
         <ServerActionsProvider
           actions={{
-            ensureServersReady: vi.fn().mockResolvedValue({
-              readyServerNames: [],
-              failedServerNames: [],
-              missingServerNames: [],
-              reauthServerNames: [],
-            }),
+            ensureServersReady,
             runtimeDisconnectServer: vi.fn(),
             reconnectServer: vi.fn().mockResolvedValue(undefined),
             setSelectedServerNames,
@@ -56,16 +71,18 @@ function renderReconciler({
     </PreferencesStoreProvider>
   );
 
-  return render(
-    // No active host → no recycle/auto-connect fires, isolating the mirror.
-    <ActiveHostServerReconciler
-      projectId="proj-1"
-      isAuthenticated
-      activeHost={undefined}
-      activeHostId={null}
-    />,
-    { wrapper }
-  );
+  return {
+    ensureServersReady,
+    ...render(
+      <ActiveHostServerReconciler
+        projectId="proj-1"
+        isAuthenticated
+        activeHost={activeHost as any}
+        activeHostId={activeHostId}
+      />,
+      { wrapper },
+    ),
+  };
 }
 
 const flush = () => act(() => Promise.resolve());
@@ -73,6 +90,9 @@ const flush = () => act(() => Promise.resolve());
 describe("ActiveHostServerReconciler — active-set mirror", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetAutoConnectAttempts();
+    viewsMocks.servers = [];
+    localStorage.removeItem(AUTO_CONNECT_SERVERS_KEY);
   });
 
   it("mirrors connected and reconnecting servers into the multi-select", async () => {
@@ -84,7 +104,7 @@ describe("ActiveHostServerReconciler — active-set mirror", () => {
           beta: "connecting",
           gamma: "disconnected",
         },
-        []
+        [],
       ),
       setSelectedServerNames,
     });
@@ -111,5 +131,50 @@ describe("ActiveHostServerReconciler — active-set mirror", () => {
     await flush();
     // Already equal as a set (order-independent) → no write, no loop.
     expect(setSelectedServerNames).not.toHaveBeenCalled();
+  });
+});
+
+describe("ActiveHostServerReconciler — auto-connect preference", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetAutoConnectAttempts();
+    viewsMocks.servers = [{ _id: "srv-alpha", name: "alpha" }];
+    localStorage.removeItem(AUTO_CONNECT_SERVERS_KEY);
+  });
+
+  it("calls ensureServersReady for host-required servers when Auto-connect is on", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: ["alpha"],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+
+    renderReconciler({
+      appState: makeAppState({ alpha: "disconnected" }, []),
+      setSelectedServerNames: vi.fn(),
+      ensureServersReady,
+      activeHost: { id: "host-1", serverIds: ["srv-alpha"] },
+      activeHostId: "host-1",
+    });
+
+    await flush();
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
+  });
+
+  it("does not auto-connect host-required servers when Auto-connect is off", async () => {
+    localStorage.setItem(AUTO_CONNECT_SERVERS_KEY, "false");
+    const ensureServersReady = vi.fn();
+
+    renderReconciler({
+      appState: makeAppState({ alpha: "disconnected" }, []),
+      setSelectedServerNames: vi.fn(),
+      ensureServersReady,
+      activeHost: { id: "host-1", serverIds: ["srv-alpha"] },
+      activeHostId: "host-1",
+    });
+
+    await flush();
+    expect(ensureServersReady).not.toHaveBeenCalled();
   });
 });
