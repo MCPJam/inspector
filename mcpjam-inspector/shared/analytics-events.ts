@@ -261,6 +261,16 @@ export const ANALYTICS_EVENTS = {
   evaluate_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
+  // The Swarms / User Testing gate (REEV-6). `guest_feature_preview_shown`
+  // counts arrivals on a gated screen — from a signed-out guest OR a signed-in
+  // user whose plan lacks the feature, so `location` is what separates the two
+  // funnels. The nudge pair measures the dialog the guest CTA opens; the
+  // sign-up/sign-in clicks inside it reuse `sign_up_button_clicked` /
+  // `login_button_clicked` with the same location, exactly as the invite
+  // nudge below does.
+  guest_feature_preview_shown: { source: "client" },
+  guest_feature_nudge_shown: { source: "client" },
+  guest_feature_nudge_dismissed: { source: "client" },
   guest_refresh_failure: { source: "client" },
   guest_refresh_success: { source: "client" },
   host_capabilities_dialog_opened: { source: "client" },
