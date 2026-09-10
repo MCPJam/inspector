@@ -27,6 +27,7 @@ const consentState = vi.hoisted(() => ({
 }));
 vi.mock("../../../utils/computers/browser-consent.js", () => ({
   getBrowserConsentFingerprint: async () => consentState.fingerprint,
+  watchBrowserConsentChanges: () => () => {},
 }));
 
 const sessionState = vi.hoisted(() => ({
@@ -716,3 +717,20 @@ describe("local sharp frame negotiation", () => {
     ws.close();
   });
 });
+
+it.each([null, "replacement-grant"])(
+  "terminates a silent established viewer when consent becomes %s",
+  async (next) => {
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
+    await new Promise<void>((resolve) => ws.once("open", resolve));
+    await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
+    const closed = waitForClose(ws);
+    consentState.fingerprint = next;
+    expect((await closed).code).toBe(4401);
+    expect(sessionState.subscriptions[0].unsubscribed).toBe(true);
+    expect(sessionState.inputs).toEqual([]);
+  },
+);

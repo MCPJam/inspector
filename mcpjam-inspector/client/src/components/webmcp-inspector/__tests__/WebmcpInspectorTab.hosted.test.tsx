@@ -1,3 +1,10 @@
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => ({
+    granted: true,
+    token: "test-consent",
+    grant: vi.fn(async () => true),
+  }),
+}));
 /**
  * The tab on a hosted replica: what it offers, and what it must not.
  *
@@ -44,8 +51,10 @@ const contextState = vi.hoisted(() => ({
   activeProjectId: "proj-1" as string | null,
 }));
 vi.mock("@/stores/client-context-store", () => ({
-  useHostContextStore: (selector: (s: unknown) => unknown) =>
-    selector(contextState),
+  useHostContextStore: Object.assign(
+    (selector: (s: unknown) => unknown) => selector(contextState),
+    { subscribe: () => () => {} },
+  ),
 }));
 
 class FakeEventSource {

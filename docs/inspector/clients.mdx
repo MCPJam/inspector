@@ -5,12 +5,14 @@ icon: "user-cog"
 ---
 
 <Note>
-Open the **Connect** tab in the left sidebar to manage Clients (labelled **Servers** in some builds). The page name "Clients" refers to the configuration object, not the sidebar label.
+  Open the **Connect** tab in the left sidebar to manage Clients (labelled
+  **Servers** in some builds). The page name "Clients" refers to the
+  configuration object, not the sidebar label.
 </Note>
 
 A **Client** is a named, reusable configuration that defines how MCPJam connects to and talks to your MCP servers when you test them in the Playground, Scenarios, and Evals. It bundles everything that would normally be scattered across one-off settings — model, system prompt, attached servers, protocol-level knobs, and MCP App sandbox controls — behind a single picker.
 
-Real MCP hosts (Claude Desktop, ChatGPT, Cursor, your own product) each advertise slightly different capabilities and apply different sandbox policies to MCP Apps. Clients let you reproduce those environments in MCPJam so you can verify your server behaves correctly *before* shipping to a specific host.
+Real MCP hosts (Claude Desktop, ChatGPT, Cursor, your own product) each advertise slightly different capabilities and apply different sandbox policies to MCP Apps. Clients let you reproduce those environments in MCPJam so you can verify your server behaves correctly _before_ shipping to a specific host.
 
 ## Why Clients exist
 
@@ -33,7 +35,7 @@ These map directly to fields the inspector sends during the standard MCP `initia
 - **Client capabilities** — The capabilities object sent in `initialize` (sampling, roots, elicitation, experimental, etc.). Enable or disable each one to test what your server does when a capability is missing.
 - **Advertise EMA support by default** — Toggle in the **MCP Protocol** settings card that adds the `io.modelcontextprotocol/enterprise-managed-authorization` extension to the stored `clientCapabilities`. When on, the extension appears in the MCP Protocol JSON editor and host-card capability chips. This controls the stored baseline only — XAA-configured connections always advertise the extension at connect time regardless of this setting.
 - **Elicitation** — Toggle in the **MCP Protocol** settings card that controls the top-level `clientCapabilities.elicitation` key. When off, the key is absent. When on, the inspector advertises `{ form: {} }`, signalling that the client can handle elicitation requests from the server. An optional **URL mode** sub-checkbox (visible only when Elicitation is on) adds `{ url: {} }` to the elicitation object, indicating the client can also handle requests to open a URL. Enabling this before server-side elicitation support is active is safe — it is a no-op rather than a break.
-- **Mirror tool params into `Mcp-Param-*` headers (SEP-2243)** — Dropdown in the **MCP Protocol** settings card. **Mirror** (the default) copies a tool argument annotated with `x-mcp-header` into an `Mcp-Param-{Name}` request header on `tools/call`, as MCP `2026-07-28` requires. **Omit** deliberately simulates a client that has *not* implemented the mirroring — real-world support is uneven, and browser clients never send these headers — so you can see what your server does when they don't arrive. A conforming server should answer `-32020 HeaderMismatch`; MCPJam surfaces that failure as-is rather than silently retrying. The setting applies to the whole client, not per server, because conformance is a property of the client.
+- **Mirror tool params into `Mcp-Param-*` headers (SEP-2243)** — Dropdown in the **MCP Protocol** settings card. **Mirror** (the default) copies a tool argument annotated with `x-mcp-header` into an `Mcp-Param-{Name}` request header on `tools/call`, as MCP `2026-07-28` requires. **Omit** deliberately simulates a client that has _not_ implemented the mirroring — real-world support is uneven, and browser clients never send these headers — so you can see what your server does when they don't arrive. A conforming server should answer `-32020 HeaderMismatch`; MCPJam surfaces that failure as-is rather than silently retrying. The setting applies to the whole client, not per server, because conformance is a property of the client.
 - **Request timeout** — Per-request timeout in milliseconds applied to all MCP calls (`tools/call`, `resources/read`, etc.). Lower it to verify your server handles cancellation correctly; raise it for long-running tools.
 - **Default headers** — Headers attached to every HTTP-transport request. Useful for auth tokens, tenant IDs, or anything else your server expects upstream.
 
@@ -45,7 +47,7 @@ You can override the request timeout and headers **per server** from the project
 
 These settings control how the model interacts with tools during a chat session. They appear in the **Agent** tab of the Client focus panel.
 
-- **Require tool approval** — When on, the model pauses before tool calls so you can approve or deny each one. The setting **raises** the bar and never lowers it, so it is not the whole story in either direction. Some actions pause whether it is on or off: anything driving a browser or a third-party web page in a chat you are watching, anything running on your own machine, and destructive UI actions. Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, and read-only UI actions. Web search follows the switch — its query is your text leaving for a third party, and the call spends credits.
+- **Require tool approval** — When on, the model pauses before tool calls so you can approve or deny each one. The setting **raises** the bar and never lowers it, so it is not the whole story in either direction. Browser and WebMCP page tools follow the chat’s Tool Approval setting. With it off, agents can act in signed-in websites without a per-call prompt. Browser device permission is a separate prerequisite for local browsing and inspection. Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, and read-only UI actions. Web search follows the switch — its query is your text leaving for a third party, and the call spends credits.
 - **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
 - **Progressive tools** — Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
 - **Built-in tools** — A checkbox list of host-managed built-in tools (for example, `web_search`) that the model can use on each turn. Selected tool IDs are forwarded with the chat request so the server can resolve them alongside your MCP server tools. Browser is not listed here — it is configured in the **Browser** tab. This section only appears when the deployment has a populated built-in tool catalog; it is hidden otherwise.
@@ -91,6 +93,7 @@ The Apps Extension tab contains two independent capability matrices that never c
 **`window.openai` matrix (ChatGPT compat shim)** — Controls the `window.openai.*` surface advertised to apps using the ChatGPT compatibility shim. A master **Inject window.openai** toggle enables or disables injection entirely; a collapsed per-method disclosure lets you activate individual methods to build an exact subset from scratch. Switching on any single method turns injection on with only that method enabled; turning the last method off disables injection again.
 
 **`app.*` matrix (SEP-1865 spec bridge)** — Controls the `app.*` surface advertised to apps using the primary MCP Apps protocol. A master **MCP App support** switch advertises the MCP UI client extension (`io.modelcontextprotocol/ui`). The matrix rows include:
+
 - **`availableDisplayModes`** — multi-checkbox cluster (`inline`, `fullscreen`, `pip`); unchecking the last mode force-enables `inline`.
 - **`widgetDisplayModeRequests`** — tri-state host policy (`accept`, `user-initiated-only`, `decline`) for widget-initiated display-mode requests.
 - **Boolean dimensions** — a flat list of all `app.*` capability flags (e.g. `toolInputPartial`, `toolCancelled`, `serverResources`, `logging`, `toolInfo`, `openLinks`, `serverTools`, `updateModelContext`, `message`). Rows that diverge from the selected host preset are stored as sparse overrides.
@@ -153,7 +156,7 @@ Standalone clients do not appear as options in the Scenarios client picker dropd
 
 ## Server attachments
 
-A **server attachment** is a named, reusable set of servers drawn from the project pool. Server attachments let you decouple *which servers are active* from the Client configuration itself, so you can swap the server set without touching the model or prompt settings.
+A **server attachment** is a named, reusable set of servers drawn from the project pool. Server attachments let you decouple _which servers are active_ from the Client configuration itself, so you can swap the server set without touching the model or prompt settings.
 
 ### Eval suites
 
@@ -210,7 +213,6 @@ Append `?hosts=<id1>,<id2>` to the `/host-compare` URL to pre-select a specific 
 ```
 
 The URL updates automatically as you toggle hosts on or off. When the default selection (ChatGPT and Claude presets, in that order) is active, the `?hosts` parameter is omitted so shared links stay clean.
-
 
 ## Best practices
 

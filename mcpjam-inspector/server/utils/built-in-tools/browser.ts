@@ -1,4 +1,7 @@
-import { verifyLocalBrowserConsent } from "../computers/browser-consent.js";
+import {
+  verifyLocalBrowserConsent,
+  verifyAndFingerprintBrowserConsent,
+} from "../computers/browser-consent.js";
 /**
  * The six `browser_*` built-in tools — a real Chromium on the member's cloud
  * computer, driven through the sandbox-local browserd daemon.
@@ -2326,7 +2329,10 @@ function defaultEnsureSession(
       logicalSessionId,
       signal,
     }) => {
-      if (!(await verifyLocalBrowserConsent(opts.localConsentToken))) {
+      const consentFingerprint = await verifyAndFingerprintBrowserConsent(
+        opts.localConsentToken,
+      );
+      if (!consentFingerprint) {
         throw new Error(
           "browser_consent_required: Allow Browser in the Browser panel.",
         );
@@ -2397,6 +2403,8 @@ function defaultEnsureSession(
             })
           : null;
       const handle = await ensureLocalBrowserSession({
+        consentFingerprint,
+        authHeader: bearer,
         projectId,
         contextMode,
         ...(ownerKey ? { ownerKey } : {}),

@@ -105,6 +105,7 @@ describe("captureServerEvent", () => {
       );
       expect(flagMock).toHaveBeenLastCalledWith("local-browser-enabled", "u1", {
         sendFeatureFlagEvents: false,
+        personProperties: { local_browser_security_version: "1" },
       });
       captureServerEvent(
         fakeContext({ requestLogContext: { userExternalId: "u1" } }),

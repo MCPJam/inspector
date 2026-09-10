@@ -70,13 +70,13 @@ describe("WebmcpPageToolsSection", () => {
     expect(screen.getByText(/no tools registered yet/i)).toBeInTheDocument();
   });
 
-  it("counts the tools and states that every call asks first", () => {
+  it("counts the tools and states the effective Tool Approval setting", () => {
     setStore({ session: SESSION, tools: [TOOL] });
     render(<WebmcpPageToolsSection />);
     // The approval promise is part of the offer: opting in must not read as
     // handing a third-party page unattended access.
     expect(
-      screen.getByText(/1 tool — every call asks first/i),
+      screen.getByText(/1 tool — Tool Approval uses chat setting/i),
     ).toBeInTheDocument();
   });
 

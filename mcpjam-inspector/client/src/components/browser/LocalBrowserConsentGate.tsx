@@ -1,3 +1,4 @@
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useEffect, useState } from "react";
 import { ShieldQuestion } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -13,6 +14,9 @@ export function LocalBrowserConsentGate({
   onUseCloud?: () => void;
   location?: "computer_tab_local" | "playground_browser" | "browser_settings";
 }) {
+  const approval = useActiveChatSessionStore((state) =>
+    state.sessionId ? state.approvalSettings[state.sessionId] : undefined,
+  );
   const [granting, setGranting] = useState(false);
   const [error, setError] = useState(false);
 
@@ -64,9 +68,16 @@ export function LocalBrowserConsentGate({
         Allow agents to control a browser on this machine?
       </h2>
       <p className="text-sm leading-relaxed text-muted-foreground">
-        Agents can navigate, click, and type in this browser, including websites
-        you sign into. This permission does not authorize shell commands. Chat
-        approval settings still apply.
+        Agents can navigate, click, and type in websites you sign into and local
+        network apps. Page content and screenshots used by chat may be sent to
+        your model provider. Browser and WebMCP share this permission; shell
+        permission is separate. With Tool Approval off, chat actions run without
+        asking first.
+      </p>
+      <p className="text-sm text-muted-foreground">
+        {approval === undefined
+          ? "Tool Approval is configured separately for each chat."
+          : `Current chat Tool Approval: ${approval ? "on" : "off"}.`}
       </p>
       <div className="mt-1 flex items-center gap-2">
         <Button

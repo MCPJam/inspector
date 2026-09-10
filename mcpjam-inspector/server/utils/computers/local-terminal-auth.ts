@@ -45,7 +45,7 @@ export const MAX_OUTSTANDING_NONCES = 64;
  * consent but they are not the same capability — one shows you a page, the
  * other runs commands as you.
  */
-export type LocalNonceKind = "terminal" | "browser-frames";
+export type LocalNonceKind = "terminal" | "browser-frames" | "webmcp-frames";
 
 interface IssuedNonce {
   kind: LocalNonceKind;

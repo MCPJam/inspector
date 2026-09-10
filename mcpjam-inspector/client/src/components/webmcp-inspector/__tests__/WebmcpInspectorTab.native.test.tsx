@@ -1,3 +1,10 @@
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => ({
+    granted: true,
+    token: "test-consent",
+    grant: vi.fn(async () => true),
+  }),
+}));
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { type ReactNode } from "react";
 import { render, screen, act, fireEvent } from "@testing-library/react";
