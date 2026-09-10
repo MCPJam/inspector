@@ -21,7 +21,7 @@ import { chromium } from "playwright";
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
 import { startWebMcpSession, WebMcpSessionRegistry } from "../session-registry";
 import { PlaywrightWebMcpProvider } from "../playwright-provider";
-import { WebMcpToolGoneError } from "../provider";
+import { WebMcpOutcomeUnknownError, WebMcpToolGoneError } from "../provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_HOUSEKEEPING_INTERVAL_MS,
@@ -324,15 +324,14 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // timeout and leave the first promise rejecting with nobody listening —
     // which vitest reports as an unhandled rejection and fails the run.
     const hung = runtime.invoke(`${origin}::slow`, {}, "manual");
-    await expect(hung.settled).rejects.toThrow(
-      /did not respond in time|cancel/i,
+    const error = await hung.settled.catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(WebMcpOutcomeUnknownError);
+    expect((error as Error).message).toMatch(
+      /after a timeout.*execution may continue/i,
     );
 
-    // END TO END, through the shared bridge: the RUNTIME owns the deadline, so
-    // the browser's `Canceled` — which says nothing about why — must still be
-    // recorded as a timeout and not as a user cancellation. That distinction is
-    // the whole reason the reason is carried, and it is the exact bug a naive
-    // adoption of the bridge introduces.
+    // The timeline must retain uncertainty: a timeout is not evidence that
+    // a dispatched page tool stopped or that its effects were rolled back.
     await vi.waitFor(() => {
       const settled = activity.find(
         (entry) =>
@@ -340,7 +339,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
           entry.invokeId === hung.invokeId,
       );
       expect(settled && "state" in settled ? settled.state : undefined).toBe(
-        "timeout",
+        "unknown",
       );
     });
 
