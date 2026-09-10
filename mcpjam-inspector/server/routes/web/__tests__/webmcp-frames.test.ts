@@ -721,3 +721,132 @@ describe("frame pacer", () => {
     expect(sent.map((b) => b[0])).toEqual([1]);
   });
 });
+
+describe("WebMCP negotiated socket input", () => {
+  async function streamed() {
+    const session = await openSession();
+    const browser = provider.sessions[0];
+    browser.transport = { kind: "frame-stream", width: 1280, height: 800 };
+    const probe = connect(server.port, session.sessionId, token);
+    await probe.opened;
+    await vi.waitFor(() =>
+      expect(
+        probe.text.some((text) => JSON.parse(text).type === "capabilities"),
+      ).toBe(true),
+    );
+    return { browser, probe, runtime: webMcpSessions.get(session.sessionId) };
+  }
+  const wheel = { kind: "wheel", x: 10, y: 20, deltaX: 0, deltaY: 12 };
+  const acks = (probe: Probe) =>
+    probe.text
+      .map((text) => JSON.parse(text))
+      .filter((message) => message.type === "input_ack");
+
+  it("dispatches validated input and acknowledges it without an HTTP request", async () => {
+    const { browser, probe, runtime } = await streamed();
+    runtime.expiresAt = Date.now() + 1000;
+    const expiresBefore = runtime.expiresAt;
+    probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
+    await vi.waitFor(() =>
+      expect(acks(probe)).toEqual([
+        { type: "input_ack", seq: 1, dispatched: 1 },
+      ]),
+    );
+    expect(browser.inputBatches[0][0]).toMatchObject(wheel);
+    expect(runtime.expiresAt).toBeGreaterThan(expiresBefore);
+  });
+
+  it("reports a vanished registry session as no_browser_session", async () => {
+    const { browser, probe } = await streamed();
+    const get = vi.spyOn(webMcpSessions, "get").mockImplementation(() => {
+      throw new Error("session gone");
+    });
+    try {
+      probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
+      await vi.waitFor(() => expect(acks(probe)[0]?.refused).toBe("no_browser_session"));
+      expect(browser.inputBatches).toHaveLength(0);
+    } finally {
+      get.mockRestore();
+    }
+  });
+
+  it("orders batches and coalesces compatible wheels behind a slow dispatch", async () => {
+    const { browser, probe } = await streamed();
+    let finish!: () => void;
+    const dispatch = vi.spyOn(browser, "dispatchInput").mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
+    probe.ws.send(JSON.stringify({ type: "input", seq: 2, events: [wheel] }));
+    probe.ws.send(JSON.stringify({ type: "input", seq: 3, events: [wheel] }));
+    // Ping is ordered behind the messages, so its pong proves they arrived.
+    probe.ws.send(JSON.stringify({ type: "ping" }));
+    await vi.waitFor(() => expect(probe.text).toContain('{"type":"pong"}'));
+    expect(dispatch).toHaveBeenCalledOnce();
+    finish();
+    await vi.waitFor(() => expect(acks(probe)).toHaveLength(3));
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1][0]).toEqual([
+      expect.objectContaining({ kind: "wheel", deltaY: 24 }),
+    ]);
+    expect(acks(probe).map((ack) => ack.seq)).toEqual([1, 2, 3]);
+  });
+
+  it("refuses invalid input and duplicate sequence IDs without replaying", async () => {
+    const { browser, probe } = await streamed();
+    probe.ws.send(
+      JSON.stringify({ type: "input", seq: 1, events: [{ ...wheel, x: -1 }] }),
+    );
+    await vi.waitFor(() =>
+      expect(acks(probe)[0]?.refused).toBe("invalid_input"),
+    );
+    expect(browser.inputBatches).toHaveLength(0);
+    probe.ws.send(JSON.stringify({ type: "input", seq: 2, events: [wheel] }));
+    await vi.waitFor(() => expect(browser.inputBatches).toHaveLength(1));
+    probe.ws.send(JSON.stringify({ type: "input", seq: 2, events: [wheel] }));
+    await vi.waitFor(() => expect(acks(probe)).toHaveLength(3));
+    expect(acks(probe)[2].refused).toBe("invalid_input");
+    expect(browser.inputBatches).toHaveLength(1);
+  });
+
+  it("cancels queued input when its socket disconnects", async () => {
+    const { browser, probe } = await streamed();
+    let finish!: () => void;
+    const dispatch = vi.spyOn(browser, "dispatchInput").mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    probe.ws.send(
+      JSON.stringify({
+        type: "input",
+        seq: 1,
+        events: [{ kind: "mouse_down", x: 1, y: 1, button: "left" }],
+      }),
+    );
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
+    probe.ws.send(JSON.stringify({ type: "input", seq: 2, events: [wheel] }));
+    probe.ws.close();
+    await probe.closed;
+    finish();
+    await probe.settle();
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+
+  it("does not enable input for a native Electron surface", async () => {
+    const session = await openSession();
+    provider.sessions[0].transport = { kind: "electron-webview" };
+    const probe = connect(server.port, session.sessionId, token);
+    await probe.opened;
+    probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
+    probe.ws.send(JSON.stringify({ type: "ping" }));
+    await vi.waitFor(() => expect(probe.text).toContain('{"type":"pong"}'));
+    expect(provider.sessions[0].inputBatches).toHaveLength(0);
+    expect(probe.text).toEqual(['{"type":"pong"}']);
+  });
+});

@@ -208,6 +208,8 @@ export class WebMcpSessionRuntime {
   readonly createdAt: number;
 
   private session: WebMcpBrowserSession | undefined;
+  private inputTail: Promise<void> = Promise.resolve();
+  private inputClosed = false;
   private status: WebMcpSessionStatus = "starting";
   private statusDetail: string | undefined;
   private url: string;
@@ -528,9 +530,21 @@ export class WebMcpSessionRuntime {
    * `external_invocation` — so logging the clicks themselves would bury those
    * under a mouse trail.
    */
-  async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
-    await this.requireSession().dispatchInput(events);
-    this.onActivity();
+  async dispatchInput(
+    events: WebMcpInputEvent[],
+    isCancelled: () => boolean = () => false,
+  ): Promise<void> {
+    const session = this.requireSession();
+    const pending = this.inputTail.then(async () => {
+      if (this.inputClosed || this.session !== session || isCancelled()) {
+        throw new Error("The browser session is no longer available.");
+      }
+      this.onActivity();
+      await session.dispatchInput(events);
+    });
+    // Every transport/viewer shares this tail. A failure must not wedge it.
+    this.inputTail = pending.catch(() => {});
+    await pending;
   }
 
   private requireSession(): WebMcpBrowserSession {
@@ -952,6 +966,7 @@ export class WebMcpSessionRuntime {
   }
 
   async close(reason: "closed" | "detached" = "closed"): Promise<void> {
+    this.inputClosed = true;
     this.failAllPending(
       new Error(
         reason === "detached"

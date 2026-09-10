@@ -96,6 +96,8 @@ export function createFrameWireReader(
      * kind it does not know.
      */
     video?: boolean;
+    /** Node-local JPEGs: one decode in flight and one replaceable pending frame. */
+    latestOnly?: boolean;
   } = {},
 ): {
   push(chunk: ArrayBuffer | Uint8Array): void;
@@ -118,6 +120,61 @@ export function createFrameWireReader(
    */
   let deliveredSeq = -1;
 
+  type JpegRecord = Extract<
+    FrameStreamRecord,
+    { kind: typeof FRAME_STREAM_KIND.frame }
+  >;
+  let decoding = false;
+  let pendingRecord: JpegRecord | undefined;
+  const decodeRecord = (record: JpegRecord) => {
+    decoding = true;
+    const jpeg = record.jpeg;
+    const startedAt = performance.now();
+    // OFF THE MAIN THREAD, which is the whole point of the byte wire:
+    // `createImageBitmap` decodes in the browser's own image pipeline,
+    // where a `data:` URL assigned to an `<img>` cannot.
+    //
+    // `.slice()` because the decoder hands back a view into a buffer it
+    // goes on appending to; a `Blob` over a live view can decode whatever
+    // arrived next instead.
+    void createImageBitmap(
+      new Blob([jpeg.slice().buffer as ArrayBuffer], {
+        type: "image/jpeg",
+      }),
+    )
+      .then((bitmap) => {
+        if (closed || record.seq <= deliveredSeq) {
+          // The socket went while we were decoding, or a newer picture
+          // already landed. Nobody will draw this, and nobody else will
+          // free it.
+          bitmap.close();
+          return;
+        }
+        deliveredSeq = record.seq;
+        handlers.onFrame({
+          bitmap,
+          deviceWidth: record.deviceWidth,
+          deviceHeight: record.deviceHeight,
+          scale: record.scale,
+          relayTs: record.ts,
+          seq: record.seq,
+          decodeMs: performance.now() - startedAt,
+          bytes: jpeg.byteLength + FRAME_STREAM_HEADER_BYTES,
+        });
+      })
+      .catch(() => {
+        // A frame that will not decode is one frame. The next paint
+        // replaces it, and dropping the connection over it would replace a
+        // momentary glitch with a reconnect.
+      })
+      .finally(() => {
+        decoding = false;
+        const next = pendingRecord;
+        pendingRecord = undefined;
+        if (!closed && next) decodeRecord(next);
+      });
+  };
+
   return {
     push(chunk) {
       if (closed) return;
@@ -125,6 +182,7 @@ export function createFrameWireReader(
       const decoded = decoder.push(bytes);
       if (!decoded.ok) {
         closed = true;
+        pendingRecord = undefined;
         handlers.onFatal?.(decoded.error);
         return;
       }
@@ -156,49 +214,21 @@ export function createFrameWireReader(
           continue;
         }
         if (record.kind !== FRAME_STREAM_KIND.frame) continue;
-        const jpeg = record.jpeg;
-        const startedAt = performance.now();
-        // OFF THE MAIN THREAD, which is the whole point of the byte wire:
-        // `createImageBitmap` decodes in the browser's own image pipeline,
-        // where a `data:` URL assigned to an `<img>` cannot.
-        //
-        // `.slice()` because the decoder hands back a view into a buffer it
-        // goes on appending to; a `Blob` over a live view can decode whatever
-        // arrived next instead.
-        void createImageBitmap(
-          new Blob([jpeg.slice().buffer as ArrayBuffer], {
-            type: "image/jpeg",
-          }),
-        )
-          .then((bitmap) => {
-            if (closed || record.seq <= deliveredSeq) {
-              // The socket went while we were decoding, or a newer picture
-              // already landed. Nobody will draw this, and nobody else will
-              // free it.
-              bitmap.close();
-              return;
-            }
-            deliveredSeq = record.seq;
-            handlers.onFrame({
-              bitmap,
-              deviceWidth: record.deviceWidth,
-              deviceHeight: record.deviceHeight,
-              scale: record.scale,
-              relayTs: record.ts,
-              seq: record.seq,
-              decodeMs: performance.now() - startedAt,
-              bytes: jpeg.byteLength + FRAME_STREAM_HEADER_BYTES,
-            });
-          })
-          .catch(() => {
-            // A frame that will not decode is one frame. The next paint
-            // replaces it, and dropping the connection over it would replace a
-            // momentary glitch with a reconnect.
-          });
+        if (options.latestOnly && decoding) {
+          if (
+            record.seq > deliveredSeq &&
+            (!pendingRecord || record.seq > pendingRecord.seq)
+          ) {
+            pendingRecord = { ...record, jpeg: record.jpeg.slice() };
+          }
+        } else if (!options.latestOnly || record.seq > deliveredSeq) {
+          decodeRecord(record);
+        }
       }
     },
     close() {
       closed = true;
+      pendingRecord = undefined;
     },
   };
 }
