@@ -3,8 +3,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const grantConsent = vi.hoisted(() => vi.fn(async () => true));
-vi.mock("@/hooks/useLocalComputerConsent", () => ({
-  useLocalComputerConsent: () => ({ grant: grantConsent }),
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => ({ grant: grantConsent }),
 }));
 
 const api = vi.hoisted(() => ({
@@ -215,12 +215,12 @@ function renderBody(over: Record<string, unknown> = {}) {
 }
 
 describe("the agent browser pane", () => {
-  it("grants shared device consent from the Browser panel", async () => {
+  it("grants Browser-only consent from the Browser panel", async () => {
     renderBody({ consentGranted: false });
     expect(await screen.findByTestId("rail-browser-unconsented")).toBeTruthy();
     expect(screen.queryByText(/Open the Computer tab/)).toBeNull();
     expect(
-      screen.getByText(/permission covers both commands and browser control/),
+      screen.getByText(/permission does not authorize shell commands/),
     ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Allow" }));
     expect(grantConsent).toHaveBeenCalled();

@@ -58,11 +58,11 @@ describe("local browser authentication across deployment modes", () => {
       method: "POST",
       headers: {
         Authorization: "Bearer explicit",
-        "X-MCPJam-Local-Consent": "consent",
+        "X-MCPJam-Browser-Consent": "consent",
       },
     });
     expect(sentHeaders().get("Authorization")).toBe("Bearer explicit");
-    expect(sentHeaders().get("X-MCPJam-Local-Consent")).toBe("consent");
+    expect(sentHeaders().get("X-MCPJam-Browser-Consent")).toBe("consent");
   });
 
   it("does not fabricate account credentials for an OSS client without a bearer", async () => {

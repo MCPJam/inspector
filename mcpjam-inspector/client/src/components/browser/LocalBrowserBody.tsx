@@ -8,8 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { PaneMessage } from "@/components/computer/PaneMessage";
-import { LocalComputerConsentGate } from "@/components/computer/LocalComputerConsentGate";
-import { useLocalComputerConsent } from "@/hooks/useLocalComputerConsent";
+import { LocalBrowserConsentGate } from "@/components/browser/LocalBrowserConsentGate";
+import { useLocalBrowserConsent } from "@/hooks/useLocalBrowserConsent";
 import {
   BrowserPaneSurface,
   type PaneControl,
@@ -140,7 +140,7 @@ export function LocalBrowserBody({
   active?: boolean;
 }) {
   const workspaceEnabled = useBrowserWorkspaceEnabled();
-  const { grant: grantConsent } = useLocalComputerConsent();
+  const { grant: grantConsent } = useLocalBrowserConsent();
   const [status, setStatus] = useState<LocalBrowserStatus | null>(null);
   const [session, setSession] = useState<{ bootId: string } | null>(null);
   const [lease, setLease] = useState<LocalBrowserLease>({ state: "free" });
@@ -205,7 +205,7 @@ export function LocalBrowserBody({
     }
     let cancelled = false;
     void api
-      .capability()
+      .capability(consentToken)
       .then((result) => {
         if (!cancelled) setNativeCapable(Boolean(result?.available));
       })
@@ -215,7 +215,7 @@ export function LocalBrowserBody({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [consentToken]);
   /**
    * Show the page itself rather than a screencast of it.
    *
@@ -893,7 +893,7 @@ export function LocalBrowserBody({
       return (
         <PaneMessage dashed>
           <div data-testid="rail-browser-unconsented">
-            <LocalComputerConsentGate
+            <LocalBrowserConsentGate
               onAllow={grantConsent}
               location="playground_browser"
             />
@@ -1105,6 +1105,7 @@ export function LocalBrowserBody({
             flex container to grow in, and the picture collapses to nothing. */}
         <div className="flex min-h-0 flex-1 flex-col">
           <ElectronNativeBody
+            consentToken={consentToken}
             session={session}
             holder={holder}
             control={control}
@@ -1205,6 +1206,7 @@ export function LocalBrowserBody({
         >
           {native ? (
             <ElectronNativeBody
+              consentToken={consentToken}
               session={session}
               holder={holder}
               control={control}

@@ -32,8 +32,9 @@ vi.mock("@/hooks/useClients", () => ({
   useHost: () => ({ host: state.explicitHost, isLoading: false }),
 }));
 
-vi.mock("@/hooks/useComputerEngine", () => ({
-  useComputerEngine: () => ({
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    localAvailable: true,
     engine: state.selectedEngine,
     selectedEngine: state.selectedEngine,
     consent: { token: state.consentToken, granted: !!state.consentToken },

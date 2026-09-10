@@ -391,9 +391,7 @@ function bindSessionEmit(
  *
  * Built from what the target ACTUALLY declares rather than from a first
  * matching branch, because the combinations are not exclusive: `bash` and
- * `browser` conflict on a host config only while a deployment has NOT accepted
- * the co-tenancy boundary (`allowComputerToolCoTenancy`), and a harness can
- * accompany either. A target that lost its box lost every one of them, so the
+ * `browser` may coexist, and a harness can accompany either. A target that lost its box lost every one of them, so the
  * sentence names every one of them.
  *
  * The `toolId` is the capability that DECIDED the image, because that is the

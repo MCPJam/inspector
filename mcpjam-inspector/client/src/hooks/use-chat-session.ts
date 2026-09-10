@@ -1,3 +1,6 @@
+import { saveBrowserEngine } from "@/lib/browser-engine-storage";
+import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
+import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 /**
  * useChatSession
  *
@@ -355,6 +358,11 @@ export interface UseChatSessionOptions {
   hostedContext?: HostedRuntimeContext;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
+  /** Browser location and Browser-only capability, independent of shell. */
+  personalBrowserEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
   /**
    * Resolved Local⇄Cloud engine for this project's personal computer, provided
    * by the caller (Playground) so the CENTRAL hook stays free of the config
@@ -457,7 +465,11 @@ export interface UseChatSessionOptions {
 }
 
 export type ChatSessionResetReason =
-  "auth-bootstrap" | "hydrate" | "fork" | "servers-changed" | "reset";
+  | "auth-bootstrap"
+  | "hydrate"
+  | "fork"
+  | "servers-changed"
+  | "reset";
 
 /**
  * Shown when `detachToLocalFork` could not confirm its fork went live. The
@@ -1704,6 +1716,7 @@ export function useChatSession(
     executionConfig,
     hostStyle,
     personalComputerEngine,
+    personalBrowserEngine,
     localHarnessExecution,
     onReset,
   } = options;
@@ -1711,6 +1724,13 @@ export function useChatSession(
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
   const resolvedLocalEngine = personalComputerEngine?.engine === "local";
   const localConsentToken = personalComputerEngine?.consentToken ?? null;
+  const localBrowserRequested =
+    !HOSTED_MODE &&
+    personalBrowserEngine?.engine === "local" &&
+    (options.builtInToolIds ?? executionConfig?.builtInToolIds)?.includes(
+      "browser",
+    ) === true;
+  const browserConsentToken = personalBrowserEngine?.consentToken ?? null;
   // Surfaces that omit `executionConfig` entirely (e.g. Playground) own their
   // chat-execution state imperatively and must not be re-synced from prop
   // defaults. Surfaces that pass `executionConfig` are in controlled mode and
@@ -2150,6 +2170,25 @@ export function useChatSession(
 
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (
+        part &&
+        typeof part === "object" &&
+        "type" in part &&
+        part.type === "data-browser-readiness" &&
+        "data" in part
+      ) {
+        const data = part.data as { reason?: unknown } | null;
+        if (!data || typeof data !== "object") return;
+        if (data.reason === null || typeof data.reason === "string") {
+          useBrowserReadinessStore
+            .getState()
+            .setReason(
+              `${hostedProjectId}:${chatSessionIdRef.current}`,
+              data.reason,
+            );
+        }
+        return;
+      }
       if (!isTraceEventDataPart(part)) {
         if (isScopeStepUpFinishedDataPart(part)) {
           const event = part.data;
@@ -2306,8 +2345,8 @@ export function useChatSession(
               ];
             const server =
               (log.serverName
-                ? (appState?.servers?.[log.serverName] ??
-                  activeProject?.servers?.[log.serverName])
+                ? appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName]
                 : undefined) ??
               appState?.servers?.[log.serverId] ??
               activeProject?.servers?.[log.serverId];
@@ -2693,7 +2732,7 @@ export function useChatSession(
     !HOSTED_MODE &&
     !hostedRequiresWebChatApi &&
     selectedModelUsesOrgRuntime &&
-    hasLocalOnlySelectedServer;
+    (hasLocalOnlySelectedServer || localBrowserRequested);
   /**
    * Does THIS send explicitly ask to run Claude Code on this machine?
    *
@@ -2915,6 +2954,13 @@ export function useChatSession(
       !hostedScenarioId &&
       Boolean(localConsentToken) &&
       authIsMemberRef.current;
+    const sendLocalBrowser =
+      !shouldUseOrgAwareChatApi &&
+      localBrowserRequested &&
+      !hostedScenarioId &&
+      authIsMemberRef.current;
+    if (sendLocalBrowser && browserConsentToken)
+      mergedHeaders[BROWSER_CONSENT_HEADER] = browserConsentToken;
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
@@ -3034,7 +3080,7 @@ export function useChatSession(
         // the data-part handler, whose closure is recreated on a project
         // switch and would stamp the NEW project on a late part.
         turnTaskScopeRef.current = shouldUseOrgAwareChatApi
-          ? (hostedProjectId ?? undefined)
+          ? hostedProjectId ?? undefined
           : getTrackedTaskScope();
         // And the approval value this turn is SENT with, for the same reason.
         // The server declares each tool's `needsApproval` from the value in
@@ -3094,6 +3140,13 @@ export function useChatSession(
                 // engine. The consent capability rides the header above; the
                 // server ignores this without it (and off the /mcp direct
                 // path). Absent ⇒ the legacy cloud-family resolution.
+                ...(!hostedScenarioId && personalBrowserEngine
+                  ? {
+                      browserEngine: sendLocalBrowser
+                        ? ("local" as const)
+                        : ("cloud" as const),
+                    }
+                  : {}),
                 ...(sendLocalEngine
                   ? { computerEngine: "local" as const }
                   : {}),
@@ -3276,6 +3329,9 @@ export function useChatSession(
     // the very next turn.
     resolvedLocalEngine,
     localConsentToken,
+    localBrowserRequested,
+    browserConsentToken,
+    personalBrowserEngine,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
@@ -4638,6 +4694,33 @@ export function useChatSession(
         shouldApply?: () => boolean;
       },
     ) => {
+      // The resume pointer is only a destination hint. Read the existing
+      // authenticated logical-session binding before selecting its location.
+      if (!HOSTED_MODE && hostedContext?.projectId && personalBrowserEngine) {
+        try {
+          const response = await authFetch(
+            "/api/mcp/computers/browser-location",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                projectId: hostedContext.projectId,
+                conversationId: session.chatSessionId,
+              }),
+            },
+          );
+          if (response.ok) {
+            const location = await response.json();
+            if (
+              (!options?.shouldApply || options.shouldApply()) &&
+              (location.engine === "local" || location.engine === "cloud")
+            )
+              saveBrowserEngine(hostedContext.projectId, location.engine);
+          }
+        } catch {
+          /* A failed lookup grants nothing; the turn/open boundary still refuses a mismatch. */
+        }
+      }
       let uiMessages: UIMessage[] = [];
 
       if (session.messagesBlobUrl) {
@@ -4715,7 +4798,12 @@ export function useChatSession(
       });
       onResetRef.current?.("hydrate");
     },
-    [queueSessionHydration, setSystemPrompt],
+    [
+      queueSessionHydration,
+      setSystemPrompt,
+      hostedContext?.projectId,
+      personalBrowserEngine,
+    ],
   );
 
   // When controlled, mirror `executionConfig` fields into local state; when

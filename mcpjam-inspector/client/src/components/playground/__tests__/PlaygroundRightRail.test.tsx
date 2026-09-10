@@ -435,3 +435,17 @@ describe("PlaygroundRightRail — the gated-off fallback", () => {
     ).toBeInTheDocument();
   });
 });
+
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    engine: engineState.engine,
+    selectedEngine: engineState.selectedEngine,
+    consent: {
+      granted: engineState.granted,
+      token: engineState.granted ? "browser-token" : null,
+    },
+  }),
+}));
+vi.mock("@/components/browser/BrowserRuntimeControls", () => ({
+  BrowserRuntimeControls: () => null,
+}));

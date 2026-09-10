@@ -1,3 +1,11 @@
+import { BrowserSessionService } from "../../services/browserd/session-service.js";
+import { isChromiumInstalled } from "../../utils/browser-rendering-setup.js";
+import { resolveLocalBrowserRuntime } from "../../services/browserd/local/local-browser-session.js";
+import { resolveBrowserEngine } from "../../utils/computers/browser-engine.js";
+import {
+  BROWSER_CONSENT_HEADER,
+  verifyLocalBrowserConsent,
+} from "../../utils/computers/browser-consent.js";
 import {
   withoutLegacyWebmcpVerbs,
   type BrowserPageToolsSnapshot,
@@ -548,7 +556,8 @@ function streamDirectChatWithLiveTrace(options: {
   // chain — cheaper than widening the engine's signature for every headless
   // caller that will never emit a receipt.
   let persistReceipt:
-    { outcome: PersistChatOutcome; turnId: string } | undefined;
+    | { outcome: PersistChatOutcome; turnId: string }
+    | undefined;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -697,6 +706,7 @@ chatV2.post("/", async (c) => {
       // (computer still comes only from the server-resolved runtime config).
       // "local" additionally requires the consent capability header.
       computerEngine?: "local" | "cloud";
+      browserEngine?: "local" | "cloud";
       // Run a CLAUDE CODE HARNESS turn on this machine rather than in a cloud
       // computer. Opaque ids only; the consent capability rides the
       // `x-mcpjam-local-harness-grant` header, never the body, so it cannot
@@ -764,7 +774,7 @@ chatV2.post("/", async (c) => {
       ? "scenario"
       : "playground";
     const chatSessionSurface: "preview" | "share_link" | undefined =
-      isScenarioSession ? (bodySurface ?? "preview") : undefined;
+      isScenarioSession ? bodySurface ?? "preview" : undefined;
 
     // Scenario-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
@@ -1289,7 +1299,9 @@ chatV2.post("/", async (c) => {
     // access (per-swarm isolation/caps). Absent ⇒ legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        { executionScope?: ExecutionScope } | null | undefined
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
     )?.executionScope;
 
     // Local⇄Cloud engine preference — a LOCAL-ROUTE-ONLY channel (this route
@@ -1333,16 +1345,95 @@ chatV2.post("/", async (c) => {
       localConsentValid,
     });
 
+    const localBrowserRequested = body.browserEngine === "local";
+    const browserConsentToken = c.req.header(BROWSER_CONSENT_HEADER);
+    const browserConsentValid =
+      !requestIsGuest &&
+      !isScenarioSession &&
+      (await verifyLocalBrowserConsent(browserConsentToken));
+    let browserEngine = resolveBrowserEngine({
+      preference: localBrowserRequested ? "local" : "cloud",
+      localConsentValid: browserConsentValid,
+    });
+    let browserUnavailableReason =
+      localBrowserRequested && browserEngine !== "local"
+        ? browserConsentValid
+          ? "browser_runtime_unavailable: Browser on this machine is unavailable. Check Browser settings."
+          : "browser_consent_required: Allow Browser in the Browser panel."
+        : undefined;
+
+    if (
+      browserEngine === "local" &&
+      resolveLocalBrowserRuntime() !== "electron" &&
+      !(await isChromiumInstalled())
+    ) {
+      browserEngine = "unavailable";
+      browserUnavailableReason =
+        "browser_runtime_unavailable: Install Chromium in the Browser panel.";
+    }
+    if (
+      body.browserEngine &&
+      body.chatSessionId &&
+      body.projectId &&
+      builtInAuthHeader &&
+      resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID) &&
+      !browserUnavailableReason
+    ) {
+      try {
+        const browserSessions = new BrowserSessionService();
+        const logical = await browserSessions.resolveSession({
+          owner: { kind: "conversation", id: body.chatSessionId },
+          projectId: body.projectId,
+          bearer: builtInAuthHeader,
+          engine: localBrowserRequested ? "local" : "hosted",
+          profile: "blank",
+        });
+        if (browserSessions.enabled && !logical)
+          throw new Error("Browser session could not be resolved");
+      } catch (error) {
+        browserEngine = "unavailable";
+        browserUnavailableReason =
+          error instanceof Error &&
+          error.message.includes("browser_location_mismatch")
+            ? "browser_location_mismatch: Start a new chat to change Browser location."
+            : "browser_runtime_unavailable: Browser session could not be reached. Retry from the Browser panel.";
+      }
+    }
+
+    const emitBrowserReadiness = (writer: {
+      write: (chunk: UIMessageChunk) => void;
+    }) => {
+      if (
+        !body.browserEngine ||
+        !resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+      )
+        return;
+      writer.write({
+        type: "data-browser-readiness",
+        data: { reason: browserUnavailableReason ?? null },
+      });
+      if (!browserUnavailableReason) return;
+      writer.write({ type: "text-start", id: "browser-readiness" });
+      writer.write({
+        type: "text-delta",
+        id: "browser-readiness",
+        delta: browserUnavailableReason + "\n\n",
+      });
+      writer.write({ type: "text-end", id: "browser-readiness" });
+    };
+
     // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built. See
     // the twin block in `routes/web/chat-v2.ts`: read-only, fail-empty, and
     // skipped entirely for a turn that has no browser capability.
     const pageToolsPeek = await peekPageToolsForChatTurn({
-      builtInToolIds: resolvedExecution.builtInToolIds,
+      builtInToolIds: browserUnavailableReason
+        ? []
+        : resolvedExecution.builtInToolIds,
       browserToolId: BROWSER_BUILT_IN_TOOL_ID,
       firstClass: webmcpPageToolsMode() === "first_class",
       isHarnessTurn: Boolean(resolvedExecution.harness),
       hasV1PageTools: validatedPageTools.length > 0,
-      engine: computerEngine === "local" ? "local" : "hosted",
+      engine: browserEngine === "local" ? "local" : "hosted",
       projectId:
         typeof body.projectId === "string" ? body.projectId : undefined,
       ...(builtInAuthHeader ? { bearer: builtInAuthHeader } : {}),
@@ -1419,6 +1510,10 @@ chatV2.post("/", async (c) => {
             // requires approval regardless (see bash.ts).
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
+            browserEngine,
+            browserConsentToken,
+            localBrowserRequested,
+            browserUnavailableReason,
             localComputerRequested: localPrefEligible,
             // A person is watching this route, so browser tools may be
             // advertised and keep a signed-in profile; surfaces that attest
@@ -1894,6 +1989,7 @@ chatV2.post("/", async (c) => {
         }) => {
           scopeChallengeWriter = writer;
           taskCreatedBridge?.attachStreamWriter(writer);
+          emitBrowserReadiness(writer);
         },
         ...(resolvedExecution.harness
           ? {
@@ -2030,7 +2126,8 @@ chatV2.post("/", async (c) => {
       // still executes locally against the local MCP connection. Without this,
       // a local-eligible provider would resolve to the "local" runtime and pull
       // the org key onto this machine, which org BYOK must never do.
-      const localMcpRuntimeRequired = body.localMcpRuntimeRequired === true;
+      const localMcpRuntimeRequired =
+        body.localMcpRuntimeRequired === true || localBrowserRequested;
       const runtime: OrgProviderRuntime =
         !localMcpRuntimeRequired && isLocalRuntimeEligible(providerKey)
           ? await resolveOrgProviderRuntime(
@@ -2135,6 +2232,7 @@ chatV2.post("/", async (c) => {
           }) => {
             scopeChallengeWriter = writer;
             taskCreatedBridge?.attachStreamWriter(writer);
+            emitBrowserReadiness(writer);
           },
         });
       }
@@ -2170,6 +2268,7 @@ chatV2.post("/", async (c) => {
         }) => {
           scopeChallengeWriter = writer;
           taskCreatedBridge?.attachStreamWriter(writer);
+          emitBrowserReadiness(writer);
         },
       });
     }
@@ -2220,7 +2319,8 @@ chatV2.post("/", async (c) => {
     const authHeader = c.req.header("authorization");
     const chatSessionId = body.chatSessionId;
     const inboundAbortSignalDirect = c.req.raw.signal as
-      AbortSignal | undefined;
+      | AbortSignal
+      | undefined;
     warnIfChatAbortSignalMissing(inboundAbortSignalDirect, "mcp/chat-v2");
 
     const scrubbedModelMessages = scrubMessages(
@@ -2252,6 +2352,7 @@ chatV2.post("/", async (c) => {
       }) => {
         scopeChallengeWriter = writer;
         taskCreatedBridge?.attachStreamWriter(writer);
+        emitBrowserReadiness(writer);
       },
       onPersist: chatSessionId
         ? async ({

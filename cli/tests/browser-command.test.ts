@@ -16,12 +16,12 @@ async function stateFile(
 }
 
 function env(file: string): NodeJS.ProcessEnv {
-  // MCPJAM_LOCAL_CONSENT is cleared explicitly: `consentOf` reads it BEFORE the
+  // MCPJAM_BROWSER_CONSENT is cleared explicitly: `consentOf` reads it BEFORE the
   // stored consent, so a developer who happens to export one would have these
   // tests reach a real Inspector instead of failing the way they assert.
   return {
     ...process.env,
-    MCPJAM_LOCAL_CONSENT: "",
+    MCPJAM_BROWSER_CONSENT: "",
     MCPJAM_BROWSER_STATE_FILE: file,
   };
 }
@@ -62,21 +62,71 @@ test("the CLI never grants its own consent — it says where to get one", async 
   assert.match(result.stderr + result.stdout, /mcpjam browser consent/);
 });
 
-test("`browser consent` stores what a person granted in the UI", async () => {
-  const file = await stateFile();
-  const result = await runCli(
-    ["--format", "json", "browser", "consent", "--token", "cap-xyz"],
-    undefined,
-    { env: env(file) },
+test("browser consent validates before storing, and refuses old Inspectors", async () => {
+  const { createServer } = await import("node:http");
+  const { readBrowserState } = await import(
+    "../src/lib/browser-session-store.js"
   );
-  assert.equal(result.exitCode, 0);
-  const { readBrowserState } =
-    await import("../src/lib/browser-session-store.js");
-  assert.equal(readBrowserState(file).consent, "cap-xyz");
+  let supported = true;
+  let valid = true;
+  const calls: string[] = [];
+  const server = createServer(async (req, res) => {
+    calls.push(req.url ?? "");
+    for await (const _ of req) {
+      /* drain */
+    }
+    res.setHeader("content-type", "application/json");
+    res.end(
+      JSON.stringify(
+        req.url === "/api/session-token"
+          ? { token: "session-token" }
+          : req.url === "/api/web/computers/config"
+          ? { capabilities: { browserConsent: supported } }
+          : { valid }
+      )
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const file = await stateFile({ version: 1, consent: "legacy-shell-token" });
+  const args = [
+    "--format",
+    "json",
+    "browser",
+    "consent",
+    "--inspector-url",
+    url,
+    "--token",
+    "browser-token",
+  ];
+  try {
+    const result = await runCli(args, undefined, { env: env(file) });
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(readBrowserState(file).browserConsent, "browser-token");
+    assert.ok(
+      calls.includes("/api/mcp/computers/local-browser/consent/verify")
+    );
+    assert.ok(!calls.some((call) => call.endsWith("/grant")));
+    valid = false;
+    const rejected = await runCli(
+      [...args.slice(0, -1), "wrong-token"],
+      undefined,
+      { env: env(file) }
+    );
+    assert.notEqual(rejected.exitCode, 0);
+    assert.equal(readBrowserState(file).browserConsent, "browser-token");
+    supported = false;
+    const old = await runCli(args, undefined, { env: env(file) });
+    assert.notEqual(old.exitCode, 0);
+    assert.match(old.stderr + old.stdout, /Update Inspector/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 test("a command with no open session says so instead of guessing one", async () => {
-  const file = await stateFile({ version: 1, consent: "cap" });
+  const file = await stateFile({ version: 1, browserConsent: "cap" });
   const result = await runCli(
     ["--format", "json", "browser", "observe", "--project", "p"],
     undefined,
@@ -92,7 +142,7 @@ test("two targets on one act is a usage error, not a silent pick", async () => {
   // for, which looks exactly like a click that missed.
   const file = await stateFile({
     version: 1,
-    consent: "cap",
+    browserConsent: "cap",
     sessions: { p: "bs_00000000-0000-4000-8000-000000000000" },
   });
   const result = await runCli(
@@ -120,7 +170,7 @@ test("two targets on one act is a usage error, not a silent pick", async () => {
 test("coordinates must both be numbers", async () => {
   const file = await stateFile({
     version: 1,
-    consent: "cap",
+    browserConsent: "cap",
     sessions: { p: "bs_00000000-0000-4000-8000-000000000000" },
   });
   const result = await runCli(
@@ -180,7 +230,11 @@ test("the normalized success wins over anything in the payload", async () => {
 test("a project name that is an inherited property is not a session", async () => {
   // A parsed JSON object still inherits from Object.prototype, so
   // `--project toString` resolved to a function and was handed on as a session.
-  const file = await stateFile({ version: 1, consent: "cap", sessions: {} });
+  const file = await stateFile({
+    version: 1,
+    browserConsent: "cap",
+    sessions: {},
+  });
   const result = await runCli(
     ["--format", "json", "browser", "observe", "--project", "toString"],
     undefined,
@@ -195,7 +249,7 @@ test("the consent capability is never sent to a cleartext remote Inspector", asy
   // cleartext to a remote host it is on the wire for anyone on the path.
   const file = await stateFile({
     version: 1,
-    consent: "cap",
+    browserConsent: "cap",
     sessions: { p: "bs_00000000-0000-4000-8000-000000000000" },
   });
   const remote = await runCli(
@@ -238,7 +292,7 @@ test("a loopback URL still has to be http or https", async () => {
   // inside a fetch says less than failing on the argument that was typed.
   const file = await stateFile({
     version: 1,
-    consent: "cap",
+    browserConsent: "cap",
     sessions: { p: "bs_00000000-0000-4000-8000-000000000000" },
   });
   for (const url of ["ws://localhost:6274", "ftp://localhost"]) {
@@ -264,7 +318,7 @@ test("a loopback URL still has to be http or https", async () => {
 test("a misspelled --profile is a usage error, not the real browser", async () => {
   // `--profile ephermal` asked for a throwaway context; opening the project's
   // logged-in Chromium instead is the mix-up this surface exists to prevent.
-  const file = await stateFile({ version: 1, consent: "cap" });
+  const file = await stateFile({ version: 1, browserConsent: "cap" });
   const result = await runCli(
     [
       "--format",
@@ -354,7 +408,7 @@ test("cloud uses bearer auth and deployment-scoped session storage without local
     calls.push({
       url: req.url,
       auth: req.headers.authorization,
-      consent: req.headers["x-mcpjam-local-consent"],
+      consent: req.headers["x-mcpjam-browser-consent"],
       body: JSON.parse(raw),
     });
     res.setHeader("content-type", "application/json");
@@ -363,18 +417,18 @@ test("cloud uses bearer auth and deployment-scoped session storage without local
         req.url?.endsWith("/session")
           ? { session: { sessionId: "cloud-session" } }
           : req.url?.endsWith("/artifact")
-            ? { screenshot: "aGVsbG8=" }
-            : {
-                status: "executed",
-                ok: true,
-                commandId: "cmd",
-                page: {
-                  artifacts: {
-                    screenshot: { id: "cmd", mediaType: "image/jpeg" },
-                  },
+          ? { screenshot: "aGVsbG8=" }
+          : {
+              status: "executed",
+              ok: true,
+              commandId: "cmd",
+              page: {
+                artifacts: {
+                  screenshot: { id: "cmd", mediaType: "image/jpeg" },
                 },
               },
-      ),
+            }
+      )
     );
   });
   await new Promise<void>((resolve, reject) => {
@@ -386,7 +440,7 @@ test("cloud uses bearer auth and deployment-scoped session storage without local
   }/api/v1`;
   const file = await stateFile({
     version: 1,
-    consent: "NEVER-SEND",
+    browserConsent: "NEVER-SEND",
     sessions: { p: "local-session" },
   });
   const flags = [
@@ -459,6 +513,79 @@ test("cloud uses bearer auth and deployment-scoped session storage without local
     assert.equal(state.sessions[`cloud:${apiUrl}:p`], "cloud-session");
     const output = JSON.parse(observed.stdout);
     assert.equal(await readFile(output.screenshotPath, "utf8"), "hello");
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("Browser consent precedence is flag, Browser environment, then Browser state; legacy grants are ignored", async () => {
+  const { createServer } = await import("node:http");
+  const received: string[] = [];
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) {
+      /* drain */
+    }
+    res.setHeader("content-type", "application/json");
+    if (req.url === "/api/session-token")
+      res.end(JSON.stringify({ token: "session-token" }));
+    else if (req.url === "/api/web/computers/config")
+      res.end(JSON.stringify({ capabilities: { browserConsent: true } }));
+    else {
+      received.push(String(req.headers["x-mcpjam-browser-consent"]));
+      res.end(
+        JSON.stringify({ ok: true, sessionId: "bs_test", projectId: "p" })
+      );
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const file = await stateFile({
+    version: 1,
+    browserConsent: "stored-browser-token",
+    consent: "legacy-token",
+  });
+  const args = [
+    "--format",
+    "json",
+    "browser",
+    "open",
+    "--project",
+    "p",
+    "--inspector-url",
+    url,
+  ];
+  try {
+    for (const [extra, token, expected] of [
+      [
+        ["--consent", "flag-browser-token"],
+        "env-browser-token",
+        "flag-browser-token",
+      ],
+      [[], "env-browser-token", "env-browser-token"],
+      [[], "", "stored-browser-token"],
+    ] as const) {
+      const result = await runCli([...args, ...extra], undefined, {
+        env: {
+          ...env(file),
+          MCPJAM_BROWSER_CONSENT: token,
+          MCPJAM_LOCAL_CONSENT: "shell-env-token",
+        },
+      });
+      assert.equal(received.at(-1), expected);
+      assert.ok(!(result.stdout + result.stderr).includes(expected));
+    }
+    await writeFile(
+      file,
+      JSON.stringify({ version: 1, consent: "legacy-token" })
+    );
+    const count = received.length;
+    const result = await runCli(args, undefined, {
+      env: { ...env(file), MCPJAM_LOCAL_CONSENT: "shell-env-token" },
+    });
+    assert.notEqual(result.exitCode, 0);
+    assert.match(result.stderr + result.stdout, /has not been authorized/);
+    assert.equal(received.length, count);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));

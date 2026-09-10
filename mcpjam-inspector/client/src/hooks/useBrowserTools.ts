@@ -17,7 +17,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { useComputerEngine } from "@/hooks/useComputerEngine";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useHost } from "@/hooks/useClients";
 import { resolveEffectiveHost } from "@/lib/effective-client";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -102,7 +102,7 @@ export function useBrowserTools(args: {
     explicitHostConfig: host?.config ?? null,
     projectDefaultHostConfig: projectDefaultHostConfig ?? null,
   });
-  const engineState = useComputerEngine(args.projectId);
+  const engineState = useBrowserEngine(args.projectId);
   const mintToken = useMintBrowserToken();
   const attached = (hostConfig?.builtInToolIds ?? []).includes(
     BROWSER_BUILT_IN_TOOL_ID,
@@ -259,5 +259,17 @@ export function useBrowserTools(args: {
     webmcpEpoch,
   ]);
 
-  return { attached, engine, tools, page, live, refreshPage };
+  const available =
+    engine !== "local" ||
+    (engineState.localAvailable && engineState.consent.granted);
+  return {
+    attached,
+    engine,
+    tools: available ? tools : [],
+    page: available
+      ? page
+      : { ok: false as const, error: "no_browser_session" as const },
+    live: available ? live : undefined,
+    refreshPage,
+  };
 }
