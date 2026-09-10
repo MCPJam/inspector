@@ -74,7 +74,7 @@ describe("ScenarioShareSection", () => {
 
   it("renders the same section structure as the project share dialog", () => {
     render(
-      <ScenarioShareSection scenario={createScenario()} projectName="Acme" />,
+      <ScenarioShareSection scenario={createScenario()} />,
     );
 
     // getByLabelText, not getByText: the "Tester link" label has to resolve to
@@ -102,7 +102,7 @@ describe("ScenarioShareSection", () => {
   it("discloses guest credit usage only when link guest access is selected", () => {
     const creditNotice = /Guest usage runs on your organization's credits/i;
     const { rerender } = render(
-      <ScenarioShareSection scenario={createScenario()} projectName="Acme" />,
+      <ScenarioShareSection scenario={createScenario()} />,
     );
 
     expect(screen.queryByText(creditNotice)).not.toBeInTheDocument();
@@ -113,7 +113,7 @@ describe("ScenarioShareSection", () => {
           allowGuestAccess: true,
           mode: "anyone_with_link",
         })}
-        projectName="Acme"
+       
       />,
     );
 
@@ -148,7 +148,7 @@ describe("ScenarioShareSection", () => {
             },
           ],
         })}
-        projectName="Acme"
+       
       />,
     );
 
@@ -181,7 +181,7 @@ describe("ScenarioShareSection", () => {
       },
     });
 
-    render(<ScenarioShareSection scenario={scenario} projectName="Acme" />);
+    render(<ScenarioShareSection scenario={scenario} />);
 
     // The withheld copy, not just the absence of the link: asserting a path is
     // missing would stay green if the path shape ever changed under it.
@@ -259,7 +259,7 @@ describe("ScenarioShareSection", () => {
     render(
       <ScenarioShareSection
         scenario={createScenario({ maxShareMode: "invited_only" })}
-        projectName="Acme"
+       
       />,
     );
 
