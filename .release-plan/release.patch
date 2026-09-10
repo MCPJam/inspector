@@ -1,55 +1,77 @@
-diff --git a/.changeset/restore-credentialed-mcp-connections.md b/.changeset/restore-credentialed-mcp-connections.md
+diff --git a/.changeset/friendly-browsers-recover.md b/.changeset/friendly-browsers-recover.md
 deleted file mode 100644
-index 34ae49c97..000000000
---- a/.changeset/restore-credentialed-mcp-connections.md
+index 9755a4070..000000000
+--- a/.changeset/friendly-browsers-recover.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Restore bearer-authenticated and OAuth MCP server connections when the backend does not provide credential-origin bindings by temporarily reverting enforcement until backend support and the required backfill are deployed.
-diff --git a/.changeset/skip-project-default-for-sentinel-project-id.md b/.changeset/skip-project-default-for-sentinel-project-id.md
-deleted file mode 100644
-index f85ffccb8..000000000
---- a/.changeset/skip-project-default-for-sentinel-project-id.md
-+++ /dev/null
-@@ -1,12 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Stop asking the backend for a project default host config under a project id
--that is not a Convex row. The Playground passes `sharedProjectId ??
--activeProjectId`, so a guest with no cloud project reached
--`hostConfigsV2:getProjectDefault` with the string sentinel `"none"` — truthy,
--and rejected by `v.id("projects")` before the handler runs, where nothing
--client-side could catch it. All four call sites now gate on
--`shouldQueryProjectId`, the guard the rest of the Convex-reading hooks already
--use.
+-Fix comparison browser controls leaving browser access blocked before the next chat turn. Make Chromium installation and recovery available before a comparison browser starts, and notify consent subscribers once when clearing browser permission.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index d818a10ac..ea2df04d2 100644
+index ea2df04d2..7731fc822 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.5.0",
-+  "version": "3.5.1",
+-  "version": "3.5.1",
++  "version": "3.5.2",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index 947bfe495..c36f29613 100644
+index bc625c390..4515c9cb1 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -400,7 +400,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.5.0",
-+      "version": "3.5.1",
+-      "version": "3.5.1",
++      "version": "3.5.2",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
+@@ -8198,9 +8198,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -8217,9 +8214,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -8236,9 +8230,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -8255,9 +8246,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [

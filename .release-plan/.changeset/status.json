@@ -7,30 +7,19 @@
           "type": "patch"
         }
       ],
-      "summary": "Restore bearer-authenticated and OAuth MCP server connections when the backend does not provide credential-origin bindings by temporarily reverting enforcement until backend support and the required backfill are deployed.",
-      "id": "restore-credentialed-mcp-connections"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Stop asking the backend for a project default host config under a project id\nthat is not a Convex row. The Playground passes `sharedProjectId ??\nactiveProjectId`, so a guest with no cloud project reached\n`hostConfigsV2:getProjectDefault` with the string sentinel `\"none\"` — truthy,\nand rejected by `v.id(\"projects\")` before the handler runs, where nothing\nclient-side could catch it. All four call sites now gate on\n`shouldQueryProjectId`, the guard the rest of the Convex-reading hooks already\nuse.",
-      "id": "skip-project-default-for-sentinel-project-id"
+      "summary": "Fix comparison browser controls leaving browser access blocked before the next chat turn. Make Chromium installation and recovery available before a comparison browser starts, and notify consent subscribers once when clearing browser permission.",
+      "id": "friendly-browsers-recover"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "3.5.0",
+      "oldVersion": "3.5.1",
       "changesets": [
-        "restore-credentialed-mcp-connections",
-        "skip-project-default-for-sentinel-project-id"
+        "friendly-browsers-recover"
       ],
-      "newVersion": "3.5.1"
+      "newVersion": "3.5.2"
     }
   ]
 }
