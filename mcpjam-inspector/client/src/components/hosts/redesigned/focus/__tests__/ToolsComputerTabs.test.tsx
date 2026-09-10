@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const flags = vi.hoisted(() => ({ hostedBrowser: true }));
 import { fireEvent, render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 
@@ -48,7 +49,8 @@ vi.mock("../BrowserProfilePicker", () => ({
 // Flag on so computer-backed rows (Bash) are visible in the Tools tab.
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
-  useFeatureFlagEnabled: () => true,
+  useFeatureFlagEnabled: (key: string) =>
+    key === "hosted-browser-enabled" ? flags.hostedBrowser : true,
 }));
 // Harness native built-in tools (read-only). Returns a list only for a harness
 // host (non-null harnessId), mirroring the real catalog hook.
@@ -75,15 +77,25 @@ vi.mock("@/hooks/useHarnessBuiltinTools", () => ({
       : { tools: [], loading: false },
 }));
 
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({ toggleVisible: flags.hostedBrowser }),
+}));
+vi.mock("@/components/browser/BrowserRuntimeControls", () => ({ BrowserRuntimeControls: () => null }));
+vi.mock("@/components/browser/BrowserProfilesSettings", () => ({ BrowserProfilesSettings: () => null }));
+import { BrowserTab } from "../BrowserTab";
 import { ToolsTab } from "../ToolsTab";
 import { ComputerTab } from "../ComputerTab";
 
 describe("ToolsTab", () => {
-  it("enables Browser without a computer and edits its profile from Tools", () => {
+  beforeEach(() => {
+    flags.hostedBrowser = true;
+  });
+
+  it("enables Browser without a computer and edits its profile from Browser", () => {
     const onDraftChange = vi.fn();
     const draft = emptyHostConfigInputV2({ builtInToolIds: ["browser"] });
     render(
-      <ToolsTab
+      <BrowserTab
         projectId="project-1"
         draft={draft}
         onDraftChange={onDraftChange}
@@ -96,11 +108,29 @@ describe("ToolsTab", () => {
     const updated = onDraftChange.mock.calls[0][0](draft);
     expect(updated.browserProfileId).toBe("profile-1");
     expect(updated.computer).toBeUndefined();
+    expect(
+      screen.getByText(/browser location, device permission/),
+    ).toBeInTheDocument();
+  });
+
+  it("hides Cloud location copy when hosted browser is flagged off", () => {
+    flags.hostedBrowser = false;
+    render(
+      <BrowserTab
+        projectId="project-1"
+        draft={emptyHostConfigInputV2({ builtInToolIds: ["browser"] })}
+        onDraftChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/browser location/)).toBeNull();
+    expect(
+      screen.getByText(/device permission and saved profiles/),
+    ).toBeInTheDocument();
   });
 
   it("disables the profile picker for read-only hosts", () => {
     render(
-      <ToolsTab
+      <BrowserTab
         projectId="project-1"
         draft={emptyHostConfigInputV2({ builtInToolIds: ["browser"] })}
         onDraftChange={vi.fn()}

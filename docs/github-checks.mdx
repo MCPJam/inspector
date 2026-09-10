@@ -232,6 +232,31 @@ writes there is deliberately bounded.
 If a case title or a tool name is itself sensitive, treat it as published: those
 are the two fields that carry your own words into a public comment.
 
+## Server authentication
+
+Some MCP servers require OAuth login before they will answer the MCP initialize
+request. When MCPJam detects a Bearer challenge during the health probe, it
+marks the server as requiring authorization and looks for a project-shared OAuth
+connection to use.
+
+To run checks against such a server:
+
+1. Go to **Settings → Integrations → GitHub** and find the repository in
+   **Connected repositories**.
+2. Under **Server authentication**, select the project-shared OAuth connection
+   that is authorized for the PR server.
+3. If no authorized connection appears in the list, click **Authorize or
+   reconnect** to go to the project's Servers page and complete the OAuth flow
+   there first.
+
+When no OAuth source is selected and the PR server requires login, the check
+reports **Action required** and skips execution. Selecting an authorized source
+lets the check proceed normally.
+
+The selector only shows connections that belong to the same project as the
+connected repository. Connections that have not been authorized yet appear in
+the list but are disabled — authorize them on the Servers page first.
+
 ## Per-repository switches
 
 Each connected repository has three labeled switches:

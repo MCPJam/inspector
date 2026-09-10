@@ -72,6 +72,13 @@ it("defaults to This machine without shell availability or Browser consent", () 
   expect(result.current.engine).toBe("local");
   expect(result.current.localAvailable).toBe(true);
   expect(result.current.cloudAvailable).toBe(false);
+  expect(result.current.toggleVisible).toBe(false);
+});
+it("offers a location picker only when the hosted-browser rollout is on", () => {
+  state.hostedFlag = true;
+  const { result } = renderHook(() => useBrowserEngine("p"));
+  expect(result.current.cloudAvailable).toBe(true);
+  expect(result.current.toggleVisible).toBe(true);
 });
 it("keeps local Browser available to guests but never offers cloud", () => {
   state.member = false;
@@ -143,4 +150,14 @@ it("resuming Cloud affects only that conversation and leaves new chats local", (
   expect(loadBrowserEngine("p")).toBe("local");
   act(() => useActiveChatSessionStore.getState().setSessionId("new-chat"));
   expect(result.current.engine).toBe("local");
+});
+
+it("personal preferences ignore an environment's forced location and a bound chat", () => {
+  saveBrowserEngine("p", "local");
+  state.environment = true;
+  useActiveChatSessionStore.setState({ sessionId: "old-chat", browserLocation: { projectId: "p", sessionId: "old-chat", engine: "cloud" } });
+  const { result } = renderHook(() => useBrowserEngine("p", "preference"));
+  expect(result.current.selectedEngine).toBe("local");
+  act(() => result.current.setEngine("cloud"));
+  expect(loadBrowserEngine("p")).toBe("cloud");
 });

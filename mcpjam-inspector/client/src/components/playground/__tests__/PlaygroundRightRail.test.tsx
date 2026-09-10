@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 
 /**
  * The rail's Shell tab is engine-aware: the CLOUD controller
@@ -142,6 +142,7 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 }));
 
 import { PlaygroundRightRail } from "../PlaygroundRightRail";
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 
 const hostConfig = { computer: { workdir: "/home/user" } } as any;
 
@@ -165,6 +166,11 @@ beforeEach(() => {
   engineState.granted = false;
   terminalSpies.useComputerTerminal.mockClear();
   terminalSpies.openTerminal.mockClear();
+  useBrowserWorkspaceStore.setState({
+    conversations: {},
+    revealSeq: 0,
+    revealConversationId: null,
+  });
 });
 
 describe("PlaygroundRightRail — engine indicator", () => {
@@ -441,6 +447,46 @@ describe("PlaygroundRightRail — the gated-off fallback", () => {
       screen.getByRole("button", { name: /browser/i }),
     ).toBeInTheDocument();
   });
+
+  it("opens the Browser tab when the agent starts browsing", () => {
+    workspaceFlag.enabled = false;
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    renderRail();
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+    act(() => {
+      useBrowserWorkspaceStore.getState().openBrowser("chat-1");
+    });
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+  });
+
+  it("stays on Logs once the person has left the browser", () => {
+    workspaceFlag.enabled = false;
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    renderRail();
+    act(() => {
+      useBrowserWorkspaceStore.getState().openBrowser("chat-1");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+    act(() => {
+      useBrowserWorkspaceStore.getState().openBrowser("chat-1");
+    });
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+  });
 });
 
 vi.mock("@/hooks/useBrowserEngine", () => ({
@@ -456,3 +502,41 @@ vi.mock("@/hooks/useBrowserEngine", () => ({
 vi.mock("@/components/browser/BrowserRuntimeControls", () => ({
   BrowserRuntimeControls: () => null,
 }));
+
+vi.mock("@/components/browser/BrowserActivityList", () => ({
+  BrowserActivityList: ({ active }: { active: boolean }) => (
+    <div data-testid="browser-activity-logs" data-active={String(active)}>
+      Browser activity
+    </div>
+  ),
+}));
+
+it("shows browser activity only in Logs and stops polling on the Browser tab", () => {
+  workspaceFlag.enabled = false;
+  engineState.selectedEngine = "local";
+  engineState.granted = true;
+  render(
+    <PlaygroundRightRail
+      onClose={() => {}}
+      hostConfig={{ builtInToolIds: ["browser"] } as any}
+      hostId="host-1"
+      projectId="proj-1"
+      isAuthenticated
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+  const activity = screen.getByTestId("browser-activity-logs");
+  expect(activity).toBeVisible();
+  expect(activity).toHaveAttribute("data-active", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Browser" }));
+  expect(activity).not.toBeVisible();
+  expect(activity).toHaveAttribute("data-active", "false");
+});
+
+it("does not mount browser history without browser consent", () => {
+  workspaceFlag.enabled = false;
+  engineState.selectedEngine = "local";
+  engineState.granted = false;
+  renderRail();
+  expect(screen.queryByTestId("browser-activity-logs")).toBeNull();
+});

@@ -132,6 +132,7 @@ export function PlaygroundBrowserPanel({
             <Maximize2 className="size-3.5" aria-hidden />
           )}
         </button>
+        <BrowserRuntimeControls projectId={projectId} compact />
         <button
           type="button"
           onClick={onClose}
@@ -147,7 +148,6 @@ export function PlaygroundBrowserPanel({
           <PanelRightClose className="size-3.5" aria-hidden />
         </button>
       </div>
-      <BrowserRuntimeControls projectId={projectId} />
       <div className="flex min-h-0 flex-1 flex-col">
         {isLocal && !engine.localAvailable ? (
           <p className="p-4 text-sm text-muted-foreground">
@@ -195,10 +195,12 @@ export function PlaygroundBrowserPanel({
  */
 export function browserPanelAvailable(args: {
   hostHasBrowser: boolean;
+  sessionHasBrowser?: boolean;
   selectedEngine: "local" | "cloud";
   isAuthenticated: boolean;
   localBrowserRunning: boolean;
 }): boolean {
+  if (args.sessionHasBrowser && args.isAuthenticated) return true;
   if (args.localBrowserRunning) return true;
   if (!args.hostHasBrowser) return false;
   return args.selectedEngine === "local" || args.isAuthenticated;

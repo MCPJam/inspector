@@ -1,3 +1,4 @@
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 /**
  * PlaygroundMain
@@ -181,7 +182,7 @@ import {
 } from "@/lib/previewed-client-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
-import { useProjectMembers } from "@/hooks/useProjects";
+import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
@@ -923,9 +924,13 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  // `shouldQueryProjectId`, not a bare truthiness check — the same guard the
+  // rest of the Convex-reading hooks use. `convexProjectId` is a shared project
+  // id today, but a local/placeholder id reaching `v.id("projects")` throws
+  // before the handler and cannot be caught downstream.
   const projectDefaultHostConfig = useQuery(
     "hostConfigsV2:getProjectDefault" as never,
-    isConvexAuthenticated && convexProjectId
+    isConvexAuthenticated && shouldQueryProjectId(convexProjectId)
       ? ({ projectId: convexProjectId } as never)
       : "skip",
   ) as HostConfigDtoV2 | null | undefined;
@@ -1243,6 +1248,10 @@ export function PlaygroundMain({
   // conversation only while this Playground center is mounted; the rail then
   // binds the watched browser to the same durable owner. Clearing is guarded
   // so an overlapping PlaygroundMain cannot erase a newer active session.
+  const restoredSessionHasBrowser = useActiveChatSessionStore(
+    (state) => state.restoredSession?.sessionId === chatSessionId && !!state.restoredSession.browser,
+  );
+  const apiSessionViewOnly = useActiveChatSessionStore(state => state.restoredSession?.sessionId === chatSessionId && state.restoredSession.origin === "api");
   const setActiveChatSessionId = useActiveChatSessionStore(
     (state) => state.setSessionId,
   );
@@ -2334,7 +2343,7 @@ export function PlaygroundMain({
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive: isStreamingActive || isPreparingServerForSend,
     composerDisabled:
-      disableChatInput || submitBlocked || isPreparingServerForSend,
+      apiSessionViewOnly || disableChatInput || submitBlocked || isPreparingServerForSend,
     submitDisabled:
       disableChatInput ||
       submitBlocked ||
@@ -2593,7 +2602,7 @@ export function PlaygroundMain({
   // ref rather than a dependency — the send paths must not be re-created (and
   // re-armed) on every host or environment change.
   conversationSendBlockedRef.current =
-    needsConversationTargetAck || loadingHistorySessionId !== null || restoringTarget !== null;
+    apiSessionViewOnly || needsConversationTargetAck || loadingHistorySessionId !== null || restoringTarget !== null;
   const acknowledgeConversationTarget = useCallback(() => {
     setRestoredConversation((previous) =>
       previous ? { ...previous, acknowledged: true } : previous,
@@ -2689,7 +2698,7 @@ export function PlaygroundMain({
         turnTraces?: ChatHistoryTurnTrace[];
       },
     ) => {
-      if (options?.restoreExecutionTarget) {
+      if (options?.restoreExecutionTarget && detail.origin !== "api") {
         adoptRestoredConversationTarget(detail);
         const apply = await restoreTarget(
           readConversationExecutionTarget(detail),
@@ -2714,6 +2723,8 @@ export function PlaygroundMain({
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
+      useActiveChatSessionStore.getState().setRestoredSession({ sessionId: detail.chatSessionId, origin: detail.origin, browser: detail.browser });
+      if (detail.browser && detail.projectId) useActiveChatSessionStore.getState().setBrowserLocation({ projectId: detail.projectId, sessionId: detail.chatSessionId, engine: "cloud" });
       const shouldRestoreComposerState =
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
@@ -3143,6 +3154,10 @@ export function PlaygroundMain({
               modelId: detail.session.modelId,
             }
           : null;
+        if (new URLSearchParams(window.location.search).get("browser") === "open") {
+          if (detail.session.browser) useBrowserWorkspaceStore.getState().openBrowser(detail.session.chatSessionId);
+          const url = new URL(window.location.href); url.searchParams.delete("browser"); window.history.replaceState(window.history.state, "", url);
+        }
         restored = true;
         return "restored";
       } catch (error) {
@@ -3411,6 +3426,12 @@ export function PlaygroundMain({
   // overlay for one frame. After ~120 ms the load is "slow enough" to warrant
   // visible feedback.
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
+  useLayoutEffect(() => {
+    useActiveChatSessionStore.getState().setRestorationPending(
+      !!loadingHistorySessionId || isRestoringConversation || restoringTarget !== null,
+    );
+    return () => useActiveChatSessionStore.getState().setRestorationPending(false);
+  }, [loadingHistorySessionId, isRestoringConversation, restoringTarget]);
   useEffect(() => {
     // A URL restore is the same "fetching a transcript" wait, and it happens on
     // a cold load — without it the user stares at an empty composer until the
@@ -4802,11 +4823,19 @@ export function PlaygroundMain({
         onDismiss={() => setLocalHarnessJustReady(false)}
       />
     ) : null;
+  const apiSessionNotice = apiSessionViewOnly ? (
+    <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
+      This conversation is driven by an agent. Continue it through the session API.
+      {restoredSessionHasBrowser ? " You can take over its browser here." : ""}
+    </p>
+  ) : null;
   const composerNotice =
+    apiSessionNotice ||
     conversationTargetNotice ||
     localHarnessNotice ||
     localHarnessReadyNotice ? (
       <div className="flex flex-col gap-2">
+        {apiSessionNotice}
         {conversationTargetNotice}
         {localHarnessNotice}
         {localHarnessReadyNotice}
@@ -4997,7 +5026,7 @@ export function PlaygroundMain({
    * composer with the device frame behind it set to `display: none`.
    */
   const showPinnedConversationTargetNotice =
-    !!conversationTargetNotice &&
+    !!(apiSessionNotice || conversationTargetNotice) &&
     isWidgetFullTakeover &&
     !showLiveTraceDiagnostics &&
     !(isThreadEmpty && showSingleModelEmptyStateComposer);
@@ -5011,7 +5040,7 @@ export function PlaygroundMain({
           className="pointer-events-auto absolute inset-x-0 top-0 z-30 px-2 pt-2"
         >
           <div className="rounded-md bg-background/95 shadow-lg backdrop-blur-md">
-            {conversationTargetNotice}
+            {apiSessionNotice || conversationTargetNotice}
           </div>
         </div>
       ) : null}
@@ -5188,7 +5217,13 @@ export function PlaygroundMain({
                 displayMode={displayMode}
                 onDisplayModeChange={handleDisplayModeChange}
                 onFullscreenChange={setIsWidgetFullscreen}
-                onToolApprovalResponse={addToolApprovalResponse}
+                interactive={
+                  !apiSessionViewOnly && loadingHistorySessionId === null && restoringTarget === null
+                }
+                onToolApprovalResponse={(response) => {
+                  if (!conversationSendBlockedRef.current)
+                    return addToolApprovalResponse(response);
+                }}
                 toolRenderOverrides={mergedToolRenderOverrides}
                 mcpToolResultImageRendering={
                   effectiveMcpToolResultImageRendering
@@ -5620,7 +5655,10 @@ export function PlaygroundMain({
                             deterministicExecutionRequest
                           }
                           stopRequestId={stopBroadcastRequestId}
-                          executionConfig={column.executionConfig}
+                          executionConfig={{
+                            ...column.executionConfig,
+                            builtInToolIds: column.hostConfig.builtInToolIds,
+                          }}
                           hostedContext={{
                             projectId: convexProjectId,
                             selectedServerIds: hostedSelectedServerIds,

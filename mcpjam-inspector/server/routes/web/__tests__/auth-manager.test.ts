@@ -368,10 +368,6 @@ describe("web auth manager batching", () => {
                 serverConfig: {
                   transportType: "http",
                   url: "https://server-1.example.com/mcp",
-                  // MJ-003: a row whose stored credential is bound to its own
-                  // origin. Absent, the connect gate refuses — which is the point of
-                  // the backfill gating that deploy.
-                  secretsBoundOrigin: "https://server-1.example.com",
                   headers: {},
                   useOAuth: true,
                 },
@@ -467,13 +463,6 @@ describe("web auth manager batching", () => {
                   url: "http://localhost:8000/mcp",
                   headers: {},
                   useOAuth: true,
-                  // MJ-003: no token on the authorize response, but PASS 1b
-                  // recovers one from this row's stored refresh material — so
-                  // the token IS row-derived and the origin gate applies. A
-                  // repointed row would otherwise have its refresh material
-                  // spent against whatever authorization server the new host
-                  // advertises.
-                  secretsBoundOrigin: "http://localhost:8000",
                 },
               },
             },
@@ -547,10 +536,6 @@ describe("web auth manager batching", () => {
                 serverConfig: {
                   transportType: "http",
                   url: "https://server-1.example.com/mcp",
-                  // MJ-003: a row whose stored credential is bound to its own
-                  // origin. Absent, the connect gate refuses — which is the point of
-                  // the backfill gating that deploy.
-                  secretsBoundOrigin: "https://server-1.example.com",
                   headers: {},
                   useOAuth: true,
                 },
@@ -734,10 +719,6 @@ describe("web auth manager batching", () => {
               serverConfig: {
                 transportType: "http",
                 url: "https://server-1.example.com/mcp",
-                // MJ-003: a row whose stored credential is bound to its own
-                // origin. Absent, the connect gate refuses — which is the point of
-                // the backfill gating that deploy.
-                secretsBoundOrigin: "https://server-1.example.com",
                 headers: {},
                 authMethod: "auto",
               },

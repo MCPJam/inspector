@@ -172,6 +172,7 @@ async function renderWithEngine(
   personalComputerEngine?: EnginePref,
   hostedContext?: Record<string, unknown>,
   extra?: {
+    builtInToolIds?: string[];
     usePageTools?: boolean;
     requireToolApproval?: boolean;
     personalBrowserEngine?: EnginePref;
@@ -227,6 +228,11 @@ describe("useChatSession — local computer engine transmission", () => {
       tools: [],
       chatEnabled: false,
     });
+  });
+
+  it("sends an explicit empty built-in override rather than inheriting the client", async () => {
+    await renderWithEngine(undefined, undefined, { builtInToolIds: [] });
+    expect(lastTransport().body.builtInToolIds).toEqual([]);
   });
 
   it("sends Browser and Bash with independent destinations and credentials", async () => {
