@@ -12,6 +12,7 @@ import {
   ADD_SERVER_NODE_ID,
   BUILTIN_TOOLS_NODE_ID,
   COMPUTER_NODE_ID,
+  BROWSER_NODE_ID,
   HOST_MATRIX_NODE_ID,
   SERVERS_HUB_NODE_ID,
   type AgentIdentityNodeData,
@@ -845,7 +846,7 @@ export function buildRedesignedHostCanvas(
   if (context.computersEnabled === true || draft.computer !== undefined) {
     const catalog = context.builtInToolCatalog ?? [];
     const catalogById = new Map(catalog.map((entry) => [entry.id, entry]));
-    const tools = draft.builtInToolIds.map((id) => {
+    const tools = draft.builtInToolIds.filter((id) => id !== "browser").map((id) => {
       const entry = catalogById.get(id);
       return {
         id,
@@ -929,6 +930,35 @@ export function buildRedesignedHostCanvas(
         // ghost-vs-attached treatment of the node itself.
         strokeDasharray: attached ? undefined : "4 4",
       },
+    });
+  }
+
+  const browserEnabled = draft.builtInToolIds.includes("browser");
+  if (context.browsersEnabled || browserEnabled || draft.browserProfileId) {
+    const y = ISLAND_Y + 180;
+    nodes.push({
+      id: BROWSER_NODE_ID,
+      type: "redesignBrowser",
+      position: { x: MATRIX_W + ISLAND_GAP, y },
+      style: { width: ISLAND_W },
+      data: {
+        kind: "browser",
+        enabled: browserEnabled,
+        profileLabel: draft.browserProfileId
+          ? context.browserProfileName ?? "Saved profile selected"
+          : "Default profile for chats",
+      },
+      draggable: false,
+    });
+    edges.push({
+      id: "host-to-browser", source: HOST_MATRIX_NODE_ID,
+      target: BROWSER_NODE_ID, type: "hostBranch",
+      data: {
+        fixedSourceX: MATRIX_W, fixedSourceY: y + 32,
+        fixedTargetX: MATRIX_W + ISLAND_GAP, fixedTargetY: y + 32,
+      },
+      style: { stroke: "var(--primary)", strokeWidth: 1.5,
+        strokeDasharray: browserEnabled ? undefined : "4 4" },
     });
   }
 

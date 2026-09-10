@@ -1,3 +1,4 @@
+import { PlaygroundBrowserOverrideContext } from "../playground-browser-override";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
@@ -378,6 +379,16 @@ describe("PlaygroundRightRail — the gated-off fallback", () => {
 
   afterEach(() => {
     workspaceFlag.enabled = true;
+  });
+
+  it("offers Browser from a temporary override without a host or Computer", () => {
+    workspaceFlag.enabled = false;
+    engineState.selectedEngine = "cloud";
+    render(<PlaygroundBrowserOverrideContext.Provider value={true}>
+      <PlaygroundRightRail onClose={() => {}} hostConfig={null} hostId={null} projectId="proj-1" isAuthenticated />
+    </PlaygroundBrowserOverrideContext.Provider>);
+    expect(screen.getByRole("button", { name: /browser/i })).toBeInTheDocument();
+    expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
   });
 
   it.each(["local", "cloud"] as const)(

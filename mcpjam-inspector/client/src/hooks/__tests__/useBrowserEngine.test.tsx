@@ -144,3 +144,13 @@ it("resuming Cloud affects only that conversation and leaves new chats local", (
   act(() => useActiveChatSessionStore.getState().setSessionId("new-chat"));
   expect(result.current.engine).toBe("local");
 });
+
+it("personal preferences ignore an environment's forced location and a bound chat", () => {
+  saveBrowserEngine("p", "local");
+  state.environment = true;
+  useActiveChatSessionStore.setState({ sessionId: "old-chat", browserLocation: { projectId: "p", sessionId: "old-chat", engine: "cloud" } });
+  const { result } = renderHook(() => useBrowserEngine("p", "preference"));
+  expect(result.current.selectedEngine).toBe("local");
+  act(() => result.current.setEngine("cloud"));
+  expect(loadBrowserEngine("p")).toBe("cloud");
+});

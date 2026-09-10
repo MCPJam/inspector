@@ -75,15 +75,18 @@ vi.mock("@/hooks/useHarnessBuiltinTools", () => ({
       : { tools: [], loading: false },
 }));
 
+vi.mock("@/components/browser/BrowserRuntimeControls", () => ({ BrowserRuntimeControls: () => null }));
+vi.mock("@/components/browser/BrowserProfilesSettings", () => ({ BrowserProfilesSettings: () => null }));
+import { BrowserTab } from "../BrowserTab";
 import { ToolsTab } from "../ToolsTab";
 import { ComputerTab } from "../ComputerTab";
 
 describe("ToolsTab", () => {
-  it("enables Browser without a computer and edits its profile from Tools", () => {
+  it("enables Browser without a computer and edits its profile from Browser", () => {
     const onDraftChange = vi.fn();
     const draft = emptyHostConfigInputV2({ builtInToolIds: ["browser"] });
     render(
-      <ToolsTab
+      <BrowserTab
         projectId="project-1"
         draft={draft}
         onDraftChange={onDraftChange}
@@ -100,7 +103,7 @@ describe("ToolsTab", () => {
 
   it("disables the profile picker for read-only hosts", () => {
     render(
-      <ToolsTab
+      <BrowserTab
         projectId="project-1"
         draft={emptyHostConfigInputV2({ builtInToolIds: ["browser"] })}
         onDraftChange={vi.fn()}

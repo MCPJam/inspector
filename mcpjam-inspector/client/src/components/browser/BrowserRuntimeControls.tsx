@@ -1,3 +1,4 @@
+import { LocalBrowserConsentGate } from "./LocalBrowserConsentGate";
 import { Settings2 } from "lucide-react";
 import {
   Popover,
@@ -14,17 +15,25 @@ import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 export function BrowserRuntimeControls({
   projectId,
   compact = false,
+  settings = false,
 }: {
   projectId: string | null;
   compact?: boolean;
+  settings?: boolean;
 }) {
-  const engine = useBrowserEngine(projectId);
+  const engine = useBrowserEngine(
+    projectId,
+    settings ? "preference" : "conversation",
+  );
   const bridge = usePlaygroundChatHistoryBridge();
-  const sessionId = useActiveChatSessionStore((s) => s.sessionId);
+  const activeSessionId = useActiveChatSessionStore((s) => s.sessionId);
+  const sessionId = settings ? null : activeSessionId;
   const reason = useBrowserReadinessStore(
     (s) => s.reasons[`${projectId}:${sessionId}`],
   );
-  const visibleReason = reason?.startsWith("browser_consent_required:")
+  const visibleReason = settings
+    ? null
+    : reason?.startsWith("browser_consent_required:")
     ? engine.consent.granted
       ? null
       : "Allow Browser below, then retry your request."
@@ -51,6 +60,12 @@ export function BrowserRuntimeControls({
   };
   const controls = (
     <div className="flex flex-col gap-2 p-2 text-xs">
+      {settings && (
+        <p className="text-muted-foreground">
+          Location for new Playground chats. Existing chats keep their browser;
+          environments use Cloud.
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         {engine.toggleVisible ? (
           <select
@@ -73,14 +88,14 @@ export function BrowserRuntimeControls({
           {!engine.resolved
             ? "Checking Browser…"
             : engine.selectedEngine === "local"
-              ? !engine.localAvailable
-                ? "Browser unavailable on this machine"
-                : engine.consent.granted
-                  ? "Browser authorized"
-                  : "Browser permission required"
-              : engine.cloudAvailable
-                ? "Cloud Browser"
-                : "Cloud Browser unavailable"}
+            ? !engine.localAvailable
+              ? "Browser unavailable on this machine"
+              : engine.consent.granted
+              ? "Browser authorized"
+              : "Browser permission required"
+            : engine.cloudAvailable
+            ? "Cloud Browser"
+            : "Cloud Browser unavailable"}
         </span>
         {engine.selectedEngine === "local" && engine.consent.granted ? (
           <Button
@@ -92,6 +107,15 @@ export function BrowserRuntimeControls({
           </Button>
         ) : null}
       </div>
+      {settings &&
+      engine.selectedEngine === "local" &&
+      engine.localAvailable &&
+      !engine.consent.granted ? (
+        <LocalBrowserConsentGate
+          location="browser_settings"
+          onAllow={engine.consent.grant}
+        />
+      ) : null}
       {pending ? (
         <div role="status">
           Changing Browser location starts a new chat. Tabs and logins stay
