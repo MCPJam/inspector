@@ -82,6 +82,16 @@ const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_NOT_FOUND = 4404;
 const CLOSE_LEASE_HELD = 4409;
 /**
+ * The box is asleep. Wake it, but only if somebody is actually looking.
+ *
+ * Its own code because reconnecting cannot help: the socket does not wake
+ * anything (`ensure=1` on the session route does), so a plain retry would
+ * hammer a paused machine every 3 seconds forever. A hosted browser is
+ * reclaimed within a couple of minutes of nobody watching, so this is the
+ * ordinary way a hidden pane's socket ends — not a fault.
+ */
+const CLOSE_ASLEEP = 4410;
+/**
  * This box cannot encode video. Reconnect WITHOUT asking for it.
  *
  * Its own code because the answer differs from every other close: retrying the
@@ -535,10 +545,10 @@ export function HostedBrowserBody({
   const control: PaneControl = holding
     ? "you"
     : lease.state === "free" || lease.state === "unknown"
-    ? "agent"
-    : lease.holderKind === "script"
-    ? "script"
-    : "other";
+      ? "agent"
+      : lease.holderKind === "script"
+        ? "script"
+        : "other";
 
   /**
    * The shell's transport, for this engine.
@@ -1129,6 +1139,26 @@ export function HostedBrowserBody({
           );
           return;
         }
+        if (event.code === CLOSE_ASLEEP) {
+          // NO SOCKET RETRY. This socket cannot wake anything; `refresh()`
+          // re-runs the session read with `ensure=1`, which is what asks the
+          // control plane to resume the box.
+          //
+          // And only while somebody is looking: a pane behind another tab is
+          // exactly what let the box be reclaimed, so waking it from here
+          // would undo the reclaim on behalf of nobody — and every hidden pane
+          // in every open tab would do it at once. A hidden pane leaves the
+          // box asleep; the visibility-gated poll re-ensures when it is shown
+          // again, which is the moment a person is actually there.
+          if (
+            activeRef.current &&
+            document.visibilityState === "visible" &&
+            !closed
+          ) {
+            void refresh();
+          }
+          return;
+        }
         if (event.code === CLOSE_VIDEO_UNAVAILABLE) {
           // A box with no ffmpeg, or an encoder that failed to spawn. The same
           // fallback a browser with no `VideoDecoder` takes, and the same one
@@ -1301,10 +1331,10 @@ export function HostedBrowserBody({
           control === "you"
             ? "human"
             : control === "script"
-            ? "script"
-            : control === "other"
-            ? "human"
-            : "agent",
+              ? "script"
+              : control === "other"
+                ? "human"
+                : "agent",
         ...(lease.state === "parked" ? { parked: true } : {}),
       }}
       onCommand={shell.run}
