@@ -28,7 +28,10 @@ test("cloud session browser exposes its commands", async () => {
     assert.match(result.stdout, new RegExp(verb));
 });
 
-test("new browser sessions require a caller-owned retry key", async () => {
+test("new browser sessions require a caller-owned retry key", async (t) => {
+  const fetch = t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("Validation must not make a network request");
+  });
   const result = await runCli([
     "cloud",
     "sessions",
@@ -38,7 +41,12 @@ test("new browser sessions require a caller-owned retry key", async () => {
     "p",
     "--browser-mode",
     "read_only",
+    "--api-key",
+    "sk_test_fixture",
+    "--api-url",
+    "http://127.0.0.1:1/api/v1",
   ]);
   assert.notEqual(result.exitCode, 0);
   assert.match(result.stderr + result.stdout, /--idempotency-key is required/);
+  assert.equal(fetch.mock.callCount(), 0);
 });
