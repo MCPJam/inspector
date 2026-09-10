@@ -1,3 +1,4 @@
+import { BROWSER_VIEWPORT_POLICY } from "@/shared/browser-viewport-policy";
 /**
  * Watching the page, and touching it — over CDP, for every engine.
  *
@@ -65,30 +66,7 @@ export interface ViewportFrame {
 
 /** A pointer/keyboard event forwarded from the pane. */
 export type ViewportInputEvent =
-  | { type: "mouse_move"; x: number; y: number; modifiers?: number }
-  | {
-      type: "mouse_down" | "mouse_up";
-      x: number;
-      y: number;
-      button: "left" | "middle" | "right";
-      clickCount?: number;
-      modifiers?: number;
-    }
-  | {
-      type: "wheel";
-      x: number;
-      y: number;
-      deltaX: number;
-      deltaY: number;
-      modifiers?: number;
-    }
-  | {
-      type: "key_down" | "key_up";
-      key: string;
-      code?: string;
-      modifiers?: number;
-    }
-  | { type: "text"; text: string };
+  import("@/shared/browser-pane-input").BrowserPaneInputEvent;
 
 export interface TabViewportOptions {
   /** The CSS-pixel surface the frames describe (the canonical viewport). */
@@ -104,9 +82,9 @@ export interface TabViewportOptions {
   clearTimer?: (handle: unknown) => void;
 }
 
-const DEFAULT_QUALITY = 75;
-const DEFAULT_MIN_INTERVAL_MS = 100;
-const DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
+const DEFAULT_QUALITY = BROWSER_VIEWPORT_POLICY.quality;
+const DEFAULT_MIN_INTERVAL_MS = BROWSER_VIEWPORT_POLICY.minIntervalMs;
+const DEFAULT_MAX_FRAME_BYTES = BROWSER_VIEWPORT_POLICY.maxFrameBytes;
 
 export type ViewportListener = (frame: ViewportFrame) => void;
 
@@ -146,13 +124,21 @@ export interface TabViewport {
    */
   subscribe(listener: ViewportListener): () => void;
   subscriberCount(): number;
+  /** Resolve the current start attempt, allowing the caller to report failure. */
+  ready(): Promise<boolean>;
+  /** A new document must publish its first frame even if its pixels match. */
+  invalidate(): void;
+  resize(
+    surface: { width: number; height: number },
+    apply?: () => Promise<void>,
+  ): Promise<void>;
   /**
    * Forward a person's input.
    *
    * `stillPermitted` is re-asked before every event rather than once for the
    * batch: 64 keystrokes and pointer moves can span a handoff, and the events
    * after it belong to whoever holds the lease now, not to whoever sent them.
-   * Omitted by callers that have no lease to consult (tests, fakes).
+   * Omitted by shared-authority local inspection, which has no exclusive lease.
    *
    * `holder` names whose input this is. A change of hand drops the button
    * mask, because the release for anything the last hand was holding is never
@@ -189,6 +175,7 @@ export function createTabViewport(
   const now = options.now ?? Date.now;
   const listeners = new Set<ViewportListener>();
   let streaming = false;
+  let startPending: Promise<void> = Promise.resolve();
   let streamGeneration = 0;
   let disposed = false;
   /**
@@ -213,6 +200,7 @@ export function createTabViewport(
    * sequence; this is what makes it one.
    */
   let inputChain: Promise<void> = Promise.resolve();
+  let resizeChain: Promise<void> = Promise.resolve();
   /** Whose input the current `buttonMask` describes. */
   let inputHolder: string | undefined;
   let lastData: string | undefined;
@@ -328,7 +316,7 @@ export function createTabViewport(
   return {
     subscribe(listener) {
       listeners.add(listener);
-      if (listeners.size === 1) void start();
+      if (listeners.size === 1) startPending = start();
       return () => {
         listeners.delete(listener);
         // Property 4's other half: nobody is watching, so stop painting.
@@ -336,6 +324,37 @@ export function createTabViewport(
       };
     },
     subscriberCount: () => listeners.size,
+    ready: async () => {
+      await startPending;
+      return streaming && !disposed;
+    },
+    invalidate() {
+      lastData = undefined;
+    },
+    resize(surface, apply) {
+      const run = resizeChain.then(async () => {
+        if (
+          disposed ||
+          (options.surface.width === surface.width &&
+            options.surface.height === surface.height)
+        )
+          return;
+        await stop();
+        if (disposed) return;
+        try {
+          await apply?.();
+          Object.assign(options.surface, surface);
+        } finally {
+          // A rejected resize must not leave an otherwise healthy page dark.
+          if (!disposed && listeners.size > 0) {
+            startPending = start();
+            await startPending;
+          }
+        }
+      });
+      resizeChain = run.catch(() => {});
+      return run;
+    },
     boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),
     counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
     noteTransportDrop() {

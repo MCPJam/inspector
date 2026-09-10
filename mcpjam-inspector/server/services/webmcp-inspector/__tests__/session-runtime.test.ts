@@ -1,3 +1,5 @@
+import { createRelayInputForwarder } from "../../../routes/web/browser-pane-input-forwarder";
+import { fromBrowserPaneInput } from "@/shared/webmcp-input";
 import { describe, it, expect, vi } from "vitest";
 import {
   WEBMCP_RESULT_CAP_BYTES,
@@ -873,12 +875,57 @@ describe("viewport frames", () => {
 });
 
 describe("input forwarding", () => {
+  it("keeps HTTP fallback behind work still queued in the socket relay", async () => {
+    const { runtime, session } = makeRuntime();
+    let release!: () => void;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const dispatch = vi
+      .spyOn(session, "dispatchInput")
+      .mockImplementationOnce(() => gate)
+      .mockResolvedValue(undefined);
+    const relay = createRelayInputForwarder({
+      dispatch: async ({ events }) => {
+        await runtime.dispatchInput(
+          events.map(fromBrowserPaneInput),
+          () => false,
+          "socket",
+        );
+        return { ok: true };
+      },
+      ack() {},
+    });
+    const unregister = runtime.registerSocketInputDrain(() => relay.drain());
+    relay.submit({ seq: 1, events: [{ type: "text", text: "socket 1" }] });
+    relay.submit({ seq: 2, events: [{ type: "text", text: "socket 2" }] });
+    const fallback = runtime.dispatchInput([{ kind: "text", text: "http" }]);
+    await Promise.resolve();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    release();
+    await fallback;
+    expect(dispatch.mock.calls.map(([events]) => events[0])).toEqual([
+      { kind: "text", text: "socket 1" },
+      { kind: "text", text: "socket 2" },
+      { kind: "text", text: "http" },
+    ]);
+    unregister();
+    relay.cancel();
+  });
+
   it("serializes all input callers and continues after a dispatch rejection", async () => {
     const { runtime, session } = makeRuntime();
     let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const dispatch = vi.spyOn(session, "dispatchInput")
-      .mockImplementationOnce(() => gate.then(() => { throw new Error("dispatch failed"); }))
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const dispatch = vi
+      .spyOn(session, "dispatchInput")
+      .mockImplementationOnce(() =>
+        gate.then(() => {
+          throw new Error("dispatch failed");
+        }),
+      )
       .mockResolvedValue(undefined);
     const first = runtime.dispatchInput([{ kind: "key_down", key: "a" }]);
     const failed = expect(first).rejects.toThrow("dispatch failed");
@@ -897,10 +944,16 @@ describe("input forwarding", () => {
     let release!: () => void;
     let cancelled = false;
     const dispatch = vi.spyOn(session, "dispatchInput").mockImplementationOnce(
-      () => new Promise<void>((resolve) => { release = resolve; }),
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
     );
     const first = runtime.dispatchInput([{ kind: "text", text: "http" }]);
-    const second = runtime.dispatchInput([{ kind: "text", text: "socket" }], () => cancelled);
+    const second = runtime.dispatchInput(
+      [{ kind: "text", text: "socket" }],
+      () => cancelled,
+    );
     const refused = expect(second).rejects.toThrow("no longer available");
     await Promise.resolve();
     cancelled = true;
@@ -914,7 +967,10 @@ describe("input forwarding", () => {
     const { runtime, session } = makeRuntime();
     let release!: () => void;
     const dispatch = vi.spyOn(session, "dispatchInput").mockImplementationOnce(
-      () => new Promise<void>((resolve) => { release = resolve; }),
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
     );
     const first = runtime.dispatchInput([{ kind: "key_down", key: "a" }]);
     const second = runtime.dispatchInput([{ kind: "key_up", key: "a" }]);

@@ -143,6 +143,7 @@ export interface WebMcpBrowserSession {
    * a failed command on a session whose viewport may be working fine.
    */
   setScreencast(enabled: boolean): Promise<boolean>;
+  resizeViewport?(width: number, height: number): Promise<void>;
   /**
    * Apply a batch of input to the page, in order.
    *

@@ -102,7 +102,9 @@ describe("tab viewport", () => {
     const a = viewport.subscribe(() => {});
     const b = viewport.subscribe(() => {});
     await Promise.resolve();
-    expect(methods().filter((m) => m === "Page.startScreencast")).toHaveLength(1);
+    expect(methods().filter((m) => m === "Page.startScreencast")).toHaveLength(
+      1,
+    );
 
     a();
     await Promise.resolve();
@@ -143,7 +145,9 @@ describe("tab viewport", () => {
   });
 
   it("refuses to publish a frame too large to carry", async () => {
-    const { viewport, frames, emitFrame, time } = make({ maxFrameBytes: 1_000 });
+    const { viewport, frames, emitFrame, time } = make({
+      maxFrameBytes: 1_000,
+    });
     viewport.subscribe((f) => frames.push(f));
     await Promise.resolve();
     emitFrame("x".repeat(10_000));
@@ -211,7 +215,8 @@ describe("tab viewport", () => {
 
 describe("createTabViewport — the button mask Chromium actually reads", () => {
   function cdpRecorder() {
-    const sent: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const sent: Array<{ method: string; params?: Record<string, unknown> }> =
+      [];
     const handlers = new Map<string, (p: unknown) => void>();
     const cdp: CdpLike = {
       async send(method, params) {
@@ -356,18 +361,26 @@ describe("createTabViewport — the mask does not outlive the hand that set it",
 
     // Control changes. The rest of the drag is refused...
     permitted = false;
-    await viewport.dispatchInput([{ type: "mouse_move", x: 3, y: 3 }], () => permitted);
+    await viewport.dispatchInput(
+      [{ type: "mouse_move", x: 3, y: 3 }],
+      () => permitted,
+    );
 
     // ...and the next holder's first move is a hover, not a drag.
     permitted = true;
-    await viewport.dispatchInput([{ type: "mouse_move", x: 9, y: 9 }], () => permitted);
+    await viewport.dispatchInput(
+      [{ type: "mouse_move", x: 9, y: 9 }],
+      () => permitted,
+    );
     expect(masks(sent).at(-1)).toBe(0);
   });
 
   it("does not record a button whose press Chromium never accepted", async () => {
     // `dispatchOne`'s rejection is swallowed. Committing the mask first would
     // leave us claiming a button the page is not holding.
-    const { cdp, sent } = recorder((method) => method === "Input.dispatchMouseEvent" && sent.length === 1);
+    const { cdp, sent } = recorder(
+      (method) => method === "Input.dispatchMouseEvent" && sent.length === 1,
+    );
     const viewport = createTabViewport(cdp, {
       surface: { width: 100, height: 100 },
     });
@@ -471,7 +484,6 @@ describe("createTabViewport — the mask does not outlive the hand that set it",
   });
 });
 
-
 /**
  * V-4a. Three drop paths existed and every one was silent, so a pane showing a
  * stale picture and a pane on a healthy quiet page looked identical from
@@ -491,7 +503,10 @@ describe("counting what the viewport threw away", () => {
   });
 
   it("counts an oversized frame as its own kind of drop", async () => {
-    const { viewport, emitFrame } = make({ minIntervalMs: 0, maxFrameBytes: 8 });
+    const { viewport, emitFrame } = make({
+      minIntervalMs: 0,
+      maxFrameBytes: 8,
+    });
     viewport.subscribe(() => {});
     await Promise.resolve();
     emitFrame(JPEG_1PX, 1);
@@ -515,5 +530,70 @@ describe("counting what the viewport threw away", () => {
     viewport.noteTransportDrop();
     expect(first.dropped.pacer).toBe(0);
     expect(viewport.counters().dropped.pacer).toBe(1);
+  });
+});
+
+describe("shared viewport lifecycle", () => {
+  it("serializes resize and restarts at the new geometry", async () => {
+    const h = make();
+    h.viewport.subscribe(() => {});
+    expect(await h.viewport.ready()).toBe(true);
+    let release!: () => void;
+    const applied: number[] = [];
+    let entered!: () => void;
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const first = h.viewport.resize({ width: 600, height: 700 }, async () => {
+      applied.push(600);
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    const second = h.viewport.resize({ width: 800, height: 500 }, async () => {
+      applied.push(800);
+    });
+    await entering;
+    expect(applied).toEqual([600]);
+    release();
+    await Promise.all([first, second]);
+    expect(applied).toEqual([600, 800]);
+    expect(
+      h.sent.filter((call) => call.method === "Page.startScreencast").at(-1)
+        ?.params,
+    ).toMatchObject({ maxWidth: 800, maxHeight: 500, quality: 75 });
+    await h.viewport.dispose();
+  });
+
+  it("restarts after a rejected resize and never restarts after disposal", async () => {
+    const h = make();
+    h.viewport.subscribe(() => {});
+    await h.viewport.ready();
+    await expect(
+      h.viewport.resize({ width: 600, height: 700 }, async () => {
+        throw new Error("closed");
+      }),
+    ).rejects.toThrow("closed");
+    expect(await h.viewport.ready()).toBe(true);
+    await h.viewport.dispose();
+    const count = h.methods().length;
+    await h.viewport.resize({ width: 800, height: 500 });
+    expect(h.methods()).toHaveLength(count);
+    expect(await h.viewport.ready()).toBe(false);
+  });
+
+  it("invalidates a deduplicated frame when navigation reuses the same pixels", async () => {
+    const h = make();
+    h.viewport.subscribe((frame) => h.frames.push(frame));
+    await h.viewport.ready();
+    h.emitFrame(JPEG_1PX);
+    h.emitFrame(JPEG_1PX);
+    expect(h.frames).toHaveLength(1);
+    h.viewport.invalidate();
+    h.time.advance(100);
+    h.emitFrame(JPEG_1PX);
+    expect(h.frames).toHaveLength(2);
+    await h.viewport.dispose();
   });
 });

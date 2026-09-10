@@ -1,3 +1,7 @@
+import { beforeAll } from "vitest";
+beforeAll(() => {
+  window.PointerEvent = MouseEvent as typeof PointerEvent;
+});
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -198,7 +202,7 @@ async function deliverFrame() {
 async function clickPicture() {
   const image = await deliverFrame();
   image.getBoundingClientRect = () =>
-    ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
+    ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
   fireEvent.click(image, { clientX: 10, clientY: 10 });
   return image;
 }
@@ -381,10 +385,10 @@ describe("the agent browser pane — driving it", () => {
     const image = await deliverFrame();
     // jsdom lays nothing out, so the pane cannot map a point without one.
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
+      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
 
-    fireEvent.mouseDown(image, { clientX: 10, clientY: 10, button: 2 });
-    fireEvent.mouseUp(image, { clientX: 10, clientY: 10, button: 2 });
+    fireEvent.pointerDown(image, { clientX: 10, clientY: 10, button: 2 });
+    fireEvent.pointerUp(image, { clientX: 10, clientY: 10, button: 2 });
 
     await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
     const buttons = api.inputs
@@ -401,10 +405,10 @@ describe("the agent browser pane — driving it", () => {
     await takeControl();
     const image = await deliverFrame();
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
+      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
 
-    fireEvent.mouseDown(image, { clientX: 10, clientY: 10, button: 1 });
-    fireEvent.mouseLeave(image, { clientX: 10, clientY: 10 });
+    fireEvent.pointerDown(image, { clientX: 10, clientY: 10, button: 1 });
+    fireEvent.pointerCancel(image, { clientX: 10, clientY: 10 });
 
     await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
     const released = api.inputs

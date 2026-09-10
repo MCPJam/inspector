@@ -1,0 +1,273 @@
+{
+  "method": "Capture callback arrival; no transport, UI decode, display or physical input. Five samples per case. Historical DPR/viewport presets retained in both runs.",
+  "baseline": {
+    "machine": "Apple M4 Pro",
+    "platform": "darwin",
+    "node": "v26.3.0",
+    "report": [
+      {
+        "engine": "webmcp",
+        "matched": false,
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "dpr": 2,
+        "version": "provider-managed",
+        "samples": [
+          {
+            "dispatchMs": 23,
+            "markerArrivalMs": 69
+          },
+          {
+            "dispatchMs": 18,
+            "markerArrivalMs": 56
+          },
+          {
+            "dispatchMs": 17,
+            "markerArrivalMs": 63
+          },
+          {
+            "dispatchMs": 18,
+            "markerArrivalMs": 49
+          },
+          {
+            "dispatchMs": 16,
+            "markerArrivalMs": 57
+          }
+        ]
+      },
+      {
+        "engine": "playground",
+        "matched": false,
+        "viewport": {
+          "width": 600,
+          "height": 700
+        },
+        "dpr": 1,
+        "version": "151.0.7922.34",
+        "samples": [
+          {
+            "dispatchMs": 6,
+            "markerArrivalMs": 35
+          },
+          {
+            "dispatchMs": 14,
+            "markerArrivalMs": 51
+          },
+          {
+            "dispatchMs": 17,
+            "markerArrivalMs": 61
+          },
+          {
+            "dispatchMs": 12,
+            "markerArrivalMs": 49
+          },
+          {
+            "dispatchMs": 16,
+            "markerArrivalMs": 64
+          }
+        ]
+      },
+      {
+        "engine": "webmcp",
+        "matched": true,
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "dpr": 1,
+        "version": "provider-managed",
+        "samples": [
+          {
+            "dispatchMs": 14,
+            "markerArrivalMs": 68
+          },
+          {
+            "dispatchMs": 12,
+            "markerArrivalMs": 61
+          },
+          {
+            "dispatchMs": 12,
+            "markerArrivalMs": 52
+          },
+          {
+            "dispatchMs": 14,
+            "markerArrivalMs": 64
+          },
+          {
+            "dispatchMs": 18,
+            "markerArrivalMs": 87
+          }
+        ]
+      },
+      {
+        "engine": "playground",
+        "matched": true,
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "dpr": 1,
+        "version": "151.0.7922.34",
+        "samples": [
+          {
+            "dispatchMs": 8,
+            "markerArrivalMs": 67
+          },
+          {
+            "dispatchMs": 15,
+            "markerArrivalMs": 57
+          },
+          {
+            "dispatchMs": 16,
+            "markerArrivalMs": 60
+          },
+          {
+            "dispatchMs": 11,
+            "markerArrivalMs": 47
+          },
+          {
+            "dispatchMs": 15,
+            "markerArrivalMs": 57
+          }
+        ]
+      }
+    ]
+  },
+  "sharedCapture": {
+    "machine": "Apple M4 Pro",
+    "platform": "darwin",
+    "node": "v26.3.0",
+    "report": [
+      {
+        "engine": "webmcp",
+        "matched": false,
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "dpr": 2,
+        "version": "provider-managed",
+        "samples": [
+          {
+            "dispatchMs": 17,
+            "markerArrivalMs": 68
+          },
+          {
+            "dispatchMs": 9,
+            "markerArrivalMs": 54
+          },
+          {
+            "dispatchMs": 12,
+            "markerArrivalMs": 49
+          },
+          {
+            "dispatchMs": 17,
+            "markerArrivalMs": 62
+          },
+          {
+            "dispatchMs": 14,
+            "markerArrivalMs": 51
+          }
+        ]
+      },
+      {
+        "engine": "playground",
+        "matched": false,
+        "viewport": {
+          "width": 600,
+          "height": 700
+        },
+        "dpr": 1,
+        "version": "151.0.7922.34",
+        "samples": [
+          {
+            "dispatchMs": 10,
+            "markerArrivalMs": 34
+          },
+          {
+            "dispatchMs": 16,
+            "markerArrivalMs": 49
+          },
+          {
+            "dispatchMs": 16,
+            "markerArrivalMs": 57
+          },
+          {
+            "dispatchMs": 14,
+            "markerArrivalMs": 47
+          },
+          {
+            "dispatchMs": 16,
+            "markerArrivalMs": 57
+          }
+        ]
+      },
+      {
+        "engine": "webmcp",
+        "matched": true,
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "dpr": 1,
+        "version": "provider-managed",
+        "samples": [
+          {
+            "dispatchMs": 3,
+            "markerArrivalMs": 66
+          },
+          {
+            "dispatchMs": 10,
+            "markerArrivalMs": 65
+          },
+          {
+            "dispatchMs": 11,
+            "markerArrivalMs": 58
+          },
+          {
+            "dispatchMs": 11,
+            "markerArrivalMs": 49
+          },
+          {
+            "dispatchMs": 16,
+            "markerArrivalMs": 61
+          }
+        ]
+      },
+      {
+        "engine": "playground",
+        "matched": true,
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "dpr": 1,
+        "version": "151.0.7922.34",
+        "samples": [
+          {
+            "dispatchMs": 3,
+            "markerArrivalMs": 33
+          },
+          {
+            "dispatchMs": 15,
+            "markerArrivalMs": 52
+          },
+          {
+            "dispatchMs": 13,
+            "markerArrivalMs": 60
+          },
+          {
+            "dispatchMs": 11,
+            "markerArrivalMs": 48
+          },
+          {
+            "dispatchMs": 15,
+            "markerArrivalMs": 62
+          }
+        ]
+      }
+    ]
+  }
+}

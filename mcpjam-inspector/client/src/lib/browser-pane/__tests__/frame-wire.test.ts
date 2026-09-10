@@ -222,49 +222,20 @@ describe("painting", () => {
   });
 });
 
-describe("frames that decode out of order", () => {
-  it("drops a picture a newer one already overtook", async () => {
-    // `createImageBitmap` runs concurrently for every record and resolves in
-    // whatever order the image pipeline finishes them. Without a guard a slow
-    // older JPEG lands after a fast newer one and paints the page backwards —
-    // taking the click mapping with it, because the geometry travels with the
-    // frame.
-    const settle: Array<(bitmap: ImageBitmap) => void> = [];
-    const closed: number[] = [];
-    let made = 0;
-    vi.stubGlobal("createImageBitmap", () => {
-      const id = made++;
-      return new Promise<ImageBitmap>((resolve) => {
-        settle.push(() =>
-          resolve({
-            close: () => closed.push(id),
-          } as unknown as ImageBitmap),
-        );
-      });
-    });
-    try {
-      const seen: number[] = [];
-      const reader = createFrameWireReader({
-        onFrame: (frame) => seen.push(frame.seq),
-      });
-      reader.push(frameRecord({ seq: 1 }));
-      reader.push(frameRecord({ seq: 2 }));
-      // The SECOND decode finishes first.
-      settle[1]!({} as never);
-      await Promise.resolve();
-      settle[0]!({} as never);
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(seen).toEqual([2]);
-      // And the overtaken picture is released rather than leaked.
-      expect(closed).toEqual([0]);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+it("ignores a replay older than the frame already delivered", async () => {
+  const seen: number[] = [];
+  const reader = createFrameWireReader({
+    onFrame: (frame) => seen.push(frame.seq),
   });
+  reader.push(frameRecord({ seq: 2 }));
+  await settle();
+  reader.push(frameRecord({ seq: 1 }));
+  await settle();
+  expect(seen).toEqual([2]);
+  expect(bitmaps).toHaveLength(1);
 });
 
-describe("Node-local bounded JPEG decoding", () => {
+describe("shared bounded JPEG decoding", () => {
   it("keeps one decode active and only the newest waiting JPEG", async () => {
     const resolutions: Array<(bitmap: ImageBitmap) => void> = [];
     const decode = vi.fn(
@@ -272,7 +243,7 @@ describe("Node-local bounded JPEG decoding", () => {
     );
     vi.stubGlobal("createImageBitmap", decode);
     const onFrame = vi.fn();
-    const reader = createFrameWireReader({ onFrame }, { latestOnly: true });
+    const reader = createFrameWireReader({ onFrame });
     reader.push(frameRecord({ seq: 1 }));
     for (let seq = 2; seq <= 100; seq++) reader.push(frameRecord({ seq }));
     reader.push(frameRecord({ seq: 5 }));
@@ -302,7 +273,7 @@ describe("Node-local bounded JPEG decoding", () => {
     );
     vi.stubGlobal("createImageBitmap", decode);
     const onFrame = vi.fn();
-    const reader = createFrameWireReader({ onFrame }, { latestOnly: true });
+    const reader = createFrameWireReader({ onFrame });
     reader.push(frameRecord({ seq: 1 }));
     reader.push(frameRecord({ seq: 2 }));
     reader.close();
@@ -328,7 +299,7 @@ describe("Node-local bounded JPEG decoding", () => {
       .mockResolvedValue(bitmap);
     vi.stubGlobal("createImageBitmap", decode);
     const onFrame = vi.fn();
-    const reader = createFrameWireReader({ onFrame }, { latestOnly: true });
+    const reader = createFrameWireReader({ onFrame });
     reader.push(frameRecord({ seq: 1 }));
     reader.push(frameRecord({ seq: 2 }));
     reject(new Error("bad JPEG"));

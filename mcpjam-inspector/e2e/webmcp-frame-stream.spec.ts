@@ -10,7 +10,7 @@
  *
  * Driven through the HTTP + WebSocket API rather than the inspector's own UI,
  * because the `/webmcp` screen sits behind a PostHog rollout flag that a
- * headless run cannot resolve. What that leaves uncovered — the pane's `<img>`
+ * headless run cannot resolve. What that leaves uncovered — the pane's canvas
  * and the store's ladder — is covered by the store, presenter and tab suites,
  * which is the right place for it: those are decisions, not integrations.
  */
@@ -24,8 +24,6 @@ import {
   WEBMCP_FRAME_BOOST_INTERVAL_MS,
   WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_FRAME_MIN_INTERVAL_MS,
-  WEBMCP_SETTLE_QUIET_MS,
-  WEBMCP_STREAM_QUALITY_LADDER,
   type WebMcpBinaryFrame,
 } from "../shared/webmcp-inspector-protocol";
 import { readJpegDimensions } from "../shared/jpeg-dimensions";
@@ -190,17 +188,6 @@ function parseSseEvents(text: string): Array<Record<string, unknown>> {
     }
   }
   return events;
-}
-
-/** The quality the newest session event reports, if any. */
-function latestStreamQuality(text: string): number | undefined {
-  const sessions = parseSseEvents(text).filter(
-    (event) => event.type === "session",
-  );
-  const newest = sessions.at(-1)?.session as
-    | { streamQuality?: number }
-    | undefined;
-  return newest?.streamQuality;
 }
 
 /**
@@ -679,13 +666,8 @@ test.describe("WebMCP viewport frame stream", () => {
     }
   });
 
-  test("sharpens the picture once the page stops painting", async () => {
-    // The whole chain for the settle still: a real screencast, a page that
-    // stops, a capture the server takes on its own, and the pane's transport
-    // carrying it. What the unit suites cannot show is that the still SURVIVES
-    // the round trip — Chromium answers every capture with a repaint of the
-    // same picture, and publishing that would undo the sharpening a tenth of a
-    // second later.
+  test("keeps a settled picture stable and permits explicit screenshots", async () => {
+    // Static page: no automatic screenshot may create a repeated capture loop.
     const page = await startWebMcpFixturePage({ variant: "static" });
     const token = await sessionToken();
     let sessionId: string | undefined;
@@ -709,7 +691,7 @@ test.describe("WebMCP viewport frame stream", () => {
         .toBeGreaterThan(0);
       // Let the page finish loading and settle once, so what follows is not
       // measuring the difference between a half-painted page and a whole one.
-      await sleep(WEBMCP_SETTLE_QUIET_MS + 2_500);
+      await sleep(3000);
 
       // Scroll, which is the gesture this whole trade is about: motion the
       // stream carries at its own quality, and then a page at rest showing
@@ -723,33 +705,15 @@ test.describe("WebMCP viewport frame stream", () => {
         .toBeGreaterThan(0);
       await sleep(500);
       const streamedCount = socket.frames.length;
-      const streamed = socket.frames.at(-1)!;
-
-      // The fixture never repaints on its own, so anything arriving now is the
-      // still — or the repaint Chromium produces to satisfy the capture, which
-      // is dropped as redundant before it reaches this socket.
-      await sleep(WEBMCP_SETTLE_QUIET_MS + 2_500);
+      await sleep(2500);
       expect(
-        socket.frames.length,
-        "a still after the page settled",
-      ).toBeGreaterThan(streamedCount);
-
-      // The same scrolled page, in more bytes. Taken as the largest frame that
-      // arrived after it settled rather than as the last one, so a build that
-      // answers a capture with one extra repaint does not turn this into a
-      // flake — what must hold is that the sharp still got through.
-      const settled = socket.frames.slice(streamedCount);
-      const sharpest = Math.max(...settled.map((f) => f.jpeg.byteLength));
-      expect(sharpest).toBeGreaterThan(streamed.jpeg.byteLength);
-      expect(sharpest).toBeLessThanOrEqual(WEBMCP_FRAME_MAX_BYTES);
-
-      // And the stream then goes quiet. A still induces a repaint, and a
-      // repaint counted as activity would take another still, and another —
-      // so this is the assertion that pins the loop shut. One stray frame is
-      // tolerated; a loop delivers one per second.
-      const after = socket.frames.length;
-      await sleep(3_000);
-      expect(socket.frames.length - after, "no capture loop").toBeLessThan(2);
+        socket.frames.length - streamedCount,
+        "no automatic still captures",
+      ).toBeLessThan(2);
+      const shot = await command(token, sessionId, {
+        type: "capture_screenshot",
+      });
+      expect(shot.screenshotBase64).toBeTruthy();
     } finally {
       socket?.close();
       if (sessionId) {
@@ -842,7 +806,7 @@ test.describe("WebMCP viewport frame stream", () => {
     }
   });
 
-  test("steps quality down on a slow consumer, and back up after", async () => {
+  test("resumes frames after a slow consumer drains", async () => {
     test.slow();
     // The `busy` fixture repaints an incompressible mosaic, so frames are
     // large but still under the cap: the pressure this measures comes from a
@@ -880,19 +844,7 @@ test.describe("WebMCP viewport frame stream", () => {
       // — the case this whole mechanism exists for.
       (socket.ws as unknown as { _socket: { pause(): void } })._socket.pause();
       paused = true;
-      await expect
-        .poll(
-          async () =>
-            latestStreamQuality(
-              await readSse(token, sessionId!, "replay=200&frames=off", 800),
-            ) ?? WEBMCP_STREAM_QUALITY_LADDER[0],
-          {
-            message: "the stream should step down for a consumer that stalled",
-            timeout: 45_000,
-          },
-        )
-        .toBeLessThan(WEBMCP_STREAM_QUALITY_LADDER[0]);
-
+      await sleep(3000);
       // Read again, and the picture comes back. Asserted as a floor rather
       // than an exact rung: the governor keeps stepping while the socket is
       // paused, so how far down it got is a property of the machine.
@@ -904,18 +856,6 @@ test.describe("WebMCP viewport frame stream", () => {
       await expect
         .poll(() => socket!.frames.length, { timeout: 20_000 })
         .toBeGreaterThan(beforeResume + 2);
-      await expect
-        .poll(
-          async () =>
-            latestStreamQuality(
-              await readSse(token, sessionId!, "replay=200&frames=off", 800),
-            ) ?? 0,
-          {
-            message: "the stream should climb back once the link recovers",
-            timeout: 45_000,
-          },
-        )
-        .toBe(WEBMCP_STREAM_QUALITY_LADDER[0]);
     } finally {
       if (paused && socket) {
         // Before the close, or the teardown blocks on a socket nobody is
