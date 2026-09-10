@@ -4,10 +4,7 @@ import { cn } from "@mcpjam/design-system/cn";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
 import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
-import {
-  useMintBrowserToken,
-  useMintConversationBrowserToken,
-} from "@/hooks/useProjectComputer";
+import { useMintConversationBrowserToken } from "@/hooks/useProjectComputer";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 
@@ -51,7 +48,6 @@ export function PlaygroundBrowserPanel({
   onClose,
 }: PlaygroundBrowserPanelProps) {
   const engine = useComputerEngine(projectId);
-  const mintBrowserToken = useMintBrowserToken();
   // THE DURABLE SESSION, in the panel as well as in the rail tab it replaces.
   // The browser a chat owns keeps its logins and its saved profile across
   // turns, and that identity travels on the token: minting the project-scoped
@@ -64,17 +60,30 @@ export function PlaygroundBrowserPanel({
   );
   const browserSessionId = activeChatSessionId ?? undefined;
   const mintHostedBrowserToken = useCallback(
-    ({ projectId: tokenProjectId }: { projectId: string }) =>
-      browserSessionId
-        ? mintConversationBrowserToken({
-            projectId: tokenProjectId,
-            conversationId: browserSessionId,
-          })
-        : mintBrowserToken({ projectId: tokenProjectId }),
-    [browserSessionId, mintBrowserToken, mintConversationBrowserToken],
+    ({ projectId: tokenProjectId }: { projectId: string }) => {
+      if (!browserSessionId)
+        throw new Error("The conversation is still loading.");
+      return mintConversationBrowserToken({
+        projectId: tokenProjectId,
+        conversationId: browserSessionId,
+      });
+    },
+    [browserSessionId, mintConversationBrowserToken],
   );
-  const expanded = useBrowserWorkspaceStore((state) => state.expanded);
-  const setExpanded = useBrowserWorkspaceStore((state) => state.setExpanded);
+  const expanded = useBrowserWorkspaceStore((state) =>
+    browserSessionId
+      ? !!state.conversations[browserSessionId]?.expanded
+      : false,
+  );
+  const setConversationExpanded = useBrowserWorkspaceStore(
+    (state) => state.setExpanded,
+  );
+  const setExpanded = useCallback(
+    (value: boolean) => {
+      if (browserSessionId) setConversationExpanded(browserSessionId, value);
+    },
+    [browserSessionId, setConversationExpanded],
+  );
 
   // An expanded browser that is no longer on screen has nothing to be expanded
   // over. Left set, it would take over the window the next time the panel
@@ -89,6 +98,13 @@ export function PlaygroundBrowserPanel({
   // authorized it yet must see the local body's pointer, not a cloud browser
   // they did not ask for.
   const isLocal = engine.selectedEngine === "local";
+
+  if (!browserSessionId)
+    return (
+      <p role="status" className="p-4 text-sm text-muted-foreground">
+        Loading conversation…
+      </p>
+    );
 
   return (
     <div
@@ -133,6 +149,7 @@ export function PlaygroundBrowserPanel({
       <div className="flex min-h-0 flex-1 flex-col">
         {isLocal ? (
           <LocalBrowserBody
+            key={`${projectId}:${browserSessionId}:local`}
             projectId={projectId}
             sessionId={browserSessionId}
             consentGranted={engine.consent.granted}
@@ -141,6 +158,7 @@ export function PlaygroundBrowserPanel({
           />
         ) : (
           <HostedBrowserBody
+            key={`${projectId}:${browserSessionId}:hosted`}
             projectId={projectId}
             sessionId={browserSessionId}
             mintToken={mintHostedBrowserToken}

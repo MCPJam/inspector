@@ -122,9 +122,9 @@ function getServiceToken(): string | null {
 export function isComputersDataPlaneConfigured(): boolean {
   return Boolean(
     getConvexHttpUrl() &&
-    getServiceToken() &&
-    process.env.E2B_API_KEY &&
-    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim(),
+      getServiceToken() &&
+      process.env.E2B_API_KEY &&
+      process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim(),
   );
 }
 
@@ -336,12 +336,22 @@ export async function mintBrowserTokenForSession(args: {
 export async function wakePlaygroundSandbox(args: {
   bearer: string;
   sandboxRowId: string;
+  /** Identity already verified from a short-lived browser token by the panel. */
+  verifiedUserId?: string;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<{ ok: boolean; woke?: boolean }>> {
   return postJson<{ ok: boolean; woke?: boolean }>(
     "/playground/sandbox/wake",
-    bearerHeader(args.bearer),
-    { sandboxRowId: args.sandboxRowId },
+    {
+      ...bearerHeader(args.bearer),
+      ...(args.verifiedUserId && getServiceToken()
+        ? { "x-inspector-service-token": getServiceToken()! }
+        : {}),
+    },
+    {
+      sandboxRowId: args.sandboxRowId,
+      ...(args.verifiedUserId ? { verifiedUserId: args.verifiedUserId } : {}),
+    },
     args.signal,
   );
 }
@@ -387,7 +397,12 @@ export async function provisionPlaygroundSandbox(args: {
     const attemptDeadline = AbortSignal.timeout(Math.min(30_000, remainingMs));
     const result = await postJson<PlaygroundSandbox>(
       "/playground/sandbox/provision",
-      bearerHeader(args.bearer),
+      {
+        ...bearerHeader(args.bearer),
+        ...(getServiceToken()
+          ? { "x-inspector-service-token": getServiceToken()! }
+          : {}),
+      },
       {
         projectId: args.projectId,
         chatSessionId: args.chatSessionId,

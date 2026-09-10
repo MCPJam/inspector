@@ -26,10 +26,7 @@ import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
 import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
 import { browserPanelAvailable } from "@/components/playground/PlaygroundBrowserPanel";
-import {
-  useMintBrowserToken,
-  useMintConversationBrowserToken,
-} from "@/hooks/useProjectComputer";
+import { useMintConversationBrowserToken } from "@/hooks/useProjectComputer";
 import {
   useComputerEngine,
   type ComputerEngineState,
@@ -142,21 +139,21 @@ function RightRailTabbed({
   // picked "This machine" but has not authorized it yet sees the local body's
   // pointer rather than a cloud browser they did not ask for.
   const isLocalBrowser = engine.selectedEngine === "local";
-  const mintBrowserToken = useMintBrowserToken();
   const mintConversationBrowserToken = useMintConversationBrowserToken();
   const activeChatSessionId = useActiveChatSessionStore(
     (state) => state.sessionId,
   );
   const browserSessionId = activeChatSessionId ?? undefined;
   const mintHostedBrowserToken = useCallback(
-    ({ projectId: tokenProjectId }: { projectId: string }) =>
-      browserSessionId
-        ? mintConversationBrowserToken({
-            projectId: tokenProjectId,
-            conversationId: browserSessionId,
-          })
-        : mintBrowserToken({ projectId: tokenProjectId }),
-    [browserSessionId, mintBrowserToken, mintConversationBrowserToken],
+    ({ projectId: tokenProjectId }: { projectId: string }) => {
+      if (!browserSessionId)
+        throw new Error("The conversation is still loading.");
+      return mintConversationBrowserToken({
+        projectId: tokenProjectId,
+        conversationId: browserSessionId,
+      });
+    },
+    [browserSessionId, mintConversationBrowserToken],
   );
 
   // A tab that disappears cannot stay selected: leaving `activeTab` on a
@@ -244,8 +241,13 @@ function RightRailTabbed({
               is what makes that safe — a pane behind the Logs tab must stop
               claiming somebody is watching, and on the hosted engine that claim
               keeps a METERED box awake. */}
-          {isLocalBrowser ? (
+          {!browserSessionId ? (
+            <p role="status" className="p-4 text-sm text-muted-foreground">
+              Loading conversation…
+            </p>
+          ) : isLocalBrowser ? (
             <LocalBrowserBody
+              key={`${projectId}:${browserSessionId}:local`}
               projectId={projectId}
               sessionId={browserSessionId}
               consentGranted={engine.consent.granted}
@@ -254,6 +256,7 @@ function RightRailTabbed({
             />
           ) : (
             <HostedBrowserBody
+              key={`${projectId}:${browserSessionId}:hosted`}
               projectId={projectId}
               sessionId={browserSessionId}
               mintToken={mintHostedBrowserToken}

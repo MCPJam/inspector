@@ -96,6 +96,29 @@ Chromium caches and singleton locks, uploaded to Convex storage, and imported
 only on the next fresh boot. Computer settings lists the saved profiles and
 lets the owner choose the default for new chats or delete one.
 
+### Returning to a chat
+
+The local Playground pane reads `POST /local-browser/lookup` with the project
+and conversation IDs when it becomes visible or switches chats. The route
+returns the existing live browser's boot ID and lease, or `session: null`.
+It never launches a browser or falls back to the project's legacy browser.
+An empty visible pane checks again every two seconds so it can attach when the
+agent starts browsing. Hidden panes stop checking; request failures leave the
+explicit Open action available.
+
+The browser runtime owns the tabs independently of the React pane. Reattaching
+shows the same live pages, including their document state and WebMCP tool
+registrations. The shell clears the previous browser's tab metadata on a boot
+change and ignores late command replies from that browser. Electron shows the
+existing native view; Node reconnects its frame stream. Hosted panes already
+resolve their existing conversation browser through the hosted session read.
+
+This is live reattachment, not restoration after browser termination. Local
+browsers still expire after ten minutes idle or one hour total unless a human
+holds the lease. Profile storage preserves supported site data; it does not
+serialize a page's DOM, JavaScript heap, scroll position, or WebMCP callbacks.
+Restoring closed tabs would need saved tab metadata and a fresh navigation.
+
 ## The browser is a full Chromium, headless
 
 `headless: true` alone resolves to `chromium-headless-shell` — the _old_

@@ -218,7 +218,7 @@ export async function fetchLocalBrowserSession(
   sessionId: string,
 ): Promise<LocalBrowserSession | null> {
   const result = await post<{ session: LocalBrowserSession | null }>(
-    "session",
+    "lookup",
     { projectId, sessionId },
     consentToken,
   );
@@ -408,7 +408,8 @@ export async function fetchLocalBrowserProfileArchive(args: {
       response.status,
     );
   }
-  const savedFrom = response.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
+  const savedFrom =
+    response.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
   return {
     archive: await response.blob(),
     ...(savedFrom ? { savedFrom } : {}),
@@ -477,7 +478,6 @@ export function openLocalBrowserFrameStream(args: {
     },
   };
 }
-
 
 /**
  * The browser shell's three calls, on the local engine.

@@ -43,8 +43,9 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 }));
 
 vi.mock("@/stores/active-chat-session-store", () => ({
-  useActiveChatSessionStore: (select: (s: { sessionId: string | null }) => unknown) =>
-    select({ sessionId: sessionState.sessionId }),
+  useActiveChatSessionStore: (
+    select: (s: { sessionId: string | null }) => unknown,
+  ) => select({ sessionId: sessionState.sessionId }),
 }));
 
 // Both bodies are exercised in their own suites; here they only have to say
@@ -92,10 +93,9 @@ vi.mock("@/components/browser/HostedBrowserBody", () => ({
   ),
 }));
 
-const {
-  browserPanelAvailable,
-  PlaygroundBrowserPanel,
-} = await import("../PlaygroundBrowserPanel");
+const { browserPanelAvailable, PlaygroundBrowserPanel } = await import(
+  "../PlaygroundBrowserPanel"
+);
 const { useBrowserWorkspaceStore, DEFAULT_BROWSER_PANEL_SIZE } = await import(
   "@/stores/browser-workspace-store"
 );
@@ -118,9 +118,8 @@ beforeEach(() => {
   engineState.granted = true;
   sessionState.sessionId = "chat-1";
   useBrowserWorkspaceStore.setState({
-    open: true,
+    conversations: { "chat-1": { open: true, expanded: false } },
     size: DEFAULT_BROWSER_PANEL_SIZE,
-    expanded: false,
     collapsedRailForBrowser: false,
   });
 });
@@ -143,11 +142,7 @@ describe("which body the panel mounts", () => {
     engineState.selectedEngine = "cloud";
     engineState.engine = "cloud";
     rerender(
-      <PlaygroundBrowserPanel
-        projectId="proj-1"
-        visible
-        onClose={() => {}}
-      />,
+      <PlaygroundBrowserPanel projectId="proj-1" visible onClose={() => {}} />,
     );
     expect(screen.getByTestId("browser-pane").dataset.engine).toBe("hosted");
   });
@@ -175,7 +170,9 @@ describe("expand and close", () => {
     const button = screen.getByTestId("browser-expand");
     expect(button).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(button);
-    expect(useBrowserWorkspaceStore.getState().expanded).toBe(true);
+    expect(
+      useBrowserWorkspaceStore.getState().conversations["chat-1"]?.expanded,
+    ).toBe(true);
     expect(screen.getByTestId("browser-expand")).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -187,7 +184,9 @@ describe("expand and close", () => {
     // with the control to undo it in the corner of a panel nobody expected.
     const { rerender } = renderPanel();
     fireEvent.click(screen.getByTestId("browser-expand"));
-    expect(useBrowserWorkspaceStore.getState().expanded).toBe(true);
+    expect(
+      useBrowserWorkspaceStore.getState().conversations["chat-1"]?.expanded,
+    ).toBe(true);
 
     rerender(
       <PlaygroundBrowserPanel
@@ -196,7 +195,9 @@ describe("expand and close", () => {
         onClose={() => {}}
       />,
     );
-    expect(useBrowserWorkspaceStore.getState().expanded).toBe(false);
+    expect(
+      useBrowserWorkspaceStore.getState().conversations["chat-1"]?.expanded,
+    ).toBe(false);
   });
 
   it("hands the close back to the workspace", () => {
@@ -307,20 +308,13 @@ describe("the browser a chat owns", () => {
     );
   });
 
-  it("falls back to the project token when there is no conversation", async () => {
-    // No active chat session is not "no browser" — it is the shared project
-    // browser, which is exactly what the project mint returns. This is the
-    // only remaining way to land there now that per-conversation browsers
-    // are the default rather than a flag.
+  it("waits for conversation hydration without minting a project token", () => {
     sessionState.sessionId = null;
-    engineState.engine = "cloud";
     engineState.selectedEngine = "cloud";
     renderPanel();
-    const pane = screen.getByTestId("browser-pane");
-    expect(pane).toHaveAttribute("data-session", "");
-    fireEvent.click(pane);
-    await vi.waitFor(() =>
-      expect(pane).toHaveAttribute("data-token", "project-tok"),
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading conversation",
     );
+    expect(screen.queryByTestId("browser-pane")).toBeNull();
   });
 });
