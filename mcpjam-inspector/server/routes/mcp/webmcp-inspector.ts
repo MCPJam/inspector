@@ -1,3 +1,4 @@
+import { parsePaneCommand } from "../../services/browserd/daemon/pane-command";
 import {
   MIN_SESSION_VIEWPORT,
   MAX_SESSION_VIEWPORT,
@@ -37,10 +38,7 @@ import {
   WebMcpQueueFullError,
 } from "../../services/webmcp-inspector/session-runtime";
 import { createBrowserdWebMcpProvider } from "../../services/webmcp-inspector/browserd-provider";
-import {
-  createElectronWebviewProvider,
-  WebMcpWebviewAttachError,
-} from "../../services/webmcp-inspector/electron-webview-provider";
+
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
 import {
   classifyHostedReserveError,
@@ -90,7 +88,7 @@ import {
  * code the UI can explain beats a 404 on a route the client can plainly see.
  * `WEBMCP_INSPECTOR_ENABLED` is the kill switch in both modes;
  * `webmcpInspectorHostedEnabled()` is the separate hosted-reachability gate;
- * the client-side gate is the `webmcp-inspector-enabled` flag.
+ * client visibility follows the deployment's local/hosted Browser rollout.
  *
  * The browser opens as a real window on the machine running the inspector: the
  * developer drives their own page directly, and this API is the instrument
@@ -180,6 +178,18 @@ const startSchema = z.object({
 });
 
 const commandSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("browser_state") }),
+  z.object({
+    type: z.literal("browser_command"),
+    command: z.unknown().transform((value, ctx) => {
+      const command = parsePaneCommand(value);
+      if (!command) {
+        ctx.addIssue({ code: "custom", message: "Invalid browser command" });
+        return z.NEVER;
+      }
+      return command;
+    }),
+  }),
   z.object({ type: z.literal("navigate"), url: httpUrlSchema }),
   z.object({ type: z.literal("reload") }),
   z.object({ type: z.literal("go_back") }),
@@ -233,6 +243,7 @@ const commandSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("input"),
+    tabId: z.string().min(1).max(200).optional(),
     events: z.array(inputEventSchema).min(1).max(WEBMCP_INPUT_BATCH_LIMIT),
   }),
 ]);
@@ -306,12 +317,6 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
       { error: hostedRefusal.error, code: hostedRefusal.code },
       httpStatus(hostedRefusal),
     );
-  }
-  if (error instanceof WebMcpWebviewAttachError) {
-    // 400, not 500: the id the client sent no longer names a surface we can
-    // attach to (its pane unmounted, or devtools took the debugger slot). The
-    // request was malformed by the time it arrived, and the fix is the client's.
-    return c.json({ error: error.message, code: "webview-attach-failed" }, 400);
   }
   reportRouteFailure("[webmcp] unhandled route error", error, {
     source: "mcp.webmcp-inspector",
@@ -550,35 +555,15 @@ webmcpInspector.post("/sessions", async (c) => {
   let handle: ComputerHostedBrowserSessionHandle | undefined;
   let ownerId: string | undefined;
   if (webContentsId !== undefined) {
-    // Both refusals are 400s that name what the caller got wrong, because both
-    // describe a request that could never be honoured rather than a server that
-    // failed to honour it.
-    if (process.env.ELECTRON_APP !== "true") {
-      return c.json(
-        {
-          error:
-            "The embedded browser surface only exists inside the MCPJam desktop app.",
-          code: "electron-only",
-        },
-        400,
-      );
-    }
-    if (display !== "in-app") {
-      // A surface the client mounted IS the in-app view. Honouring a window
-      // request with it would report a transport whose pane the client is not
-      // rendering, and the person would watch an empty box beside a browser
-      // that never opened.
-      return c.json(
-        {
-          error:
-            'An embedded browser surface is the in-app view; ask for `display: "in-app"` or omit the surface.',
-          code: "webview-display-mismatch",
-        },
-        400,
-      );
-    }
-    provider = createElectronWebviewProvider({ webContentsId });
-  } else if (transport === "hosted") {
+    return c.json(
+      {
+        error: "Restart the desktop app to use managed browser tabs.",
+        code: "obsolete_surface",
+      },
+      400,
+    );
+  }
+  if (transport === "hosted") {
     // Every refusal below is a 4xx with a code the UI can explain, never a
     // 500: each one is a thing the person can actually fix (turn the feature
     // on, pick a project, sign in).
@@ -1055,6 +1040,11 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
     webMcpSessions.touch(runtime);
 
     switch (command.type) {
+      case "browser_state":
+        return c.json({ state: await runtime.browserState() });
+      case "browser_command":
+        await runtime.browserCommand(command.command);
+        return c.json({ ok: true });
       case "navigate":
       case "reload":
       case "go_back": {
@@ -1128,7 +1118,12 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           streaming: await runtime.setScreencast(command.enabled),
         });
       case "input":
-        await runtime.dispatchInput(command.events);
+        await runtime.dispatchInput(
+          command.events,
+          undefined,
+          "http",
+          command.tabId,
+        );
         return c.json({ ok: true });
     }
   } catch (error) {

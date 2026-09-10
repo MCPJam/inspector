@@ -1,40 +1,9 @@
 /**
- * A `WebMcpBrowserProvider` backed by browserd (the hosted stage).
- *
- * SCAFFOLD GRADE — honest about what it is. The V1 provider interface was
- * written so the browser could move off the viewer's machine, and this is that
- * move: the same session runtime, registry and routes, driving Chromium inside
- * an E2B Desktop instead of a Playwright window on the user's laptop. The
- * local `playwright-provider.ts` is untouched and stays the default.
- *
- * Two gaps, deliberate and specced rather than papered over:
- *
- * 1. TOOL DISCOVERY IS POLLED, not pushed. This provider asks for a snapshot
- *    on an interval and after every command. That is correct but laggy: a tool
- *    registered by a page's own script shows up within one poll rather than
- *    instantly.
- *
- *    HALF of that gap is now closed: `daemon/webmcp-bridge.ts` has an
- *    `onChange` push channel emitting complete snapshots, which is exactly what
- *    this provider wants and what the local inspector already consumes. What is
- *    still missing is the TRANSPORT — an SSE (or long-poll) endpoint on the
- *    daemon forwarding that channel out of the sandbox. When it exists, this
- *    provider swaps its interval for a subscription and nothing above it
- *    changes, because snapshot semantics are already what the interface wants:
- *    `onToolsChanged` takes the COMPLETE set every time, so a missed event
- *    cannot leak a stale tool.
- *
- * 2. NO ACTIVITY OR POPUP SIGNAL. `onActivityObserved` and `onPopupOpened`
- *    need the same push channel. Until then a hosted session relies on
- *    command traffic for its idle clock, so a session a person is only
- *    WATCHING through the panel can be reaped as idle. The panel's own
- *    keepalive covers the computer; wiring it to the V1 idle clock is part of
- *    the same follow-up.
- *
- * What it does do properly: it is the first constructor of the
- * `remote-interactive-url` viewport transport — the type V1 reserved for
- * exactly this and never built — so the UI can embed the desktop's stream
- * instead of claiming a browser opened on the viewer's machine.
+ * WebMCP discovery and invocation over the daemon command contract.
+ * Hosted sessions keep their computer-owned lifetime and lease; the local
+ * facade supplies an in-process transport and shared inspection authority.
+ * Tab bindings survive viewer changes, and raw tool values are separated from
+ * the daemon's observation envelope before entering the inspector timeline.
  */
 import type {
   CreateWebMcpSessionOptions,
@@ -67,6 +36,11 @@ const TOOL_POLL_MS = 2_000;
 
 /** The daemon calls this provider needs; narrowed so tests need no E2B. */
 export interface BrowserdSessionTransport {
+  paneState?(args: {
+    holder?: string;
+  }): Promise<
+    import("@/shared/browser-session-state").BrowserStateSnapshot | null
+  >;
   sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
@@ -144,7 +118,7 @@ const LEASE_BLOCKED_BACKOFF_MS = 15_000;
  */
 const WEBMCP_INVOKE_TIMEOUT_MS = 75_000;
 
-class BrowserdWebMcpSession implements WebMcpBrowserSession {
+export class BrowserdWebMcpSession implements WebMcpBrowserSession {
   private url: string;
   private disposed = false;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -167,9 +141,14 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
   private readonly hasWatchers: () => boolean;
 
   constructor(
-    private readonly handle: ComputerHostedBrowserSessionHandle,
+    private readonly handle: {
+      bootId: string;
+      computerId?: string;
+      sessionId?: string;
+      streamUrl?: string;
+    },
     private readonly transport: BrowserdSessionTransport,
-    private readonly options: CreateWebMcpSessionOptions,
+    protected readonly options: CreateWebMcpSessionOptions,
     sessionOptions: BrowserdSessionOptions,
   ) {
     this.url = options.url;
@@ -250,7 +229,9 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     await this.pollTools();
   }
 
-  async invokeTool(request: WebMcpInvokeRequest): Promise<{ output: unknown }> {
+  async invokeTool(
+    request: WebMcpInvokeRequest,
+  ): Promise<{ output: unknown; truncated?: boolean }> {
     if (request.signal.aborted) {
       throw new WebMcpInvocationCancelledError(
         "Cancelled before it started.",
@@ -313,7 +294,17 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
         },
       );
       const result = await Promise.race([sent, aborted]);
-      return { output: result.output };
+      const envelope = result.output as
+        | { invocationId?: unknown; result?: unknown; omitted?: boolean }
+        | undefined;
+      return envelope &&
+        typeof envelope.invocationId === "string" &&
+        "result" in envelope
+        ? {
+            output: envelope.result,
+            ...(envelope.omitted ? { truncated: true } : {}),
+          }
+        : { output: result.output };
     } finally {
       request.signal.removeEventListener("abort", onAbort);
     }
@@ -327,9 +318,12 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     );
   }
 
-  async captureScreenshot(): Promise<string | undefined> {
+  async captureScreenshot(tabId?: string): Promise<string | undefined> {
     try {
-      const result = await this.run({ kind: "observe", mode: "screenshot" });
+      const result = await this.run(
+        { kind: "observe", mode: "screenshot" },
+        { tabId },
+      );
       return readString(result.output, "screenshot");
     } catch {
       // Best effort by contract: a thumbnail is never worth failing a session.
@@ -341,7 +335,8 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     return this.url;
   }
 
-  hostedTarget(): { computerId: string; sessionId: string } {
+  hostedTarget(): { computerId: string; sessionId: string } | undefined {
+    if (!this.handle.computerId || !this.handle.sessionId) return undefined;
     return {
       computerId: this.handle.computerId,
       sessionId: this.handle.sessionId,
@@ -352,7 +347,7 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     // The first real constructor of the type V1 reserved for a hosted browser.
     // Saying `native-window` here would tell the UI a window opened on the
     // viewer's machine, which is the one thing that is definitely not true.
-    return { kind: "remote-interactive-url", url: this.handle.streamUrl };
+    return { kind: "remote-interactive-url", url: this.handle.streamUrl ?? "" };
   }
 
   /**
@@ -449,6 +444,13 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
   ): Promise<BrowserCommandResult> {
     if (this.disposed) throw new Error("session disposed");
     if (!options.background) this.lastCommandAt = Date.now();
+    const state = options.tabId ? null : await this.transport.paneState?.({});
+    const tabId = options.tabId ?? state?.activeTabId ?? undefined;
+    const active = state?.tabs.find((tab) => tab.id === tabId);
+    if (active && active.url !== this.url) {
+      this.url = active.url;
+      this.options.callbacks.onNavigated(active.url, originOf(active.url));
+    }
     const response = await this.transport.sendCommand(
       {
         // A fresh id per send is right for everything EXCEPT an invocation:
@@ -457,7 +459,8 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
         // invocation passes its own — see `invokeTool`.
         commandId: options.commandId ?? randomUUID(),
         source: "inspector",
-        ...(options.tabId ? { tabId: options.tabId } : {}),
+        responsiveViewport: true,
+        ...(tabId ? { tabId } : {}),
         action,
       },
       this.handle.bootId,
@@ -469,10 +472,8 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     // outcome including a refusal: the traffic is what proves someone is
     // using the machine, and a lease refusal means a PERSON is using it
     // directly, which is the strongest signal of all.
-    this.onCommand?.({
-      computerId: this.handle.computerId,
-      sessionId: this.handle.sessionId,
-    });
+    const hosted = this.hostedTarget();
+    if (hosted) this.onCommand?.(hosted);
     if (response.status === "lease_blocked") {
       // Backs the poll off rather than stopping it: without this it re-asks
       // every couple of seconds for as long as a person holds the browser and
@@ -586,9 +587,11 @@ function parseTools(
         : {}),
       origin: typeof tool.origin === "string" ? tool.origin : "",
       isMainFrame: tool.isMainFrame === true,
-      // The daemon does not distinguish declarative from imperative
-      // registration yet; claiming either would be a guess the UI displays.
-      registrationKind: "unknown",
+      registrationKind:
+        tool.registrationKind === "declarative" ||
+        tool.registrationKind === "imperative"
+          ? tool.registrationKind
+          : "unknown",
     });
   }
   return tools;

@@ -109,7 +109,7 @@ it("resolves changed combinations only at launch without modifying the suite", a
   await waitFor(() =>
     expect(onStart).toHaveBeenCalledWith(
       expect.objectContaining({ environmentIds: ["new-env"] }),
-      { iterationOverride: 3, ephemeralEnvironment: true },
+      { iterationOverride: 5, ephemeralEnvironment: true },
     ),
   );
   expect(ensure).toHaveBeenCalledWith(
@@ -149,7 +149,7 @@ it("launches saved pairings without a temporary-environment flag or capability p
   await waitFor(() =>
     expect(onStart).toHaveBeenCalledWith(
       expect.objectContaining({ environmentIds: ["env"] }),
-      { iterationOverride: 3 },
+      { iterationOverride: 5 },
     ),
   );
   expect(ensure).not.toHaveBeenCalled();

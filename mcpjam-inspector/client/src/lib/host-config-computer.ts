@@ -31,7 +31,7 @@ const KNOWN_COMPUTER_BACKED_TOOL_IDS: readonly string[] = ["bash"];
  * what the deployment has actually enabled.
  */
 export function catalogHasComputerBackedTool(
-  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
+  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
 ): boolean {
   return (catalog ?? []).some((t) => t.requiresComputer);
 }
@@ -43,7 +43,7 @@ export function catalogHasComputerBackedTool(
  * disabled row.
  */
 export function computerBackedToolIds(
-  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
+  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
 ): Set<string> {
   const ids = new Set<string>(KNOWN_COMPUTER_BACKED_TOOL_IDS);
   for (const tool of catalog ?? []) {
@@ -66,15 +66,18 @@ export function visibleBuiltInToolCatalog(
   catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
   opts: {
     computersEnabled: boolean;
+    browsersEnabled: boolean;
     selectedIds: ReadonlyArray<string>;
-  }
+  },
 ): ReadonlyArray<BuiltInToolCatalogEntry> | undefined {
-  if (catalog === undefined || opts.computersEnabled) return catalog;
+  if (catalog === undefined) return catalog;
   const selected = new Set(opts.selectedIds);
-  // Browser no longer needs a computer attachment, but authoring still uses
-  // the same rollout cohort as hosted desktop provisioning.
   return catalog.filter(
-    (t) => (!t.requiresComputer && t.id !== "browser") || selected.has(t.id),
+    (t) =>
+      selected.has(t.id) ||
+      (t.id === "browser"
+        ? opts.browsersEnabled
+        : !t.requiresComputer || opts.computersEnabled),
   );
 }
 
@@ -126,7 +129,7 @@ export function validateComputerWorkdir(raw: string): string | null {
  */
 export function setComputerWorkdirPatch(
   value: HostConfigInputV2,
-  workdir: string
+  workdir: string,
 ): Partial<HostConfigInputV2> {
   if (value.computer === undefined) return {};
   const trimmed = workdir.trim().replace(/\/+$/, "");
@@ -166,7 +169,7 @@ export function shouldShowComputerToggle(opts: {
  */
 export function detachComputerPatch(
   value: HostConfigInputV2,
-  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
+  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
 ): Partial<HostConfigInputV2> {
   const backed = computerBackedToolIds(catalog);
   return {
@@ -190,7 +193,7 @@ export function detachComputerPatch(
  */
 export function sanitizeHostConfigForEvalSuite(
   value: HostConfigInputV2,
-  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
+  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
 ): HostConfigInputV2 {
   const backed = computerBackedToolIds(catalog);
   const cleanedIds = value.builtInToolIds.filter((id) => !backed.has(id));

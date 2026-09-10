@@ -299,7 +299,7 @@ export function buildSuiteMetricStripData(
     const runName = labelRun
       ? labelRun(run)
       : run.runNumber
-      ? `Run #${run.runNumber}`
+      ? `#${run.runNumber}`
       : `Run ${run._id.slice(0, 8)}`;
     runLabels.push(`${runName} · ${new Date(run.createdAt).toLocaleString()}`);
     const summary = computeIterationSummary(its);

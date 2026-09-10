@@ -34,7 +34,31 @@ import {
 } from "./browser-viewport";
 
 /** One tab, as the strip draws it. */
+/** Engine-neutral default: explicit tabs and popups share the same budget. */
+export const BROWSER_TAB_CAP = 8;
+
+/** The daemon owns close selection; reducers mirror it until the next snapshot. */
+export function tabAfterClose(
+  tabs: readonly { id: string; openerId?: string }[],
+  closingId: string,
+  activeId: string | null,
+): string | null {
+  if (activeId !== closingId) return activeId;
+  const index = tabs.findIndex((tab) => tab.id === closingId);
+  if (index < 0) return activeId;
+  const openerId = tabs[index].openerId;
+  return (
+    (openerId && tabs.some((tab) => tab.id === openerId && tab.id !== closingId)
+      ? openerId
+      : undefined) ??
+    tabs[index + 1]?.id ??
+    tabs[index - 1]?.id ??
+    null
+  );
+}
+
 export interface BrowserTabState {
+  openerId?: string;
   navCounter?: number;
   /** The daemon's tab id. Stable for the tab's life; never reused. */
   id: string;
@@ -103,10 +127,7 @@ export interface BrowserControlState {
  * that moment or a person mid-login watches their own typing disappear.
  */
 export type BrowserConnectionState =
-  | "connecting"
-  | "live"
-  | "reconnecting"
-  | "closed";
+  "connecting" | "live" | "reconnecting" | "closed";
 
 export interface BrowserSessionState {
   /** Every tab, in the order the browser holds them. */
@@ -307,10 +328,11 @@ function applyDelta(
       // right, falling back to the left at the end of the strip. Leaving
       // `activeTabId` pointing at a tab that no longer exists would blank the
       // address field and the page area until the next snapshot arrived.
-      const activeTabId =
-        state.activeTabId === event.tabId
-          ? tabs[index]?.id ?? tabs[index - 1]?.id ?? null
-          : state.activeTabId;
+      const activeTabId = tabAfterClose(
+        state.tabs,
+        event.tabId,
+        state.activeTabId,
+      );
       return { ...state, tabs, activeTabId };
     }
     case "tab_activated": {
@@ -404,6 +426,7 @@ export function isHeldByAnother(
 function sameTab(a: BrowserTabState, b: BrowserTabState): boolean {
   return (
     a.id === b.id &&
+    a.openerId === b.openerId &&
     a.url === b.url &&
     a.title === b.title &&
     a.faviconUrl === b.faviconUrl &&

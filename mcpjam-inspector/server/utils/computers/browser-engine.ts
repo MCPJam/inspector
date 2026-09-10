@@ -24,13 +24,14 @@ export function coerceBrowserEngineForActor(
   engine: ComputerEngine,
   actor: {
     isGuest: boolean;
+    localGuestAuthorized?: boolean;
     isScenarioSession: boolean;
     isJourneySession: boolean;
     executionScopeKind?: "project" | "swarm";
   },
 ): ComputerEngine {
   return engine === "local" &&
-    (actor.isGuest ||
+    ((actor.isGuest && !actor.localGuestAuthorized) ||
       actor.isScenarioSession ||
       actor.isJourneySession ||
       actor.executionScopeKind === "swarm")

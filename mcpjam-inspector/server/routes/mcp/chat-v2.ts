@@ -134,6 +134,10 @@ import {
 } from "../../utils/computers/local-consent.js";
 import { isGuestChatRequest } from "../../utils/computers/local-engine-request.js";
 import {
+  resolveBrowserRollout,
+  guestBrowserProject,
+} from "../../utils/computers/browser-rollout.js";
+import {
   LOCAL_HARNESS_GRANT_HEADER,
   parseHarnessExecutionTarget,
   type RawHarnessTargetInput,
@@ -1083,7 +1087,7 @@ chatV2.post("/", async (c) => {
     // org/BYOK below even after they passed the harness preflight.
     const isMcpJamProvidedModel = Boolean(
       modelDefinition.id &&
-      isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
+        isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
     );
     // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
     // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
@@ -1099,7 +1103,7 @@ chatV2.post("/", async (c) => {
     // the values do too — `modelSource` below reads this one.
     const isExternalAccountHarnessTurn = Boolean(
       resolvedExecution.harness &&
-      harnessUsesExternalAccount(resolvedExecution.harness),
+        harnessUsesExternalAccount(resolvedExecution.harness),
     );
     const usesMcpjamFreePath =
       isMcpJamProvidedModel || isExternalAccountHarnessTurn;
@@ -1340,27 +1344,41 @@ chatV2.post("/", async (c) => {
       ...(localPrefEligible
         ? { preference: "local" as const }
         : enginePref === "cloud"
-          ? { preference: "cloud" as const }
-          : {}),
+        ? { preference: "cloud" as const }
+        : {}),
       localConsentValid,
     });
 
     const localBrowserRequested = body.browserEngine === "local";
+    const browserRollout = resolvedExecution.builtInToolIds?.includes(
+      BROWSER_BUILT_IN_TOOL_ID,
+    )
+      ? await resolveBrowserRollout(c, localBrowserRequested)
+      : { enabled: false, actor: null };
+    const localBrowserGuestId =
+      localBrowserRequested &&
+      browserRollout.enabled &&
+      browserRollout.actor?.guest
+        ? browserRollout.actor.id
+        : undefined;
     const browserConsentToken = c.req.header(BROWSER_CONSENT_HEADER);
     const browserConsentValid =
-      !requestIsGuest &&
+      browserRollout.enabled &&
+      (!requestIsGuest || Boolean(localBrowserGuestId)) &&
       !isScenarioSession &&
       (await verifyLocalBrowserConsent(browserConsentToken));
     let browserEngine = resolveBrowserEngine({
       preference: localBrowserRequested ? "local" : "cloud",
       localConsentValid: browserConsentValid,
     });
-    let browserUnavailableReason =
-      localBrowserRequested && browserEngine !== "local"
-        ? browserConsentValid
-          ? "browser_runtime_unavailable: Browser on this machine is unavailable. Check Browser settings."
-          : "browser_consent_required: Allow Browser in the Browser panel."
-        : undefined;
+    if (!browserRollout.enabled) browserEngine = "unavailable";
+    let browserUnavailableReason = !browserRollout.enabled
+      ? "browser_rollout_unavailable: Browser is not available for this location."
+      : localBrowserRequested && browserEngine !== "local"
+      ? browserConsentValid
+        ? "browser_runtime_unavailable: Browser on this machine is unavailable. Check Browser settings."
+        : "browser_consent_required: Allow Browser in the Browser panel."
+      : undefined;
 
     if (
       browserEngine === "local" &&
@@ -1372,6 +1390,7 @@ chatV2.post("/", async (c) => {
         "browser_runtime_unavailable: Install Chromium in the Browser panel.";
     }
     if (
+      !localBrowserGuestId &&
       body.browserEngine &&
       body.chatSessionId &&
       body.projectId &&
@@ -1428,7 +1447,11 @@ chatV2.post("/", async (c) => {
       hasV1PageTools: validatedPageTools.length > 0,
       engine: browserEngine === "local" ? "local" : "hosted",
       projectId:
-        typeof body.projectId === "string" ? body.projectId : undefined,
+        typeof body.projectId === "string"
+          ? localBrowserGuestId
+            ? guestBrowserProject(body.projectId, localBrowserGuestId)
+            : body.projectId
+          : undefined,
       ...(builtInAuthHeader ? { bearer: builtInAuthHeader } : {}),
     });
     const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
@@ -1492,7 +1515,7 @@ chatV2.post("/", async (c) => {
             // resolver withholds bash on the personal-project path — matching
             // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
             // only for a host-funded swarm executionScope.
-            isGuest: !requestAuthHeader,
+            isGuest: requestIsGuest,
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
@@ -1504,6 +1527,7 @@ chatV2.post("/", async (c) => {
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
             browserEngine,
+            localBrowserGuestId,
             browserConsentToken,
             localBrowserRequested,
             browserUnavailableReason,
@@ -1558,7 +1582,25 @@ chatV2.post("/", async (c) => {
     // persisted direct-chat/resume configs keep the RAW user prompt; the env
     // block is turn-injected, not user configuration.
     const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
-      systemPrompt,
+      systemPrompt:
+        browserUnavailableReason &&
+        resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+          ? [
+              systemPrompt,
+              "Browser is configured for this conversation but is temporarily unavailable for this turn. " +
+                (browserUnavailableReason.startsWith(
+                  "browser_consent_required:",
+                )
+                  ? "The user must click Allow in the Browser panel, then retry their request."
+                  : browserUnavailableReason.replace(
+                      /^browser_[a-z_]+:\s*/,
+                      "",
+                    )),
+              "If the request needs browsing, explain this setup step briefly. Do not claim that this assistant cannot browse in general. Do not claim navigation succeeded or switch browser locations.",
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+          : systemPrompt,
       // The environment context describes the pinned E2B image — the WRONG
       // machine when this turn's bash runs on the user's own computer.
       hasBashTool:
@@ -1870,11 +1912,11 @@ chatV2.post("/", async (c) => {
           modelVisibleMcpToolResults,
         })
       : scopeStepUpCancelRequest
-        ? buildLocalScopeStepUpCancellation({
-            request: scopeStepUpCancelRequest,
-            bindingKey: scopeStepUpBindingKey,
-          })
-        : undefined;
+      ? buildLocalScopeStepUpCancellation({
+          request: scopeStepUpCancelRequest,
+          bindingKey: scopeStepUpBindingKey,
+        })
+      : undefined;
     const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
       validatedWidgetModelContext,
     );

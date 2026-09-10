@@ -935,3 +935,5 @@ export {
   scorerRollupsComparable,
   stampScorerRollupIdentities,
 } from "./scorer-rollup.js";
+
+export { caseSourceSchema, type CaseSource } from "./case-source.js";

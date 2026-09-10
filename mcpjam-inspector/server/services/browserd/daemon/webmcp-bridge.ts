@@ -4,9 +4,8 @@
  *
  * This is the cooperation layer, not the drive mechanism — `navigate`/`act`/
  * `observe` are how browserd gets work done; `webmcp_*` is the bonus when a
- * page chooses to expose structured tools. The state machine is ported from
- * the local inspector's `webmcp-inspector/playwright-provider.ts` (the only
- * other module that speaks this domain) and keeps its hard-won behaviors:
+ * page chooses to expose structured tools. Node, cloud and Electron use this
+ * shared state machine, which preserves these browser-specific behaviors:
  *
  *   - identity is `${frameId} ${name}`, the browser's own notion;
  *   - navigation fires NO `toolsRemoved` and the main frame KEEPS its id, so
@@ -34,16 +33,8 @@
  * hands over a `CdpLike` through {@link WebMcpBridge.addSession}.
  *
  * Written against an injected `CdpLike`, so all of it is unit-testable with a
- * fake CDP session — no Chromium required. That zero-import design is also what
- * lets it be the SINGLE copy of this machine: the local inspector's
- * `webmcp-inspector/playwright-provider.ts` instantiates it too, because
- * Playwright's `CDPSession` satisfies `CdpLike` structurally.
- *
- * That import direction — inspector reaching into `browserd/daemon/` — is
- * deliberate but temporary. This file has no imports at all, so the eventual
- * move into a shared `webmcp-runtime/` package consumed by both is a file move
- * and nothing else. Anyone doing that extraction should move this rather than
- * inverting the dependency in place.
+ * fake CDP session — no Chromium required. Chromium and Electron adapters
+ * supply the same contract; WebMCP inspection reuses the daemon's tab owner.
  */
 
 /** The CDP surface this bridge uses; `chromium-launch.ts` supplies the real one. */
@@ -286,6 +277,15 @@ function originOf(url: string): string {
  * per driven tab, created lazily on the first `webmcp_*` action.
  */
 export class WebMcpBridge {
+  private readonly externalSubscribers = new Set<(toolName: string) => void>();
+  subscribeExternalInvocation(
+    listener: (toolName: string) => void,
+  ): () => void {
+    this.externalSubscribers.add(listener);
+    return () => {
+      this.externalSubscribers.delete(listener);
+    };
+  }
   /**
    * Tools keyed `${frameId} ${name}` — the browser's own notion of identity —
    * each carrying the registration sequence minted when it arrived.
@@ -621,6 +621,8 @@ export class WebMcpBridge {
       // gap in an advisory one.
       if (this.outstandingSends > 0) return;
       this.onExternalInvocation?.(invoked.toolName ?? "");
+      for (const listener of this.externalSubscribers)
+        listener(invoked.toolName ?? "");
     });
 
     // NOT guarded by `live`. A response settles a PENDING INVOCATION, and a
@@ -1232,6 +1234,7 @@ export class WebMcpBridge {
     if (this.disposed) return;
     this.disposed = true;
     this.subscribers.clear();
+    this.externalSubscribers.clear();
     this.probe = undefined;
     // Child sessions are the provider's to close; what the bridge drops is its
     // own bookkeeping. It cannot UNSUBSCRIBE them — `CdpLike` has no `off` —

@@ -26,6 +26,7 @@ import type { BrowserControlState } from "../../../../shared/browser-session-sta
  */
 
 export interface BrowserNavigationBarProps {
+  authority?: { kind: "shared" } | { kind: "lease" };
   address: AddressFieldState;
   onAddress: (event: AddressFieldEvent) => void;
   canGoBack: boolean;
@@ -52,6 +53,7 @@ export interface BrowserNavigationBarProps {
 
 export function BrowserNavigationBar({
   address,
+  authority = { kind: "lease" },
   onAddress,
   canGoBack,
   canGoForward,
@@ -114,9 +116,11 @@ export function BrowserNavigationBar({
         autoCorrect="off"
         autoCapitalize="off"
         aria-label="Address"
-        placeholder="Enter a URL"
+        placeholder="Search Google or enter a URL"
         data-testid="browser-address"
-        onChange={(event) => onAddress({ type: "edit", value: event.target.value })}
+        onChange={(event) =>
+          onAddress({ type: "edit", value: event.target.value })
+        }
         onFocus={() => onAddress({ type: "focus" })}
         onBlur={() => onAddress({ type: "blur" })}
         onKeyDown={(event) => {
@@ -142,17 +146,19 @@ export function BrowserNavigationBar({
           "disabled:opacity-60",
         )}
       />
-      <span
-        data-testid="browser-control-status"
-        // ANNOUNCED. Losing the browser to somebody else changes what every
-        // control on this bar does, and a person using a screen reader has no
-        // picture to notice it in.
-        role="status"
-        aria-live="polite"
-        className="shrink-0 whitespace-nowrap px-1 text-[11px] text-muted-foreground"
-      >
-        {controlSentence(control, holding)}
-      </span>
+      {authority.kind === "lease" ? (
+        <span
+          data-testid="browser-control-status"
+          // ANNOUNCED. Losing the browser to somebody else changes what every
+          // control on this bar does, and a person using a screen reader has no
+          // picture to notice it in.
+          role="status"
+          aria-live="polite"
+          className="shrink-0 whitespace-nowrap px-1 text-[11px] text-muted-foreground"
+        >
+          {controlSentence(control, holding)}
+        </span>
+      ) : null}
       {onResumeAgent ? (
         <Button
           size="sm"
