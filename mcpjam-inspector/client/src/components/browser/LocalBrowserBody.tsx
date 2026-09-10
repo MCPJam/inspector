@@ -423,45 +423,42 @@ export function LocalBrowserBody({
           wire: "binary",
         });
         stream = opened;
-        wire = createFrameWireReader(
-          {
-            onFrame: (decoded) => {
-              if (closed) return;
-              paneFrameStats.noteTransport("jpeg-binary");
-              paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
-              frameSeqRef.current = decoded.seq;
-              // React can coalesce two `setFrame` calls into one render, and the
-              // surface only ever releases a frame it PAINTED — so a picture
-              // superseded before the commit has nobody to free it.
-              lastBitmap?.close();
-              lastBitmap = decoded.bitmap;
-              setFrame({
-                bitmap: decoded.bitmap,
-                decodeMs: decoded.decodeMs,
-                deviceWidth: decoded.deviceWidth,
-                deviceHeight: decoded.deviceHeight,
-                scale: decoded.scale,
-                ts: decoded.relayTs,
-                relayTs: decoded.relayTs,
-                seq: decoded.seq,
-              });
-            },
-            onHeartbeat: (daemon) => {
-              if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
-              noteWebmcpStats(
-                browserPageToolsKey(projectId, "local"),
-                daemon as never,
-                session.bootId,
-              );
-            },
-            onFatal: () => {
-              // A reader that has lost its place in a byte stream can never find
-              // it again, so the connection goes rather than the record.
-              opened.close();
-            },
+        wire = createFrameWireReader({
+          onFrame: (decoded) => {
+            if (closed) return;
+            paneFrameStats.noteTransport("jpeg-binary");
+            paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
+            frameSeqRef.current = decoded.seq;
+            // React can coalesce two `setFrame` calls into one render, and the
+            // surface only ever releases a frame it PAINTED — so a picture
+            // superseded before the commit has nobody to free it.
+            lastBitmap?.close();
+            lastBitmap = decoded.bitmap;
+            setFrame({
+              bitmap: decoded.bitmap,
+              decodeMs: decoded.decodeMs,
+              deviceWidth: decoded.deviceWidth,
+              deviceHeight: decoded.deviceHeight,
+              scale: decoded.scale,
+              ts: decoded.relayTs,
+              relayTs: decoded.relayTs,
+              seq: decoded.seq,
+            });
           },
-          { latestOnly: window.isElectron !== true },
-        );
+          onHeartbeat: (daemon) => {
+            if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
+            noteWebmcpStats(
+              browserPageToolsKey(projectId, "local"),
+              daemon as never,
+              session.bootId,
+            );
+          },
+          onFatal: () => {
+            // A reader that has lost its place in a byte stream can never find
+            // it again, so the connection goes rather than the record.
+            opened.close();
+          },
+        });
         openedSocket = opened.socket;
         socketRef.current = opened.socket;
         socketInputRef.current = false;
@@ -876,7 +873,7 @@ export function LocalBrowserBody({
   // apart, and a report that called them the same thing could not say whether
   // the native surface helped.
   const engineRef = useRef<string>("local");
-  engineRef.current = native ? "local-native" : status?.runtime ?? "local";
+  engineRef.current = native ? "local-native" : (status?.runtime ?? "local");
   useEffect(
     () => () => captureBrowserPaneSessionSummary(engineRef.current),
     [],
@@ -979,8 +976,7 @@ export function LocalBrowserBody({
   const shellTransport = useMemo(() => {
     if (!bootId) return null;
     return {
-      readState: () =>
-        fetchLocalBrowserState({ bootId, holder, consentToken }),
+      readState: () => fetchLocalBrowserState({ bootId, holder, consentToken }),
       sendCommand: (args: {
         command: BrowserPaneCommand;
         commandId?: string;
@@ -1219,7 +1215,7 @@ export function LocalBrowserBody({
               // Gated as well as cleared: a frame that lands in the same tick as
               // the revocation must not be the one that gets painted.
               frame={consentGranted ? frame : null}
-              holding={holding}
+              authority={{ kind: "lease", holding }}
               control={control}
               // NO take-control button. Using the browser is what takes it now,
               // and the shell's second row already says who is driving.

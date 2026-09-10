@@ -494,3 +494,59 @@ describe("a scroll that outlived the gesture", () => {
     expect(batches[0]).toHaveLength(4);
   });
 });
+
+describe("shared gesture ordering", () => {
+  it("pipelines ordered sends, bounds the window, and drains after an ack", async () => {
+    const batches: BrowserInputEvent[][] = [];
+    const acks: Array<() => void> = [];
+    const forwarder = createInputForwarder((events) => {
+      batches.push(events);
+      return new Promise<void>((resolve) => acks.push(resolve));
+    });
+    for (let i = 0; i < 20; i++)
+      forwarder.push([{ type: "text", text: String(i) }]);
+    expect(batches).toHaveLength(16);
+    acks[0]();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(batches).toHaveLength(17);
+    expect(batches[16]).toEqual(
+      [16, 17, 18, 19].map((i) => ({ type: "text", text: String(i) })),
+    );
+    forwarder.cancel();
+    acks.forEach((ack) => ack());
+  });
+
+  it("merges trackpad jitter and preserves a reversal on the dominant axis", () => {
+    const wheel = (deltaX: number, deltaY: number): BrowserInputEvent => ({
+      type: "wheel",
+      x: 10,
+      y: 20,
+      deltaX,
+      deltaY,
+    });
+    expect(
+      coalesceInput([wheel(0.2, 10), wheel(-0.1, 15), wheel(0.1, -12)]),
+    ).toEqual([wheel(0.1, 25), wheel(0.1, -12)]);
+  });
+});
+
+it("chunks long pasted text without splitting an emoji", () => {
+  const text = "a".repeat(4095) + "🍕" + "z".repeat(4200);
+  const sent: BrowserInputEvent[] = [];
+  const forwarder = createInputForwarder((events) => {
+    sent.push(...events);
+  });
+  forwarder.push([{ type: "text", text }]);
+  const chunks = sent
+    .filter((event) => event.type === "text")
+    .map((event) => event.text);
+  expect(chunks.join("")).toBe(text);
+  expect(
+    chunks.every(
+      (chunk) => chunk.length <= 4096 && !/[\uD800-\uDBFF]$/.test(chunk),
+    ),
+  ).toBe(true);
+  expect(chunks[1].startsWith("🍕")).toBe(true);
+});

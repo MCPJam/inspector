@@ -22,14 +22,13 @@
  * already does for the local engine. So: a chunked response, read back through
  * the `fetch` the client already has.
  *
- * THE LAYOUT IS `shared/webmcp-inspector-protocol.ts`'s, byte for byte, so the
- * two can be diffed side by side. What it is NOT is that module: its decoder
- * validates `jpegLength === byteLength - 24`, a MESSAGE-level invariant that
- * means nothing in a byte stream, and it answers `undefined` on an unknown
- * kind — which would silently swallow the `end` record below, the one record a
- * reader must never miss. (It is also imported by twenty-odd modules and edited
- * constantly; in this bundle's graph, every one of those edits would rotate
- * `bundleHash` and relaunch every live hosted session.)
+ * Protocol edits rotate the daemon bundleHash and relaunch hosted sessions.
+ *
+ * The inspection socket's single-message adapter delegates to this codec.
+ * That adapter additionally requires one complete JPEG per message; this byte
+ * stream also supports heartbeat, end and negotiated video records. Keeping
+ * the codec here lets the daemon bundle depend on the small wire contract
+ * without depending on the inspector's full product protocol.
  *
  *   offset  type  field
  *   0       u8    version (1)
@@ -260,7 +259,8 @@ export interface FrameStreamEnd {
  * viewport, so a click maps through exactly as it does for a JPEG.
  */
 export interface FrameStreamVideo {
-  kind: typeof FRAME_STREAM_KIND.video_key | typeof FRAME_STREAM_KIND.video_delta;
+  kind:
+    typeof FRAME_STREAM_KIND.video_key | typeof FRAME_STREAM_KIND.video_delta;
   deviceWidth: number;
   deviceHeight: number;
   scale: number;
@@ -271,10 +271,7 @@ export interface FrameStreamVideo {
 }
 
 export type FrameStreamRecord =
-  | FrameStreamFrame
-  | FrameStreamHeartbeat
-  | FrameStreamEnd
-  | FrameStreamVideo;
+  FrameStreamFrame | FrameStreamHeartbeat | FrameStreamEnd | FrameStreamVideo;
 
 /**
  * Pack one record.
@@ -476,9 +473,9 @@ export function createFrameStreamDecoder(
 }
 
 /** `{ stats }` when the payload is readable, `{}` otherwise. */
-function decodeHeartbeatStats(
-  payload: Uint8Array,
-): { stats?: FrameStreamStats } {
+function decodeHeartbeatStats(payload: Uint8Array): {
+  stats?: FrameStreamStats;
+} {
   if (payload.byteLength === 0) return {};
   try {
     const parsed: unknown = JSON.parse(new TextDecoder().decode(payload));

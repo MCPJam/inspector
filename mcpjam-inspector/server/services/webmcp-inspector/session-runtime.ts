@@ -214,6 +214,7 @@ export class WebMcpSessionRuntime {
 
   private session: WebMcpBrowserSession | undefined;
   private inputTail: Promise<void> = Promise.resolve();
+  private readonly socketInputDrains = new Set<() => Promise<void>>();
   private inputClosed = false;
   private status: WebMcpSessionStatus = "starting";
   private statusDetail: string | undefined;
@@ -501,6 +502,26 @@ export class WebMcpSessionRuntime {
     return shot;
   }
 
+  /** Resize the embedded viewport on the same dispatch tail as input. */
+  async resizeViewport(width: number, height: number): Promise<void> {
+    const session = this.requireSession();
+    // Drain before joining the tail: queued relay batches must retain the
+    // geometry their coordinates were captured against.
+    await Promise.all([...this.socketInputDrains].map((drain) => drain()));
+    const pending = this.inputTail.then(async () => {
+      if (this.inputClosed || this.session !== session) return;
+      try {
+        await session.resizeViewport?.(width, height);
+      } catch (error) {
+        if (this.inputClosed || this.session !== session) return;
+        throw error;
+      }
+      if (this.session === session) this.publishSession();
+    });
+    this.inputTail = pending.catch(() => {});
+    await pending;
+  }
+
   /**
    * Start or stop the viewport stream, reporting whether frames are flowing.
    *
@@ -539,11 +560,24 @@ export class WebMcpSessionRuntime {
    * `external_invocation` — so logging the clicks themselves would bury those
    * under a mouse trail.
    */
+  registerSocketInputDrain(drain: () => Promise<void>): () => void {
+    this.socketInputDrains.add(drain);
+    return () => {
+      this.socketInputDrains.delete(drain);
+    };
+  }
+
   async dispatchInput(
     events: WebMcpInputEvent[],
     isCancelled: () => boolean = () => false,
+    source: "http" | "socket" = "http",
   ): Promise<void> {
     const session = this.requireSession();
+    // Capture the existing relay work before joining the dispatch tail. Doing
+    // this inside the tail would deadlock the very socket dispatches we await.
+    if (source === "http" && this.socketInputDrains.size > 0) {
+      await Promise.all([...this.socketInputDrains].map((drain) => drain()));
+    }
     const pending = this.inputTail.then(async () => {
       if (this.inputClosed || this.session !== session || isCancelled()) {
         throw new Error("The browser session is no longer available.");

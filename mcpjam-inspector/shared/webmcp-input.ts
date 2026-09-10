@@ -65,11 +65,13 @@ export const inputEventSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("key_down"),
     key: keyNameSchema,
+    code: keyNameSchema.optional(),
     modifiers: modifiersSchema,
   }),
   z.object({
     kind: z.literal("key_up"),
     key: keyNameSchema,
+    code: keyNameSchema.optional(),
     modifiers: modifiersSchema,
   }),
   z.object({

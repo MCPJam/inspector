@@ -13,43 +13,15 @@
  * That module re-exports it under its old names, so its callers did not move.
  */
 
-/**
- * The most events one input request may carry.
- *
- * Mirrors the limit both input routes slice at — `routes/mcp/computers.ts`
- * for the local engine, `routes/web/computer-browser-panel.ts` for the hosted
- * one — and the daemon's own `MAX_INPUT_EVENTS` behind them. Kept in step by
- * hand, since the client cannot import a server module, and pinned by a test
- * on each side.
- */
-export const INPUT_BATCH_LIMIT = 64;
+import {
+  BROWSER_INPUT_BATCH_LIMIT,
+  BROWSER_INPUT_TEXT_MAX_CHARS,
+  coalesceBrowserPaneInput,
+  type BrowserPaneInputEvent,
+} from "@/shared/browser-pane-input";
 
-/** A pointer or key event, in the browser's own CSS-pixel space. */
-export type BrowserInputEvent =
-  | { type: "mouse_move"; x: number; y: number; modifiers?: number }
-  | {
-      type: "mouse_down" | "mouse_up";
-      x: number;
-      y: number;
-      button: "left" | "middle" | "right";
-      clickCount?: number;
-      modifiers?: number;
-    }
-  | {
-      type: "wheel";
-      x: number;
-      y: number;
-      deltaX: number;
-      deltaY: number;
-      modifiers?: number;
-    }
-  | {
-      type: "key_down" | "key_up";
-      key: string;
-      code?: string;
-      modifiers?: number;
-    }
-  | { type: "text"; text: string };
+export const INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
+export type BrowserInputEvent = BrowserPaneInputEvent;
 
 /**
  * A frame as it arrives: base64 JPEG plus the geometry it measured itself at.
@@ -65,12 +37,13 @@ export interface PaneFrame {
    * negotiate `binary` still speaks.
    */
   data?: string;
+  /** Ready-to-load source supplied by a local transport adapter. */
+  src?: string;
   /**
    * A picture already decoded off the main thread, on the binary wire.
    *
-   * The pane OWNS this: an `ImageBitmap` holds a decoded surface the garbage
-   * collector cannot see the cost of, so whoever replaces a frame closes the
-   * one it replaced.
+   * The producing connection owns this and closes it on replacement/teardown.
+   * The surface borrows it for drawing; it must not close it a second time.
    */
   bitmap?: ImageBitmap;
   /**
@@ -206,7 +179,7 @@ export function createInputForwarder(
     });
   let queue: BrowserInputEvent[] = [];
   let scheduled = false;
-  let inFlight = false;
+  let inFlight = 0;
   /**
    * Was the outstanding send one that has to be waited on?
    *
@@ -216,7 +189,7 @@ export function createInputForwarder(
    * that caused it: whatever started serialized stays serialized until it
    * settles.
    */
-  let inFlightSerialized = false;
+  let inFlightSerialized = 0;
   let cancelled = false;
   /** The id this pane stamps on each batch, so an ack can name one. */
   let seq = 0;
@@ -233,7 +206,11 @@ export function createInputForwarder(
       // and an unordered drag lands where nobody aimed. On the socket this is
       // false, because the socket is ordered and waiting would put a round
       // trip back into every gesture.
-      if (inFlight && (inFlightSerialized || options.serialize?.())) return;
+      if (
+        inFlight >= 16 ||
+        (inFlight > 0 && (inFlightSerialized > 0 || options.serialize?.()))
+      )
+        return;
       // Chunked at the server's own batch limit. The routes SLICE what they
       // will accept, so a single oversized message silently drops its tail —
       // which for key and button events means a page left holding a key
@@ -242,15 +219,16 @@ export function createInputForwarder(
       const batch = coalesced.splice(0, INPUT_BATCH_LIMIT);
       queue = coalesced;
       const mine = (seq += 1);
-      inFlight = true;
-      inFlightSerialized = options.serialize?.() ?? false;
+      inFlight += 1;
+      const serialized = options.serialize?.() ?? false;
+      if (serialized) inFlightSerialized += 1;
       const outcome = send(batch, mine);
       if (
         !outcome ||
         typeof (outcome as Promise<unknown>).then !== "function"
       ) {
-        inFlight = false;
-        inFlightSerialized = false;
+        inFlight -= 1;
+        if (serialized) inFlightSerialized -= 1;
         continue;
       }
       void (outcome as Promise<unknown>)
@@ -259,8 +237,8 @@ export function createInputForwarder(
           // says why.
         })
         .finally(() => {
-          inFlight = false;
-          inFlightSerialized = false;
+          inFlight -= 1;
+          if (serialized) inFlightSerialized -= 1;
           // Directly, not on the next frame: this batch already waited a
           // whole round trip for its turn.
           if (queue.length > 0) flush();
@@ -280,34 +258,6 @@ export function createInputForwarder(
       if (cancelled || events.length === 0) return;
       let urgent = false;
       for (const event of events) {
-        // WHEELS ADD UP; they do not queue.
-        //
-        // A move that another move replaces is dropped (see `coalesceInput`),
-        // because only the position matters. A wheel is the opposite: each one
-        // is a DELTA, so dropping any of them loses distance and replaying
-        // them one at a time makes the page go on scrolling long after the
-        // person stopped — a spin that outlives the gesture by however long
-        // the queue was. Summing adjacent deltas keeps the distance exact and
-        // delivers it as one movement.
-        //
-        // Only adjacent ones, and only with the same modifiers: Ctrl+wheel is
-        // a zoom, not a scroll, and merging across a click would move the page
-        // under a press that had already landed.
-        const previous = queue[queue.length - 1];
-        if (
-          event.type === "wheel" &&
-          previous?.type === "wheel" &&
-          event.modifiers === previous.modifiers &&
-          event.x === previous.x &&
-          event.y === previous.y
-        ) {
-          queue[queue.length - 1] = {
-            ...event,
-            deltaX: previous.deltaX + event.deltaX,
-            deltaY: previous.deltaY + event.deltaY,
-          };
-          continue;
-        }
         // The transitions a person can FEEL. A move is one of a stream and
         // nobody notices which frame it went in; a press, a release or a key
         // is a discrete act, and holding it for the next animation frame is
@@ -321,7 +271,25 @@ export function createInputForwarder(
         ) {
           urgent = true;
         }
-        queue.push(event);
+        if (event.type === "text") {
+          // Never split a surrogate pair between insertText calls.
+          for (let start = 0; start < event.text.length;) {
+            let end = Math.min(
+              start + BROWSER_INPUT_TEXT_MAX_CHARS,
+              event.text.length,
+            );
+            const last = event.text.charCodeAt(end - 1);
+            if (end < event.text.length && last >= 0xd800 && last <= 0xdbff)
+              end--;
+            queue.push({ type: "text", text: event.text.slice(start, end) });
+            start = end;
+          }
+        } else {
+          const tail = queue.pop();
+          queue.push(
+            ...coalesceBrowserPaneInput(tail ? [tail, event] : [event], true),
+          );
+        }
       }
       if (urgent) {
         flush();
@@ -341,19 +309,7 @@ export function createInputForwarder(
 export function coalesceInput(
   events: readonly BrowserInputEvent[],
 ): BrowserInputEvent[] {
-  const out: BrowserInputEvent[] = [];
-  for (const event of events) {
-    if (
-      event.type === "mouse_move" &&
-      out.length > 0 &&
-      out[out.length - 1]?.type === "mouse_move"
-    ) {
-      out[out.length - 1] = event;
-      continue;
-    }
-    out.push(event);
-  }
-  return out;
+  return coalesceBrowserPaneInput(events, true);
 }
 
 /** CDP's modifier bitmask: Alt 1, Ctrl 2, Meta 4, Shift 8. */

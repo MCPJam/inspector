@@ -433,6 +433,57 @@ describe("webmcp-inspector routes", () => {
     expect(status).toBe(400);
   });
 
+  it.each([true, false])(
+    "handles resize rejection during teardown (%s) without hiding live failures",
+    async (closing) => {
+      const started = await openSession(provider);
+      let entered!: () => void;
+      let reject!: (error: Error) => void;
+      const applying = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      Object.assign(provider.sessions[0], {
+        resizeViewport: () => {
+          entered();
+          return new Promise<void>((_resolve, fail) => {
+            reject = fail;
+          });
+        },
+      });
+      const result = call(
+        `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+        json({ type: "set_viewport", width: 600, height: 700 }),
+      );
+      await applying;
+      if (closing) await webMcpSessions.close(started.sessionId);
+      reject(new Error("resize failed"));
+      expect((await result).status).toBe(closing ? 200 : 500);
+    },
+  );
+
+  it("validates pane geometry before resizing the existing session", async () => {
+    const started = await openSession(provider);
+    const resize = vi.fn().mockResolvedValue(undefined);
+    Object.assign(provider.sessions[0], { resizeViewport: resize });
+    const path = `/api/mcp/webmcp/sessions/${started.sessionId}/command`;
+    expect(
+      (
+        await call(
+          path,
+          json({ type: "set_viewport", width: 600, height: 700 }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(resize).toHaveBeenCalledWith(600, 700);
+    for (const width of [0, -1, 100000, 500.5]) {
+      expect(
+        (await call(path, json({ type: "set_viewport", width, height: 700 })))
+          .status,
+      ).toBe(400);
+    }
+    expect(resize).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards a batch of input in order", async () => {
     const started = await openSession(provider);
     const session = provider.sessions[0];

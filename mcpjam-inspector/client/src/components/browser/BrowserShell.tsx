@@ -108,8 +108,7 @@ export interface BrowserShellProps {
    * Absent on an engine that cannot resize, in which case nothing observes.
    */
   onViewportMeasured?:
-    | ((size: { width: number; height: number }) => void)
-    | undefined;
+    ((size: { width: number; height: number }) => void) | undefined;
 }
 
 export function BrowserShell({
@@ -191,10 +190,9 @@ export function BrowserShell({
     const observer = new ResizeObserver((entries) => {
       const box = entries[0]?.contentRect;
       if (!box) return;
-      // Reported RAW. The coalescing, the debounce and the clamping all live
-      // in the session barrier on the far side, which is the only place that
-      // can order a resize against work in flight — doing any of it here would
-      // be a second, quieter policy that the barrier then has to argue with.
+      // Report raw geometry to the shared viewport reporter. It normalizes
+      // and coalesces measurements; the server barrier orders actual resizing
+      // against commands in flight.
       measuredRef.current?.({ width: box.width, height: box.height });
     });
     observer.observe(element);

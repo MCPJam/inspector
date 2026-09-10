@@ -24,8 +24,6 @@ import { PlaywrightWebMcpProvider } from "../playwright-provider";
 import { WebMcpOutcomeUnknownError, WebMcpToolGoneError } from "../provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
-  WEBMCP_HOUSEKEEPING_INTERVAL_MS,
-  WEBMCP_SETTLE_QUIET_MS,
   WEBMCP_VIEWPORT,
   type WebMcpActivityEntry,
   type WebMcpFrame,
@@ -70,16 +68,6 @@ if (process.env.CI && CHROMIUM_AVAILABLE && !WEBMCP_CDP_AVAILABLE) {
       "WebMCP domain. Install the pinned Playwright browser before running CI.",
   );
 }
-
-/**
- * How long to wait for a settled page's still, with slop.
- *
- * Derived from the constants the provider actually uses — the quiet window
- * plus a housekeeping tick to notice it — rather than a round number that
- * would keep passing while meaning something else.
- */
-const SETTLE_WAIT_MS =
-  WEBMCP_SETTLE_QUIET_MS + WEBMCP_HOUSEKEEPING_INTERVAL_MS + 2_000;
 
 /** Headless for tests; a real session opens a window the developer drives. */
 class HeadlessProvider extends PlaywrightWebMcpProvider {
@@ -152,9 +140,13 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
 
   it("discovers the page's tools with stable keys and provenance", async () => {
     const { runtime } = await open();
-    await vi.waitFor(() =>
-      expect(runtime.currentTools().length).toBeGreaterThanOrEqual(5),
-    );
+    // Main-frame tools can arrive before the cross-origin target attaches.
+    await vi.waitFor(() => {
+      expect(runtime.currentTools().length).toBeGreaterThanOrEqual(5);
+      expect(
+        runtime.currentTools().some((tool) => tool.name === "sub_tool"),
+      ).toBe(true);
+    });
 
     const tools = runtime.currentTools();
     const echo = tools.find((tool) => tool.name === "echo");
@@ -581,51 +573,19 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await registry.disposeAll();
   }, 60_000);
 
-  it("sharpens the picture once the page stops painting", async () => {
-    // The fixture paints on load and then stops, which is the case the settle
-    // still exists for: what a person reads is the picture still on screen a
-    // second after everything stopped moving, and the stream is encoded for
-    // motion.
-    // Subscribe before starting the stream so hub replay cannot replace the
-    // initial streaming frame with an already sharpened still.
+  it("keeps a quiet page stable and still supports explicit screenshots", async () => {
     const { runtime, frames } = await open();
     await runtime.setScreencast(true);
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
       timeout: 15_000,
     });
-
-    const streamedCount = 1;
-    const streamed = frames[0];
-
-    // Long enough for the page's own paints to stop and for the quiet window
-    // to elapse, DERIVED from the constants that decide it rather than a
-    // number that would quietly stop matching them. What arrives after that is
-    // the still — plus, on a build that answers a capture with a repaint it
-    // does not deduplicate, possibly one more frame, which is why this takes
-    // the LARGEST rather than the last.
-    await new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS));
-    expect(frames.length, "a still after the paints").toBeGreaterThan(
-      streamedCount,
-    );
-
-    const sharpest = Math.max(
-      ...frames
-        .slice(streamedCount)
-        .map((frame) => Buffer.byteLength(frame.data, "base64")),
-    );
-    // Same picture, more bytes: the still is encoded well above the streaming
-    // baseline, which is the entire point of taking it.
-    expect(sharpest).toBeGreaterThan(
-      Buffer.byteLength(streamed.data, "base64"),
-    );
-    expect(sharpest).toBeLessThanOrEqual(WEBMCP_FRAME_MAX_BYTES);
-    // And no capture loop: a still induces a repaint, and a repaint counted as
-    // activity would take another still, forever.
-    const after = frames.length;
-    await new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS));
-    expect(frames.length - after, "no capture loop").toBeLessThan(2);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const settled = frames.length;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(frames.length).toBe(settled);
+    expect(await runtime.screenshotNow()).toBeTruthy();
     await registry.disposeAll();
-  }, 60_000);
+  }, 30_000);
 
   it("boots an embedded session that streams unprompted and takes input", async () => {
     const { session, runtime, frames } = await open({

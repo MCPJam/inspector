@@ -1,3 +1,7 @@
+import {
+  MIN_SESSION_VIEWPORT,
+  MAX_SESSION_VIEWPORT,
+} from "@/shared/browser-viewport";
 import { inputEventSchema } from "@/shared/webmcp-input";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -214,6 +218,19 @@ const commandSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("capture_screenshot") }),
   z.object({ type: z.literal("set_screencast"), enabled: z.boolean() }),
+  z.object({
+    type: z.literal("set_viewport"),
+    width: z
+      .number()
+      .int()
+      .min(MIN_SESSION_VIEWPORT.width)
+      .max(MAX_SESSION_VIEWPORT.width),
+    height: z
+      .number()
+      .int()
+      .min(MIN_SESSION_VIEWPORT.height)
+      .max(MAX_SESSION_VIEWPORT.height),
+  }),
   z.object({
     type: z.literal("input"),
     events: z.array(inputEventSchema).min(1).max(WEBMCP_INPUT_BATCH_LIMIT),
@@ -1098,6 +1115,9 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           ...(screenshotBase64 === undefined ? {} : { capturedAt: Date.now() }),
         });
       }
+      case "set_viewport":
+        await runtime.resizeViewport(command.width, command.height);
+        return c.json({ ok: true });
       case "set_screencast":
         // `streaming` is the load-bearing half of this answer. A browser that
         // refuses `Page.startScreencast`, or a provider with no screencast at

@@ -1,6 +1,8 @@
+import { createImagePresenter } from "@/lib/browser-pane/image-presenter";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -34,11 +36,8 @@ import {
  * different — how it starts a browser, mints its credentials and reaches its
  * lease — and hands the result here.
  *
- * Taking over is a BUTTON, not a click into the picture. While nobody holds
- * the browser the agent may be mid-turn, and two drivers on one page is what
- * the lease exists to prevent; every server behind this refuses input that
- * arrives without one, so the button is the honest shape of the rule rather
- * than decoration over it.
+ * Authority is explicit: shared inspection permits human input alongside tool
+ * invocation; leased sessions delegate acquisition and enforcement to adapters.
  */
 
 export type { PaneControl };
@@ -46,14 +45,12 @@ export type { PaneControl };
 export interface BrowserPaneSurfaceProps {
   /** The latest frame, or null while none has arrived. */
   frame: PaneFrame | null;
-  /**
-   * Does this pane hold the browser?
-   *
-   * Gates every input path AND the keyboard. Not derived from `control`,
-   * because an engine may know it holds the lease before it can say whose the
-   * frame is.
-   */
-  holding: boolean;
+  /** Local inspection shares input; leased engines require an actual hold. */
+  authority: { kind: "lease"; holding: boolean } | { kind: "shared" };
+  label?: string;
+  interactionLabel?: string;
+  onViewportSize?: (size: { width: number; height: number }) => void;
+  onPainted?: (frame: PaneFrame, decodeMs?: number) => void;
   control: PaneControl;
   /** Offer "Take control". Omitted when there is nothing to take. */
   onTakeControl?: (() => void) | undefined;
@@ -175,10 +172,7 @@ function isTypedCharacter(event: {
   altKey: boolean;
 }): boolean {
   return (
-    event.key.length === 1 &&
-    !event.ctrlKey &&
-    !event.metaKey &&
-    !event.altKey
+    event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey
   );
 }
 
@@ -191,7 +185,11 @@ function buttonOf(event: { button?: number }): "left" | "middle" | "right" {
 
 export function BrowserPaneSurface({
   frame,
-  holding,
+  authority,
+  label = "The agent's browser",
+  onPainted,
+  onViewportSize,
+  interactionLabel,
   control,
   onTakeControl,
   onHandBack,
@@ -216,6 +214,9 @@ export function BrowserPaneSurface({
    * the console gets the overlay without hunting for the menu — and the menu
    * writes the same key back, so the choice survives a reload either way.
    */
+  const holding =
+    authority.kind === "shared" ||
+    (authority.kind === "lease" && authority.holding);
   const [ownStatsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
   // The prop WINS when it is given, and there is no syncing between the two:
   // one owner per value, chosen by whether a caller supplied one.
@@ -239,21 +240,28 @@ export function BrowserPaneSurface({
    * page and then the composed text on top.
    */
   const composingRef = useRef(false);
+  const heldKeys = useRef(new Map<string, { key: string; code: string }>());
+  const withheldKeys = useRef(new Set<string>());
+  const lastPoint = useRef({ x: 0, y: 0 });
 
   // Taking control moves the KEYBOARD, not just the lease: the click that
   // acquired it left focus on the button, so everything typed afterwards went
   // to the button and nothing reached the page.
   useEffect(() => {
-    if (!holding || !active) return;
+    if (!holding || !active || authority.kind === "shared") return;
     paneRef.current?.focus();
-  }, [holding, active]);
+  }, [holding, active, authority.kind]);
 
   // A hold that ends mid-drag must not leave the page holding a button. The
   // release cannot be sent — the lease is gone and the server would refuse it
   // — so this only forgets, which is what stops the NEXT press from being
   // treated as the continuation of a drag nobody is making.
   useEffect(() => {
-    if (!holding) draggingRef.current = null;
+    if (!holding) {
+      draggingRef.current = null;
+      heldKeys.current.clear();
+      withheldKeys.current.clear();
+    }
   }, [holding]);
 
   const send = useCallback(
@@ -296,39 +304,43 @@ export function BrowserPaneSurface({
    * development. The last frame's bitmap is closed by the body that owns the
    * socket, which is also the thing that knows when the stream is over.
    */
-  const paintedRef = useRef<PaneFrame | null>(null);
-
-  /**
-   * Paint the latest frame, and record that it was painted.
-   *
-   * An EFFECT rather than a render, because drawing is a side effect on a
-   * backing store the React tree does not own — and because the honest moment
-   * to record a paint is after `drawImage` returns. `setFrame` means a frame
-   * exists; it says nothing about anybody having seen it.
-   *
-   * Two wires meet here. On the binary wire the picture arrived decoded and
-   * the draw is synchronous. On the JSON wire it is base64 that still has to
-   * become an image, which the browser does asynchronously — so that path
-   * checks it is still the current frame before drawing, or a slow decode from
-   * two frames ago would paint over a newer picture.
-   */
-  // A stream that ENDED — a revoked grant, a lease taken, a socket closed —
-  // sets the frame to null, and the last picture's surface has no successor to
-  // release it. Several megabytes held for as long as the pane stays mounted.
-  useEffect(() => {
-    if (frame) return;
-    paintedRef.current?.bitmap?.close();
-    paintedRef.current = null;
-  }, [frame]);
+  const displayedFrame = useRef<PaneFrame | null>(null);
+  const images = useMemo(
+    () =>
+      createImagePresenter<{
+        src: string;
+        frame: PaneFrame;
+        record(decodeMs?: number): void;
+      }>((image, packet, decodeMs) => {
+        const canvas = canvasRef.current;
+        if (!canvas?.isConnected) return;
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        if (canvas.width !== packet.frame.deviceWidth)
+          canvas.width = packet.frame.deviceWidth;
+        if (canvas.height !== packet.frame.deviceHeight)
+          canvas.height = packet.frame.deviceHeight;
+        context.drawImage(image, 0, 0);
+        displayedFrame.current = packet.frame;
+        packet.record(decodeMs);
+      }),
+    [],
+  );
+  useEffect(() => () => images.clear(), [images]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !frame) return;
-    const previous = paintedRef.current;
-    if (previous && previous !== frame) previous.bitmap?.close();
-    paintedRef.current = frame;
+    if (!canvas || !frame) {
+      images.clear();
+      displayedFrame.current = null;
+      return;
+    }
 
     const record = (decodeMs?: number) => {
+      if (onPainted) {
+        onPainted(frame, decodeMs);
+        return;
+      }
       paneFrameStats.notePainted({
         ...(frame.relayTs !== undefined ? { relayTs: frame.relayTs } : {}),
         ts: frame.ts,
@@ -341,29 +353,22 @@ export function BrowserPaneSurface({
 
     const bitmap = frame.bitmap;
     if (bitmap) {
+      images.clear();
       // The producer's own measurement: the decode happened off the main
       // thread before this frame existed, so there is nothing to time here.
-      if (paintFrame(canvas, { ...frame, bitmap })) record(frame.decodeMs);
+      if (paintFrame(canvas, { ...frame, bitmap })) {
+        displayedFrame.current = frame;
+        record(frame.decodeMs);
+      }
       return;
     }
-    if (!frame.data) return;
-    let stale = false;
-    const startedAt = performance.now();
-    const image = new Image();
-    image.onload = () => {
-      if (stale) return;
-      canvas.width = frame.deviceWidth;
-      canvas.height = frame.deviceHeight;
-      const context = canvas.getContext("2d");
-      if (!context) return;
-      context.drawImage(image, 0, 0);
-      record(performance.now() - startedAt);
-    };
-    image.src = `data:image/jpeg;base64,${frame.data}`;
-    return () => {
-      stale = true;
-    };
-  }, [frame]);
+    if (!frame.data && !frame.src) return;
+    images.push({
+      src: frame.src ?? `data:image/jpeg;base64,${frame.data}`,
+      frame,
+      record,
+    });
+  }, [frame, onPainted, images]);
 
   const pointAt = useCallback(
     (
@@ -375,10 +380,81 @@ export function BrowserPaneSurface({
       // The ELEMENT's rectangle and the frame's own geometry, never the backing
       // store: the canvas is sized to the picture and CSS scales it to fit, so
       // the letterbox arithmetic is exactly what it was for the `<img>`.
-      return toPageCoordinates(event, canvas, frame, options);
+      const point = toPageCoordinates(
+        event,
+        canvas,
+        displayedFrame.current ?? frame,
+        options,
+      );
+      if (point) lastPoint.current = point;
+      return point;
     },
     [frame],
   );
+
+  const releaseHeld = useCallback(() => {
+    const button = draggingRef.current;
+    draggingRef.current = null;
+    composingRef.current = false;
+    if (button)
+      send([{ type: "mouse_up", ...lastPoint.current, button, modifiers: 0 }]);
+    for (const key of heldKeys.current.values())
+      send([{ type: "key_up", ...key, modifiers: 0 }]);
+    heldKeys.current.clear();
+    withheldKeys.current.clear();
+  }, [send]);
+
+  const wheelRef = useRef<(event: WheelEvent) => void>(() => {});
+  wheelRef.current = (event) => {
+    const point = pointAt(event);
+    if (!point || (!holding && !onTakeoverInput)) return;
+    event.preventDefault();
+    const input: BrowserInputEvent[] = [
+      {
+        type: "wheel",
+        ...point,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        modifiers: modifiersOf(event),
+      },
+    ];
+    if (holding) send(input);
+    else takeover(input);
+  };
+  useEffect(() => {
+    const pane = paneRef.current;
+    const wheel = (event: WheelEvent) => wheelRef.current(event);
+    pane?.addEventListener("wheel", wheel, { passive: false });
+    return () => pane?.removeEventListener("wheel", wheel);
+  }, []);
+  useEffect(() => {
+    const element = paneRef.current;
+    if (!element || !onViewportSize || typeof ResizeObserver === "undefined")
+      return;
+    const observer = new ResizeObserver(() => {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const width =
+        rect.width -
+        parseFloat(style.paddingLeft || "0") -
+        parseFloat(style.paddingRight || "0");
+      const height =
+        rect.height -
+        parseFloat(style.paddingTop || "0") -
+        parseFloat(style.paddingBottom || "0");
+      if (width > 0 && height > 0)
+        onViewportSize({
+          width: Math.round(width),
+          height: Math.round(height),
+        });
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onViewportSize]);
+
+  const releaseRef = useRef(releaseHeld);
+  releaseRef.current = releaseHeld;
+  useEffect(() => () => releaseRef.current(), []);
 
   const paneBody = () => {
     if (!frame) {
@@ -397,10 +473,10 @@ export function BrowserPaneSurface({
       <canvas
         ref={canvasRef}
         data-testid="rail-browser-frame"
-        aria-label="The agent's browser"
+        aria-label={label}
         role="img"
         className="h-full w-full select-none object-contain"
-        onMouseMove={(event) => {
+        onPointerMove={(event) => {
           // Mid-drag a move must still land, even over a letterbox bar: the
           // page is tracking the pointer and a gap reads as a jump.
           const point = pointAt(event, {
@@ -411,7 +487,7 @@ export function BrowserPaneSurface({
               { type: "mouse_move", ...point, modifiers: modifiersOf(event) },
             ]);
         }}
-        onMouseDown={(event) => {
+        onPointerDown={(event) => {
           // BEFORE the drag state is seeded, not just before the send. A press
           // while the agent is driving sends nothing either way — `send` drops
           // it — but recording the button anyway leaves this pane believing a
@@ -423,16 +499,28 @@ export function BrowserPaneSurface({
           // nothing there, and inventing a target clicks where nobody aimed.
           const point = pointAt(event);
           if (!point) return;
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+          paneRef.current?.focus();
+        }}
+        // Pointer events own capture; compatibility mouse events carry the
+        // browser's click count (PointerEvent.detail is always zero).
+        onMouseDown={(event) => {
+          if (!holding) return;
+          const point = pointAt(event);
+          if (!point) return;
           draggingRef.current = buttonOf(event);
           send([
             {
               type: "mouse_down",
               ...point,
               button: buttonOf(event),
-              clickCount: event.detail || 1,
+              clickCount: Math.min(3, event.detail || 1),
               modifiers: modifiersOf(event),
             },
           ]);
+        }}
+        onPointerUp={(event) => {
+          event.currentTarget.releasePointerCapture?.(event.pointerId);
         }}
         onMouseUp={(event) => {
           // The release always lands. Dropping it because the pointer drifted
@@ -448,29 +536,12 @@ export function BrowserPaneSurface({
               type: "mouse_up",
               ...point,
               button: buttonOf(event),
-              clickCount: event.detail || 1,
+              clickCount: Math.min(3, event.detail || 1),
               modifiers: modifiersOf(event),
             },
           ]);
         }}
-        onMouseLeave={(event) => {
-          // Leaving the element mid-drag ends it, for the same reason — with
-          // the button that was actually pressed, not always the left one.
-          const held = draggingRef.current;
-          if (!held) return;
-          const point = pointAt(event, { clampToPage: true });
-          draggingRef.current = null;
-          if (point) {
-            send([
-              {
-                type: "mouse_up",
-                ...point,
-                button: held,
-                modifiers: modifiersOf(event),
-              },
-            ]);
-          }
-        }}
+        onPointerCancel={() => releaseHeld()}
         onContextMenu={(event) => {
           // The page gets the right-click; the host's own menu would cover it.
           if (holding) event.preventDefault();
@@ -489,39 +560,14 @@ export function BrowserPaneSurface({
               type: "mouse_down",
               ...point,
               button: buttonOf(event),
-              clickCount: event.detail || 1,
+              clickCount: Math.min(3, event.detail || 1),
               modifiers: modifiersOf(event),
             },
             {
               type: "mouse_up",
               ...point,
               button: buttonOf(event),
-              clickCount: event.detail || 1,
-              modifiers: modifiersOf(event),
-            },
-          ]);
-        }}
-        onWheel={(event) => {
-          const point = pointAt(event);
-          if (!point) return;
-          if (!holding) {
-            takeover([
-              {
-                type: "wheel",
-                ...point,
-                deltaX: event.deltaX,
-                deltaY: event.deltaY,
-                modifiers: modifiersOf(event),
-              },
-            ]);
-            return;
-          }
-          send([
-            {
-              type: "wheel",
-              ...point,
-              deltaX: event.deltaX,
-              deltaY: event.deltaY,
+              clickCount: Math.min(3, event.detail || 1),
               modifiers: modifiersOf(event),
             },
           ]);
@@ -532,28 +578,29 @@ export function BrowserPaneSurface({
 
   return (
     <>
-      {chrome === "none" ? null : (
-      <PaneControlBar
-        control={control}
-        onTakeControl={onTakeControl}
-        onHandBack={onHandBack}
-        {...(controls ? { extra: controls } : {})}
-        {...(tier ? { tier } : {})}
-        {...(onTier ? { onTier } : {})}
-        {...(tiers ? { tiers } : {})}
-        statsOpen={statsOpen}
-        onToggleStats={(next) => {
-          // The menu is the flag: turning the overlay on from here is what a
-          // person who has never heard of `localStorage` can do, and turning it
-          // on has to START the recording, not merely reveal a set of zeros.
-          paneFrameStats.setEnabled(next);
-          setStatsOpen(next);
-        }}
-      />
+      {chrome === "none" || authority.kind === "shared" ? null : (
+        <PaneControlBar
+          control={control}
+          onTakeControl={onTakeControl}
+          onHandBack={onHandBack}
+          {...(controls ? { extra: controls } : {})}
+          {...(tier ? { tier } : {})}
+          {...(onTier ? { onTier } : {})}
+          {...(tiers ? { tiers } : {})}
+          statsOpen={statsOpen}
+          onToggleStats={(next) => {
+            // The menu is the flag: turning the overlay on from here is what a
+            // person who has never heard of `localStorage` can do, and turning it
+            // on has to START the recording, not merely reveal a set of zeros.
+            paneFrameStats.setEnabled(next);
+            setStatsOpen(next);
+          }}
+        />
       )}
       <div
         ref={paneRef}
-        className="relative min-h-0 flex-1 px-3 pb-3 outline-none"
+        aria-label={interactionLabel}
+        className="relative min-h-0 flex-1 px-3 pb-3 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         // FOCUSABLE EVEN WHEN THE AGENT IS DRIVING, because typing is now one
         // of the things that takes the browser. It used to be `-1` while not
         // holding, which was right when taking control was a button: there was
@@ -587,7 +634,31 @@ export function BrowserPaneSurface({
           if (holding) send([{ type: "text", text: event.data }]);
           else takeover([{ type: "text", text: event.data }]);
         }}
+        onBlur={() => releaseHeld()}
+        onKeyUp={(event) => {
+          const identity = event.code || event.key.toLowerCase();
+          if (withheldKeys.current.delete(identity)) return;
+          const pressed = heldKeys.current.get(identity);
+          if (!pressed) return;
+          heldKeys.current.delete(identity);
+          event.preventDefault();
+          send([
+            {
+              type: "key_up",
+              ...pressed,
+              modifiers: modifiersOf(event),
+            },
+          ]);
+        }}
         onKeyDown={(event) => {
+          if (
+            event.key.toLowerCase() === "v" &&
+            (event.ctrlKey || event.metaKey) &&
+            !event.altKey
+          ) {
+            withheldKeys.current.add(event.code || event.key.toLowerCase());
+            return;
+          }
           if (!holding) {
             // MID-COMPOSITION KEYSTROKES ARE NOT TEXT. They are the Latin keys
             // building a character that has not been chosen yet, and sending
@@ -595,7 +666,7 @@ export function BrowserPaneSurface({
             // and the result. Ignored here rather than in `takeover`, because
             // the browser is taken by the composition ending — which is the
             // moment the person actually meant something.
-            if (composingRef.current) return;
+            if (composingRef.current || event.key === "Process") return;
             // A modifier on its own is not somebody typing — it is somebody
             // about to use a host shortcut, or resting a hand. Taking the
             // browser away from the agent for a lone Shift would be the
@@ -644,15 +715,13 @@ export function BrowserPaneSurface({
             send([{ type: "text", text: event.key }]);
             return;
           }
+          heldKeys.current.set(event.code || event.key.toLowerCase(), {
+            key: event.key,
+            code: event.code,
+          });
           send([
             {
               type: "key_down",
-              key: event.key,
-              code: event.code,
-              modifiers: modifiersOf(event),
-            },
-            {
-              type: "key_up",
               key: event.key,
               code: event.code,
               modifiers: modifiersOf(event),
