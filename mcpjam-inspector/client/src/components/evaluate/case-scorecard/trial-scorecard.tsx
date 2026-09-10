@@ -1,3 +1,4 @@
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 /**
  * The trial, as the same scorers the left pane authored.
  *
@@ -20,19 +21,36 @@
  */
 
 import { useMemo, type ReactNode } from "react";
-import { STAGE_STATE_LABELS } from "@mcpjam/sdk/contract";
+import {
+  isRecommendedDefaultPredicateKind,
+  STAGE_STATE_LABELS,
+} from "@mcpjam/sdk/contract";
 import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 import type { TestStep } from "@/shared/steps";
 import type { StepReplayEnvelope } from "@/shared/eval-step-replay";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { EvalIteration } from "@/components/evals/types";
 import type { JudgeCase } from "@/components/evals/goal-completion-presentation";
-import type { CaseScorecardInput } from "./case-scorecard-model";
+import type { CaseScorecardInput, ScorecardRow } from "./case-scorecard-model";
 import { buildCaseScorecard } from "./case-scorecard-model";
 import { joinTrialResults, summarizeTrialScorecard } from "./trial-results";
 import { ScorecardGroupSection } from "./scorecard-group";
-import { StageStrip } from "./stage-strip";
+import { TrialChainPanel } from "../trial-chain-panel";
 import { TrialScorecardRow } from "./trial-scorecard-row";
+
+// Explicit step/case assertions remain added checks, even when their kind is
+// also offered by default. Frozen predicates have no inherited/added origin;
+// classify their standard default kinds with the chain.
+function isDefaultAssertion(row: ScorecardRow): boolean {
+  return (
+    row.provenance === "judge" ||
+    row.provenance === "route" ||
+    row.provenance === "suite" ||
+    (row.provenance === "snapshot" &&
+      !!row.predicate &&
+      isRecommendedDefaultPredicateKind(row.predicate.type))
+  );
+}
 
 /**
  * The tally line.
@@ -80,6 +98,7 @@ export function TrialScorecard({
   suggestionsSlot,
   nextQuestionSlot,
   judgeHidden = false,
+  isRunning = false,
   syncedStepId,
   onSyncStep,
 }: {
@@ -108,6 +127,7 @@ export function TrialScorecard({
    * label recorded as blind beside a visible verdict is not calibration data.
    */
   judgeHidden?: boolean;
+  isRunning?: boolean;
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
 }) {
@@ -147,18 +167,20 @@ export function TrialScorecard({
     liveStepStatusById,
   ]);
 
-  // The total can reveal a judge gate's verdict even when its row is hidden.
-  const summary = useMemo(
-    () => summarizeTrialScorecard(
-      judgeHidden
-        ? groups.map((group) => ({
-            ...group,
-            rows: group.rows.filter((row) => row.provenance !== "judge"),
-          }))
-        : groups,
-    ),
-    [groups, judgeHidden],
-  );
+  const defaultGroups = groups
+    .map((group) => ({
+      ...group,
+      rows: group.rows.filter(isDefaultAssertion),
+    }))
+    .filter((group) => group.rows.length > 0);
+  const addedGroups = groups
+    .map((group) => ({
+      ...group,
+      rows: group.rows.filter((row) => !isDefaultAssertion(row)),
+    }))
+    .filter((group) => group.rows.length > 0);
+
+  const summary = summarizeTrialScorecard(addedGroups);
 
   /**
    * The state word each group heading shows, read from the chain the strip
@@ -187,31 +209,73 @@ export function TrialScorecard({
     };
   }, [chain, judgeHidden]);
 
-  return (
-    <div
-      className="flex flex-col gap-3 p-3"
-      data-testid="trial-scorecard"
-    >
-      {!judgeHidden ? (
-        <StageStrip chain={chain} resetKey={iteration?._id} />
-      ) : null}
+  const userValueStage =
+    chain?.status === "verified"
+      ? chain.stages.find((stage) => stage.stage === "userValue")
+      : undefined;
+  const userValuePassRows = groups
+    .flatMap((group) => group.rows)
+    .filter(
+      (row) => row.stage === "userValue" && row.result.state === "passed",
+    );
+  const userValueEvidence = [
+    ...new Set(
+      [
+        ...(userValueStage?.state === "passed"
+          ? (userValueStage.evidence?.predicateReasons ?? [])
+          : []),
+        ...userValuePassRows.flatMap((row) => [
+          ...("reason" in row.result && row.result.reason
+            ? [row.result.reason]
+            : []),
+          ...(row.evidence?.scoreEvidence ?? []),
+        ]),
+      ]
+        .map((text) => text.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const showUserValueEvidence =
+    !judgeHidden &&
+    (userValueStage?.state === "passed" || userValuePassRows.length > 0);
 
-      <p
-        className="text-xs text-muted-foreground"
-        data-testid="trial-scorecard-summary"
-      >
-        {summaryLine(summary)}
-      </p>
-
-      {!judgeHidden ? nextQuestionSlot : null}
-
-      {groups.map((group) => (
+  const renderGroups = (sectionGroups: typeof groups) => (
+    <>
+      {sectionGroups.map((group) => (
         <ScorecardGroupSection
           key={group.stage}
           stage={group.stage}
           label={group.label}
           question={group.question}
           state={stageState(group.stage)}
+          evidence={
+            group.stage === "userValue" &&
+            group.rows.some((row) => row.provenance === "judge") &&
+            showUserValueEvidence ? (
+              <div
+                className="space-y-1 rounded-md border border-border bg-muted/20 px-3 py-2"
+                data-testid="user-value-pass-evidence"
+              >
+                <p className="text-xs font-medium">Evidence for this pass</p>
+                {userValueEvidence.length ? (
+                  <ul className="space-y-1 text-xs leading-relaxed text-muted-foreground">
+                    {userValueEvidence.map((text) => (
+                      <li
+                        className="whitespace-pre-wrap break-words"
+                        key={text}
+                      >
+                        {text}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    This run recorded a pass without supporting evidence.
+                  </p>
+                )}
+              </div>
+            ) : undefined
+          }
         >
           {group.rows.map((row) => (
             <TrialScorecardRow
@@ -225,6 +289,112 @@ export function TrialScorecard({
           ))}
         </ScorecardGroupSection>
       ))}
+    </>
+  );
+
+  const inProgress =
+    isRunning ||
+    iteration?.status === "pending" ||
+    iteration?.status === "running" ||
+    (!iteration && !!liveStepStatusById?.size);
+  if (inProgress) {
+    return (
+      <div
+        className="space-y-4 p-4"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        data-testid="trial-scorecard-loading"
+      >
+        <p className="text-sm text-muted-foreground">
+          Run in progress. The report will appear when it finishes.
+        </p>
+        <div
+          className="grid gap-4 sm:grid-cols-[170px_minmax(0,1fr)]"
+          aria-hidden="true"
+        >
+          <div className="space-y-3">
+            {Array.from({ length: 6 }, (_, index) => (
+              <Skeleton key={index} className="h-9 w-full" />
+            ))}
+          </div>
+          <Skeleton className="h-60 w-full" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3 p-3" data-testid="trial-scorecard">
+      <section
+        className="space-y-4"
+        aria-label="User value chain — default assertions"
+      >
+        {!judgeHidden ? (
+          <TrialChainPanel
+            layout="report"
+            chain={chain}
+            resetKey={iteration?._id}
+            stageFooter={(stage) => {
+              const selected = defaultGroups.find(
+                (group) => group.stage === stage,
+              );
+              return selected ? (
+                <div
+                  className="mt-3 space-y-2"
+                  aria-label="Recorded assertions"
+                >
+                  {selected.rows.map((row) => (
+                    <TrialScorecardRow
+                      key={row.key}
+                      row={row}
+                      body={row.provenance === "judge" ? judgeSlot : undefined}
+                      hideJudgeResult={judgeHidden}
+                      syncedStepId={syncedStepId}
+                      onSyncStep={onSyncStep}
+                    />
+                  ))}
+                  {stage === "userValue" && showUserValueEvidence && (
+                    <div
+                      className="text-xs text-muted-foreground"
+                      data-testid="user-value-pass-evidence"
+                    >
+                      {userValueEvidence.length
+                        ? userValueEvidence.join(" ")
+                        : "This run recorded a pass without supporting evidence."}
+                    </div>
+                  )}
+                </div>
+              ) : null;
+            }}
+          />
+        ) : null}
+        {(judgeHidden || chain?.status !== "verified") &&
+          renderGroups(defaultGroups)}
+        {!judgeHidden ? nextQuestionSlot : null}
+      </section>
+
+      <section
+        className="space-y-3 border-t border-border pt-4"
+        aria-label="Added assertions"
+      >
+        <h3 className="text-sm font-semibold">Added assertions</h3>
+        {addedGroups.length ? (
+          <>
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="trial-scorecard-summary"
+            >
+              {summaryLine(summary)}
+            </p>
+            {renderGroups(addedGroups)}
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No extra assertions added.
+          </p>
+        )}
+      </section>
 
       {/*
         The integrity view stays reachable, collapsed. It answers a different
@@ -232,7 +402,12 @@ export function TrialScorecard({
         downgraded the verdict for it — and a reader who needs that is looking
         for it.
       */}
-      {!judgeHidden || !judgeCase ? suggestionsSlot : null}
+      {(!judgeHidden || !judgeCase) && suggestionsSlot ? (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer py-2">Suggested checks</summary>
+          {suggestionsSlot}
+        </details>
+      ) : null}
 
       {scoresSection ? (
         <details

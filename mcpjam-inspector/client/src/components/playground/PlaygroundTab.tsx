@@ -38,7 +38,7 @@ import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import {
   useBrowserWorkspaceEnabledState,
-  useComputersEnabledState,
+  useBrowserEnabledState,
 } from "@/hooks/useComputersEnabled";
 import {
   MAX_BROWSER_PANEL_SIZE,
@@ -271,13 +271,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   );
 
   const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
-  const computersEnabled = useComputersEnabledState();
+  const browsersEnabled = useBrowserEnabledState();
   const browserEngine = useBrowserEngine(projectScope);
   // Polled only on the local engine, where the question means something: on
   // hosted this route describes a machine that is not the one running the
   // browser.
   const localBrowserRunning = useLocalBrowserRunning(
-    browserEngine.selectedEngine === "local" && computersEnabled === true,
+    browserEngine.selectedEngine === "local" && browsersEnabled === true,
   );
   // GATED until all three engines meet the release criteria. Off, the browser
   // is the right rail's Browser tab again — see `BROWSER_WORKSPACE_FLAG`.
@@ -285,10 +285,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // is not the same as "no" and must not close a panel on its own.
   const workspaceState = useBrowserWorkspaceEnabledState();
   const canBrowseResolved =
-    workspaceState !== undefined && computersEnabled !== undefined;
+    workspaceState !== undefined && browsersEnabled !== undefined;
   const canBrowse =
     workspaceState === true &&
-    computersEnabled === true &&
+    browsersEnabled === true &&
     browserPanelAvailable({
       sessionHasBrowser,
       hostHasBrowser:

@@ -55,7 +55,7 @@ const api = vi.hoisted(() => ({
    */
   paneUnsupported: false,
   /** Every panel measurement reported. */
-  viewports: [] as Array<{ width: number; height: number }>,
+  viewports: [] as Array<{ width: number; height: number; policy?: string }>,
   /** The last socket handed to the pane, so a test can deliver a frame. */
   socket: null as {
     readyState: number;
@@ -148,7 +148,11 @@ vi.mock("@/lib/local-browser/client", async () => {
       return { ok: true as const };
     },
     reportLocalPaneViewport: async (args: any) => {
-      api.viewports.push({ width: args.width, height: args.height });
+      api.viewports.push({
+        width: args.width,
+        height: args.height,
+        policy: args.policy,
+      });
       return { width: args.width, height: args.height, revision: 1 };
     },
     openLocalBrowserFrameStream: (args: { bootId: string }) => {
@@ -743,6 +747,40 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     await waitFor(() => expect(api.watches).toContain("boot-proj-1"));
   });
 
+  it("fits the native page to its slot with workspace chrome disabled", async () => {
+    asDesktopApp();
+    api.workspaceEnabled = false;
+    const rect = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockReturnValue({
+        x: 700,
+        y: 100,
+        left: 700,
+        top: 100,
+        width: 480,
+        height: 600,
+        right: 1180,
+        bottom: 700,
+        toJSON: () => ({}),
+      } as DOMRect);
+    try {
+      renderBody();
+      await userEvent.click(await screen.findByText("Open the browser"));
+      await screen.findByTestId("rail-browser-native-slot");
+      await waitFor(() =>
+        expect(api.viewports).toContainEqual({
+          width: 480,
+          height: 600,
+          policy: "followPane",
+        }),
+      );
+      expect(api.viewports.at(-1)?.policy).toBe("followPane");
+      expect(api.socket).toBeNull();
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
   it("falls back to frames when the box turned the native surface off", async () => {
     // `MCPJAM_BROWSER_NATIVE_SURFACE=false`. The server built its context with
     // hidden windows, so there is no view to place — and a pane that branched
@@ -921,14 +959,12 @@ describe("a browser whose daemon predates the pane endpoints", () => {
   });
 });
 
-it("keeps explicit controls and no browser chrome when the workspace flag is off", async () => {
+it("keeps navigation when the workspace flag is off", async () => {
   api.workspaceEnabled = false;
   renderBody();
   await userEvent.click(await screen.findByText("Open the browser"));
-  expect(
-    await screen.findByRole("button", { name: "Take control" }),
-  ).toBeTruthy();
-  expect(screen.queryByTestId("browser-new-tab")).toBeNull();
+  expect(await screen.findByTestId("browser-new-tab")).toBeInTheDocument();
+  expect(screen.getByTestId("browser-address")).toBeInTheDocument();
 });
 
 it("takes control but drops the first click if the daemon cannot identify the page", async () => {

@@ -1,3 +1,4 @@
+import type { EvalMatchOptions, CasePredicates } from "@/shared/eval-matching";
 import type { ConvexReactClient } from "convex/react";
 import {
   generateEvalTests,
@@ -30,6 +31,8 @@ export type CreateEvalTestCaseInput = {
   isNegativeTest: boolean;
   scenario?: string;
   expectedOutput?: string;
+  matchOptions?: EvalMatchOptions;
+  predicates?: CasePredicates;
   /**
    * Authored test steps (the unified `steps` model). The Convex mutation
    * rejects the legacy `promptTurns`/`caseType`/`probeConfig` fields, so case
@@ -167,8 +170,7 @@ export type GenerateAndPersistEvalTestsOptions = {
   isDirectGuest?: boolean;
   /** Override case listing; used when the caller already has the suite's cases. */
   listExistingCases?: () =>
-    | Array<Record<string, unknown>>
-    | Promise<Array<Record<string, unknown>>>;
+    Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
   /**
    * Optional server-attachment metadata for the suite the cases are being
    * generated against. When provided, the backend scopes the LLM prompt to

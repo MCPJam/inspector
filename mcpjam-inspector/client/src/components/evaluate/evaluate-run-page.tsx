@@ -102,6 +102,7 @@ export function EvaluateRunPage({
   relatedRuns,
   defaultCompareRunId,
   onCompareWithRun,
+  onOpenComparison,
   onExport,
   iterations,
   launchReview,
@@ -113,6 +114,7 @@ export function EvaluateRunPage({
   relatedRuns?: readonly EvalSuiteRun[];
   defaultCompareRunId: string | null;
   onCompareWithRun: (baseRunId: string) => void;
+  onOpenComparison?: () => void;
   onExport?: () => void;
   /** Used to recover the model when the list projection omitted effectiveModelId. */
   iterations?: readonly EvalIteration[];
@@ -143,10 +145,9 @@ export function EvaluateRunPage({
           >
             <div className="flex min-w-0 items-center gap-3">
               <h2 className="text-2xl font-bold leading-8 tracking-tight text-foreground">
-                Run{" "}
                 {targets[0].runNumber
                   ? `#${targets[0].runNumber}`
-                  : formatRunId(targets[0]._id)}{" "}
+                  : `Run ${formatRunId(targets[0]._id)}`}{" "}
                 Results
               </h2>
               <RunPairingDecisions
@@ -188,7 +189,7 @@ export function EvaluateRunPage({
                 title={
                   canCompare ? "Compare two runs" : "Need at least two runs"
                 }
-                onClick={() => setComparing(true)}
+                onClick={() => onOpenComparison ? onOpenComparison() : setComparing(true)}
                 data-testid="evaluate-run-compare-open"
               >
                 <TrendingUp className="size-3.5" aria-hidden />

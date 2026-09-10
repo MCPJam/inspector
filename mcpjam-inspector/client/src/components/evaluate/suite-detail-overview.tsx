@@ -18,14 +18,13 @@ import {
   evalSuiteKey,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
-import {
-  openEvalChat,
-  useEvalPromptQueue,
-} from "@/lib/mcpjam-agent/eval-scope";
+import { GenerateCasesDialog } from "./generate-cases-dialog";
+import type { GenerateCasesConfig } from "@/lib/evals/eval-generation-config";
 import { EvalGenerationWorkspace } from "./eval-generation-workspace";
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
 import { useMemo, useState } from "react";
 import {
+  Code2,
   FileUp,
   Loader2,
   MessageSquareText,
@@ -68,7 +67,6 @@ import type {
   EvalSuiteRun,
 } from "../evals/types";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
-import { ImportDatasetDialog } from "./import-dataset-dialog";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
@@ -93,7 +91,7 @@ const EMPTY_CASE_ACTIONS = [
   {
     id: "import",
     title: "Import",
-    description: "MD / docx / test file → cases",
+    description: "Markdown → draft cases",
     Icon: FileUp,
   },
 ] as const;
@@ -112,6 +110,7 @@ export function SuiteDetailOverview({
   environments,
   onRerun,
   onEditSuite,
+  onSetupSdk,
   onDuplicateSuite,
   onEditCases,
   onDescribeCases,
@@ -141,6 +140,7 @@ export function SuiteDetailOverview({
   environments?: SuiteRunReviewProps["environments"];
   onRerun: SuiteRunReviewProps["onStart"];
   onEditSuite: () => void;
+  onSetupSdk?: () => void;
   /**
    * Take an editable copy. Offered only when {@link configLocked} — it is the
    * one way forward for a suite the app refuses to edit, and offering it beside
@@ -325,24 +325,15 @@ export function SuiteDetailOverview({
     Boolean(generation?.drafts.length) || generation?.status === "running";
   const showEmptyCasesHero = !hasCases && !hasGeneratedContent;
 
-  const [generationSession, setGenerationSession] = useState<string | null>(
-    null,
-  );
+  const [generationOpen, setGenerationOpen] = useState(false);
+  const [generationConfig, setGenerationConfig] =
+    useState<GenerateCasesConfig>();
   const handleGenerateCases = () => {
-    if (!projectId) return;
-    const sessionId = openEvalChat({
-      projectId,
-      suiteId: suite._id,
-      suiteName: suite.name,
-    });
-    setGenerationSession(sessionId);
-    useEvalPromptQueue
-      .getState()
-      .enqueue(
-        sessionId,
-        "Generate discovery-backed test cases for this suite using its connected servers. Read the current ui_eval_context first to identify this suite and its servers. Stage the cases for review; do not save or run them.",
-      );
+    if (projectId) setGenerationOpen(true);
   };
+  // Generation needs a project to run against; without one the button can
+  // only fail silently.
+  const canGenerate = canGenerateTestCases && Boolean(projectId);
 
   const runButton = (
     <Button
@@ -350,7 +341,7 @@ export function SuiteDetailOverview({
       size="sm"
       className="h-8 gap-1.5"
       disabled={runDisabled}
-      aria-label="Run this suite"
+      aria-label="Setup Run"
       aria-busy={isRerunning}
       onClick={() => setReviewRun(true)}
     >
@@ -359,17 +350,18 @@ export function SuiteDetailOverview({
       ) : (
         <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
       )}
-      Run
+      Setup Run
     </Button>
   );
 
-  if (generationSession && projectId)
+  if (generationConfig && projectId)
     return (
       <EvalGenerationWorkspace
+        key={`${projectId}:${suite._id}`}
+        config={generationConfig}
         projectId={projectId}
         suiteId={suite._id}
         suiteName={suite.name}
-        sessionId={generationSession}
       />
     );
 
@@ -383,6 +375,17 @@ export function SuiteDetailOverview({
       )}
       data-testid="suite-detail-overview"
     >
+      {generationOpen && (
+        <GenerateCasesDialog
+          key={suite._id}
+          suiteId={suite._id}
+          onClose={() => setGenerationOpen(false)}
+          onGenerate={(config) => {
+            setGenerationOpen(false);
+            setGenerationConfig(config);
+          }}
+        />
+      )}
       {(reviewRun || runReviewRequested) && (
         <SuiteRunReview
           projectId={projectId}
@@ -410,6 +413,17 @@ export function SuiteDetailOverview({
           </h2>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {onSetupSdk && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={onSetupSdk}
+            >
+              <Code2 className="size-3.5" aria-hidden /> Setup SDK
+            </Button>
+          )}
           {configLocked ? (
             // The reason and the way out, together. A disabled Edit button with
             // a tooltip would make the remedy discoverable only by hovering the
@@ -462,6 +476,15 @@ export function SuiteDetailOverview({
         </div>
       </div>
 
+      {projectId && !readOnlyConfig && (
+        <EvalGeneratedDrafts
+          key={`${projectId}:${suite._id}`}
+          defaultOpen={false}
+          projectId={projectId}
+          suiteId={suite._id}
+          suiteName={suite.name}
+        />
+      )}
       {showRunHistory ? (
         <section
           className={runHistorySurfaceClass}
@@ -504,20 +527,16 @@ export function SuiteDetailOverview({
               {runsLoading
                 ? "Loading runs…"
                 : hasRuns
-                ? "No runs match these filters."
-                : "No runs yet."}
+                  ? "No runs match these filters."
+                  : "No runs yet."}
             </div>
           ) : (
             <div className="overflow-x-auto bg-card">
               <RunHistoryTable aria-label="Suite run history">
                 <TableHeader>
                   <TableRow className="hover:bg-transparent border-border/30">
-                    <TableHead className={runHistoryHeadClass}>
-                      Date
-                    </TableHead>
-                    <TableHead className={runHistoryHeadClass}>
-                      Run
-                    </TableHead>
+                    <TableHead className={runHistoryHeadClass}>Date</TableHead>
+                    <TableHead className={runHistoryHeadClass}>Run</TableHead>
                     <TableHead className={runHistoryHeadClass}>
                       Client : model
                     </TableHead>
@@ -528,9 +547,6 @@ export function SuiteDetailOverview({
                       className={cn(runHistoryHeadClass, "text-right")}
                     >
                       Iteration pass
-                    </TableHead>
-                    <TableHead className={runHistoryHeadClass}>
-                      Platform
                     </TableHead>
                     <TableHead
                       className={cn(runHistoryHeadClass, "text-right")}
@@ -546,6 +562,9 @@ export function SuiteDetailOverview({
                       className={cn(runHistoryHeadClass, "text-right")}
                     >
                       Tool calls
+                    </TableHead>
+                    <TableHead className={runHistoryHeadClass}>
+                      Platform
                     </TableHead>
                   </TableRow>
                 </TableHeader>
@@ -563,7 +582,7 @@ export function SuiteDetailOverview({
                         details={details}
                         historyRows={rowMap}
                         showGitContext={false}
-                        label={`Run #${representative.runNumber}`}
+                        label={`#${representative.runNumber}`}
                         date={formatRunHistoryDate(representative.createdAt)}
                         onOpen={() => onRunClick(representative._id)}
                       />
@@ -588,19 +607,12 @@ export function SuiteDetailOverview({
         </section>
       ) : null}
 
-      {projectId && !readOnlyConfig && (
-        <EvalGeneratedDrafts
-          projectId={projectId}
-          suiteId={suite._id}
-          suiteName={suite.name}
-        />
-      )}
       {showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
           readOnly={readOnlyConfig || configLocked}
           onDescribe={onDescribeCases ?? onEditCases}
           onGenerate={() => void handleGenerateCases()}
-          canGenerate={canGenerateTestCases}
+          canGenerate={canGenerate}
           generateDisabledReason={generateTestCasesDisabledReason}
           isGenerating={isGeneratingTestCases}
           onImport={onImportCases}
@@ -629,10 +641,21 @@ export function SuiteDetailOverview({
                 {onGenerateTestCases ? (
                   <GenerateCasesButton
                     onGenerate={handleGenerateCases}
-                    canGenerate={canGenerateTestCases}
+                    canGenerate={canGenerate}
                     disabledReason={generateTestCasesDisabledReason}
                     isGenerating={isGeneratingTestCases}
                   />
+                ) : null}
+                {onImportCases ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={onImportCases}
+                  >
+                    Import cases
+                  </Button>
                 ) : null}
                 {onEditCases ? (
                   <Button
@@ -685,7 +708,7 @@ export function SuiteDetailOverview({
           {onGenerateTestCases && (
             <GenerateCasesButton
               onGenerate={handleGenerateCases}
-              canGenerate={canGenerateTestCases}
+              canGenerate={canGenerate}
               disabledReason={generateTestCasesDisabledReason}
               isGenerating={
                 isGeneratingTestCases || generation?.status === "running"
@@ -717,8 +740,8 @@ function GenerateCasesButton({
   const blocked = isGenerating
     ? "Generating test cases…"
     : !canGenerate
-    ? disabledReason ?? "Configure suite servers before generating cases."
-    : null;
+      ? (disabledReason ?? "Configure suite servers before generating cases.")
+      : null;
 
   const button = (
     <Button
@@ -776,8 +799,6 @@ export function SuiteEmptyCasesHero({
   /** First-run already generated. Only Describe and Import remain. */
   hideGenerate?: boolean;
 }) {
-  const [showImportDialog, setShowImportDialog] = useState(false);
-
   const handleAction = (id: (typeof EMPTY_CASE_ACTIONS)[number]["id"]) => {
     if (id === "describe") {
       onDescribe?.();
@@ -787,11 +808,7 @@ export function SuiteEmptyCasesHero({
       onGenerate?.();
       return;
     }
-    if (onImport) {
-      onImport();
-      return;
-    }
-    setShowImportDialog(true);
+    onImport?.();
   };
 
   return (
@@ -819,16 +836,16 @@ export function SuiteEmptyCasesHero({
               action.id === "describe"
                 ? !onDescribe
                 : action.id === "generate"
-                ? !onGenerate || !canGenerate || isGenerating
-                : false;
+                  ? !onGenerate || !canGenerate || isGenerating
+                  : !onImport;
             const generateTooltip =
               action.id === "generate"
                 ? isGenerating
                   ? "Generating test cases…"
                   : !canGenerate
-                  ? generateDisabledReason ??
-                    "Configure suite servers before generating cases."
-                  : null
+                    ? (generateDisabledReason ??
+                      "Configure suite servers before generating cases.")
+                    : null
                 : null;
             const button = (
               <button
@@ -885,12 +902,6 @@ export function SuiteEmptyCasesHero({
             );
           })}
         </div>
-      ) : null}
-      {!onImport ? (
-        <ImportDatasetDialog
-          open={showImportDialog}
-          onOpenChange={setShowImportDialog}
-        />
       ) : null}
     </div>
   );

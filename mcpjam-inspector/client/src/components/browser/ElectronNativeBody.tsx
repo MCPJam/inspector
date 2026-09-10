@@ -61,6 +61,7 @@ export function ElectronNativeBody({
   engine = "local",
   extra,
   chrome = "bar",
+  onViewportSize,
 }: {
   chrome?: "bar" | "none";
   /** The browser this pane is looking at, or null while none is running. */
@@ -87,6 +88,8 @@ export function ElectronNativeBody({
   active?: boolean;
   engine?: string;
   extra?: ReactNode;
+  /** Negotiate the page size through the session's resize barrier. */
+  onViewportSize?: (size: { width: number; height: number }) => void;
 }) {
   const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
   const slotRef = useRef<HTMLDivElement | null>(null);
@@ -135,6 +138,8 @@ export function ElectronNativeBody({
   consentTokenRef.current = consentToken;
   const wantVisibleRef = useRef(wantVisible);
   wantVisibleRef.current = wantVisible;
+  const onViewportSizeRef = useRef(onViewportSize);
+  onViewportSizeRef.current = onViewportSize;
 
   const push = useCallback(() => {
     const api = window.electronAPI?.agentBrowser;
@@ -163,6 +168,9 @@ export function ElectronNativeBody({
     // does — and it is applied in the MAIN process, which is the side that
     // actually knows it.
     const rect = element?.getBoundingClientRect();
+    if (visible && rect && rect.width > 0 && rect.height > 0) {
+      onViewportSizeRef.current?.({ width: rect.width, height: rect.height });
+    }
     void api
       .setViewport({
         consentToken: consentTokenRef.current,

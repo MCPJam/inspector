@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 import sharp from "sharp";
 import { writeFile } from "node:fs/promises";
 import os from "node:os";
-import { PlaywrightWebMcpProvider } from "../playwright-provider";
+import { localBrowserdWebMcpProvider } from "../local-browserd-provider";
 import {
   createTabViewport,
   type ViewportFrame,
@@ -36,7 +36,7 @@ describe.skipIf(!enabled)("actual browser capture/input pipelines", () => {
               : { width: 600, height: 700 };
           const dpr = preset === "historical" && engine === "webmcp" ? 2 : 1;
           if (engine === "webmcp") {
-            const session = await new PlaywrightWebMcpProvider().createSession({
+            const session = await localBrowserdWebMcpProvider.createSession({
               url: fixture.url,
               viewportMode: "embedded",
               devicePixelRatio: dpr,

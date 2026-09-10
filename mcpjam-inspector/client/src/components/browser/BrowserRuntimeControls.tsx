@@ -16,6 +16,11 @@ export function BrowserRuntimeControls({
   const reason = useBrowserReadinessStore(
     (s) => s.reasons[`${projectId}:${sessionId}`],
   );
+  const visibleReason = reason?.startsWith("browser_consent_required:")
+    ? engine.consent.granted
+      ? null
+      : "Allow Browser below, then retry your request."
+    : reason?.replace(/^browser_[a-z_]+:\s*/, "");
   const [pending, setPending] = useState<"local" | "cloud" | null>(null);
   const [starting, setStarting] = useState(false);
   const choose = (location: "local" | "cloud") => {
@@ -46,8 +51,12 @@ export function BrowserRuntimeControls({
             value={engine.selectedEngine}
             onChange={(e) => choose(e.target.value as "local" | "cloud")}
           >
-            <option value="local">This machine</option>
-            <option value="cloud">Cloud</option>
+            <option value="local" disabled={!engine.localAvailable}>
+              This machine
+            </option>
+            <option value="cloud" disabled={!engine.cloudAvailable}>
+              Cloud
+            </option>
           </select>
         ) : (
           <span>Cloud</span>
@@ -91,9 +100,9 @@ export function BrowserRuntimeControls({
           </Button>
         </div>
       ) : null}
-      {reason ? (
+      {visibleReason ? (
         <p role="status" className="text-muted-foreground">
-          {reason}
+          {visibleReason}
         </p>
       ) : null}
     </div>

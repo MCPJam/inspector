@@ -27,6 +27,12 @@ import {
  *          grant's rotated capability), unconditional otherwise.
  */
 import { randomUUID } from "node:crypto";
+import type { Context } from "hono";
+import {
+  guestBrowserPrefix,
+  guestBrowserProject,
+  resolveBrowserRollout,
+} from "../../utils/computers/browser-rollout.js";
 import { Hono } from "hono";
 import { LOCAL_BROWSER_ENABLED, LOCAL_COMPUTER_ENABLED } from "../../config.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
@@ -263,9 +269,13 @@ computers.post("/local-terminal-token", async (c) => {
  * separate in substance: `MCPJAM_LOCAL_BROWSER_ENABLED` is its own switch, so
  * an operator can allow a browser without a shell or the reverse.
  */
-computers.use("/local-browser/*", bearerAuthMiddleware, requireVerifiedAuth());
+computers.use("/local-browser/*", bearerAuthMiddleware);
 computers.use("/local-browser/*", async (c, next) => {
-  if (!LOCAL_BROWSER_ENABLED) {
+  const rollout = await resolveBrowserRollout(c, true);
+  if (!rollout.actor) return c.json({ error: "Invalid credentials" }, 401);
+  const cleanup =
+    c.req.path.endsWith("/consent/revoke") || c.req.path.endsWith("/close");
+  if ((!LOCAL_BROWSER_ENABLED || !rollout.enabled) && !cleanup) {
     return c.json(
       {
         error: "Browser is disabled on this server",
@@ -274,11 +284,35 @@ computers.use("/local-browser/*", async (c, next) => {
       404,
     );
   }
-  if (c.get("guestId")) {
-    return c.json({ error: "Guests cannot use the local browser" }, 403);
+  if (rollout.actor.guest) {
+    const guestId = rollout.actor.id;
+    c.set("guestId", guestId);
+    if (c.req.path.includes("/profile/")) {
+      return c.json({ error: "Sign in to save Browser profiles" }, 403);
+    }
+    // Boot-addressed operations must not cross into another actor's profile.
+    const body = await c.req.json().catch(() => null);
+    if (typeof body?.bootId === "string") {
+      const session = findLocalBrowserSession(body.bootId);
+      if (!session?.projectKey.startsWith(guestBrowserPrefix(guestId))) {
+        return c.json({ error: "No such local browser" }, 404);
+      }
+    }
   }
   return next();
 });
+
+/** Use the same actor namespace for pane, CLI, artifacts, and chat tools. */
+function localBrowserProject(c: Context, raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const guestId = c.get("guestId");
+  if (!guestId) return raw;
+  try {
+    return guestBrowserProject(raw, guestId);
+  } catch {
+    return "";
+  }
+}
 
 /**
  * Is there a Chromium on this machine for the agent to drive, and is one
@@ -318,7 +352,11 @@ computers.get("/local-browser/status", async (c) => {
   const install = electron
     ? ({ status: "ready" } as const)
     : getChromiumInstallState();
-  const sessions = listLocalBrowserSessions();
+  const guestId = c.get("guestId");
+  const sessions = listLocalBrowserSessions().filter(
+    (session) =>
+      !guestId || session.key.startsWith(guestBrowserPrefix(guestId)),
+  );
   return c.json({
     runtime,
     // Whether the pane gets the page itself or a picture of it. The pane
@@ -446,7 +484,7 @@ computers.post("/local-browser/lookup", async (c) => {
   let session: LiveLocalBrowser | undefined;
   try {
     session = findLocalBrowserSessionForSession(
-      typeof body?.projectId === "string" ? body.projectId : "",
+      localBrowserProject(c, body?.projectId),
       typeof body?.sessionId === "string" ? body.sessionId : "",
     );
   } catch {
@@ -489,7 +527,7 @@ computers.post("/local-browser/ensure", async (c) => {
     projectId?: unknown;
     sessionId?: unknown;
   } | null;
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   // The conversation's durable identity, when the rail has one. Without it
   // this route keys on the project alone and hands the pane the legacy
   // project-wide browser while the agent drives `<project>:session:<id>` —
@@ -500,7 +538,7 @@ computers.post("/local-browser/ensure", async (c) => {
     const service = new BrowserSessionService();
     const bearer = c.req.header("authorization") ?? "";
     const logical =
-      sessionId && service.enabled
+      sessionId && service.enabled && !c.get("guestId")
         ? await service.resolveSession({
             owner: { kind: "conversation", id: sessionId },
             projectId,
@@ -509,7 +547,7 @@ computers.post("/local-browser/ensure", async (c) => {
             profile: "blank",
           })
         : null;
-    if (sessionId && service.enabled && !logical) {
+    if (sessionId && service.enabled && !c.get("guestId") && !logical) {
       return c.json(
         {
           error: "The Browser session could not be resolved",
@@ -609,7 +647,7 @@ computers.post("/local-browser/profile/export", async (c) => {
     sessionId?: unknown;
   } | null;
   const bootId = typeof body?.bootId === "string" ? body.bootId : "";
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   const conversationId =
     typeof body?.sessionId === "string" ? body.sessionId : "";
   const session = findLocalBrowserSession(bootId);
@@ -702,7 +740,7 @@ computers.post("/local-browser/token", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
   } | null;
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   try {
     return c.json(
       issueLocalNonce({
@@ -1041,7 +1079,7 @@ computers.post("/local-browser/page-tools", async (c) => {
     tabId?: unknown;
     holder?: unknown;
   } | null;
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   const tabId = typeof body?.tabId === "string" ? body.tabId : undefined;
   const holder = typeof body?.holder === "string" ? body.holder : undefined;
   let session: ReturnType<typeof findLocalBrowserSessionForProject>;
@@ -1215,7 +1253,7 @@ computers.post("/local-browser/session", async (c) => {
     observe?: unknown;
     runKey?: unknown;
   } | null;
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   const policy = parseSessionPolicy(body?.policy);
   if (!policy) {
     // A refusal, not a default. The one thing worse than a session that cannot
@@ -1458,7 +1496,7 @@ computers.post("/local-browser/sessions", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
   } | null;
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   try {
     const sessions = await listAgentSessions(projectId);
     return c.json({
@@ -1497,7 +1535,7 @@ computers.post("/local-browser/command", async (c) => {
     clientId?: unknown;
     correlation?: unknown;
   } | null;
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   const command = body?.command as BrowserAgentCommand | undefined;
   if (
@@ -1567,7 +1605,7 @@ computers.post("/local-browser/note", async (c) => {
     client?: unknown;
     clientId?: unknown;
   } | null;
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   const text = typeof body?.text === "string" ? body.text.slice(0, 4000) : "";
   if (!text) return c.json({ error: "A note needs text" }, 400);
@@ -1617,7 +1655,7 @@ computers.post("/local-browser/trace", async (c) => {
     commandId?: unknown;
     limit?: unknown;
   } | null;
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   let stored: AgentSessionRecord | undefined;
   try {
@@ -1688,7 +1726,7 @@ computers.post("/local-browser/artifact", async (c) => {
     artifactId?: unknown;
     mediaType?: unknown;
   } | null;
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   const artifactId =
     typeof body?.artifactId === "string" ? body.artifactId : "";
@@ -1775,7 +1813,7 @@ computers.post("/local-browser/close", async (c) => {
     client?: unknown;
     clientId?: unknown;
   } | null;
-  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const projectId = localBrowserProject(c, body?.projectId);
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   const terminate = body?.terminate === true;
   let stored: AgentSessionRecord | undefined;

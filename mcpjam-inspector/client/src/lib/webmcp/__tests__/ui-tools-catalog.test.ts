@@ -57,11 +57,8 @@ describe("buildUiToolsCatalog", () => {
       "ui_connect_server",
       "ui_disconnect_server",
       "ui_eval_context",
-      "ui_eval_edit_case",
-      "ui_eval_edit_generated_case",
-      "ui_eval_generate_cases",
-      "ui_eval_run_suite",
-      "ui_eval_undo_case",
+      "ui_eval_propose_cases",
+      "ui_eval_question",
       "ui_execute_tool",
       "ui_navigate",
       "ui_open_playground",
@@ -115,8 +112,6 @@ describe("buildUiToolsCatalog", () => {
       .map((t) => t.name)
       .sort();
     expect(destructive).toEqual([
-      "ui_eval_generate_cases",
-      "ui_eval_run_suite",
       "ui_execute_tool",
       "ui_remove_server",
       "ui_reset_chat",
@@ -131,8 +126,6 @@ describe("buildUiToolsCatalog", () => {
     expect(openWorld).toEqual([
       "ui_connect_server",
       "ui_disconnect_server",
-      "ui_eval_generate_cases",
-      "ui_eval_run_suite",
       "ui_execute_tool",
     ]);
   });

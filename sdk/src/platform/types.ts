@@ -9,6 +9,7 @@ export type PlatformSessionBrowserResult = BrowserAgentResult & { screenshots?: 
 export type PlatformSessionBrowserTrace = { sessionId: string; chatSessionId: string; entries: Array<{ commandId: string; seq: number; result?: PlatformSessionBrowserResult }>; screenshots: PlatformBrowserScreenshot[] };
 export type PlatformSessionBrowserOperation = "open" | "command" | "note" | "trace" | "artifact" | "close";
 export type PlatformSessionBrowserOperationResult = PlatformSessionBrowserOpened | PlatformSessionBrowserResult | PlatformSessionBrowserTrace | { url: string; mediaType?: string } | { ok: boolean };
+import type { CaseSource } from "../contract/case-source.js";
 /**
  * Wire DTOs for the MCPJam Platform API (`/api/v1`).
  *
@@ -1865,6 +1866,8 @@ export interface PlatformEvalCase {
    * once the two are conflated.
    */
   import?: PlatformEvalCaseImportClaim;
+  /** Source of an AI-assisted Markdown case. */
+  source?: CaseSource;
   createdAt: number | null;
   updatedAt: number | null;
 }

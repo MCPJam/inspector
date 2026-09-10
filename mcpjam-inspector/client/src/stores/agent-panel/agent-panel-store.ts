@@ -45,14 +45,23 @@ function isWindowAvailable(): boolean {
   );
 }
 
-function clampWidth(raw: number): number {
-  if (!Number.isFinite(raw)) return AGENT_PANEL_DEFAULT_WIDTH;
-  const max =
-    typeof window !== "undefined" && window.innerWidth > 0
-      ? Math.floor(window.innerWidth * 0.5)
-      : Number.POSITIVE_INFINITY;
-  const lowerBounded = Math.max(AGENT_PANEL_MIN_WIDTH, raw);
-  return Math.min(lowerBounded, max);
+export function agentPanelWidthBounds(viewportWidth: number) {
+  const max = Math.max(
+    0,
+    Math.floor(viewportWidth < 1024 ? viewportWidth - 24 : viewportWidth * 0.5),
+  );
+  return { min: Math.min(AGENT_PANEL_MIN_WIDTH, max), max };
+}
+
+export function clampAgentPanelWidth(
+  raw: number,
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1440,
+): number {
+  const { min, max } = agentPanelWidthBounds(viewportWidth);
+  return Math.min(
+    Math.max(Number.isFinite(raw) ? raw : AGENT_PANEL_DEFAULT_WIDTH, min),
+    max,
+  );
 }
 
 interface LoadedState {
@@ -92,7 +101,7 @@ function loadPersisted(): LoadedState {
       isOpen: parsed.isOpen === true,
       width:
         typeof parsed.width === "number"
-          ? clampWidth(parsed.width)
+          ? clampAgentPanelWidth(parsed.width)
           : AGENT_PANEL_DEFAULT_WIDTH,
       // A v1-shape entry has a sessionId but no sessionProjectId. Treat that
       // as a cross-project pointer (we don't know its project) and drop it
@@ -142,7 +151,7 @@ export const useAgentPanelStore = create<AgentPanelState>((set, get) => ({
     set({ isOpen: next });
   },
   setWidth: (next) => {
-    const clamped = clampWidth(next);
+    const clamped = clampAgentPanelWidth(next);
     if (get().width === clamped) return;
     const current = get();
     persist({ ...current, width: clamped });
@@ -178,8 +187,12 @@ if (isWindowAvailable()) {
     const current = useAgentPanelStore.getState();
     // Eval conversations belong to this tab's suite/case. A background tab
     // closing its panel must not close the Generate sidebar in this one.
-    if (current.activeSessionId?.startsWith("eval-") || next.activeSessionId?.startsWith("eval-")) {
-      if (current.width !== next.width) useAgentPanelStore.setState({ width: next.width });
+    if (
+      current.activeSessionId?.startsWith("eval-") ||
+      next.activeSessionId?.startsWith("eval-")
+    ) {
+      if (current.width !== next.width)
+        useAgentPanelStore.setState({ width: next.width });
       return;
     }
     if (

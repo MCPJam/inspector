@@ -213,6 +213,7 @@ export function buildBrowserdStack(
   driver: BrowserDriver,
   config: {
     token: string;
+    authority?: "lease" | "shared";
     bootId?: string;
     lease?: HandoffLease;
     /** Announced on `/v1/status`; never assumed by a caller. */
@@ -261,7 +262,9 @@ export function buildBrowserdStack(
   // reading a tab's current state token to compare it IS an observation of the
   // page, so it must not happen for a command the lease is about to refuse.
   const queue = new CommandQueue(
-    guardLease(lease, guardStaleness(driver, lease)),
+    config.authority === "shared"
+      ? guardStaleness(driver)
+      : guardLease(lease, guardStaleness(driver, lease)),
     bootId,
   );
   const handler = new BrowserdRequestHandler({
@@ -269,6 +272,7 @@ export function buildBrowserdStack(
     driver,
     bootId,
     token: config.token,
+    authority: config.authority,
     lease,
     ...(config.features ? { features: config.features } : {}),
     ...(config.bundleHash ? { bundleHash: config.bundleHash } : {}),

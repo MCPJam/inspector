@@ -7,6 +7,13 @@ import {
 import { parseEvalRouteFromUrl } from "../eval-route-url";
 
 describe("eval-route-url", () => {
+  it("roundtrips the case UVC checks page", () => {
+    const route = { type: "test-edit" as const, suiteId: "suite-1", testId: "case-1", checks: true };
+    const url = buildEvalsPath(route);
+    const [path, search] = url.split("?");
+    expect(url).toContain("checks=1");
+    expect(parseEvalRouteFromUrl("/evals", path, `?${search}`)).toEqual(route);
+  });
   it("parses eval list and create routes", () => {
     expect(parseEvalRouteFromUrl("/evals", "/evals")).toEqual({
       type: "list",
@@ -359,4 +366,11 @@ describe("eval-route-url", () => {
       iteration: undefined,
     });
   });
+});
+
+it("roundtrips a dedicated run comparison page", () => {
+  const route = { type: "run-detail" as const, suiteId: "suite", runId: "run", comparison: true };
+  const path = buildEvaluatePath(route);
+  expect(path).toBe("/evaluate/suite/suite/runs/run/compare");
+  expect(parseEvalRouteFromUrl("/evaluate", path)).toMatchObject(route);
 });
