@@ -30,6 +30,7 @@ import { SelectedToolHeader } from "./SelectedToolHeader";
 import { ParametersForm } from "./ParametersForm";
 import { ToolDetailsAccordion } from "@/components/ui/tool-details-accordion";
 import { useBuiltinToolRun } from "@/components/playground/use-builtin-tool-run";
+import { useBrowserToolRun } from "@/components/playground/use-browser-tool-run";
 import { BuiltinToolDetailView } from "@/components/playground/BuiltinToolDetailView";
 
 interface PlaygroundLeftProps {
@@ -109,7 +110,13 @@ export function PlaygroundLeft({
   // server tools, but "Run" asks the agent (see useBuiltinToolRun). Only one of
   // {server tool, built-in} is selected at a time.
   const builtin = useBuiltinToolRun(builtinTools);
-  const hasSelection = !!selectedToolName || !!builtin.selected;
+  const browser = useBrowserToolRun(
+    browserTools?.tools ?? [],
+    browserTools?.page ?? null,
+    browserTools?.invokePage,
+  );
+  const hasSelection =
+    !!selectedToolName || !!builtin.selected || !!browser.selected;
   const builtinNames = useMemo(
     () => builtinTools.map((t) => t.name),
     [builtinTools],
@@ -145,14 +152,17 @@ export function PlaygroundLeft({
   // Sync list expansion when the selection (server OR built-in) changes. A
   // manual expand (back) doesn't change the selection, so it persists.
   useEffect(() => {
-    setIsListExpanded(!selectedToolName && !builtin.selectedKey);
-  }, [selectedToolName, builtin.selectedKey]);
+    setIsListExpanded(
+      !selectedToolName && !builtin.selectedKey && !browser.selectedKey,
+    );
+  }, [selectedToolName, builtin.selectedKey, browser.selectedKey]);
 
   const handleTabChange = (tab: "tools" | "saved") => {
     setActiveTab(tab);
     if (tab === "tools" && hasSelection) {
       onSelectTool(null);
       builtin.clear();
+      browser.clear();
     }
   };
 
@@ -162,20 +172,30 @@ export function PlaygroundLeft({
 
   const handleToolListSelect = (name: string) => {
     builtin.clear();
+    browser.clear();
     onSelectTool(name);
     setIsListExpanded(false);
   };
 
   const handleSelectBuiltin = (key: string) => {
     onSelectTool(null);
+    browser.clear();
     builtin.select(key);
     setIsListExpanded(false);
   };
 
-  // Top "Run": execute the selected server tool, OR ask the agent to run the
-  // selected built-in tool (no API can fire a built-in tool call directly).
+  const handleSelectBrowser = (key: string) => {
+    onSelectTool(null);
+    builtin.clear();
+    browser.select(key);
+    setIsListExpanded(false);
+  };
+
+  // Top "Run": execute the selected server tool, invoke a page tool directly,
+  // or ask the agent to run a built-in / browser verb.
   const handleRun = () => {
-    if (builtin.selected) builtin.askAgentToRun();
+    if (browser.selected) void browser.run();
+    else if (builtin.selected) builtin.askAgentToRun();
     else onExecute();
   };
 
@@ -186,7 +206,7 @@ export function PlaygroundLeft({
     const tag = target.tagName;
     // Avoid firing while typing in multiline fields
     if (tag === "TEXTAREA") return;
-    if (!hasSelection || isExecuting) return;
+    if (!hasSelection || isExecuting || browser.invoking) return;
     e.preventDefault();
     handleRun();
   };
@@ -221,8 +241,46 @@ export function PlaygroundLeft({
           {...(browserTools ? { browserTools } : {})}
           selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
           onSelectBuiltin={handleSelectBuiltin}
+          selectedBrowserKey={isListExpanded ? null : browser.selectedKey}
+          onSelectBrowser={handleSelectBrowser}
           hasConnectedServer={hasConnectedServer}
           onAddServerRequested={onAddServerRequested}
+        />
+      ) : browser.selected ? (
+        <BuiltinToolDetailView
+          tool={{
+            key: browser.selected.key,
+            name: browser.selected.title,
+            description: browser.selected.description,
+            inputSchema: browser.selected.inputSchema,
+          }}
+          fields={browser.fields}
+          onExpand={() => setIsListExpanded(true)}
+          onFieldChange={browser.onFieldChange}
+          onToggleField={browser.onToggleField}
+          switchItems={browser.catalog.map((tool) => ({
+            id: tool.key,
+            label: tool.title,
+          }))}
+          selectedSwitchId={browser.selected.key}
+          onSwitch={handleSelectBrowser}
+          headerDescription={
+            browser.selected.kind === "page"
+              ? `${browser.selected.callName}${
+                  browser.selected.originHost
+                    ? ` · ${browser.selected.originHost}`
+                    : ""
+                }`
+              : undefined
+          }
+          runHint={
+            browser.selected.blocking
+              ? "is disabled — this tool was not offered to the model."
+              : browser.selected.kind === "page"
+                ? "calls this page tool now, the same way the WebMCP tab does."
+                : "asks the agent to call this browser tool. It drives the open browser — every call still asks first."
+          }
+          result={browser.result}
         />
       ) : builtin.selected ? (
         <BuiltinToolDetailView
@@ -263,8 +321,8 @@ export function PlaygroundLeft({
         onTabChange={handleTabChange}
         toolCount={toolNames.length}
         savedCount={savedRequests.length}
-        isExecuting={isExecuting}
-        canExecute={hasSelection}
+        isExecuting={isExecuting || browser.invoking}
+        canExecute={browser.selected ? browser.canRun : hasSelection}
         canSave={!!selectedToolName}
         fetchingTools={fetchingTools}
         onExecute={handleRun}

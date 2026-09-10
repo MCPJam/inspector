@@ -1,7 +1,10 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, expect, it } from "vitest";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
-import { useOpenBrowserOnBrowsing } from "../useOpenBrowserOnBrowsing";
+import {
+  railShouldOpenForBrowse,
+  useOpenBrowserOnBrowsing,
+} from "../useOpenBrowserOnBrowsing";
 
 beforeEach(() => useBrowserWorkspaceStore.setState({ conversations: {} }));
 
@@ -36,4 +39,28 @@ it("does not open a pane for history or an ownerless tool call", () => {
     }),
   );
   expect(useBrowserWorkspaceStore.getState().conversations).toEqual({});
+});
+
+it("opens the collapsed rail when the workspace panel is not the surface", () => {
+  expect(
+    railShouldOpenForBrowse({
+      conversationId: "chat-1",
+      revealConversationId: "chat-1",
+      workspacePanelVisible: false,
+    }),
+  ).toBe(true);
+  expect(
+    railShouldOpenForBrowse({
+      conversationId: "chat-1",
+      revealConversationId: "chat-1",
+      workspacePanelVisible: true,
+    }),
+  ).toBe(false);
+  expect(
+    railShouldOpenForBrowse({
+      conversationId: "chat-1",
+      revealConversationId: "other",
+      workspacePanelVisible: false,
+    }),
+  ).toBe(false);
 });
