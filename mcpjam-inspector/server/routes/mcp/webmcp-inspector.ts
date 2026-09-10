@@ -88,7 +88,7 @@ import {
  * code the UI can explain beats a 404 on a route the client can plainly see.
  * `WEBMCP_INSPECTOR_ENABLED` is the kill switch in both modes;
  * `webmcpInspectorHostedEnabled()` is the separate hosted-reachability gate;
- * the client-side gate is the `webmcp-inspector-enabled` flag.
+ * client visibility follows the deployment's local/hosted Browser rollout.
  *
  * The browser opens as a real window on the machine running the inspector: the
  * developer drives their own page directly, and this API is the instrument

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "../../hooks/useWebmcpInspectorEnabled";
 import {
   applyBillingGateNavState,
   filterByFeatureFlags,
@@ -217,6 +218,21 @@ describe("filterByFeatureFlags", () => {
 });
 
 describe("declared nav flags are actually resolved", () => {
+  it("WebMCP uses the deployment Browser flag, not the legacy flag", () => {
+    const titles = (flags: Record<string, boolean>) =>
+      filterByFeatureFlags(navigationSections, flags)
+        .flatMap((section) => section.items)
+        .map((item) => item.title);
+    expect(titles({ "webmcp-inspector-enabled": true })).not.toContain(
+      "WebMCP",
+    );
+    expect(titles({ [WEBMCP_INSPECTOR_FEATURE_FLAG]: true })).toContain(
+      "WebMCP",
+    );
+    expect(titles({ [WEBMCP_INSPECTOR_FEATURE_FLAG]: false })).not.toContain(
+      "WebMCP",
+    );
+  });
   // The bug this guards: a nav item can declare `featureFlag: "x"` while the
   // sidebar's `featureFlags` map never sets `x`. `filterByFeatureFlags` then
   // reads `undefined`, hides the item permanently, and — because nothing ever
