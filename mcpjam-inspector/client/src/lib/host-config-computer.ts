@@ -71,7 +71,11 @@ export function visibleBuiltInToolCatalog(
 ): ReadonlyArray<BuiltInToolCatalogEntry> | undefined {
   if (catalog === undefined || opts.computersEnabled) return catalog;
   const selected = new Set(opts.selectedIds);
-  return catalog.filter((t) => !t.requiresComputer || selected.has(t.id));
+  // Browser no longer needs a computer attachment, but authoring still uses
+  // the same rollout cohort as hosted desktop provisioning.
+  return catalog.filter(
+    (t) => (!t.requiresComputer && t.id !== "browser") || selected.has(t.id),
+  );
 }
 
 /** Patch that attaches a personal computer (the only MVP resource shape). */

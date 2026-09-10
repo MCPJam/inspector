@@ -266,7 +266,11 @@ export function HostFocusDialog({
               />
             ) : null}
             {activeTab === "tools" ? (
-              <ToolsTab draft={draft} onDraftChange={onDraftChange} />
+              <ToolsTab
+                projectId={projectId}
+                draft={draft}
+                onDraftChange={onDraftChange}
+              />
             ) : null}
             {activeTab === "computer" ? (
               <ComputerTab

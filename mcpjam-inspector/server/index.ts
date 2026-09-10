@@ -161,6 +161,7 @@ import {
   applySandboxHostPartition,
   assertSandboxIsolation,
 } from "./middleware/sandbox-host-partition";
+import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
 import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
@@ -466,6 +467,14 @@ if (HOSTED_MODE) {
   // the DEPLOY, not about any page: only this process knows which hostnames it
   // was supposed to answer as. Loud, and deliberately not fatal.
   assertSandboxIsolation();
+  // FATAL, unlike the check above, because the alternative is worse than not
+  // starting. Since MJ-001 the agent surfaces dial their first-party MCP
+  // servers through the same egress guard as a caller-supplied URL — no
+  // permanent loopback exemption in those managers — so a deployment whose
+  // platform/docs/spec URL resolves privately would refuse its own connections
+  // mid-turn, one turn at a time, with the reason buried in a per-request
+  // error. This says it once, names the variable, and stops.
+  assertHostedFirstPartyMcpUrls();
 }
 
 // 5. Session authentication (blocks unauthorized API requests)

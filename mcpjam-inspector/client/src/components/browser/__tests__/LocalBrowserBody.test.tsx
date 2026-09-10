@@ -2,6 +2,11 @@ import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+const grantConsent = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("@/hooks/useLocalComputerConsent", () => ({
+  useLocalComputerConsent: () => ({ grant: grantConsent }),
+}));
+
 const api = vi.hoisted(() => ({
   workspaceEnabled: true,
   status: {
@@ -210,9 +215,27 @@ function renderBody(over: Record<string, unknown> = {}) {
 }
 
 describe("the agent browser pane", () => {
-  it("points at the Computer tab instead of asking for consent twice", async () => {
+  it("grants shared device consent from the Browser panel", async () => {
     renderBody({ consentGranted: false });
     expect(await screen.findByTestId("rail-browser-unconsented")).toBeTruthy();
+    expect(screen.queryByText(/Open the Computer tab/)).toBeNull();
+    expect(
+      screen.getByText(/permission covers both commands and browser control/),
+    ).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect(grantConsent).toHaveBeenCalled();
+    expect(api.ensures).toEqual([]);
+  });
+
+  it("shows a failed grant inline and allows retry", async () => {
+    grantConsent.mockResolvedValueOnce(false);
+    renderBody({ consentGranted: false });
+    await userEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    expect(await screen.findByTestId("consent-error")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("consent-error")).toBeNull(),
+    );
   });
 
   it("offers the download when this machine has no Chromium", async () => {

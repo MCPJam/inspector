@@ -5,7 +5,6 @@ import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import { FieldRow, FocusBlock } from "./primitives";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import { HARNESS_DISPLAY_NAME } from "@/lib/harness-capabilities";
-import { BrowserProfilePicker } from "./BrowserProfilePicker";
 import {
   attachComputerPatch,
   detachComputerPatch,
@@ -37,7 +36,6 @@ interface ComputerTabProps {
  * (see `detachComputerPatch`).
  */
 export function ComputerTab({
-  projectId,
   draft,
   onDraftChange,
   readOnly = false,
@@ -135,18 +133,6 @@ export function ComputerTab({
             }
           />
         )}
-        <FieldRow
-          label="Browser profile"
-          description="Optionally pin a saved browser profile for this host. Without a pin, new chats use your selected default profile."
-          control={
-            <BrowserProfilePicker
-              projectId={projectId}
-              value={draft.browserProfileId}
-              onChange={(browserProfileId) => update({ browserProfileId })}
-              disabled={readOnly}
-            />
-          }
-        />
       </FocusBlock>
     </div>
   );
