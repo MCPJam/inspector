@@ -154,6 +154,7 @@ export function registerAgentBrowserListeners(
   deps: AgentBrowserDeps = {},
 ): void {
   const consentWatches = new Map<string, ReturnType<typeof setInterval>>();
+  const latestViewport = new WeakMap<ContextSurface, object>();
   const verifyConsent = deps.verifyConsent ?? verifyLocalBrowserConsent;
   const surfaceFor = deps.surfaceFor ?? contextSurfaceFor;
   const ipc = deps.ipc ?? ipcMain;
@@ -234,7 +235,15 @@ export function registerAgentBrowserListeners(
       // frames, not to show an error over a browser that is simply not there.
       if (!surface) return refused("unknown");
 
-      if (!(await verifyConsent(request.consentToken))) {
+      // Consent checks can finish out of order. A pane's teardown must
+      // supersede an earlier show, or that show resurrects the native view.
+      const revision = {};
+      latestViewport.set(surface, revision);
+      const valid = await verifyConsent(request.consentToken);
+      if (latestViewport.get(surface) !== revision) {
+        return { shown: surface.isShown(), inputAllowed: surface.inputAllowed() };
+      }
+      if (!valid) {
         surface.hide();
         return refused("consent");
       }
