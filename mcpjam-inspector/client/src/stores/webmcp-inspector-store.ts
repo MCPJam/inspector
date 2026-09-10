@@ -40,6 +40,7 @@ import {
 import {
   noteFrameTransportRung,
   noteInputSent,
+  noteInputDispatched,
   noteInputAck,
   resetFrameStats,
 } from "@/lib/webmcp-inspector/frame-stats";
@@ -980,7 +981,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         },
         onInputSent: (seq) => {
           if (generation === connectionGeneration)
-            noteInputSent(lastAppliedFrameSeq, seq);
+            noteInputDispatched(lastAppliedFrameSeq, seq);
         },
         onInputAck: (seq) => {
           if (generation === connectionGeneration) noteInputAck(seq);
@@ -1515,8 +1516,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
 
       async sendInput(events) {
         if (events.length === 0) return;
-        // Record next-frame latency at dispatch, not while queued. It is a
-        // proxy: a newer frame need not contain the result of this input.
+        // Preserve the queue-inclusive headline; a newer frame remains only
+        // a proxy, not proof that it contains this gesture's effect.
+        noteInputSent(lastAppliedFrameSeq);
         // Chunked to the route's cap rather than sent whole and refused. A
         // flush that happened to exceed it would otherwise drop the gesture
         // entirely — the one outcome worse than sending it as two requests.
@@ -1564,7 +1566,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
               }
               continue;
             }
-            noteInputSent(lastAppliedFrameSeq);
+            noteInputDispatched(lastAppliedFrameSeq);
             // Through `sendCommand`, unlike `set_screencast`: input the server
             // refuses is a person's click going nowhere, which they should be
             // told about rather than left to wonder at.

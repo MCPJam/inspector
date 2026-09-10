@@ -161,7 +161,7 @@ servers omit the capability and keep receiving ordered HTTP input. Electron's
 native surface and hosted browser transport do not opt into this path.
 
 The `webmcp:frame-stats` report includes `inputToAck` for socket input. It measures
-dispatch completion, not the resulting paint. `inputToPaint` remains a next-frame
+dispatch completion, not the resulting paint. `inputToPaint` starts when input enters the store, including its queue wait; `dispatchToPaint` starts after that queue. Both remain a next-frame
 proxy; the E2E interaction fixture paints a scroll marker to distinguish a real
 scroll response from an unrelated animation frame. The marker test reports
 input-to-frame-arrival separately from viewer decoding and display.
@@ -924,3 +924,9 @@ npm run build && npm run electron:package && npm run electron:install
 In the installed app an in-app WebMCP session should work end to end (it could
 not before), "Chrome window" should be absent, closing the session should empty
 the pane, and quitting mid-session should leave no orphaned processes.
+
+### Node input fallback and ordering
+
+The client awaits each socket acknowledgement before sending its next batch; this removes HTTP overhead, not per-batch dispatch waiting. An acknowledgement timeout marks that input uncertain and disables socket input for that connection, while binary frames keep flowing. Only later input falls back to HTTP; the uncertain batch is never replayed. The per-connection caps also protect against other callers, even though this client sends one batch at a time.
+
+The session runtime serializes input from all sockets and HTTP callers, so a slow socket dispatch cannot overlap a later fallback request. Failed dispatches do not wedge the tail. Queued input is checked again before dispatch for session close/replacement or caller cancellation. Socket dispatch refreshes activity and reports a missing session explicitly. Wheel coalescing preserves reversals on the dominant axis while summing minor-axis trackpad jitter without losing distance.

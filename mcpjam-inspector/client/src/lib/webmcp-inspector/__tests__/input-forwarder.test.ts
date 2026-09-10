@@ -206,6 +206,17 @@ function wheel(overrides: Record<string, unknown> = {}) {
  * seconds after the person stopped.
  */
 describe("createInputForwarder — wheel", () => {
+  it("coalesces vertical trackpad wheels with alternating horizontal jitter", async () => {
+    const h = harness({ deferSends: true, preserveGestureBoundaries: true });
+    h.forwarder.wheel(wheel({ deltaY: 10 }));
+    h.forwarder.wheel(wheel({ deltaX: 0.2, deltaY: 20 }));
+    h.forwarder.wheel(wheel({ deltaX: -0.1, deltaY: 30 }));
+    await h.settleOldest();
+    expect(h.sent[1]).toEqual([
+      { kind: "wheel", x: 0, y: 0, deltaX: 0.1, deltaY: 50 },
+    ]);
+  });
+
   it("preserves direction and nested-scroll target changes for Node-local input", async () => {
     const h = harness({ deferSends: true, preserveGestureBoundaries: true });
     h.forwarder.wheel(wheel({ deltaY: 10 }));

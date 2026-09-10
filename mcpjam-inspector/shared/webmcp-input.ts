@@ -4,8 +4,8 @@ import {
   WEBMCP_INPUT_BATCH_LIMIT,
   WEBMCP_INPUT_TEXT_MAX_CHARS,
   type WebMcpInputEvent,
-} from "./webmcp-inspector-protocol.js";
-import type { BrowserPaneInputEvent } from "./browser-pane-input.js";
+} from "./webmcp-inspector-protocol";
+import type { BrowserPaneInputEvent } from "./browser-pane-input";
 
 /**
  * One input event, bounded at both the HTTP and socket boundaries.
@@ -98,14 +98,20 @@ export function toBrowserPaneInput(
     (modifiers?.ctrl ? 2 : 0) |
     (modifiers?.meta ? 4 : 0) |
     (modifiers?.shift ? 8 : 0);
-  return { type: kind, ...fields, modifiers: mask } as BrowserPaneInputEvent;
+  return {
+    type: kind,
+    ...fields,
+    ...(modifiers === undefined ? {} : { modifiers: mask }),
+  } as BrowserPaneInputEvent;
 }
 
 export function fromBrowserPaneInput(
   event: BrowserPaneInputEvent,
 ): WebMcpInputEvent {
   if (event.type === "text") return { kind: "text", text: event.text };
-  const { type, modifiers = 0, ...fields } = event;
+  const { type, modifiers, ...fields } = event;
+  if (modifiers === undefined)
+    return { kind: type, ...fields } as WebMcpInputEvent;
   return {
     kind: type,
     ...fields,

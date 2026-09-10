@@ -55,7 +55,7 @@ import {
   WEBMCP_SOCKET_INPUT_MAX_CHARS,
   toBrowserPaneInput,
   fromBrowserPaneInput,
-} from "../../../shared/webmcp-input.js";
+} from "@/shared/webmcp-input";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { MiddlewareHandler } from "hono";
 import type { WSContext } from "hono/ws";
@@ -307,14 +307,22 @@ export function createWebMcpFramesWsHandler(
           input = createRelayInputForwarder({
             preserveGestureBoundaries: true,
             dispatch: async ({ events }) => {
-              if (
-                closed ||
-                ws.readyState !== 1 ||
-                webMcpSessions.get(sessionId) !== runtime
-              ) {
+              try {
+                if (
+                  closed ||
+                  ws.readyState !== 1 ||
+                  webMcpSessions.get(sessionId) !== runtime
+                ) {
+                  return { ok: false, refused: "no_browser_session" };
+                }
+                webMcpSessions.touch(runtime);
+              } catch {
                 return { ok: false, refused: "no_browser_session" };
               }
-              await runtime.dispatchInput(events.map(fromBrowserPaneInput));
+              await runtime.dispatchInput(
+                events.map(fromBrowserPaneInput),
+                () => closed || ws.readyState !== 1,
+              );
               return { ok: true };
             },
             ack: (payload) => {

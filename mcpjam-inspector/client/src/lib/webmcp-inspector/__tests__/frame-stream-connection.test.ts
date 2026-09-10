@@ -161,7 +161,11 @@ describe("Node WebMCP frame connection", () => {
     const rejection = expect(pending).rejects.toThrow("not replayed");
     await vi.advanceTimersByTimeAsync(101);
     await rejection;
-    expect(h.ws.close).toHaveBeenCalledOnce();
+    expect(h.ws.close).not.toHaveBeenCalled();
+    h.frame(2);
+    expect(h.onFrame).toHaveBeenCalledOnce();
+    // A repeated capability announcement must not re-enable timed-out input.
+    h.enable();
     expect(h.ws.send).toHaveBeenCalledOnce();
     expect(h.connection.sendInput(wheel)).toBeUndefined();
   });

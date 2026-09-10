@@ -35,3 +35,13 @@ The frame-stream test measured capture-to-arrival p50 8 ms and p95 15 ms across 
 Run physical trackpad momentum, nested scrolling, dragging, typing, text selection, and zoom checks in the full UI on supported hardware. Record display submission/visible-effect latency, React commit duration, CPU, memory, bandwidth, and queue depth through a ten-minute mixed session. Compare production and development builds, and repeat on Linux and Windows. The proposed 100 ms p95 visible-effect and 27 displayed-fps targets remain unverified.
 
 No evidence from this run justifies a 60 fps profile, changing the existing boost window, or introducing a native encoding helper. If full-UI measurements still identify capture/encoding as the limit, investigate a cross-platform source feeding the existing video wire and decoder.
+
+## TL review follow-up
+
+The follow-up preserves binary frames after an input-ack timeout, restores the store-entry timestamp for the queue-inclusive `inputToPaint` headline, and adds `dispatchToPaint` for the post-queue proxy. Socket acknowledgements still measure post-queue dispatch completion. Input buffered before reaching the store is outside these diagnostics, and a next frame is still not proof of an input effect.
+
+All transport/viewer input now shares the runtime's serial queue, with failure recovery and cancellation/session checks before dispatch. Dominant-axis wheel coalescing tolerates minor-axis jitter and preserves total distance. Missing registry sessions produce the intended refusal, socket dispatch refreshes activity, and modifier-free events retain their shape through the adapter.
+
+Regenerated the daemon bundle and verified all four freshness checks; the executable `.mjs` bytes were unchanged, so only generated hash metadata changed. Follow-up regression runs passed 143 unique client tests, 107 unique server tests (including runtime ordering, socket lifecycle, relay forwarding, and freshness), and 22 shared tests. Client typechecking and the server build passed. The seven real-Chrome E2Es were rerun against the updated server. Original benchmark samples above remain historical measurements, not new performance claims.
+
+Per-batch waiting is deliberately retained. The socket removes HTTP overhead; it does not remove dispatch completion waits or promise a larger in-flight window. Physical trackpad and long-session release checks remain outstanding.

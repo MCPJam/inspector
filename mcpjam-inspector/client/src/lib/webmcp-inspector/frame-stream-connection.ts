@@ -145,6 +145,7 @@ export function openWebMcpFrameStream(
   const cancelFrame =
     opts.cancelFrame ?? ((handle: number) => cancelAnimationFrame(handle));
   let inputEnabled = false;
+  let inputTimedOut = false;
   let inputSeq = 0;
   const awaitingInput = new Map<
     number,
@@ -215,7 +216,7 @@ export function openWebMcpFrameStream(
       }
       if (!control || typeof control !== "object") return;
       if (control.type === "capabilities" && Array.isArray(control.features)) {
-        inputEnabled = control.features.includes("input");
+        inputEnabled = !inputTimedOut && control.features.includes("input");
       } else if (
         control.type === "input_ack" &&
         typeof control.seq === "number" &&
@@ -285,8 +286,9 @@ export function openWebMcpFrameStream(
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           // An absent ack is an unknown outcome, never permission to replay.
+          inputTimedOut = true;
           abandonInput();
-          ws.close();
+          // Input falls back independently; keep binary pixels flowing.
         }, opts.inputAckTimeoutMs ?? 5_000);
         awaitingInput.set(seq, { resolve, reject, timer });
         opts.onInputSent?.(seq);

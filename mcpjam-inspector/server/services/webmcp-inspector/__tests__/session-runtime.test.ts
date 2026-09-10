@@ -872,6 +872,60 @@ describe("viewport frames", () => {
 });
 
 describe("input forwarding", () => {
+  it("serializes all input callers and continues after a dispatch rejection", async () => {
+    const { runtime, session } = makeRuntime();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const dispatch = vi.spyOn(session, "dispatchInput")
+      .mockImplementationOnce(() => gate.then(() => { throw new Error("dispatch failed"); }))
+      .mockResolvedValue(undefined);
+    const first = runtime.dispatchInput([{ kind: "key_down", key: "a" }]);
+    const failed = expect(first).rejects.toThrow("dispatch failed");
+    const second = runtime.dispatchInput([{ kind: "key_up", key: "a" }]);
+    await Promise.resolve();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    release();
+    await failed;
+    await second;
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1][0][0].kind).toBe("key_up");
+  });
+
+  it("rechecks socket cancellation after waiting behind another caller", async () => {
+    const { runtime, session } = makeRuntime();
+    let release!: () => void;
+    let cancelled = false;
+    const dispatch = vi.spyOn(session, "dispatchInput").mockImplementationOnce(
+      () => new Promise<void>((resolve) => { release = resolve; }),
+    );
+    const first = runtime.dispatchInput([{ kind: "text", text: "http" }]);
+    const second = runtime.dispatchInput([{ kind: "text", text: "socket" }], () => cancelled);
+    const refused = expect(second).rejects.toThrow("no longer available");
+    await Promise.resolve();
+    cancelled = true;
+    release();
+    await first;
+    await refused;
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses queued input after the runtime closes", async () => {
+    const { runtime, session } = makeRuntime();
+    let release!: () => void;
+    const dispatch = vi.spyOn(session, "dispatchInput").mockImplementationOnce(
+      () => new Promise<void>((resolve) => { release = resolve; }),
+    );
+    const first = runtime.dispatchInput([{ kind: "key_down", key: "a" }]);
+    const second = runtime.dispatchInput([{ kind: "key_up", key: "a" }]);
+    const refused = expect(second).rejects.toThrow("no longer available");
+    await Promise.resolve();
+    await runtime.close();
+    release();
+    await first;
+    await refused;
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
   it("hands the batch to the browser and ticks the idle clock", async () => {
     const { runtime, session, onActivity } = makeRuntime();
     onActivity.mockClear();

@@ -1288,6 +1288,26 @@ describe("webmcp inspector store — frame transport", () => {
     unsubscribe();
   });
 
+  it("keeps binary frames after an ack timeout and sends only later input over HTTP", async () => {
+    const { ws, sse } = await openFrameSession();
+    vi.useFakeTimers();
+    ws.open();
+    ws.onmessage?.({ data: JSON.stringify({ type: "capabilities", features: ["input"] }) });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    fetchSpy.mockClear();
+    const pending = useWebmcpInspectorStore.getState().sendInput([{ kind: "text", text: "uncertain" }]);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(5001);
+    await pending;
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sse.url).toContain("frames=off");
+    const count = ws.sent.length;
+    await useWebmcpInspectorStore.getState().sendInput([{ kind: "text", text: "later" }]);
+    expect(ws.sent).toHaveLength(count);
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(fetchSpy.mock.calls.some(([, init]) => String(init?.body).includes("uncertain"))).toBe(false);
+  });
+
   it("surfaces interrupted socket input without replaying it over HTTP", async () => {
     const { ws } = await openFrameSession();
     ws.open();

@@ -28,7 +28,9 @@ export type { FrameStatsBucket, FrameTransportRung };
 
 export interface FrameStatsReport {
   captureToPaint: FrameStatsBucket;
+  /** Queue-inclusive store-entry to next-frame proxy. */
   inputToPaint: FrameStatsBucket;
+  dispatchToPaint: FrameStatsBucket;
   /** Socket acknowledgements measure dispatch completion, not visible effect. */
   inputToAck: FrameStatsBucket;
   byTransport: Partial<Record<FrameTransportRung, FrameStatsBucket>>;
@@ -36,11 +38,18 @@ export interface FrameStatsReport {
 
 const stats = createFrameStats({
   flag: "webmcp:frame-stats",
-  globalName: "webmcpFrameStats",
 });
 
+const dispatchedStats = createFrameStats({ flag: "webmcp:frame-stats" });
+
 export function frameStatsEnabled(): boolean {
-  return stats.enabled();
+  const enabled = stats.enabled();
+  if (enabled && typeof window !== "undefined") {
+    const scope = window as unknown as Record<string, unknown>;
+    scope.webmcpFrameStats = frameStatsReport;
+    scope.webmcpFrameStatsReset = resetFrameStats;
+  }
+  return enabled;
 }
 
 /**
@@ -50,16 +59,25 @@ export function frameStatsEnabled(): boolean {
  * when it is on, because a rung recorded late tags the wrong samples.
  */
 export function noteFrameTransportRung(rung: FrameTransportRung): void {
+  frameStatsEnabled();
   stats.noteTransport(rung);
+  dispatchedStats.noteTransport(rung);
 }
 
-/** Called when a gesture leaves the client, with the seq currently on screen. */
-export function noteInputSent(afterSeq: number, seq?: number): void {
-  stats.noteInputSent(afterSeq, seq);
+/** Legacy headline: stamp when input enters the store, before its queue. */
+export function noteInputSent(afterSeq: number): void {
+  frameStatsEnabled();
+  stats.noteInputSent(afterSeq);
+}
+
+/** Separate post-queue measurement; acknowledgements use this clock. */
+export function noteInputDispatched(afterSeq: number, seq?: number): void {
+  frameStatsEnabled();
+  dispatchedStats.noteInputSent(afterSeq, seq);
 }
 
 export function noteInputAck(seq: number): void {
-  stats.noteInputAck(seq);
+  dispatchedStats.noteInputAck(seq);
 }
 
 /**
@@ -79,24 +97,30 @@ export function notePainted(frame: {
   seq?: number;
   rung?: FrameTransportRung;
 }): void {
+  frameStatsEnabled();
   stats.notePainted(frame);
+  dispatchedStats.notePainted(frame);
 }
 
 export function frameStatsReport(): FrameStatsReport {
   const full = stats.report();
+  const dispatched = dispatchedStats.report();
   return {
     captureToPaint: full.captureToPaint,
     inputToPaint: full.inputToPaint,
-    inputToAck: full.inputToAck,
+    dispatchToPaint: dispatched.inputToPaint,
+    inputToAck: dispatched.inputToAck,
     byTransport: full.byTransport,
   };
 }
 
 export function resetFrameStats(): void {
   stats.reset();
+  dispatchedStats.reset();
 }
 
 /** Test seam: the flag is read once and cached for the tab's lifetime. */
 export function resetFrameStatsFlagForTests(): void {
   stats.resetFlagForTests();
+  dispatchedStats.resetFlagForTests();
 }

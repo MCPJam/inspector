@@ -19,6 +19,8 @@ describe("WebMCP socket input boundary", () => {
   it("preserves input semantics through the shared relay vocabulary", () => {
     const events: WebMcpInputEvent[] = [
       wheel,
+      { kind: "wheel", x: 1, y: 2, deltaX: 0, deltaY: 1 },
+      { kind: "key_up", key: "a" },
       { kind: "key_down", key: "Shift", modifiers: wheel.modifiers },
       {
         kind: "mouse_down",
@@ -52,6 +54,16 @@ describe("WebMCP socket input boundary", () => {
     expect(output[0]).toMatchObject({ type: "wheel", deltaY: 20 });
     expect(output[1]).toMatchObject({ type: "wheel", deltaY: -10 });
     expect(output.at(-1)).toMatchObject({ type: "mouse_up" });
+  });
+  it("sums jitter on the minor axis but preserves dominant reversals and axis changes", () => {
+    const output = coalesceBrowserPaneInput([
+      { ...toBrowserPaneInput(wheel), deltaX: 0.2, deltaY: 10 },
+      { ...toBrowserPaneInput(wheel), deltaX: -0.1, deltaY: 12 },
+      { ...toBrowserPaneInput(wheel), deltaX: 0.1, deltaY: -10 },
+      { ...toBrowserPaneInput(wheel), deltaX: 10, deltaY: -0.1 },
+    ] as Parameters<typeof coalesceBrowserPaneInput>[0], true);
+    expect(output).toHaveLength(3);
+    expect(output[0]).toMatchObject({ deltaX: 0.1, deltaY: 22 });
   });
   it.each([
     [],

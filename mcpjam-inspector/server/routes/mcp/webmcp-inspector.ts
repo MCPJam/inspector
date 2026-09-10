@@ -1,4 +1,4 @@
-import { inputEventSchema } from "../../../shared/webmcp-input.js";
+import { inputEventSchema } from "@/shared/webmcp-input";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { ComputerHostedBrowserSessionHandle } from "../../services/browserd/browser-session.js";

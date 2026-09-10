@@ -28,6 +28,7 @@
  * way to read the current geometry, which is what makes all of the above
  * testable without rendering anything.
  */
+import { sameWheelDirection } from "@/shared/browser-pane-input";
 import { WEBMCP_INPUT_TEXT_MAX_CHARS } from "@/shared/webmcp-inspector-protocol";
 import type {
   WebMcpInputEvent,
@@ -303,8 +304,7 @@ export function createInputForwarder(
         (!options.preserveGestureBoundaries ||
           (last.x === event.x &&
             last.y === event.y &&
-            Math.sign(last.deltaX) === Math.sign(event.deltaX) &&
-            Math.sign(last.deltaY) === Math.sign(event.deltaY)))
+            sameWheelDirection(last, event)))
       ) {
         // SUM the deltas rather than keep the latest: scroll distance is
         // additive, and keeping only the newest would make a fast flick move

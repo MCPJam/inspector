@@ -734,7 +734,7 @@ describe("WebMCP negotiated socket input", () => {
         probe.text.some((text) => JSON.parse(text).type === "capabilities"),
       ).toBe(true),
     );
-    return { browser, probe };
+    return { browser, probe, runtime: webMcpSessions.get(session.sessionId) };
   }
   const wheel = { kind: "wheel", x: 10, y: 20, deltaX: 0, deltaY: 12 };
   const acks = (probe: Probe) =>
@@ -743,7 +743,9 @@ describe("WebMCP negotiated socket input", () => {
       .filter((message) => message.type === "input_ack");
 
   it("dispatches validated input and acknowledges it without an HTTP request", async () => {
-    const { browser, probe } = await streamed();
+    const { browser, probe, runtime } = await streamed();
+    runtime.expiresAt = Date.now() + 1000;
+    const expiresBefore = runtime.expiresAt;
     probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
     await vi.waitFor(() =>
       expect(acks(probe)).toEqual([
@@ -751,6 +753,21 @@ describe("WebMCP negotiated socket input", () => {
       ]),
     );
     expect(browser.inputBatches[0][0]).toMatchObject(wheel);
+    expect(runtime.expiresAt).toBeGreaterThan(expiresBefore);
+  });
+
+  it("reports a vanished registry session as no_browser_session", async () => {
+    const { browser, probe } = await streamed();
+    const get = vi.spyOn(webMcpSessions, "get").mockImplementation(() => {
+      throw new Error("session gone");
+    });
+    try {
+      probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
+      await vi.waitFor(() => expect(acks(probe)[0]?.refused).toBe("no_browser_session"));
+      expect(browser.inputBatches).toHaveLength(0);
+    } finally {
+      get.mockRestore();
+    }
   });
 
   it("orders batches and coalesces compatible wheels behind a slow dispatch", async () => {
