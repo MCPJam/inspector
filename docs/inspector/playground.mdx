@@ -91,6 +91,21 @@ Open the **Tools** tab in the left rail to invoke any tool by hand:
 
 When multiple servers are selected at the same time, the Tools rail aggregates every server's tools into one list and routes each execution to the right server automatically.
 
+### Tool groups
+
+When a browser is active, the Tools rail organizes tools into collapsible groups:
+
+- **WebMCP** — Tools declared by the page currently open in the conversation's browser. Each row shows the page's own tool name first, with the name the model calls and the page's host beneath it. This group is hidden when no page is open. Tools change as the browser navigates.
+- **Browser** — The `browser_*` verbs the host gives the model (collapsed by default). These drive the open browser; every call still asks the agent first.
+- **Servers** — Tools from your connected MCP servers.
+- **Built-in tools** — Host-managed built-ins such as `web_search`.
+
+### Running WebMCP page tools
+
+Selecting a WebMCP page tool and clicking **Run** invokes it directly on the page — the same path the WebMCP tab uses — without going through the agent. This works even while the agent is driving. The result appears inline below the parameter form.
+
+Selecting a `browser_*` verb and clicking **Run** asks the agent to call it instead of driving the browser directly from the form.
+
 ## Model Picker
 
 The model picker in the chat input lets you choose which LLM to use. Models are organized into two tabs:
