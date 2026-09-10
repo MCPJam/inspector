@@ -440,6 +440,15 @@ When a server requires multiple interactions before a tool can run, the notice w
 
 Playground follows the selected client's saved Browser enablement. Turn Browser on or off in the client's [Browser tab](/inspector/clients#browser-settings). A **Browser settings** link in the browser panel header opens that tab when a client is selected.
 
+### Comparison browser
+
+When a multi-model or multi-host compare session is running and at least one client has an active browser, Playground replaces the single browser panel with a **comparison browser**: one shared tab strip over isolated per-client browser sessions. Only the selected client's session gets a renderer at any time; switching tabs or clicking a different client's tab activates that session without affecting the others.
+
+- Tabs are labeled with the client name when more than one client is in the lineup (for example, `Cursor · Nike`).
+- The navigation bar shows `<client> is driving` when an agent holds the lease on the selected session.
+- Sessions in the comparison browser are transient — they are never saved as a project default.
+- Closing the comparison browser or ending the multi-client session discards the comparison state.
+
 ## Related Features
 
 - [Clients](/inspector/clients) — Manage MCP server connections, transports, and OAuth.
