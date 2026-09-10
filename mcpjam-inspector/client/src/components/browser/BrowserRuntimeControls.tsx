@@ -60,12 +60,12 @@ export function BrowserRuntimeControls({
   };
   const controls = (
     <div className="flex flex-col gap-2 p-2 text-xs">
-      {settings && (
+      {settings && engine.toggleVisible ? (
         <p className="text-muted-foreground">
           Location for new Playground chats. Existing chats keep their browser;
           environments use Cloud.
         </p>
-      )}
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {engine.toggleVisible ? (
           <select
@@ -81,9 +81,9 @@ export function BrowserRuntimeControls({
               Cloud
             </option>
           </select>
-        ) : (
+        ) : engine.selectedEngine === "cloud" ? (
           <span>Cloud</span>
-        )}
+        ) : null}
         <span className="text-muted-foreground">
           {!engine.resolved
             ? "Checking Browser…"
@@ -148,7 +148,11 @@ export function BrowserRuntimeControls({
           size="icon"
           className="size-6"
           aria-label="Browser options"
-          title="Browser location and permissions"
+          title={
+            engine.toggleVisible
+              ? "Browser location and permissions"
+              : "Browser permissions"
+          }
         >
           <Settings2 className="size-3.5" />
         </Button>
