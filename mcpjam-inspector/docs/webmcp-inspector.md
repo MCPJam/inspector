@@ -529,14 +529,22 @@ carries on the stream, because for a hosted caller it is all they will get. Chat
 fulfils a model's page-tool call straight from that value, so an outcome that
 says `succeeded` and carries nothing answers the model with `null`.
 
-`unknown` is a real terminal state, not a hedge. The daemon's `webmcp_invoke` is
-synchronous — it reports an `invocationId` only once the tool has settled — so
-an aborted request stops our wait but not the tool, and there is no id to cancel
-with. Reporting `cancelled` would be a lie about a tool that may still be
-filling in a form; reporting `failed` would tell someone a payment did not go
-through when it may have. The client re-queries the same `invokeId` to find out.
-(A daemon that returned `invocationId` early would replace this with a real
-mid-flight cancel — see the follow-ups.)
+`unknown` is a real terminal state. Hosted cancellation now sends
+`webmcp_cancel {commandId}` immediately, so the daemon can latch cancellation
+before it knows the browser invocation ID or dequeues the call. The caller
+stops waiting and reports `unknown` once dispatch may have happened, because
+Chromium can acknowledge cancellation while page code continues. Calls stopped
+before dispatch retain a definite cancellation outcome.
+
+A client that loses its settlement stream also retains `unknown` and its
+original invocation ID. Its wait budget covers the serialized queue, tool
+deadlines and screenshot overhead. `GET /sessions/:id/invocations/:invokeId`
+reads a retained result without enqueueing any execution: pending returns 202,
+a retained outcome returns 200, and an expired or replica-local missing result
+returns `unknown`. The store exposes this as `recoverInvocationResult`.
+This lookup is bounded by the runtime's retention window; it cannot recover
+an outcome another replica never observed. Verify page state when it remains
+unknown rather than retrying with a fresh invocation ID.
 
 ## Keeping the machine awake
 
@@ -709,7 +717,7 @@ Details worth keeping:
   *imperative* invocation is accepted and answers `Canceled`. Stopping one still
   frees the caller, through the grace timer that settles a cancel the page never
   answers; what it does not do is stop the page. So the form stays live, a
-  person submitting later answers an invocation already reported as cancelled,
+  person submitting later answers an invocation already reported as unknown,
   and `settle()` remembering the id is what makes that late answer get dropped
   instead of buffered.
 
@@ -773,9 +781,30 @@ ours, because frame ids churn across navigations. The runtime assigns
 same name twice), stable across reloads and readable in a URL or a transcript.
 The live frame id is resolved at the moment of invocation.
 
-For chat, tools additionally get an opaque `page_<8hex>` alias: page-authored
-names are arbitrary while a model-facing name must satisfy
-`^[a-zA-Z0-9_-]{1,64}$`.
+For chat, tools additionally get an opaque `page_<8hex>` alias bound to the
+observed registration. Aliases remain stable while that registration lives;
+a reload or re-registration produces a new alias. The snapshot carries the
+frame and registration sequence, plus boot/tab/navigation identity for hosted
+browsers. Approval retains that snapshot, the runtime checks it at dequeue,
+and the provider checks it again at CDP dispatch. A missing binding prevents
+chat advertisement and invocation. Manual invocations capture the current
+binding at enqueue. Neither CDP adapter substitutes a different frame.
+
+A stale chat call is a **definite refusal before execution**, marked
+`errorCode: "tool-gone"` in both SSE and inline outcomes. The client refreshes
+the tool list through `GET /sessions/:id?refreshTools=1` (hosted providers read
+it from browserd) and returns the refusal to the model. The existing automatic
+client-tool continuation sends a fresh snapshot; the model can choose current
+arguments and issue a new call, which follows the normal approval gate. No
+manual MCPJam refresh is needed and old approvals are never transferred.
+This recovery is limited to three consecutive stale refusals per session,
+reset after a successful call. Unknown outcomes, cancellation, timeouts, and
+ordinary tool errors never trigger this refresh/retry guidance. Recovery does
+not itself execute a replacement tool; a model may explain that no suitable
+tool remains instead of issuing another call.
+
+Same-origin duplicate tool keys extend their frame-hash suffix until unique;
+a hash collision cannot make two selections execute the first frame's tool.
 
 ## Approval
 
@@ -823,12 +852,12 @@ running two at once would interleave their effects.
 - **A tool whose form targets `_blank` never settles.** The browser produces no
   response for it at the pinned Chromium (see **Cross-document results** above),
   and there is nothing to recover, so the invocation runs out the caller's
-  deadline and the timeline records it as cancelled-by-timeout. That reading is
-  literally true — the tool ran, and never answered — but it under-describes
-  what happened, and nothing observable distinguishes this case from a page that
-  is merely slow. Every other navigation shape is answered natively.
+  deadline and the timeline records its outcome as unknown after timeout.
+  Nothing observable distinguishes this case from a page that is merely slow.
+  Every other navigation shape is answered natively.
 - **Chat sees a per-turn snapshot** of the page's tools; a registration that
-  happens mid-turn surfaces on the next one.
+  happens mid-turn surfaces on the next one, including the automatic
+  continuation after a stale-registration refusal.
 - **Headed needs a display.** Over SSH, in a container, or on a bare WSL
   install, set `MCPJAM_WEBMCP_HEADLESS=true`: discovery, invocation and
   screenshots all still work, only driving the page by hand does not.

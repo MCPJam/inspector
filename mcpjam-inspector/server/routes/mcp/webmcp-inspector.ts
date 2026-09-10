@@ -181,6 +181,19 @@ const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("go_back") }),
   z.object({
     type: z.literal("invoke_tool"),
+    expectedBinding: z
+      .object({
+        frameId: z.string().min(1).max(256),
+        registrationSeq: z.number().int().nonnegative().safe(),
+        browser: z
+          .object({
+            bootId: z.string().min(1).max(256),
+            tabId: z.string().min(1).max(256),
+            navCounter: z.number().int().nonnegative().safe(),
+          })
+          .optional(),
+      })
+      .optional(),
     toolKey: z.string().min(1),
     input: z.record(z.string(), z.unknown()).default({}),
     source: z.enum(["manual", "chat"]).default("manual"),
@@ -704,12 +717,37 @@ webmcpInspector.get("/sessions/:id", async (c) => {
   try {
     const runtime = await resolveRuntime(c, c.req.param("id"));
     webMcpSessions.touch(runtime);
+    if (c.req.query("refreshTools") === "1") await runtime.refreshTools();
     return c.json({
       session: runtime.toPublic(),
       tools: runtime.currentTools(),
     });
   } catch (error) {
     return webMcpErrorResponse(c, error, "Could not read that session.");
+  }
+});
+
+// A missing result is not permission to execute again. This endpoint only
+// reads retained outcomes, including when an SSE settlement was lost.
+webmcpInspector.get("/sessions/:id/invocations/:invokeId", async (c) => {
+  try {
+    const runtime = await resolveRuntime(c, c.req.param("id"));
+    const invokeId = c.req.param("invokeId");
+    const retained = runtime.invocationResult(invokeId);
+    webMcpSessions.touch(runtime);
+    if (!retained)
+      return c.json({
+        invokeId,
+        outcome: {
+          state: "unknown",
+          errorMessage:
+            "This replica no longer has the invocation's outcome. Verify the page state before retrying.",
+        },
+      });
+    if ("pending" in retained) return c.json({ invokeId, pending: true }, 202);
+    return c.json({ invokeId, outcome: await outcomeOf(retained.settled, c) });
+  } catch (error) {
+    return webMcpErrorResponse(c, error, "Could not read that invocation.");
   }
 });
 
@@ -977,6 +1015,9 @@ async function outcomeOf(
     }
     return {
       state: "failed",
+      ...(error instanceof WebMcpToolGoneError
+        ? { errorCode: "tool-gone" as const }
+        : {}),
       errorMessage: error instanceof Error ? error.message : "The tool failed.",
     };
   }
@@ -1020,6 +1061,7 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           command.input as Record<string, unknown>,
           command.source,
           command.invokeId,
+          command.expectedBinding,
         );
         // The caller follows the outcome on the activity stream; swallow the
         // rejection here so a failed tool is not an unhandled rejection.

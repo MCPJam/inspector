@@ -287,7 +287,7 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
 
     await expect(pending).rejects.toMatchObject({
       name: "WebMcpOutcomeUnknownError",
-      message: expect.stringContaining("Cancellation requested"),
+      message: expect.stringContaining("may continue"),
     });
   });
 
@@ -311,7 +311,7 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
 
     const error = await pending.catch((e: unknown) => e);
     expect(error).toBeInstanceOf(WebMcpOutcomeUnknownError);
-    expect((error as Error).message).toContain("after a timeout");
+    expect((error as Error).message).toMatch(/timeout.*may continue/i);
   });
 
   it("passes a page-side failure up with the page's own message", async () => {
@@ -388,4 +388,39 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
       /ERR_CONNECTION_REFUSED/,
     );
   });
+});
+
+it("refuses a re-registration at the final CDP boundary", async () => {
+  const h = await started({ onSend: () => ({ invocationId: "inv-1" }) });
+  h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+  const registrationSeq = h.toolSnapshots.at(-1)![0].registrationSeq!;
+  h.emit("WebMCP.toolsRemoved", { tools: [TOOL] });
+  h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+  await expect(
+    h.session.invokeTool({
+      ...invokeArgs,
+      expectedBinding: { frameId: TOOL.frameId, registrationSeq },
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toBeInstanceOf(WebMcpToolGoneError);
+  expect(h.sent.some((command) => command.method === "WebMCP.invokeTool")).toBe(
+    false,
+  );
+  await h.session.dispose();
+});
+
+it("does not substitute the main frame for a selected frame that vanished", async () => {
+  const h = await started({ onSend: () => ({ invocationId: "inv-1" }) });
+  h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+  await expect(
+    h.session.invokeTool({
+      ...invokeArgs,
+      frameId: "gone-subframe",
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toBeInstanceOf(WebMcpToolGoneError);
+  expect(h.sent.some((command) => command.method === "WebMCP.invokeTool")).toBe(
+    false,
+  );
+  await h.session.dispose();
 });

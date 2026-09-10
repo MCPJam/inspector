@@ -114,6 +114,101 @@ describe("webmcp-inspector routes", () => {
     provider = new FakeProvider();
   });
 
+  it("refreshes a provider's tools on request without executing a tool", async () => {
+    const session = await openSession(provider);
+    const browser = provider.sessions.at(-1)!;
+    const refreshTools = vi.fn(async () => {
+      browser.emitTools([fakeTool({ registrationSeq: 2 })]);
+    });
+    Object.assign(browser, { refreshTools });
+    const result = await call(
+      `/api/mcp/webmcp/sessions/${session.sessionId}?refreshTools=1`,
+    );
+    expect(result.status).toBe(200);
+    expect(result.body.tools[0].binding.registrationSeq).toBe(2);
+    expect(refreshTools).toHaveBeenCalledTimes(1);
+    expect(browser.invocations).toHaveLength(0);
+  });
+
+  it("preserves the definite stale-refusal code in an inline recovered outcome", async () => {
+    const session = await openSession(provider);
+    const browser = provider.sessions.at(-1)!;
+    browser.emitTools([fakeTool({ registrationSeq: 2 })]);
+    await call(
+      `/api/mcp/webmcp/sessions/${session.sessionId}/command`,
+      json({
+        type: "invoke_tool",
+        toolKey: "https://example.test::echo",
+        source: "chat",
+        invokeId: "stale",
+        expectedBinding: { frameId: "old", registrationSeq: 1 },
+        input: {},
+      }),
+    );
+    await vi.waitFor(async () =>
+      expect(
+        await call(
+          `/api/mcp/webmcp/sessions/${session.sessionId}/invocations/stale`,
+        ),
+      ).toMatchObject({
+        body: { outcome: { state: "failed", errorCode: "tool-gone" } },
+      }),
+    );
+    expect(browser.invocations).toHaveLength(0);
+  });
+
+  it("reads pending and settled outcomes without invoking again", async () => {
+    const session = await openSession(provider);
+    const browser = provider.sessions.at(-1)!;
+    browser.emitTools([fakeTool()]);
+    browser.hangOnInvoke = true;
+    const { body } = await call(
+      `/api/mcp/webmcp/sessions/${session.sessionId}/command`,
+      json({
+        type: "invoke_tool",
+        toolKey: "https://example.test::echo",
+        input: {},
+        invokeId: "recover-me",
+      }),
+    );
+    expect(body.invokeId).toBe("recover-me");
+    const path = `/api/mcp/webmcp/sessions/${session.sessionId}/invocations/recover-me`;
+    expect(await call(path)).toMatchObject({
+      status: 202,
+      body: { pending: true },
+    });
+    await vi.waitFor(() => expect(browser.pending).toBeDefined());
+    browser.pending!.resolve({ output: "paid" });
+    await vi.waitFor(async () =>
+      expect(await call(path)).toMatchObject({
+        status: 200,
+        body: { outcome: { state: "succeeded", output: "paid" } },
+      }),
+    );
+    expect(await call(path.replace("recover-me", "missing"))).toMatchObject({
+      status: 200,
+      body: { outcome: { state: "unknown" } },
+    });
+    expect(browser.invocations).toHaveLength(1);
+  });
+
+  it("refuses chat calls without a registration binding", async () => {
+    const session = await openSession(provider);
+    provider.sessions.at(-1)!.emitTools([fakeTool()]);
+    expect(
+      await call(
+        `/api/mcp/webmcp/sessions/${session.sessionId}/command`,
+        json({
+          type: "invoke_tool",
+          source: "chat",
+          toolKey: "https://example.test::echo",
+          input: {},
+        }),
+      ),
+    ).toMatchObject({ status: 409 });
+    expect(provider.sessions.at(-1)!.invocations).toHaveLength(0);
+  });
+
   it("404s every route when the kill switch is off", async () => {
     configState.enabled = false;
     // Not 403: a disabled capability should not be discoverable.

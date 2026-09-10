@@ -16,10 +16,13 @@ import {
 import {
   WEBMCP_INPUT_BATCH_LIMIT,
   type WebMcpInvocationOutcome,
+  WEBMCP_INVOKE_QUEUE_LIMIT,
+  WEBMCP_INVOKE_TIMEOUT_MS,
 } from "@/shared/webmcp-inspector-protocol";
 import { isHostedMode } from "@/lib/apis/mode-client";
 import { authFetch } from "@/lib/session-token";
 import type {
+  WebMcpRegistrationBinding,
   WebMcpActivityEntry,
   WebMcpBinaryFrame,
   WebMcpCommand,
@@ -78,8 +81,10 @@ export interface PageToolInvocationResult extends WebMcpInvocationOutcome {
   invokeId?: string;
 }
 
-/** How long to wait for a settle event before giving up on the stream. */
-const INVOCATION_WAIT_TIMEOUT_MS = 90_000;
+/** Queue + execution + budgeted before/after screenshots, then transport grace. */
+const INVOCATION_WAIT_TIMEOUT_MS =
+  (WEBMCP_INVOKE_QUEUE_LIMIT + 1) * (WEBMCP_INVOKE_TIMEOUT_MS + 30_000) +
+  30_000;
 
 /**
  * A client-minted id for one invocation, so a retry is recognisable as one.
@@ -321,6 +326,14 @@ interface WebMcpInspectorState {
   invokeToolForResult(
     toolKey: string,
     input: Record<string, unknown>,
+    expectedBinding?: WebMcpRegistrationBinding,
+  ): Promise<PageToolInvocationResult>;
+  /** Refresh metadata without navigating or executing any page tool. */
+  refreshToolsForChat(sessionId: string): Promise<boolean>;
+  /** Read only: an expired/missing outcome must never cause another invocation. */
+  recoverInvocationResult(
+    sessionId: string,
+    invokeId: string,
   ): Promise<PageToolInvocationResult>;
   cancelInvocation(invokeId: string): Promise<void>;
   /**
@@ -540,7 +553,11 @@ function failOutstandingWaiters(errorMessage: string) {
   sessionGeneration += 1;
   for (const [invokeId, waiter] of [...invocationWaiters]) {
     invocationWaiters.delete(invokeId);
-    waiter({ state: "failed", errorMessage });
+    waiter({
+      state: "unknown",
+      invokeId,
+      errorMessage: `${errorMessage} The outcome is unknown; verify the page state before retrying.`,
+    });
   }
   settledResults.clear();
 }
@@ -704,6 +721,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           outputTruncated: entry.outputTruncated,
           outputBytes: entry.outputBytes,
           errorMessage: entry.errorMessage,
+          errorCode: entry.errorCode,
         };
         const waiter = invocationWaiters.get(entry.invokeId);
         if (waiter) {
@@ -1332,6 +1350,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           toolKey,
           input,
           source: "manual",
+          expectedBinding: get().tools.find((tool) => tool.toolKey === toolKey)
+            ?.binding,
           invokeId,
         })) as { outcome?: PageToolInvocationResult } | undefined;
         // Locally the outcome arrives on the activity stream and this response
@@ -1344,7 +1364,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         }
       },
 
-      async invokeToolForResult(toolKey, input) {
+      async invokeToolForResult(toolKey, input, expectedBinding) {
         const generation = sessionGeneration;
         // MINTED HERE, so this call has one identity for its whole life. A
         // hosted request can be dropped in flight or retried onto another
@@ -1358,6 +1378,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           toolKey,
           input,
           source: "chat",
+          expectedBinding,
           invokeId,
         })) as
           { invokeId?: string; outcome?: PageToolInvocationResult } | undefined;
@@ -1403,16 +1424,17 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // The session went away while this call was being queued; nothing
           // will ever settle it.
           return {
-            state: "failed",
+            state: "unknown",
+            invokeId,
             errorMessage:
-              "The browser session went away before this tool finished.",
+              "The browser session went away before this tool finished. The outcome is unknown; verify the page state before retrying.",
           };
         }
         // The settle may already have arrived while the POST was in flight.
         const early = settledResults.get(invokeId);
         if (early) {
           settledResults.delete(invokeId);
-          return early;
+          return early.state === "unknown" ? { ...early, invokeId } : early;
         }
 
         return new Promise<PageToolInvocationResult>((resolve) => {
@@ -1423,17 +1445,60 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             // answer rather than waiting forever.
             if (!invocationWaiters.delete(invokeId)) return;
             resolve({
-              state: "failed",
+              state: "unknown",
+              invokeId,
               errorMessage:
-                "Lost track of this invocation — the connection to the browser session dropped.",
+                "Lost track of this invocation. The outcome is unknown; verify the page state before retrying.",
             });
           }, INVOCATION_WAIT_TIMEOUT_MS);
 
           invocationWaiters.set(invokeId, (result) => {
             clearTimeout(timer);
-            resolve(result);
+            resolve(
+              result.state === "unknown" ? { ...result, invokeId } : result,
+            );
           });
         });
+      },
+
+      async refreshToolsForChat(sessionId) {
+        const generation = sessionGeneration;
+        const response = await request<{
+          session: WebMcpSessionPublic;
+          tools: WebMcpToolDescriptor[];
+        }>(`/sessions/${encodeURIComponent(sessionId)}?refreshTools=1`, {
+          method: "GET",
+        });
+        if (
+          !response.ok ||
+          !response.data ||
+          generation !== sessionGeneration ||
+          get().session?.sessionId !== sessionId ||
+          response.data.session.sessionId !== sessionId
+        )
+          return false;
+        set({ tools: response.data.tools });
+        return true;
+      },
+
+      async recoverInvocationResult(sessionId, invokeId) {
+        const response = await request<{
+          pending?: boolean;
+          outcome?: PageToolInvocationResult;
+        }>(
+          `/sessions/${encodeURIComponent(sessionId)}/invocations/${encodeURIComponent(invokeId)}`,
+          { method: "GET" },
+        );
+        return response.ok && response.data?.outcome
+          ? { ...response.data.outcome, invokeId }
+          : {
+              state: "unknown",
+              invokeId,
+              errorMessage:
+                response.ok && response.data?.pending
+                  ? "The invocation is still pending. Do not invoke it again to obtain its result."
+                  : "The invocation's outcome could not be recovered. Verify the page state before retrying.",
+            };
       },
 
       async cancelInvocation(invokeId) {

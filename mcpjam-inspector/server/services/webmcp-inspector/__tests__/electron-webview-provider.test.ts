@@ -378,8 +378,7 @@ describe("electron-webview provider — the session surface", () => {
     expect(
       guest.debugger.calls.some(
         (call) =>
-          call.sessionId === "sess-1" &&
-          call.method === "Target.setAutoAttach",
+          call.sessionId === "sess-1" && call.method === "Target.setAutoAttach",
       ),
     ).toBe(true);
 
@@ -496,9 +495,9 @@ describe("electron-webview provider — the session surface", () => {
     // order, so a later registration would move the entry this checks while the
     // name assertion above still passed.
     expect(
-      (recorder.toolSnapshots.at(-1) as { name: string; origin: string }[]).find(
-        (tool) => tool.name === "inner_tool",
-      )?.origin,
+      (
+        recorder.toolSnapshots.at(-1) as { name: string; origin: string }[]
+      ).find((tool) => tool.name === "inner_tool")?.origin,
     ).toBe("https://inner.test");
   });
 
@@ -625,7 +624,7 @@ describe("electron-webview provider — the session surface", () => {
     controller.abort("timeout");
     await expect(pending).rejects.toMatchObject({
       name: "WebMcpOutcomeUnknownError",
-      message: expect.stringContaining("after a timeout"),
+      message: expect.stringMatching(/timeout.*may continue/i),
     });
   });
 });
