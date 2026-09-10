@@ -23,6 +23,36 @@ const environments = [
 const names = new Map([["claude", "Claude"]]);
 
 describe("suite run review", () => {
+  it.each([
+    [undefined, undefined, 5],
+    [2, undefined, 2],
+    [2, 7, 7],
+  ])(
+    "seeds repetitions %s with minimum %s as %s",
+    (repetitions, minimum, expected) => {
+      render(
+        <SuiteRunReview
+          suite={{
+            ...suite,
+            minIterations: minimum,
+            verdictPolicyDefaults:
+              repetitions === undefined
+                ? undefined
+                : { repetitions, passThreshold: 0.8 },
+          }}
+          cases={cases}
+          environments={environments}
+          hostNamesById={names}
+          onStart={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      );
+      expect(screen.getByLabelText("Iterations per case")).toHaveValue(
+        expected,
+      );
+    },
+  );
+
   it("requires a target and never mutates suite defaults", () => {
     expect(() => selectReviewTargets(suite, [])).toThrow("Select at least one");
     expect(() => selectReviewTargets(suite, ["stale"])).toThrow(
@@ -49,7 +79,18 @@ describe("suite run review", () => {
     );
     // Seeded from the suite floor (minIterations 5), not the flat default.
     expect(screen.getByRole("spinbutton")).toHaveValue(5);
-    expect(screen.getByText("80%")).toBeVisible();
+    expect(screen.getByLabelText("Iterations per case")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Fewer iterations" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "More iterations" }),
+    ).toBeVisible();
+    expect(screen.queryByText("1–10 repetitions")).toBeNull();
+    expect(
+      screen.queryByText("Repeat every case to check consistency."),
+    ).toBeNull();
+    expect(screen.queryByText("80%")).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Claude · sonnet" }));
     await user.clear(screen.getByRole("spinbutton"));
     await user.type(screen.getByRole("spinbutton"), "11");
@@ -65,14 +106,37 @@ describe("suite run review", () => {
   });
   it("does not show its own in-progress launch as a blocker", async () => {
     let finish!: () => void;
-    const onStart = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const onStart = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
     const onClose = vi.fn();
-    const props = { suite, cases, environments, hostNamesById: names, onStart, onClose };
+    const props = {
+      suite,
+      cases,
+      environments,
+      hostNamesById: names,
+      onStart,
+      onClose,
+    };
     const { rerender } = render(<SuiteRunReview {...props} />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Start run" }));
-    rerender(<SuiteRunReview {...props} disabledReason="A suite or replay is already in progress." />);
-    expect(screen.queryByText("A suite or replay is already in progress.")).toBeNull();
-    expect(screen.getByRole("button", { name: "Starting run…" })).toBeDisabled();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Start run" }));
+    rerender(
+      <SuiteRunReview
+        {...props}
+        disabledReason="A suite or replay is already in progress."
+      />,
+    );
+    expect(
+      screen.queryByText("A suite or replay is already in progress."),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Starting run…" }),
+    ).toBeDisabled();
     await act(async () => finish());
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -109,5 +173,30 @@ describe("suite run review", () => {
     expect(
       screen.getByRole("checkbox", { name: "Claude · opus" }),
     ).toBeChecked();
+  });
+
+  it("opens suite settings from the grading policy action", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onEditSettings = vi.fn();
+    render(
+      <SuiteRunReview
+        suite={suite}
+        cases={cases}
+        environments={environments}
+        hostNamesById={names}
+        onStart={vi.fn()}
+        onClose={onClose}
+        onEditSettings={onEditSettings}
+      />,
+    );
+    expect(
+      screen.queryByRole("link", { name: "Edit Suite Settings" }),
+    ).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Edit Suite Settings" }),
+    );
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onEditSettings).toHaveBeenCalledOnce();
   });
 });

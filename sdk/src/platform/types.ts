@@ -1,3 +1,4 @@
+import type { CaseSource } from "../contract/case-source.js";
 /**
  * Wire DTOs for the MCPJam Platform API (`/api/v1`).
  *
@@ -1844,6 +1845,8 @@ export interface PlatformEvalCase {
    * once the two are conflated.
    */
   import?: PlatformEvalCaseImportClaim;
+  /** Source of an AI-assisted Markdown case. */
+  source?: CaseSource;
   createdAt: number | null;
   updatedAt: number | null;
 }

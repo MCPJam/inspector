@@ -1,3 +1,5 @@
+import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Cloud,
@@ -18,7 +20,16 @@ import { ComputerTerminal } from "@/components/computer/ComputerTerminal";
 import { ComputerTerminalPane } from "@/components/computer/ComputerTerminalPane";
 import { PaneMessage } from "@/components/computer/PaneMessage";
 import { useComputerTerminal } from "@/components/computer/useComputerTerminal";
-import { useComputersEnabledState } from "@/hooks/useComputersEnabled";
+import {
+  useBrowserWorkspaceEnabled,
+  useComputersEnabledState,
+  useBrowserEnabledState,
+} from "@/hooks/useComputersEnabled";
+import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
+import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
+import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
+import { browserPanelAvailable } from "@/components/playground/PlaygroundBrowserPanel";
+import { useMintConversationBrowserToken } from "@/hooks/useProjectComputer";
 import {
   useComputerEngine,
   type ComputerEngineState,
@@ -27,10 +38,7 @@ import { useHarnessWorkdir } from "@/stores/harness-workdir-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
-import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
-import { fetchLocalBrowserStatus } from "@/lib/local-browser/client";
-import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
-import { useMintBrowserToken } from "@/hooks/useProjectComputer";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -57,9 +65,8 @@ export function PlaygroundRightRail({
   isAuthenticated: boolean;
 }) {
   const computersEnabled = useComputersEnabledState();
-  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
-
-  if (!shellAvailable) {
+  const browsersEnabled = useBrowserEnabledState();
+  if (computersEnabled !== true && browsersEnabled !== true) {
     return <LoggerView onClose={onClose} />;
   }
   return (
@@ -73,44 +80,21 @@ export function PlaygroundRightRail({
   );
 }
 
-type RightRailTab = "logs" | "shell" | "browser";
-
-/** How often to ask whether this machine has a browser open. */
-const LOCAL_BROWSER_PROBE_MS = 5_000;
-
 /**
- * Is there a live browser on this machine right now?
+ * The rail's tabs.
  *
- * Polled rather than derived from the host config, because the thing that
- * opens one may not be this app: an agent running `mcpjam browser open` in
- * another process starts a browser this rail should show. The status route is
- * consent-free and machine-anonymous — no paths, no profile directories, no
- * process ids — so asking it costs nothing a person has not already agreed to.
+ * The Browser moved out to a panel of its own beside chat — a page rendered at
+ * 30% of a workspace is a page in its mobile layout, and hiding it to read the
+ * logs hides it at the moment you most want to see what the agent just did.
+ * What belongs here is text: a log stream and a shell, which are exactly right
+ * in a narrow column.
  *
- * Off entirely on the hosted engine, where this route describes a machine that
- * is not the one running the browser.
+ * It comes BACK when the browser workspace is gated off, because the
+ * alternative is no browser at all: a flag that removed the panel and left
+ * nothing in its place would be worse than either state it is choosing
+ * between. @see BROWSER_WORKSPACE_FLAG
  */
-function useLocalBrowserRunning(enabled: boolean): boolean {
-  const [running, setRunning] = useState(false);
-  useEffect(() => {
-    if (!enabled) {
-      setRunning(false);
-      return;
-    }
-    let cancelled = false;
-    const probe = async () => {
-      const status = await fetchLocalBrowserStatus().catch(() => null);
-      if (!cancelled && status) setRunning(status.running === true);
-    };
-    void probe();
-    const timer = window.setInterval(() => void probe(), LOCAL_BROWSER_PROBE_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [enabled]);
-  return running;
-}
+type RightRailTab = "logs" | "shell" | "browser";
 
 function RightRailTabbed({
   onClose,
@@ -126,6 +110,9 @@ function RightRailTabbed({
   hostId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
+  const computersEnabled = useComputersEnabledState();
+  const browsersEnabled = useBrowserEnabledState();
+  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
   // Which engine serves this project's computer work. The rail is an INDICATOR
   // only — switching lives on the Computer tab, which owns the consent gate.
   //
@@ -133,50 +120,59 @@ function RightRailTabbed({
   // PlaygroundMain's engine reads `sharedProjectId` only. The divergence is
   // harmless (the engine hooks no-op without a shared project) and deliberate.
   const engine = useComputerEngine(projectId);
+  const browserEngine = useBrowserEngine(projectId);
   // The BODY follows `selectedEngine` (consent-blind), mirroring the Computer
   // tab's face choice: someone who picked "This machine" but hasn't authorized
   // it yet must see the local body's pointer, not a cloud terminal they didn't
   // ask for. The CHIP follows the resolved `engine`, so it can never claim
   // "This machine" while commands actually run in the cloud.
   const isLocalShell = engine.selectedEngine === "local";
-  // The Browser tab follows the HOST's attached capability, and ONLY that: a
-  // host without `browser` has no browser for the model to drive, so a pane for
-  // one would be showing something nothing can use. The engine decides which
-  // BODY goes in it, not whether the tab exists — both engines have a browser,
-  // and the tab vanishing on an engine switch was a rail that looked broken.
-  // The hosted body additionally needs a signed-in user: every one of its
-  // calls carries a minted browser token, so before authentication is ready it
-  // can only fail — and it would fail into an "unreachable" state with nothing
-  // to retry it once auth arrives. The Shell's cloud body gates the same way.
-  //
-  // A LOCAL BROWSER THAT IS ALREADY RUNNING also shows the tab, whatever the
-  // host config says. An outside coding agent can now open a session through
-  // `mcpjam browser open` without the host carrying the built-in at all, and
-  // hiding the tab in that case would mean the browser somebody is driving is
-  // visible in no window in this app — which is exactly the "an agent driving
-  // a browser you cannot see" problem the pane exists to solve.
+  // THE FALLBACK BROWSER, and only that. While the workspace flag is on the
+  // browser lives in its own panel beside chat and this tab does not exist;
+  // with the flag off it is the rail's third tab again, exactly as it was.
+  const workspaceEnabled = useBrowserWorkspaceEnabled();
   const localBrowserRunning = useLocalBrowserRunning(
-    engine.selectedEngine === "local",
+    !workspaceEnabled && browserEngine.selectedEngine === "local",
   );
-  const hasBrowser = Boolean(
-    (hostConfig?.builtInToolIds?.includes("browser") &&
-      (engine.selectedEngine === "local" || isAuthenticated)) ||
+  const hasBrowser =
+    browsersEnabled === true &&
+    !workspaceEnabled &&
+    browserPanelAvailable({
+      hostHasBrowser: !!hostConfig?.builtInToolIds?.includes("browser"),
+      selectedEngine: browserEngine.selectedEngine,
+      isAuthenticated,
       localBrowserRunning,
-  );
+    });
   // Which body. Follows `selectedEngine` like the Shell above, so someone who
   // picked "This machine" but has not authorized it yet sees the local body's
   // pointer rather than a cloud browser they did not ask for.
-  const isLocalBrowser = engine.selectedEngine === "local";
-  const mintBrowserToken = useMintBrowserToken();
+  const isLocalBrowser = browserEngine.selectedEngine === "local";
+  const mintConversationBrowserToken = useMintConversationBrowserToken();
+  const activeChatSessionId = useActiveChatSessionStore(
+    (state) => state.sessionId,
+  );
+  const browserSessionId = activeChatSessionId ?? undefined;
+  const mintHostedBrowserToken = useCallback(
+    ({ projectId: tokenProjectId }: { projectId: string }) => {
+      if (!browserSessionId)
+        throw new Error("The conversation is still loading.");
+      return mintConversationBrowserToken({
+        projectId: tokenProjectId,
+        conversationId: browserSessionId,
+      });
+    },
+    [browserSessionId, mintConversationBrowserToken],
+  );
 
-  // A tab that disappears cannot stay selected. Only a host losing the browser
-  // capability can do that now — the engine switch swaps the body instead —
-  // but leaving `activeTab` on a hidden pane hides all three and the rail looks
-  // broken.
+  // A tab that disappears cannot stay selected: leaving `activeTab` on a
+  // hidden pane hides all of them and the rail looks broken.
   useEffect(() => {
-    if (!hasBrowser && activeTab === "browser") setActiveTab("logs");
-  }, [hasBrowser, activeTab]);
-
+    if (
+      (!hasBrowser && activeTab === "browser") ||
+      (!shellAvailable && activeTab === "shell")
+    )
+      setActiveTab("logs");
+  }, [hasBrowser, shellAvailable, activeTab]);
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
       if (next === activeTab) return;
@@ -190,6 +186,12 @@ function RightRailTabbed({
     [activeTab],
   );
 
+  // Browser-only hosts must reach the tabbed rail (and its consent gate)
+  // without mounting a shell or requiring a Computer attachment.
+  if (!shellAvailable && !hasBrowser) {
+    return <LoggerView onClose={onClose} />;
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-0.5 border-b border-border px-2 py-1">
@@ -199,16 +201,14 @@ function RightRailTabbed({
           isActive={activeTab === "logs"}
           onClick={() => handleTabClick("logs")}
         />
-        <TabButton
-          icon={TerminalSquare}
-          label="Shell"
-          isActive={activeTab === "shell"}
-          onClick={() => handleTabClick("shell")}
-        />
-        {/* When this host has the browser capability — a tab offering a
-            browser the model cannot use would be a promise the host config
-            does not keep — OR when this machine simply has one running, which
-            an outside agent can now arrange without the host's help. */}
+        {shellAvailable ? (
+          <TabButton
+            icon={TerminalSquare}
+            label="Shell"
+            isActive={activeTab === "shell"}
+            onClick={() => handleTabClick("shell")}
+          />
+        ) : null}
         {hasBrowser ? (
           <TabButton
             icon={Globe}
@@ -245,53 +245,67 @@ function RightRailTabbed({
         >
           {/* Mounted-hidden like the others: switching tabs must not drop the
               frame socket, which would stop the screencast and make the agent's
-              browser go dark every time somebody glanced at the logs.
-
-              `active` is what makes that safe. Mounted-hidden is not "being
-              watched": both panes say somebody is looking in order to defer the
-              idle reap, and a pane behind the Logs tab must stop claiming it —
-              on the hosted engine that claim keeps a METERED box awake. */}
-          {isLocalBrowser ? (
+              browser go dark every time somebody glanced at the logs. `active`
+              is what makes that safe — a pane behind the Logs tab must stop
+              claiming somebody is watching, and on the hosted engine that claim
+              keeps a METERED box awake. */}
+          <BrowserRuntimeControls projectId={projectId} />
+          {!browserSessionId ? (
+            <p role="status" className="p-4 text-sm text-muted-foreground">
+              Loading conversation…
+            </p>
+          ) : isLocalBrowser && browserEngine.localAvailable === false ? (
+            <p className="p-4 text-sm text-muted-foreground">
+              Browser is unavailable on this machine. Check Browser settings or
+              choose Cloud for a new chat.
+            </p>
+          ) : isLocalBrowser ? (
             <LocalBrowserBody
+              key={`${projectId}:${browserSessionId}:local`}
               projectId={projectId}
-              consentGranted={engine.consent.granted}
-              consentToken={engine.consent.token}
+              sessionId={browserSessionId}
+              consentGranted={browserEngine.consent.granted}
+              consentToken={browserEngine.consent.token}
               active={activeTab === "browser"}
             />
           ) : (
             <HostedBrowserBody
+              key={`${projectId}:${browserSessionId}:hosted`}
               projectId={projectId}
-              mintToken={mintBrowserToken}
+              sessionId={browserSessionId}
+              mintToken={mintHostedBrowserToken}
               active={activeTab === "browser"}
             />
           )}
         </div>
       ) : null}
-      <div
-        className={cn(
-          "min-h-0 flex-1 flex-col",
-          activeTab === "shell" ? "flex" : "hidden",
-        )}
-      >
-        {/* The local body deliberately does NOT mount the cloud terminal
+      {shellAvailable ? (
+        <div
+          className={cn(
+            "min-h-0 flex-1 flex-col",
+            activeTab === "shell" ? "flex" : "hidden",
+          )}
+        >
+          {/* The local body deliberately does NOT mount the cloud terminal
             controller: `useComputerTerminal` reserves (and wakes) a cloud box
             on open, which would be a real machine started behind the user's
             back while their chat bash runs on this laptop. Swapping bodies
             mid-session drops a live cloud socket — the reserved box stays up
             until the idle sweep, and switching back reconnects with a fresh
             token mint. */}
-        {isLocalShell ? (
-          <LocalShellBody engine={engine} projectId={projectId} />
-        ) : (
-          <CloudShellBody
-            engine={engine}
-            projectId={projectId}
-            isAuthenticated={isAuthenticated}
-            hostConfig={hostConfig}
-            hostId={hostId}
-          />
-        )}
-      </div>
+          {isLocalShell ? (
+            <LocalShellBody engine={engine} projectId={projectId} />
+          ) : (
+            <CloudShellBody
+              engine={engine}
+              projectId={projectId}
+              isAuthenticated={isAuthenticated}
+              hostConfig={hostConfig}
+              hostId={hostId}
+            />
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

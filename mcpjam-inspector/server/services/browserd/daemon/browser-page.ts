@@ -11,6 +11,8 @@
  */
 
 import type { ConsoleEntry } from "./observation-budget";
+import type { PendingDialog } from "./dialogs";
+import type { NetworkEntry } from "./network";
 import type { CdpLike, WebMcpBridge } from "./webmcp-bridge";
 
 /**
@@ -38,6 +40,25 @@ export interface DriverPage {
   goto(url: string): Promise<void>;
   reload(): Promise<void>;
   goBack(): Promise<void>;
+  /**
+   * The other direction. A no-op when there is nothing ahead in the history,
+   * which is what Playwright's `goForward` already does — it resolves with a
+   * null response rather than throwing — so the driver has nothing to special-
+   * case and the pane's disabled button is the only guard anybody sees.
+   */
+  goForward(): Promise<void>;
+  /**
+   * Change the page's CSS-pixel viewport.
+   *
+   * OPTIONAL, and the optionality is load-bearing rather than convenience: an
+   * engine that cannot resize is still a perfectly good engine for a `fixed`
+   * session, which is every eval and every unattended run. The driver refuses
+   * a resize the page cannot do instead of reporting a size the page is not
+   * actually rendering at — a viewport nobody applied, published as if they
+   * had, is exactly the disagreement between the number and the picture that
+   * the whole responsive path exists to avoid.
+   */
+  setViewportSize?(size: { width: number; height: number }): Promise<void>;
   /**
    * The act primitives. Each throws when its target cannot be resolved — the
    * driver turns that into a typed `target_not_found` result rather than
@@ -118,6 +139,40 @@ export interface DriverPage {
    */
   consoleCursor?(): { console: number; errors: number };
   /**
+   * The dialog this page is currently blocked on, if any.
+   *
+   * A JavaScript dialog stops the renderer, so this is asked BEFORE anything
+   * that would touch the page — a settle that runs against a blocked renderer
+   * simply burns its whole budget and reports the page unsettled, which is a
+   * true statement that explains nothing.
+   *
+   * Optional, like `consoleCursor`: an engine that does not track dialogs
+   * omits it, and the driver behaves exactly as it did before rather than
+   * refusing everything.
+   */
+  /**
+   * What this page asked the network for, oldest first.
+   *
+   * Optional for the same reason `consoleCursor` is: an engine that does not
+   * track requests omits it, and the observe mode reports that this browser
+   * cannot answer rather than that the page made no requests. Those are very
+   * different facts and a model acts differently on each.
+   */
+  networkEntries?(): readonly NetworkEntry[];
+  /** Discard requests captured at or after `since` — the handoff purge. */
+  dropNetworkSince?(since: number): void;
+  /** How many requests this page has EVER captured. Monotonic, like console. */
+  networkCursor?(): number;
+  pendingDialog?(): PendingDialog | null;
+  /**
+   * Answer the pending dialog, unblocking the renderer.
+   *
+   * Resolves `false` when there was nothing to answer — a dialog the page
+   * closed on its own, or a race with another answer. Never throws for that
+   * case, because "it is already gone" is success from the caller's side.
+   */
+  resolveDialog?(accept: boolean, promptText?: string): Promise<boolean>;
+  /**
    * The page's WebMCP bridge, attached lazily on first use (attaching a CDP
    * session to every tab that may never invoke a page tool is wasted work).
    * Resolves `null` when this build cannot speak the domain at all.
@@ -159,6 +214,14 @@ export interface DriverPage {
 /** The persistent browser context: one profile, many tabs. */
 export interface DriverContext {
   newPage(): Promise<DriverPage>;
+  /** Actual popup pages, preserving their opener and browsing context. */
+  onPageCreated?(
+    listener: (event: {
+      page: DriverPage;
+      opener: DriverPage;
+      background?: boolean;
+    }) => void,
+  ): () => void;
   /** True while the underlying browser is alive; false after a crash/close. */
   isConnected(): boolean;
   close(): Promise<void>;

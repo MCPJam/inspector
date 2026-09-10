@@ -1875,18 +1875,19 @@ export function ChatInput({
                               around it would open over the control the user is
                               reaching for, and a non-focusable trigger div
                               would never open for a keyboard user at all.
-                              Both halves of the rule are surprising — the
-                              switch RAISES a floor and never lowers it, so
-                              some things pause without it and some never
-                              pause with it — and neither should be behind a
-                              hover. */}
+                              The switch decides for every tool that acts, so
+                              the only thing left to say is which calls it does
+                              not cover — reads, and an app's own tools, which
+                              belong to the iframe the user opened rather than
+                              to this setting. That belongs in front of someone
+                              rather than behind a hover. */}
                           <p
                             id="tool-approval-floor-note"
                             className="mt-1 pl-6 text-[11px] leading-snug text-muted-foreground"
                           >
-                            Pause before tool calls. Browser, page,
-                            local-machine and destructive UI actions always
-                            pause; read-only lookups never do.
+                            Pause before tool calls: MCP servers, the browser,
+                            a page's own tools, the shell. Read-only lookups
+                            and an open app's own actions never pause.
                           </p>
                         </div>
                       )}

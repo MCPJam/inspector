@@ -1,12 +1,17 @@
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
-import { FocusBlock } from "./primitives";
+import { FieldRow, FocusBlock } from "./primitives";
+import { BrowserProfilePicker } from "./BrowserProfilePicker";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import { BuiltInToolCheckboxList } from "@/components/client-config/BuiltInToolCheckboxList";
 import { visibleBuiltInToolCatalog } from "@/lib/host-config-computer";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import {
+  useComputersEnabled,
+  useBrowserEnabled,
+} from "@/hooks/useComputersEnabled";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
 
 interface ToolsTabProps {
+  projectId?: string;
   draft: HostConfigInputV2;
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
@@ -27,17 +32,20 @@ interface ToolsTabProps {
  * to the Computer tab).
  */
 export function ToolsTab({
+  projectId,
   draft,
   onDraftChange,
   readOnly = false,
 }: ToolsTabProps) {
   const builtInToolCatalog = useBuiltInToolCatalog();
   const computersEnabled = useComputersEnabled();
+  const browsersEnabled = useBrowserEnabled();
   // Render only the rows this user may see: with `computers-enabled` off,
   // computer-backed rows (e.g. an enabled `bash`) stay hidden — except an
   // already-selected id, which must remain visible to stay removable.
   const visibleBuiltInTools = visibleBuiltInToolCatalog(builtInToolCatalog, {
     computersEnabled,
+    browsersEnabled,
     selectedIds: draft.builtInToolIds,
   });
 
@@ -66,6 +74,23 @@ export function ToolsTab({
           onChange={(builtInToolIds) => update({ builtInToolIds })}
         />
       </FocusBlock>
+
+      {(draft.builtInToolIds.includes("browser") || draft.browserProfileId) && (
+        <FocusBlock title="Browser">
+          <FieldRow
+            label="Browser profile"
+            description="Optionally pin a saved browser profile for this host. Without a pin, new chats use your selected default profile."
+            control={
+              <BrowserProfilePicker
+                projectId={projectId}
+                value={draft.browserProfileId}
+                onChange={(browserProfileId) => update({ browserProfileId })}
+                disabled={readOnly}
+              />
+            }
+          />
+        </FocusBlock>
+      )}
 
       {draft.harness && (
         <FocusBlock

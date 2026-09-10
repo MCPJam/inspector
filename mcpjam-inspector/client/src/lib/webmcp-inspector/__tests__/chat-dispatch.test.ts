@@ -21,6 +21,7 @@ import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import type { PageToolSnapshotEntry } from "@/shared/chat-v2";
 
 const ENTRY: PageToolSnapshotEntry = {
+  binding: { frameId: "frame-main", registrationSeq: 1 },
   alias: "page_1a2b3c4d",
   sessionId: "session-1",
   toolKey: "https://shop.test::add_to_cart",
@@ -46,7 +47,9 @@ function stubStore(
           typeof useWebmcpInspectorStore.getState
         >["session"])
       : undefined,
+    tools: [{ toolKey: ENTRY.toolKey, binding: ENTRY.binding }] as never,
     invokeToolForResult: invoke as never,
+    refreshToolsForChat: vi.fn(async () => true),
   } as ReturnType<typeof useWebmcpInspectorStore.getState>);
 }
 
@@ -55,6 +58,173 @@ describe("invokePageToolForChat", () => {
     vi.restoreAllMocks();
     __resetPageToolDispatchForTests();
     setAdvertisedPageTools([ENTRY]);
+  });
+
+  it.each([
+    undefined,
+    "Cancellation requested. Page execution may continue; verify the page state before retrying.",
+  ])(
+    "reports an unknown outcome without claiming failure or retrying",
+    async (errorMessage) => {
+      const invoke = vi.fn(async () => ({ state: "unknown", errorMessage }));
+      stubStore("session-1", invoke);
+      const result = await invokePageToolForChat(ENTRY.alias, {});
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain("may continue");
+      expect(textOf(result)).toContain("before retrying");
+      expect(textOf(result)).not.toContain("failed");
+      expect(invoke).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("rejects an approval after the page replaces the advertised registration", async () => {
+    const invoke = vi.fn(async () => ({
+      state: "succeeded",
+      output: "wrong tool",
+    }));
+    stubStore("session-1", invoke);
+    deferPageToolCallForApproval({
+      toolName: ENTRY.alias,
+      toolCallId: "changed",
+      input: {},
+    });
+    const state = useWebmcpInspectorStore.getState();
+    vi.mocked(useWebmcpInspectorStore.getState).mockReturnValue({
+      ...state,
+      tools: [
+        {
+          ...state.tools[0],
+          binding: { frameId: "frame-main", registrationSeq: 2 },
+        },
+      ],
+    });
+    const addToolOutput = vi.fn();
+    await fulfillApprovedPageToolCall({ toolCallId: "changed", addToolOutput });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(addToolOutput.mock.calls[0][0].output).toMatchObject({
+      isError: true,
+    });
+    expect(textOf(addToolOutput.mock.calls[0][0].output)).toMatch(
+      /registration.*changed/i,
+    );
+  });
+
+  it("keeps a deferred approval bound even if a later snapshot reuses its alias", async () => {
+    const invoke = vi.fn(async () => ({
+      state: "succeeded",
+      output: "wrong tool",
+    }));
+    stubStore("session-1", invoke);
+    deferPageToolCallForApproval({
+      toolName: ENTRY.alias,
+      toolCallId: "reused",
+      input: {},
+    });
+    const replacement = {
+      ...ENTRY,
+      binding: { frameId: "frame-main", registrationSeq: 2 },
+    };
+    setAdvertisedPageTools([replacement]);
+    const state = useWebmcpInspectorStore.getState();
+    vi.mocked(useWebmcpInspectorStore.getState).mockReturnValue({
+      ...state,
+      tools: [{ ...state.tools[0], binding: replacement.binding }],
+    });
+    const addToolOutput = vi.fn();
+    await fulfillApprovedPageToolCall({ toolCallId: "reused", addToolOutput });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(addToolOutput.mock.calls[0][0].output.isError).toBe(true);
+  });
+
+  it("automatically refreshes a definite queue refusal and advertises the replacement for a NEW approval", async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({ state: "failed", errorCode: "tool-gone" })
+      .mockResolvedValueOnce({ state: "succeeded", output: "updated" });
+    stubStore("session-1", invoke);
+    const state = useWebmcpInspectorStore.getState();
+    const replacement = {
+      toolKey: ENTRY.toolKey,
+      name: ENTRY.rawName,
+      origin: ENTRY.origin,
+      binding: { frameId: "frame-main", registrationSeq: 2 },
+      inputSchema: { type: "object", required: ["quantity"] },
+    };
+    const refresh = vi.fn(async () => {
+      vi.mocked(useWebmcpInspectorStore.getState).mockReturnValue({
+        ...state,
+        tools: [replacement] as never,
+        pageToolsLive: () => true,
+        refreshToolsForChat: refresh,
+      });
+      return true;
+    });
+    vi.mocked(useWebmcpInspectorStore.getState).mockReturnValue({
+      ...state,
+      refreshToolsForChat: refresh,
+    });
+    const result = await invokePageToolForChat(ENTRY.alias, { sku: "old" });
+    expect(textOf(result)).toContain("refreshed automatically");
+    expect(refresh).toHaveBeenCalledWith("session-1");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const [next] = snapshotPageToolsForTurn();
+    expect(next.binding).toEqual(replacement.binding);
+    expect(next.inputSchema).toEqual(replacement.inputSchema);
+    expect(next.alias).not.toBe(ENTRY.alias);
+    deferPageToolCallForApproval({
+      toolName: next.alias,
+      toolCallId: "fresh",
+      input: { quantity: 2 },
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    await fulfillApprovedPageToolCall({
+      toolCallId: "fresh",
+      addToolOutput: vi.fn(),
+    });
+    expect(invoke).toHaveBeenLastCalledWith(
+      ENTRY.toolKey,
+      { quantity: 2 },
+      replacement.binding,
+    );
+  });
+
+  it.each(["unknown", "failed", "cancelled", "timeout"])(
+    "does not refresh or retry a %s outcome without a definite refusal",
+    async (state) => {
+      const invoke = vi.fn(async () => ({ state, errorMessage: "tool-gone" }));
+      stubStore("session-1", invoke);
+      await invokePageToolForChat(ENTRY.alias, {});
+      expect(
+        useWebmcpInspectorStore.getState().refreshToolsForChat,
+      ).not.toHaveBeenCalled();
+      expect(invoke).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not tell the model to retry when refreshing tools fails", async () => {
+    stubStore("session-1", async () => ({
+      state: "failed",
+      errorCode: "tool-gone",
+    }));
+    vi.mocked(
+      useWebmcpInspectorStore.getState().refreshToolsForChat,
+    ).mockResolvedValue(false);
+    const result = await invokePageToolForChat(ENTRY.alias, {});
+    expect(textOf(result)).toContain("Do not retry this call automatically");
+    expect(textOf(result)).not.toContain("refreshed automatically");
+  });
+
+  it("bounds repeated stale recovery while a page is hot reloading continuously", async () => {
+    stubStore("session-1", async () => ({
+      state: "failed",
+      errorCode: "tool-gone",
+    }));
+    for (let i = 0; i < 3; i++) await invokePageToolForChat(ENTRY.alias, {});
+    const result = await invokePageToolForChat(ENTRY.alias, {});
+    expect(textOf(result)).toContain("Stop retrying automatically");
+    expect(
+      useWebmcpInspectorStore.getState().refreshToolsForChat,
+    ).toHaveBeenCalledTimes(3);
   });
 
   it("returns the tool's output on success", async () => {
@@ -71,7 +241,11 @@ describe("invokePageToolForChat", () => {
     const invoke = vi.fn(async () => ({ state: "succeeded", output: "ok" }));
     stubStore("session-1", invoke as never);
     await invokePageToolForChat(ENTRY.alias, { sku: "XYZ" });
-    expect(invoke).toHaveBeenCalledWith(ENTRY.toolKey, { sku: "XYZ" });
+    expect(invoke).toHaveBeenCalledWith(
+      ENTRY.toolKey,
+      { sku: "XYZ" },
+      ENTRY.binding,
+    );
   });
 
   it("says so when a truncated result was shortened", async () => {
@@ -171,7 +345,11 @@ describe("page-tool approval dispatch", () => {
     });
 
     expect(invoke).toHaveBeenCalledTimes(1);
-    expect(invoke).toHaveBeenCalledWith(ENTRY.toolKey, { sku: "ABC-123" });
+    expect(invoke).toHaveBeenCalledWith(
+      ENTRY.toolKey,
+      { sku: "ABC-123" },
+      ENTRY.binding,
+    );
     expect(addToolOutput).toHaveBeenCalledTimes(1);
     expect(addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -218,6 +396,7 @@ describe("snapshotPageToolsForTurn", () => {
   } as ReturnType<typeof useWebmcpInspectorStore.getState>["session"];
 
   const TOOL = {
+    binding: ENTRY.binding,
     toolKey: "https://shop.test::add_to_cart",
     name: "add_to_cart",
     origin: "https://shop.test",

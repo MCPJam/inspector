@@ -1,3 +1,7 @@
+import {
+  BROWSER_TAB_CAP,
+  tabAfterClose,
+} from "../../../../shared/browser-session-state";
 /**
  * The real browser driver: it fills the `CommandExecutor` seam PR (a)'s queue
  * drives and PR (b)'s control plane authenticates, turning a `BrowserCommand`
@@ -15,21 +19,52 @@
  * in here from the pure helpers in PR (c1).
  */
 import {
-  BROWSERD_OBSERVATION_VIEWPORT,
   DEFAULT_QUEUE_KEY,
   formatBrowserdError,
   type WebMcpToolsRevision,
-  isPointInViewport,
   wantsFor,
   type BrowserAction,
+  type BrowserActTarget,
   type BrowserCommand,
   type BrowserCommandResult,
   type BrowserdErrorCode,
   type ActObserve,
 } from "../protocol";
+import {
+  capNetwork,
+  DEFAULT_NETWORK_BUDGET,
+  type NetworkBudget,
+} from "./network";
+import {
+  agentDefaultAccepts,
+  dialogRefusal,
+  safeUnderDialog,
+  type DialogOutcome,
+  type DialogPolicy,
+} from "./dialogs";
+import {
+  coveringElementAt,
+  focusBackendNodeId,
+  pointForBackendNodeId,
+  replaceTextInNode,
+  resolveRefNode,
+  selectOptionOnNode,
+  type ResolvedRefNode,
+} from "./node-target";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
 import { computeStateToken, shortHash } from "./state-token";
+import { SessionBarrier } from "./session-barrier";
+import { readTabMetadata } from "./tab-metadata";
+import {
+  advanceViewport,
+  negotiateViewport,
+  INITIAL_SESSION_VIEWPORT,
+  isPointInSessionViewport,
+  type SessionViewport,
+  type SessionViewportPolicy,
+  type ViewportSize,
+} from "../../../../shared/browser-viewport";
 import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
@@ -123,7 +158,9 @@ class LeaseTakenMidAct extends Error {}
  * read as part of the page's shape, and a model that tries one gets the clean
  * `unknown_ref` refusal that exists for exactly a ref this tab never issued.
  */
-function withoutRefIndex(fields: Record<string, unknown>): Record<string, unknown> {
+function withoutRefIndex(
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
   const { refs: _unstored, ...rest } = fields;
   return rest;
 }
@@ -141,6 +178,8 @@ function isNotAnInputRefusal(message: string): boolean {
 
 interface TabEntry {
   page: DriverPage;
+  openerId?: string;
+  loading?: boolean;
   /** Bumps on every navigation so back/forward to the same URL yield distinct
    * tokens (L3). */
   navCounter: number;
@@ -240,6 +279,10 @@ interface FrameSnapshot {
 }
 
 export interface ChromiumDriverOptions {
+  maxTabs?: number;
+  onExternalInvocation?: (tabId: string, toolName: string) => void;
+  onPopupOpened?: (url: string) => void;
+  onTabLimit?: () => void;
   settle?: SettleOptions;
   /**
    * The human-handoff lease, shared with the request handler.
@@ -259,10 +302,61 @@ export interface ChromiumDriverOptions {
   >;
   a11y?: A11yBudget;
   console?: ConsoleBudget;
+  /** How many network rows one observation returns. */
+  network?: NetworkBudget;
+  /**
+   * What an UNANSWERED dialog means. `auto` (default) applies the safe
+   * defaults so a tab can never wedge; `ask` decides nothing and refuses the
+   * command instead, leaving the choice to a client that has its own rules.
+   * The explicit answer verbs work under both.
+   */
+  dialogPolicy?: DialogPolicy;
   /** Byte budget for a WebMCP tool's returned output (L9). */
   webmcpOutputBytes?: number;
   /** Byte budget for one `observe {mode:"text"}` (L9). */
   pageTextBytes?: number;
+  /**
+   * How big this session's page is, and whether it may change.
+   *
+   * Absent means the old behaviour exactly: a `fixed` session at 1024x768 that
+   * refuses every resize. Every existing caller — evals, swarms, the CLI, the
+   * v1 bridge — gets that without being touched, which is the point: a run
+   * recorded last month and one recorded today stay comparable frame for
+   * frame, and only a caller that asked for a responsive session gets one.
+   */
+  viewport?: {
+    policy: SessionViewportPolicy;
+    allowPaneResize?: boolean;
+    initial?: ViewportSize;
+    /**
+     * Told whenever the session's size actually changes.
+     *
+     * AFTER the change has been applied to every page, never before: a
+     * listener that heard about a size the pages had not taken would publish
+     * dimensions that disagree with the picture, which is the one thing the
+     * whole responsive path must not do.
+     */
+    onChange?: (viewport: SessionViewport) => void;
+    /** Test seam for the barrier's debounce. */
+    debounceMs?: number;
+    /**
+     * Take the box's DISPLAY to the new size too, on an engine that has one.
+     *
+     * Hosted only. There, "the display IS the page" is literally true —
+     * Chromium fills the X screen in kiosk mode and the encoder grabs that
+     * screen — so a page resized without the display behind it paints past the
+     * edge of what is captured, and the missing strip is on the right where
+     * nothing looks obviously wrong. On a local Chromium there is no display
+     * to move: the page is a window, and resizing it is the whole job.
+     *
+     * Returns whether it landed. A false ABORTS the viewport change, so the
+     * published number never runs ahead of the picture.
+     */
+    resizeDisplay?: (
+      next: ViewportSize,
+      previous: ViewportSize,
+    ) => Promise<boolean>;
+  };
 }
 
 /** Big enough for a real tool result, small enough not to blow a context. */
@@ -352,6 +446,8 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly settleOptions: SettleOptions;
   private readonly a11yBudget: A11yBudget;
   private readonly consoleBudget: ConsoleBudget;
+  private readonly networkBudget: NetworkBudget;
+  private readonly dialogPolicy: DialogPolicy;
   private readonly webmcpOutputBudgetBytes: number;
   private readonly pageTextMaxBytes: number;
   private readonly lease:
@@ -389,6 +485,14 @@ export class ChromiumDriver implements BrowserDriver {
    * that minted them can tell the difference.
    */
   private readonly refs = new Map<string, RefMap>();
+  /**
+   * What was decided about a dialog, waiting to ride the next observation.
+   *
+   * Carried rather than returned because the dialog is answered at the top of
+   * `execute`, before the command that will produce the result has run — the
+   * same shape as the handoff note, and read out in the same funnel.
+   */
+  private readonly dialogNotes = new Map<string, DialogOutcome>();
   /**
    * Tab creations already under way, by tabId.
    *
@@ -444,26 +548,281 @@ export class ChromiumDriver implements BrowserDriver {
    * running command is live for as long as the command is.
    */
   private readonly activeInvocations = new Set<string>();
+  /**
+   * How big this session's page is, and its revision.
+   *
+   * The DRIVER owns it rather than the launch args, because it is the thing
+   * that knows every open tab and can therefore be the one place that
+   * guarantees they all agree. A per-tab answer would let two tabs in one
+   * session render at different sizes while one number was published for both.
+   */
+  private sessionViewport: SessionViewport;
+  /** Monotonic per boot, so two snapshots in one millisecond still order. */
+  private stateSeq = 0;
+  private stopPageCreated?: () => void;
+  private nextPopupId = 0;
+  private readonly maxTabs: number;
+  private readonly onExternalInvocation?: (
+    tabId: string,
+    toolName: string,
+  ) => void;
+  private readonly allowPaneResize: boolean;
+  private viewportPolicy: SessionViewportPolicy;
+  private latestViewportRequest?: import("../../../../shared/browser-viewport").PaneViewportRequest;
+  private readonly onViewportChange:
+    ((viewport: SessionViewport) => void) | undefined;
+  private readonly barrier: SessionBarrier;
+  private readonly resizeDisplay:
+    | ((next: ViewportSize, previous: ViewportSize) => Promise<boolean>)
+    | undefined;
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
+    this.onExternalInvocation = options.onExternalInvocation;
+    this.maxTabs = Math.max(1, options.maxTabs ?? BROWSER_TAB_CAP);
+    this.stopPageCreated = context.onPageCreated?.(
+      ({ page, opener, background }) => {
+        const openerId = [...this.tabs].find(
+          ([, entry]) => entry.page === opener,
+        )?.[0];
+        if (
+          this.closing ||
+          !openerId ||
+          this.tabs.size + this.pendingTabs.size >= this.maxTabs
+        ) {
+          void page.close().catch(() => {});
+          return;
+        }
+        let id: string;
+        do {
+          id = `popup-${++this.nextPopupId}`;
+        } while (this.tabs.has(id) || this.pendingTabs.has(id));
+        void this.registerTab(id, page, openerId, background)
+          .then(() => options.onPopupOpened?.(safeUrl(page)))
+          .catch(() => page.close().catch(() => {}));
+      },
+    );
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.dialogPolicy = options.dialogPolicy ?? "auto";
+    this.networkBudget = options.network ?? DEFAULT_NETWORK_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes =
       options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
+    this.viewportPolicy = options.viewport?.policy ?? "fixed";
+    this.allowPaneResize = options.viewport?.allowPaneResize === true;
+    const initial = options.viewport?.initial;
+    this.sessionViewport = initial
+      ? { width: initial.width, height: initial.height, revision: 0 }
+      : INITIAL_SESSION_VIEWPORT;
+    this.onViewportChange = options.viewport?.onChange;
+    this.resizeDisplay = options.viewport?.resizeDisplay;
+    this.barrier = new SessionBarrier(
+      (size) => this.applyViewport(size),
+      options.viewport?.debounceMs !== undefined
+        ? { debounceMs: options.viewport.debounceMs }
+        : {},
+    );
   }
 
+  /** This session's page size and revision, for everything that publishes it. */
+  sessionViewportState(): SessionViewport {
+    return this.sessionViewport;
+  }
+
+  /**
+   * Ask for a new size, and resolve once the request has been dealt with.
+   *
+   * "Dealt with" rather than "applied": a burst of measurements from a drag
+   * collapses into one transition, and every caller in the burst resolves when
+   * that transition lands, whatever size it carried. A `fixed` session
+   * resolves immediately, having changed nothing.
+   */
+  sessionViewportPolicy(): SessionViewportPolicy {
+    return this.viewportPolicy;
+  }
+
+  async requestViewport(
+    size: import("../../../../shared/browser-viewport").PaneViewportRequest,
+  ): Promise<SessionViewport> {
+    if (size.policy === "followPane" && this.allowPaneResize)
+      this.viewportPolicy = "followPane";
+    if (this.viewportPolicy === "fixed") return this.sessionViewport;
+    const request =
+      size.policy === "fixed" ? { ...size, width: 1024, height: 768 } : size;
+    this.latestViewportRequest = request;
+    await this.barrier.request(request);
+    return this.sessionViewport;
+  }
+
+  /** Is a resize waiting or transitioning? Surfaces as the pane's affordance. */
+  viewportSettling(): boolean {
+    return this.barrier.busy;
+  }
+
+  /**
+   * Take every tab to a new size, or leave every tab where it was.
+   *
+   * ALL OR NOTHING, and rolled back by hand rather than left half-applied. A
+   * session whose tabs render at two different sizes has no honest number to
+   * publish for either — and the pane would draw the one that was written
+   * last, over a page that is not that size. The rollback is best-effort
+   * because a page that just refused a resize may refuse the way back too; what
+   * matters is that `sessionViewport` is not advanced unless every page took
+   * the new size, so the published number never runs ahead of the picture.
+   */
+  private async applyViewport(
+    size: import("../../../../shared/browser-viewport").PaneViewportRequest,
+  ): Promise<void> {
+    const next = advanceViewport(this.sessionViewport, size, "followPane");
+    if (next === this.sessionViewport) {
+      if (size.policy === "fixed" && this.latestViewportRequest === size)
+        this.viewportPolicy = "fixed";
+      return;
+    }
+    const pages = [...this.tabs.values()]
+      .map((entry) => entry.page)
+      .filter((page) => !page.isClosed());
+    // An engine that cannot resize must not be told it did. Refusing here is
+    // what makes `setViewportSize` genuinely optional on `DriverPage` rather
+    // than a method every engine has to pretend to have.
+    const unable = pages.find(
+      (page) => typeof page.setViewportSize !== "function",
+    );
+    if (unable) {
+      throw new Error(
+        "viewport_unsupported: this engine cannot resize its pages",
+      );
+    }
+    const previous = this.sessionViewport;
+    // THE DISPLAY FIRST, on a box that has one. A kiosk window told to fill a
+    // screen that has not grown yet fills the old one, and every page resized
+    // underneath it would then be describing a rectangle the capture cannot
+    // reach. @see display-resize.ts
+    if (this.resizeDisplay) {
+      const moved = await this.resizeDisplay(
+        { width: next.width, height: next.height },
+        { width: previous.width, height: previous.height },
+      );
+      if (!moved) {
+        throw new Error(
+          "display_resize_failed: the box would not change its display size",
+        );
+      }
+    }
+    const applied: DriverPage[] = [];
+    try {
+      for (const page of pages) {
+        await page.setViewportSize?.({
+          width: next.width,
+          height: next.height,
+        });
+        applied.push(page);
+      }
+    } catch (error) {
+      for (const page of applied) {
+        await page
+          .setViewportSize?.({ width: previous.width, height: previous.height })
+          .catch(() => {});
+      }
+      // THE DISPLAY COMES BACK TOO. It moved first, and on a hosted box it
+      // took the kiosk window and the encoder with it — so a page refusing
+      // afterwards left the screen at `next` while the pages and the published
+      // `sessionViewport` were at `previous`. `resizeHostedDisplay` cannot
+      // undo this on its own: its own rollback covers failures inside its own
+      // call, and it is not given a `resizePage` dependency here precisely
+      // because the driver owns the pages.
+      //
+      // Best-effort, and the throw below is unconditional either way: the
+      // caller's job on a failed resize is to keep publishing the last size
+      // everything agreed on, which is `previous`, and a display that would
+      // not come back is a bad picture rather than a lying coordinate space.
+      if (this.resizeDisplay) {
+        await this.resizeDisplay(
+          { width: previous.width, height: previous.height },
+          { width: next.width, height: next.height },
+        ).catch(() => false);
+      }
+      throw error;
+    }
+    this.sessionViewport = next;
+    if (size.policy === "fixed" && this.latestViewportRequest === size)
+      this.viewportPolicy = "fixed";
+    // ANYTHING THAT APPEARED WHILE WE RAN. `pages` above is a snapshot, and a
+    // `navigate {newTab: true}` can register a page inside the awaits below it
+    // — external browser events can still create pages while the barrier
+    // defers commands during a transition. Such a page
+    // sized itself from `sessionViewport` on creation, which was `previous`
+    // until the line above; sweeping here is what closes the window rather
+    // than leaving one tab a different size from the rest.
+    for (const entry of this.tabs.values()) {
+      if (applied.includes(entry.page) || entry.page.isClosed()) continue;
+      await entry.page
+        .setViewportSize?.({ width: next.width, height: next.height })
+        .catch(() => {});
+    }
+    try {
+      this.onViewportChange?.(next);
+    } catch {
+      // A listener that throws must not undo a resize that landed.
+    }
+  }
+
+  /**
+   * Is this coordinate on the page?
+   *
+   * The SESSION's numbers, not the module constant. The two agree exactly when
+   * the session is `fixed`, which is every caller that predates this — so the
+   * refusals a caller sees today do not move, and a resized session refuses
+   * the coordinates that are genuinely off ITS page rather than off a 1024x768
+   * one it is not.
+   */
+  private inViewport(x: number, y: number): boolean {
+    return isPointInSessionViewport(x, y, this.sessionViewport);
+  }
+
+  /** How this session's size reads in an error a caller has to act on. */
+  private get viewportLabel(): string {
+    return `${this.sessionViewport.width}x${this.sessionViewport.height}`;
+  }
+
+  /**
+   * Run one command, never across a resize.
+   *
+   * The barrier is here rather than around the queue because the queue is
+   * per-TAB and a resize is per-SESSION: two tabs' FIFOs can each be mid-act
+   * while the display changes underneath both. Wrapping the one place every
+   * verb passes through is what makes "never resize midway through an action"
+   * true for all of them at once — including the ones added later.
+   */
   async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
+    return this.barrier.run(() => this.executeInBarrier(command));
+  }
+
+  private async executeInBarrier(
+    command: BrowserCommand,
+  ): Promise<BrowserCommandResult> {
+    // Recheck after waiting for a resize, not only at queue admission.
+    if (
+      command.source !== "manual" &&
+      command.action.kind !== "webmcp_cancel" &&
+      !negotiateViewport(this.viewportPolicy, command).ok
+    ) {
+      return {
+        ok: false,
+        error:
+          "responsive_viewport_required: read the session viewport before acting",
+      };
+    }
     // W4/L6 — before ANYTHING can read, discard what a person's handoff left
     // behind. The 423 gate stops an agent observing DURING a handoff, but the
     // console ring fills from an eager page listener that knows nothing about
     // leases, so a token or a form value the page logged while someone signed
     // in would otherwise be readable the instant they hand back. Doing it here
     // rather than in the console branch covers every future reader too.
-    this.purgeHandoffConsole();
+    this.purgeHandoffRings();
     // The third and last gate (handler → dequeue → here). A command that got
     // this far while a person holds the browser must not run: `execute` is
     // where the page is actually touched.
@@ -473,8 +832,18 @@ export class ChromiumDriver implements BrowserDriver {
         "a person took control of this browser before this action ran; nothing was run and nothing was observed",
       );
     }
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const action = command.action;
+    // A DIALOG STOPS THE RENDERER, so it is dealt with before anything reaches
+    // the page. Placed here rather than in each verb because every one of them
+    // would otherwise hang against a blocked page and report it as "unsettled".
+    const blocked = await this.answerOrRefuseDialog(
+      tabId,
+      action,
+      permit,
+      command.source,
+    );
+    if (blocked) return blocked;
     switch (action.kind) {
       case "navigate": {
         // `navigate` is the only verb that may CREATE a tab (P2).
@@ -517,17 +886,24 @@ export class ChromiumDriver implements BrowserDriver {
         );
       }
       case "back":
+      case "forward":
       case "reload": {
-        // back/reload act on an EXISTING tab only — an unknown tabId is an error,
-        // not a reason to conjure a fresh about:blank page (P2).
+        // back/forward/reload act on an EXISTING tab only — an unknown tabId is
+        // an error, not a reason to conjure a fresh about:blank page (P2).
         const entry = this.tabs.get(tabId);
         if (!entry || entry.page.isClosed()) {
           return { ok: false, error: `unknown_tab: ${tabId}` };
         }
+        const kind = action.kind;
         return this.navigateVerb(
           tabId,
           entry,
-          (page) => (action.kind === "back" ? page.goBack() : page.reload()),
+          (page) =>
+            kind === "back"
+              ? page.goBack()
+              : kind === "forward"
+                ? page.goForward()
+                : page.reload(),
           permit,
           action.observe,
         );
@@ -535,7 +911,7 @@ export class ChromiumDriver implements BrowserDriver {
       case "observe":
         return this.observe(tabId, action, permit);
       case "act":
-        return this.act(tabId, action, permit);
+        return this.act(tabId, action, permit, command.source);
       case "webmcp_invoke":
         return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
@@ -563,6 +939,7 @@ export class ChromiumDriver implements BrowserDriver {
     tabId: string,
     action: Extract<BrowserAction, { kind: "act" }>,
     permit: () => boolean,
+    source: BrowserCommand["source"],
   ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
@@ -574,7 +951,44 @@ export class ChromiumDriver implements BrowserDriver {
     if (action.verb === "close_tab") {
       await page.close().catch(() => {});
       await this.dropTab(tabId);
+      if (!this.closing && this.tabs.size === 0)
+        await this.getOrCreateTab(DEFAULT_TAB);
       return { ok: true, output: { closed: tabId } };
+    }
+    if (action.verb === "accept_dialog" || action.verb === "dismiss_dialog") {
+      // ALWAYS AVAILABLE, under either policy. The policy decides what happens
+      // to an UNANSWERED dialog; answering one is the capability, and a client
+      // that has its own rules needs it whatever the fallback is.
+      const pending = page.pendingDialog?.();
+      if (!pending) {
+        return {
+          ok: false,
+          error: formatBrowserdError(
+            "act_failed",
+            "there is no dialog open on this page to answer",
+          ),
+        };
+      }
+      const accept = action.verb === "accept_dialog";
+      await page.resolveDialog?.(
+        accept,
+        accept && action.value !== undefined ? action.value : undefined,
+      );
+      // Recorded like an automatic answer, minus `auto`: a reader of the
+      // transcript should be able to tell what the page asked and who decided.
+      this.dialogNotes.set(tabId, {
+        kind: pending.kind,
+        message: pending.message,
+        choice: accept ? "accepted" : "dismissed",
+      });
+      const settledAfter = await this.settle(page);
+      const observed = await this.afterAct(
+        tabId,
+        entry,
+        permit,
+        wantsFor(action.observe),
+      );
+      return observed.ok ? { settled: settledAfter, ...observed } : observed;
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
@@ -603,7 +1017,28 @@ export class ChromiumDriver implements BrowserDriver {
       );
     }
     try {
-      await this.dispatchVerb(page, action, permit);
+      // RESOLVED HERE, not in `dispatchVerb`, because a ref is only meaningful
+      // against the tab that issued it: the token check needs `tabId` and the
+      // live entry, and `dispatchVerb` is handed a page. Throws `ActError`, so
+      // the classifier below reports `stale_ref` / `unknown_ref` as themselves
+      // rather than matching prose and landing on `act_failed`.
+      const refNode = await this.resolveActRef(
+        tabId,
+        entry,
+        action.target,
+        permit,
+      );
+      // AND THE LEASE AGAIN, because resolving a ref is several awaits: a
+      // node lookup, sometimes a whole AX tree re-read for the recovery, then
+      // a scroll and a box measurement. The check above was the last word only
+      // while nothing yielded between it and the click; it no longer is.
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          "a person took control of this browser while its target was being " +
+            "resolved; nothing was run and nothing was observed",
+        );
+      }
+      await this.dispatchVerb(page, action, permit, refNode);
     } catch (error) {
       // A target that cannot be resolved is a NORMAL answer the model must be
       // able to act on ("the button isn't there"), not a daemon fault — and
@@ -664,6 +1099,46 @@ export class ChromiumDriver implements BrowserDriver {
       };
     }
 
+    // THE ACT'S OWN DIALOG. A click that calls `confirm()` blocks the renderer
+    // before this line, and settling against a blocked renderer burns the full
+    // 10s budget to report a page "unsettled" — which is true and useless.
+    // Answered here so the settle below runs against a page that is running.
+    const stillBlocked = await this.answerOrRefuseDialog(
+      tabId,
+      action,
+      permit,
+      source,
+    );
+    if (stillBlocked) {
+      // The dialog was NOT answered — a person raised it with their own
+      // command, and it is theirs. Returning here rather than pressing on is
+      // the whole point: the settle and the capture below would each spend
+      // their full budget against a stopped renderer and then describe the
+      // frame from before the dialog, which reads as an action that quietly
+      // did nothing.
+      //
+      // `ok: true`, because the act RAN. The refusal shape would promise that
+      // nothing did, and a caller told that would do it again.
+      const pending = entry.page.pendingDialog?.();
+      return {
+        ok: true,
+        settled: false,
+        output: {
+          ...(pending
+            ? {
+                dialog: {
+                  kind: pending.kind,
+                  message: pending.message,
+                  pending: true,
+                },
+              }
+            : {}),
+          note:
+            "the action ran and the page is now blocked on a dialog; it is " +
+            "waiting for whoever holds this browser to answer it",
+        },
+      };
+    }
     const settled = await this.settle(page);
     const observed = await this.afterAct(
       tabId,
@@ -691,10 +1166,125 @@ export class ChromiumDriver implements BrowserDriver {
    * typed into it. The check is between steps because there is no way to take
    * back the ones already made.
    */
+  /**
+   * Turn an `a11yRef` target into a live node, or refuse in the model's terms.
+   *
+   * Three refusals, and they send the model three different places:
+   *
+   *   - `stale_ref` for a ref minted against a page this tab has since left.
+   *     Checked against the state token BEFORE anything is resolved, because a
+   *     backend node id is only unique within a document: a new page can reuse
+   *     the number, and resolving it would click a stranger with confidence.
+   *   - `unknown_ref` for a ref this tab's last observation never issued —
+   *     a model quoting a ref from an older turn, or inventing one.
+   *   - `stale_ref` again when the id is dead AND no node still carries that
+   *     exact role and name (`resolveRefNode` does the recovery).
+   */
+  private async resolveActRef(
+    tabId: string,
+    entry: TabEntry,
+    target: BrowserActTarget | undefined,
+    permit: () => boolean = () => true,
+  ): Promise<ResolvedRefNode | undefined> {
+    if (!target || !("a11yRef" in target)) return undefined;
+    const raw = target.a11yRef;
+    const map = this.refs.get(tabId);
+    if (map && !this.refsStillDescribe(tabId, entry, map)) {
+      this.refs.delete(tabId);
+      throw new ActError(
+        "stale_ref",
+        `${raw} was issued for a page this tab has since left; observe again ` +
+          "and use a ref from the new page",
+      );
+    }
+    const parsed = parseRef(raw);
+    const known = parsed ? map?.entries.get(parsed) : undefined;
+    if (!known) {
+      throw new ActError(
+        "unknown_ref",
+        `${raw} is not a ref from this tab's last observation; observe again ` +
+          "and use a ref it names",
+      );
+    }
+    const cdp = await entry.page.cdp();
+    if (!cdp) {
+      // An engine with no CDP session can still be driven by selector and
+      // coordinates, so this is a capability answer rather than a fault.
+      throw new ActError(
+        "unsupported_target",
+        "this browser cannot resolve refs; use a selector or coordinates",
+      );
+    }
+    try {
+      // The recovery path RE-READS THE PAGE's accessibility tree, which is an
+      // observation — and the lease forbids observing as firmly as it forbids
+      // acting. Asked here because the lookup above is an await.
+      return await resolveRefNode(cdp, parsed!, known, permit);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ActError("stale_ref", message.replace(/^stale_ref:\s*/, ""));
+    }
+  }
+
+  /**
+   * Where to aim for a resolved ref, refusing when something is on top of it.
+   *
+   * The occlusion check is HERE and not on the selector path because the two
+   * are not in the same position: Playwright's own actionability already
+   * refuses a selector click whose element cannot receive the event, which is
+   * why those fail as timeouts rather than landing somewhere else. A ref is
+   * clicked by coordinate, so nothing else is checking — and a coordinate that
+   * lands on a consent banner reports a click that "worked".
+   */
+  private async pointForRef(
+    page: DriverPage,
+    refNode: ResolvedRefNode,
+    label: string,
+    check: "occlusion" | "none",
+  ): Promise<ActPoint> {
+    const cdp = await page.cdp();
+    if (!cdp) {
+      throw new ActError(
+        "unsupported_target",
+        "this browser cannot resolve refs; use a selector or coordinates",
+      );
+    }
+    const point = await pointForBackendNodeId(
+      cdp,
+      refNode.backendNodeId,
+      label,
+    );
+    if (!this.inViewport(point.x, point.y)) {
+      // Scrolled and still outside: a fixed-position element parked off-screen,
+      // or a box the layout put beyond the viewport. Clicking those pixels
+      // would hit nothing.
+      throw new ActError(
+        "target_not_found",
+        `${label} is at (${point.x}, ${point.y}), outside the ` +
+          `${this.viewportLabel} ` +
+          "viewport even after scrolling; observe again to see where it is now",
+      );
+    }
+    if (check === "occlusion") {
+      const covering = await coveringElementAt(cdp, refNode.backendNodeId);
+      if (covering) {
+        throw new ActError(
+          "target_covered",
+          `${label} is covered by ${covering} at its click point, so the ` +
+            "input would land on that element instead. Dismiss or interact " +
+            "with the covering element first (it is often a dialog, banner, " +
+            "or sticky header).",
+        );
+      }
+    }
+    return point;
+  }
+
   private async dispatchVerb(
     page: DriverPage,
     action: Extract<BrowserAction, { kind: "act" }>,
     permit: () => boolean = () => true,
+    refNode?: ResolvedRefNode,
   ): Promise<void> {
     /** Refuse the NEXT page write when the browser changed hands. */
     const stillOurs = () => {
@@ -705,7 +1295,7 @@ export class ChromiumDriver implements BrowserDriver {
       target && "coordinates" in target
         ? { x: target.coordinates[0], y: target.coordinates[1] }
         : null;
-    if (point && !isPointInViewport(point.x, point.y)) {
+    if (point && !this.inViewport(point.x, point.y)) {
       // Refuse rather than dispatch. Chromium delivers a mouse event outside
       // the viewport quite happily; it hits nothing, and the caller reads an
       // ordinary post-act observation that looks exactly like a click landing
@@ -714,34 +1304,69 @@ export class ChromiumDriver implements BrowserDriver {
       // and the v1 bridge reach this same path.
       throw new Error(
         `out_of_viewport: (${point.x}, ${point.y}) is outside the ` +
-          `${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} ` +
+          `${this.viewportLabel} ` +
           "observation viewport; coordinates are CSS pixels with (0, 0) at the " +
           "top-left of the last screenshot",
       );
     }
     const selector = target && "selector" in target ? target.selector : null;
-    if (target && "a11yRef" in target) {
-      // Deferred deliberately: a ref that silently drifts across a re-render
-      // is worse than one the model cannot use at all.
-      throw new Error(
-        "unsupported_target: a11yRef targeting is not available; use coordinates or a selector",
-      );
-    }
+    // Resolved by the caller (`resolveActRef`), which is the only place with
+    // the tab identity a ref is scoped to. Here it is just a live node id.
+    const refLabel =
+      target && "a11yRef" in target ? target.a11yRef : "the target";
+    const needCdp = async () => {
+      const cdp = await page.cdp();
+      if (!cdp) {
+        throw new ActError(
+          "unsupported_target",
+          "this browser cannot resolve refs; use a selector or coordinates",
+        );
+      }
+      return cdp;
+    };
 
     switch (action.verb) {
       case "click":
+        if (refNode) {
+          const at = await this.pointForRef(
+            page,
+            refNode,
+            refLabel,
+            "occlusion",
+          );
+          // IMMEDIATELY BEFORE THE WRITE. Measuring the target is three round
+          // trips, and a person can take the browser inside them.
+          stillOurs();
+          return page.clickAt(at);
+        }
         if (point) return page.clickAt(point);
         if (selector) return page.clickSelector(selector);
-        throw new Error("no element: click needs coordinates or a selector");
+        throw new Error(
+          "no element: click needs a ref, coordinates or a selector",
+        );
       case "hover":
+        if (refNode) {
+          const at = await this.pointForRef(
+            page,
+            refNode,
+            refLabel,
+            "occlusion",
+          );
+          stillOurs();
+          return page.hoverAt(at);
+        }
         if (point) return page.hoverAt(point);
         if (selector) return page.hoverSelector(selector);
-        throw new Error("no element: hover needs coordinates or a selector");
+        throw new Error(
+          "no element: hover needs a ref, coordinates or a selector",
+        );
       case "type": {
         const text = action.value ?? "";
-        // With a selector, REPLACE the field's value; without one, type into
-        // whatever has focus (the model's previous click).
-        if (selector) await page.fillSelector(selector, text);
+        // With a ref or a selector, REPLACE the field's value; without either,
+        // type into whatever has focus (the model's previous click).
+        if (refNode) {
+          await replaceTextInNode(await needCdp(), refNode.backendNodeId, text);
+        } else if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
         // ONE settle and ONE observation for what was two commands. The submit
         // is also the half a model most often cannot pin: it acts on the page
@@ -785,6 +1410,15 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
+        // A ref makes the key land somewhere named rather than wherever focus
+        // happened to be — the difference between Enter submitting the form
+        // the model meant and Enter submitting whatever it clicked last.
+        if (refNode) {
+          const cdp = await needCdp();
+          stillOurs();
+          await focusBackendNodeId(cdp, refNode.backendNodeId);
+          stillOurs();
+        }
         return page.press(action.value);
       case "scroll": {
         // Default to one viewport-ish step down, the overwhelmingly common
@@ -793,29 +1427,42 @@ export class ChromiumDriver implements BrowserDriver {
         return page.scrollBy({ dx, dy });
       }
       case "drag": {
-        if (!point) throw new Error("drag needs start coordinates");
+        const from = refNode
+          ? await this.pointForRef(page, refNode, refLabel, "occlusion")
+          : point;
+        if (refNode) stillOurs();
+        if (!from) throw new Error("drag needs a ref or start coordinates");
         const to = parsePoint(action.value);
         if (!to) {
           throw new Error(
             'drag needs a destination in `value` as "x,y" (viewport coordinates)',
           );
         }
-        if (!isPointInViewport(to.x, to.y)) {
+        if (!this.inViewport(to.x, to.y)) {
           // The destination rides in a string and so bypasses the check above;
           // a drag ending off-viewport drops its payload on nothing.
           throw new Error(
             `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ` +
-              `${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} ` +
-              "observation viewport",
+              `${this.viewportLabel} observation viewport`,
           );
         }
-        return page.dragTo(point, to);
+        return page.dragTo(from, to);
       }
       case "select":
-        if (!selector) throw new Error("select needs a selector");
         if (action.value === undefined) {
           throw new Error("select needs the option value in `value`");
         }
+        if (refNode) {
+          const cdp = await needCdp();
+          stillOurs();
+          return selectOptionOnNode(
+            cdp,
+            refNode.backendNodeId,
+            action.value,
+            refLabel,
+          );
+        }
+        if (!selector) throw new Error("select needs a ref or a selector");
         return page.selectOption(selector, action.value);
       case "close_tab":
       case "activate_tab":
@@ -986,7 +1633,13 @@ export class ChromiumDriver implements BrowserDriver {
     // the user approved, invoked under that approval.
     const binding = action.expectedBinding;
     if (binding) {
-      const stale = this.bindingRefusal(tabId, entry, bridge, action.toolKey, binding);
+      const stale = this.bindingRefusal(
+        tabId,
+        entry,
+        bridge,
+        action.toolKey,
+        binding,
+      );
       if (stale) {
         return {
           ok: false,
@@ -1037,7 +1690,22 @@ export class ChromiumDriver implements BrowserDriver {
         output,
         this.webmcpOutputBudgetBytes,
       );
-      const frame = await this.snapshot(entry.page);
+      const frame = await this.snapshot(entry.page).catch(() => undefined);
+      // The tool's own result is authoritative even if it navigated away.
+      // Failure to sample the destination must not turn completed work into a failure.
+      if (!frame)
+        return permit()
+          ? {
+              ok: true,
+              output: {
+                invocationId,
+                result: capped,
+                ...(omitted ? { omitted } : {}),
+              },
+            }
+          : this.leaseBlockedResult(
+              "The tool ran, but control changed before its result could be read.",
+            );
       return {
         ...this.observation(
           tabId,
@@ -1131,7 +1799,10 @@ export class ChromiumDriver implements BrowserDriver {
       );
     }
     const known = await bridge.cancel(invocationId);
-    return { ok: true, output: { cancelled: known, known: true, invocationId } };
+    return {
+      ok: true,
+      output: { cancelled: known, known: true, invocationId },
+    };
   }
 
   /**
@@ -1286,7 +1957,6 @@ export class ChromiumDriver implements BrowserDriver {
     return observed.ok ? { settled, ...observed } : observed;
   }
 
-
   private async observe(
     tabId: string,
     action: Extract<BrowserAction, { kind: "observe" }>,
@@ -1345,6 +2015,65 @@ export class ChromiumDriver implements BrowserDriver {
         );
         this.commitRefs(tabId, result, rendered.refMap);
         return result;
+      }
+      case "dialog": {
+        // Touches no page, which is the property that makes it answerable
+        // while a dialog has the renderer stopped — and reading it is how a
+        // caller learns what it is about to decide.
+        const pending = entry.page.pendingDialog?.() ?? null;
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { dialog: pending },
+          frame,
+          permit,
+        );
+      }
+      case "network": {
+        const all = entry.page.networkEntries?.();
+        if (!all) {
+          // "This browser cannot tell you" and "this page made no requests"
+          // are different facts, and a model acts differently on each — an
+          // empty array for the first would send it looking for a cause that
+          // was never captured.
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "a11y_unavailable",
+              "this browser build does not record network requests",
+            ),
+          };
+        }
+        if (action.requestId) {
+          const one = entry.page
+            .networkEntries?.()
+            .find((row) => row.requestId === action.requestId);
+          const frame = await this.snapshot(entry.page);
+          return this.observation(
+            tabId,
+            entry,
+            one
+              ? { network: [one] }
+              : {
+                  network: [],
+                  // Named rather than left as an empty list: the ring is
+                  // bounded, and "it scrolled off" is the answer.
+                  omitted: 1,
+                },
+            frame,
+            permit,
+          );
+        }
+        const { entries: rows, omitted } = capNetwork(all, this.networkBudget);
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { network: rows, ...(omitted > 0 ? { omitted } : {}) },
+          frame,
+          permit,
+        );
       }
       case "console": {
         const { entries, omitted } = capConsole(
@@ -1514,13 +2243,14 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   async currentStateToken(tabId: string | undefined) {
-    const entry = this.tabs.get(tabId ?? DEFAULT_TAB);
+    const entry = this.tabs.get(tabId ?? this.activeTabId ?? DEFAULT_TAB);
     if (!entry) return undefined;
     return computeStateToken({
-      tabId: tabId ?? DEFAULT_TAB,
+      tabId: tabId ?? this.activeTabId ?? DEFAULT_TAB,
       navCounter: entry.navCounter,
       url: entry.page.url(),
       domSignal: await entry.page.domStructureSignal(),
+      viewportRevision: this.sessionViewport.revision,
     });
   }
 
@@ -1547,6 +2277,100 @@ export class ChromiumDriver implements BrowserDriver {
    * than asking Chromium — because it runs on every heartbeat of every open
    * stream.
    */
+  /**
+   * The whole truth about this browser, for the pane's shell.
+   *
+   * A SEPARATE READ from `tabsSnapshot`, not a richer version of it, and the
+   * two are kept apart on purpose. `tabsSnapshot` rides the frame heartbeat:
+   * it is synchronous, budgeted to a few kilobytes, and drops tabs from the
+   * end when a session has more than fit — which is exactly right for a
+   * caption over a video and exactly wrong for a tab strip, where the tab that
+   * got dropped is the one somebody is looking for.
+   *
+   * This one is asynchronous (it asks each tab's CDP session for its title,
+   * icon and history), complete, and fetched on its own endpoint. Nothing is
+   * truncated: a browser with thirty tabs has thirty tabs, and a strip that
+   * silently showed sixteen of them would be lying about a thing the person
+   * can count.
+   *
+   * `seq` is a monotonic counter rather than a timestamp: two snapshots taken
+   * inside the same millisecond are ordinary on a fast box, and a reducer that
+   * cannot order them would drop one at random.
+   */
+  interactionAnchor():
+    | import("../../../../shared/browser-pane-command").InteractionAnchor
+    | undefined {
+    const tabId = this.activeTabId;
+    const entry = tabId ? this.tabs.get(tabId) : undefined;
+    if (!tabId || !entry || entry.page.isClosed()) return undefined;
+    return {
+      tabId,
+      url: safeUrl(entry.page),
+      navCounter: entry.navCounter,
+      viewportRevision: this.sessionViewport.revision,
+    };
+  }
+
+  async stateSnapshot(): Promise<{
+    seq: number;
+    tabs: Array<{
+      id: string;
+      url: string;
+      title: string;
+      faviconUrl?: string;
+      navCounter: number;
+      loading: boolean;
+      openerId?: string;
+    }>;
+    activeTabId: string | null;
+    canGoBack: boolean;
+    canGoForward: boolean;
+    viewport: SessionViewport;
+    policy: SessionViewportPolicy;
+  }> {
+    const hadTabs = this.tabs.size > 0;
+    for (const [id, entry] of [...this.tabs]) {
+      if (entry.page.isClosed()) await this.dropTab(id);
+    }
+    if (hadTabs && this.tabs.size === 0 && !this.closing)
+      await this.getOrCreateTab(DEFAULT_TAB);
+    const live = [...this.tabs.entries()];
+    // IN PARALLEL. Serially, a browser with a dozen tabs would spend a dozen
+    // CDP round trips per heartbeat, and the strip would lag the browser by
+    // more than the interval that refreshes it.
+    const read = await Promise.all(
+      live.map(async ([id, entry]) => {
+        const cdp = await entry.page.cdp().catch(() => null);
+        const meta = await readTabMetadata(cdp, safeUrl(entry.page));
+        return { id, meta, entry };
+      }),
+    );
+    const activeTabId =
+      this.activeTabId && read.some(({ id }) => id === this.activeTabId)
+        ? this.activeTabId
+        : (read[0]?.id ?? null);
+    const active = read.find(({ id }) => id === activeTabId);
+    this.stateSeq += 1;
+    return {
+      seq: this.stateSeq,
+      tabs: read.map(({ id, meta, entry }) => ({
+        id,
+        navCounter: entry.navCounter,
+        ...(entry.openerId ? { openerId: entry.openerId } : {}),
+        url: meta.url,
+        title: meta.title,
+        ...(meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {}),
+        loading: entry.loading ?? false,
+      })),
+      activeTabId,
+      // The ACTIVE tab's history, which is what the two buttons act on.
+      canGoBack: active?.meta.canGoBack ?? false,
+      canGoForward: active?.meta.canGoForward ?? false,
+      viewport: this.sessionViewport,
+      policy: this.viewportPolicy,
+    };
+  }
+
   tabsSnapshot(): {
     active?: string;
     list: Array<{ id: string; url: string }>;
@@ -1642,7 +2466,7 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   async viewport(tabId?: string): Promise<TabViewport | null> {
-    const key = tabId ?? DEFAULT_TAB;
+    const key = tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
     if (live && !live.page.isClosed()) {
       const cached = this.viewports.get(key);
@@ -1671,8 +2495,14 @@ export class ChromiumDriver implements BrowserDriver {
     const created = (async () => {
       const cdp = await entry.page.cdp();
       if (!cdp) return null;
+      // The SESSION's size, read at attach time. A pane opening on a session
+      // that has already been resized has to letterbox against the picture it
+      // is actually being sent, not against the size the session launched at.
       return createTabViewport(cdp, {
-        surface: BROWSERD_OBSERVATION_VIEWPORT,
+        surface: {
+          width: this.sessionViewport.width,
+          height: this.sessionViewport.height,
+        },
       });
     })();
     this.viewports.set(key, created);
@@ -1688,6 +2518,7 @@ export class ChromiumDriver implements BrowserDriver {
   async close(): Promise<void> {
     // Refuse new pages from here on, so nothing can register behind the sweep.
     this.closing = true;
+    this.stopPageCreated?.();
     // A tab creation already awaiting `newPage()` would otherwise register its
     // page after this ran, leaving a renderer nobody closes for the life of
     // the browser. Settle them first, then let the sweep below take whatever
@@ -1761,7 +2592,27 @@ export class ChromiumDriver implements BrowserDriver {
       // page would reach the model unfiltered. Stamped at the funnel so no
       // future observation mode can forget it. An explicit `url` in `output`
       // still wins; today it is the same value.
-      output: this.withHandoffNote({ url: frame.url, ...output }),
+      output: this.withDialogNote(
+        tabId,
+        this.withHandoffNote({
+          url: frame.url,
+          // THE SIZE THIS WAS SEEN AT, on every observation without exception.
+          // It is what the model's coordinates are read in, and on a session
+          // that can be resized it is the only honest way to know: the tool
+          // schema states a range rather than a size, precisely so that it
+          // does not have to be regenerated — and its hash rotated — every
+          // time somebody drags a panel.
+          //
+          // In `output` rather than beside it, unlike `stateToken` and
+          // `cursors`, because this one IS for the model: it is the number it
+          // has to compute against.
+          viewport: {
+            width: this.sessionViewport.width,
+            height: this.sessionViewport.height,
+          },
+          ...output,
+        }),
+      ),
       stateToken: this.tokenFor(tabId, entry, frame),
     };
   }
@@ -1773,6 +2624,23 @@ export class ChromiumDriver implements BrowserDriver {
    * change that just happened. Consumed once, so it marks the result that
    * actually crossed the handoff rather than every later one.
    */
+  /**
+   * Fold in what was decided about a dialog, once, on the next observation.
+   *
+   * Consumed like the handoff note and for the same reason: it describes one
+   * moment, and repeating it on every later result would tell the model a
+   * dialog keeps appearing.
+   */
+  private withDialogNote(
+    tabId: string,
+    output: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const note = this.dialogNotes.get(tabId);
+    if (!note) return output;
+    this.dialogNotes.delete(tabId);
+    return { ...output, dialog: note };
+  }
+
   private withHandoffNote(output: Record<string, unknown>) {
     return this.lease?.consumeResumedDirty()
       ? {
@@ -1796,6 +2664,77 @@ export class ChromiumDriver implements BrowserDriver {
    * command can take seconds (a navigation settles for up to ten), and the
    * handoff it must respect is the one happening NOW.
    */
+  /**
+   * Answer a pending dialog, or refuse the command that cannot run past one.
+   *
+   * Returns a refusal when the command must not proceed, and `undefined` when
+   * the page is clear — either it always was, or this call just made it so.
+   *
+   * WHO ANSWERS depends on the lease, and that is the whole reason the page
+   * wrapper captures dialogs instead of answering them. With the browser free,
+   * an agent-driven dialog is answered here on the agent's behalf and the
+   * choice is recorded for the model to read. With a person holding it, the
+   * dialog is THEIRS — dismissing it out from under someone signing in is
+   * exactly the surprise the handoff exists to prevent — so it stays open and
+   * the agent is told why its command cannot run.
+   */
+  private async answerOrRefuseDialog(
+    tabId: string,
+    action: BrowserAction,
+    permit: () => boolean,
+    source: BrowserCommand["source"],
+  ): Promise<BrowserCommandResult | undefined> {
+    const entry = this.tabs.get(tabId);
+    const dialog = entry?.page.pendingDialog?.();
+    if (!entry || !dialog) return undefined;
+    // WHO GETS TO DECIDE, and the three ways the answer is "not us":
+    //
+    //   - `manual` is the pane. A person's own command never answers their own
+    //     dialog: answering it from under one of their reads would take the
+    //     decision away at the exact moment they were making it.
+    //   - Somebody else holds the lease, so the dialog is theirs.
+    //   - The client asked to decide for itself (`dialogPolicy: "ask"`). A
+    //     default is a guess at what a client meant, and one with its own
+    //     interaction rules — ask the person, always confirm a known flow —
+    //     needs that guess not to be made. It answers with `accept_dialog` /
+    //     `dismiss_dialog`, which work under either policy.
+    //
+    // In all three the reads that do not touch the blocked page still pass,
+    // which is how anyone sees the dialog they are being asked about.
+    // A COMMAND THAT DOES NOT NEED THE PAGE UNBLOCKED IS NEVER A REASON TO
+    // ANSWER. Checked first, above every policy: a screenshot, the URL, the
+    // console, and the dialog read itself are precisely how a caller looks at
+    // the dialog before deciding — and answering one in order to serve them
+    // destroys the thing they were looking at. Answering it is also on this
+    // list, which is what stops the fallback from consuming the dialog before
+    // the explicit verb can reach it.
+    if (safeUnderDialog(action)) return undefined;
+    const decideForCaller =
+      source !== "manual" && permit() && this.dialogPolicy === "auto";
+    if (!decideForCaller) {
+      return { ok: false, error: dialogRefusal(dialog) };
+    }
+    const accept = agentDefaultAccepts(dialog.kind);
+    const answered = await entry.page
+      .resolveDialog?.(accept)
+      .catch(() => false);
+    if (!answered) {
+      // Nothing there to answer after all (the page closed it, or a race).
+      // Proceeding is right: the renderer is running again either way.
+      return undefined;
+    }
+    // RECORDED, not merely handled. "I clicked Delete and nothing happened"
+    // and "I clicked Delete, a confirmation appeared, and it was cancelled on
+    // your behalf" lead the model to completely different next moves.
+    this.dialogNotes.set(tabId, {
+      kind: dialog.kind,
+      message: dialog.message,
+      choice: accept ? "accepted" : "dismissed",
+      auto: true,
+    });
+    return undefined;
+  }
+
   private permitFor(command: BrowserCommand): () => boolean {
     const lease = this.lease;
     if (!lease) return () => true;
@@ -1816,16 +2755,22 @@ export class ChromiumDriver implements BrowserDriver {
    * they may have opened one, and a leak in a tab nobody was watching is
    * still a leak. Consumed once per handoff.
    */
-  private purgeHandoffConsole(): void {
+  private purgeHandoffRings(): void {
     const since = this.lease?.consumeResumedHeldSince?.();
     if (since === undefined) return;
     for (const entry of this.tabs.values()) {
       if (entry.page.isClosed()) continue;
       try {
         entry.page.dropConsoleSince(since);
+        // THE NETWORK RING TOO, and for a stronger reason than the console:
+        // it records the URLs a person visited while they held the browser and
+        // the requests their signing-in produced. Purging one ring and not the
+        // other would make the lease's promise "you must wait to read it"
+        // rather than "it is private".
+        entry.page.dropNetworkSince?.(since);
       } catch {
         // A page that cannot be purged must not take the command down; the
-        // budgeted console read that follows is capped either way.
+        // budgeted reads that follow are capped either way.
       }
     }
   }
@@ -1837,6 +2782,11 @@ export class ChromiumDriver implements BrowserDriver {
       navCounter: entry.navCounter,
       url: frame.url,
       domSignal: frame.domSignal,
+      // The revision AT THE MOMENT OF THE OBSERVATION, which is what makes the
+      // comparison mean anything: an act decided from this token is refused
+      // once the layout has been re-flowed underneath it, even when the DOM
+      // came out structurally identical.
+      viewportRevision: this.sessionViewport.revision,
     });
   }
 
@@ -1858,6 +2808,81 @@ export class ChromiumDriver implements BrowserDriver {
     return settled;
   }
 
+  private async registerTab(
+    tabId: string,
+    page: DriverPage,
+    openerId?: string,
+    background = false,
+  ): Promise<TabEntry> {
+    const entry: TabEntry = {
+      page,
+      ...(openerId ? { openerId } : {}),
+      navCounter: 0,
+      webmcp: emptyWebmcpState(),
+    };
+    this.tabs.set(tabId, entry);
+    void page
+      .cdp()
+      .then(async (cdp) => {
+        if (!cdp || this.tabs.get(tabId) !== entry) return;
+        const frames = new Set<string>();
+        cdp.on("Page.frameStartedLoading", (raw) => {
+          if (this.tabs.get(tabId) !== entry) return;
+          frames.add((raw as { frameId: string }).frameId);
+          entry.loading = true;
+        });
+        cdp.on("Page.frameStoppedLoading", (raw) => {
+          if (this.tabs.get(tabId) !== entry) return;
+          frames.delete((raw as { frameId: string }).frameId);
+          entry.loading = frames.size > 0;
+        });
+        await cdp.send("Page.enable");
+      })
+      .catch(() => {});
+    // THE SESSION'S SIZE, not the launch size.
+    //
+    // A page opens at whatever the browser was launched with, and on a
+    // `followPane` session that stops being the right answer the first time
+    // somebody drags the panel. Without this, every tab opened after a resize
+    // laid out at 1024x768 while the session published the panel's size — so
+    // the model read one rectangle and clicked in another, on the tab it had
+    // just opened.
+    //
+    // Registered BEFORE this await, and re-checked by `applyViewport` after
+    // its own loop: between those two, a page created while a resize is
+    // transitioning is picked up by whichever of them runs second.
+    await entry.page
+      .setViewportSize?.({
+        width: this.sessionViewport.width,
+        height: this.sessionViewport.height,
+      })
+      .catch(() => {
+        // A page that cannot be sized is not a reason to fail opening the
+        // tab: the engine may not support it at all, which is exactly what
+        // `applyViewport` refuses on and this path must tolerate.
+      });
+    // EAGERLY, reversing the bridge's original lazy attach. Lazy was right
+    // when the only consumer was `webmcp_invoke` — a tab that never called a
+    // page tool should not pay for a CDP session. It is wrong now: the tool
+    // set is a thing the server READS between model steps, and a bridge that
+    // attaches on first use has no idea what the page registered before it
+    // existed. Fire-and-forget so tab creation is not slowed by it; every
+    // reader awaits `attachWebmcp` itself.
+    void this.attachWebmcp(tabId, entry);
+    // A new tab is the one Chromium shows, which is what the human pane's
+    // video will be grabbing a moment later.
+    if (!background) {
+      this.activeTabId = tabId;
+      if (openerId) await page.bringToFront?.().catch(() => {});
+    } else if (this.activeTabId) {
+      await this.tabs
+        .get(this.activeTabId)
+        ?.page.bringToFront?.()
+        .catch(() => {});
+    }
+    return entry;
+  }
+
   /** `null` means teardown has begun and no new page will be opened. */
   private async getOrCreateTab(tabId: string): Promise<TabEntry | null> {
     const existing = this.tabs.get(tabId);
@@ -1865,6 +2890,11 @@ export class ChromiumDriver implements BrowserDriver {
     const inFlight = this.pendingTabs.get(tabId);
     if (inFlight) return inFlight;
     if (this.closing) return null;
+    if (this.tabs.size + this.pendingTabs.size >= this.maxTabs) {
+      throw new Error(
+        `not found: this browser is at its limit of ${this.maxTabs} tabs — close one first`,
+      );
+    }
     const creating = (async () => {
       // Replacing a closed tab retires everything attached to the old page —
       // its viewport is bound to a CDP session that will never speak again.
@@ -1877,24 +2907,7 @@ export class ChromiumDriver implements BrowserDriver {
         await page.close().catch(() => {});
         return null;
       }
-      const entry: TabEntry = {
-        page,
-        navCounter: 0,
-        webmcp: emptyWebmcpState(),
-      };
-      this.tabs.set(tabId, entry);
-      // EAGERLY, reversing the bridge's original lazy attach. Lazy was right
-      // when the only consumer was `webmcp_invoke` — a tab that never called a
-      // page tool should not pay for a CDP session. It is wrong now: the tool
-      // set is a thing the server READS between model steps, and a bridge that
-      // attaches on first use has no idea what the page registered before it
-      // existed. Fire-and-forget so tab creation is not slowed by it; every
-      // reader awaits `attachWebmcp` itself.
-      void this.attachWebmcp(tabId, entry);
-      // A new tab is the one Chromium shows, which is what the human pane's
-      // video will be grabbing a moment later.
-      this.activeTabId = tabId;
-      return entry;
+      return this.registerTab(tabId, page);
     })();
     this.pendingTabs.set(tabId, creating);
     try {
@@ -2124,7 +3137,9 @@ export class ChromiumDriver implements BrowserDriver {
       // Only when it MOVED. `url` is on every observation already; a
       // `previousUrl` equal to it teaches the model nothing and costs a line
       // on every act.
-      ...(before && before.url !== frame.url ? { previousUrl: before.url } : {}),
+      ...(before && before.url !== frame.url
+        ? { previousUrl: before.url }
+        : {}),
       ...a11yFields,
       ...(screenshot ? { screenshot } : {}),
     };
@@ -2198,7 +3213,7 @@ export class ChromiumDriver implements BrowserDriver {
     command: BrowserCommand,
     wants: { a11y: boolean; screenshot: boolean },
   ): Promise<BrowserCommandResult> {
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -2359,11 +3374,18 @@ export class ChromiumDriver implements BrowserDriver {
       // the same name). Subscribing then would wire a dead page's bridge to a
       // live entry.
       if (!bridge || this.tabs.get(tabId) !== entry) return;
-      entry.webmcp.unsubscribe = bridge.subscribe((tools) => {
+      const unsubscribeTools = bridge.subscribe((tools) => {
         entry.webmcp.tools = tools;
         entry.webmcp.supported = bridge.isSupported();
         this.bumpWebmcpRevision(entry);
       });
+      const unsubscribeExternal = bridge.subscribeExternalInvocation?.((name) =>
+        this.onExternalInvocation?.(tabId, name),
+      );
+      entry.webmcp.unsubscribe = () => {
+        unsubscribeTools();
+        unsubscribeExternal?.();
+      };
     })().catch(() => {});
     return entry.webmcp.attaching;
   }
@@ -2426,15 +3448,18 @@ export class ChromiumDriver implements BrowserDriver {
     // bridge whose page is being replaced, it would keep bumping a revision
     // nothing reads and keep the entry alive with it.
     going?.webmcp.unsubscribe?.();
+    const next = tabAfterClose(
+      [...this.tabs].map(([id, tab]) => ({ id, openerId: tab.openerId })),
+      tabId,
+      this.activeTabId ?? null,
+    );
     this.tabs.delete(tabId);
-    if (this.activeTabId === tabId) {
-      // Chromium shows SOMETHING after a close, and the most recently
-      // registered remaining tab is the best answer available without asking
-      // the browser — which would be a round trip on a path that runs whenever
-      // a tab goes away.
-      const remaining = [...this.tabs.keys()];
-      this.activeTabId = remaining[remaining.length - 1];
-    }
+    this.activeTabId = next ?? undefined;
+    if (!this.closing && next)
+      await this.tabs
+        .get(next)
+        ?.page.bringToFront?.()
+        .catch(() => {});
     // Refs name nodes in a page that is going away. Left behind, they would be
     // handed to a recreated tab of the same name and resolve — by role and
     // name — against a document that never issued them.

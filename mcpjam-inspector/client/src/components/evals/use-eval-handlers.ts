@@ -239,6 +239,7 @@ interface UseEvalHandlersProps {
   connectedServerNames?: Set<string>;
   ensureServersReady?: (
     serverNames: string[],
+    options?: { allowInteractiveOAuthFlow?: boolean },
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
@@ -1795,7 +1796,7 @@ export function useEvalHandlers({
         );
         if (disconnected.length > 0) {
           if (ensureServersReady != null) {
-            const readiness = await ensureServersReady(suiteServers);
+            const readiness = await ensureServersReady(suiteServers, { allowInteractiveOAuthFlow: true });
             if (hasUnavailableServers(readiness)) {
               if (postOptions?.stageCase)
                 throw new Error(

@@ -62,9 +62,7 @@ function renderTable(
   );
   const nextPredicates = () => {
     const arg = onPredicatesChange.mock.calls.at(-1)?.[0];
-    return typeof arg === "function"
-      ? arg(overrides.predicates ?? [])
-      : arg;
+    return typeof arg === "function" ? arg(overrides.predicates ?? []) : arg;
   };
   return { ...result, onPredicatesChange, onJudgeConfigChange, nextPredicates };
 }
@@ -283,9 +281,9 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    const gate = screen.getAllByRole("button", { name: "Gate" }).find(
-      (button) => button.closest('[aria-label="Judge role"]'),
-    );
+    const gate = screen
+      .getAllByRole("button", { name: "Gate" })
+      .find((button) => button.closest('[aria-label="Judge role"]'));
     expect(gate).toBeDisabled();
     expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
       "Not available on this deployment",
@@ -296,21 +294,15 @@ describe("SuiteScorerTable", () => {
     const user = userEvent.setup();
     renderTable();
     await user.click(screen.getByRole("button", { name: "Add scorer" }));
-    const library = screen.getByTestId("scorer-library");
-    expect(
-      library.querySelector('[data-library-category="selection"]'),
-    ).toBeTruthy();
-    expect(
-      library.querySelector('[data-library-category="userValue"]'),
-    ).toBeTruthy();
-    expect(
-      library.querySelector('[data-library-category="budget"]'),
-    ).toBeTruthy();
-    // Response is populated as of analyzer 11 — `noToolErrors` files there,
-    // so the category shows even on the legacy kind set this render uses.
-    expect(
-      library.querySelector('[data-library-category="response"]'),
-    ).toBeTruthy();
+    for (const name of [
+      "Assertions · Tool selection",
+      "Assertions · Answer and outcome",
+      "Limits · Time and usage",
+      "Assertions · Tool inputs and results",
+    ]) {
+      expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("region", { name: "Actions" })).toBeNull();
   });
 
   it("has no Last run or Trend column", () => {

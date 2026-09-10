@@ -136,6 +136,16 @@ describe("MetricStrip sparkline hover", () => {
     expect(within(sparkline).getByText("Run 1")).toBeInTheDocument();
   });
 
+  it("omits failed-iteration and point-change chips in history context", () => {
+    render(
+      <MetricStrip data={sampleData} context="history" testId="metric-strip" />,
+    );
+    expect(screen.queryByText(/failed iteration/)).toBeNull();
+    expect(screen.queryByText(/pp/)).toBeNull();
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    expect(screen.getByText("1/2 passed")).toBeInTheDocument();
+  });
+
   it("renders card sparkline tooltips below the chart", () => {
     render(<MetricStrip data={sampleData} testId="metric-strip" />);
     const sparkline = screen.getByTestId("metric-sparkline-latency");
@@ -143,4 +153,56 @@ describe("MetricStrip sparkline hover", () => {
     const tooltip = within(sparkline).getByText("Run 2").closest(".top-full");
     expect(tooltip).toBeTruthy();
   });
+});
+
+describe("MetricStrip bars", () => {
+  it("uses zero-based bars without trend lines across the metric row", () => {
+    render(<MetricStrip bars data={sampleData} />);
+    for (const metric of ["pass-rate", "tokens", "tool-calls"]) {
+      const chart = screen.getByTestId(`metric-sparkline-${metric}`);
+      expect(chart.querySelectorAll("rect[data-chart-bar=value]")).toHaveLength(2);
+      expect(chart.querySelector("polyline")).toBeNull();
+    }
+    const bars = screen.getByTestId("metric-sparkline-pass-rate").querySelectorAll("rect");
+    const heights = [...bars].map((bar) => Number(bar.getAttribute("height")));
+    // 50% is half the height of 100%, rather than appearing as zero.
+    expect(heights[1]).toBe(heights[0] / 2);
+  });
+
+  it("compares P50 and P95 on a shared scale", () => {
+    render(<MetricStrip bars data={sampleData} />);
+    const chart = screen.getByTestId("metric-sparkline-latency");
+    expect(chart.querySelector("polyline")).toBeNull();
+    const primary = [...chart.querySelectorAll('[data-chart-bar="p50"]')];
+    const secondary = [...chart.querySelectorAll('[data-chart-bar="p95"]')];
+    expect(primary).toHaveLength(2);
+    expect(secondary).toHaveLength(2);
+    expect(Number(primary[1].getAttribute("height"))).toBe(Number(secondary[1].getAttribute("height")) / 2);
+  });
+
+  it("keeps zero values at the baseline", () => {
+    render(<MetricStrip bars data={{ ...sampleData, series: sampleData.series.map((point) => ({ ...point, toolCalls: 0 })) }} />);
+    const chart = screen.getByTestId("metric-sparkline-tool-calls");
+    for (const bar of chart.querySelectorAll("rect")) {
+      expect(bar).toHaveAttribute("height", "0");
+      expect(bar.getAttribute("y")).not.toBe("NaN");
+    }
+  });
+});
+
+it("keeps line graphs as the default for the original Evals surfaces", () => {
+  render(<MetricStrip data={sampleData} />);
+  for (const metric of ["pass-rate", "latency", "tokens", "tool-calls"]) {
+    const chart = screen.getByTestId(`metric-sparkline-${metric}`);
+    expect(chart.querySelector("polyline")).not.toBeNull();
+    expect(chart.querySelector("rect[data-chart-bar]")).toBeNull();
+  }
+});
+
+it("can omit the suite summary cost block and use four columns", () => {
+  render(<MetricStrip data={sampleData} showCost={false} />);
+  expect(screen.queryByText("Cost")).toBeNull();
+  expect(screen.queryByText("not priced")).toBeNull();
+  expect(screen.getByText("Tokens")).toBeVisible();
+  expect(screen.getByTestId("metric-strip").className).toContain("sm:grid-cols-[1.4fr_1fr_1fr_1fr]");
 });

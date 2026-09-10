@@ -614,7 +614,12 @@ describe("UserTestingTab — agent bridge handlers", () => {
       ok: true,
       data: {
         activeView: "detail",
-        detailTab: "insights",
+        // No `?tab=` here, so this is the RESOLVED DEFAULT the agent is told
+        // about, not a tab this test navigated to. BB-146 moved that default
+        // to Findings, and the bridge has to report where the reader actually
+        // landed — an agent acting on "insights" would be steering a surface
+        // that is not on screen.
+        detailTab: "findings",
         scenarioCount: 2,
         scenarios: [
           { scenarioId: "cb-1", hostId: "host-1", hasPublishLink: true },

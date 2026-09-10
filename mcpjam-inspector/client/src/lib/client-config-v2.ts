@@ -198,6 +198,8 @@ export type HostConfigInputV2 = {
    * is the only shape; `workdir` optionally pins the initial shell cwd.
    */
   computer?: HostConfigComputerV2;
+  /** Optional saved browser profile selected for hosted browser sessions. */
+  browserProfileId?: string;
   /**
    * Real agent harness (see {@link HostConfigHarnessV2}). `"claude-code"` runs
    * the real Claude Code runtime on the attached computer; absent ⇒ MCPJam's
@@ -292,6 +294,8 @@ export type HostConfigDtoV2 = {
    * wire — `hostConfigDtoToInput` reads only `kind`/`workdir`.
    */
   computer?: HostConfigComputerV2 & { toolset?: string };
+  /** Optional saved browser profile selected for hosted browser sessions. */
+  browserProfileId?: string;
   /**
    * Real agent harness (see HostConfigInputV2.harness). Optional; pre-feature
    * rows and non-harness hosts omit it.
@@ -420,6 +424,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
           ...(dto.computer.workdir ? { workdir: dto.computer.workdir } : {}),
         }
       : undefined,
+    browserProfileId: dto.browserProfileId,
     // String literal pass-through; absent ⇒ emulated engine.
     harness: dto.harness,
     connectionDefaults: {
@@ -863,7 +868,7 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     // turning an era off silently wrote nothing.
     (profile.toolCallCancellation === undefined ||
       Object.values(profile.toolCallCancellation).every(
-        (value) => value === undefined
+        (value) => value === undefined,
       )) &&
     !profile.apps &&
     !profile.extensions
@@ -1188,6 +1193,7 @@ export function hostConfigInputsEqual(
     if (a.computer.kind !== b.computer.kind) return false;
     if (a.computer.workdir !== b.computer.workdir) return false;
   }
+  if (a.browserProfileId !== b.browserProfileId) return false;
   // Harness selector: undefined vs "claude-code" are distinct states (backend
   // hashes them distinctly). Switching engines marks the draft dirty.
   if (a.harness !== b.harness) return false;

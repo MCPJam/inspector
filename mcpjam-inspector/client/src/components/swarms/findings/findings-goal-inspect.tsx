@@ -11,7 +11,10 @@ import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { JOURNEY_STAGES, type JourneyStageId } from "./journey-stages";
 import type { GoalFindingsModel, StageState } from "./findings-derivation";
-import { FindingsGoalSessions } from "./findings-goal-sessions";
+import {
+  FindingsGoalSessions,
+  type FindingsSessionScope,
+} from "./findings-goal-sessions";
 
 export const EMPTY_STAGE_COPY =
   "No finding landed on this stage. This is not evidence that the stage passed.";
@@ -42,19 +45,23 @@ export function FindingsGoalInspect({
   selectedStage,
   onSelectStage,
   onOpenSession,
-  projectId,
+  sessionScope,
 }: {
   goal: GoalFindingsModel;
   selectedStage: JourneyStageId;
   onSelectStage: (stage: JourneyStageId) => void;
   onOpenSession?: (sessionId: string) => void;
-  /** When set, the inspect panel pages this goal's sessions for click-through. */
-  projectId?: string;
+  /**
+   * When set, the inspect panel pages this goal's sessions for click-through.
+   * The surface owns how a goal is keyed, so it hands the scope in rather than
+   * this panel assuming a swarm.
+   */
+  sessionScope?: FindingsSessionScope;
 }) {
   const stageMeta = JOURNEY_STAGES.find((s) => s.id === selectedStage)!;
   const stageModel = goal.stages[selectedStage];
   const evidencePanelId = `findings-stage-evidence-${goal.runId}`;
-  const canListSessions = Boolean(projectId && onOpenSession);
+  const canListSessions = Boolean(sessionScope && onOpenSession);
   const [openEvidence, setOpenEvidence] = useState(canListSessions ? 0 : -1);
 
   // Footer rules: no sessions means no control at all, and a single session is
@@ -232,13 +239,13 @@ export function FindingsGoalInspect({
                         </button>
                       ) : null}
                       {canShowSessions &&
-                      projectId &&
+                      sessionScope &&
                       onOpenSession &&
                       (sessionsAreExpandable ? expanded : i === 0) ? (
                         <FindingsGoalSessions
                           key={goal.runId}
-                          projectId={projectId}
-                          runId={goal.runId}
+                          scope={sessionScope}
+                          goalId={goal.runId}
                           expectedCount={goal.sessions}
                           onOpenSession={onOpenSession}
                         />
@@ -255,7 +262,7 @@ export function FindingsGoalInspect({
                 >
                   {EMPTY_STAGE_COPY}
                 </p>
-                {canShowSessions && projectId && onOpenSession ? (
+                {canShowSessions && sessionScope && onOpenSession ? (
                   <>
                     {sessionsAreExpandable ? (
                       <button
@@ -280,8 +287,8 @@ export function FindingsGoalInspect({
                     {(sessionsAreExpandable ? openEvidence === 0 : true) ? (
                       <FindingsGoalSessions
                         key={goal.runId}
-                        projectId={projectId}
-                        runId={goal.runId}
+                        scope={sessionScope}
+                        goalId={goal.runId}
                         expectedCount={goal.sessions}
                         onOpenSession={onOpenSession}
                       />

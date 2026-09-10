@@ -196,7 +196,10 @@ const LOCAL_TARGET = {
 
 type HarnessOption = {
   requested: boolean;
-  resolveSendTarget: () => { target: typeof LOCAL_TARGET; token: string } | null;
+  resolveSendTarget: () => {
+    target: typeof LOCAL_TARGET;
+    token: string;
+  } | null;
 };
 
 function grantedController(token = "grant-token-value"): HarnessOption {
@@ -449,6 +452,28 @@ describe("useChatSession — routing an org-runtime model that asks for local", 
       hostedOrgModelConfig: ORG_CONFIG,
     });
     expect(chatApi()).toBe("/api/mcp/chat-v2");
+  });
+
+  it("routes Browser-only org models through the local tool loop without a shell or harness", async () => {
+    await renderWithHarness(
+      undefined,
+      { projectId: "proj-1" },
+      {
+        hostedOrgModelConfig: ORG_CONFIG,
+        builtInToolIds: ["browser"],
+        personalBrowserEngine: {
+          engine: "local",
+          consentToken: "browser-capability",
+        },
+      },
+    );
+    expect(chatApi()).toBe("/api/mcp/chat-v2");
+    const { body, headers } = sendRequest();
+    expect(body.localMcpRuntimeRequired).toBe(true);
+    expect(body.browserEngine).toBe("local");
+    expect(headers["X-MCPJam-Browser-Consent"]).toBe("browser-capability");
+    expect(body.harnessTarget).toBeUndefined();
+    expect(body.computerEngine).toBeUndefined();
   });
 
   it("tells the local route to resolve MCP servers locally too", async () => {

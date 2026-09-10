@@ -68,11 +68,17 @@ export type BrowserAgentTarget =
   /**
    * A `ref` from this tab's last a11y observation, e.g. `e7`.
    *
-   * NOT YET ACTIONABLE. The daemon has no ref→node resolution (that is the
-   * unlanded ref-targeting work), so an act aimed at a ref is refused with
-   * `unsupported_target` rather than dispatched. It is in the union because
-   * the observation already hands refs out and the shape is settled; use
-   * `selector` or `coordinates` to act until resolution lands.
+   * THE PREFERRED TARGET. It is the only one that does not ask the caller to
+   * invent something: the observation named the element and handed back this
+   * handle, where a coordinate is read off a picture and a selector is CSS
+   * written for a page seen only as a tree.
+   *
+   * Refs are fresh per observation and bound to the page that issued them. A
+   * ref from a page the tab has since left is refused (`stale_ref`) rather
+   * than resolved against the new one; a ref whose element was re-rendered is
+   * recovered by its exact role and name. Before a click, hover or drag, the
+   * daemon checks that nothing is on top of the element and refuses with
+   * `target_covered` — naming the covering element — rather than clicking it.
    */
   | { ref: string };
 
@@ -86,7 +92,18 @@ export type BrowserAgentActVerb =
   | "select"
   /** Tab lifecycle rides `act_in_browser`; the protocol already has the verbs. */
   | "close_tab"
-  | "activate_tab";
+  | "activate_tab"
+  /**
+   * Answer the dialog blocking this page. `accept_dialog` takes a `prompt`
+   * reply in `value`.
+   *
+   * The capability, as distinct from the daemon's defaults: a default exists
+   * so a tab can never wedge, but it is a guess at what the caller meant. A
+   * client with its own rules answers here, and opens its session with the
+   * daemon deciding nothing.
+   */
+  | "accept_dialog"
+  | "dismiss_dialog";
 
 export type BrowserAgentObserveMode =
   | "a11y"
@@ -94,6 +111,17 @@ export type BrowserAgentObserveMode =
   | "text"
   | "dom"
   | "console"
+  /**
+   * What the page asked the network for, and what came back.
+   *
+   * Metadata only — URLs with the query and fragment stripped, an allowlisted
+   * subset of response headers, statuses, sizes and timing. Bodies are never
+   * retained. Usually the only way to explain a page that rendered wrong and
+   * logged nothing.
+   */
+  | "network"
+  /** The dialog blocking this page, or `null`. Touches no page. */
+  | "dialog"
   | "url"
   /** WebMCP tools the page offers. Named for what it is to a caller. */
   | "page_tools";
@@ -108,8 +136,7 @@ export type BrowserAgentObserveMode =
  * the window in which the page moves between an act and the separate
  * observation that was supposed to describe it.
  *
- * The refs it carries are not yet act-able targets; see `BrowserAgentTarget`.
- * The tree's value here is reading the page and building a `selector`.
+ * The refs it carries ARE act-able targets; see `BrowserAgentTarget`.
  */
 export type BrowserAgentObserveAfter = "a11y" | "screenshot" | "none";
 
@@ -133,6 +160,15 @@ export type BrowserAgentCommand =
       observeAfter?: BrowserAgentObserveAfter;
     }
   | { op: "back"; observeAfter?: BrowserAgentObserveAfter }
+  /**
+   * Forward through this tab's history.
+   *
+   * Published alongside `back` rather than kept pane-only, because the two are
+   * one capability and an agent that can go back and not forward has to
+   * remember and re-navigate a URL it already had. A no-op when there is
+   * nothing ahead, exactly as `back` is at the start of history.
+   */
+  | { op: "forward"; observeAfter?: BrowserAgentObserveAfter }
   | { op: "reload"; observeAfter?: BrowserAgentObserveAfter }
   | {
       op: "act";
@@ -153,6 +189,8 @@ export type BrowserAgentCommand =
   | {
       op: "observe";
       mode: BrowserAgentObserveMode;
+      /** `network` only: read one exchange in full rather than the tail. */
+      requestId?: string;
       /** `a11y` only: scope the tree to this CSS selector's element. */
       rootSelector?: string;
       /** `a11y` only: scope the tree to a ref from this tab's last observation. */
@@ -196,6 +234,35 @@ export interface BrowserAgentPageContent {
   /** A structural digest of the DOM, not its markup. */
   dom?: string;
   console?: Array<{ type: string; text: string; at?: number }>;
+  /**
+   * What the page requested, and what came back. Metadata only — never bodies,
+   * and never a URL's query or fragment.
+   *
+   * Inside the fence because every row carries a URL the page chose, and a
+   * path is as good a place to address a model as a tool description is.
+   */
+  network?: Array<Record<string, unknown>>;
+  /**
+   * A JavaScript dialog the page raised, and what was decided about it.
+   *
+   * The explanation for a click that appears to have done nothing: the page
+   * asked, and — with nobody to ask on the agent's behalf — the answer was
+   * `cancelled`. Without this the agent surface loses the one fact that makes
+   * that result legible, even though the daemon recorded it.
+   *
+   * Inside the fence: `message` is the page's own words, written for a person
+   * to read, which makes it as good a place to address a model as a tool
+   * description is.
+   */
+  dialog?: {
+    kind: string;
+    message: string;
+    choice?: "accepted" | "dismissed";
+    /** The choice was made for the agent, not by a person. */
+    auto?: true;
+    /** Still open, and waiting for whoever holds the browser. */
+    pending?: true;
+  };
   /** WebMCP tools this page offers. */
   pageTools?: unknown;
   /** A WebMCP invocation's own result. */
@@ -269,7 +336,9 @@ export type BrowserAgentRefusalCode =
   | "session_revoked"
   | "session_closed"
   | "busy"
-  | "daemon_at_capacity";
+  | "daemon_at_capacity"
+  /** Provisioning or wake failed before a command could be sent. */
+  | "browser_unavailable";
 
 /** Why an outcome is unknowable. @see BrowserAgentResult */
 export type BrowserAgentUnknownReason =

@@ -17,6 +17,7 @@ export const CLIENT_SETTING_IDS = [
   "optional_servers",
   "built_in_tools",
   "computer",
+  "browser_profile",
   "harness",
   "connection.headers",
   "connection.request_timeout",
@@ -244,6 +245,7 @@ const CLIENT_SETTING_DETECTORS = {
   ),
   builtInToolIds: one("built_in_tools", (config) => config.builtInToolIds),
   computer: one("computer", (config) => config.computer),
+  browserProfileId: one("browser_profile", (config) => config.browserProfileId),
   harness: one("harness", (config) => config.harness),
   connectionDefaults: (saved, draft) => [
     ...(equal(

@@ -42,6 +42,7 @@ describe("toDaemonAction", () => {
       { op: "act", verb: "click" },
       { op: "navigate", url: "https://x.test" },
       { op: "back" },
+      { op: "forward" },
       { op: "reload" },
     ] as const) {
       const mapped = toDaemonAction(command);
@@ -67,23 +68,19 @@ describe("toDaemonAction", () => {
     );
   });
 
-  it("REFUSES a ref target, because the daemon cannot resolve one yet", () => {
-    // The tree hands out refs and the daemon has no ref→node resolution, so an
-    // act aimed at one would come back `unsupported_target` after a round trip.
-    // Saying so here names the alternative in one hop — and keeps the contract
-    // from promising something the code does not do.
+  it("maps a ref target through to the daemon rather than second-guessing it", () => {
+    // Refusing here would be this layer deciding a question it cannot see: a
+    // ref is scoped to the tab that issued it and checked against that
+    // observation's state token, and only the daemon holds either.
     const mapped = toDaemonAction({
       op: "act",
       verb: "click",
       target: { ref: "e7" },
     });
-    expect(mapped.ok).toBe(false);
-    expect(!mapped.ok && mapped.refusal.code).toBe("unsupported_target");
-    expect(!mapped.ok && mapped.refusal.message).toMatch(/selector|coordinates/);
-    // The action it WOULD have been still comes back, so the refusal is
-    // recorded as what was attempted rather than as a placeholder.
-    expect(!mapped.ok && mapped.action).toMatchObject({
+    expect(mapped.ok).toBe(true);
+    expect(mapped.ok && mapped.action).toMatchObject({
       kind: "act",
+      verb: "click",
       target: { a11yRef: "e7" },
     });
   });
@@ -161,6 +158,7 @@ describe("publishedOpFor — the reverse exhaustive check", () => {
     const cases: Array<[BrowserAction, string]> = [
       [{ kind: "navigate", url: "https://x.test" }, "navigate"],
       [{ kind: "back" }, "back"],
+      [{ kind: "forward" }, "forward"],
       [{ kind: "reload" }, "reload"],
       [{ kind: "act", verb: "click" }, "act"],
       [{ kind: "observe", mode: "url" }, "observe"],
@@ -174,6 +172,42 @@ describe("publishedOpFor — the reverse exhaustive check", () => {
     expect(() =>
       publishedOpFor({ kind: "teleport" } as unknown as BrowserAction),
     ).toThrow(/no published agent op/);
+  });
+});
+
+describe("toAgentPage — the dialog note reaches the agent surface", () => {
+  it("carries what was decided about a dialog, fenced", () => {
+    // Review catch: the daemon recorded it and this mapper dropped it, so the
+    // agent surface lost the one fact that explains a click which appears to
+    // have done nothing — the page asked, and it was cancelled.
+    const page = toAgentPage({
+      output: {
+        url: "https://x.test",
+        dialog: {
+          kind: "confirm",
+          message: "Delete this account?",
+          choice: "dismissed",
+          auto: true,
+        },
+      },
+      stateToken: TOKEN,
+    })!;
+    expect(page.pageContent.dialog).toMatchObject({
+      kind: "confirm",
+      message: "Delete this account?",
+      choice: "dismissed",
+    });
+    // Inside the fence, because the message is the page's own words.
+    expect(page.pageContent.untrusted).toBe(true);
+  });
+
+  it("ignores a `dialog` that is not the daemon's note", () => {
+    // The key could otherwise be claimed by a page-shaped payload.
+    const page = toAgentPage({
+      output: { url: "https://x.test", dialog: "not a note" },
+      stateToken: TOKEN,
+    })!;
+    expect(page.pageContent.dialog).toBeUndefined();
   });
 });
 

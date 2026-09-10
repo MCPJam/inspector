@@ -2,7 +2,9 @@
  * Browser side of the WebMCP frame socket. Speaks the protocol served by
  * `server/routes/web/webmcp-frames.ts`:
  *
- *   client → server  text {type:"ping"}
+ *   client → server  text {type:"ping"} or negotiated {type:"input",seq,events}
+ *   server → client  text {type:"capabilities",features:["input"]}
+ *   server → client  text {type:"input_ack",seq,dispatched,refused?}
  *   server → client  binary  24-byte header + JPEG (see the shared codec)
  *   server → client  text {type:"pong"}
  *
@@ -16,7 +18,10 @@
  * fake WebSocket.
  */
 import { decodeWebMcpBinaryFrame } from "@/shared/webmcp-inspector-protocol";
-import type { WebMcpBinaryFrame } from "@/shared/webmcp-inspector-protocol";
+import type {
+  WebMcpBinaryFrame,
+  WebMcpInputEvent,
+} from "@/shared/webmcp-inspector-protocol";
 import { getSessionToken } from "@/lib/session-token";
 
 /**
@@ -44,14 +49,28 @@ export const FRAME_WS_CLOSE = {
 export const FRAME_WS_PING_MS = 30_000;
 
 export interface FrameStreamConnection {
+  /** Undefined means not negotiated/not sent: use ordered HTTP instead. */
+  sendInput(
+    events: WebMcpInputEvent[],
+    tabId?: string,
+  ): Promise<void> | undefined;
+  /** Forget a queued picture when live view stops, without closing input. */
+  discardPendingFrame(): void;
   close(): void;
 }
 
 export interface OpenFrameStreamOptions {
   sessionId: string;
-  /** One decoded frame. Called once per binary message. */
+  /** One decoded frame; with coalescing, only the newest per display tick. */
   onFrame: (frame: WebMcpBinaryFrame) => void;
+  /** Node-local viewers can skip obsolete JPEGs before allocating blob URLs. */
+  coalesceFrames?: boolean;
+  requestFrame?: (callback: FrameRequestCallback) => number;
+  cancelFrame?: (handle: number) => void;
   onOpen?: () => void;
+  onInputSent?: (seq: number) => void;
+  onInputAck?: (seq: number) => void;
+  inputAckTimeoutMs?: number;
   onClose: (code: number, reason: string) => void;
   /** Origin override (defaults to the page origin); mainly for tests. */
   baseUrl?: string;
@@ -119,6 +138,48 @@ export function openWebMcpFrameStream(
       document.visibilityState === "visible");
 
   let ping: unknown;
+  let closed = false;
+  let pendingFrame: WebMcpBinaryFrame | undefined;
+  let presentation: number | undefined;
+  let newestSeq = -1;
+  const requestFrame =
+    opts.requestFrame ??
+    ((callback: FrameRequestCallback) => requestAnimationFrame(callback));
+  const cancelFrame =
+    opts.cancelFrame ?? ((handle: number) => cancelAnimationFrame(handle));
+  let inputEnabled = false;
+  let inputTimedOut = false;
+  let inputSeq = 0;
+  const awaitingInput = new Map<
+    number,
+    {
+      resolve: () => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  const abandonInput = () => {
+    inputEnabled = false;
+    for (const pending of awaitingInput.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(
+        new Error(
+          "Browser input was interrupted; it may already have executed. It was not replayed.",
+        ),
+      );
+    }
+    awaitingInput.clear();
+  };
+  const discardPendingFrame = () => {
+    if (presentation !== undefined) cancelFrame(presentation);
+    presentation = undefined;
+    pendingFrame = undefined;
+  };
+  const clearPresentation = () => {
+    closed = true;
+    abandonInput();
+    discardPendingFrame();
+  };
 
   ws.onopen = () => {
     ping = setTimer(() => {
@@ -141,17 +202,69 @@ export function openWebMcpFrameStream(
 
   ws.onmessage = (event: MessageEvent) => {
     const data = event.data;
-    // Text is control traffic only — `{type:"pong"}` today. Ignored rather
-    // than parsed: nothing here acts on it.
-    if (typeof data === "string") return;
+    if (closed) return;
+    if (typeof data === "string") {
+      if (data.length > 4096) return;
+      let control: {
+        type?: string;
+        features?: unknown;
+        seq?: unknown;
+        dispatched?: unknown;
+        refused?: unknown;
+      };
+      try {
+        control = JSON.parse(data);
+      } catch {
+        return;
+      }
+      if (!control || typeof control !== "object") return;
+      if (control.type === "capabilities" && Array.isArray(control.features)) {
+        inputEnabled = !inputTimedOut && control.features.includes("input");
+      } else if (
+        control.type === "input_ack" &&
+        typeof control.seq === "number" &&
+        Number.isSafeInteger(control.seq) &&
+        typeof control.dispatched === "number" &&
+        Number.isSafeInteger(control.dispatched) &&
+        control.dispatched >= 0 &&
+        (control.refused === undefined || typeof control.refused === "string")
+      ) {
+        const pending = awaitingInput.get(control.seq);
+        if (!pending) return;
+        awaitingInput.delete(control.seq);
+        clearTimeout(pending.timer);
+        opts.onInputAck?.(control.seq);
+        if (control.refused !== undefined)
+          pending.reject(
+            new Error(`Browser input was refused (${control.refused}).`),
+          );
+        else pending.resolve();
+      }
+      return;
+    }
     if (!(data instanceof ArrayBuffer)) return;
     const frame = decodeWebMcpBinaryFrame(data);
     // A message this client cannot read is dropped, never thrown: a throw in
     // here would take the whole socket down over one bad paint.
-    if (frame) opts.onFrame(frame);
+    if (!frame || closed) return;
+    if (!opts.coalesceFrames) {
+      opts.onFrame(frame);
+      return;
+    }
+    if (frame.seq <= newestSeq) return;
+    newestSeq = frame.seq;
+    pendingFrame = frame;
+    if (presentation !== undefined) return;
+    presentation = requestFrame(() => {
+      presentation = undefined;
+      const latest = pendingFrame;
+      pendingFrame = undefined;
+      if (!closed && latest) opts.onFrame(latest);
+    });
   };
 
   ws.onclose = (event: CloseEvent) => {
+    clearPresentation();
     if (ping !== undefined) {
       clearTimer(ping);
       ping = undefined;
@@ -162,6 +275,41 @@ export function openWebMcpFrameStream(
   ws.onerror = () => {};
 
   return {
+    discardPendingFrame,
+    sendInput(events, tabId) {
+      if (closed || !inputEnabled || ws.readyState !== WebSocket.OPEN)
+        return undefined;
+      if (awaitingInput.size >= 16)
+        return Promise.reject(
+          new Error(
+            "Browser input is busy. Wait for the current gesture to finish.",
+          ),
+        );
+      const seq = ++inputSeq;
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          // An absent ack is an unknown outcome, never permission to replay.
+          inputTimedOut = true;
+          abandonInput();
+          // Input falls back independently; keep binary pixels flowing.
+        }, opts.inputAckTimeoutMs ?? 5_000);
+        awaitingInput.set(seq, { resolve, reject, timer });
+        opts.onInputSent?.(seq);
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "input",
+              seq,
+              events,
+              ...(tabId ? { tabId } : {}),
+            }),
+          );
+        } catch {
+          abandonInput();
+          ws.close();
+        }
+      });
+    },
     /**
      * Close the socket. `onClose` STILL FIRES afterwards, as it would for any
      * WebSocket: silencing it here would hide a real drop that raced the
@@ -170,6 +318,7 @@ export function openWebMcpFrameStream(
      * place.
      */
     close() {
+      clearPresentation();
       if (ping !== undefined) {
         clearTimer(ping);
         ping = undefined;

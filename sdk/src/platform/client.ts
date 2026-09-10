@@ -530,6 +530,27 @@ export class PlatformApiClient {
       : undefined;
   }
 
+  /** Coding-agent browser entry point; command outcomes are returned in-band. */
+  browserSession(
+    operation:
+      | "session"
+      | "sessions"
+      | "command"
+      | "trace"
+      | "note"
+      | "artifact"
+      | "close",
+    body: Record<string, unknown>,
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `/browser-sessions/${operation}`,
+      { body },
+      options
+    );
+  }
+
   getMe(options?: RequestOptions): Promise<PlatformMe> {
     return this.request("GET", "/me", {}, options);
   }
@@ -616,8 +637,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-              ? "true"
-              : "false",
+                ? "true"
+                : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },

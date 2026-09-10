@@ -207,7 +207,9 @@ describe("adding a scorer", () => {
     openSettingsRow(container, "checks");
 
     await user.click(screen.getByRole("button", { name: "Add scorer" }));
-    await user.click(await screen.findByTestId("add-scorer-noToolErrors"));
+    await user.click(
+      await screen.findByTestId("add-step-item-check:noToolErrors"),
+    );
 
     // Still standing, and the edit registered as one drafted change.
     expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();

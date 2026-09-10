@@ -1,11 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 
 // Catalog with one GA tool (Web Search) plus a computer-backed tool (Bash),
 // so we can exercise both the plain row and the requiresComputer gating.
 vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
   useBuiltInToolCatalog: () => [
+    {
+      id: "browser",
+      displayLabel: "Browser",
+      description: "Browse",
+      category: "code",
+      billable: false,
+      requiresComputer: false,
+    },
     {
       id: "web_search",
       displayLabel: "Web Search",
@@ -22,6 +30,20 @@ vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
       requiresComputer: true,
     },
   ],
+}));
+vi.mock("../BrowserProfilePicker", () => ({
+  BrowserProfilePicker: ({ projectId, value, onChange, disabled }: any) => (
+    <select
+      aria-label="Browser profile"
+      data-project={projectId}
+      value={value ?? ""}
+      onChange={(event) => onChange(event.target.value || undefined)}
+      disabled={disabled}
+    >
+      <option value="">Default</option>
+      <option value="profile-1">Saved</option>
+    </select>
+  ),
 }));
 // Flag on so computer-backed rows (Bash) are visible in the Tools tab.
 vi.mock("posthog-js/react", () => ({
@@ -57,6 +79,38 @@ import { ToolsTab } from "../ToolsTab";
 import { ComputerTab } from "../ComputerTab";
 
 describe("ToolsTab", () => {
+  it("enables Browser without a computer and edits its profile from Tools", () => {
+    const onDraftChange = vi.fn();
+    const draft = emptyHostConfigInputV2({ builtInToolIds: ["browser"] });
+    render(
+      <ToolsTab
+        projectId="project-1"
+        draft={draft}
+        onDraftChange={onDraftChange}
+      />,
+    );
+    expect(screen.getByRole("switch", { name: "Browser" })).toBeEnabled();
+    const picker = screen.getByRole("combobox", { name: "Browser profile" });
+    expect(picker).toHaveAttribute("data-project", "project-1");
+    fireEvent.change(picker, { target: { value: "profile-1" } });
+    const updated = onDraftChange.mock.calls[0][0](draft);
+    expect(updated.browserProfileId).toBe("profile-1");
+    expect(updated.computer).toBeUndefined();
+  });
+
+  it("disables the profile picker for read-only hosts", () => {
+    render(
+      <ToolsTab
+        projectId="project-1"
+        draft={emptyHostConfigInputV2({ builtInToolIds: ["browser"] })}
+        onDraftChange={vi.fn()}
+        readOnly
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Browser profile" }),
+    ).toBeDisabled();
+  });
   it("renders system tools as minimal switch rows", () => {
     render(
       <ToolsTab draft={emptyHostConfigInputV2()} onDraftChange={vi.fn()} />,

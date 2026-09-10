@@ -209,6 +209,7 @@ export interface AppToolSnapshotEntry {
  * invokes by, and `sessionId` says which open browser it belongs to.
  */
 export interface PageToolSnapshotEntry {
+  binding?: import("./webmcp-inspector-protocol").WebMcpRegistrationBinding;
   alias: string;
   sessionId: string;
   toolKey: string;

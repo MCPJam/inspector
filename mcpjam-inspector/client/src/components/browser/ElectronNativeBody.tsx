@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { PaneMessage } from "@/components/computer/PaneMessage";
 import {
   PaneControlBar,
@@ -46,13 +52,18 @@ export function ElectronNativeBody({
   control,
   holding,
   consentGranted,
+  consentToken,
   onTakeControl,
   onHandBack,
   placeholder,
   error,
   active = true,
   engine = "local",
+  extra,
+  chrome = "bar",
+  onViewportSize,
 }: {
+  chrome?: "bar" | "none";
   /** The browser this pane is looking at, or null while none is running. */
   session: { bootId: string } | null;
   /** This pane's lease identity, compared against the daemon's holder. */
@@ -61,6 +72,7 @@ export function ElectronNativeBody({
   /** Does this pane hold the browser? Only used for what the bar says. */
   holding: boolean;
   consentGranted: boolean;
+  consentToken?: string | null;
   onTakeControl?: (() => void) | undefined;
   onHandBack?: (() => void) | undefined;
   /** The engine's empty and blocked states — no browser yet, no consent. */
@@ -75,13 +87,16 @@ export function ElectronNativeBody({
    */
   active?: boolean;
   engine?: string;
+  extra?: ReactNode;
+  /** Negotiate the page size through the session's resize barrier. */
+  onViewportSize?: (size: { width: number; height: number }) => void;
 }) {
   const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
   const slotRef = useRef<HTMLDivElement | null>(null);
   /** What the main process last said actually happened. */
   const [placed, setPlaced] = useState<{
     shown: boolean;
-    reason?: "unknown" | "no_window" | "bad_bounds" | "lease";
+    reason?: "unknown" | "no_window" | "bad_bounds" | "lease" | "consent";
   }>({ shown: false });
 
   /**
@@ -115,10 +130,16 @@ export function ElectronNativeBody({
    * next, and nothing short of an unmount removes it.
    */
   const shownRef = useRef<string | null>(null);
+  const takeoverRef = useRef(chrome === "none");
+  takeoverRef.current = chrome === "none";
   const holderRef = useRef(holder);
   holderRef.current = holder;
+  const consentTokenRef = useRef(consentToken);
+  consentTokenRef.current = consentToken;
   const wantVisibleRef = useRef(wantVisible);
   wantVisibleRef.current = wantVisible;
+  const onViewportSizeRef = useRef(onViewportSize);
+  onViewportSizeRef.current = onViewportSize;
 
   const push = useCallback(() => {
     const api = window.electronAPI?.agentBrowser;
@@ -131,7 +152,11 @@ export function ElectronNativeBody({
       shownRef.current = null;
       setPlaced({ shown: false });
       void api
-        .setViewport({ bootId: previous, visible: false })
+        .setViewport({
+          consentToken: consentTokenRef.current,
+          bootId: previous,
+          visible: false,
+        })
         .catch(() => {});
     }
     if (!bootId) return;
@@ -143,10 +168,15 @@ export function ElectronNativeBody({
     // does — and it is applied in the MAIN process, which is the side that
     // actually knows it.
     const rect = element?.getBoundingClientRect();
+    if (visible && rect && rect.width > 0 && rect.height > 0) {
+      onViewportSizeRef.current?.({ width: rect.width, height: rect.height });
+    }
     void api
       .setViewport({
+        consentToken: consentTokenRef.current,
         bootId,
         holder: holderRef.current,
+        takeover: takeoverRef.current,
         visible,
         ...(visible && rect
           ? {
@@ -217,7 +247,7 @@ export function ElectronNativeBody({
   // moved, a pane that stopped being the visible tab, a grant withdrawn.
   useEffect(() => {
     schedule();
-  }, [schedule, session?.bootId, holder, control, wantVisible]);
+  }, [schedule, session?.bootId, holder, control, wantVisible, chrome]);
 
   /**
    * Take the view OUT of the window on the way past.
@@ -239,7 +269,13 @@ export function ElectronNativeBody({
       const last = shownRef.current ?? bootIdRef.current;
       shownRef.current = null;
       if (!api || !last) return;
-      void api.setViewport({ bootId: last, visible: false }).catch(() => {});
+      void api
+        .setViewport({
+          consentToken: consentTokenRef.current,
+          bootId: last,
+          visible: false,
+        })
+        .catch(() => {});
     };
   }, []);
 
@@ -287,17 +323,26 @@ export function ElectronNativeBody({
 
   return (
     <>
-      <PaneControlBar
-        control={control}
-        onTakeControl={onTakeControl}
-        onHandBack={onHandBack}
-        statsOpen={statsOpen}
-        onToggleStats={(next) => {
-          paneFrameStats.setEnabled(next);
-          setStatsOpen(next);
-        }}
-      />
-      <div className="relative flex min-h-0 flex-1 flex-col px-3 pb-3">
+      {chrome === "bar" ? (
+        <PaneControlBar
+          control={control}
+          onTakeControl={onTakeControl}
+          onHandBack={onHandBack}
+          extra={extra}
+          statsOpen={statsOpen}
+          onToggleStats={(next) => {
+            paneFrameStats.setEnabled(next);
+            setStatsOpen(next);
+          }}
+        />
+      ) : null}
+      <div
+        className={
+          chrome === "none"
+            ? "relative flex min-h-0 flex-1 flex-col"
+            : "relative flex min-h-0 flex-1 flex-col px-3 pb-3"
+        }
+      >
         {/*
           IN FLOW, not over the picture. There is no picture: the view paints
           over the slot's rectangle, so an overlay inside it would be on screen

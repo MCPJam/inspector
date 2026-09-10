@@ -1,3 +1,9 @@
+import { parsePaneCommand } from "../../services/browserd/daemon/pane-command";
+import {
+  MIN_SESSION_VIEWPORT,
+  MAX_SESSION_VIEWPORT,
+} from "@/shared/browser-viewport";
+import { inputEventSchema } from "@/shared/webmcp-input";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { ComputerHostedBrowserSessionHandle } from "../../services/browserd/browser-session.js";
@@ -32,10 +38,7 @@ import {
   WebMcpQueueFullError,
 } from "../../services/webmcp-inspector/session-runtime";
 import { createBrowserdWebMcpProvider } from "../../services/webmcp-inspector/browserd-provider";
-import {
-  createElectronWebviewProvider,
-  WebMcpWebviewAttachError,
-} from "../../services/webmcp-inspector/electron-webview-provider";
+
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
 import {
   classifyHostedReserveError,
@@ -60,7 +63,6 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 import { logger } from "../../utils/logger.js";
 import {
   WEBMCP_INPUT_BATCH_LIMIT,
-  WEBMCP_INPUT_TEXT_MAX_CHARS,
   type WebMcpInvocationOutcome,
 } from "@/shared/webmcp-inspector-protocol";
 
@@ -86,7 +88,7 @@ import {
  * code the UI can explain beats a 404 on a route the client can plainly see.
  * `WEBMCP_INSPECTOR_ENABLED` is the kill switch in both modes;
  * `webmcpInspectorHostedEnabled()` is the separate hosted-reachability gate;
- * the client-side gate is the `webmcp-inspector-enabled` flag.
+ * client visibility follows the deployment's local/hosted Browser rollout.
  *
  * The browser opens as a real window on the machine running the inspector: the
  * developer drives their own page directly, and this API is the instrument
@@ -175,83 +177,37 @@ const startSchema = z.object({
   devicePixelRatio: z.number().min(1).max(2).optional(),
 });
 
-/**
- * One input event, bounded at the HTTP boundary.
- *
- * `finite()` rather than a bare `number()` on every coordinate: JSON carries no
- * NaN, but a client computing a scale factor from a zero-height pane produces
- * one, and `JSON.stringify` turns it into `null` — which a permissive schema
- * would coerce rather than refuse. Negative coordinates are refused for the
- * same reason they are clamped downstream: they are never a thing a person did
- * to the pane.
- */
-const coordinate = z.number().finite().nonnegative();
-const modifiersSchema = z
-  .object({
-    alt: z.boolean().optional(),
-    ctrl: z.boolean().optional(),
-    meta: z.boolean().optional(),
-    shift: z.boolean().optional(),
-  })
-  .optional();
-const mouseButtonSchema = z.enum(["left", "middle", "right"]);
-/** Bounded so one event cannot ask the browser to hold a key name of any size. */
-const keyNameSchema = z.string().min(1).max(64);
-
-const inputEventSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("mouse_move"),
-    x: coordinate,
-    y: coordinate,
-    modifiers: modifiersSchema,
-  }),
-  z.object({
-    kind: z.literal("mouse_down"),
-    x: coordinate,
-    y: coordinate,
-    button: mouseButtonSchema,
-    clickCount: z.number().int().min(1).max(3).optional(),
-    modifiers: modifiersSchema,
-  }),
-  z.object({
-    kind: z.literal("mouse_up"),
-    x: coordinate,
-    y: coordinate,
-    button: mouseButtonSchema,
-    clickCount: z.number().int().min(1).max(3).optional(),
-    modifiers: modifiersSchema,
-  }),
-  z.object({
-    kind: z.literal("wheel"),
-    x: coordinate,
-    y: coordinate,
-    // Deltas are signed — scrolling up is a negative number, not an error.
-    deltaX: z.number().finite(),
-    deltaY: z.number().finite(),
-    modifiers: modifiersSchema,
-  }),
-  z.object({
-    kind: z.literal("key_down"),
-    key: keyNameSchema,
-    modifiers: modifiersSchema,
-  }),
-  z.object({
-    kind: z.literal("key_up"),
-    key: keyNameSchema,
-    modifiers: modifiersSchema,
-  }),
-  z.object({
-    kind: z.literal("text"),
-    text: z.string().max(WEBMCP_INPUT_TEXT_MAX_CHARS),
-  }),
-]);
-
 const commandSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("browser_state") }),
+  z.object({
+    type: z.literal("browser_command"),
+    command: z.unknown().transform((value, ctx) => {
+      const command = parsePaneCommand(value);
+      if (!command) {
+        ctx.addIssue({ code: "custom", message: "Invalid browser command" });
+        return z.NEVER;
+      }
+      return command;
+    }),
+  }),
   z.object({ type: z.literal("navigate"), url: httpUrlSchema }),
   z.object({ type: z.literal("reload") }),
   z.object({ type: z.literal("go_back") }),
   z.object({
     type: z.literal("invoke_tool"),
+    expectedBinding: z
+      .object({
+        frameId: z.string().min(1).max(256),
+        registrationSeq: z.number().int().nonnegative().safe(),
+        browser: z
+          .object({
+            bootId: z.string().min(1).max(256),
+            tabId: z.string().min(1).max(256),
+            navCounter: z.number().int().nonnegative().safe(),
+          })
+          .optional(),
+      })
+      .optional(),
     toolKey: z.string().min(1),
     input: z.record(z.string(), z.unknown()).default({}),
     source: z.enum(["manual", "chat"]).default("manual"),
@@ -273,7 +229,21 @@ const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("capture_screenshot") }),
   z.object({ type: z.literal("set_screencast"), enabled: z.boolean() }),
   z.object({
+    type: z.literal("set_viewport"),
+    width: z
+      .number()
+      .int()
+      .min(MIN_SESSION_VIEWPORT.width)
+      .max(MAX_SESSION_VIEWPORT.width),
+    height: z
+      .number()
+      .int()
+      .min(MIN_SESSION_VIEWPORT.height)
+      .max(MAX_SESSION_VIEWPORT.height),
+  }),
+  z.object({
     type: z.literal("input"),
+    tabId: z.string().min(1).max(200).optional(),
     events: z.array(inputEventSchema).min(1).max(WEBMCP_INPUT_BATCH_LIMIT),
   }),
 ]);
@@ -347,12 +317,6 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
       { error: hostedRefusal.error, code: hostedRefusal.code },
       httpStatus(hostedRefusal),
     );
-  }
-  if (error instanceof WebMcpWebviewAttachError) {
-    // 400, not 500: the id the client sent no longer names a surface we can
-    // attach to (its pane unmounted, or devtools took the debugger slot). The
-    // request was malformed by the time it arrived, and the fix is the client's.
-    return c.json({ error: error.message, code: "webview-attach-failed" }, 400);
   }
   reportRouteFailure("[webmcp] unhandled route error", error, {
     source: "mcp.webmcp-inspector",
@@ -591,35 +555,15 @@ webmcpInspector.post("/sessions", async (c) => {
   let handle: ComputerHostedBrowserSessionHandle | undefined;
   let ownerId: string | undefined;
   if (webContentsId !== undefined) {
-    // Both refusals are 400s that name what the caller got wrong, because both
-    // describe a request that could never be honoured rather than a server that
-    // failed to honour it.
-    if (process.env.ELECTRON_APP !== "true") {
-      return c.json(
-        {
-          error:
-            "The embedded browser surface only exists inside the MCPJam desktop app.",
-          code: "electron-only",
-        },
-        400,
-      );
-    }
-    if (display !== "in-app") {
-      // A surface the client mounted IS the in-app view. Honouring a window
-      // request with it would report a transport whose pane the client is not
-      // rendering, and the person would watch an empty box beside a browser
-      // that never opened.
-      return c.json(
-        {
-          error:
-            'An embedded browser surface is the in-app view; ask for `display: "in-app"` or omit the surface.',
-          code: "webview-display-mismatch",
-        },
-        400,
-      );
-    }
-    provider = createElectronWebviewProvider({ webContentsId });
-  } else if (transport === "hosted") {
+    return c.json(
+      {
+        error: "Restart the desktop app to use managed browser tabs.",
+        code: "obsolete_surface",
+      },
+      400,
+    );
+  }
+  if (transport === "hosted") {
     // Every refusal below is a 4xx with a code the UI can explain, never a
     // 500: each one is a thing the person can actually fix (turn the feature
     // on, pick a project, sign in).
@@ -775,12 +719,37 @@ webmcpInspector.get("/sessions/:id", async (c) => {
   try {
     const runtime = await resolveRuntime(c, c.req.param("id"));
     webMcpSessions.touch(runtime);
+    if (c.req.query("refreshTools") === "1") await runtime.refreshTools();
     return c.json({
       session: runtime.toPublic(),
       tools: runtime.currentTools(),
     });
   } catch (error) {
     return webMcpErrorResponse(c, error, "Could not read that session.");
+  }
+});
+
+// A missing result is not permission to execute again. This endpoint only
+// reads retained outcomes, including when an SSE settlement was lost.
+webmcpInspector.get("/sessions/:id/invocations/:invokeId", async (c) => {
+  try {
+    const runtime = await resolveRuntime(c, c.req.param("id"));
+    const invokeId = c.req.param("invokeId");
+    const retained = runtime.invocationResult(invokeId);
+    webMcpSessions.touch(runtime);
+    if (!retained)
+      return c.json({
+        invokeId,
+        outcome: {
+          state: "unknown",
+          errorMessage:
+            "This replica no longer has the invocation's outcome. Verify the page state before retrying.",
+        },
+      });
+    if ("pending" in retained) return c.json({ invokeId, pending: true }, 202);
+    return c.json({ invokeId, outcome: await outcomeOf(retained.settled, c) });
+  } catch (error) {
+    return webMcpErrorResponse(c, error, "Could not read that invocation.");
   }
 });
 
@@ -1048,6 +1017,9 @@ async function outcomeOf(
     }
     return {
       state: "failed",
+      ...(error instanceof WebMcpToolGoneError
+        ? { errorCode: "tool-gone" as const }
+        : {}),
       errorMessage: error instanceof Error ? error.message : "The tool failed.",
     };
   }
@@ -1068,6 +1040,11 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
     webMcpSessions.touch(runtime);
 
     switch (command.type) {
+      case "browser_state":
+        return c.json({ state: await runtime.browserState() });
+      case "browser_command":
+        await runtime.browserCommand(command.command);
+        return c.json({ ok: true });
       case "navigate":
       case "reload":
       case "go_back": {
@@ -1091,6 +1068,7 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           command.input as Record<string, unknown>,
           command.source,
           command.invokeId,
+          command.expectedBinding,
         );
         // The caller follows the outcome on the activity stream; swallow the
         // rejection here so a failed tool is not an unhandled rejection.
@@ -1127,6 +1105,9 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           ...(screenshotBase64 === undefined ? {} : { capturedAt: Date.now() }),
         });
       }
+      case "set_viewport":
+        await runtime.resizeViewport(command.width, command.height);
+        return c.json({ ok: true });
       case "set_screencast":
         // `streaming` is the load-bearing half of this answer. A browser that
         // refuses `Page.startScreencast`, or a provider with no screencast at
@@ -1137,7 +1118,12 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           streaming: await runtime.setScreencast(command.enabled),
         });
       case "input":
-        await runtime.dispatchInput(command.events);
+        await runtime.dispatchInput(
+          command.events,
+          undefined,
+          "http",
+          command.tabId,
+        );
         return c.json({ ok: true });
     }
   } catch (error) {

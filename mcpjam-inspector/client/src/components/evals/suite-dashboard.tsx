@@ -240,6 +240,7 @@ export function SuiteDashboard({
       {hasRuns ? (
         <div className="shrink-0">
           <SuiteMetricStrip
+            showCost={false}
             runs={metricRuns}
             allIterations={metricIterations}
             aggregate={metricAggregate}

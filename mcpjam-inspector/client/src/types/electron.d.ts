@@ -32,7 +32,9 @@ export interface ElectronAPI {
    */
   agentBrowser?: {
     /** Can this build show a native view at all? Asked before any browser. */
-    capability: () => Promise<{ available: boolean }>;
+    capability: (
+      consentToken?: string | null,
+    ) => Promise<{ available: boolean }>;
     /**
      * Ask for the view to be at these bounds, or taken off screen.
      *
@@ -42,13 +44,15 @@ export interface ElectronAPI {
      */
     setViewport: (request: {
       bootId: string;
+      consentToken?: string | null;
       holder?: string;
+      takeover?: boolean;
       visible: boolean;
       bounds?: { x: number; y: number; width: number; height: number };
     }) => Promise<{
       shown: boolean;
       inputAllowed: boolean;
-      reason?: "unknown" | "no_window" | "bad_bounds" | "lease";
+      reason?: "unknown" | "no_window" | "bad_bounds" | "lease" | "consent";
     }>;
   };
 
