@@ -1,57 +1,121 @@
-import { useEffect } from "react";
+import {
+  openEvalChat,
+  useEvalAgentScopes,
+} from "@/lib/mcpjam-agent/eval-scope";
 import { createPortal } from "react-dom";
-import { AgentSidePanel } from "./AgentSidePanel";
-import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
 import { useEvalChatHost } from "@/lib/mcpjam-agent/eval-chat-host";
-import { openEvalChat } from "@/lib/mcpjam-agent/eval-scope";
+import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
+/** Keep scoped eval chat in its dashboard and general chat available app-wide. */
+import { useEffect } from "react";
+import { AgentSidePanel } from "@/components/mcpjam-agent/AgentSidePanel";
+import { useAppReady } from "@/hooks/use-app-ready";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
+import { track } from "@/lib/analytics";
 
-export function AgentSidePanelMount({
-  activeTab,
-}: {
+interface AgentSidePanelMountProps {
   projectId: string | null;
   organizationId: string | null;
   activeTab: string;
-}) {
-  const scope = useDescribeSurface((s) => s.scope);
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (target.isContentEditable) return true;
+  return false;
+}
+
+export function AgentSidePanelMount({
+  projectId,
+  organizationId,
+  activeTab,
+}: AgentSidePanelMountProps) {
+  const sessionId = useAgentPanelStore((s) => s.activeSessionId);
+  const scoped = useEvalAgentScopes(
+    (s) =>
+      !!sessionId && (!!s.scopes[sessionId] || sessionId.startsWith("eval-")),
+  );
+  const isOpen = useAgentPanelStore((s) => s.isOpen);
+  const toggle = useAgentPanelStore((s) => s.toggle);
   const host = useEvalChatHost((s) => s.host);
+  const inEvaluate = activeTab === "evaluate";
+  const describeScope = useDescribeSurface((s) => s.scope);
+  const describeReady = !!describeScope && !!host && host.projectId === describeScope.projectId;
+  const resolvedProjectId = inEvaluate && host ? host.projectId : projectId;
+
   useEffect(() => {
-    if (!scope || activeTab !== "evaluate") return;
+    if (!inEvaluate && scoped && isOpen)
+      useAgentPanelStore.getState().setOpen(false);
+  }, [inEvaluate, scoped, isOpen]);
+
+  useEffect(() => {
+    if (inEvaluate && !describeReady) return;
     const handler = (event: KeyboardEvent) => {
-      if (
-        event.key !== "\\" ||
-        !(event.metaKey || event.ctrlKey) ||
-        event.shiftKey ||
-        event.altKey
-      )
-        return;
-      if (
-        event.target instanceof HTMLElement &&
-        (event.target.isContentEditable ||
-          /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName))
-      )
-        return;
+      if (event.key !== "\\") return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.shiftKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
+      const willOpen = !useAgentPanelStore.getState().isOpen;
+      const context =
+        willOpen && inEvaluate ? describeScope : undefined;
+
       event.preventDefault();
-      const panel = useAgentPanelStore.getState();
-      if (panel.isOpen) panel.setOpen(false);
-      else openEvalChat(scope);
+      if (willOpen) {
+        track("mcpjam_agent_panel_opened", {
+          location: "agent_side_panel",
+          via: "shortcut",
+          tab: activeTab,
+        });
+      }
+      if (context) openEvalChat(context);
+      else {
+        if (willOpen && scoped)
+          useAgentPanelStore.getState().setActiveSession(null, null);
+        toggle();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [scope, activeTab]);
-  if (
-    activeTab !== "evaluate" ||
-    !scope ||
-    !host ||
-    host.projectId !== scope.projectId
-  )
-    return null;
-  return createPortal(
-    <AgentSidePanel
-      projectId={scope.projectId}
-      organizationId={host.organizationId}
-      activeTab={activeTab}
-    />,
-    host.element,
+  }, [activeTab, inEvaluate, describeReady, describeScope, scoped, toggle]);
+
+  // Drop the persisted session pointer whenever the panel state and the
+  // current active project disagree about which project the session belongs
+  // to. The render path (`AgentSidePanel`) already gates the thread on a
+  // project match, so a stale pointer is inert; this effect just GCs it so
+  // it doesn't linger in localStorage. Wait for `useAppReady` so the normal
+  // bootstrap step where `activeProjectId` flips from a synthetic
+  // local-fallback id to the real Convex-scoped id isn't treated as a
+  // project switch.
+  const appReady = useAppReady();
+  const activeSessionId = useAgentPanelStore((s) => s.activeSessionId);
+  const activeSessionProjectId = useAgentPanelStore(
+    (s) => s.activeSessionProjectId,
   );
+  useEffect(() => {
+    if (appReady.status !== "ready") return;
+    if (inEvaluate && !host) return;
+    if (activeSessionId === null) return;
+    if (activeSessionProjectId === resolvedProjectId) return;
+    useAgentPanelStore.getState().setActiveSession(null, null);
+  }, [
+    activeSessionId,
+    activeSessionProjectId,
+    appReady.status,
+    resolvedProjectId,
+    inEvaluate,
+    host,
+  ]);
+
+  if (inEvaluate && (!describeReady || !scoped)) return null;
+  if (!inEvaluate && scoped) return null;
+  if (inEvaluate && scoped && !host) return null;
+  const panel = (
+    <AgentSidePanel
+      projectId={resolvedProjectId}
+      organizationId={inEvaluate && host ? host.organizationId : organizationId}
+      activeTab={activeTab}
+    />
+  );
+  return inEvaluate && host ? createPortal(panel, host.element) : panel;
 }

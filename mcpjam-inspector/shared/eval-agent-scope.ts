@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const DESCRIBE_ONLY_AGENT = true;
+export const EVAL_DESCRIBE_ONLY_AGENT = true;
 
 /** Product capability boundary; independent of the optional approval setting. */
 export const evalAgentScopeSchema = z
