@@ -104,7 +104,9 @@ const {
     setSelectedServer: vi.fn(),
     toggleServerSelection: vi.fn(),
     setSelectedMultipleServersToAllServers: vi.fn(),
-    projects: {},
+    projects: {
+      ws_local: { id: "ws_local", sharedProjectId: "project-1" },
+    },
     activeProjectId: "ws_local",
     handleSwitchProject: vi.fn(),
     handleCreateProject: vi.fn(),
@@ -138,7 +140,10 @@ const {
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
-        "ready" | "auth-loading" | "project-loading" | "logged-out",
+        | "ready"
+        | "auth-loading"
+        | "project-loading"
+        | "logged-out",
     },
     mockMCPSidebar: vi.fn(() => <div />),
     mockOAuthFlowTabState: {
@@ -216,6 +221,7 @@ function mockSeenGuestUser() {
 
 function mockUnseenOnboardingState() {
   localStorage.removeItem("mcp-onboarding-state");
+  localStorage.removeItem("mcp-first-run-server-choice-state");
 }
 
 vi.mock("convex/react", () => ({
@@ -502,6 +508,14 @@ describe("App hosted OAuth callback handling", () => {
     localStorage.setItem(
       "mcp-onboarding-state",
       JSON.stringify({ status: "completed", completedAt: Date.now() }),
+    );
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "completed",
+        shownAt: Date.now(),
+        completedAt: Date.now(),
+      }),
     );
     sessionStorage.clear();
     vi.stubGlobal("__APP_VERSION__", "test");
@@ -3319,11 +3333,11 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("opens Servers when a first-run guest chooses their own server", async () => {
+  it("shows first-run onboarding from a project-scoped Home route", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
-    window.history.replaceState({}, "", "/servers");
+    window.history.replaceState({}, "", "/p/k5700000000000000000000000a/home");
     mockHandleOAuthCallback.mockReset();
     mockConvexAuthState.isAuthenticated = true;
     mockWorkOsAuthState.user = null;
@@ -3333,30 +3347,71 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
         screen.getByRole("heading", { name: "Welcome to MCPJam" }),
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
-      target: { value: "https://mcp.example.com/mcp" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(window.location.pathname).toBe(
+      "/p/k5700000000000000000000000a/home",
+    );
+  });
+
+  it("shows first-run onboarding over a project-scoped Servers route", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState(
+      {},
+      "",
+      "/p/k5700000000000000000000000a/servers",
+    );
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
 
     await waitFor(() => {
       expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/servers");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(
-      JSON.parse(localStorage.getItem("mcp-onboarding-state") ?? "{}"),
-    ).toEqual(expect.objectContaining({ status: "started" }));
+    expect(window.location.pathname).toBe(
+      "/p/k5700000000000000000000000a/servers",
+    );
   });
 
-  it("connects the Excalidraw demo and opens Playground from first-run onboarding", async () => {
+  it("routes a fresh Playground visitor through the explicit server-choice flow", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/playground");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/home");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("keeps a first-run guest in onboarding while their server connects", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3369,7 +3424,73 @@ describe("App hosted OAuth callback handling", () => {
     const appState = createAppStateMock();
     mockUseAppState.mockReturnValue(appState);
 
-    render(<App />);
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://mcp.example.com/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Connecting to Example" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/home");
+    expect(appState.handleConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Example",
+        type: "http",
+        url: "https://mcp.example.com/mcp",
+        authMethod: "auto",
+      }),
+    );
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(expect.objectContaining({ status: "started" }));
+
+    appState.appState.servers = {
+      Example: {
+        name: "Example",
+        config: { transportType: "http", url: "https://mcp.example.com/mcp" },
+        connectionStatus: "failed",
+        lastError: "Connection refused",
+      },
+    };
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Set up your server" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
+    });
+  });
+
+  it("keeps the Excalidraw demo in onboarding while it connects", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
 
     await waitFor(() => {
       expect(
@@ -3383,10 +3504,14 @@ describe("App hosted OAuth callback handling", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", {
+          name: "Connecting to Excalidraw (App)",
+        }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(appState.handleConnect).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Excalidraw (App)",
@@ -3394,6 +3519,80 @@ describe("App hosted OAuth callback handling", () => {
         url: "https://mcp.excalidraw.com/mcp",
       }),
     );
+
+    appState.appState.servers = {
+      "Excalidraw (App)": {
+        name: "Excalidraw (App)",
+        config: {
+          transportType: "http",
+          url: "https://mcp.excalidraw.com/mcp",
+        },
+        connectionStatus: "connected",
+      },
+    };
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+    });
+    expect(window.location.pathname).toBe("/playground");
+  });
+
+  it("waits for project provisioning before starting the first-run handshake", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    appState.projects.ws_local = { id: "ws_local" };
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: "Preparing your MCPJam workspace",
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(appState.handleConnect).not.toHaveBeenCalled();
+
+    appState.projects.ws_local = {
+      id: "ws_local",
+      sharedProjectId: "project-1",
+    };
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(appState.handleConnect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Excalidraw (App)",
+          url: "https://mcp.excalidraw.com/mcp",
+        }),
+      );
+      expect(
+        screen.getByRole("heading", {
+          name: "Connecting to Excalidraw (App)",
+        }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("dismisses first-run onboarding when a guest skips it", async () => {
@@ -3424,11 +3623,13 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(window.location.pathname).toBe("/");
     expect(
-      JSON.parse(localStorage.getItem("mcp-onboarding-state") ?? "{}"),
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
     ).toEqual({ status: "dismissed" });
   });
 
-  it("does not auto-route a guest row already marked as having seen onboarding", async () => {
+  it("does not let the legacy remote seen flag hide server choice", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3442,10 +3643,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/servers");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
@@ -3681,6 +3885,7 @@ describe("App hosted OAuth callback handling", () => {
       "mcp-onboarding-state",
       JSON.stringify({ status: "seen", shownAt: Date.now() }),
     );
+    localStorage.removeItem("mcp-first-run-server-choice-state");
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
     mockHostedShellGateState.value = "ready";
@@ -3821,18 +4026,18 @@ describe("App hosted OAuth callback handling", () => {
       ref === "users:getCurrentUser"
         ? existingConvexUser
         : ref === "hosts:listHosts"
-          ? [
-              {
-                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
-                name: "Slack",
-                hostConfigId: "host-config-slack",
-                modelId: "claude-sonnet-4",
-                serverCount: 0,
-                createdAt: 0,
-                updatedAt: 0,
-              },
-            ]
-          : undefined,
+        ? [
+            {
+              hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+              name: "Slack",
+              hostConfigId: "host-config-slack",
+              modelId: "claude-sonnet-4",
+              serverCount: 0,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          ]
+        : undefined,
     );
     localStorage.setItem(
       "mcp-previewed-host-id",

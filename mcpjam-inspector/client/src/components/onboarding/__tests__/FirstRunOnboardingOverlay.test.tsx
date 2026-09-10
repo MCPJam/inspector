@@ -18,19 +18,44 @@ import {
   FirstRunOnboardingOverlay,
 } from "../FirstRunOnboardingOverlay";
 
-function renderOverlay() {
+function renderOverlay(connectionState = { status: "idle" } as const) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
+  const onWelcomeAcknowledged = vi.fn();
   const onSkip = vi.fn();
-  render(
+  const view = render(
     <FirstRunOnboardingOverlay
       open
+      connectionState={connectionState}
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
+      onWelcomeAcknowledged={onWelcomeAcknowledged}
       onSkip={onSkip}
     />,
   );
-  return { onConnectOwnServer, onConnectDemo, onSkip };
+  return {
+    onConnectOwnServer,
+    onConnectDemo,
+    onWelcomeAcknowledged,
+    onSkip,
+    rerenderWithConnectionState: (
+      nextConnectionState:
+        | { status: "idle" }
+        | { status: "preparing"; serverName: string }
+        | { status: "connecting"; serverName: string }
+        | { status: "failed"; error: string },
+    ) =>
+      view.rerender(
+        <FirstRunOnboardingOverlay
+          open
+          connectionState={nextConnectionState}
+          onConnectOwnServer={onConnectOwnServer}
+          onConnectDemo={onConnectDemo}
+          onWelcomeAcknowledged={onWelcomeAcknowledged}
+          onSkip={onSkip}
+        />,
+      ),
+  };
 }
 
 afterEach(() => {
@@ -41,7 +66,7 @@ afterEach(() => {
 
 describe("FirstRunOnboardingOverlay", () => {
   it("advances from the welcome card with Continue", () => {
-    renderOverlay();
+    const { onWelcomeAcknowledged } = renderOverlay();
 
     const continueButton = screen.getByRole("button", { name: "Continue" });
     expect(continueButton).toHaveClass(
@@ -51,14 +76,16 @@ describe("FirstRunOnboardingOverlay", () => {
     );
 
     fireEvent.click(continueButton);
+    expect(onWelcomeAcknowledged).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("heading", { name: "Point MCPJam at a server" }),
     ).toBeInTheDocument();
   });
 
   it("advances from the welcome card with Enter", () => {
-    renderOverlay();
+    const { onWelcomeAcknowledged } = renderOverlay();
     fireEvent.keyDown(window, { key: "Enter" });
+    expect(onWelcomeAcknowledged).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("heading", { name: "Point MCPJam at a server" }),
     ).toBeInTheDocument();
@@ -93,19 +120,37 @@ describe("FirstRunOnboardingOverlay", () => {
   });
 
   it("delegates both connection paths and the explicit skip", () => {
-    const { onConnectOwnServer, onConnectDemo, onSkip } = renderOverlay();
+    const {
+      onConnectOwnServer,
+      onConnectDemo,
+      onSkip,
+      rerenderWithConnectionState,
+    } = renderOverlay();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://mcp.example.com/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    expect(onConnectOwnServer).toHaveBeenCalledWith({
+      name: "Example",
+      transport: "http",
+      urlOrCommand: "https://mcp.example.com/mcp",
+      authentication: "auto",
+      header: "",
+    });
+
+    rerenderWithConnectionState({
+      status: "failed",
+      error: "Connection refused",
+    });
     expect(
       screen.getByRole("heading", { name: "Set up your server" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
-    expect(onConnectOwnServer).toHaveBeenCalledOnce();
-    expect(onConnectOwnServer).toHaveBeenCalledWith({
+    expect(onConnectOwnServer).toHaveBeenCalledTimes(2);
+    expect(onConnectOwnServer).toHaveBeenLastCalledWith({
       name: "Example",
       transport: "http",
       urlOrCommand: "https://mcp.example.com/mcp",
@@ -124,6 +169,24 @@ describe("FirstRunOnboardingOverlay", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
     expect(onSkip).toHaveBeenCalledOnce();
+  });
+
+  it("shows project preparation separately from the MCP handshake", () => {
+    const { rerenderWithConnectionState } = renderOverlay();
+
+    rerenderWithConnectionState({
+      status: "preparing",
+      serverName: "Excalidraw (App)",
+    });
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Preparing your MCPJam workspace",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Getting your project ready to connect/i),
+    ).toBeInTheDocument();
   });
 
   it("uses the prototype's welcome and server-choice copy", () => {

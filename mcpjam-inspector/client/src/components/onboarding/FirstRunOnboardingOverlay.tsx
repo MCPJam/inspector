@@ -17,7 +17,17 @@ import { Label } from "@mcpjam/design-system/label";
 /** Time the welcome splash remains visible before it advances to server choice. */
 export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 8_500;
 
-type FirstRunOverlayStep = "welcome" | "choose" | "server-details";
+type FirstRunOverlayStep =
+  | "welcome"
+  | "choose"
+  | "connecting"
+  | "server-details";
+
+export type FirstRunConnectionState =
+  | { status: "idle" }
+  | { status: "preparing"; serverName: string }
+  | { status: "connecting"; serverName: string }
+  | { status: "failed"; error: string };
 
 export interface FirstRunServerDraft {
   name: string;
@@ -29,23 +39,26 @@ export interface FirstRunServerDraft {
 
 interface FirstRunOnboardingOverlayProps {
   open: boolean;
+  connectionState: FirstRunConnectionState;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
+  onWelcomeAcknowledged: () => void;
   onSkip: () => void;
 }
 
 /**
  * The Home-mounted shell for first-run onboarding.
  *
- * It owns the welcome, initial URL capture, and editable connection draft.
- * Saving the draft still delegates into the existing server-connection surface;
- * the next save-and-connect slice will carry it through to the connection API
- * and return an editable failure result here.
+ * It owns the welcome, initial URL capture, and editable failure recovery.
+ * The parent sends each draft through the existing save-and-connect path, then
+ * reports the real connection outcome back here for the next visible state.
  */
 export function FirstRunOnboardingOverlay({
   open,
+  connectionState,
   onConnectOwnServer,
   onConnectDemo,
+  onWelcomeAcknowledged,
   onSkip,
 }: FirstRunOnboardingOverlayProps) {
   const prefersReducedMotion = useReducedMotion();
@@ -67,10 +80,11 @@ export function FirstRunOnboardingOverlay({
   }, [open]);
 
   const continueToChoice = useCallback(() => {
+    onWelcomeAcknowledged();
     setStep("choose");
-  }, []);
+  }, [onWelcomeAcknowledged]);
 
-  const continueToServerDetails = useCallback(
+  const connectWithInitialDefaults = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       const trimmedUrlOrCommand = serverUrlOrCommand.trim();
@@ -81,10 +95,21 @@ export function FirstRunOnboardingOverlay({
 
       setServerUrlError(null);
       setServerUrlOrCommand(trimmedUrlOrCommand);
-      if (!serverName) setServerName(deriveServerName(trimmedUrlOrCommand));
-      setStep("server-details");
+      const inferredName = serverName || deriveServerName(trimmedUrlOrCommand);
+      const inferredTransport = /^https?:\/\//i.test(trimmedUrlOrCommand)
+        ? "http"
+        : "stdio";
+      setServerName(inferredName);
+      setServerTransport(inferredTransport);
+      onConnectOwnServer({
+        name: inferredName,
+        transport: inferredTransport,
+        urlOrCommand: trimmedUrlOrCommand,
+        authentication: "auto",
+        header: "",
+      });
     },
-    [serverName, serverUrlOrCommand],
+    [onConnectOwnServer, serverName, serverUrlOrCommand],
   );
 
   const submitServerDetails = useCallback(
@@ -107,6 +132,18 @@ export function FirstRunOnboardingOverlay({
       serverUrlOrCommand,
     ],
   );
+
+  useEffect(() => {
+    if (!open) return;
+    if (
+      connectionState.status === "preparing" ||
+      connectionState.status === "connecting"
+    ) {
+      setStep("connecting");
+    } else if (connectionState.status === "failed") {
+      setStep("server-details");
+    }
+  }, [connectionState, open]);
 
   useEffect(() => {
     if (!open || step !== "welcome" || prefersReducedMotion) return;
@@ -222,7 +259,7 @@ export function FirstRunOnboardingOverlay({
                 </DialogDescription>
               </DialogHeader>
 
-              <form className="mt-[18px]" onSubmit={continueToServerDetails}>
+              <form className="mt-[18px]" onSubmit={connectWithInitialDefaults}>
                 <Label
                   htmlFor="first-run-server-url"
                   className="font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase"
@@ -273,7 +310,7 @@ export function FirstRunOnboardingOverlay({
                   type="button"
                   variant="outline"
                   className="h-auto w-full bg-card px-4 py-2.5 text-[12.5px] font-semibold shadow-none hover:border-primary hover:bg-card hover:text-foreground"
-                  onClick={onConnectDemo}
+                  onClick={() => onConnectDemo()}
                 >
                   Try the Excalidraw demo server
                 </Button>
@@ -290,6 +327,29 @@ export function FirstRunOnboardingOverlay({
                 Set up later
               </Button>
             </>
+          ) : step === "connecting" ? (
+            <div className="py-3 text-center">
+              <div
+                className="mx-auto size-7 animate-spin rounded-full border-2 border-muted border-t-primary"
+                role="status"
+                aria-label="Connecting to server"
+              />
+              <DialogHeader className="mt-5 gap-0 text-center">
+                <DialogTitle className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
+                  {connectionState.status === "preparing"
+                    ? "Preparing your MCPJam workspace"
+                    : "Connecting to "}
+                  {connectionState.status === "connecting"
+                    ? connectionState.serverName
+                    : null}
+                </DialogTitle>
+                <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
+                  {connectionState.status === "preparing"
+                    ? "Getting your project ready to connect to an MCP server."
+                    : "Negotiating MCP compatibility and loading tools."}
+                </DialogDescription>
+              </DialogHeader>
+            </div>
           ) : (
             <form onSubmit={submitServerDetails}>
               <DialogHeader className="gap-0 text-left">
@@ -297,9 +357,19 @@ export function FirstRunOnboardingOverlay({
                   Set up your server
                 </DialogTitle>
                 <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  Confirm the connection details before MCPJam connects to it.
+                  MCPJam couldn&apos;t connect with the default settings. Update
+                  the details and try again.
                 </DialogDescription>
               </DialogHeader>
+
+              {connectionState.status === "failed" ? (
+                <p
+                  className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] leading-[1.45] text-destructive"
+                  role="alert"
+                >
+                  {connectionState.error}
+                </p>
+              ) : null}
 
               <div className="mt-[18px] grid gap-3">
                 <div className="grid gap-3 sm:grid-cols-2">

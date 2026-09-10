@@ -14,9 +14,12 @@ export interface OnboardingPersistedState {
 }
 
 const STORAGE_KEY = "mcp-onboarding-state";
+const FIRST_RUN_SERVER_CHOICE_STORAGE_KEY = "mcp-first-run-server-choice-state";
 
-export function readOnboardingState(): OnboardingPersistedState | null {
-  const stored = localStorage.getItem(STORAGE_KEY);
+function readPersistedState(
+  storageKey: string,
+): OnboardingPersistedState | null {
+  const stored = localStorage.getItem(storageKey);
   if (!stored) return null;
   try {
     const parsed = JSON.parse(stored) as Partial<OnboardingPersistedState>;
@@ -42,6 +45,10 @@ export function readOnboardingState(): OnboardingPersistedState | null {
   } catch {
     return null;
   }
+}
+
+export function readOnboardingState(): OnboardingPersistedState | null {
+  return readPersistedState(STORAGE_KEY);
 }
 
 export function writeOnboardingState(state: OnboardingPersistedState): void {
@@ -87,6 +94,97 @@ export function clearOnboardingState(): void {
 }
 
 /**
+ * State for the explicit first-run server-choice flow. It deliberately does
+ * not reuse the legacy guided-Excalidraw key or remote `hasSeenOnboarding`
+ * flag: those record an automatic background flow, not a user's choice here.
+ */
+export function readFirstRunServerChoiceState(): OnboardingPersistedState | null {
+  return readPersistedState(FIRST_RUN_SERVER_CHOICE_STORAGE_KEY);
+}
+
+function writeFirstRunServerChoiceState(state: OnboardingPersistedState): void {
+  localStorage.setItem(
+    FIRST_RUN_SERVER_CHOICE_STORAGE_KEY,
+    JSON.stringify(state),
+  );
+}
+
+export function markFirstRunServerChoiceStarted(): void {
+  const current = readFirstRunServerChoiceState();
+  if (current?.status === "completed" || current?.status === "dismissed") {
+    return;
+  }
+  writeFirstRunServerChoiceState({
+    status: "started",
+    startedAt: current?.startedAt ?? Date.now(),
+    shownAt: current?.shownAt,
+  });
+}
+
+/**
+ * Records that the user reached the server-choice step. A completed state
+ * without this marker came from an older automatic flow, so it must not hide
+ * the explicit welcome screen.
+ */
+export function markFirstRunServerChoiceWelcomeAcknowledged(): void {
+  const current = readFirstRunServerChoiceState();
+  if (current?.status === "completed" || current?.status === "dismissed") {
+    return;
+  }
+  writeFirstRunServerChoiceState({
+    status: "started",
+    startedAt: current?.startedAt ?? Date.now(),
+    shownAt: Date.now(),
+  });
+}
+
+export function markFirstRunServerChoiceDismissed(): void {
+  if (readFirstRunServerChoiceState()?.status === "completed") return;
+  writeFirstRunServerChoiceState({ status: "dismissed" });
+}
+
+export function markFirstRunServerChoiceCompleted(): void {
+  const current = readFirstRunServerChoiceState();
+  writeFirstRunServerChoiceState({
+    status: "completed",
+    completedAt: Date.now(),
+    shownAt: current?.shownAt,
+  });
+}
+
+export function isFirstRunServerChoiceEligible(
+  hasAnyBlockingServers: boolean,
+  currentRouteTab: string,
+  isSignedInWithWorkOs = false,
+  isNewSignedInAccount = false,
+): boolean {
+  if (hasAnyBlockingServers) return false;
+  if (isSignedInWithWorkOs && !isNewSignedInAccount) return false;
+
+  const rawRoute = currentRouteTab.replace(/^#?\/?/, "");
+  const [routePath = ""] = rawRoute.split("?");
+  const routeTab = routePath.replace(/\/+$/, "");
+  if (
+    routeTab !== "servers" &&
+    routeTab !== "connect" &&
+    routeTab !== "clients" &&
+    routeTab !== "hosts" &&
+    routeTab !== "home" &&
+    routeTab !== "playground" &&
+    routeTab
+  ) {
+    return false;
+  }
+
+  const persisted = readFirstRunServerChoiceState();
+  if (persisted?.status === "dismissed") return false;
+
+  // A completion written before the explicit welcome existed (or before the
+  // visitor reached its choice step) must not make the welcome disappear.
+  return !(persisted?.status === "completed" && persisted.shownAt);
+}
+
+/**
  * Returns true when the user is eligible for first-run onboarding:
  * - No explicit hash route (empty, "#", "#/", the default hub hash
  *   `#servers`/`#connect`/legacy `#hosts`, or the `#home` landing route)
@@ -105,13 +203,16 @@ export function isFirstRunEligible(
   currentRouteTab: string,
   isSignedInWithWorkOs = false,
   hasSeenRemoteOnboarding?: boolean,
-  isNewSignedInAccount = false
+  isNewSignedInAccount = false,
 ): boolean {
   if (hasAnyBlockingServers) return false;
   if (isSignedInWithWorkOs && !isNewSignedInAccount) return false;
 
   // Drop query strings and trailing slashes so `connect?foo=bar` and
   // `/connect/` still pass the allowlist — both land on the same hub route.
+  // Playground is also an entry route: a fresh visitor can arrive there from
+  // the local preview URL, and must be sent through the explicit server-choice
+  // flow before the legacy Playground bootstrap can do anything on their behalf.
   const rawRoute = currentRouteTab.replace(/^#?\/?/, "");
   const [routePath = ""] = rawRoute.split("?");
   const routeTab = routePath.replace(/\/+$/, "");
@@ -121,6 +222,7 @@ export function isFirstRunEligible(
     routeTab !== "clients" &&
     routeTab !== "hosts" &&
     routeTab !== "home" &&
+    routeTab !== "playground" &&
     routeTab
   )
     return false;
