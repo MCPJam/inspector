@@ -1,3 +1,4 @@
+import { DEFAULTS } from "@/components/evals/constants";
 import type { MetadataSnapshot } from "./eval-tool-metadata";
 import { isDescribeTarget } from "./describe-surface";
 import { create } from "zustand";
@@ -87,12 +88,12 @@ export function beginDescribe(session: string, text: string) {
   if (!text.trim()) throw new Error("Describe what you want to test.");
   const previous = useDescribeFlow.getState().sessions[session];
   const match = text.match(
-    /\b([1-5]|one|two|three|four|five)\s+(?:[\w-]+\s+){0,2}tests?\b/i,
+    /\b([1-5]|one|two|three|four|five)\s+(?:[\w-]+\s+){0,2}(?:tests?|cases?)\b/i,
   );
   const words = ["one", "two", "three", "four", "five"];
   const requestedCount = match
     ? Number(match[1]) || words.indexOf(match[1].toLowerCase()) + 1
-    : previous?.requestedCount ?? 1;
+    : (previous?.requestedCount ?? 1);
   put(session, {
     phase: "describing",
     questionUsed: previous?.questionUsed ?? false,
@@ -234,7 +235,7 @@ export function createDescribeCases(
         suiteId: scope.suiteId,
         caseId: mintCaseId(),
         models: [],
-        runs: 1,
+        runs: DEFAULTS.RUNS_PER_TEST,
         isNegativeTest: false,
         query: deriveQuery(draft.steps),
         expectedToolCalls: deriveExpectedToolCalls(draft.steps),
