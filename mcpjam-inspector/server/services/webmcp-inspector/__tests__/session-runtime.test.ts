@@ -832,6 +832,53 @@ describe("viewport frames", () => {
     expect(runtime.toPublic().status).not.toBe("error");
   });
 
+  it("replays the attached transport without a provisional native-window session", () => {
+    const runtime = new WebMcpSessionRuntime("https://example.test/", {
+      sessionId: "session-embedded",
+    });
+    const callbacks = runtime.callbacks();
+    // Providers navigate and discover tools inside createSession, before the
+    // returned browser can be attached to the runtime.
+    callbacks.onNavigated("https://example.test/", "https://example.test");
+    callbacks.onToolsChanged([fakeTool()]);
+
+    const session = new FakeBrowserSession(callbacks);
+    session.transport = { kind: "electron-webview" };
+    runtime.attach(session);
+    runtime.expiresAt = 2_000;
+    runtime.hardExpiresAt = 3_000;
+    runtime.publishSession();
+
+    const replay: WebMcpEvent[] = [];
+    runtime.hub.subscribe((event) => replay.push(event));
+    const sessions = replay.filter((event) => event.type === "session");
+    // Even a transient native-window replay makes the client unmount its
+    // webview, destroying the guest before the correct snapshot arrives.
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].session).toMatchObject({
+      status: "ready",
+      viewportTransport: { kind: "electron-webview" },
+      expiresAt: 2_000,
+      hardExpiresAt: 3_000,
+    });
+    expect(replay.some((event) => event.type === "tools")).toBe(true);
+    expect(
+      replay.some(
+        (event) =>
+          event.type === "activity" && event.entry.kind === "navigated",
+      ),
+    ).toBe(true);
+
+    callbacks.onCrashed("The embedded page was closed.");
+    expect(replay.at(-2)).toMatchObject({
+      type: "session",
+      session: {
+        status: "error",
+        viewportTransport: { kind: "electron-webview" },
+      },
+    });
+  });
+
   it("does not publish a quality change before a browser is attached", () => {
     const runtime = new WebMcpSessionRuntime("https://example.test/", {
       sessionId: "session-1",
