@@ -399,7 +399,7 @@ describe("EvaluateTab", () => {
     mocks.getEffectiveSuiteServers.mockReturnValue(["server-a"]);
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await userEvent.click(screen.getByRole("button", { name: "Run Suite suite-a" }));
+    await userEvent.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
     expect(screen.getByRole("dialog", { name: "Run Suite suite-a" })).toBeInTheDocument();
     expect(screen.getByTestId("evals-suites-overview")).toBeInTheDocument();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
@@ -606,7 +606,7 @@ describe("EvaluateTab", () => {
     const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await user.click(screen.getByRole("button", { name: "Run Suite suite-a" }));
+    await user.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
     expect(mocks.handleRerun).not.toHaveBeenCalled();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Start reviewed run" }));
