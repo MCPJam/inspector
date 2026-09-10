@@ -91,12 +91,13 @@ function persist(consent: StoredLocalBrowserConsent | null): boolean {
 }
 
 export function clearStoredLocalBrowserConsent(): void {
-  persist(null);
   try {
-    setSetupPending(false);
+    localStorage.removeItem(SETUP_KEY);
   } catch {
     /* Storage may be blocked. */
   }
+  // Subscribers must see the complete cleared state in one notification.
+  persist(null);
 }
 
 export function subscribeLocalBrowserConsent(callback: () => void): () => void {
