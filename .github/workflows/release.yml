@@ -23,7 +23,7 @@ on:
         default: false
         type: boolean
       skip_verify:
-        description: "Skip the green-CI (Tests + Build and Test) preflight gates"
+        description: "Emergency bypass of CI, staging and saved-credential verification"
         required: false
         default: false
         type: boolean
@@ -80,7 +80,7 @@ jobs:
       # build:inspector and a production boot; `test.yml` runs the suites.
       # BOTH are required — neither alone covers what `verify` did.
       - name: Require green CI for candidate SHA
-        if: ${{ !fromJSON(inputs.skip_verify) }}
+        if: ${{ !inputs.skip_verify }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -139,7 +139,7 @@ jobs:
       # skip_verify release that also deploys the webapp ships a SHA no staging
       # run has smoked.
       - name: Require green staging smoke for candidate SHA
-        if: ${{ !fromJSON(inputs.skip_verify) }}
+        if: ${{ !inputs.skip_verify }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -531,17 +531,27 @@ jobs:
         if: fromJSON(needs.preflight.outputs.publish_inspector)
         run: node .github/scripts/assert-client-sourcemaps-processed.mjs
 
+      - name: Inject SDK sourcemap debug ids before packing
+        if: fromJSON(needs.preflight.outputs.publish_sdk)
+        run: npx @sentry/cli sourcemaps inject ./sdk/dist
+
       - name: Smoke packed npm packages
         run: node .github/scripts/smoke-packed-npm-packages.mjs
         env:
           PUBLISH_SDK: ${{ needs.preflight.outputs.publish_sdk }}
           PUBLISH_CLI: ${{ needs.preflight.outputs.publish_cli }}
           PUBLISH_INSPECTOR: ${{ needs.preflight.outputs.publish_inspector }}
+          PACK_OUTPUT_DIR: release-packages
 
-      # @mcpjam/inspector has no prepublishOnly hook, so the dist that reaches
-      # npm is THIS one — publish-packages cannot rebuild it. sdk/cli do rebuild
-      # via prepublishOnly; theirs are carried anyway so the publish job can
-      # assert it has a complete, already-smoked package set.
+      - name: Upload verified package archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-archives
+          path: release-packages
+          if-no-files-found: error
+          retention-days: 7
+
+      # Keep processed SDK maps available for the upload after publishing.
       - name: Upload built package dists
         uses: actions/upload-artifact@v4
         with:
@@ -576,7 +586,7 @@ jobs:
       needs.build-packages.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
       (
-        !fromJSON(inputs.deploy_backend_prod) ||
+        !inputs.deploy_backend_prod ||
         needs.deploy-backend-prod.result == 'success'
       )
     runs-on: ubuntu-latest
@@ -634,19 +644,38 @@ jobs:
               || fail "mcpjam-inspector/dist/client is missing — publishing now would ship an inspector with no UI."
           fi
 
-      # NOTE: sdk's `prepublishOnly: npm run build` re-runs during the publish
-      # below, overwriting these injected debug ids in the packed tarball. That
-      # is a pre-existing bug (it predates this job split) and is tracked
-      # separately — the real fix is to inject inside the sdk's own prepack.
-      # Left in place so behavior matches what shipped before.
-      - name: Inject SDK sourcemap debug ids
-        if: fromJSON(needs.preflight.outputs.publish_sdk)
-        run: npx @sentry/cli sourcemaps inject ./sdk/dist
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      - name: Download verified package archives
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-archives
+          path: release-packages
 
-      - name: Publish package set
-        run: npx changeset publish
+      # Exercise the exact archive against the backend that is live NOW,
+      # after the optional backend deploy and before any npm publication.
+      - name: Verify saved credentials against production backend
+        if: ${{ !inputs.skip_verify && fromJSON(needs.preflight.outputs.publish_inspector) }}
+        run: node .github/scripts/smoke-packed-npm-packages.mjs
+        env:
+          PACK_INPUT_DIR: release-packages
+          REQUIRE_CRITICAL_JOURNEYS: "true"
+          PUBLISH_SDK: ${{ needs.preflight.outputs.publish_sdk }}
+          PUBLISH_CLI: ${{ needs.preflight.outputs.publish_cli }}
+          PUBLISH_INSPECTOR: ${{ needs.preflight.outputs.publish_inspector }}
+          CANARY_API_KEY: ${{ secrets.CANARY_API_KEY }}
+          CANARY_LOCAL_BEARER: ${{ secrets.CANARY_LOCAL_BEARER }}
+          CANARY_FIXTURES_JSON: ${{ secrets.CANARY_FIXTURES_JSON }}
+
+      - name: Upload candidate journey evidence
+        if: ${{ always() && !inputs.skip_verify && fromJSON(needs.preflight.outputs.publish_inspector) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-journeys
+          path: release-journeys.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publish and verify the exact tested archives
+        run: node scripts/reliability/release-artifacts.mjs publish release-packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -684,7 +713,7 @@ jobs:
       always() &&
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
-      fromJSON(inputs.deploy_backend_prod)
+      inputs.deploy_backend_prod
     runs-on: ubuntu-latest
     environment: backend-production
     steps:
@@ -758,11 +787,11 @@ jobs:
       - deploy-backend-prod
     if: |
       always() &&
-      fromJSON(inputs.deploy_webapp) &&
+      inputs.deploy_webapp &&
       needs.preflight.result == 'success' &&
       needs.publish-packages.result == 'success' &&
       (
-        !fromJSON(inputs.deploy_backend_prod) ||
+        !inputs.deploy_backend_prod ||
         needs.deploy-backend-prod.result == 'success'
       )
     uses: ./.github/workflows/deploy-webapp.yml
@@ -792,7 +821,7 @@ jobs:
       - deploy-webapp
     if: |
       always() &&
-      fromJSON(inputs.deploy_webapp) &&
+      inputs.deploy_webapp &&
       needs.deploy-webapp.result == 'success'
     uses: ./.github/workflows/deploy-slack-app.yml
     secrets: inherit

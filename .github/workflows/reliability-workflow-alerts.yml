@@ -1,0 +1,68 @@
+name: Release and deploy Slack alerts
+
+on:
+  workflow_run:
+    workflows:
+      - Release
+      - Deploy Webapp
+      - Deploy Staging
+      - Deploy MCP Production
+      - Deploy Slack app
+      - Deploy Discord app
+      - Windows Release
+      - Mac Release
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  notify:
+    # workflow_run has access to secrets. Never check out triggering code or
+    # execute/download its artifacts, and never process fork/PR runs.
+    if: >-
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.event != 'pull_request' &&
+      github.event.workflow_run.conclusion != 'cancelled' &&
+      github.event.workflow_run.conclusion != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          SLACK_ALERTS_WEBHOOK_URL: ${{ secrets.SLACK_ALERTS_WEBHOOK_URL }}
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const { owner, repo } = context.repo;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: run.workflow_id, branch: 'main',
+              status: 'completed', per_page: 30
+            });
+            const prior = data.workflow_runs.find(r =>
+              r.id !== run.id && new Date(r.created_at) < new Date(run.created_at) &&
+              r.event !== 'pull_request' && !['cancelled', 'skipped'].includes(r.conclusion)
+            );
+            const failed = run.conclusion !== 'success';
+            const recovered = !failed && prior && prior.conclusion !== 'success';
+            if (!process.env.SLACK_ALERTS_WEBHOOK_URL) {
+              core.setFailed('SLACK_ALERTS_WEBHOOK_URL missing: release/deploy alert coverage unavailable');
+              return;
+            }
+            if (!failed && !recovered) return;
+            const url = new URL(process.env.SLACK_ALERTS_WEBHOOK_URL);
+            if (url.protocol !== 'https:' || url.hostname !== 'hooks.slack.com' || !url.pathname.startsWith('/services/')) {
+              core.setFailed('Invalid Slack webhook configuration');
+              return;
+            }
+            const text = `${run.name} ${failed ? 'failed (' + run.conclusion + ')' : 'recovered'} on main.\nSHA: ${run.head_sha}\n${run.html_url}\n${failed ? 'Inspect the failed job before deciding whether a release is safe. No rollback was performed.' : ''}`;
+            const response = await fetch(url, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text, unfurl_links: false }),
+              redirect: 'error', signal: AbortSignal.timeout(20000)
+            });
+            if (!response.ok || (await response.text()).trim() !== 'ok') {
+              core.setFailed('Slack delivery failed; notification was not confirmed');
+            }

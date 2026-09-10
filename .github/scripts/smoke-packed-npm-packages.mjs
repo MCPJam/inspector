@@ -1,4 +1,7 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { childEnvironment } from "../../scripts/reliability/process-environment.mjs";
+import { recordManifest, verifyManifest } from "../../scripts/reliability/release-artifacts.mjs";
+import { parseFixtures, runJourneys } from "../../scripts/reliability/critical-journeys.mjs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, copyFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -22,6 +25,8 @@ const packageSpecs = {
   },
 };
 
+const selectedForPublish = new Set(Object.values(packageSpecs).filter(p => p.publish).map(p => p.workspace));
+
 if (!packageSpecs.sdk.publish && (packageSpecs.cli.publish || packageSpecs.inspector.publish)) {
   packageSpecs.sdk.publish = true;
 }
@@ -40,7 +45,30 @@ try {
   const packDir = path.join(tmpRoot, "packs");
   mkdirSync(packDir, { recursive: true });
 
-  const tarballs = packagesToPack.map((pkg) => packWorkspace(pkg, packDir));
+  const inputDir = process.env.PACK_INPUT_DIR;
+  const tarballs = inputDir
+    ? verifyManifest(inputDir, process.env.GITHUB_SHA).packages.map((p) =>
+        path.resolve(inputDir, p.filename)
+      )
+    : packagesToPack.map((pkg) => packWorkspace(pkg, packDir));
+  if (process.env.PACK_OUTPUT_DIR && !inputDir) {
+    const out = path.resolve(process.env.PACK_OUTPUT_DIR);
+    mkdirSync(out, { recursive: true });
+    const packages = packagesToPack.map((pkg, i) => {
+      const filename = path.basename(tarballs[i]);
+      copyFileSync(tarballs[i], path.join(out, filename));
+      const version = JSON.parse(
+        readFileSync(path.join(pkg.dir, "package.json"), "utf8")
+      ).version;
+      return {
+        name: pkg.workspace,
+        version,
+        filename,
+        publish: selectedForPublish.has(pkg.workspace),
+      };
+    });
+    recordManifest(out, process.env.GITHUB_SHA, packages);
+  }
   const installDir = path.join(tmpRoot, "install");
 
   mkdirSync(installDir, { recursive: true });
@@ -52,7 +80,7 @@ try {
   if (packageSpecs.cli.publish) {
     run("npx", ["--no-install", "mcpjam", "--help"], {
       cwd: installDir,
-      env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
+      env: { ...childEnvironment(), MCPJAM_TELEMETRY_DISABLED: "1" },
     });
   }
 
@@ -134,6 +162,7 @@ function assertInstalledPackageVersion(installDir, packageName, expectedVersion)
     ["ls", packageName, "--all", "--json"],
     {
       cwd: installDir,
+      env: childEnvironment(),
       encoding: "utf8",
     },
   );
@@ -213,10 +242,11 @@ async function smokeInspectorStartup(installDir) {
     cwd: installDir,
     detached: process.platform !== "win32",
     env: {
-      ...process.env,
+      ...childEnvironment(),
       MCPJAM_INSPECTOR_DISABLE_ORPHAN_CHECK: "1",
       MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN: "1",
       NO_COLOR: "1",
+      DO_NOT_TRACK: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -234,7 +264,31 @@ async function smokeInspectorStartup(installDir) {
     throw new Error(`Inspector smoke exited early with code ${earlyExit.code}:\n${output}`);
   }
 
-  await terminateChildProcess(child, 5000);
+  try {
+    const health = await fetch(`http://127.0.0.1:${port}/health`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!health.ok) throw new Error("Packed Inspector health failed");
+    if (process.env.REQUIRE_CRITICAL_JOURNEYS === "true") {
+      const report = await runJourneys({
+        baseUrl: `http://127.0.0.1:${port}`,
+        apiKey: process.env.CANARY_API_KEY,
+        localBearer: process.env.CANARY_LOCAL_BEARER,
+        fixtures: parseFixtures(process.env.CANARY_FIXTURES_JSON),
+        mode: "local",
+      });
+      writeFileSync(path.join(rootDir, "release-journeys.json"), JSON.stringify(report, null, 2));
+      if (!report.passed)
+        throw new Error(
+          `Packed Inspector critical journeys failed: ${report.results
+            .filter((r) => r.outcome !== "passed")
+            .map((r) => r.name)
+            .join(", ")}`
+        );
+    }
+  } finally {
+    await terminateChildProcess(child, 5000);
+  }
   console.log("Inspector startup smoke stayed alive long enough to pass.");
 }
 
@@ -313,7 +367,7 @@ function sendSignal(child, signal) {
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: rootDir,
-    env: process.env,
+    env: childEnvironment(),
     stdio: "inherit",
     ...options,
   });
@@ -326,7 +380,7 @@ function run(command, args, options = {}) {
 function capture(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: rootDir,
-    env: process.env,
+    env: childEnvironment(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
     ...options,
