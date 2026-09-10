@@ -1,3 +1,14 @@
+import type { BrowserAgentCommand, BrowserAgentResult } from "./browser-agent-contract.js";
+export type PlatformBrowserToolPolicy = { mode: "allow_all" | "read_only" | "allowlist"; originAllowlist?: string[]; toolAllowlist?: string[] };
+export type PlatformSessionBrowserInput = { policy?: PlatformBrowserToolPolicy; profileId?: string };
+export type PlatformBrowserScreenshot = { turnId?: string; toolCallId: string; toolName?: string; stepIndex: number; status?: "ready" | "not_captured" | "unavailable"; url?: string; mediaType?: "image/png" | "image/jpeg"; bytes?: number; ts?: number };
+export type PlatformSessionBrowser = { browserSessionId: string; state: "active" | "sleeping" | "closed"; policy?: PlatformBrowserToolPolicy; profileId?: string; bootId?: string; controlledBy?: "human" | null; box?: string | null; lastActiveAt?: number };
+export type PlatformSessionBrowserOpened = { sessionId: string; chatSessionId: string; projectId: string; browser: PlatformSessionBrowser };
+export type PlatformSessionBrowserCommand = BrowserAgentCommand;
+export type PlatformSessionBrowserResult = BrowserAgentResult & { screenshots?: PlatformBrowserScreenshot[] };
+export type PlatformSessionBrowserTrace = { sessionId: string; chatSessionId: string; entries: Array<{ commandId: string; seq: number; result?: PlatformSessionBrowserResult }>; screenshots: PlatformBrowserScreenshot[] };
+export type PlatformSessionBrowserOperation = "open" | "command" | "note" | "trace" | "artifact" | "close";
+export type PlatformSessionBrowserOperationResult = PlatformSessionBrowserOpened | PlatformSessionBrowserResult | PlatformSessionBrowserTrace | { url: string; mediaType?: string } | { ok: boolean };
 /**
  * Wire DTOs for the MCPJam Platform API (`/api/v1`).
  *
@@ -458,6 +469,8 @@ export interface PlatformTurnUsage {
  * "nothing happened", because the turn already spent.
  */
 export interface PlatformChatTurn {
+  chatSessionId?: string;
+  browser?: Partial<PlatformSessionBrowser> & { attached: boolean; reason?: string; screenshots?: PlatformBrowserScreenshot[]; notices?: string[]; handoff?: { waited: boolean; resumed: boolean } };
   sessionId: string | null;
   turnId: string;
   /**
@@ -514,6 +527,10 @@ export interface PlatformChatMessage {
 
 /** Session metadata plus a bounded window of raw messages. */
 export interface PlatformChatSessionDetail {
+  chatSessionId?: string;
+  apiConfigState?: "unconfigured" | "configured";
+  browser?: PlatformSessionBrowser | null;
+  usage?: { cumulativeInputTokens?: number; cumulativeOutputTokens?: number };
   sessionId: string;
   projectId: string | null;
   origin: string | null;
@@ -532,6 +549,8 @@ export interface PlatformChatSessionDetail {
 
 /** One turn's entry in a trace read. */
 export interface PlatformChatSessionTraceTurn {
+  browser?: { browserSessionId: string; bootId?: string; box?: unknown };
+  screenshots?: PlatformBrowserScreenshot[];
   turnId: string;
   promptIndex: number;
   startedAt: number;
@@ -552,6 +571,8 @@ export interface PlatformChatSessionTraceTurn {
 }
 
 export interface PlatformChatSessionTrace {
+  projectId?: string | null;
+  chatSessionId?: string;
   sessionId: string;
   origin: string | null;
   traceVersion: number;

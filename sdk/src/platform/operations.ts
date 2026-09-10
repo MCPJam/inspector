@@ -1,3 +1,4 @@
+import type { PlatformSessionBrowserOperationResult } from "./types.js";
 /**
  * Curated, task-shaped operations over the Platform API. Each operation is
  * defined once and adapted per surface: MCP worker tools, CLI commands, and
@@ -8610,6 +8611,7 @@ export const listChatSessionsOperation: PlatformOperation<
 // everyone in this org has been talking about".
 
 const sendChatMessageInput = z.object({
+  browser: z.object({ policy: z.object({ mode: z.enum(["allow_all", "read_only", "allowlist"]), originAllowlist: z.array(z.string().min(1)).min(1).optional(), toolAllowlist: z.array(z.string().min(1)).min(1).optional() }).optional(), profileId: z.string().min(1).optional() }).optional().describe("Attach the session browser for this turn. The first attachment requires a policy; later turns can send {} to reuse it."),
   idempotencyKey: z
     .string()
     .trim()
@@ -8745,6 +8747,7 @@ export const sendChatMessageOperation: PlatformOperation<
             id: result.sessionId,
             projectId: result.projectId,
           },
+          ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, projectId: result.projectId }] : []),
         ]
       : []
   ),
@@ -8767,6 +8770,7 @@ export const sendChatMessageOperation: PlatformOperation<
       {
         idempotencyKey: input.idempotencyKey,
         message: input.message,
+        ...(input.browser !== undefined ? { browser: input.browser } : {}),
         ...(projectId ? { projectId } : {}),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         ...(input.modelId ? { modelId: input.modelId } : {}),
@@ -8790,6 +8794,157 @@ export const sendChatMessageOperation: PlatformOperation<
           ? { maxToolCalls: input.maxToolCalls }
           : {}),
       },
+      { signal }
+    );
+  },
+};
+
+const sessionBrowserInput = z.object({
+  sessionId: z.string().min(1).optional(),
+  project: z.string().min(1).optional(),
+  policy: z.object({ mode: z.enum(["allow_all", "read_only", "allowlist"]), originAllowlist: z.array(z.string()).min(1).optional(), toolAllowlist: z.array(z.string()).min(1).optional() }).optional(),
+  profileId: z.string().min(1).optional(),
+  commandId: z.string().min(1).optional(),
+  idempotencyKey: z.string().min(1).optional(),
+  tabId: z.string().min(1).optional(),
+});
+const driveSessionBrowserInput = sessionBrowserInput.extend({
+  op: z.enum(["open", "navigate", "act", "invoke", "note", "close"]),
+  url: z.string().url().optional(),
+  command: z.record(z.string(), z.unknown()).optional().describe("For act: BrowserAgentCommand fields, including verb, target, value, and expectedState."),
+  toolKey: z.string().optional(), input: z.unknown().optional(), text: z.string().optional(),
+});
+const observeSessionBrowserInput = z.object({
+  sessionId: z.string().min(1), op: z.enum(["observe", "trace", "artifact"]),
+  mode: z.enum(["a11y", "screenshot", "text", "dom", "console", "network", "dialog", "url", "page_tools"]).optional(),
+  commandId: z.string().optional(), tabId: z.string().optional(), afterSeq: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).optional(),
+});
+export type DriveChatSessionBrowserInput = z.infer<typeof driveSessionBrowserInput>;
+export type ObserveChatSessionBrowserInput = z.infer<typeof observeSessionBrowserInput>;
+export const driveChatSessionBrowserOperation: PlatformOperation<
+  DriveChatSessionBrowserInput,
+  PlatformSessionBrowserOperationResult
+> = {
+  name: "drive_chat_session_browser",
+  title: "Drive a Playground session browser",
+  description:
+    "Open, navigate, act, invoke a page tool, add a note, or close the browser owned by an API Playground session. Uses metered desktop time. Same-user control only; sessionId is the public chat session ID. Opening without sessionId requires project, policy and a stable idempotencyKey.",
+  readOnly: false,
+  mayBeDestructive: true,
+  risk: "spend",
+  permalink: derivePermalinks((result) => {
+    const row = result as {
+      sessionId?: string;
+      chatSessionId?: string;
+      projectId?: string;
+    };
+    return row.chatSessionId
+      ? [
+          {
+            type: "playground_conversation",
+            id: row.chatSessionId,
+            projectId: row.projectId,
+          },
+        ]
+      : [];
+  }),
+  inputSchema: driveSessionBrowserInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    if (!input.sessionId) {
+      if (input.op !== "open" || !input.policy || !input.idempotencyKey)
+        throw new Error(
+          "Opening without a session requires policy and idempotencyKey"
+        );
+      const scope = await resolveProjectOrThrow(
+        { client, signal, onScopeResolved },
+        input.project
+      );
+      return client.createChatSessionBrowser(
+        {
+          projectId: scope.project.id,
+          policy: input.policy,
+          ...(input.profileId ? { profileId: input.profileId } : {}),
+          idempotencyKey: input.idempotencyKey,
+        },
+        { signal }
+      );
+    }
+    const common = {
+      ...(input.commandId ? { commandId: input.commandId } : {}),
+      ...(input.tabId ? { tabId: input.tabId } : {}),
+    };
+    if (input.op === "open")
+      return client.chatSessionBrowser(
+        input.sessionId,
+        "open",
+        {
+          ...(input.policy ? { policy: input.policy } : {}),
+          ...(input.profileId ? { profileId: input.profileId } : {}),
+        },
+        { signal }
+      );
+    if (input.op === "close")
+      return client.chatSessionBrowser(
+        input.sessionId,
+        "close",
+        {},
+        { signal }
+      );
+    if (input.op === "note")
+      return client.chatSessionBrowser(
+        input.sessionId,
+        "note",
+        { ...common, text: input.text },
+        { signal }
+      );
+    const command =
+      input.op === "navigate"
+        ? { op: "navigate", url: input.url }
+        : input.op === "invoke"
+        ? { op: "invoke_page_tool", toolKey: input.toolKey, input: input.input }
+        : { ...input.command, op: "act" };
+    return client.chatSessionBrowser(
+      input.sessionId,
+      "command",
+      { ...common, command },
+      { signal }
+    );
+  },
+};
+export const observeChatSessionBrowserOperation: PlatformOperation<
+  ObserveChatSessionBrowserInput,
+  PlatformSessionBrowserOperationResult
+> = {
+  name: "observe_chat_session_browser",
+  title: "Observe a Playground session browser",
+  description:
+    "Observe, read command history, or obtain a screenshot URL for an API session browser. Observation wakes a sleeping desktop and uses metered desktop time. Trace and artifact reads do not wake it. No image blocks are returned.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => {
+    const row = result as { chatSessionId?: string; projectId?: string };
+    return row.chatSessionId
+      ? [
+          {
+            type: "playground_conversation",
+            id: row.chatSessionId,
+            projectId: row.projectId,
+          },
+        ]
+      : [];
+  }),
+  inputSchema: observeSessionBrowserInput,
+  async execute(input, { client, signal }) {
+    const { sessionId, op, ...body } = input;
+    return client.chatSessionBrowser(
+      sessionId,
+      op === "observe" ? "command" : op,
+      op === "observe"
+        ? {
+            ...(body.commandId ? { commandId: body.commandId } : {}),
+            ...(body.tabId ? { tabId: body.tabId } : {}),
+            command: { op: "observe", mode: body.mode ?? "screenshot" },
+          }
+        : body,
       { signal }
     );
   },
@@ -8835,6 +8990,7 @@ export const getChatSessionOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) => [
     { type: "chat_session", id: result.sessionId, ...projectIdOf(result) },
+    ...(result.chatSessionId && result.origin === "api" ? [{ type: "playground_conversation" as const, id: result.chatSessionId, ...projectIdOf(result) }] : []),
   ]),
   inputSchema: getChatSessionInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -8906,10 +9062,10 @@ export const getChatSessionTraceOperation: PlatformOperation<
   description:
     "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions.",
   readOnly: true,
-  permalink: noPermalink(
-    "no-addressable-resource",
-    "A span-level trace projection; the response names turns, not the session id the Sessions feed opens on."
-  ),
+  permalink: derivePermalinks((result) => [
+    { type: "chat_session", id: result.sessionId, ...projectIdOf(result) },
+    ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, ...projectIdOf(result) }] : []),
+  ]),
   inputSchema: getChatSessionTraceInput,
   async execute(input, { client, signal, onScopeResolved }) {
     const projectSelector = input.project?.trim();
@@ -15958,6 +16114,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listChatSessionsOperation,
   searchSessionsOperation,
   sendChatMessageOperation,
+  driveChatSessionBrowserOperation,
+  observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
   listJourneysOperation,

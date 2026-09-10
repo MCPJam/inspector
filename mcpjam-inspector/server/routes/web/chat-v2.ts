@@ -1,3 +1,4 @@
+import { BrowserSessionService } from "../../services/browserd/session-service";
 import { toResumeExecutionTarget } from "@/shared/execution-target";
 import type { BrowserPageToolsSnapshot } from "../../utils/built-in-tools/browser.js";
 import {
@@ -231,6 +232,14 @@ chatV2.post("/", async (c) => {
 
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
+    if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
+      const service = new BrowserSessionService();
+      if (service.enabled) {
+        const access = await service.agentRequest<{ writable: boolean }>("assert_web_writable", { bearer: bearerToken, projectId: hostedBody.projectId, body: { conversationId: hostedBody.chatSessionId }, signal: c.req.raw.signal });
+        if (!access.writable) return c.json({ code: "API_SESSION_READ_ONLY", error: "This API session is view-only in Playground. Continue it through the session API." }, 409);
+      }
+    }
+
     const { initializePins, mcpProtocolVersionsByServerId } =
       extractMcpInitializeOptions(rawBody);
     const body = rawBody as unknown as ChatV2Request & {

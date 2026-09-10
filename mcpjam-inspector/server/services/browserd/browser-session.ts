@@ -290,6 +290,7 @@ export interface EnsureBrowserSessionArgs {
         sandboxRowId: string;
         sandboxId: string;
         watched?: boolean;
+        record?: boolean;
       };
   /**
    * Persistent Chrome profile (playground/inspector) unless stated.
@@ -319,8 +320,7 @@ export interface EnsureBrowserSessionArgs {
  * return the hosted member specifically, so hosted call sites need no narrow.
  */
 export type BrowserSessionHandle =
-  | HostedBrowserSessionHandle
-  | LocalBrowserSessionHandle;
+  HostedBrowserSessionHandle | LocalBrowserSessionHandle;
 
 interface HostedBrowserSessionHandleCommon {
   engine: "hosted";
@@ -346,8 +346,7 @@ interface HostedBrowserSessionHandleCommon {
  * A daemon on the member's durable computer — the Playground's browser, with
  * their logins, a panel that can watch it and a lease a person can take.
  */
-export interface ComputerHostedBrowserSessionHandle
-  extends HostedBrowserSessionHandleCommon {
+export interface ComputerHostedBrowserSessionHandle extends HostedBrowserSessionHandleCommon {
   target: "computer";
   computerId: string;
   streamUrl: string;
@@ -362,8 +361,7 @@ export interface ComputerHostedBrowserSessionHandle
  * back. Making it a union member rather than optional fields is what stops a
  * `streamUrl: ""` placeholder from reaching a panel that would render it.
  */
-export interface SandboxHostedBrowserSessionHandle
-  extends HostedBrowserSessionHandleCommon {
+export interface SandboxHostedBrowserSessionHandle extends HostedBrowserSessionHandleCommon {
   target: "sandbox";
   /** The control-plane row — the session's identity and its teardown hook. */
   sandboxRowId: string;
@@ -376,8 +374,7 @@ export interface SandboxHostedBrowserSessionHandle
 }
 
 export type HostedBrowserSessionHandle =
-  | ComputerHostedBrowserSessionHandle
-  | SandboxHostedBrowserSessionHandle;
+  ComputerHostedBrowserSessionHandle | SandboxHostedBrowserSessionHandle;
 
 /**
  * A browserd running INSIDE this inspector process — the npm engine's
@@ -453,7 +450,7 @@ export async function ensureBrowserSession(
         target.watched
           ? "a watched Playground sandbox browser is always persistent"
           : "a per-run sandbox browser is always ephemeral: the box dies with " +
-            "the run, so a persistent profile on it could keep nothing",
+              "the run, so a persistent profile on it could keep nothing",
       );
     }
     // Keyed per BOX. Two ensures for one row serialize (the fixed port and one
@@ -800,20 +797,21 @@ async function fenceForRelaunch(
   // this box's browser?", and a persistent daemon with a person on it is the
   // most emphatic possible yes. Reusing the mode-filtered answer here read that
   // yes as "no row, nothing to protect" and killed them.
-  const owner = await (target.computerId !== undefined
-    ? deps.store.lookup({
-        computerId: target.computerId,
-        expectedBundleHash: bundleHash,
-        expectedContextMode: "any",
-        ...(signal ? { signal } : {}),
-      })
-    : deps.store.lookup({
-        sandboxRowId: target.sandboxRowId,
-        ...(target.watched ? { watched: true } : {}),
-        expectedBundleHash: bundleHash,
-        expectedContextMode: "any",
-        ...(signal ? { signal } : {}),
-      })
+  const owner = await (
+    target.computerId !== undefined
+      ? deps.store.lookup({
+          computerId: target.computerId,
+          expectedBundleHash: bundleHash,
+          expectedContextMode: "any",
+          ...(signal ? { signal } : {}),
+        })
+      : deps.store.lookup({
+          sandboxRowId: target.sandboxRowId,
+          ...(target.watched ? { watched: true } : {}),
+          expectedBundleHash: bundleHash,
+          expectedContextMode: "any",
+          ...(signal ? { signal } : {}),
+        })
   ).catch(() => null);
   // RESIDUAL, and named rather than papered over: the backend checks the bundle
   // hash BEFORE the mode, so a daemon booted from a previous bundle answers

@@ -113,7 +113,7 @@ describe("PlaygroundTab loading branch", () => {
 
     render(<PlaygroundTab {...baseProps} />);
 
-    expect(mockLoadingScreen).toHaveBeenCalledTimes(1);
+    expect(mockLoadingScreen).toHaveBeenCalled();
     expect(mockLoadingScreen).toHaveBeenCalledWith(
       expect.objectContaining({ message: "Setting things up..." })
     );

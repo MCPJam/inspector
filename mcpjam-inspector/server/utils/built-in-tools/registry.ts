@@ -261,6 +261,15 @@ export interface BuiltInToolContext {
   browserSessionScope?: BrowserSessionScope;
   /** Explicit profile pin from a host/eval config. */
   browserProfileId?: string;
+  browserHandoffMaxWaitMs?: number;
+  onBrowserHandoffWaiting?: Parameters<
+    typeof buildBrowserTools
+  >[0]["onHandoffWaiting"];
+  browserSessionHandle?: Awaited<
+    ReturnType<
+      NonNullable<Parameters<typeof buildBrowserTools>[0]["ensureSession"]>
+    >
+  >;
   /** Surface notices while a conversation browser waits for capacity. */
   onBrowserNotice?: (notice: string) => void;
   /**
@@ -621,6 +630,7 @@ export function resolveHostTools(
           "[built-in-tools] browser requested while HOSTED_BROWSER_TOOLS_ENABLED is off; skipping",
           { projectId: ctx.projectId },
         );
+        ctx.onToolSuppressed?.({ id, reason: "HOSTED_BROWSER_TOOLS_ENABLED is disabled on this server." });
         continue;
       }
       // The backend's own gate (catalog entry + desktop template + desktop
@@ -748,6 +758,11 @@ export function resolveHostTools(
         projectId: ctx.projectId,
         engine: isLocalBrowser ? "local" : "hosted",
         localConsentToken: ctx.browserConsentToken,
+        handoffMaxWaitMs: ctx.browserHandoffMaxWaitMs,
+        onHandoffWaiting: ctx.onBrowserHandoffWaiting,
+        ...(ctx.browserSessionHandle
+          ? { ensureSession: async () => ctx.browserSessionHandle! }
+          : {}),
         // The host's switch, exactly as bash gets it. This family follows it
         // rather than overruling it.
         requireToolApproval: ctx.requireToolApproval,
@@ -755,7 +770,7 @@ export function resolveHostTools(
         // The run's own identity, falling back to the chat session when a
         // surface has one — both name a single run, which is all the ephemeral
         // profile key needs. Unused on an interactive turn.
-        ...(ctx.runKey ?? ctx.chatSessionId
+        ...((ctx.runKey ?? ctx.chatSessionId)
           ? { runKey: ctx.runKey ?? ctx.chatSessionId }
           : {}),
         // ABSENT ⇒ buildBrowserTools advertises nothing. That is what keeps
@@ -781,6 +796,7 @@ export function resolveHostTools(
               sandboxTarget: {
                 sandboxRowId: sandboxBrowser.sandboxRowId!,
                 sandboxId: sandboxBrowser.sandboxId,
+                record: ctx.browserApprovalDelivery?.kind === "unattended",
               },
             }
           : {}),

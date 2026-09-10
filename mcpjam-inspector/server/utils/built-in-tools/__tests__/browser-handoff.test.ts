@@ -59,7 +59,7 @@ describe("waiting for the browser to come back", () => {
     await waitForHandoff(deps);
     expect(waiting).toEqual([
       { waiting: true, holder: { kind: "human" } },
-      { waiting: false, holder: { kind: "human" } },
+      { waiting: false, resumed: true, holder: { kind: "human" } },
     ]);
   });
 

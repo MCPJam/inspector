@@ -215,8 +215,8 @@ export function buildDirectHostConfig(input: {
       typeof resolvedTemperature === "number"
         ? resolvedTemperature
         : typeof requestedTemperature === "number"
-        ? requestedTemperature
-        : 0.7,
+          ? requestedTemperature
+          : 0.7,
     requireToolApproval: requireToolApproval === true,
     // Pass through verbatim so undefined-vs-set semantics survive into
     // the backend canonicalizer (drops undefined; keeps explicit false).
@@ -239,6 +239,11 @@ export function buildDirectHostConfig(input: {
  */
 export interface PersistedTurnTrace {
   turnId: string;
+  browserAtTurn?: {
+    browserSessionId: string;
+    bootId?: string;
+    box?: { sandboxRowId: string } | { computerId: string };
+  };
   promptIndex: number;
   startedAt: number;
   endedAt: number;
@@ -352,6 +357,7 @@ interface PersistChatSessionOptions {
   expectedVersion?: number;
   rewind?: ChatRewind;
   turnTrace?: PersistedTurnTrace;
+  turnLeaseOwnerToken?: string;
   /**
    * Materialized project secrets this turn delivered into the sandbox, so their
    * values are replaced with `[secret:NAME]` before anything is persisted.
@@ -598,6 +604,9 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
     ...(options.turnTrace?.turnId ? { turnId: options.turnTrace.turnId } : {}),
     ...(options.rewind ? { rewind: options.rewind } : {}),
     ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
+    ...(options.turnLeaseOwnerToken
+      ? { turnLeaseOwnerToken: options.turnLeaseOwnerToken }
+      : {}),
     ...(options.harnessSessionCommit
       ? { harnessSessionCommit: options.harnessSessionCommit }
       : {}),
@@ -947,10 +956,10 @@ export async function persistChatSessionToConvex(
     lastFailure = {
       failureKind: result.failureKind,
       ...(result.status !== undefined ? { status: result.status } : {}),
-      ...(result.preview ?? lastFailure.preview
+      ...((result.preview ?? lastFailure.preview)
         ? { preview: result.preview ?? lastFailure.preview }
         : {}),
-      ...(result.error ?? lastFailure.error
+      ...((result.error ?? lastFailure.error)
         ? { error: result.error ?? lastFailure.error }
         : {}),
     };

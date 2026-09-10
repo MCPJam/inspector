@@ -292,6 +292,7 @@ export const PLATFORM_PERMALINK_ROUTES = {
    * universal target for a session whose surface-native page does not exist
    * (an eval Quick Run, a session whose parent run was deleted).
    */
+  playground_conversation: { label: "Open in Playground", segments: ["playground"], idParam: "conversation", query: { browser: "open" } },
   chat_session: {
     label: "Open session",
     segments: ["sessions"],

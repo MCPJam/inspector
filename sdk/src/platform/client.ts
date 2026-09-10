@@ -1,3 +1,4 @@
+import type { PlatformSessionBrowserInput, PlatformSessionBrowserOperation, PlatformSessionBrowserOperationResult, PlatformSessionBrowserOpened, PlatformBrowserToolPolicy } from "./types.js";
 import { PlatformApiError } from "./errors.js";
 import type {
   PlatformScenarioSummary,
@@ -993,10 +994,17 @@ export class PlatformApiClient {
    * session that named only a host is REFUSED without it, rather than run on
    * the other engine. The response's `engine` field always names what ran.
    */
+  chatSessionBrowser(sessionId: string, op: PlatformSessionBrowserOperation, body: Record<string, unknown> = {}, options?: RequestOptions): Promise<PlatformSessionBrowserOperationResult> {
+    return this.request("POST", `/chat-sessions/${encodeURIComponent(sessionId)}/browser/${op}`, { body }, options);
+  }
+  createChatSessionBrowser(body: { projectId: string; policy: PlatformBrowserToolPolicy; profileId?: string; idempotencyKey: string }, options?: RequestOptions): Promise<PlatformSessionBrowserOpened> {
+    return this.request("POST", "/chat-sessions/browser", { body }, options);
+  }
   sendChatMessage(
     params: {
       idempotencyKey: string;
       message: string;
+      browser?: PlatformSessionBrowserInput;
       projectId?: string;
       sessionId?: string;
       modelId?: string;
@@ -1025,6 +1033,7 @@ export class PlatformApiClient {
         body: {
           idempotencyKey: params.idempotencyKey,
           message: params.message,
+          ...(params.browser !== undefined ? { browser: params.browser } : {}),
           ...(params.projectId !== undefined
             ? { projectId: params.projectId }
             : {}),

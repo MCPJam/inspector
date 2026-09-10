@@ -126,6 +126,7 @@ function RightRailTabbed({
   // THE FALLBACK BROWSER, and only that. While the workspace flag is on the
   // browser lives in its own panel beside chat and this tab does not exist;
   // with the flag off it is the rail's third tab again, exactly as it was.
+  const sessionHasBrowser = useActiveChatSessionStore(state => !!state.restoredSession?.browser);
   const workspaceEnabled = useBrowserWorkspaceEnabled();
   const localBrowserRunning = useLocalBrowserRunning(
     !workspaceEnabled && browserEngine.selectedEngine === "local",
@@ -133,6 +134,7 @@ function RightRailTabbed({
   const hasBrowser =
     !workspaceEnabled &&
     browserPanelAvailable({
+      sessionHasBrowser,
       hostHasBrowser: !!hostConfig?.builtInToolIds?.includes("browser"),
       selectedEngine: browserEngine.selectedEngine,
       isAuthenticated,

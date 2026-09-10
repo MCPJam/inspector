@@ -10,10 +10,7 @@
 import type { BrowserContextMode } from "./browser-sessions-client.js";
 
 export type BrowserSessionOwnerKind =
-  | "conversation"
-  | "swarm_attempt"
-  | "eval_iteration"
-  | "participant_session";
+  "conversation" | "swarm_attempt" | "eval_iteration" | "participant_session";
 
 export interface BrowserSessionOwner {
   kind: BrowserSessionOwnerKind;
@@ -21,9 +18,7 @@ export interface BrowserSessionOwner {
 }
 
 export type BrowserSessionBox =
-  | { computerId: string }
-  | { sandboxRowId: string }
-  | { localKey: string };
+  { computerId: string } | { sandboxRowId: string } | { localKey: string };
 
 export interface BrowserLogicalSessionRecord {
   sessionId: string;
@@ -240,6 +235,11 @@ export class BrowserSessionService {
   /** The external-agent door uses the same authenticated control-plane transport. */
   async agentRequest<T>(
     operation:
+      | "assert_web_writable"
+      | "create_shell"
+      | "begin_model"
+      | "open_conversation"
+      | "get_conversation"
       | "open"
       | "get"
       | "list"

@@ -6,6 +6,14 @@ interface BrowserLocation {
   engine: "local" | "cloud";
 }
 interface ActiveChatSessionState {
+  restoredSession: {
+    sessionId: string;
+    origin?: string;
+    browser?: { browserSessionId: string; state: string } | null;
+  } | null;
+  setRestoredSession: (
+    session: NonNullable<ActiveChatSessionState["restoredSession"]>,
+  ) => void;
   sessionId: string | null;
   browserLocation: BrowserLocation | null;
   setBrowserLocation: (location: BrowserLocation) => void;
@@ -23,11 +31,21 @@ interface ActiveChatSessionState {
  */
 export const useActiveChatSessionStore = create<ActiveChatSessionState>(
   (set) => ({
+    restoredSession: null,
+    setRestoredSession: (restoredSession) =>
+      set({ restoredSession, sessionId: restoredSession.sessionId }),
     sessionId: null,
     browserLocation: null,
     setBrowserLocation: (browserLocation) => set({ browserLocation }),
     browserSessionId: null,
-    setSessionId: (sessionId) => set({ sessionId }),
+    setSessionId: (sessionId) =>
+      set((state) => ({
+        sessionId,
+        ...(sessionId !== state.sessionId &&
+        state.restoredSession?.sessionId !== sessionId
+          ? { restoredSession: null }
+          : {}),
+      })),
     markBrowserSessionActive: (sessionId) =>
       set({ browserSessionId: sessionId }),
   }),

@@ -1,3 +1,4 @@
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 /**
  * PlaygroundMain
@@ -1231,6 +1232,7 @@ export function PlaygroundMain({
   // conversation only while this Playground center is mounted; the rail then
   // binds the watched browser to the same durable owner. Clearing is guarded
   // so an overlapping PlaygroundMain cannot erase a newer active session.
+  const apiSessionViewOnly = useActiveChatSessionStore(state => state.restoredSession?.sessionId === chatSessionId && state.restoredSession.origin === "api");
   const setActiveChatSessionId = useActiveChatSessionStore(
     (state) => state.setSessionId,
   );
@@ -2322,7 +2324,7 @@ export function PlaygroundMain({
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive: isStreamingActive || isPreparingServerForSend,
     composerDisabled:
-      disableChatInput || submitBlocked || isPreparingServerForSend,
+      apiSessionViewOnly || disableChatInput || submitBlocked || isPreparingServerForSend,
     submitDisabled:
       disableChatInput ||
       submitBlocked ||
@@ -2581,7 +2583,7 @@ export function PlaygroundMain({
   // ref rather than a dependency — the send paths must not be re-created (and
   // re-armed) on every host or environment change.
   conversationSendBlockedRef.current =
-    needsConversationTargetAck || loadingHistorySessionId !== null || restoringTarget !== null;
+    apiSessionViewOnly || needsConversationTargetAck || loadingHistorySessionId !== null || restoringTarget !== null;
   const acknowledgeConversationTarget = useCallback(() => {
     setRestoredConversation((previous) =>
       previous ? { ...previous, acknowledged: true } : previous,
@@ -2677,7 +2679,7 @@ export function PlaygroundMain({
         turnTraces?: ChatHistoryTurnTrace[];
       },
     ) => {
-      if (options?.restoreExecutionTarget) {
+      if (options?.restoreExecutionTarget && detail.origin !== "api") {
         adoptRestoredConversationTarget(detail);
         const apply = await restoreTarget(
           readConversationExecutionTarget(detail),
@@ -2702,6 +2704,8 @@ export function PlaygroundMain({
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
+      useActiveChatSessionStore.getState().setRestoredSession({ sessionId: detail.chatSessionId, origin: detail.origin, browser: detail.browser });
+      if (detail.browser && detail.projectId) useActiveChatSessionStore.getState().setBrowserLocation({ projectId: detail.projectId, sessionId: detail.chatSessionId, engine: "cloud" });
       const shouldRestoreComposerState =
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
@@ -3131,6 +3135,10 @@ export function PlaygroundMain({
               modelId: detail.session.modelId,
             }
           : null;
+        if (detail.session.browser && new URLSearchParams(window.location.search).get("browser") === "open") {
+          useBrowserWorkspaceStore.getState().openBrowser(detail.session.chatSessionId);
+          const url = new URL(window.location.href); url.searchParams.delete("browser"); window.history.replaceState(window.history.state, "", url);
+        }
         restored = true;
         return "restored";
       } catch (error) {
@@ -5287,6 +5295,7 @@ export function PlaygroundMain({
                 />
               </div>
             )}
+            {apiSessionViewOnly && <p role="status" className="px-3 py-2 text-sm text-muted-foreground">This conversation is driven by an agent. You can take over its browser here.</p>}
             <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
           </div>
         )}

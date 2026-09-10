@@ -1,3 +1,4 @@
+import { addBrowserFlags, browserInput, registerSessionsBrowserCommands, type BrowserOptions } from "./sessions-browser.js";
 /**
  * `mcpjam cloud sessions` — find a conversation, or list Playground chat
  * sessions.
@@ -220,10 +221,12 @@ export function registerSessionsCommands(program: Command): void {
     })
   );
 
+  registerSessionsBrowserCommands(sessions);
+
   // ── Agent Playground ──────────────────────────────────────────────────────
 
   bindOperation(
-    addProjectOption(
+    addBrowserFlags(addProjectOption(
       sessions
         .command("send")
         .description(
@@ -265,11 +268,12 @@ export function registerSessionsCommands(program: Command): void {
           "Cap the tool calls this turn may make. 0 answers without tools."
         )
         .option("--temperature <n>", "Sampling temperature (0-2)")
-    ),
+    )),
     sendChatMessageOperation,
     (options: SendOptions) => ({
       idempotencyKey: options.idempotencyKey ?? "",
       message: options.message ?? "",
+      browser: browserInput(options),
       project: options.project,
       sessionId: options.session,
       modelId: options.model,
@@ -292,7 +296,7 @@ export function registerSessionsCommands(program: Command): void {
     // A Playground turn runs a model, and often tools with it. The 30s program
     // default expired mid-turn while the turn kept running and spending, which
     // reads to the caller as "it failed" when it had not.
-    { defaultTimeoutMs: 300_000 }
+    { defaultTimeoutMs: 360_000 }
   );
 
   bindOperation(
@@ -355,7 +359,7 @@ export function registerSessionsCommands(program: Command): void {
   );
 }
 
-type SendOptions = PlatformOptions & {
+type SendOptions = BrowserOptions & {
   project?: string;
   message?: string;
   idempotencyKey?: string;

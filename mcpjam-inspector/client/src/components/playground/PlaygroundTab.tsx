@@ -247,6 +247,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // The browser panel's own layout, which is a STORE rather than state here
   // because three unrelated things move it: the agent starting to browse, the
   // person dragging the divider, and the panel's own controls.
+  const sessionHasBrowser = useActiveChatSessionStore(state => !!state.restoredSession?.browser);
   const conversationId = useActiveChatSessionStore((state) => state.sessionId);
   const browserOpen = useBrowserWorkspaceStore((state) =>
     conversationId ? !!state.conversations[conversationId]?.open : false,
@@ -289,6 +290,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     workspaceState === true &&
     computersEnabled === true &&
     browserPanelAvailable({
+      sessionHasBrowser,
       hostHasBrowser:
         !!effectiveHostConfig?.builtInToolIds?.includes("browser"),
       selectedEngine: browserEngine.selectedEngine,

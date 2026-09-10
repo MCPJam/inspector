@@ -1,3 +1,4 @@
+import { registerChatSessionBrowserRoutes } from "./chat-session-browser-routes";
 /**
  * Public v1 AGENT PLAYGROUND surface — drive a conversation and read what it
  * produced.
@@ -12,10 +13,10 @@
  *
  * ONE PUBLIC ID. `sessionId` everywhere in this module is the `chatSessions`
  * DOCUMENT id, the same id `GET /v1/chat-sessions` returns and the same id the
- * trace and detail reads take. The runtime `chatSessionId` UUID — the ingest
- * write key — is INTERNAL and never leaves this file. Two ids on a public
- * surface is how callers pass the wrong one and get an opaque 404 they cannot
- * diagnose; see the two-id trap documented at `journeys.ts:291`.
+ * trace, detail, and browser command routes accept. The runtime `chatSessionId`
+ * UUID is returned read-only for Playground links and is the logical browser
+ * conversation owner. It is never accepted as a route input. Logical browser
+ * identifiers are informational too: agents address only the public sessionId.
  *
  * THE THREE ROUTES, and why they are one module:
  *
@@ -94,6 +95,10 @@ type SessionRow = {
   startedAt?: number;
   lastActivityAt?: number;
   messagesBlobUrl?: string | null;
+  apiConfigState?: "unconfigured" | "configured";
+  browser?: Record<string, unknown> | null;
+  cumulativeInputTokens?: number;
+  cumulativeOutputTokens?: number;
   resumeConfig?: {
     modelId?: string;
     toolMode?: "read_only" | "auto";
@@ -115,6 +120,7 @@ type TurnTraceRow = {
   usage?: { inputTokens?: number; outputTokens?: number };
   spanCount?: number;
   spansBlobUrl?: string | null;
+  browserAtTurn?: { browserSessionId: string; bootId?: string; box?: unknown };
 };
 
 /**
@@ -284,6 +290,22 @@ chatSessions.get("/chat-sessions/:sessionId", async (c) => {
 
   return v1Resource(c, {
     sessionId: session._id,
+    chatSessionId: session.chatSessionId,
+    browser: session.browser ?? null,
+    apiConfigState: session.apiConfigState ?? "configured",
+    ...(session.cumulativeInputTokens !== undefined ||
+    session.cumulativeOutputTokens !== undefined
+      ? {
+          usage: {
+            ...(session.cumulativeInputTokens !== undefined
+              ? { cumulativeInputTokens: session.cumulativeInputTokens }
+              : {}),
+            ...(session.cumulativeOutputTokens !== undefined
+              ? { cumulativeOutputTokens: session.cumulativeOutputTokens }
+              : {}),
+          },
+        }
+      : {}),
     projectId: session.projectId ?? null,
     origin: session.origin ?? null,
     modelId: session.modelId ?? null,
@@ -391,9 +413,38 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     selected = ordered.slice(Math.max(0, ordered.length - limit));
   }
 
+  type Artifact = {
+    turnId?: string;
+    toolCallId: string;
+    toolName?: string;
+    promptIndex: number;
+    stepIndex: number;
+    screenshotUrl?: string;
+    ts: number;
+  };
+  let artifacts: Artifact[] = [];
+  if (selected.some((row) => row.browserAtTurn)) {
+    const evidence = (await client.query(
+      "chatSessions:getBrowserArtifacts" as never,
+      { sessionId: session._id } as never,
+    )) as { browserInteractionSteps?: Artifact[] };
+    artifacts = evidence?.browserInteractionSteps ?? [];
+  }
   const turns = await Promise.all(
     selected.map(async (row) => {
+      const screenshots = artifacts
+        .filter((step) => step.turnId === row.turnId && step.screenshotUrl)
+        .map((step) => ({
+          toolCallId: step.toolCallId,
+          toolName: step.toolName,
+          stepIndex: step.stepIndex,
+          url: step.screenshotUrl,
+          ts: step.ts,
+        }));
       const base = {
+        ...(row.browserAtTurn
+          ? { browser: row.browserAtTurn, screenshots }
+          : {}),
         turnId: row.turnId,
         promptIndex: row.promptIndex,
         startedAt: row.startedAt,
@@ -416,14 +467,21 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
       }
       const spans = Array.isArray(parsed)
         ? (parsed as EvalTraceSpan[])
-        : ((parsed as { spans?: unknown })?.spans as EvalTraceSpan[]) ??
-          undefined;
+        : (((parsed as { spans?: unknown })?.spans as EvalTraceSpan[]) ??
+          undefined);
       if (!Array.isArray(spans)) {
         return { ...base, spansUnavailable: true as const };
       }
       return {
         ...base,
-        spans,
+        spans: spans.map((span) => {
+          const shot = screenshots.find(
+            (shot) =>
+              shot.toolCallId ===
+              (span as unknown as { toolCallId?: string }).toolCallId,
+          );
+          return shot ? { ...span, screenshotUrl: shot.url } : span;
+        }),
         // The blob is the record; a count that disagrees with it means the
         // reader is looking at a partial write, and saying so is cheaper than
         // letting the caller discover it by arithmetic.
@@ -437,6 +495,8 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
   return v1Resource(c, {
     sessionId: session._id,
     origin: session.origin ?? null,
+    chatSessionId: session.chatSessionId,
+    projectId: session.projectId ?? null,
     traceVersion: 1,
     turnCount: ordered.length,
     turns,
@@ -459,6 +519,7 @@ function normalizeUsage(usage: {
 // ── POST /v1/chat-sessions/messages ─────────────────────────────────────────
 
 registerChatSessionTurnRoute(chatSessions);
+registerChatSessionBrowserRoutes(chatSessions);
 
 export default chatSessions;
 export type { SessionRow };
