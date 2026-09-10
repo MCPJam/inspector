@@ -89,10 +89,24 @@ describe("FirstRunOnboardingOverlay", () => {
     const { onConnectOwnServer, onConnectDemo, onSkip } = renderOverlay();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Connect your server" }),
-    );
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://mcp.example.com/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    expect(
+      screen.getByRole("heading", { name: "Set up your server" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
     expect(onConnectOwnServer).toHaveBeenCalledOnce();
+    expect(onConnectOwnServer).toHaveBeenCalledWith({
+      name: "Example",
+      transport: "http",
+      urlOrCommand: "https://mcp.example.com/mcp",
+      authentication: "auto",
+      header: "",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -101,9 +115,7 @@ describe("FirstRunOnboardingOverlay", () => {
     );
     expect(onConnectDemo).toHaveBeenCalledOnce();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "I'll set this up later" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
     expect(onSkip).toHaveBeenCalledOnce();
   });
 
@@ -126,5 +138,18 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByText("6 tools · no setup · nothing to install"),
     ).toBeInTheDocument();
+  });
+
+  it("requires a server URL or command before opening the details sheet", () => {
+    renderOverlay();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Enter a server URL or command.",
+    );
+    expect(
+      screen.queryByRole("heading", { name: "Set up your server" }),
+    ).not.toBeInTheDocument();
   });
 });

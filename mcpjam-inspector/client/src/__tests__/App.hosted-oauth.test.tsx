@@ -3337,9 +3337,11 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Connect your server" }),
-    );
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://mcp.example.com/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
 
     await waitFor(() => {
       expect(screen.getByText("Servers Tab")).toBeInTheDocument();
@@ -3412,9 +3414,7 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "I'll set this up later" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
