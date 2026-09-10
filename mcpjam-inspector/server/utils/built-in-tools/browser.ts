@@ -1417,7 +1417,9 @@ export function buildBrowserTools(
           return {
             error:
               `origin_not_allowed: this run's toolPolicy does not permit ${url} — ` +
-              `allowed origins: ${(unattended.originAllowlist ?? []).join(", ") || "(none)"}`,
+              `allowed origins: ${
+                (unattended.originAllowlist ?? []).join(", ") || "(none)"
+              }`,
           };
         }
         const browserAction: BrowserAction =
@@ -1428,10 +1430,10 @@ export function buildBrowserTools(
                 ...(newTab ? { newTab: true } : {}),
               }
             : verb === "back"
-              ? { kind: "back" }
-              : verb === "forward"
-                ? { kind: "forward" }
-                : { kind: "reload" };
+            ? { kind: "back" }
+            : verb === "forward"
+            ? { kind: "forward" }
+            : { kind: "reload" };
         return presented(
           await send(
             // BOTH, matching `browser_act` and matching what the description
@@ -1552,10 +1554,10 @@ export function buildBrowserTools(
         const target: BrowserActTarget | undefined = ref
           ? { a11yRef: ref }
           : x !== undefined && y !== undefined
-            ? { coordinates: [x, y] }
-            : selector
-              ? { selector }
-              : undefined;
+          ? { coordinates: [x, y] }
+          : selector
+          ? { selector }
+          : undefined;
         return presented(
           await send(
             {
@@ -2345,7 +2347,12 @@ function defaultEnsureSession(
               ...(signal ? { signal } : {}),
             })
           : null;
-      if (service.enabled && opts.sessionScope && logicalSessionId && !logical) {
+      if (
+        service.enabled &&
+        opts.sessionScope &&
+        logicalSessionId &&
+        !logical
+      ) {
         throw new Error("The durable browser session could not be opened");
       }
       // `startSession` derives its profile directory from exactly these two
@@ -2435,20 +2442,9 @@ function defaultEnsureSession(
     logicalSessionId,
     signal,
   }) => {
-    // A CONVERSATION-scoped hosted browser needs a host that advertises
-    // `browser`: the backend re-derives that permission from the frozen config
-    // (`iteration.hostConfigId` / `snapshot.hosts[]`) and refuses without one.
-    // A Playground turn may legitimately run with no `hostId` — an ad-hoc
-    // config carries `builtInToolIds` on the body — and before per-conversation
-    // browsers those turns used the member's project computer. Falling back to
-    // exactly that keeps them working; refusing here would turn a browser that
-    // works today into a fail-closed notice the moment this path became the
-    // default. An unattended run is unaffected: it brings its own `target`.
-    const conversationScoped =
-      opts.sessionScope?.kind === "conversation"
-        ? Boolean(opts.sessionScope.hostId)
-        : true;
-    if (opts.sessionScope && logicalSessionId && conversationScoped) {
+    // Owner IDs must pass through the durable resolver, including ad-hoc chats.
+    // A missing host is never permission to fall back to the project computer.
+    if (opts.sessionScope && logicalSessionId) {
       return ensureHostedConversationSession({
         bearer,
         projectId,
@@ -2518,15 +2514,20 @@ export async function ensureHostedConversationSession(args: {
   if (!logical) {
     throw new Error("The durable browser session could not be opened");
   }
+  if (logical.engine !== "hosted")
+    throw new Error(
+      "This conversation already uses a browser on another engine.",
+    );
   const logicalSessionId = logical.sessionId;
-  const profileArchive = logical.profileId && !logical.lastBootId
-    ? await new BrowserSessionService().downloadProfile({
-        projectId: args.projectId,
-        profileId: logical.profileId,
-        bearer: args.bearer,
-        ...(args.signal ? { signal: args.signal } : {}),
-      })
-    : null;
+  const profileArchive =
+    logical.profileId && !logical.lastBootId
+      ? await new BrowserSessionService().downloadProfile({
+          projectId: args.projectId,
+          profileId: logical.profileId,
+          bearer: args.bearer,
+          ...(args.signal ? { signal: args.signal } : {}),
+        })
+      : null;
   let sandboxRowId: string | undefined = args.target?.sandboxRowId;
   let sandboxId: string | undefined = args.target?.sandboxId;
   const watched = args.ownerKind === "conversation";
@@ -2536,8 +2537,13 @@ export async function ensureHostedConversationSession(args: {
       sandboxRowId,
       ...(args.signal ? { signal: args.signal } : {}),
     });
+    if (!info.ok || !info.value.providerComputerId) {
+      throw new Error(
+        "The existing browser is unavailable. It has not been replaced; retry connecting.",
+      );
+    }
     if (info.ok && info.value.providerComputerId) {
-      if (info.value.status === "sleeping") {
+      if (watched) {
         const wake = await wakePlaygroundSandbox({
           bearer: args.bearer,
           sandboxRowId,
@@ -2564,7 +2570,9 @@ export async function ensureHostedConversationSession(args: {
       ...(args.signal ? { signal: args.signal } : {}),
       onWait: ({ delayMs, resource }) => {
         args.onNotice?.(
-          `The watched browser is waiting for ${resource ?? "desktop"} capacity; retrying in ${Math.ceil(delayMs / 1000)}s.`,
+          `The watched browser is waiting for ${
+            resource ?? "desktop"
+          } capacity; retrying in ${Math.ceil(delayMs / 1000)}s.`,
         );
       },
     });
@@ -2584,6 +2592,9 @@ export async function ensureHostedConversationSession(args: {
     projectId: args.projectId,
     contextMode: args.contextMode,
     logicalSessionId,
+    ...(watched && logical.lastBootId
+      ? { expectedExistingBootId: logical.lastBootId }
+      : {}),
     target: {
       kind: "sandbox",
       sandboxRowId,
@@ -3015,24 +3026,24 @@ function pageToolsNote(
         "call one by name rather than clicking." +
         (options.dynamic ? " They change when you navigate." : "")
       : options.arriving
-        ? "This page's tools will appear as `webmcp_*` tools on your next " +
-          "step." +
-          (options.invokeVerb
-            ? " Until then, call one with `browser_webmcp_invoke`" +
-              (options.listVerb
-                ? " — `browser_webmcp_tools` lists their names."
-                : ".")
-            : "")
-        : options.listVerb
-          ? "This page offers WebMCP tools. List them with `browser_webmcp_tools`, " +
-            "then call one with `browser_webmcp_invoke`."
-          : options.invokeVerb && names.length > 0
-            ? "This page offers WebMCP tools. Call one with " +
-              "`browser_webmcp_invoke`, using a name listed above."
-            : // Nothing this toolset can reach them with. Said plainly rather
-              // than pointing at a verb that is not here.
-              "This page offers WebMCP tools, but none of this browser's tools " +
-              "can reach them; interact with the page itself instead.",
+      ? "This page's tools will appear as `webmcp_*` tools on your next " +
+        "step." +
+        (options.invokeVerb
+          ? " Until then, call one with `browser_webmcp_invoke`" +
+            (options.listVerb
+              ? " — `browser_webmcp_tools` lists their names."
+              : ".")
+          : "")
+      : options.listVerb
+      ? "This page offers WebMCP tools. List them with `browser_webmcp_tools`, " +
+        "then call one with `browser_webmcp_invoke`."
+      : options.invokeVerb && names.length > 0
+      ? "This page offers WebMCP tools. Call one with " +
+        "`browser_webmcp_invoke`, using a name listed above."
+      : // Nothing this toolset can reach them with. Said plainly rather
+        // than pointing at a verb that is not here.
+        "This page offers WebMCP tools, but none of this browser's tools " +
+        "can reach them; interact with the page itself instead.",
   };
 }
 

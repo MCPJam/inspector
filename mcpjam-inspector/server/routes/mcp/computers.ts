@@ -58,6 +58,7 @@ import {
   findLocalBrowserSession,
   findLocalBrowserSessionByKey,
   findLocalBrowserSessionForProject,
+  findLocalBrowserSessionForSession,
   type LiveLocalBrowser,
   localBrowserKeyFor,
   closeLocalBrowserSession,
@@ -66,6 +67,7 @@ import {
   resolveLocalBrowserRuntime,
   resolveLocalBrowserSurface,
   touchLocalBrowserSession,
+  watchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
 import { exportBrowserProfileArchive } from "../../services/browserd/profile-archive.js";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
@@ -419,7 +421,7 @@ computers.post("/local-browser/watch", async (c) => {
   // A browser that has already gone is not an error worth showing anybody: the
   // pane's next measure will discover it for itself.
   if (!session) return c.json({ watching: false }, 404);
-  touchLocalBrowserSession(session.handle);
+  watchLocalBrowserSession(session.handle);
   // AND who has it. A pane that has been refused its input needs to know when
   // the other holder gives the browser back, and nothing on the frame socket
   // says so — the frames were flowing the whole time. Answering here rather
@@ -430,6 +432,38 @@ computers.post("/local-browser/watch", async (c) => {
   // the caller is actually looking at.
   const lease = await session.client.lease?.();
   return c.json({ watching: true, lease: lease ?? { state: "free" } });
+});
+
+/** Reattach a conversation's pane without launching or navigating a browser. */
+computers.post("/local-browser/lookup", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Browser consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    sessionId?: unknown;
+  } | null;
+  let session: LiveLocalBrowser | undefined;
+  try {
+    session = findLocalBrowserSessionForSession(
+      typeof body?.projectId === "string" ? body.projectId : "",
+      typeof body?.sessionId === "string" ? body.sessionId : "",
+    );
+  } catch {
+    return c.json(
+      { error: "Invalid project or conversation for the browser" },
+      400,
+    );
+  }
+  if (!session) return c.json({ session: null });
+  const lease = await session.client.lease?.();
+  return c.json({
+    session: {
+      bootId: session.handle.bootId,
+      contextMode: session.handle.contextMode,
+      lease: lease ?? { state: "free" },
+    },
+  });
 });
 
 /**
@@ -912,10 +946,10 @@ computers.post("/local-browser/pane-command", async (c) => {
       outcome.reason === "lease_held"
         ? 423
         : outcome.reason === "page_changed"
-          ? 409
-          : outcome.reason === "unsupported"
-            ? 501
-            : 502;
+        ? 409
+        : outcome.reason === "unsupported"
+        ? 501
+        : 502;
     return c.json(
       {
         error: outcome.reason,
@@ -1142,8 +1176,8 @@ function liveBrowserFor(
   const live = stored.browserKey
     ? findLocalBrowserSessionByKey(stored.browserKey)
     : stored.profile === "persistent"
-      ? findLocalBrowserSessionForProject(stored.projectId)
-      : undefined;
+    ? findLocalBrowserSessionForProject(stored.projectId)
+    : undefined;
   // The key is stored, not parsed, so this is the one place that can still
   // catch a record pointing at another project's browser. `stored.projectId` is
   // the validated key the session was opened under.

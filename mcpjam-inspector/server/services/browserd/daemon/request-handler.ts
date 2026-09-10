@@ -295,6 +295,23 @@ export class BrowserdRequestHandler {
    * the very thing this whole compatibility mechanism exists to avoid).
    */
   private lastActivityAt: number | null = null;
+  private retiring = false;
+  private suspensionId: string | null = null;
+  private readonly completedSuspensions = new Set<string>();
+  private activeOperations = 0;
+
+  /** Atomic admission barrier held through teardown; a read of isIdle alone races. */
+  tryRetireIfIdle(disconnected = false): boolean {
+    if (
+      this.retiring ||
+      this.activeOperations > 0 ||
+      !this.queue.isIdle?.() ||
+      (!disconnected && this.lease.state().state === "held")
+    )
+      return false;
+    this.retiring = true;
+    return true;
+  }
 
   constructor(deps: BrowserdHandlerDeps) {
     this.queue = deps.queue;
@@ -372,10 +389,36 @@ export class BrowserdRequestHandler {
     if (req.origin !== undefined) {
       return { status: 403, body: { error: "cross_origin_forbidden" } };
     }
+    if (this.retiring)
+      return {
+        status: 503,
+        body: { error: "browser_stopped", bootId: this.bootId },
+      };
+    if (
+      this.suspensionId &&
+      req.path !== "/v1/status" &&
+      req.path !== "/v1/lifecycle"
+    )
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId },
+      };
     return undefined;
   }
 
   async handle(req: DaemonRequest): Promise<DaemonResponse> {
+    // Admission and retirement run synchronously on this daemon's event loop.
+    // Count input, lease changes, and profile/viewport work as well as commands.
+    const operation = req.method === "POST" && req.path !== "/v1/lifecycle";
+    if (operation) this.activeOperations += 1;
+    try {
+      return await this.dispatch(req);
+    } finally {
+      if (operation) this.activeOperations -= 1;
+    }
+  }
+
+  private async dispatch(req: DaemonRequest): Promise<DaemonResponse> {
     // `/healthz` is unauthenticated liveness and carries NO secrets — not the
     // token, not the bootId. The supervisor polls it to decide kill/relaunch on
     // wake (M0 recovery posture), so browser-down is a 503, not a thrown error.
@@ -391,6 +434,63 @@ export class BrowserdRequestHandler {
 
     const refusal = this.authorize(req);
     if (refusal) return refusal;
+
+    if (req.path === "/v1/lifecycle" && req.method === "POST") {
+      let body: { action?: string; operationId?: string; bootId?: string };
+      try {
+        body = JSON.parse(req.body ?? "");
+      } catch {
+        return { status: 400 };
+      }
+      if (!body || body.bootId !== this.bootId)
+        return { status: 409, body: { error: "stale_boot" } };
+      if (
+        typeof body.operationId !== "string" ||
+        !body.operationId ||
+        body.operationId.length > 128
+      )
+        return { status: 400 };
+      if (body.action === "resume") {
+        if (this.suspensionId && this.suspensionId !== body.operationId)
+          return { status: 409 };
+        if (
+          !this.suspensionId &&
+          !this.completedSuspensions.has(body.operationId) &&
+          this.completedSuspensions.size >= 4096
+        )
+          return { status: 409 };
+        this.suspensionId = null;
+        this.completedSuspensions.add(body.operationId);
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      }
+      if (body.action !== "prepare_sleep") return { status: 400 };
+      if (
+        this.completedSuspensions.has(body.operationId) ||
+        this.completedSuspensions.size >= 4096
+      )
+        return { status: 409 };
+      if (this.suspensionId === body.operationId)
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      if (
+        this.suspensionId ||
+        this.activeOperations > 0 ||
+        !this.queue.isIdle?.() ||
+        this.lease.state().state === "held"
+      ) {
+        return {
+          status: 409,
+          body: { error: "browser_busy", bootId: this.bootId },
+        };
+      }
+      this.suspensionId = body.operationId;
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
+    }
+    if (this.suspensionId && req.path !== "/v1/status") {
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId },
+      };
+    }
 
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
@@ -435,7 +535,7 @@ export class BrowserdRequestHandler {
           ? { tabs: this.tabsSnapshot()!.list }
           : {}),
       };
-      return health.ok
+      return health.ok && !this.suspensionId
         ? { status: 200, body: { ok: true, ...identity } }
         : {
             status: 503,
@@ -762,9 +862,7 @@ export class BrowserdRequestHandler {
    */
   private async currentAnchor(
     tabId: string,
-  ): Promise<
-    { urlHash: string; navCounter: number } | null | "unsupported"
-  > {
+  ): Promise<{ urlHash: string; navCounter: number } | null | "unsupported"> {
     // UNSUPPORTED IS NOT NULL, and the difference is the whole point of this
     // return type. A driver with no `currentStateToken` has not told us the
     // page moved — it has told us nothing, and it is optional precisely so
@@ -1351,8 +1449,8 @@ export class BrowserdRequestHandler {
           outcome.status === "expired"
             ? "command_expired"
             : outcome.status === "busy"
-              ? "busy"
-              : "daemon_at_capacity",
+            ? "busy"
+            : "daemon_at_capacity",
       });
       return;
     }
@@ -1442,8 +1540,8 @@ export class BrowserdRequestHandler {
       ...(what.errorCode
         ? { errorCode: what.errorCode }
         : result && !result.ok && parseBrowserdErrorCode(result.error)
-          ? { errorCode: parseBrowserdErrorCode(result.error) as string }
-          : {}),
+        ? { errorCode: parseBrowserdErrorCode(result.error) as string }
+        : {}),
       ...(what.deduped ? { deduped: true } : {}),
       ...(what.capturePage && result ? { output: result.output } : {}),
       ...(what.capturePage && result?.stateToken
@@ -1794,8 +1892,8 @@ export class BrowserdRequestHandler {
     return holder && holder === lease.holder
       ? undefined
       : lease.state === "held"
-        ? "lease_held"
-        : "lease_parked";
+      ? "lease_held"
+      : "lease_parked";
   }
 
   /**

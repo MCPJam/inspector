@@ -38,10 +38,9 @@ vi.mock("../../../middleware/require-verified-auth.js", () => ({
 
 const configState = vi.hoisted(() => ({ browserEnabled: true }));
 vi.mock("../../../config.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../../config.js")>(
-      "../../../config.js",
-    );
+  const actual = await vi.importActual<typeof import("../../../config.js")>(
+    "../../../config.js",
+  );
   return {
     ...actual,
     get LOCAL_BROWSER_ENABLED() {
@@ -90,6 +89,7 @@ const browserKeyFor = vi.hoisted(
   () =>
     (args: {
       projectId: string;
+      sessionId?: string;
       contextMode?: string;
       ownerKey?: string;
       captureTypedText?: boolean;
@@ -98,6 +98,8 @@ const browserKeyFor = vi.hoisted(
         ? `${args.projectId}:ephemeral:${
             args.captureTypedText ? "typed" : "redacted"
           }:${args.ownerKey}`
+        : args.sessionId
+        ? `${args.projectId}:session:${args.sessionId}`
         : `${args.projectId}:persistent`,
 );
 
@@ -105,8 +107,7 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   // The session store derives every path from this, and `homedir` is already
   // pointed at the scratch tree — so the real rule, not a stub, keeps the
   // store's own path checks doing their job.
-  getLocalBrowserRoot: () =>
-    join(scratch, ".mcpjam", "computer", "browser"),
+  getLocalBrowserRoot: () => join(scratch, ".mcpjam", "computer", "browser"),
   listLocalBrowserSessions: () =>
     [...browserState.sessions.values()].map((s: any) => ({
       key: "proj",
@@ -149,6 +150,21 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     if (projectId === "bad/project") throw new Error("invalid project key");
     return [...browserState.sessions.values()][0];
   },
+  findLocalBrowserSessionForSession: (projectId: string, sessionId: string) => {
+    if (
+      !/^[A-Za-z0-9_-]{1,64}$/.test(projectId) ||
+      !/^[A-Za-z0-9_-]{1,64}$/.test(sessionId)
+    ) {
+      throw new Error("invalid identity");
+    }
+    const bootId = browserState.byKey.get(
+      browserKeyFor({ projectId, sessionId }),
+    );
+    return bootId ? browserState.sessions.get(bootId) : undefined;
+  },
+  watchLocalBrowserSession: (handle: { bootId: string }) => {
+    browserState.touched.push(handle.bootId);
+  },
   touchLocalBrowserSession: (handle: { bootId: string }) => {
     browserState.touched.push(handle.bootId);
   },
@@ -159,22 +175,28 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   ) => (runtime === "electron" ? browserState.surface : "frames"),
   ensureLocalBrowserSession: async (args: {
     projectId: string;
+    sessionId?: string;
     contextMode?: string;
     ownerKey?: string;
     captureTypedText?: boolean;
   }) => {
     browserState.launched.push({ ...args });
     const key = browserKeyFor(args);
-    const { buildBrowserdStack } =
-      await import("../../../services/browserd/daemon/server.js");
-    const { ChromiumDriver } =
-      await import("../../../services/browserd/daemon/chromium-driver.js");
-    const { HandoffLease } =
-      await import("../../../services/browserd/daemon/lease.js");
-    const { createInProcessBrowserdClient } =
-      await import("../../../services/browserd/in-process-client.js");
-    const { fakeContext, fakePage, fakeCdpSession } =
-      await import("../../../services/browserd/daemon/__tests__/fake-page.js");
+    const { buildBrowserdStack } = await import(
+      "../../../services/browserd/daemon/server.js"
+    );
+    const { ChromiumDriver } = await import(
+      "../../../services/browserd/daemon/chromium-driver.js"
+    );
+    const { HandoffLease } = await import(
+      "../../../services/browserd/daemon/lease.js"
+    );
+    const { createInProcessBrowserdClient } = await import(
+      "../../../services/browserd/in-process-client.js"
+    );
+    const { fakeContext, fakePage, fakeCdpSession } = await import(
+      "../../../services/browserd/daemon/__tests__/fake-page.js"
+    );
     if (browserState.onLaunch) {
       const hook = browserState.onLaunch;
       browserState.onLaunch = null;
@@ -217,10 +239,7 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     return handle;
   },
   LocalBrowserUnavailableError: class extends Error {
-    constructor(
-      readonly code: string,
-      message: string,
-    ) {
+    constructor(readonly code: string, message: string) {
       super(message);
     }
   },
@@ -261,6 +280,74 @@ beforeEach(() => {
   browserState.runtime = "playwright";
   browserState.surface = "native";
   browserState.touched = [];
+});
+
+describe("POST /local-browser/lookup", () => {
+  const request = (path: string, body: unknown, token: string | null) =>
+    createApp().request(`/api/mcp/computers/local-browser/${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { [BROWSER_CONSENT_HEADER]: token } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+  it("finds each conversation's existing boot without starting or navigating", async () => {
+    const token = await grantConsent();
+    const a = { projectId: "proj", sessionId: "chat-a" };
+    const b = { projectId: "proj", sessionId: "chat-b" };
+    const first = await (await request("ensure", a, token)).json();
+    const second = await (await request("ensure", b, token)).json();
+    browserState.launched = [];
+    expect(first.bootId).not.toBe(second.bootId);
+    for (const [body, boot] of [
+      [a, first],
+      [b, second],
+      [a, first],
+    ] as const) {
+      const res = await request("lookup", body, token);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ session: boot });
+    }
+    expect(browserState.launched).toEqual([]);
+    expect(browserState.cdpSent).toEqual([]);
+  });
+
+  it("does not fall back to another conversation or project", async () => {
+    const token = await grantConsent();
+    await request("ensure", { projectId: "proj", sessionId: "chat-a" }, token);
+    browserState.launched = [];
+    for (const body of [
+      { projectId: "proj", sessionId: "chat-b" },
+      { projectId: "other", sessionId: "chat-a" },
+    ]) {
+      expect(await (await request("lookup", body, token)).json()).toEqual({
+        session: null,
+      });
+    }
+    expect(browserState.launched).toEqual([]);
+  });
+
+  it.each([
+    null,
+    {},
+    { projectId: "proj" },
+    { projectId: "proj", sessionId: "../chat" },
+  ])("rejects malformed identity %j", async (body) => {
+    expect((await request("lookup", body, await grantConsent())).status).toBe(
+      400,
+    );
+  });
+
+  it("requires consent and respects the browser kill switch", async () => {
+    const body = { projectId: "proj", sessionId: "chat-a" };
+    expect((await request("lookup", body, null)).status).toBe(403);
+    configState.browserEnabled = false;
+    expect((await request("lookup", body, await grantConsent())).status).toBe(
+      404,
+    );
+  });
 });
 
 describe("POST /local-browser/watch", () => {
@@ -571,8 +658,9 @@ describe("driving the browser from the pane", () => {
   });
 
   it("mints a frames nonce that is single-use and kind-bound", async () => {
-    const { consumeLocalNonce } =
-      await import("../../../utils/computers/local-terminal-auth.js");
+    const { consumeLocalNonce } = await import(
+      "../../../utils/computers/local-terminal-auth.js"
+    );
     const token = await grantConsent();
     const res = await post("token", token, { projectId: "proj-1" });
     const { nonce } = (await res.json()) as { nonce: string };
@@ -1236,14 +1324,20 @@ describe("the agent door's session routes", () => {
   });
 });
 
-
 it("a real shell grant never authorizes Browser, even under the Browser header", async () => {
-  const { grantLocalComputerConsent } = await import("../../../utils/computers/local-consent.js");
+  const { grantLocalComputerConsent } = await import(
+    "../../../utils/computers/local-consent.js"
+  );
   const shell = await grantLocalComputerConsent();
   for (const header of ["X-MCPJam-Local-Consent", BROWSER_CONSENT_HEADER]) {
-    const response = await createApp().request("/api/mcp/computers/local-browser/install", { method: "POST", headers: { [header]: shell.token } });
+    const response = await createApp().request(
+      "/api/mcp/computers/local-browser/install",
+      { method: "POST", headers: { [header]: shell.token } },
+    );
     expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({ code: "browser_consent_required" });
+    expect(await response.json()).toMatchObject({
+      code: "browser_consent_required",
+    });
   }
   expect(chromiumState.installs).toBe(0);
 });

@@ -123,6 +123,12 @@ vi.mock("@/components/browser/HostedBrowserBody", () => ({
   ),
 }));
 
+vi.mock("@/stores/active-chat-session-store", () => ({
+  useActiveChatSessionStore: (
+    select: (state: { sessionId: string }) => unknown,
+  ) => select({ sessionId: "chat-1" }),
+}));
+
 vi.mock("@/hooks/useProjectComputer", () => ({
   useMintBrowserToken: () => async () => ({
     token: "tok",

@@ -88,7 +88,8 @@ interface BrowserSessionRecordCommon {
  * only in memory and this row is the only durable copy any replica can recover
  * it from.
  */
-export interface ComputerBrowserSessionRecord extends BrowserSessionRecordCommon {
+export interface ComputerBrowserSessionRecord
+  extends BrowserSessionRecordCommon {
   target: "computer";
   computerId: string;
   streamUrl: string;
@@ -101,7 +102,8 @@ export interface ComputerBrowserSessionRecord extends BrowserSessionRecordCommon
  * to cache. A UNION member rather than optional fields, so a `streamUrl: ""`
  * placeholder that some future panel renders into an iframe cannot exist.
  */
-export interface SandboxBrowserSessionRecord extends BrowserSessionRecordCommon {
+export interface SandboxBrowserSessionRecord
+  extends BrowserSessionRecordCommon {
   target: "sandbox";
   sandboxRowId: string;
   /** Present only for a watched Playground sandbox. */
@@ -165,11 +167,13 @@ interface BrowserSessionLookupCommon {
   };
 }
 
-export interface ComputerBrowserSessionLookup extends BrowserSessionLookupCommon {
+export interface ComputerBrowserSessionLookup
+  extends BrowserSessionLookupCommon {
   session: ComputerBrowserSessionRecord | null;
 }
 
-export interface SandboxBrowserSessionLookup extends BrowserSessionLookupCommon {
+export interface SandboxBrowserSessionLookup
+  extends BrowserSessionLookupCommon {
   session: SandboxBrowserSessionRecord | null;
 }
 
@@ -617,22 +621,21 @@ interface BrowserSessionRecordArgsCommon {
  * box. Same reason the RECORD types above are a union: a state nothing can
  * represent needs no runtime check.
  */
-type ComputerBrowserSessionRecordArgs = BrowserSessionRecordArgsCommon & {
-  computerId: string;
-  sandboxRowId?: undefined;
-  /**
-   * REQUIRED: the stream holds its password only in memory, and this row is
-   * the only durable copy any replica can recover it from.
-   */
-  stream: { url: string; password: string };
-};
+export type ComputerBrowserSessionRecordArgs =
+  BrowserSessionRecordArgsCommon & {
+    computerId: string;
+    sandboxRowId?: undefined;
+    /**
+     * REQUIRED: the stream holds its password only in memory, and this row is
+     * the only durable copy any replica can recover it from.
+     */
+    stream: { url: string; password: string };
+  };
 
-type SandboxBrowserSessionRecordArgs = BrowserSessionRecordArgsCommon & {
+export type SandboxBrowserSessionRecordArgs = BrowserSessionRecordArgsCommon & {
   sandboxRowId: string;
   computerId?: undefined;
-} &
-  /** Unattended run: nobody is watching, so no stream is started. */
-  (
+} /** Unattended run: nobody is watching, so no stream is started. */ & (
     | { watched?: false; stream?: undefined }
     /** Watched Playground run: the stream password is durable session state. */
     | { watched: true; stream: { url: string; password: string } }
