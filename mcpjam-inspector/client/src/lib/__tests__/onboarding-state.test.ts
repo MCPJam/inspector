@@ -11,7 +11,9 @@ import {
   markFirstRunServerChoiceDismissed,
   markFirstRunServerChoiceStarted,
   markFirstRunServerChoiceWelcomeAcknowledged,
+  markFirstRunServerChoiceWelcomeShown,
   markFirstRunServerChoiceCompleted,
+  readFirstRunServerChoiceState,
 } from "../onboarding-state";
 
 describe("onboarding-state", () => {
@@ -195,6 +197,35 @@ describe("onboarding-state", () => {
   });
 
   describe("isFirstRunServerChoiceEligible", () => {
+    it("records the welcome as shown before the user interacts", () => {
+      markFirstRunServerChoiceWelcomeShown();
+
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "started",
+          shownAt: expect.any(Number),
+        }),
+      );
+    });
+
+    it("keeps a visibly started flow eligible when a server row hydrates", () => {
+      markFirstRunServerChoiceWelcomeShown();
+
+      expect(isFirstRunServerChoiceEligible(true, "playground")).toBe(true);
+    });
+
+    it("records the server associated with a connection attempt", () => {
+      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceStarted("Personal server");
+
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "started",
+          attemptedServerName: "Personal server",
+        }),
+      );
+    });
+
     it("does not inherit completion from the legacy automatic flow", () => {
       writeOnboardingState({ status: "seen", shownAt: Date.now() });
 

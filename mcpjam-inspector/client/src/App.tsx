@@ -73,11 +73,14 @@ import {
   markFirstRunServerChoiceDismissed,
   markFirstRunServerChoiceStarted,
   markFirstRunServerChoiceWelcomeAcknowledged,
+  markFirstRunServerChoiceWelcomeShown,
+  readFirstRunServerChoiceState,
 } from "./lib/onboarding-state";
 import {
   FirstRunOnboardingOverlay,
   type FirstRunConnectionState,
   type FirstRunServerDraft,
+  type FirstRunServerKind,
 } from "./components/onboarding/FirstRunOnboardingOverlay";
 import type { ServerFormData } from "@/shared/types.js";
 import { validateServerFormData } from "@/lib/server-form-validation";
@@ -209,7 +212,6 @@ import {
   type CheckoutIntentWithOrganization,
   writeBillingSignInReturnPath,
 } from "./lib/billing-deep-link";
-import { hasProjectDeepLinkParam } from "./lib/project-deep-link";
 import {
   buildProjectPath,
   isProjectIdShape,
@@ -2538,6 +2540,18 @@ export default function App() {
   const [playgroundOnboarding, setPlaygroundOnboarding] = useState(false);
   const [firstRunOverlayDismissed, setFirstRunOverlayDismissed] =
     useState(false);
+  const [firstRunOverlaySessionStarted, setFirstRunOverlaySessionStarted] =
+    useState(false);
+  const [initialFirstRunServerChoiceState] = useState(() =>
+    readFirstRunServerChoiceState(),
+  );
+  const skipFirstRunWelcome = Boolean(
+    initialFirstRunServerChoiceState?.shownAt,
+  );
+  const shouldRepairFirstRunStartedState =
+    initialFirstRunServerChoiceState?.status === "started";
+  const [useFirstRunHomeFailureBackdrop, setUseFirstRunHomeFailureBackdrop] =
+    useState(false);
   const [firstRunConnectionState, setFirstRunConnectionState] =
     useState<FirstRunConnectionState>({ status: "idle" });
   const [firstRunPlaygroundPrompt, setFirstRunPlaygroundPrompt] = useState<
@@ -2546,6 +2560,9 @@ export default function App() {
   const [pendingFirstRunConnection, setPendingFirstRunConnection] =
     useState<ServerFormData | null>(null);
   const firstRunConnectionAttemptRef = useRef(0);
+  const failedFirstRunServerKindsRef = useRef<Set<FirstRunServerKind>>(
+    new Set(),
+  );
   // Bumped to ask the active debugger route to open its own "configure server"
   // modal (XAA / OAuth) instead of the generic Add Server modal — see the
   // onAddServerRequested wiring on the header server picker below.
@@ -3331,13 +3348,6 @@ export default function App() {
       const raw = new URLSearchParams(window.location.search).get("template");
       return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
     })();
-  // First-run onboarding can render over a project-scoped destination. This
-  // preserves a shared project URL while still showing the explicit server
-  // choice; redirecting it to unscoped Home created a loop back to Servers.
-  const hasProjectScopedFirstRunDestination =
-    typeof window !== "undefined" &&
-    (hasProjectDeepLinkParam(window.location.search) ||
-      readProjectPathSegment(window.location.pathname) !== null);
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     pendingCheckoutIntent === null &&
@@ -3353,25 +3363,50 @@ export default function App() {
         areServersHydrated &&
         !!activeProjectId &&
         activeProjectId !== "none")) &&
-    isFirstRunServerChoiceEligible(
-      hasAnyFirstRunBlockingProjectServers && !isFirstRunConnectionActive,
-      activeTab,
-      !!workOsUser,
-      isNewSignedInAccount,
-    );
-  // Once a choice has been made, let its destination render immediately.
-  // The persisted state remains `started` until a later onboarding slice
-  // records a final outcome, so it intentionally remains eligible on reload
-  // if a connection has not created a blocking server yet.
-  const shouldRouteToFirstRunHome =
+    (firstRunOverlaySessionStarted ||
+      isFirstRunConnectionActive ||
+      isFirstRunServerChoiceEligible(
+        hasAnyFirstRunBlockingProjectServers,
+        activeTab,
+        !!workOsUser,
+        isNewSignedInAccount,
+      ));
+  // Keep one stable destination mounted beneath every successful first-run
+  // path. Home is used only after both the personal and demo paths have failed,
+  // giving the recovery UI a neutral fallback without making the normal flow
+  // visibly jump Home -> Playground.
+  const firstRunBackdropTab = useFirstRunHomeFailureBackdrop
+    ? "home"
+    : "playground";
+  const firstRunBackdropPath = useFirstRunHomeFailureBackdrop
+    ? routePaths.home
+    : routePaths.playground;
+  const shouldRouteToFirstRunBackdrop =
     shouldRouteToFirstRunOnboarding &&
     !firstRunOverlayDismissed &&
-    activeTab !== "home" &&
-    !hasProjectScopedFirstRunDestination;
+    activeTab !== firstRunBackdropTab;
   const shouldShowFirstRunOverlay =
     shouldRouteToFirstRunOnboarding &&
-    (activeTab === "home" || hasProjectScopedFirstRunDestination) &&
+    activeTab === firstRunBackdropTab &&
     !firstRunOverlayDismissed;
+
+  // Once this render session has committed the first-run UI, later server or
+  // project hydration must not make the overlay vanish underneath the user.
+  useLayoutEffect(() => {
+    if (shouldRouteToFirstRunOnboarding) {
+      setFirstRunOverlaySessionStarted(true);
+    }
+  }, [shouldRouteToFirstRunOnboarding]);
+
+  const recordFirstRunConnectionFailure = useCallback(
+    (serverKind: FirstRunServerKind) => {
+      failedFirstRunServerKindsRef.current.add(serverKind);
+      if (failedFirstRunServerKindsRef.current.size === 2) {
+        setUseFirstRunHomeFailureBackdrop(true);
+      }
+    },
+    [],
+  );
 
   const openFirstRunServerConnection = useCallback(
     (draft: FirstRunServerDraft) => {
@@ -3396,7 +3431,8 @@ export default function App() {
       }
 
       firstRunConnectionAttemptRef.current += 1;
-      markFirstRunServerChoiceStarted();
+      setUseFirstRunHomeFailureBackdrop(false);
+      markFirstRunServerChoiceStarted(formData.name);
       setPendingFirstRunConnection(formData);
       setFirstRunConnectionState({
         status: "preparing",
@@ -3409,7 +3445,8 @@ export default function App() {
 
   const connectFirstRunDemo = useCallback(() => {
     firstRunConnectionAttemptRef.current += 1;
-    markFirstRunServerChoiceStarted();
+    setUseFirstRunHomeFailureBackdrop(false);
+    markFirstRunServerChoiceStarted(EXCALIDRAW_SERVER_CONFIG.name);
     setPendingFirstRunConnection(EXCALIDRAW_SERVER_CONFIG);
     setFirstRunConnectionState({
       status: "preparing",
@@ -3468,6 +3505,9 @@ export default function App() {
       void listTools({ serverId: serverName, refresh: true })
         .then(({ tools }) => {
           if (firstRunConnectionAttemptRef.current !== attemptId) return;
+          // Persist the real outcome before the user presses the final CTA so
+          // a refresh cannot replay onboarding after a successful handshake.
+          markFirstRunServerChoiceCompleted();
           setFirstRunConnectionState({
             status: "connected",
             serverName,
@@ -3477,6 +3517,7 @@ export default function App() {
         })
         .catch((error: unknown) => {
           if (firstRunConnectionAttemptRef.current !== attemptId) return;
+          recordFirstRunConnectionFailure(serverKind);
           setFirstRunConnectionState({
             status: "failed",
             serverName,
@@ -3491,6 +3532,7 @@ export default function App() {
     }
 
     if (server.connectionStatus === "failed") {
+      recordFirstRunConnectionFailure(firstRunConnectionState.serverKind);
       setPendingFirstRunConnection(null);
       setFirstRunConnectionState({
         status: "failed",
@@ -3499,7 +3541,57 @@ export default function App() {
         error: server.lastError || "MCPJam could not connect to this server.",
       });
     }
-  }, [appState.servers, firstRunConnectionState]);
+  }, [
+    appState.servers,
+    firstRunConnectionState,
+    recordFirstRunConnectionFailure,
+  ]);
+
+  // Repair stale `started` records left by the earlier flow, which created the
+  // server successfully but never wrote its onboarding completion marker.
+  useEffect(() => {
+    if (
+      !shouldRepairFirstRunStartedState ||
+      !areServersHydrated ||
+      isFirstRunConnectionActive
+    ) {
+      return;
+    }
+    if (readFirstRunServerChoiceState()?.status !== "started") return;
+
+    const connectedServerNames = new Set(
+      [
+        ...Object.values(projectServers),
+        ...Object.values<ServerWithName>(appState.servers),
+      ]
+        .filter((server) => server.connectionStatus === "connected")
+        .map((server) => server.name),
+    );
+    const attemptedServerName =
+      initialFirstRunServerChoiceState?.attemptedServerName;
+    const isNamedAttemptConnected =
+      attemptedServerName !== undefined &&
+      connectedServerNames.has(attemptedServerName);
+    // Records from builds before attemptedServerName existed can be repaired
+    // only after they are clearly stale and exactly one server is connected.
+    // This avoids mistaking a fresh refresh at the choice screen for success.
+    const isLegacyStaleConnection =
+      attemptedServerName === undefined &&
+      connectedServerNames.size === 1 &&
+      Date.now() - (initialFirstRunServerChoiceState?.startedAt ?? Date.now()) >=
+        5 * 60_000;
+    if (!isNamedAttemptConnected && !isLegacyStaleConnection) return;
+
+    markFirstRunServerChoiceCompleted();
+    setFirstRunOverlayDismissed(true);
+  }, [
+    appState.servers,
+    areServersHydrated,
+    initialFirstRunServerChoiceState,
+    isFirstRunConnectionActive,
+    projectServers,
+    shouldRepairFirstRunStartedState,
+  ]);
 
   const cancelFirstRunConnection = useCallback(() => {
     firstRunConnectionAttemptRef.current += 1;
@@ -4386,10 +4478,10 @@ export default function App() {
   ]);
 
   useLayoutEffect(() => {
-    if (shouldRouteToFirstRunHome) {
-      navigateApp(routePaths.home);
+    if (shouldRouteToFirstRunBackdrop) {
+      navigateApp(firstRunBackdropPath, { replace: true });
     }
-  }, [shouldRouteToFirstRunHome]);
+  }, [firstRunBackdropPath, navigateApp, shouldRouteToFirstRunBackdrop]);
 
   // The snap-to-Servers effect that used to live here is gone with the URL
   // migration. It existed because a project switch changed hidden state and
@@ -5524,11 +5616,13 @@ export default function App() {
               </HostedShellGate>
               <FirstRunOnboardingOverlay
                 open={shouldShowFirstRunOverlay}
+                skipWelcome={skipFirstRunWelcome}
                 connectionState={firstRunConnectionState}
                 onConnectOwnServer={openFirstRunServerConnection}
                 onConnectDemo={connectFirstRunDemo}
                 onCancelConnection={cancelFirstRunConnection}
                 onOpenPlayground={openFirstRunPlayground}
+                onWelcomeShown={markFirstRunServerChoiceWelcomeShown}
                 onWelcomeAcknowledged={
                   markFirstRunServerChoiceWelcomeAcknowledged
                 }

@@ -58,11 +58,13 @@ export interface FirstRunServerDraft {
 
 interface FirstRunOnboardingOverlayProps {
   open: boolean;
+  skipWelcome?: boolean;
   connectionState: FirstRunConnectionState;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
   onCancelConnection: () => void;
   onOpenPlayground: () => void;
+  onWelcomeShown: () => void;
   onWelcomeAcknowledged: () => void;
   onSkip: () => void;
 }
@@ -76,16 +78,20 @@ interface FirstRunOnboardingOverlayProps {
  */
 export function FirstRunOnboardingOverlay({
   open,
+  skipWelcome = false,
   connectionState,
   onConnectOwnServer,
   onConnectDemo,
   onCancelConnection,
   onOpenPlayground,
+  onWelcomeShown,
   onWelcomeAcknowledged,
   onSkip,
 }: FirstRunOnboardingOverlayProps) {
   const prefersReducedMotion = useReducedMotion();
-  const [step, setStep] = useState<FirstRunOverlayStep>("welcome");
+  const [step, setStep] = useState<FirstRunOverlayStep>(() =>
+    skipWelcome ? "choose" : "welcome",
+  );
   const [isWelcomeCountdownRunning, setIsWelcomeCountdownRunning] =
     useState(false);
   const [serverUrlOrCommand, setServerUrlOrCommand] = useState("");
@@ -99,8 +105,12 @@ export function FirstRunOnboardingOverlay({
   const [serverHeader, setServerHeader] = useState("");
 
   useEffect(() => {
-    if (!open) setStep("welcome");
-  }, [open]);
+    if (!open) setStep(skipWelcome ? "choose" : "welcome");
+  }, [open, skipWelcome]);
+
+  useEffect(() => {
+    if (open && step === "welcome") onWelcomeShown();
+  }, [onWelcomeShown, open, step]);
 
   const continueToChoice = useCallback(() => {
     onWelcomeAcknowledged();
@@ -217,7 +227,7 @@ export function FirstRunOnboardingOverlay({
           className={
             step === "welcome"
               ? "backdrop-blur-[32px] backdrop-brightness-50"
-              : undefined
+              : "backdrop-blur-sm"
           }
         />
         <DialogPrimitive.Content
