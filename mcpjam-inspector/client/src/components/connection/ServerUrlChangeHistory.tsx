@@ -13,6 +13,14 @@
  */
 
 import { useQuery } from "convex/react";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { isConvexQueryUnavailable } from "@/lib/convex-error";
+
+/**
+ * Exported so the test can build the exact message the client sees, and so a
+ * rename here cannot drift from the predicate below.
+ */
+export const SERVER_URL_CHANGES_QUERY = "auditEvents:listServerUrlChanges";
 
 interface ServerUrlChangeEvent {
   // Convex system field. The sibling audit reader (`useOrganizationAudit`)
@@ -58,12 +66,58 @@ function formatWhen(timestamp: number): string {
   }
 }
 
+/**
+ * The failure this panel EXPECTS: the deployment does not serve its query.
+ *
+ * The Inspector half of MJ-003 shipped ahead of the backend half, and
+ * `useQuery` throws during render while the function is missing. That throw
+ * escaped to the route boundary and took the whole Servers page down the
+ * moment anyone opened a hosted server's details (PostHog issue
+ * 01a08999-8c34-77a2-922e-557c0e515919). The boundary below is what keeps a
+ * read-only, renders-nothing-by-default panel from ever doing that again.
+ *
+ * `isConvexQueryUnavailable` alone is not enough here: it names the DEV
+ * shapes ("Could not find public function"), and production redacts every
+ * non-`ConvexError` to `[CONVEX Q(<name>)] [Request ID: …] Server Error`. The
+ * function name in that prefix is the only thing left to match on, so a
+ * redacted failure of THIS query is treated as the dark-ship state. A
+ * `ConvexError` from it (`NOT_FOUND` for a non-member) carries its own
+ * message, matches neither branch, and still reports.
+ */
+export function isServerUrlHistoryUnavailable(error: Error): boolean {
+  const message = typeof error?.message === "string" ? error.message : "";
+  if (!message.includes(`Q(${SERVER_URL_CHANGES_QUERY})`)) return false;
+  return isConvexQueryUnavailable(error) || message.includes("Server Error");
+}
+
 export function ServerUrlChangeHistory({
   serverId,
 }: ServerUrlChangeHistoryProps) {
+  return (
+    // KEYED by the server: a boundary that has caught stays in its fallback
+    // for the life of the element, so without the key one failure would hide
+    // the history for every server opened after it in the same modal.
+    //
+    // `fallback={null}` is this panel's own contract — nothing to say, draw
+    // nothing. `isExpectedError` suppresses only the telemetry, and only for
+    // the shape the predicate can name; a genuine render bug still reports.
+    <ErrorBoundary
+      key={serverId ?? "no-server"}
+      name="server-url-change-history"
+      fallback={null}
+      isExpectedError={isServerUrlHistoryUnavailable}
+    >
+      <ServerUrlChangeHistoryPanel serverId={serverId} />
+    </ErrorBoundary>
+  );
+}
+
+function ServerUrlChangeHistoryPanel({
+  serverId,
+}: ServerUrlChangeHistoryProps) {
   const events = useQuery(
-    "auditEvents:listServerUrlChanges" as never,
-    serverId ? ({ serverId } as never) : "skip"
+    SERVER_URL_CHANGES_QUERY as never,
+    serverId ? ({ serverId } as never) : "skip",
   ) as ServerUrlChangeEvent[] | undefined;
 
   // `Array.isArray`, not a truthiness-and-length check. `undefined` is still
