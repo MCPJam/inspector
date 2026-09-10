@@ -40,6 +40,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -111,6 +112,7 @@ function RightRailTabbed({
   hostId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
+  const leftBrowserForLogs = useRef(false);
   const computersEnabled = useComputersEnabledState();
   const browsersEnabled = useBrowserEnabledState();
   const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
@@ -153,6 +155,10 @@ function RightRailTabbed({
     (state) => state.sessionId,
   );
   const browserSessionId = activeChatSessionId ?? undefined;
+  const browseRevealSeq = useBrowserWorkspaceStore((state) => state.revealSeq);
+  const browseRevealId = useBrowserWorkspaceStore(
+    (state) => state.revealConversationId,
+  );
   const mintHostedBrowserToken = useCallback(
     ({ projectId: tokenProjectId }: { projectId: string }) => {
       if (!browserSessionId)
@@ -174,9 +180,26 @@ function RightRailTabbed({
     )
       setActiveTab("logs");
   }, [hasBrowser, shellAvailable, activeTab]);
+
+  useEffect(() => {
+    leftBrowserForLogs.current = false;
+  }, [browserSessionId]);
+
+  // Follow the work until the person looks away. A live browser tool opens
+  // this tab the first time; switching to Logs (or Shell) is a choice we
+  // keep until they come back, or until this conversation is no longer
+  // the one browsing.
+  useEffect(() => {
+    if (!hasBrowser || !browserSessionId) return;
+    if (browseRevealId !== browserSessionId) return;
+    if (leftBrowserForLogs.current) return;
+    setActiveTab("browser");
+  }, [browseRevealSeq, browseRevealId, browserSessionId, hasBrowser]);
+
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
       if (next === activeTab) return;
+      leftBrowserForLogs.current = next !== "browser";
       track("playground_right_rail_tab_changed", {
         location: "playground_right_rail",
         from: activeTab,

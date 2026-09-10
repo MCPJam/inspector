@@ -52,6 +52,7 @@ import {
   LocalBrowserRequestError,
 } from "@/lib/local-browser/client";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { usePaneHolderId } from "@/lib/local-browser/pane-holder";
 
 /**
  * The frame socket's close codes, mirroring `routes/web/local-browser-frames`.
@@ -61,37 +62,6 @@ import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
  */
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_LEASE_HELD = 4409;
-
-/** The `sessionStorage` key holding this tab's lease identity. */
-const HOLDER_STORAGE_KEY = "mcpjam.localBrowser.holder";
-
-/**
- * A lease identity that survives a reload but not the tab.
- *
- * `sessionStorage` can throw (a private window, blocked site data) and can
- * come back empty, so every path falls back to a fresh in-memory id: losing
- * stability costs a wedged lease until it expires, while throwing here would
- * take the whole pane down.
- */
-function usePaneHolderId(): string {
-  const ref = useRef<string | null>(null);
-  if (ref.current === null) {
-    const bytes = crypto.getRandomValues(new Uint8Array(16));
-    const minted = `rail-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-    try {
-      const stored = window.sessionStorage.getItem(HOLDER_STORAGE_KEY);
-      if (stored) {
-        ref.current = stored;
-      } else {
-        window.sessionStorage.setItem(HOLDER_STORAGE_KEY, minted);
-        ref.current = minted;
-      }
-    } catch {
-      ref.current = minted;
-    }
-  }
-  return ref.current;
-}
 
 /**
  * The agent's browser, in the Playground rail.
@@ -108,6 +78,7 @@ function usePaneHolderId(): string {
  * `BrowserPaneSurface`, shared with the hosted pane — what a person does to a
  * rendered browser does not depend on where it runs.
  */
+
 /**
  * What the pane says when the server refuses its input.
  *

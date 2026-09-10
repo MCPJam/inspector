@@ -35,6 +35,7 @@ import {
   PlaygroundBrowserPanel,
 } from "@/components/playground/PlaygroundBrowserPanel";
 import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
+import { railShouldOpenForBrowse } from "@/hooks/useOpenBrowserOnBrowsing";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import {
   useBrowserWorkspaceEnabledState,
@@ -268,6 +269,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const noteRailCollapsed = useBrowserWorkspaceStore(
     (state) => state.noteRailCollapsed,
   );
+  const browseRevealSeq = useBrowserWorkspaceStore((state) => state.revealSeq);
+  const browseRevealId = useBrowserWorkspaceStore(
+    (state) => state.revealConversationId,
+  );
 
   const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
   const browsersEnabled = useBrowserEnabledState();
@@ -324,6 +329,29 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // user clicks the corresponding `CollapsedPanelStrip` peek button.
   const leftPanelRef = useRef<ImperativePanelHandle | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
+  const pendingRailReveal = useRef(false);
+
+  // The rail starts collapsed. A tab switch inside an unmounted rail is how
+  // "open the browser when they navigate" silently did nothing.
+  useEffect(() => {
+    if (
+      !railShouldOpenForBrowse({
+        conversationId,
+        revealConversationId: browseRevealId,
+        workspacePanelVisible: workspaceState === true,
+      })
+    ) {
+      return;
+    }
+    pendingRailReveal.current = true;
+    setIsRightRailVisible(true);
+  }, [browseRevealSeq, browseRevealId, conversationId, workspaceState]);
+
+  useEffect(() => {
+    if (!isRightRailVisible || !pendingRailReveal.current) return;
+    pendingRailReveal.current = false;
+    rightPanelRef.current?.expand();
+  }, [isRightRailVisible]);
 
   if (playgroundState.loadingState.kind === "skeleton") {
     return (

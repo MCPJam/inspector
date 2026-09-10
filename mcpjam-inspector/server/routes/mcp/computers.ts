@@ -79,7 +79,10 @@ import { exportBrowserProfileArchive } from "../../services/browserd/profile-arc
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
+  pageToolInvokeFromBody,
+  pageToolInvokeFromCommandResponse,
   pageToolsFromCommandResponse,
+  sendPageToolInvoke,
   webmcpToolsObserveCommand,
 } from "../../services/browserd/page-tools.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
@@ -1051,13 +1054,31 @@ computers.post("/local-browser/viewport", async (c) => {
 });
 
 /**
+ * THE CONVERSATION'S BROWSER when named, else the project's leftover one.
+ *
+ * Shared by the pane's read and its manual invoke so they cannot disagree
+ * about which Chromium they mean — the bug that made the list empty while
+ * the model was already calling the page's tools.
+ */
+function liveLocalBrowserForPane(args: {
+  projectId: string;
+  sessionId: string;
+}): LiveLocalBrowser | undefined {
+  return args.sessionId
+    ? findLocalBrowserSessionForSession(args.projectId, args.sessionId)
+    : findLocalBrowserSessionForProject(args.projectId);
+}
+
+/**
  * The WebMCP tools of the page THIS MACHINE'S browser is on — the local half of
  * the hosted panel's `GET /page-tools`, feeding the same Tools pane.
  *
  * READS, NEVER STARTS. `ensureLocalBrowserSession` would launch a Chromium, and
  * a tool list appearing in a side panel must not be what opens a browser window
  * on somebody's desk — so a project with nothing running answers
- * `no_browser_session` and the pane says so.
+ * `no_browser_session` and the pane says so. When the body names a
+ * `sessionId`, this looks up that conversation's browser, not the leftover
+ * project-wide one — the same identity chat already drives.
  *
  * POST rather than GET because every local-browser route is: the project id
  * travels in the body alongside the consent capability, and the shared `post`
@@ -1076,17 +1097,26 @@ computers.post("/local-browser/page-tools", async (c) => {
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
+    sessionId?: unknown;
     tabId?: unknown;
     holder?: unknown;
   } | null;
   const projectId = localBrowserProject(c, body?.projectId);
+  // THE CONVERSATION'S BROWSER, when the Tools pane named one. Chat and the
+  // pane now drive `<project>:session:<id>`; looking up the project alone
+  // still finds only the legacy persistent Chromium, so the model could call
+  // page tools the list said did not exist.
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   const tabId = typeof body?.tabId === "string" ? body.tabId : undefined;
   const holder = typeof body?.holder === "string" ? body.holder : undefined;
-  let session: ReturnType<typeof findLocalBrowserSessionForProject>;
+  let session: LiveLocalBrowser | undefined;
   try {
-    session = findLocalBrowserSessionForProject(projectId);
+    session = liveLocalBrowserForPane({ projectId, sessionId });
   } catch {
-    return c.json({ error: "Invalid project for the local browser" }, 400);
+    return c.json(
+      { error: "Invalid project or conversation for the browser" },
+      400,
+    );
   }
   if (!session) {
     return c.json({ ok: false, error: "no_browser_session" }, 409);
@@ -1110,6 +1140,70 @@ computers.post("/local-browser/page-tools", async (c) => {
       response = await observe("manual", holder);
     }
     const mapped = pageToolsFromCommandResponse(response);
+    return c.json(mapped.body, mapped.status);
+  } catch {
+    return c.json({ ok: false, error: "unreachable" }, 502);
+  }
+});
+
+/**
+ * Invoke a page tool the Tools pane is showing, the way the WebMCP Inspector
+ * does: a person clicked Run on a tool they can see, on a page they opened.
+ *
+ * NEVER STARTS a browser. NEVER takes `source` from the body. Goes out as
+ * `inspector` first so Run works while the agent is driving (lease free);
+ * retried as this holder's `manual` command if they have taken the page.
+ * `browser_*` verbs stay out of this route; driving Chromium from a form
+ * would skip the approval path those tools still need.
+ */
+computers.post("/local-browser/page-tools/invoke", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    sessionId?: unknown;
+    holder?: unknown;
+  } | null;
+  const parsed = pageToolInvokeFromBody(body);
+  if (!parsed.ok) {
+    return c.json({ ok: false, error: parsed.error }, 400);
+  }
+  const projectId = localBrowserProject(c, body?.projectId);
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
+  const holder = typeof body?.holder === "string" ? body.holder : undefined;
+  let session: LiveLocalBrowser | undefined;
+  try {
+    session = liveLocalBrowserForPane({ projectId, sessionId });
+  } catch {
+    return c.json(
+      { error: "Invalid project or conversation for the browser" },
+      400,
+    );
+  }
+  if (!session) {
+    return c.json({ ok: false, error: "no_browser_session" }, 409);
+  }
+  try {
+    const response = await sendPageToolInvoke(
+      (command, bootId) => session!.client.sendCommand(command, bootId),
+      {
+        toolKey: parsed.toolKey,
+        input: parsed.input,
+        bootId: session.handle.bootId,
+        ...(parsed.frameId ? { frameId: parsed.frameId } : {}),
+        ...(parsed.tabId ? { tabId: parsed.tabId } : {}),
+        ...(holder ? { holder } : {}),
+      },
+    );
+    const mapped = pageToolInvokeFromCommandResponse(response);
     return c.json(mapped.body, mapped.status);
   } catch {
     return c.json({ ok: false, error: "unreachable" }, 502);

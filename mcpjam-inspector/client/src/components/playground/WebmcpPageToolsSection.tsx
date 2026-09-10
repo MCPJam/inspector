@@ -18,6 +18,10 @@
  * session was left open in another tab would be a surprise, and these tools run
  * code on somebody else's site.
  *
+ * Hidden until a page is actually open. An empty "open WebMCP" caption at the
+ * bottom of the tool list is not an offer — it is noise on every chat that
+ * never uses the Inspector.
+ *
  * Rendered in BOTH modes. It was local-only while `/api/web/chat-v2` ignored
  * `pageTools` — listing tools that would then be dropped mid-conversation is
  * worse than not offering them — and the hosted route now validates, advertises
@@ -26,13 +30,6 @@
  * and that session's transport is hosted or local without this component
  * knowing which.
  */
-import { Globe } from "lucide-react";
-import {
-  scopeNavigationTarget,
-  routePaths,
-  useAppNavigate,
-  useCurrentPathname,
-} from "@/lib/app-navigation";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useWebmcpInspectorEnabled } from "@/hooks/useWebmcpInspectorEnabled";
 
@@ -44,56 +41,30 @@ export function WebmcpPageToolsSection() {
   const setChatEnabled = useWebmcpInspectorStore(
     (state) => state.setChatEnabled,
   );
-  const pathname = useCurrentPathname();
-  const navigate = useAppNavigate();
 
   if (!flagOn) return null;
 
   const live = Boolean(session) && session?.status !== "closed";
+  if (!live) return null;
 
   return (
-    <div className="mt-3">
-      <div className="flex items-center gap-1.5 px-3 pb-1">
-        <Globe className="h-3 w-3 text-muted-foreground" />
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          Page tools
+    <label className="flex cursor-pointer items-start gap-2 px-3 py-1.5 hover:bg-accent/40">
+      <input
+        type="checkbox"
+        checked={chatEnabled}
+        onChange={(event) => setChatEnabled(event.target.checked)}
+        className="mt-0.5"
+      />
+      <span className="min-w-0">
+        <span className="block truncate text-xs font-medium">
+          {session?.url}
         </span>
-      </div>
-
-      {!live ? (
-        <p className="px-3 text-xs text-muted-foreground">
-          No page open.{" "}
-          <button
-            type="button"
-            className="underline underline-offset-2"
-            onClick={() =>
-              navigate(scopeNavigationTarget(routePaths.webmcp, pathname))
-            }
-          >
-            Open one in WebMCP
-          </button>{" "}
-          to let the model use its tools.
-        </p>
-      ) : (
-        <label className="flex cursor-pointer items-start gap-2 px-3 py-1.5 hover:bg-accent/40">
-          <input
-            type="checkbox"
-            checked={chatEnabled}
-            onChange={(event) => setChatEnabled(event.target.checked)}
-            className="mt-0.5"
-          />
-          <span className="min-w-0">
-            <span className="block truncate text-xs font-medium">
-              {session?.url}
-            </span>
-            <span className="block text-[11px] text-muted-foreground">
-              {tools.length === 0
-                ? "No tools registered yet"
-                : `${tools.length} tool${tools.length === 1 ? "" : "s"} — every call asks first`}
-            </span>
-          </span>
-        </label>
-      )}
-    </div>
+        <span className="block text-xs text-muted-foreground">
+          {tools.length === 0
+            ? "No tools registered yet"
+            : `${tools.length} tool${tools.length === 1 ? "" : "s"} — every call asks first`}
+        </span>
+      </span>
+    </label>
   );
 }

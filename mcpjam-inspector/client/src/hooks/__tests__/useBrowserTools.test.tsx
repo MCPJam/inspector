@@ -20,6 +20,8 @@ const state = vi.hoisted(() => ({
   definitionCalls: [] as string[],
   pageCalls: [] as string[],
   pageTabIds: [] as Array<string | undefined>,
+  pageSessionIds: [] as Array<string | undefined>,
+  pageHolders: [] as Array<string | undefined>,
 }));
 
 vi.mock("convex/react", () => ({
@@ -47,6 +49,11 @@ vi.mock("@/hooks/useProjectComputer", () => ({
       token: "tok",
       expiresAt: Date.now() + 60_000,
     })),
+  useMintConversationBrowserToken: () =>
+    vi.fn(async () => ({
+      token: "tok-conversation",
+      expiresAt: Date.now() + 60_000,
+    })),
 }));
 
 vi.mock("@/lib/hosted-browser/client", () => ({
@@ -72,9 +79,15 @@ vi.mock("@/lib/browser-page-tools/client", () => ({
       tools: [],
     };
   }),
-  fetchLocalPageTools: vi.fn(async (args: { tabId?: string }) => {
+  fetchLocalPageTools: vi.fn(async (args: {
+    tabId?: string;
+    sessionId?: string;
+    holder?: string;
+  }) => {
     state.pageCalls.push("local");
     state.pageTabIds.push(args?.tabId);
+    state.pageSessionIds.push(args?.sessionId);
+    state.pageHolders.push(args?.holder);
     return {
       ok: true,
       url: "http://localhost/",
@@ -82,9 +95,18 @@ vi.mock("@/lib/browser-page-tools/client", () => ({
       tools: [],
     };
   }),
+  fetchHostedPageToolInvoke: vi.fn(async () => ({
+    ok: true,
+    output: {},
+  })),
+  fetchLocalPageToolInvoke: vi.fn(async () => ({
+    ok: true,
+    output: {},
+  })),
 }));
 
 import { useBrowserTools } from "../useBrowserTools";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import {
   browserPageToolsKey,
   noteWebmcpStats,
@@ -102,7 +124,15 @@ beforeEach(() => {
   state.definitionCalls = [];
   state.pageCalls = [];
   state.pageTabIds = [];
+  state.pageSessionIds = [];
+  state.pageHolders = [];
+  sessionStorage.clear();
   useBrowserPageToolsStore.setState({ live: {}, epoch: {} });
+  useActiveChatSessionStore.setState({
+    sessionId: null,
+    browserLocation: null,
+    browserSessionId: null,
+  });
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -182,6 +212,20 @@ describe("useBrowserTools — which browser it reads", () => {
     // The definitions differ per engine — they say whose browser this is.
     expect(state.definitionCalls).toEqual(["local"]);
     expect(result.current.engine).toBe("local");
+  });
+
+  it("names the conversation whose browser the pane is listing", async () => {
+    // Chat drives `<project>:session:<id>`. A read that omitted the id still
+    // looked at the leftover project-wide Chromium, so the list stayed empty
+    // while the model was already calling that page's tools.
+    state.projectDefault = WITH_BROWSER;
+    state.selectedEngine = "local";
+    state.consentToken = "consent-tok";
+    useActiveChatSessionStore.setState({ sessionId: "chat-1" });
+    renderHook(() => useBrowserTools({ projectId: "proj_1", hostId: null }));
+    await waitFor(() => expect(state.pageCalls).toEqual(["local"]));
+    expect(state.pageSessionIds).toEqual(["chat-1"]);
+    expect(state.pageHolders[0]).toMatch(/^rail-/);
   });
 
   it("does not read the local browser before consent is granted", async () => {
