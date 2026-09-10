@@ -570,13 +570,16 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // still exists for: what a person reads is the picture still on screen a
     // second after everything stopped moving, and the stream is encoded for
     // motion.
-    const { frames } = await open({ viewportMode: "embedded" });
+    // Subscribe before starting the stream so hub replay cannot replace the
+    // initial streaming frame with an already sharpened still.
+    const { runtime, frames } = await open();
+    await runtime.setScreencast(true);
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
       timeout: 15_000,
     });
 
-    const streamedCount = frames.length;
-    const streamed = frames.at(-1)!;
+    const streamedCount = 1;
+    const streamed = frames[0];
 
     // Long enough for the page's own paints to stop and for the quiet window
     // to elapse, DERIVED from the constants that decide it rather than a
