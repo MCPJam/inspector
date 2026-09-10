@@ -343,7 +343,7 @@ export class WebMcpSessionRuntime {
         this.pushActivity({
           kind: "popup_opened",
           url,
-          note: "Popups are left open so sign-in flows keep working. Their tools are not inspected.",
+          note: "Opened as a managed browser tab, preserving its opener for sign-in flows.",
         }),
       onExternalInvocation: (note, toolName) =>
         this.pushActivity({
@@ -470,6 +470,28 @@ export class WebMcpSessionRuntime {
     }
   }
 
+  async browserState() {
+    return this.requireSession().browserState?.() ?? null;
+  }
+
+  async browserCommand(
+    command: import("@/shared/browser-pane-command").BrowserPaneCommand,
+  ): Promise<void> {
+    const session = this.requireSession();
+    if (!session.browserCommand)
+      throw new Error("This browser does not support pane navigation.");
+    await Promise.all([...this.socketInputDrains].map((drain) => drain()));
+    const pending = this.inputTail.then(async () => {
+      if (this.inputClosed || this.session !== session)
+        throw new Error("The browser session is no longer available.");
+      await session.browserCommand!(command);
+    });
+    this.inputTail = pending.catch(() => {});
+    await pending;
+    this.url = session.currentUrl();
+    this.onActivity();
+  }
+
   // ---------------------------------------------------------- navigation
 
   /** Drive the page. Status flips to `navigating` so the UI can say so. */
@@ -571,6 +593,7 @@ export class WebMcpSessionRuntime {
     events: WebMcpInputEvent[],
     isCancelled: () => boolean = () => false,
     source: "http" | "socket" = "http",
+    tabId?: string,
   ): Promise<void> {
     const session = this.requireSession();
     // Capture the existing relay work before joining the dispatch tail. Doing
@@ -583,7 +606,7 @@ export class WebMcpSessionRuntime {
         throw new Error("The browser session is no longer available.");
       }
       this.onActivity();
-      await session.dispatchInput(events);
+      await session.dispatchInput(events, tabId);
     });
     // Every transport/viewer shares this tail. A failure must not wedge it.
     this.inputTail = pending.catch(() => {});
@@ -858,7 +881,7 @@ export class WebMcpSessionRuntime {
       source: item.source,
       input: echo.value,
       ...(echo.truncated ? { inputTruncated: true } : {}),
-      ...(await this.screenshot()),
+      ...(await this.screenshot(item.expectedBinding?.browser?.tabId)),
     });
 
     const timeout = setTimeout(
@@ -866,7 +889,7 @@ export class WebMcpSessionRuntime {
       this.invokeTimeoutMs,
     );
     try {
-      const { output } = await session.invokeTool({
+      const { output, truncated } = await session.invokeTool({
         expectedBinding: item.expectedBinding,
         frameId: tool.frameId,
         toolName: tool.name,
@@ -877,6 +900,7 @@ export class WebMcpSessionRuntime {
         invokeId: item.invokeId,
       });
       const capped = capResult(output);
+      capped.truncated ||= truncated === true;
       await this.settle(item, "succeeded", startedAt, {
         output: capped.value,
         ...(capped.truncated
@@ -944,7 +968,7 @@ export class WebMcpSessionRuntime {
       errorMessage?: string;
     },
   ): Promise<void> {
-    const shot = await this.screenshot();
+    const shot = await this.screenshot(item.expectedBinding?.browser?.tabId);
     this.pushActivity({
       kind: "invocation_settled",
       invokeId: item.invokeId,
@@ -957,8 +981,12 @@ export class WebMcpSessionRuntime {
     });
   }
 
-  private async screenshot(): Promise<{ screenshotBase64?: string }> {
-    const shot = await this.session?.captureScreenshot().catch(() => undefined);
+  private async screenshot(
+    tabId?: string,
+  ): Promise<{ screenshotBase64?: string }> {
+    const shot = await this.session
+      ?.captureScreenshot(tabId)
+      .catch(() => undefined);
     return shot ? { screenshotBase64: shot } : {};
   }
 
@@ -972,11 +1000,11 @@ export class WebMcpSessionRuntime {
   private setStatus(status: WebMcpSessionStatus, detail?: string): void {
     this.status = status;
     this.statusDetail = detail;
-    this.publish({
-      type: "session",
-      seq: this.nextSeq(),
-      session: this.toPublic(),
-    });
+    // Initial navigation fires inside the provider's createSession, before
+    // attach supplies the real transport. Replaying that provisional
+    // native-window snapshot would make the client destroy its webview.
+    // Retain the status; the registry publishes once the browser is attached.
+    if (this.session) this.publishSession();
   }
 
   /**

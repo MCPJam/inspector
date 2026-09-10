@@ -763,7 +763,9 @@ describe("WebMCP negotiated socket input", () => {
     });
     try {
       probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
-      await vi.waitFor(() => expect(acks(probe)[0]?.refused).toBe("no_browser_session"));
+      await vi.waitFor(() =>
+        expect(acks(probe)[0]?.refused).toBe("no_browser_session"),
+      );
       expect(browser.inputBatches).toHaveLength(0);
     } finally {
       get.mockRestore();
@@ -840,7 +842,10 @@ describe("WebMCP negotiated socket input", () => {
 
   it("does not enable input for a native Electron surface", async () => {
     const session = await openSession();
-    provider.sessions[0].transport = { kind: "electron-webview" };
+    provider.sessions[0].transport = {
+      kind: "electron-native",
+      bootId: "native-boot",
+    };
     const probe = connect(server.port, session.sessionId, token);
     await probe.opened;
     probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));

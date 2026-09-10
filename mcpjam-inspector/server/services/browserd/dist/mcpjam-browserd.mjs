@@ -1323,6 +1323,7 @@ var BrowserdRequestHandler = class {
   bootId;
   token;
   lease;
+  authority;
   features;
   bundleHash;
   contextMode;
@@ -1351,12 +1352,24 @@ var BrowserdRequestHandler = class {
    * the very thing this whole compatibility mechanism exists to avoid).
    */
   lastActivityAt = null;
+  retiring = false;
+  suspensionId = null;
+  completedSuspensions = /* @__PURE__ */ new Set();
+  activeOperations = 0;
+  /** Atomic admission barrier held through teardown; a read of isIdle alone races. */
+  tryRetireIfIdle(disconnected = false) {
+    if (this.retiring || this.activeOperations > 0 || !this.queue.isIdle?.() || !disconnected && this.lease.state().state === "held")
+      return false;
+    this.retiring = true;
+    return true;
+  }
   constructor(deps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
+    this.authority = deps.authority ?? "lease";
     this.features = [
       .../* @__PURE__ */ new Set([...deps.features ?? [], ...BROWSERD_WEBMCP_FEATURES])
     ];
@@ -1411,9 +1424,28 @@ var BrowserdRequestHandler = class {
     if (req.origin !== void 0) {
       return { status: 403, body: { error: "cross_origin_forbidden" } };
     }
+    if (this.retiring)
+      return {
+        status: 503,
+        body: { error: "browser_stopped", bootId: this.bootId }
+      };
+    if (this.suspensionId && req.path !== "/v1/status" && req.path !== "/v1/lifecycle")
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId }
+      };
     return void 0;
   }
   async handle(req) {
+    const operation = req.method === "POST" && req.path !== "/v1/lifecycle";
+    if (operation) this.activeOperations += 1;
+    try {
+      return await this.dispatch(req);
+    } finally {
+      if (operation) this.activeOperations -= 1;
+    }
+  }
+  async dispatch(req) {
     if (req.path === "/healthz") {
       if (req.method !== "GET" && req.method !== "HEAD") {
         return { status: 405, headers: { allow: "GET, HEAD" } };
@@ -1423,6 +1455,46 @@ var BrowserdRequestHandler = class {
     }
     const refusal = this.authorize(req);
     if (refusal) return refusal;
+    if (req.path === "/v1/lifecycle" && req.method === "POST") {
+      let body;
+      try {
+        body = JSON.parse(req.body ?? "");
+      } catch {
+        return { status: 400 };
+      }
+      if (!body || body.bootId !== this.bootId)
+        return { status: 409, body: { error: "stale_boot" } };
+      if (typeof body.operationId !== "string" || !body.operationId || body.operationId.length > 128)
+        return { status: 400 };
+      if (body.action === "resume") {
+        if (this.suspensionId && this.suspensionId !== body.operationId)
+          return { status: 409 };
+        if (!this.suspensionId && !this.completedSuspensions.has(body.operationId) && this.completedSuspensions.size >= 4096)
+          return { status: 409 };
+        this.suspensionId = null;
+        this.completedSuspensions.add(body.operationId);
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      }
+      if (body.action !== "prepare_sleep") return { status: 400 };
+      if (this.completedSuspensions.has(body.operationId) || this.completedSuspensions.size >= 4096)
+        return { status: 409 };
+      if (this.suspensionId === body.operationId)
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      if (this.suspensionId || this.activeOperations > 0 || !this.queue.isIdle?.() || this.lease.state().state === "held") {
+        return {
+          status: 409,
+          body: { error: "browser_busy", bootId: this.bootId }
+        };
+      }
+      this.suspensionId = body.operationId;
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
+    }
+    if (this.suspensionId && req.path !== "/v1/status") {
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId }
+      };
+    }
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -1450,7 +1522,7 @@ var BrowserdRequestHandler = class {
         ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) },
         ...this.tabsSnapshot()?.list ? { tabs: this.tabsSnapshot().list } : {}
       };
-      return health.ok ? { status: 200, body: { ok: true, ...identity } } : {
+      return health.ok && !this.suspensionId ? { status: 200, body: { ok: true, ...identity } } : {
         status: 503,
         body: { ok: false, detail: health.detail, ...identity }
       };
@@ -1589,8 +1661,8 @@ var BrowserdRequestHandler = class {
       };
     }
     const holder = body.holder;
-    const lease = this.lease.acquire(holder);
-    if (lease.state === "free" || lease.holder !== holder) {
+    const lease = this.authority === "shared" ? this.lease.state() : this.lease.acquire(holder);
+    if (this.authority === "lease" && (lease.state === "free" || lease.holder !== holder)) {
       return {
         status: 423,
         body: {
@@ -1620,6 +1692,7 @@ var BrowserdRequestHandler = class {
       }
     }
     const mapped = paneCommandToAction(command);
+    mapped.tabId ??= this.driver.tabsSnapshot?.().active;
     const outcome = await this.queue.submit({
       // `manual` is the one source `leaseRefusalFor` admits while a lease is
       // held, which is what lets this run at all now that the pane owns the
@@ -2002,10 +2075,7 @@ var BrowserdRequestHandler = class {
     }
     this.lastActivityAt = Date.now();
     const leaseState = this.lease.state();
-    const refusal = leaseRefusalFor(
-      leaseState,
-      parsed.command
-    );
+    const refusal = this.authority === "shared" ? void 0 : leaseRefusalFor(leaseState, parsed.command);
     if (refusal) {
       this.recordRow(parsed.command, startedAt, {
         outcome: "refused",
@@ -2307,7 +2377,7 @@ var BrowserdRequestHandler = class {
    */
   async dispatchInput(args) {
     const stillTheirs = () => {
-      const refused = leaseRefusalFor(this.lease.state(), {
+      const refused = this.authority === "shared" ? void 0 : leaseRefusalFor(this.lease.state(), {
         source: "manual",
         holder: args.holder
       });
@@ -2347,6 +2417,7 @@ var BrowserdRequestHandler = class {
   }
   /** May this watcher see frames right now? */
   watcherRefusal(holder) {
+    if (this.authority === "shared") return void 0;
     const lease = this.lease.state();
     if (lease.state === "free") return void 0;
     return holder && holder === lease.holder ? void 0 : lease.state === "held" ? "lease_held" : "lease_parked";
@@ -2356,6 +2427,11 @@ var BrowserdRequestHandler = class {
    * cannot be released by another tab that happens to know the endpoint.
    */
   handleLease(req) {
+    if (this.authority === "shared" && req.method !== "GET")
+      return {
+        status: 409,
+        body: { error: "shared_authority", bootId: this.bootId }
+      };
     if (req.method === "GET") {
       return { status: 200, body: this.leaseBody(this.lease.state()) };
     }
@@ -3228,7 +3304,7 @@ function buildBrowserdStack(driver, config) {
   const ledger = new CommandLedger({ bootId });
   const lease = config.lease ?? new HandoffLease();
   const queue = new CommandQueue(
-    guardLease(lease, guardStaleness(driver, lease)),
+    config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease)),
     bootId
   );
   const handler = new BrowserdRequestHandler({
@@ -3236,6 +3312,7 @@ function buildBrowserdStack(driver, config) {
     driver,
     bootId,
     token: config.token,
+    authority: config.authority,
     lease,
     ...config.features ? { features: config.features } : {},
     ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
@@ -3532,6 +3609,16 @@ function createVideoEncoder(options) {
       stop();
     }
   };
+}
+
+// shared/browser-session-state.ts
+var BROWSER_TAB_CAP = 8;
+function tabAfterClose(tabs, closingId, activeId) {
+  if (activeId !== closingId) return activeId;
+  const index = tabs.findIndex((tab) => tab.id === closingId);
+  if (index < 0) return activeId;
+  const openerId = tabs[index].openerId;
+  return (openerId && tabs.some((tab) => tab.id === openerId && tab.id !== closingId) ? openerId : void 0) ?? tabs[index + 1]?.id ?? tabs[index - 1]?.id ?? null;
 }
 
 // server/services/browserd/daemon/network.ts
@@ -4711,6 +4798,13 @@ var WebMcpBridge = class {
     this.onChange = options.onChange;
     this.onExternalInvocation = options.onExternalInvocation;
   }
+  externalSubscribers = /* @__PURE__ */ new Set();
+  subscribeExternalInvocation(listener) {
+    this.externalSubscribers.add(listener);
+    return () => {
+      this.externalSubscribers.delete(listener);
+    };
+  }
   /**
    * Tools keyed `${frameId} ${name}` — the browser's own notion of identity —
    * each carrying the registration sequence minted when it arrived.
@@ -4946,6 +5040,8 @@ var WebMcpBridge = class {
       if (this.pending.has(invoked.invocationId)) return;
       if (this.outstandingSends > 0) return;
       this.onExternalInvocation?.(invoked.toolName ?? "");
+      for (const listener of this.externalSubscribers)
+        listener(invoked.toolName ?? "");
     });
     session.cdp.on("WebMCP.toolResponded", (payload) => {
       const responded = payload ?? {};
@@ -5357,6 +5453,7 @@ var WebMcpBridge = class {
     if (this.disposed) return;
     this.disposed = true;
     this.subscribers.clear();
+    this.externalSubscribers.clear();
     this.probe = void 0;
     for (const key of [...this.sessions.keys()]) {
       if (key !== MAIN_SESSION_KEY) this.sessions.delete(key);
@@ -6066,6 +6163,10 @@ var ChromiumDriver = class {
   sessionViewport;
   /** Monotonic per boot, so two snapshots in one millisecond still order. */
   stateSeq = 0;
+  stopPageCreated;
+  nextPopupId = 0;
+  maxTabs;
+  onExternalInvocation;
   allowPaneResize;
   viewportPolicy;
   latestViewportRequest;
@@ -6074,6 +6175,26 @@ var ChromiumDriver = class {
   resizeDisplay;
   constructor(context, options = {}) {
     this.context = context;
+    this.onExternalInvocation = options.onExternalInvocation;
+    this.maxTabs = Math.max(1, options.maxTabs ?? BROWSER_TAB_CAP);
+    this.stopPageCreated = context.onPageCreated?.(
+      ({ page, opener, background }) => {
+        const openerId = [...this.tabs].find(
+          ([, entry]) => entry.page === opener
+        )?.[0];
+        if (this.closing || !openerId || this.tabs.size + this.pendingTabs.size >= this.maxTabs) {
+          void page.close().catch(() => {
+          });
+          return;
+        }
+        let id;
+        do {
+          id = `popup-${++this.nextPopupId}`;
+        } while (this.tabs.has(id) || this.pendingTabs.has(id));
+        void this.registerTab(id, page, openerId, background).then(() => options.onPopupOpened?.(safeUrl(page))).catch(() => page.close().catch(() => {
+        }));
+      }
+    );
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
@@ -6237,7 +6358,7 @@ var ChromiumDriver = class {
         "a person took control of this browser before this action ran; nothing was run and nothing was observed"
       );
     }
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const action = command.action;
     const blocked = await this.answerOrRefuseDialog(
       tabId,
@@ -6333,6 +6454,8 @@ var ChromiumDriver = class {
       await page.close().catch(() => {
       });
       await this.dropTab(tabId);
+      if (!this.closing && this.tabs.size === 0)
+        await this.getOrCreateTab(DEFAULT_TAB);
       return { ok: true, output: { closed: tabId } };
     }
     if (action.verb === "accept_dialog" || action.verb === "dismiss_dialog") {
@@ -6824,7 +6947,18 @@ var ChromiumDriver = class {
         output,
         this.webmcpOutputBudgetBytes
       );
-      const frame = await this.snapshot(entry.page);
+      const frame = await this.snapshot(entry.page).catch(() => void 0);
+      if (!frame)
+        return permit() ? {
+          ok: true,
+          output: {
+            invocationId,
+            result: capped,
+            ...omitted ? { omitted } : {}
+          }
+        } : this.leaseBlockedResult(
+          "The tool ran, but control changed before its result could be read."
+        );
       return {
         ...this.observation(
           tabId,
@@ -7195,10 +7329,10 @@ var ChromiumDriver = class {
     };
   }
   async currentStateToken(tabId) {
-    const entry = this.tabs.get(tabId ?? DEFAULT_TAB);
+    const entry = this.tabs.get(tabId ?? this.activeTabId ?? DEFAULT_TAB);
     if (!entry) return void 0;
     return computeStateToken({
-      tabId: tabId ?? DEFAULT_TAB,
+      tabId: tabId ?? this.activeTabId ?? DEFAULT_TAB,
       navCounter: entry.navCounter,
       url: entry.page.url(),
       domSignal: await entry.page.domStructureSignal(),
@@ -7260,9 +7394,13 @@ var ChromiumDriver = class {
     };
   }
   async stateSnapshot() {
-    const live = [...this.tabs.entries()].filter(
-      ([, entry]) => !entry.page.isClosed()
-    );
+    const hadTabs = this.tabs.size > 0;
+    for (const [id, entry] of [...this.tabs]) {
+      if (entry.page.isClosed()) await this.dropTab(id);
+    }
+    if (hadTabs && this.tabs.size === 0 && !this.closing)
+      await this.getOrCreateTab(DEFAULT_TAB);
+    const live = [...this.tabs.entries()];
     const read = await Promise.all(
       live.map(async ([id, entry]) => {
         const cdp = await entry.page.cdp().catch(() => null);
@@ -7278,16 +7416,11 @@ var ChromiumDriver = class {
       tabs: read.map(({ id, meta, entry }) => ({
         id,
         navCounter: entry.navCounter,
+        ...entry.openerId ? { openerId: entry.openerId } : {},
         url: meta.url,
         title: meta.title,
         ...meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {},
-        // The driver has no per-tab loading flag: every verb here awaits its
-        // own settle before answering, so by the time anything can ask, the
-        // navigation this driver started is over. A tab loading because the
-        // PAGE navigated itself is real and is not modelled — reporting a
-        // guess would be worse than reporting nothing, since the strip's
-        // spinner is the one thing on it that must not be permanent.
-        loading: false
+        loading: entry.loading ?? false
       })),
       activeTabId,
       // The ACTIVE tab's history, which is what the two buttons act on.
@@ -7338,7 +7471,7 @@ var ChromiumDriver = class {
     return this.viewports.get(tabId ?? DEFAULT_TAB) ?? null;
   }
   async viewport(tabId) {
-    const key = tabId ?? DEFAULT_TAB;
+    const key = tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
     if (live && !live.page.isClosed()) {
       const cached = this.viewports.get(key);
@@ -7368,6 +7501,7 @@ var ChromiumDriver = class {
   }
   async close() {
     this.closing = true;
+    this.stopPageCreated?.();
     await Promise.race([
       Promise.allSettled([...this.pendingTabs.values()]),
       new Promise((resolve2) => {
@@ -7588,6 +7722,46 @@ var ChromiumDriver = class {
     const { settled } = await settlePage(steps, this.settleOptions);
     return settled;
   }
+  async registerTab(tabId, page, openerId, background = false) {
+    const entry = {
+      page,
+      ...openerId ? { openerId } : {},
+      navCounter: 0,
+      webmcp: emptyWebmcpState()
+    };
+    this.tabs.set(tabId, entry);
+    void page.cdp().then(async (cdp) => {
+      if (!cdp || this.tabs.get(tabId) !== entry) return;
+      const frames = /* @__PURE__ */ new Set();
+      cdp.on("Page.frameStartedLoading", (raw) => {
+        if (this.tabs.get(tabId) !== entry) return;
+        frames.add(raw.frameId);
+        entry.loading = true;
+      });
+      cdp.on("Page.frameStoppedLoading", (raw) => {
+        if (this.tabs.get(tabId) !== entry) return;
+        frames.delete(raw.frameId);
+        entry.loading = frames.size > 0;
+      });
+      await cdp.send("Page.enable");
+    }).catch(() => {
+    });
+    await entry.page.setViewportSize?.({
+      width: this.sessionViewport.width,
+      height: this.sessionViewport.height
+    }).catch(() => {
+    });
+    void this.attachWebmcp(tabId, entry);
+    if (!background) {
+      this.activeTabId = tabId;
+      if (openerId) await page.bringToFront?.().catch(() => {
+      });
+    } else if (this.activeTabId) {
+      await this.tabs.get(this.activeTabId)?.page.bringToFront?.().catch(() => {
+      });
+    }
+    return entry;
+  }
   /** `null` means teardown has begun and no new page will be opened. */
   async getOrCreateTab(tabId) {
     const existing = this.tabs.get(tabId);
@@ -7595,6 +7769,11 @@ var ChromiumDriver = class {
     const inFlight = this.pendingTabs.get(tabId);
     if (inFlight) return inFlight;
     if (this.closing) return null;
+    if (this.tabs.size + this.pendingTabs.size >= this.maxTabs) {
+      throw new Error(
+        `not found: this browser is at its limit of ${this.maxTabs} tabs \u2014 close one first`
+      );
+    }
     const creating = (async () => {
       await this.dropTab(tabId);
       const page = await this.context.newPage();
@@ -7603,20 +7782,7 @@ var ChromiumDriver = class {
         });
         return null;
       }
-      const entry = {
-        page,
-        navCounter: 0,
-        webmcp: emptyWebmcpState()
-      };
-      this.tabs.set(tabId, entry);
-      await entry.page.setViewportSize?.({
-        width: this.sessionViewport.width,
-        height: this.sessionViewport.height
-      }).catch(() => {
-      });
-      void this.attachWebmcp(tabId, entry);
-      this.activeTabId = tabId;
-      return entry;
+      return this.registerTab(tabId, page);
     })();
     this.pendingTabs.set(tabId, creating);
     try {
@@ -7788,7 +7954,7 @@ var ChromiumDriver = class {
    * spends the very round trip the state token exists to save.
    */
   async observeForRefusal(command, wants) {
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -7902,11 +8068,18 @@ var ChromiumDriver = class {
     entry.webmcp.attaching ??= (async () => {
       const bridge = await entry.page.webmcp().catch(() => null);
       if (!bridge || this.tabs.get(tabId) !== entry) return;
-      entry.webmcp.unsubscribe = bridge.subscribe((tools) => {
+      const unsubscribeTools = bridge.subscribe((tools) => {
         entry.webmcp.tools = tools;
         entry.webmcp.supported = bridge.isSupported();
         this.bumpWebmcpRevision(entry);
       });
+      const unsubscribeExternal = bridge.subscribeExternalInvocation?.(
+        (name) => this.onExternalInvocation?.(tabId, name)
+      );
+      entry.webmcp.unsubscribe = () => {
+        unsubscribeTools();
+        unsubscribeExternal?.();
+      };
     })().catch(() => {
     });
     return entry.webmcp.attaching;
@@ -7959,11 +8132,16 @@ var ChromiumDriver = class {
   async dropTab(tabId) {
     const going = this.tabs.get(tabId);
     going?.webmcp.unsubscribe?.();
+    const next = tabAfterClose(
+      [...this.tabs].map(([id, tab]) => ({ id, openerId: tab.openerId })),
+      tabId,
+      this.activeTabId ?? null
+    );
     this.tabs.delete(tabId);
-    if (this.activeTabId === tabId) {
-      const remaining = [...this.tabs.keys()];
-      this.activeTabId = remaining[remaining.length - 1];
-    }
+    this.activeTabId = next ?? void 0;
+    if (!this.closing && next)
+      await this.tabs.get(next)?.page.bringToFront?.().catch(() => {
+      });
     this.refs.delete(tabId);
     await this.dropViewport(tabId);
   }
@@ -8196,19 +8374,22 @@ function wrapPage(page) {
   const consoleRing = [];
   let consoleTotal = 0;
   let errorsTotal = 0;
-  page.on("console", (message) => {
-    try {
-      const text = message.text?.() ?? "";
-      consoleRing.push({
-        type: message.type?.() ?? "log",
-        text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
-        at: Date.now()
-      });
-      consoleTotal += 1;
-      if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
-    } catch {
+  page.on(
+    "console",
+    (message) => {
+      try {
+        const text = message.text?.() ?? "";
+        consoleRing.push({
+          type: message.type?.() ?? "log",
+          text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
+          at: Date.now()
+        });
+        consoleTotal += 1;
+        if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+      } catch {
+      }
     }
-  });
+  );
   const network = new NetworkRing();
   const requestIds = /* @__PURE__ */ new WeakMap();
   let nextRequestId = 0;
@@ -8293,13 +8474,22 @@ function wrapPage(page) {
   let cdpPromise = null;
   const adapted = {
     async goto(url) {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async reload() {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.reload({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async goBack() {
-      await page.goBack({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goBack({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async setViewportSize(size) {
       await page.setViewportSize(size);
@@ -8512,7 +8702,8 @@ async function launchBrowserdContext(options) {
         permissions: [],
         // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
         // whatever the box says, so eval captures match across hosts.
-        ...contextOptionsFor({ contextMode: "ephemeral" })
+        ...contextOptionsFor({ contextMode: "ephemeral" }),
+        deviceScaleFactor: options.deviceScaleFactor ?? 1
       });
     } catch (error) {
       await browser.close().catch(() => {
@@ -8545,20 +8736,38 @@ async function launchBrowserdContext(options) {
 function adaptContext(context, options = {}) {
   const startup = [...context.pages()];
   let adopted = 0;
+  const listeners = /* @__PURE__ */ new Set();
+  const wrapped = /* @__PURE__ */ new WeakMap();
+  function adopt(page) {
+    const existing = wrapped.get(page);
+    if (existing) return existing;
+    if (context.newCDPSession) {
+      registerCdpAttacher(
+        page,
+        () => context.newCDPSession(page),
+        (frame) => context.newCDPSession(frame)
+      );
+    }
+    const driverPage = wrapPage(page);
+    wrapped.set(page, driverPage);
+    page.on("popup", (popup) => {
+      const child = adopt(popup);
+      for (const listener of listeners)
+        listener({ page: child, opener: driverPage });
+    });
+    return driverPage;
+  }
   return {
+    onPageCreated(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     async newPage() {
-      const page = adopted < startup.length ? startup[adopted++] : await context.newPage();
-      if (context.newCDPSession) {
-        registerCdpAttacher(
-          page,
-          () => context.newCDPSession(page),
-          // The same call with a `Frame`: how a cross-origin frame's own
-          // session is opened, so the hosted box sees the tools inside a
-          // third-party widget the way the local inspector does.
-          (frame) => context.newCDPSession(frame)
-        );
-      }
-      return wrapPage(page);
+      return adopt(
+        adopted < startup.length ? startup[adopted++] : await context.newPage()
+      );
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;

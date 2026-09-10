@@ -186,6 +186,8 @@ export interface ContextSurface {
   paneHolder(): string | undefined;
   /** Is the active view currently parented into a visible window? */
   isShown(): boolean;
+  /** Does the lease permit this pane to see the page, even before a tab exists? */
+  visibilityAllowed(): boolean;
   /** May the person's clicks reach the page right now? */
   inputAllowed(): boolean;
   dispose(): void;
@@ -226,6 +228,7 @@ export function resetContextSurfacesForTests(): void {
 }
 
 export interface CreateContextSurfaceOptions {
+  authority?: "lease" | "shared";
   /**
    * Hide a view rather than only refusing its input.
    *
@@ -323,7 +326,8 @@ export function createContextSurface(
    * shown and its input refused. Only a hold that is THIS pane's admits input.
    */
   const allowed = (): boolean =>
-    lease.state !== "free" && !!paneHolder && lease.holder === paneHolder;
+    options.authority === "shared" ||
+    (lease.state !== "free" && !!paneHolder && lease.holder === paneHolder);
 
   /**
    * May the view be on screen at all?
@@ -334,7 +338,9 @@ export function createContextSurface(
    * an observation.
    */
   const visible = (): boolean =>
-    lease.state === "free" || (!!paneHolder && lease.holder === paneHolder);
+    options.authority === "shared" ||
+    lease.state === "free" ||
+    (!!paneHolder && lease.holder === paneHolder);
 
   const detach = (): void => {
     if (!parented || !holderWindow) {
@@ -520,6 +526,7 @@ export function createContextSurface(
       apply();
     },
     isShown: () => !!parented,
+    visibilityAllowed: visible,
     paneHolder: () => paneHolder,
     isShielded: () => shielded,
     setShieldFactory(factory) {

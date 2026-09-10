@@ -1,3 +1,4 @@
+import { localBrowserdWebMcpProvider } from "./local-browserd-provider";
 /**
  * Lifecycle for WebMCP Inspector sessions: capacity, expiry, teardown.
  *
@@ -21,10 +22,6 @@ import type {
   WebMcpSessionPublic,
   WebMcpToolDescriptor,
 } from "@/shared/webmcp-inspector-protocol";
-import {
-  playwrightWebMcpProvider,
-  type PlaywrightWebMcpProvider,
-} from "./playwright-provider";
 import {
   WebMcpUnsupportedError,
   type WebMcpBrowserProvider,
@@ -477,7 +474,7 @@ export const webMcpSessions = new WebMcpSessionRegistry();
 
 export interface StartWebMcpSessionOptions {
   url: string;
-  provider?: WebMcpBrowserProvider | PlaywrightWebMcpProvider;
+  provider?: WebMcpBrowserProvider;
   registry?: WebMcpSessionRegistry;
   headless?: boolean;
   /** Omitted means `window` — exactly what every existing caller gets. */
@@ -501,7 +498,7 @@ export async function startWebMcpSession(
   options: StartWebMcpSessionOptions,
 ): Promise<WebMcpSessionPublic> {
   const registry = options.registry ?? webMcpSessions;
-  const provider = options.provider ?? playwrightWebMcpProvider;
+  const provider = options.provider ?? localBrowserdWebMcpProvider;
   const reservation = registry.reserve(options.sessionId);
   const runtime = new WebMcpSessionRuntime(options.url, {
     now: () => registry.clock(),

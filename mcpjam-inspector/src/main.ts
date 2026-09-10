@@ -63,7 +63,7 @@ import {
 // The one string the renderer's `<webview partition>`, this process's
 // `will-attach-webview` guard, and the server provider's ownership check all
 // have to agree on exactly. Three literals would drift; one constant cannot.
-import { WEBMCP_WEBVIEW_PARTITION } from "../shared/webmcp-inspector-protocol.js";
+import { WEBMCP_BROWSER_PARTITION } from "../shared/webmcp-inspector-protocol.js";
 // Safe to import statically, unlike the server graph below: this module is
 // deliberately import-free — reaching it through `electron-context.ts` would
 // drag in `utils/logger.ts`, which initialises Sentry and Axiom as a side
@@ -315,7 +315,7 @@ function installSafeOAuthCallbackRouting(
  * default handler and go on to use an API it never actually got.
  */
 function lockDownWebviewPartition(): void {
-  const guestSession = session.fromPartition(WEBMCP_WEBVIEW_PARTITION);
+  const guestSession = session.fromPartition(WEBMCP_BROWSER_PARTITION);
   guestSession.setPermissionRequestHandler((_contents, _permission, callback) =>
     callback(false),
   );
@@ -544,7 +544,7 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       // it; `will-attach-webview` below is what makes that permission narrow —
       // only a guest on our own partition, with no preload and no node access,
       // is allowed to attach at all.
-      webviewTag: true,
+
       // Read from `process.argv` by the sandboxed preload, which cannot see
       // `process.env` or call into the main process synchronously. The renderer
       // needs to know it is PACKAGED, not merely in Electron: `isElectron` is
@@ -1097,42 +1097,6 @@ app.on("open-url", (event, url) => {
 
 // Security: Prevent new window creation, but allow OAuth popups
 app.on("web-contents-created", (_, contents) => {
-  /**
-   * The only `<webview>` this app will ever attach, on our terms rather than
-   * the DOM's.
-   *
-   * The attributes come from the renderer, so they are a REQUEST, not a fact:
-   * anything that can write into that document can ask for a guest with node
-   * integration and a preload of its choosing. This is the one place that can
-   * refuse, and it refuses by default — a guest that is not on the WebMCP
-   * partition does not attach at all.
-   *
-   * Every reset matters individually. A guest `preload` would run privileged
-   * code inside a page we do not control; `nodeIntegration` would hand that
-   * page `require`; `contextIsolation: false` would put our world and the
-   * page's in one place; `sandbox: true` is the backstop for all of it. And
-   * `webSecurity: false` — what the element's `disablewebsecurity` attribute
-   * asks for — would drop the same-origin policy inside the guest, so a page
-   * the provider navigates to could read this app's own local server
-   * cross-origin with no CORS to stop it.
-   */
-  contents.on("will-attach-webview", (event, webPreferences, params) => {
-    if (params.partition !== WEBMCP_WEBVIEW_PARTITION) {
-      log.warn(`Refusing a <webview> on partition ${String(params.partition)}`);
-      event.preventDefault();
-      return;
-    }
-    // `preloadURL` is the legacy spelling and is still honoured; deleting only
-    // one of the pair leaves the other as the way in.
-    delete webPreferences.preload;
-    delete (webPreferences as { preloadURL?: string }).preloadURL;
-    webPreferences.nodeIntegration = false;
-    webPreferences.contextIsolation = true;
-    webPreferences.sandbox = true;
-    webPreferences.webSecurity = true;
-    webPreferences.allowRunningInsecureContent = false;
-  });
-
   contents.setWindowOpenHandler(({ url, frameName }) => {
     try {
       // The OAuth debugger popup explicitly names its window with the

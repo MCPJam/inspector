@@ -131,6 +131,7 @@ export interface BrowserPanelDeps {
     browserdToken: string;
   }) => Pick<
     BrowserdClient,
+    | "status"
     | "lease"
     | "leaseAction"
     | "sendInput"
@@ -301,28 +302,21 @@ export function createComputerBrowserPanelRoutes(
 
     try {
       const ensure = c.req.query("ensure") === "1";
+      if (ensure && "sandboxRowId" in target) {
+        const woke = await wakeSandbox({
+          bearer: bearerFrom(c),
+          sandboxRowId: target.sandboxRowId,
+          verifiedUserId: auth.claims.userId,
+        });
+        if (!woke.ok)
+          return c.json(
+            { ok: false, error: woke.error },
+            woke.status === 503 ? 503 : 409,
+          );
+      }
       let session = await currentSession(target, auth.claims.sessionId);
-      if (!session && ensure) {
-        if ("computerId" in target) {
-          // Attach, never reserve: see `attachBrowserSession`. A panel must
-          // not be able to provision a machine.
-          await attachSession({ computerId: target.computerId });
-        } else {
-          // Returning to a watched Playground session is the one case where
-          // ensure may wake a box: the row and provider id already exist, so
-          // this attaches to durable state rather than provisioning a new
-          // desktop behind the user's back.
-          const woke = await wakeSandbox({
-            bearer: bearerFrom(c),
-            sandboxRowId: target.sandboxRowId,
-          });
-          if (!woke.ok) {
-            return c.json(
-              { ok: false, error: woke.error },
-              woke.status === 503 ? 503 : 409,
-            );
-          }
-        }
+      if (!session && ensure && "computerId" in target) {
+        await attachSession({ computerId: target.computerId });
         session = await currentSession(target, auth.claims.sessionId);
       }
       if (!session) {
@@ -344,6 +338,20 @@ export function createComputerBrowserPanelRoutes(
       // browser now watches through `/computers/browser/stream`, which
       // authenticates upstream on the server with a password that never
       // leaves it.
+      if ("sandboxRowId" in target) {
+        const readiness = await createClient(session).status();
+        if (readiness.kind !== "ok" || readiness.bootId !== session.bootId) {
+          return c.json(
+            {
+              ok: false,
+              error: "browser_unavailable",
+              detail:
+                "The existing browser is not ready. Retry connecting; it has not been replaced.",
+            },
+            503,
+          );
+        }
+      }
       const lease = await readLease(session);
       return c.json({
         ok: true,
@@ -648,7 +656,11 @@ export function createComputerBrowserPanelRoutes(
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
     const { computerId, userId } = auth.claims;
     const parsed: unknown = await c.req.json().catch(() => undefined);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
       return c.json({ ok: false, error: "Expected a JSON object." }, 400);
     }
     const body = parsed as {
@@ -686,10 +698,10 @@ export function createComputerBrowserPanelRoutes(
           outcome.reason === "lease_held"
             ? 423
             : outcome.reason === "page_changed"
-              ? 409
-              : outcome.reason === "unsupported"
-                ? 501
-                : 502;
+            ? 409
+            : outcome.reason === "unsupported"
+            ? 501
+            : 502;
         return c.json(
           {
             ok: false,

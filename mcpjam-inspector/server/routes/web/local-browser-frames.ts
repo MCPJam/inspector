@@ -24,7 +24,7 @@ import type { MiddlewareHandler } from "hono";
 import type { UpgradeWebSocket, WSContext } from "hono/ws";
 import { logger } from "../../utils/logger.js";
 import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
-import { getLocalConsentFingerprint } from "../../utils/computers/local-consent.js";
+import { getBrowserConsentFingerprint } from "../../utils/computers/browser-consent.js";
 import { consumeLocalNonce } from "../../utils/computers/local-terminal-auth.js";
 import {
   findLocalBrowserSession,
@@ -110,6 +110,7 @@ export function createLocalBrowserFramesWsHandler(
     const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
     const nonce = protocolHeader.split(",")[0]?.trim() ?? "";
     const bootId = c.req.query("bootId") ?? "";
+    const tabId = c.req.query("tabId") || undefined;
     const holder = c.req.query("holder") ?? undefined;
     /**
      * The daemon's own bytes instead of a JSON envelope.
@@ -154,7 +155,7 @@ export function createLocalBrowserFramesWsHandler(
         rejectCode = CLOSE_UNAUTHORIZED;
         rejectMessage = "Invalid or expired browser token.";
       } else if (
-        claim.consentFingerprint !== (await getLocalConsentFingerprint())
+        claim.consentFingerprint !== (await getBrowserConsentFingerprint())
       ) {
         rejectCode = CLOSE_UNAUTHORIZED;
         rejectMessage = "Local computer consent changed; reconnect.";
@@ -232,6 +233,7 @@ export function createLocalBrowserFramesWsHandler(
         }
 
         const subscription = await session.handler.subscribeFrames({
+          tabId,
           ...(holder ? { holder } : {}),
           onRevoked: (reason) => {
             // The lease moved to somebody else while this pane was watching.

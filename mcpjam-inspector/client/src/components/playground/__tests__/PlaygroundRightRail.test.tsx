@@ -123,6 +123,12 @@ vi.mock("@/components/browser/HostedBrowserBody", () => ({
   ),
 }));
 
+vi.mock("@/stores/active-chat-session-store", () => ({
+  useActiveChatSessionStore: (
+    select: (state: { sessionId: string }) => unknown,
+  ) => select({ sessionId: "chat-1" }),
+}));
+
 vi.mock("@/hooks/useProjectComputer", () => ({
   useMintBrowserToken: () => async () => ({
     token: "tok",
@@ -435,3 +441,17 @@ describe("PlaygroundRightRail — the gated-off fallback", () => {
     ).toBeInTheDocument();
   });
 });
+
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    engine: engineState.engine,
+    selectedEngine: engineState.selectedEngine,
+    consent: {
+      granted: engineState.granted,
+      token: engineState.granted ? "browser-token" : null,
+    },
+  }),
+}));
+vi.mock("@/components/browser/BrowserRuntimeControls", () => ({
+  BrowserRuntimeControls: () => null,
+}));

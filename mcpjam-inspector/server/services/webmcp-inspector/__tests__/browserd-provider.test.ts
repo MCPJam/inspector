@@ -359,7 +359,7 @@ describe("browserd WebMCP provider", () => {
       input: { sku: "S1" },
       signal: new AbortController().signal,
     });
-    const result = (out.output as { result: unknown }).result;
+    const result = out.output;
     expect(Array.isArray(result)).toBe(true);
     expect(result).toEqual(jsonLd);
   });
@@ -395,7 +395,7 @@ describe("browserd WebMCP provider", () => {
       input: { q: "a" },
       signal: controller.signal,
     });
-    expect(out.output).toMatchObject({ result: 42 });
+    expect(out.output).toBe(42);
     // The tool's own NAME, with the frame beside it. This assertion used to
     // pin `f1::search`, which is what let the bug ship: the daemon resolves
     // `toolKey` by name against the live page, so a composite matched nothing

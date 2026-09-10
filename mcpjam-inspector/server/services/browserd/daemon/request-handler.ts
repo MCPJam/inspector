@@ -180,6 +180,7 @@ export interface BrowserdHandlerDeps {
    * hold the screenshot of someone's password field.
    */
   lease?: HandoffLease;
+  authority?: "lease" | "shared";
   /**
    * What this daemon can do beyond the baseline protocol.
    *
@@ -267,6 +268,7 @@ export class BrowserdRequestHandler {
   private readonly bootId: string;
   private readonly token: string;
   private readonly lease: HandoffLease;
+  private readonly authority: "lease" | "shared";
   private readonly features: readonly string[];
   private readonly bundleHash: string | undefined;
   private readonly contextMode: "persistent" | "ephemeral" | undefined;
@@ -295,6 +297,23 @@ export class BrowserdRequestHandler {
    * the very thing this whole compatibility mechanism exists to avoid).
    */
   private lastActivityAt: number | null = null;
+  private retiring = false;
+  private suspensionId: string | null = null;
+  private readonly completedSuspensions = new Set<string>();
+  private activeOperations = 0;
+
+  /** Atomic admission barrier held through teardown; a read of isIdle alone races. */
+  tryRetireIfIdle(disconnected = false): boolean {
+    if (
+      this.retiring ||
+      this.activeOperations > 0 ||
+      !this.queue.isIdle?.() ||
+      (!disconnected && this.lease.state().state === "held")
+    )
+      return false;
+    this.retiring = true;
+    return true;
+  }
 
   constructor(deps: BrowserdHandlerDeps) {
     this.queue = deps.queue;
@@ -302,6 +321,7 @@ export class BrowserdRequestHandler {
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
+    this.authority = deps.authority ?? "lease";
     // MERGED HERE, not at a call site. These describe what this daemon's CODE
     // can do, which is not something an assembler should be able to forget to
     // announce: the hosted `main.ts`, the local in-process session and a test
@@ -328,8 +348,7 @@ export class BrowserdRequestHandler {
    * reads as "this engine cannot tell you" rather than as "no tabs".
    */
   tabsSnapshot():
-    | { active?: string; list?: Array<{ id: string; url: string }> }
-    | undefined {
+    { active?: string; list?: Array<{ id: string; url: string }> } | undefined {
     return this.driver.tabsSnapshot?.();
   }
 
@@ -372,10 +391,36 @@ export class BrowserdRequestHandler {
     if (req.origin !== undefined) {
       return { status: 403, body: { error: "cross_origin_forbidden" } };
     }
+    if (this.retiring)
+      return {
+        status: 503,
+        body: { error: "browser_stopped", bootId: this.bootId },
+      };
+    if (
+      this.suspensionId &&
+      req.path !== "/v1/status" &&
+      req.path !== "/v1/lifecycle"
+    )
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId },
+      };
     return undefined;
   }
 
   async handle(req: DaemonRequest): Promise<DaemonResponse> {
+    // Admission and retirement run synchronously on this daemon's event loop.
+    // Count input, lease changes, and profile/viewport work as well as commands.
+    const operation = req.method === "POST" && req.path !== "/v1/lifecycle";
+    if (operation) this.activeOperations += 1;
+    try {
+      return await this.dispatch(req);
+    } finally {
+      if (operation) this.activeOperations -= 1;
+    }
+  }
+
+  private async dispatch(req: DaemonRequest): Promise<DaemonResponse> {
     // `/healthz` is unauthenticated liveness and carries NO secrets — not the
     // token, not the bootId. The supervisor polls it to decide kill/relaunch on
     // wake (M0 recovery posture), so browser-down is a 503, not a thrown error.
@@ -391,6 +436,63 @@ export class BrowserdRequestHandler {
 
     const refusal = this.authorize(req);
     if (refusal) return refusal;
+
+    if (req.path === "/v1/lifecycle" && req.method === "POST") {
+      let body: { action?: string; operationId?: string; bootId?: string };
+      try {
+        body = JSON.parse(req.body ?? "");
+      } catch {
+        return { status: 400 };
+      }
+      if (!body || body.bootId !== this.bootId)
+        return { status: 409, body: { error: "stale_boot" } };
+      if (
+        typeof body.operationId !== "string" ||
+        !body.operationId ||
+        body.operationId.length > 128
+      )
+        return { status: 400 };
+      if (body.action === "resume") {
+        if (this.suspensionId && this.suspensionId !== body.operationId)
+          return { status: 409 };
+        if (
+          !this.suspensionId &&
+          !this.completedSuspensions.has(body.operationId) &&
+          this.completedSuspensions.size >= 4096
+        )
+          return { status: 409 };
+        this.suspensionId = null;
+        this.completedSuspensions.add(body.operationId);
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      }
+      if (body.action !== "prepare_sleep") return { status: 400 };
+      if (
+        this.completedSuspensions.has(body.operationId) ||
+        this.completedSuspensions.size >= 4096
+      )
+        return { status: 409 };
+      if (this.suspensionId === body.operationId)
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      if (
+        this.suspensionId ||
+        this.activeOperations > 0 ||
+        !this.queue.isIdle?.() ||
+        this.lease.state().state === "held"
+      ) {
+        return {
+          status: 409,
+          body: { error: "browser_busy", bootId: this.bootId },
+        };
+      }
+      this.suspensionId = body.operationId;
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
+    }
+    if (this.suspensionId && req.path !== "/v1/status") {
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId },
+      };
+    }
 
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
@@ -435,7 +537,7 @@ export class BrowserdRequestHandler {
           ? { tabs: this.tabsSnapshot()!.list }
           : {}),
       };
-      return health.ok
+      return health.ok && !this.suspensionId
         ? { status: 200, body: { ok: true, ...identity } }
         : {
             status: 503,
@@ -676,8 +778,14 @@ export class BrowserdRequestHandler {
     // refuses a different one, so this is both "take it" and "confirm I still
     // have it" in one call — which is what lets the pane send a command
     // without first knowing whether it is the holder.
-    const lease = this.lease.acquire(holder);
-    if (lease.state === "free" || lease.holder !== holder) {
+    const lease =
+      this.authority === "shared"
+        ? this.lease.state()
+        : this.lease.acquire(holder);
+    if (
+      this.authority === "lease" &&
+      (lease.state === "free" || lease.holder !== holder)
+    ) {
       return {
         status: 423,
         body: {
@@ -716,6 +824,7 @@ export class BrowserdRequestHandler {
       }
     }
     const mapped = paneCommandToAction(command);
+    mapped.tabId ??= this.driver.tabsSnapshot?.().active;
     const outcome = await this.queue.submit({
       // `manual` is the one source `leaseRefusalFor` admits while a lease is
       // held, which is what lets this run at all now that the pane owns the
@@ -762,9 +871,7 @@ export class BrowserdRequestHandler {
    */
   private async currentAnchor(
     tabId: string,
-  ): Promise<
-    { urlHash: string; navCounter: number } | null | "unsupported"
-  > {
+  ): Promise<{ urlHash: string; navCounter: number } | null | "unsupported"> {
     // UNSUPPORTED IS NOT NULL, and the difference is the whole point of this
     // return type. A driver with no `currentStateToken` has not told us the
     // page moved — it has told us nothing, and it is optional precisely so
@@ -1189,8 +1296,8 @@ export class BrowserdRequestHandler {
         outcome.error === "page_changed"
           ? 409
           : outcome.error === "unknown_tab"
-          ? 404
-          : 423,
+            ? 404
+            : 423,
       body: { error: outcome.error, bootId: this.bootId },
     };
   }
@@ -1232,10 +1339,10 @@ export class BrowserdRequestHandler {
     // nobody holding it the agent may be mid-turn, and two drivers on one page
     // is precisely what the lease is for. Take the lease first.
     const leaseState = this.lease.state();
-    const refusal: LeaseRefusal | undefined = leaseRefusalFor(
-      leaseState,
-      parsed.command,
-    );
+    const refusal: LeaseRefusal | undefined =
+      this.authority === "shared"
+        ? undefined
+        : leaseRefusalFor(leaseState, parsed.command);
     if (refusal) {
       // Recorded, and recorded WITHOUT a page: the gate above captured nothing,
       // so there is nothing to attach and nothing to leak. The row is the point
@@ -1351,8 +1458,8 @@ export class BrowserdRequestHandler {
           outcome.status === "expired"
             ? "command_expired"
             : outcome.status === "busy"
-              ? "busy"
-              : "daemon_at_capacity",
+            ? "busy"
+            : "daemon_at_capacity",
       });
       return;
     }
@@ -1442,8 +1549,8 @@ export class BrowserdRequestHandler {
       ...(what.errorCode
         ? { errorCode: what.errorCode }
         : result && !result.ok && parseBrowserdErrorCode(result.error)
-          ? { errorCode: parseBrowserdErrorCode(result.error) as string }
-          : {}),
+        ? { errorCode: parseBrowserdErrorCode(result.error) as string }
+        : {}),
       ...(what.deduped ? { deduped: true } : {}),
       ...(what.capturePage && result ? { output: result.output } : {}),
       ...(what.capturePage && result?.stateToken
@@ -1732,10 +1839,13 @@ export class BrowserdRequestHandler {
     anchor?: unknown;
   }): Promise<{ ok: true } | { ok: false; error: string }> {
     const stillTheirs = () => {
-      const refused = leaseRefusalFor(this.lease.state(), {
-        source: "manual",
-        holder: args.holder,
-      });
+      const refused =
+        this.authority === "shared"
+          ? undefined
+          : leaseRefusalFor(this.lease.state(), {
+              source: "manual",
+              holder: args.holder,
+            });
       if (refused) return refused;
       if (args.anchor !== undefined) {
         const before = parseAnchor(args.anchor);
@@ -1789,13 +1899,14 @@ export class BrowserdRequestHandler {
 
   /** May this watcher see frames right now? */
   private watcherRefusal(holder: string | undefined): LeaseRefusal | undefined {
+    if (this.authority === "shared") return undefined;
     const lease = this.lease.state();
     if (lease.state === "free") return undefined;
     return holder && holder === lease.holder
       ? undefined
       : lease.state === "held"
-        ? "lease_held"
-        : "lease_parked";
+      ? "lease_held"
+      : "lease_parked";
   }
 
   /**
@@ -1803,6 +1914,11 @@ export class BrowserdRequestHandler {
    * cannot be released by another tab that happens to know the endpoint.
    */
   private handleLease(req: DaemonRequest): DaemonResponse {
+    if (this.authority === "shared" && req.method !== "GET")
+      return {
+        status: 409,
+        body: { error: "shared_authority", bootId: this.bootId },
+      };
     if (req.method === "GET") {
       return { status: 200, body: this.leaseBody(this.lease.state()) };
     }

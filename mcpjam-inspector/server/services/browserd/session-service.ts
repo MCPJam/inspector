@@ -10,7 +10,10 @@
 import type { BrowserContextMode } from "./browser-sessions-client.js";
 
 export type BrowserSessionOwnerKind =
-  "conversation" | "swarm_attempt" | "eval_iteration" | "participant_session";
+  | "conversation"
+  | "swarm_attempt"
+  | "eval_iteration"
+  | "participant_session";
 
 export interface BrowserSessionOwner {
   kind: BrowserSessionOwnerKind;
@@ -18,7 +21,9 @@ export interface BrowserSessionOwner {
 }
 
 export type BrowserSessionBox =
-  { computerId: string } | { sandboxRowId: string } | { localKey: string };
+  | { computerId: string }
+  | { sandboxRowId: string }
+  | { localKey: string };
 
 export interface BrowserLogicalSessionRecord {
   sessionId: string;
@@ -248,6 +253,26 @@ export class BrowserSessionService {
     const result = await this.post<T>(`/agent-browser/${operation}`, args);
     if (result === null) throw new Error("Browser sessions are not configured");
     return result;
+  }
+
+  async conversationLocation(args: {
+    projectId: string;
+    conversationId: string;
+    bearer: string;
+    signal?: AbortSignal;
+  }): Promise<"local" | "cloud" | null> {
+    const result = await this.post<{ engine: "local" | "cloud" | null }>(
+      "/browser-sessions/location",
+      {
+        projectId: args.projectId,
+        bearer: args.bearer,
+        signal: args.signal,
+        body: { conversationId: args.conversationId },
+      },
+    );
+    return result?.engine === "local" || result?.engine === "cloud"
+      ? result.engine
+      : null;
   }
 
   async resolveSession(args: {

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
 import {
@@ -34,7 +35,7 @@ import {
   PlaygroundBrowserPanel,
 } from "@/components/playground/PlaygroundBrowserPanel";
 import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
-import { useComputerEngine } from "@/hooks/useComputerEngine";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import {
   useBrowserWorkspaceEnabledState,
   useComputersEnabledState,
@@ -155,8 +156,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     hostId: previewedHostId,
   });
   const effectiveHostConfig = previewedHostId
-    ? (previewedHost?.config ?? null)
-    : (props.activeHost ?? null);
+    ? previewedHost?.config ?? null
+    : props.activeHost ?? null;
   const activeMcpProfile = effectiveHostConfig?.mcpProfile;
 
   // Host-derived widget runtime values. The preferences store is the
@@ -246,11 +247,21 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // The browser panel's own layout, which is a STORE rather than state here
   // because three unrelated things move it: the agent starting to browse, the
   // person dragging the divider, and the panel's own controls.
-  const browserOpen = useBrowserWorkspaceStore((state) => state.open);
+  const conversationId = useActiveChatSessionStore((state) => state.sessionId);
+  const browserOpen = useBrowserWorkspaceStore((state) =>
+    conversationId ? !!state.conversations[conversationId]?.open : false,
+  );
   const browserSize = useBrowserWorkspaceStore((state) => state.size);
-  const browserExpanded = useBrowserWorkspaceStore((state) => state.expanded);
+  const browserExpanded = useBrowserWorkspaceStore((state) =>
+    conversationId ? !!state.conversations[conversationId]?.expanded : false,
+  );
   const setBrowserSize = useBrowserWorkspaceStore((state) => state.setSize);
-  const closeBrowser = useBrowserWorkspaceStore((state) => state.closeBrowser);
+  const closeConversationBrowser = useBrowserWorkspaceStore(
+    (state) => state.closeBrowser,
+  );
+  const closeBrowser = useCallback(() => {
+    if (conversationId) closeConversationBrowser(conversationId);
+  }, [conversationId, closeConversationBrowser]);
   const collapsedRailForBrowser = useBrowserWorkspaceStore(
     (state) => state.collapsedRailForBrowser,
   );
@@ -260,7 +271,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
 
   const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
   const computersEnabled = useComputersEnabledState();
-  const browserEngine = useComputerEngine(projectScope);
+  const browserEngine = useBrowserEngine(projectScope);
   // Polled only on the local engine, where the question means something: on
   // hosted this route describes a machine that is not the one running the
   // browser.
@@ -278,7 +289,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     workspaceState === true &&
     computersEnabled === true &&
     browserPanelAvailable({
-      hostHasBrowser: !!effectiveHostConfig?.builtInToolIds?.includes("browser"),
+      hostHasBrowser:
+        !!effectiveHostConfig?.builtInToolIds?.includes("browser"),
       selectedEngine: browserEngine.selectedEngine,
       isAuthenticated: isConvexAuthenticated,
       localBrowserRunning,
@@ -420,9 +432,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                         // browser clamped to 85 — with chat hidden by CSS
                         // rather than unmounted, that 15% was an unusable gap
                         // beside a browser that was supposed to fill the space.
-                        minSize={
-                          browserExpanded ? 0 : showBrowser ? 15 : 40
-                        }
+                        minSize={browserExpanded ? 0 : showBrowser ? 15 : 40}
                         className={cn(
                           "min-h-0 min-w-0 overflow-hidden",
                           // An expanded browser hides chat rather than
@@ -453,7 +463,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                               other side of it to resize against, and a divider
                               that moves a hidden panel is a control that does
                               nothing visible. */}
-                          {browserExpanded ? null : <ResizableHandle withHandle />}
+                          {browserExpanded ? null : (
+                            <ResizableHandle withHandle />
+                          )}
                           <ResizablePanel
                             id="playground-browser"
                             order={3}

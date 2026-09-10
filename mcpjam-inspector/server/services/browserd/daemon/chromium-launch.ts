@@ -190,20 +190,23 @@ export function wrapPage(page: AnyPage): DriverPage {
   // from a quiet one.
   let consoleTotal = 0;
   let errorsTotal = 0;
-  page.on("console", (message: { type?: () => string; text?: () => string }) => {
-    try {
-      const text = message.text?.() ?? "";
-      consoleRing.push({
-        type: message.type?.() ?? "log",
-        text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
-        at: Date.now(),
-      });
-      consoleTotal += 1;
-      if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
-    } catch {
-      // A console listener must never take the page down.
-    }
-  });
+  page.on(
+    "console",
+    (message: { type?: () => string; text?: () => string }) => {
+      try {
+        const text = message.text?.() ?? "";
+        consoleRing.push({
+          type: message.type?.() ?? "log",
+          text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
+          at: Date.now(),
+        });
+        consoleTotal += 1;
+        if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+      } catch {
+        // A console listener must never take the page down.
+      }
+    },
+  );
   // THE NETWORK RING. Playwright hands back objects rather than CDP ids, so
   // the ring's own id is minted here and remembered against the Request — the
   // same object the response reports, which is what folds the two events into
@@ -335,13 +338,22 @@ export function wrapPage(page: AnyPage): DriverPage {
   // attach, two consumers.
   const adapted: DriverPage = {
     async goto(url) {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS,
+      });
     },
     async reload() {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.reload({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS,
+      });
     },
     async goBack() {
-      await page.goBack({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goBack({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS,
+      });
     },
     async setViewportSize(size) {
       // Playwright's own call, which resizes the page's CSS viewport WITHOUT
@@ -417,9 +429,11 @@ export function wrapPage(page: AnyPage): DriverPage {
       page.mouse.click(point.x, point.y, {
         ...(options?.button ? { button: options.button } : {}),
       }),
-    clickSelector: (selector) => page.click(selector, { timeout: ACT_TIMEOUT_MS }),
+    clickSelector: (selector) =>
+      page.click(selector, { timeout: ACT_TIMEOUT_MS }),
     hoverAt: (point) => page.mouse.move(point.x, point.y),
-    hoverSelector: (selector) => page.hover(selector, { timeout: ACT_TIMEOUT_MS }),
+    hoverSelector: (selector) =>
+      page.hover(selector, { timeout: ACT_TIMEOUT_MS }),
     typeText: (text) => page.keyboard.type(text),
     fillSelector: (selector, text) =>
       page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
@@ -761,6 +775,7 @@ export async function launchBrowserdContext(
         // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
         // whatever the box says, so eval captures match across hosts.
         ...contextOptionsFor({ contextMode: "ephemeral" }),
+        deviceScaleFactor: options.deviceScaleFactor ?? 1,
       });
     } catch (error) {
       // Ownership of the browser transfers to `adaptContext` below. If we
@@ -825,24 +840,40 @@ export function adaptContext(
 ): DriverContext {
   const startup = [...context.pages()];
   let adopted = 0;
+  const listeners = new Set<
+    (event: { page: DriverPage; opener: DriverPage }) => void
+  >();
+  const wrapped = new WeakMap<AnyPage, DriverPage>();
+  function adopt(page: AnyPage): DriverPage {
+    const existing = wrapped.get(page);
+    if (existing) return existing;
+    if (context.newCDPSession) {
+      registerCdpAttacher(
+        page,
+        () => context.newCDPSession!(page),
+        (frame) => context.newCDPSession!(frame as unknown as AnyPage),
+      );
+    }
+    const driverPage = wrapPage(page);
+    wrapped.set(page, driverPage);
+    page.on("popup", (popup: AnyPage) => {
+      const child = adopt(popup);
+      for (const listener of listeners)
+        listener({ page: child, opener: driverPage });
+    });
+    return driverPage;
+  }
   return {
+    onPageCreated(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     async newPage() {
-      const page =
-        adopted < startup.length ? startup[adopted++] : await context.newPage();
-      // Register how this page opens a CDP session BEFORE wrapping, so the
-      // wrapper's lazy `webmcp()` can find it. A context without
-      // `newCDPSession` (test fakes) simply yields no WebMCP.
-      if (context.newCDPSession) {
-        registerCdpAttacher(
-          page,
-          () => context.newCDPSession!(page),
-          // The same call with a `Frame`: how a cross-origin frame's own
-          // session is opened, so the hosted box sees the tools inside a
-          // third-party widget the way the local inspector does.
-          (frame) => context.newCDPSession!(frame as unknown as AnyPage),
-        );
-      }
-      return wrapPage(page);
+      return adopt(
+        adopted < startup.length ? startup[adopted++] : await context.newPage(),
+      );
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;
