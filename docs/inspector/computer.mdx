@@ -165,6 +165,19 @@ If the conversation's browser is not yet running when you open it, the panel sho
 
 Closing the browser panel stops the viewer — it does not hand control back to the agent. If you held the browser (took manual control), that hold stays parked after you close the pane. The agent remains blocked until you explicitly click **Hand back** to release control. A parked hold does not keep a metered cloud browser running indefinitely, but it does keep the agent waiting.
 
+### Stream quality
+
+The browser panel streams the live page as a series of JPEG frames. The pane scales frames down to fit the available space but never enlarges them, so text stays sharp even at high display resolutions.
+
+When the stream stats overlay is open it shows:
+
+- **Encoded size** — the pixel dimensions the capture produced.
+- **Display size** — the pixel dimensions the pane is actually drawing at.
+- **JPEG quality** — the effective quality and the quality that was requested, plus the reason for any difference (for example, `jpeg_frame_limit` when a frame was too large to send at the requested quality).
+- **Delivery rate** — the maximum frames-per-second the relay is sending to this viewer, and whether delivery has been slowed due to congestion.
+
+The pane automatically switches to a lower-bandwidth **Data saver** tier when it detects sustained frame loss. It recovers to the normal tier after the loss clears. Round-trip latency alone does not trigger a tier change.
+
 ### Browser panel layout
 
 The open and expanded state of the browser panel is tracked per conversation. Opening or closing the panel in one chat does not affect any other chat's panel state.
