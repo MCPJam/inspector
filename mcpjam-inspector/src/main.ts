@@ -1,10 +1,15 @@
 /// <reference path="./forge.env.d.ts" />
-import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
-import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 // MUST stay the first import: it sets WS_NO_BUFFER_UTIL, which `ws` reads at
 // module-eval time, and the bundled `ws` is otherwise handed an empty stub for
 // its optional `bufferutil` dep. See the file for the full story (#4208).
 import "./ws-native-fallback.js";
+// Below that guard on purpose: `security-policy.js` reaches into `server/`,
+// which pulls in `ws`. Imported above it, `ws` would evaluate before
+// WS_NO_BUFFER_UTIL is set and take the empty-stub path #4208 is about.
+// `ws-native-fallback.test.ts` asserts this ordering, because neither the type
+// check nor the bundle check can see it.
+import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
+import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import * as Sentry from "@sentry/electron/main";
 import { app, BrowserWindow, shell, Menu, dialog, session } from "electron";
 import {
