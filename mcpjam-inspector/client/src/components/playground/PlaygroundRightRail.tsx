@@ -65,9 +65,7 @@ export function PlaygroundRightRail({
   isAuthenticated: boolean;
 }) {
   const computersEnabled = useComputersEnabledState();
-  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
-
-  if (!shellAvailable) {
+  if (computersEnabled !== true) {
     return <LoggerView onClose={onClose} />;
   }
   return (
@@ -111,6 +109,7 @@ function RightRailTabbed({
   hostId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
+  const shellAvailable = !!hostConfig?.computer;
   // Which engine serves this project's computer work. The rail is an INDICATOR
   // only — switching lives on the Computer tab, which owns the consent gate.
   //
@@ -163,8 +162,12 @@ function RightRailTabbed({
   // A tab that disappears cannot stay selected: leaving `activeTab` on a
   // hidden pane hides all of them and the rail looks broken.
   useEffect(() => {
-    if (!hasBrowser && activeTab === "browser") setActiveTab("logs");
-  }, [hasBrowser, activeTab]);
+    if (
+      (!hasBrowser && activeTab === "browser") ||
+      (!shellAvailable && activeTab === "shell")
+    )
+      setActiveTab("logs");
+  }, [hasBrowser, shellAvailable, activeTab]);
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
       if (next === activeTab) return;
@@ -178,6 +181,12 @@ function RightRailTabbed({
     [activeTab],
   );
 
+  // Browser-only hosts must reach the tabbed rail (and its consent gate)
+  // without mounting a shell or requiring a Computer attachment.
+  if (!shellAvailable && !hasBrowser) {
+    return <LoggerView onClose={onClose} />;
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-0.5 border-b border-border px-2 py-1">
@@ -187,12 +196,14 @@ function RightRailTabbed({
           isActive={activeTab === "logs"}
           onClick={() => handleTabClick("logs")}
         />
-        <TabButton
-          icon={TerminalSquare}
-          label="Shell"
-          isActive={activeTab === "shell"}
-          onClick={() => handleTabClick("shell")}
-        />
+        {shellAvailable ? (
+          <TabButton
+            icon={TerminalSquare}
+            label="Shell"
+            isActive={activeTab === "shell"}
+            onClick={() => handleTabClick("shell")}
+          />
+        ) : null}
         {hasBrowser ? (
           <TabButton
             icon={Globe}
@@ -251,31 +262,33 @@ function RightRailTabbed({
           )}
         </div>
       ) : null}
-      <div
-        className={cn(
-          "min-h-0 flex-1 flex-col",
-          activeTab === "shell" ? "flex" : "hidden",
-        )}
-      >
-        {/* The local body deliberately does NOT mount the cloud terminal
+      {shellAvailable ? (
+        <div
+          className={cn(
+            "min-h-0 flex-1 flex-col",
+            activeTab === "shell" ? "flex" : "hidden",
+          )}
+        >
+          {/* The local body deliberately does NOT mount the cloud terminal
             controller: `useComputerTerminal` reserves (and wakes) a cloud box
             on open, which would be a real machine started behind the user's
             back while their chat bash runs on this laptop. Swapping bodies
             mid-session drops a live cloud socket — the reserved box stays up
             until the idle sweep, and switching back reconnects with a fresh
             token mint. */}
-        {isLocalShell ? (
-          <LocalShellBody engine={engine} projectId={projectId} />
-        ) : (
-          <CloudShellBody
-            engine={engine}
-            projectId={projectId}
-            isAuthenticated={isAuthenticated}
-            hostConfig={hostConfig}
-            hostId={hostId}
-          />
-        )}
-      </div>
+          {isLocalShell ? (
+            <LocalShellBody engine={engine} projectId={projectId} />
+          ) : (
+            <CloudShellBody
+              engine={engine}
+              projectId={projectId}
+              isAuthenticated={isAuthenticated}
+              hostConfig={hostConfig}
+              hostId={hostId}
+            />
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
