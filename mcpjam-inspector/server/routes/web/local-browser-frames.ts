@@ -110,6 +110,7 @@ export function createLocalBrowserFramesWsHandler(
     const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
     const nonce = protocolHeader.split(",")[0]?.trim() ?? "";
     const bootId = c.req.query("bootId") ?? "";
+    const tabId = c.req.query("tabId") || undefined;
     const holder = c.req.query("holder") ?? undefined;
     /**
      * The daemon's own bytes instead of a JSON envelope.
@@ -232,6 +233,7 @@ export function createLocalBrowserFramesWsHandler(
         }
 
         const subscription = await session.handler.subscribeFrames({
+          tabId,
           ...(holder ? { holder } : {}),
           onRevoked: (reason) => {
             // The lease moved to somebody else while this pane was watching.

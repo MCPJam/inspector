@@ -214,6 +214,14 @@ export interface DriverPage {
 /** The persistent browser context: one profile, many tabs. */
 export interface DriverContext {
   newPage(): Promise<DriverPage>;
+  /** Actual popup pages, preserving their opener and browsing context. */
+  onPageCreated?(
+    listener: (event: {
+      page: DriverPage;
+      opener: DriverPage;
+      background?: boolean;
+    }) => void,
+  ): () => void;
   /** True while the underlying browser is alive; false after a crash/close. */
   isConnected(): boolean;
   close(): Promise<void>;

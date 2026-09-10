@@ -381,241 +381,6 @@ export function LocalBrowserBody({
     return result;
   }, [consentToken, projectId, session, sessionId]);
 
-  // The frame socket. Re-opened when the browser changes; closed on unmount,
-  // which is what tells the server to stop encoding JPEGs nobody is watching.
-  useEffect(() => {
-    // NOT ON THE NATIVE SURFACE. There is nothing to watch: the page is a real
-    // view in the app's own window, and opening this socket would make the
-    // engine encode JPEGs at 30 fps that no pane ever draws.
-    if (!session || !projectId || native) return;
-    let closed = false;
-    let stream: { close(): void } | null = null;
-    /**
-     * This attempt's socket, captured for the cleanup.
-     *
-     * Compared by IDENTITY on teardown so a reconnect that already replaced
-     * the ref is not cleared by the closure of the connection it replaced —
-     * which would leave the pane POSTing input while a perfectly good socket
-     * was open.
-     */
-    let openedSocket: WebSocket | null = null;
-    /** Decodes the binary pixel path; null until the socket is open. */
-    let wire: ReturnType<typeof createFrameWireReader> | null = null;
-    /** The last bitmap this socket produced, so teardown can release it. */
-    let lastBitmap: ImageBitmap | undefined;
-    let heartbeat: ReturnType<typeof setInterval> | null = null;
-    let retry: ReturnType<typeof setTimeout> | null = null;
-
-    void (async () => {
-      try {
-        const { nonce } = await mintLocalBrowserFrameNonce(
-          projectId,
-          consentToken,
-        );
-        if (closed) return;
-        const opened = openLocalBrowserFrameStream({
-          bootId: session.bootId,
-          holder,
-          nonce,
-          // Worth it even on loopback, where base64 costs a memcpy rather than
-          // a network hop: it means the hosted path's decoder runs on every
-          // local session instead of only on staging.
-          wire: "binary",
-        });
-        stream = opened;
-        wire = createFrameWireReader({
-          onFrame: (decoded) => {
-            if (closed) return;
-            paneFrameStats.noteTransport("jpeg-binary");
-            paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
-            frameSeqRef.current = decoded.seq;
-            // React can coalesce two `setFrame` calls into one render, and the
-            // surface only ever releases a frame it PAINTED — so a picture
-            // superseded before the commit has nobody to free it.
-            lastBitmap?.close();
-            lastBitmap = decoded.bitmap;
-            setFrame({
-              bitmap: decoded.bitmap,
-              decodeMs: decoded.decodeMs,
-              deviceWidth: decoded.deviceWidth,
-              deviceHeight: decoded.deviceHeight,
-              scale: decoded.scale,
-              ts: decoded.relayTs,
-              relayTs: decoded.relayTs,
-              seq: decoded.seq,
-            });
-          },
-          onHeartbeat: (daemon) => {
-            if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
-            noteWebmcpStats(
-              browserPageToolsKey(projectId, "local"),
-              daemon as never,
-              session.bootId,
-            );
-          },
-          onFatal: () => {
-            // A reader that has lost its place in a byte stream can never find
-            // it again, so the connection goes rather than the record.
-            opened.close();
-          },
-        });
-        openedSocket = opened.socket;
-        socketRef.current = opened.socket;
-        socketInputRef.current = false;
-        paneFrameStats.noteTransport("jpeg-json");
-        opened.socket.onmessage = (event) => {
-          // Bytes for pixels, text for control, on one socket — see the hosted
-          // pane's twin.
-          if (typeof event.data !== "string") {
-            wire?.push(event.data as ArrayBuffer);
-            return;
-          }
-          try {
-            const raw = String(event.data);
-            const parsed = JSON.parse(raw) as {
-              type?: string;
-              frame?: PaneFrame;
-              t?: number;
-              framesIn?: number;
-              framesOut?: number;
-              bytes?: number;
-              dropped?: number;
-              subscribers?: number;
-              daemon?: Record<string, unknown>;
-            };
-            if (parsed.type === "hello") {
-              const features = Array.isArray(
-                (parsed as { features?: unknown }).features,
-              )
-                ? ((parsed as { features: unknown[] }).features as unknown[])
-                : [];
-              socketInputRef.current = features.includes("input");
-              return;
-            }
-            if (parsed.type === "input_ack") {
-              const ack = parsed as unknown as {
-                seq?: number;
-                refused?: string;
-              };
-              if (typeof ack.seq === "number") {
-                paneFrameStats.noteInputAck(ack.seq);
-              }
-              // A REFUSAL IS THE SERVER SAYING THIS PANE DOES NOT HAVE
-              // CONTROL. Recording only the latency left the pane believing it
-              // did — still forwarding keys and clicks into a page that
-              // discards every one, with nothing on screen to say why, until
-              // some later read happened to notice.
-              if (
-                ack.refused === "lease_held" ||
-                ack.refused === "lease_parked"
-              ) {
-                setLease({ state: "held" });
-                setError(SOMEBODY_ELSE_HAS_IT);
-              } else if (ack.refused === "lease_required") {
-                setLease({ state: "free" });
-              }
-              return;
-            }
-            if (parsed.type === "pong") {
-              if (typeof parsed.t === "number") {
-                paneFrameStats.noteRtt(Date.now() - parsed.t);
-              }
-              return;
-            }
-            if (parsed.type === "stats") {
-              // The page's tools, as a change signal. Synthesized by the local
-              // relay (there is no heartbeat in-process to ride), so the Tools
-              // pane is live on the engine a developer debugs against too.
-              noteWebmcpStats(
-                browserPageToolsKey(projectId, "local"),
-                parsed.daemon as never,
-                session.bootId,
-              );
-              paneFrameStats.noteRelayStats({
-                framesIn: parsed.framesIn ?? 0,
-                ...(parsed.framesOut !== undefined
-                  ? { framesOut: parsed.framesOut }
-                  : {}),
-                bytes: parsed.bytes ?? 0,
-                dropped: parsed.dropped ?? 0,
-                subscribers: parsed.subscribers ?? 0,
-                ...(parsed.daemon ? { daemon: parsed.daemon as never } : {}),
-              });
-              return;
-            }
-            if (parsed.type === "frame" && parsed.frame) {
-              paneFrameStats.noteFrameArrived({ bytes: raw.length });
-              frameSeqRef.current = parsed.frame.seq;
-              setFrame(parsed.frame);
-            }
-          } catch {
-            // Not our protocol.
-          }
-        };
-        opened.socket.onclose = (event) => {
-          if (closed) return;
-          if (event.code === CLOSE_LEASE_HELD) {
-            // Somebody else holds the browser — including a handoff that
-            // happened while this socket was open, which the daemon revokes
-            // mid-stream. Not a terminal state: the view has to come back when
-            // they hand it back, so keep asking rather than latching an error
-            // nothing will ever clear.
-            setError(
-              "Somebody else has taken control of this browser. The view will resume when they hand it back.",
-            );
-            setFrame(null);
-            retry = setTimeout(() => {
-              if (!closed) setStreamAttempt((n) => n + 1);
-            }, 3_000);
-            return;
-          }
-          if (event.code === CLOSE_UNAUTHORIZED) {
-            // TERMINAL, and told apart from the refusal above by its own code.
-            // The nonce is spent or consent moved underneath us; retrying on a
-            // timer would burn credentials against the same answer forever and
-            // report it as somebody else's handoff the whole time.
-            setError(
-              event.reason ||
-                "This machine's authorization changed. Reopen the pane to watch again.",
-            );
-            setFrame(null);
-          }
-        };
-        opened.socket.onopen = () => {
-          // Whatever refused the last attempt is over.
-          setError(null);
-        };
-        // Only while somebody is actually LOOKING: the document being visible
-        // is not enough, because this pane stays mounted behind the Logs tab.
-        // Watching is what defers the idle reap, so a pane nobody is looking
-        // at must stop claiming otherwise.
-        heartbeat = setInterval(() => {
-          if (!activeRef.current) return;
-          if (document.visibilityState !== "visible") return;
-          if (opened.socket.readyState !== WebSocket.OPEN) return;
-          opened.socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
-        }, 20_000);
-      } catch (err) {
-        if (!closed) setError(err instanceof Error ? err.message : String(err));
-      }
-    })();
-
-    return () => {
-      closed = true;
-      wire?.close();
-      // The pane releases each bitmap as the next replaces it; the LAST one
-      // has no successor.
-      lastBitmap?.close();
-      if (heartbeat) clearInterval(heartbeat);
-      if (retry) clearTimeout(retry);
-      if (socketRef.current === openedSocket) {
-        socketRef.current = null;
-        socketInputRef.current = false;
-      }
-      stream?.close();
-    };
-  }, [session, projectId, consentToken, holder, streamAttempt, native]);
-
   // THE SIGNAL DIES WITH THE PANE — see HostedBrowserBody for why this is its
   // own effect, keyed on the project alone.
   useEffect(() => {
@@ -835,38 +600,6 @@ export function LocalBrowserBody({
     [],
   );
 
-  const forwarder = useMemo(() => {
-    if (!session || !holding) return null;
-    const bootId = session.bootId;
-    return createInputForwarder(
-      (events, seq) => {
-        paneFrameStats.noteInputSent(frameSeqRef.current, seq);
-        if (socketSendable()) {
-          socketRef.current!.send(
-            JSON.stringify({ type: "input", seq, events }),
-          );
-          return;
-        }
-        return sendLocalBrowserInput({ bootId, holder, events }, consentToken);
-      },
-      // The predicate has to match the TRANSPORT the callback actually
-      // chooses, not merely the capability: the send falls back to POST
-      // whenever the socket is not open, and a `serialize` that only read the
-      // flag let two POSTs travel at once — an unordered drag lands where
-      // nobody aimed, and an unordered press/release leaves a button held.
-      { serialize: () => !socketSendable() },
-    );
-  }, [session, holding, holder, consentToken, socketSendable]);
-  useEffect(() => () => forwarder?.cancel(), [forwarder]);
-
-  const send = useCallback(
-    (events: BrowserInputEvent[]) => {
-      if (!forwarder || !holding || events.length === 0) return;
-      forwarder.push(events);
-    },
-    [forwarder, holding],
-  );
-
   // One analytics event per pane, on the way out — see `session-summary`.
   // `local-native` is its OWN engine in the summary, not a flavour of
   // `electron`: the whole point of the wave is that the two are answerable
@@ -1022,10 +755,298 @@ export function LocalBrowserBody({
   }, [workspaceEnabled, bootId, consentToken]);
 
   const shell = useBrowserSession({
-    transport: workspaceEnabled ? shellTransport : null,
+    transport: shellTransport,
     holderId: holder,
     active,
   });
+
+  const forwarder = useMemo(() => {
+    if (!session || !holding) return null;
+    const bootId = session.bootId;
+    const tabId = shell.state.activeTabId ?? undefined;
+    return createInputForwarder(
+      (events, seq) => {
+        paneFrameStats.noteInputSent(frameSeqRef.current, seq);
+        if (socketSendable()) {
+          socketRef.current!.send(
+            JSON.stringify({ type: "input", seq, events, tabId }),
+          );
+          return;
+        }
+        return sendLocalBrowserInput(
+          { bootId, holder, events, tabId },
+          consentToken,
+        );
+      },
+      // The predicate has to match the TRANSPORT the callback actually
+      // chooses, not merely the capability: the send falls back to POST
+      // whenever the socket is not open, and a `serialize` that only read the
+      // flag let two POSTs travel at once — an unordered drag lands where
+      // nobody aimed, and an unordered press/release leaves a button held.
+      { serialize: () => !socketSendable() },
+    );
+  }, [
+    session,
+    holding,
+    holder,
+    consentToken,
+    socketSendable,
+    shell.state.activeTabId,
+  ]);
+  useEffect(() => () => forwarder?.cancel(), [forwarder]);
+
+  const send = useCallback(
+    (events: BrowserInputEvent[]) => {
+      if (!forwarder || !holding || events.length === 0) return;
+      forwarder.push(events);
+    },
+    [forwarder, holding],
+  );
+
+  // The frame socket. Re-opened when the browser changes; closed on unmount,
+  // which is what tells the server to stop encoding JPEGs nobody is watching.
+  useEffect(() => {
+    // NOT ON THE NATIVE SURFACE. There is nothing to watch: the page is a real
+    // view in the app's own window, and opening this socket would make the
+    // engine encode JPEGs at 30 fps that no pane ever draws.
+    setFrame(null);
+    if (!session || !projectId || native || !shell.state.activeTabId) return;
+    let closed = false;
+    let stream: { close(): void } | null = null;
+    /**
+     * This attempt's socket, captured for the cleanup.
+     *
+     * Compared by IDENTITY on teardown so a reconnect that already replaced
+     * the ref is not cleared by the closure of the connection it replaced —
+     * which would leave the pane POSTing input while a perfectly good socket
+     * was open.
+     */
+    let openedSocket: WebSocket | null = null;
+    /** Decodes the binary pixel path; null until the socket is open. */
+    let wire: ReturnType<typeof createFrameWireReader> | null = null;
+    /** The last bitmap this socket produced, so teardown can release it. */
+    let lastBitmap: ImageBitmap | undefined;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+
+    void (async () => {
+      try {
+        const { nonce } = await mintLocalBrowserFrameNonce(
+          projectId,
+          consentToken,
+        );
+        if (closed) return;
+        const opened = openLocalBrowserFrameStream({
+          bootId: session.bootId,
+          tabId: shell.state.activeTabId ?? undefined,
+          holder,
+          nonce,
+          // Worth it even on loopback, where base64 costs a memcpy rather than
+          // a network hop: it means the hosted path's decoder runs on every
+          // local session instead of only on staging.
+          wire: "binary",
+        });
+        stream = opened;
+        wire = createFrameWireReader({
+          onFrame: (decoded) => {
+            if (closed) return;
+            paneFrameStats.noteTransport("jpeg-binary");
+            paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
+            frameSeqRef.current = decoded.seq;
+            // React can coalesce two `setFrame` calls into one render, and the
+            // surface only ever releases a frame it PAINTED — so a picture
+            // superseded before the commit has nobody to free it.
+            lastBitmap?.close();
+            lastBitmap = decoded.bitmap;
+            setFrame({
+              bitmap: decoded.bitmap,
+              decodeMs: decoded.decodeMs,
+              deviceWidth: decoded.deviceWidth,
+              deviceHeight: decoded.deviceHeight,
+              scale: decoded.scale,
+              ts: decoded.relayTs,
+              relayTs: decoded.relayTs,
+              seq: decoded.seq,
+            });
+          },
+          onHeartbeat: (daemon) => {
+            if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
+            noteWebmcpStats(
+              browserPageToolsKey(projectId, "local"),
+              daemon as never,
+              session.bootId,
+            );
+          },
+          onFatal: () => {
+            // A reader that has lost its place in a byte stream can never find
+            // it again, so the connection goes rather than the record.
+            opened.close();
+          },
+        });
+        openedSocket = opened.socket;
+        socketRef.current = opened.socket;
+        socketInputRef.current = false;
+        paneFrameStats.noteTransport("jpeg-json");
+        opened.socket.onmessage = (event) => {
+          // Bytes for pixels, text for control, on one socket — see the hosted
+          // pane's twin.
+          if (typeof event.data !== "string") {
+            wire?.push(event.data as ArrayBuffer);
+            return;
+          }
+          try {
+            const raw = String(event.data);
+            const parsed = JSON.parse(raw) as {
+              type?: string;
+              frame?: PaneFrame;
+              t?: number;
+              framesIn?: number;
+              framesOut?: number;
+              bytes?: number;
+              dropped?: number;
+              subscribers?: number;
+              daemon?: Record<string, unknown>;
+            };
+            if (parsed.type === "hello") {
+              const features = Array.isArray(
+                (parsed as { features?: unknown }).features,
+              )
+                ? ((parsed as { features: unknown[] }).features as unknown[])
+                : [];
+              socketInputRef.current = features.includes("input");
+              return;
+            }
+            if (parsed.type === "input_ack") {
+              const ack = parsed as unknown as {
+                seq?: number;
+                refused?: string;
+              };
+              if (typeof ack.seq === "number") {
+                paneFrameStats.noteInputAck(ack.seq);
+              }
+              // A REFUSAL IS THE SERVER SAYING THIS PANE DOES NOT HAVE
+              // CONTROL. Recording only the latency left the pane believing it
+              // did — still forwarding keys and clicks into a page that
+              // discards every one, with nothing on screen to say why, until
+              // some later read happened to notice.
+              if (
+                ack.refused === "lease_held" ||
+                ack.refused === "lease_parked"
+              ) {
+                setLease({ state: "held" });
+                setError(SOMEBODY_ELSE_HAS_IT);
+              } else if (ack.refused === "lease_required") {
+                setLease({ state: "free" });
+              }
+              return;
+            }
+            if (parsed.type === "pong") {
+              if (typeof parsed.t === "number") {
+                paneFrameStats.noteRtt(Date.now() - parsed.t);
+              }
+              return;
+            }
+            if (parsed.type === "stats") {
+              // The page's tools, as a change signal. Synthesized by the local
+              // relay (there is no heartbeat in-process to ride), so the Tools
+              // pane is live on the engine a developer debugs against too.
+              noteWebmcpStats(
+                browserPageToolsKey(projectId, "local"),
+                parsed.daemon as never,
+                session.bootId,
+              );
+              paneFrameStats.noteRelayStats({
+                framesIn: parsed.framesIn ?? 0,
+                ...(parsed.framesOut !== undefined
+                  ? { framesOut: parsed.framesOut }
+                  : {}),
+                bytes: parsed.bytes ?? 0,
+                dropped: parsed.dropped ?? 0,
+                subscribers: parsed.subscribers ?? 0,
+                ...(parsed.daemon ? { daemon: parsed.daemon as never } : {}),
+              });
+              return;
+            }
+            if (parsed.type === "frame" && parsed.frame) {
+              paneFrameStats.noteFrameArrived({ bytes: raw.length });
+              frameSeqRef.current = parsed.frame.seq;
+              setFrame(parsed.frame);
+            }
+          } catch {
+            // Not our protocol.
+          }
+        };
+        opened.socket.onclose = (event) => {
+          if (closed) return;
+          if (event.code === CLOSE_LEASE_HELD) {
+            // Somebody else holds the browser — including a handoff that
+            // happened while this socket was open, which the daemon revokes
+            // mid-stream. Not a terminal state: the view has to come back when
+            // they hand it back, so keep asking rather than latching an error
+            // nothing will ever clear.
+            setError(
+              "Somebody else has taken control of this browser. The view will resume when they hand it back.",
+            );
+            setFrame(null);
+            retry = setTimeout(() => {
+              if (!closed) setStreamAttempt((n) => n + 1);
+            }, 3_000);
+            return;
+          }
+          if (event.code === CLOSE_UNAUTHORIZED) {
+            // TERMINAL, and told apart from the refusal above by its own code.
+            // The nonce is spent or consent moved underneath us; retrying on a
+            // timer would burn credentials against the same answer forever and
+            // report it as somebody else's handoff the whole time.
+            setError(
+              event.reason ||
+                "This machine's authorization changed. Reopen the pane to watch again.",
+            );
+            setFrame(null);
+          }
+        };
+        opened.socket.onopen = () => {
+          // Whatever refused the last attempt is over.
+          setError(null);
+        };
+        // Only while somebody is actually LOOKING: the document being visible
+        // is not enough, because this pane stays mounted behind the Logs tab.
+        // Watching is what defers the idle reap, so a pane nobody is looking
+        // at must stop claiming otherwise.
+        heartbeat = setInterval(() => {
+          if (!activeRef.current) return;
+          if (document.visibilityState !== "visible") return;
+          if (opened.socket.readyState !== WebSocket.OPEN) return;
+          opened.socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
+        }, 20_000);
+      } catch (err) {
+        if (!closed) setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+
+    return () => {
+      closed = true;
+      wire?.close();
+      // The pane releases each bitmap as the next replaces it; the LAST one
+      // has no successor.
+      lastBitmap?.close();
+      if (heartbeat) clearInterval(heartbeat);
+      if (retry) clearTimeout(retry);
+      if (socketRef.current === openedSocket) {
+        socketRef.current = null;
+        socketInputRef.current = false;
+      }
+      stream?.close();
+    };
+  }, [
+    session,
+    projectId,
+    consentToken,
+    holder,
+    streamAttempt,
+    native,
+    shell.state.activeTabId,
+  ]);
 
   /**
    * Take the browser, then deliver the interaction that asked for it.
@@ -1042,7 +1063,7 @@ export function LocalBrowserBody({
    * before there was a lease to send it under.
    */
   useEffect(() => {
-    if (!native || !workspaceEnabled || shell.state.seq === 0) return;
+    if (!native || shell.state.seq === 0) return;
     const current = shell.state.control;
     setLease(
       current.kind === "agent"
@@ -1088,64 +1109,11 @@ export function LocalBrowserBody({
     [bootId, holder, consentToken, setLeaseAction, shell.state],
   );
 
-  // The page ITSELF, in the app's own window — no encoder, no socket, no
-  // decode. Everything above is unchanged and still applies: the same status,
-  // the same lease, the same holder identity, the same take-control bar. What
-  // differs is only that there is no picture to draw.
-  if (native && !workspaceEnabled) {
-    return (
-      <div className="flex h-full min-h-0 flex-col">
-        {/* `flex flex-col` and not merely `flex-1`: both pane bodies render a
-            control bar above a `min-h-0 flex-1` viewport and so expect a flex
-            COLUMN parent. A plain block wrapper leaves that `flex-1` with no
-            flex container to grow in, and the picture collapses to nothing. */}
-        <div className="flex min-h-0 flex-1 flex-col">
-          <ElectronNativeBody
-            session={session}
-            holder={holder}
-            control={control}
-            holding={holding}
-            consentGranted={consentGranted}
-            onTakeControl={
-              session && !holding && lease.state === "free"
-                ? () => void setLeaseAction("acquire")
-                : undefined
-            }
-            onHandBack={
-              session && holding
-                ? () => void setLeaseAction("resume")
-                : undefined
-            }
-            placeholder={placeholder}
-            error={error}
-            active={active}
-            engine="local-native"
-            extra={
-              session && sessionId ? (
-                <BrowserProfileSaveButton
-                  projectId={projectId ?? ""}
-                  exportArchive={exportProfile}
-                  disabled={holding || busy}
-                />
-              ) : null
-            }
-          />
-        </div>
-        <Activity
-          projectId={projectId}
-          consentToken={consentToken}
-          consentGranted={consentGranted}
-          active={active}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-0 flex-1 flex-col">
         <BrowserShell
-          enabled={workspaceEnabled}
+          enabled={true}
           state={shell.state}
           holderId={holder}
           // THIS engine's lease, not the shell's polled copy: the local body
@@ -1169,7 +1137,9 @@ export function LocalBrowserBody({
           resuming={shell.resuming}
           // The shell owns the picture's SIZE, so it is the shell that
           // measures. @see BrowserShellProps.onViewportMeasured
-          onViewportMeasured={shell.reportViewport}
+          onViewportMeasured={
+            workspaceEnabled ? shell.reportViewport : undefined
+          }
           // Not just "is there a browser": an engine too old to answer pane
           // commands has a perfectly real session, and controls that look live
           // and swallow every click read as broken rather than old.
@@ -1212,6 +1182,7 @@ export function LocalBrowserBody({
             />
           ) : (
             <BrowserPaneSurface
+              key={shell.state.activeTabId}
               // Gated as well as cleared: a frame that lands in the same tick as
               // the revocation must not be the one that gets painted.
               frame={consentGranted ? frame : null}
@@ -1219,11 +1190,11 @@ export function LocalBrowserBody({
               control={control}
               // NO take-control button. Using the browser is what takes it now,
               // and the shell's second row already says who is driving.
-              chrome={workspaceEnabled ? "none" : "bar"}
+              chrome="none"
               // The shell's menu owns this now; the surface draws it.
-              statsOpen={workspaceEnabled ? statsOpen : undefined}
+              statsOpen={statsOpen}
               onInput={send}
-              onTakeoverInput={workspaceEnabled ? takeover : undefined}
+              onTakeoverInput={takeover}
               onTakeControl={
                 !workspaceEnabled &&
                 session &&

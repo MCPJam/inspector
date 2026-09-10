@@ -190,7 +190,10 @@ describe("electron context — the page it hands back", () => {
     const page = await context.newPage();
     await page.goto("https://example.test/");
 
-    expect(contents.navigations).toEqual(["https://example.test/"]);
+    expect(contents.navigations).toEqual([
+      "about:blank",
+      "https://example.test/",
+    ]);
     expect(page.url()).toBe("https://example.test/");
   });
 
@@ -253,7 +256,6 @@ describe("electron context — outside Electron", () => {
     await expect(launchElectronContext({})).rejects.toThrow(/not Electron/i);
   });
 });
-
 
 /**
  * V-3. Tabs as VIEWS on one hidden holder, which is what makes the browser
@@ -374,6 +376,35 @@ describe("the native surface", () => {
     });
     await context.newPage();
     expect(electron.windows).toHaveLength(1);
+    await context.close();
+  });
+});
+
+describe("managed Electron popups", () => {
+  it("returns the adopted webContents with its original opener, and enforces the cap", async () => {
+    const electron = fakeElectron();
+    const context = await launchElectronContext({ electron });
+    const parent = await context.newPage();
+    const events: unknown[] = [];
+    context.onPageCreated!((event) => events.push(event));
+    const handler = electron.windows[0].webContents.windowOpenHandler!;
+    const decision = handler({ url: "https://popup.test" }) as {
+      action: string;
+      createWindow: (options: object) => unknown;
+    };
+    expect(decision.action).toBe("allow");
+    const originalContents = { originalPopup: true };
+    const contents = decision.createWindow({ webContents: originalContents });
+    expect(electron.windows[1].options.webContents).toBe(originalContents);
+    expect(contents).toBe(electron.windows[1].webContents);
+    expect(events[0]).toMatchObject({ opener: parent });
+    expect(electron.windows[1].options.webPreferences).toMatchObject({
+      sandbox: true,
+      nodeIntegration: false,
+      partition: "persist:mcpjam-browser-default",
+    });
+    for (let i = 2; i < ELECTRON_TAB_CAP; i++) await context.newPage();
+    expect(handler({ url: "https://excess.test" })).toEqual({ action: "deny" });
     await context.close();
   });
 });

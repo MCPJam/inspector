@@ -122,7 +122,18 @@ export function addressFieldValue(state: AddressFieldState): string {
  */
 export function addressFieldTarget(state: AddressFieldState): string | null {
   if (state.draft === null) return null;
-  return normalizePaneUrl(state.draft);
+  return addressOrSearchTarget(state.draft);
+}
+
+/** Search classification belongs to the human field; daemon commands stay URL-only. */
+export function addressOrSearchTarget(input: string): string | null {
+  const text = input.trim();
+  if (!text) return null;
+  const url = normalizePaneUrl(text);
+  if (url) return url;
+  // Never turn an explicitly unsupported URL into an accidental search.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(text)) return null;
+  return `https://www.google.com/search?${new URLSearchParams({ q: text })}`;
 }
 
 /**

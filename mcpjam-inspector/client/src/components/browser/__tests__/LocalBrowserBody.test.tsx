@@ -809,14 +809,12 @@ describe("a browser whose daemon predates the pane endpoints", () => {
   });
 });
 
-it("keeps explicit controls and no browser chrome when the workspace flag is off", async () => {
+it("keeps navigation when the workspace flag is off", async () => {
   api.workspaceEnabled = false;
   renderBody();
   await userEvent.click(await screen.findByText("Open the browser"));
-  expect(
-    await screen.findByRole("button", { name: "Take control" }),
-  ).toBeTruthy();
-  expect(screen.queryByTestId("browser-new-tab")).toBeNull();
+  expect(await screen.findByTestId("browser-new-tab")).toBeInTheDocument();
+  expect(screen.getByTestId("browser-address")).toBeInTheDocument();
 });
 
 it("takes control but drops the first click if the daemon cannot identify the page", async () => {
