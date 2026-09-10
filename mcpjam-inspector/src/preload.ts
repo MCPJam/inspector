@@ -49,9 +49,12 @@ interface ElectronAPI {
    */
   agentBrowser: {
     /** Can this build show a native view at all? Asked before any browser. */
-    capability: () => Promise<{ available: boolean }>;
+    capability: (
+      consentToken?: string | null,
+    ) => Promise<{ available: boolean }>;
     setViewport: (request: {
       bootId: string;
+      consentToken?: string | null;
       holder?: string;
       takeover?: boolean;
       visible: boolean;
@@ -59,7 +62,7 @@ interface ElectronAPI {
     }) => Promise<{
       shown: boolean;
       inputAllowed: boolean;
-      reason?: "unknown" | "no_window" | "bad_bounds" | "lease";
+      reason?: "unknown" | "no_window" | "bad_bounds" | "lease" | "consent";
     }>;
   };
 
@@ -119,7 +122,8 @@ const electronAPI: ElectronAPI = {
   },
 
   agentBrowser: {
-    capability: () => ipcRenderer.invoke("agent-browser:capability"),
+    capability: (consentToken) =>
+      ipcRenderer.invoke("agent-browser:capability", consentToken),
     setViewport: (request) =>
       ipcRenderer.invoke("agent-browser:set-viewport", request),
   },

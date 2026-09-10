@@ -3,8 +3,8 @@ import { ShieldQuestion } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
 
-/** Shell-only device consent; Browser permission is independent. */
-export function LocalComputerConsentGate({
+/** Browser-only device consent; shell permission is independent. */
+export function LocalBrowserConsentGate({
   onAllow,
   onUseCloud,
   location = "computer_tab_local",
@@ -22,7 +22,7 @@ export function LocalComputerConsentGate({
   // by construction.
   const cloudOffered = !!onUseCloud;
   useEffect(() => {
-    track("local_computer_consent_gate_shown", {
+    track("local_browser_consent_gate_shown", {
       location,
       cloud_offered: cloudOffered,
     });
@@ -34,13 +34,13 @@ export function LocalComputerConsentGate({
     try {
       const ok = await onAllow();
       if (!ok) setError(true);
-      track("local_computer_consent_granted", {
+      track("local_browser_consent_granted", {
         location,
         outcome: ok ? "stored" : "failed",
       });
     } catch {
       setError(true);
-      track("local_computer_consent_granted", {
+      track("local_browser_consent_granted", {
         location,
         outcome: "failed",
       });
@@ -50,25 +50,23 @@ export function LocalComputerConsentGate({
   };
 
   const handleUseCloud = () => {
-    track("local_computer_consent_denied", { location });
+    track("local_browser_consent_denied", { location });
     onUseCloud?.();
   };
 
   return (
     <div
-      data-testid="local-computer-consent-gate"
+      data-testid="local-browser-consent-gate"
       className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-6 py-8 text-center"
     >
       <ShieldQuestion className="size-6 text-muted-foreground" aria-hidden />
       <h2 className="text-base font-semibold text-foreground">
-        Allow agents to run commands on this machine?
+        Allow agents to control a browser on this machine?
       </h2>
       <p className="text-sm leading-relaxed text-muted-foreground">
-        Enabled tools can run commands as your user account. This permission
-        authorizes shell commands; it does not enable the Bash tool on this
-        host. The project folder is not a sandbox — commands can read or change
-        files and credentials your user can access. Chat approval settings still
-        apply.
+        Agents can navigate, click, and type in this browser, including websites
+        you sign into. This permission does not authorize shell commands. Chat
+        approval settings still apply.
       </p>
       <div className="mt-1 flex items-center gap-2">
         <Button

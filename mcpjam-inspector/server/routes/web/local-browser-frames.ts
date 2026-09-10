@@ -24,7 +24,7 @@ import type { MiddlewareHandler } from "hono";
 import type { UpgradeWebSocket, WSContext } from "hono/ws";
 import { logger } from "../../utils/logger.js";
 import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
-import { getLocalConsentFingerprint } from "../../utils/computers/local-consent.js";
+import { getBrowserConsentFingerprint } from "../../utils/computers/browser-consent.js";
 import { consumeLocalNonce } from "../../utils/computers/local-terminal-auth.js";
 import {
   findLocalBrowserSession,
@@ -154,7 +154,7 @@ export function createLocalBrowserFramesWsHandler(
         rejectCode = CLOSE_UNAUTHORIZED;
         rejectMessage = "Invalid or expired browser token.";
       } else if (
-        claim.consentFingerprint !== (await getLocalConsentFingerprint())
+        claim.consentFingerprint !== (await getBrowserConsentFingerprint())
       ) {
         rejectCode = CLOSE_UNAUTHORIZED;
         rejectMessage = "Local computer consent changed; reconnect.";

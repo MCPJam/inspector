@@ -1,3 +1,9 @@
+import {
+  capabilityFingerprint as sha256,
+  capabilityMatches,
+  mintCapabilityToken,
+  persistCapabilityState,
+} from "../../local-capability.js";
 /**
  * Workspace grants and local harness consent — the two pieces of local state
  * that decide whether a turn may run on this machine at all.
@@ -33,12 +39,7 @@
  * process, turns that back into a canonical path. A renderer that could submit
  * a path could submit any path.
  */
-import {
-  createHash,
-  randomBytes,
-  randomUUID,
-  timingSafeEqual,
-} from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
@@ -131,10 +132,6 @@ const withGrantLock = createLocalStateMutationLock({
   lockFileName: "grants.lock",
   resourceLabel: "grant store",
 });
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
-}
 
 /** Canonical serialization of a binding — field order is fixed here, so two
  *  bindings that differ anywhere hash differently and a reordered object
@@ -289,10 +286,7 @@ async function writeState(state: PersistedState): Promise<void> {
   const dir = localHarnessStateRoot();
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await chmod(dir, 0o700).catch(() => {});
-  const file = grantsFilePath();
-  const tmp = `${file}.tmp`;
-  await writeFile(tmp, JSON.stringify(state), { mode: 0o600 });
-  await rename(tmp, file);
+  await persistCapabilityState(grantsFilePath(), state);
 }
 
 /**
@@ -572,7 +566,7 @@ export function grantLocalHarnessConsent(
     // asking for an unattended capability. A shorter grant is strictly safer,
     // so it is honoured as given.
     const ttlMs = Math.min(opts?.ttlMs ?? GRANT_TTL_MS, GRANT_TTL_MS);
-    const token = randomBytes(32).toString("base64url");
+    const token = mintCapabilityToken();
     const grant: PersistedHarnessGrant = {
       grantId: `grant_${randomUUID()}`,
       tokenHash: sha256(token),
@@ -670,13 +664,10 @@ export async function verifyLocalHarnessGrant(
           : "the local harness grant store could not be read",
     };
   }
-  const presented = Buffer.from(sha256(token), "hex");
   const now = opts?.now ?? Date.now();
 
   for (const grant of state.harnessGrants) {
-    const stored = Buffer.from(grant.tokenHash, "hex");
-    if (presented.length !== stored.length) continue;
-    if (!timingSafeEqual(presented, stored)) continue;
+    if (!capabilityMatches(token, grant.tokenHash)) continue;
     if (grant.bindingHash !== bindingHash) {
       return {
         ok: false,

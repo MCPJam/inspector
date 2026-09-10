@@ -34,7 +34,7 @@ import {
   PlaygroundBrowserPanel,
 } from "@/components/playground/PlaygroundBrowserPanel";
 import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
-import { useComputerEngine } from "@/hooks/useComputerEngine";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import {
   useBrowserWorkspaceEnabledState,
   useComputersEnabledState,
@@ -155,8 +155,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     hostId: previewedHostId,
   });
   const effectiveHostConfig = previewedHostId
-    ? (previewedHost?.config ?? null)
-    : (props.activeHost ?? null);
+    ? previewedHost?.config ?? null
+    : props.activeHost ?? null;
   const activeMcpProfile = effectiveHostConfig?.mcpProfile;
 
   // Host-derived widget runtime values. The preferences store is the
@@ -260,7 +260,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
 
   const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
   const computersEnabled = useComputersEnabledState();
-  const browserEngine = useComputerEngine(projectScope);
+  const browserEngine = useBrowserEngine(projectScope);
   // Polled only on the local engine, where the question means something: on
   // hosted this route describes a machine that is not the one running the
   // browser.
@@ -453,7 +453,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                               other side of it to resize against, and a divider
                               that moves a hidden panel is a control that does
                               nothing visible. */}
-                          {browserExpanded ? null : <ResizableHandle withHandle />}
+                          {browserExpanded ? null : (
+                            <ResizableHandle withHandle />
+                          )}
                           <ResizablePanel
                             id="playground-browser"
                             order={3}
