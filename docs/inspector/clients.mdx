@@ -58,13 +58,15 @@ The **Browser** tab in the Client focus panel separates saved browser configurat
 
 **This client** — Saved configuration that applies to every chat and environment using this client:
 
-- **Browser** — Enable or disable the browser tool for this client. When the feature is not yet rolled out to your account, the toggle is disabled unless the client already has Browser enabled (so existing configurations remain inspectable).
+- **Browser** (local inspector) — Enable or disable the local Browser tool for this client. This setting is independent of the hosted Browser configuration. When the feature is not yet rolled out to your account, the toggle is disabled unless the client already has Browser enabled (so existing configurations remain inspectable).
+- **Browser** (hosted) — Enable or disable the hosted browser built-in for this client. Hosted Browser settings are independent of the local Browser setting.
 - **Browser profile** — Optionally pin a saved browser profile for this client. Without a selection, new chats use your personal default profile. This field appears only when Browser is enabled or a profile is already saved.
 
 **Your browser** — Personal preferences that do not change the client configuration:
 
 - **Browser location** — Shown when Cloud Browser is rolled out to your account. Choose between local and cloud for new Playground chats. Changing this affects new chats only; any chat already bound to a browser keeps its existing location. Environments always use Cloud regardless of this preference.
 - **Device permission** — Grant or revoke permission for the local browser on this machine. Appears only when local browser is available and selected.
+- **Enable for all clients** — After granting device permission, this button opens a setup flow that enables the local Browser tool for all clients in projects you manage, including shared clients. New clients inherit the setting; clients you have explicitly disabled stay disabled. Teammates must allow browser access on their own machines separately.
 - **Saved profiles** — Manage your personal browser profiles.
 
 #### Browser canvas island
