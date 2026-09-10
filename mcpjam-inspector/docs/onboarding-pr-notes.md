@@ -54,7 +54,15 @@
 - Verification: 96 focused component/App tests passed, including both connection paths and cancellation; client type-check and design-token drift checks passed.
 - Review polish: completed progress checks now use the success color; the final success indicator is green with a reduced-motion-safe entry animation; the centered server name is highlighted for easier scanning.
 
+## Preloaded Playground prompt
+
+- Use one server-agnostic prompt for both connection paths: `What can this server do?`
+- Reuse Playground's existing initial-input, typewriter, and send-button pulse behavior; do not generate a prompt on the backend and do not auto-send it.
+- Seed the prompt only when Playground opens from the successful first-run handoff, then retire the one-shot handoff after the user sends their first message.
+- Verification: 192 focused App, Playground handoff, composer, and routing tests passed; client type-check and design-token drift checks passed.
+
 ## Deferred follow-ups
 
 - Guest sign-up bar: a dismissible Playground strip inviting anonymous users to create an account so they can keep their server, history, and evals.
 - Demo-only Home banner: a persistent, dismissible confirmation and client-exploration prompt while Excalidraw is the user's only connected server.
+- Guided product tour: a later, dismissible spotlight sequence covering (1) the full left navigation rail, (2) the Playground configuration controls such as fill, locale, strictness, Client Context, and Host Capabilities, and (3) the sign-in/create-account area.

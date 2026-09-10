@@ -81,7 +81,7 @@ const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
 const FIRST_RUN_SKELETON_TIMEOUT_MS = 12000;
 
 export const PLAYGROUND_FIRST_RUN_PROMPT =
-  "Draw me an MCP architecture diagram";
+  "What can this server do?";
 
 type ExecutionInjectionWaiter = {
   expectedToolCallId?: string;
