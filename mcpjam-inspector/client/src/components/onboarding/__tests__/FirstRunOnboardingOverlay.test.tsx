@@ -18,19 +18,39 @@ import {
   FirstRunOnboardingOverlay,
 } from "../FirstRunOnboardingOverlay";
 
-function renderOverlay() {
+function renderOverlay(connectionState = { status: "idle" } as const) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
   const onSkip = vi.fn();
-  render(
+  const view = render(
     <FirstRunOnboardingOverlay
       open
+      connectionState={connectionState}
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
       onSkip={onSkip}
     />,
   );
-  return { onConnectOwnServer, onConnectDemo, onSkip };
+  return {
+    onConnectOwnServer,
+    onConnectDemo,
+    onSkip,
+    rerenderWithConnectionState: (
+      nextConnectionState:
+        | { status: "idle" }
+        | { status: "connecting"; serverName: string }
+        | { status: "failed"; error: string },
+    ) =>
+      view.rerender(
+        <FirstRunOnboardingOverlay
+          open
+          connectionState={nextConnectionState}
+          onConnectOwnServer={onConnectOwnServer}
+          onConnectDemo={onConnectDemo}
+          onSkip={onSkip}
+        />,
+      ),
+  };
 }
 
 afterEach(() => {
@@ -93,19 +113,37 @@ describe("FirstRunOnboardingOverlay", () => {
   });
 
   it("delegates both connection paths and the explicit skip", () => {
-    const { onConnectOwnServer, onConnectDemo, onSkip } = renderOverlay();
+    const {
+      onConnectOwnServer,
+      onConnectDemo,
+      onSkip,
+      rerenderWithConnectionState,
+    } = renderOverlay();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://mcp.example.com/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    expect(onConnectOwnServer).toHaveBeenCalledWith({
+      name: "Example",
+      transport: "http",
+      urlOrCommand: "https://mcp.example.com/mcp",
+      authentication: "auto",
+      header: "",
+    });
+
+    rerenderWithConnectionState({
+      status: "failed",
+      error: "Connection refused",
+    });
     expect(
       screen.getByRole("heading", { name: "Set up your server" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
-    expect(onConnectOwnServer).toHaveBeenCalledOnce();
-    expect(onConnectOwnServer).toHaveBeenCalledWith({
+    expect(onConnectOwnServer).toHaveBeenCalledTimes(2);
+    expect(onConnectOwnServer).toHaveBeenLastCalledWith({
       name: "Example",
       transport: "http",
       urlOrCommand: "https://mcp.example.com/mcp",

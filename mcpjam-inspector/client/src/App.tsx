@@ -73,8 +73,11 @@ import {
 } from "./lib/onboarding-state";
 import {
   FirstRunOnboardingOverlay,
+  type FirstRunConnectionState,
   type FirstRunServerDraft,
 } from "./components/onboarding/FirstRunOnboardingOverlay";
+import type { ServerFormData } from "@/shared/types.js";
+import { validateServerFormData } from "@/lib/server-form-validation";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -2525,6 +2528,8 @@ export default function App() {
   const [playgroundOnboarding, setPlaygroundOnboarding] = useState(false);
   const [firstRunOverlayDismissed, setFirstRunOverlayDismissed] =
     useState(false);
+  const [firstRunConnectionState, setFirstRunConnectionState] =
+    useState<FirstRunConnectionState>({ status: "idle" });
   // Bumped to ask the active debugger route to open its own "configure server"
   // modal (XAA / OAuth) instead of the generic Add Server modal — see the
   // onAddServerRequested wiring on the header server picker below.
@@ -3260,6 +3265,10 @@ export default function App() {
   const hasAnyFirstRunBlockingProjectServers = Object.keys(projectServers).some(
     (serverName) => serverName !== EXCALIDRAW_SERVER_NAME,
   );
+  // A first attempt creates its project server record before the real MCP
+  // handshake begins. Keep the overlay mounted while that attempt is active so
+  // a failed handshake can return the user to its editable recovery form.
+  const isFirstRunConnectionActive = firstRunConnectionState.status !== "idle";
   const remoteFirstRunOnboardingShown =
     currentUser == null
       ? undefined
@@ -3344,7 +3353,7 @@ export default function App() {
         !!activeProjectId &&
         activeProjectId !== "none")) &&
     isFirstRunEligible(
-      hasAnyFirstRunBlockingProjectServers,
+      hasAnyFirstRunBlockingProjectServers && !isFirstRunConnectionActive,
       activeTab,
       !!workOsUser,
       remoteFirstRunOnboardingShown,
@@ -3364,26 +3373,68 @@ export default function App() {
     !firstRunOverlayDismissed;
 
   const openFirstRunServerConnection = useCallback(
-    (_draft: FirstRunServerDraft) => {
-      // The draft is captured in the onboarding overlay today. The next
-      // save-and-connect slice will submit it directly instead of handing off
-      // to the existing Servers surface.
-      setFirstRunOverlayDismissed(true);
+    (draft: FirstRunServerDraft) => {
+      const formData: ServerFormData = {
+        name: draft.name,
+        type: draft.transport,
+        ...(draft.transport === "http"
+          ? { url: draft.urlOrCommand }
+          : { command: draft.urlOrCommand }),
+        useOAuth: draft.authentication === "oauth",
+        authMethod: draft.authentication,
+      };
+      const validationError = validateServerFormData(formData);
+      if (validationError) {
+        setFirstRunConnectionState({
+          status: "failed",
+          error: validationError,
+        });
+        return;
+      }
+
       markOnboardingStarted();
-      navigateApp(routePaths.servers);
+      setFirstRunConnectionState({
+        status: "connecting",
+        serverName: formData.name,
+      });
+      void handleConnect(formData);
     },
-    [navigateApp],
+    [handleConnect],
   );
 
   const connectFirstRunDemo = useCallback(() => {
-    setFirstRunOverlayDismissed(true);
     markOnboardingStarted();
+    setFirstRunConnectionState({
+      status: "connecting",
+      serverName: EXCALIDRAW_SERVER_NAME,
+    });
     void handleConnect(EXCALIDRAW_SERVER_CONFIG);
-    navigateApp(routePaths.playground);
-  }, [handleConnect, navigateApp]);
+  }, [handleConnect]);
+
+  useEffect(() => {
+    if (firstRunConnectionState.status !== "connecting") return;
+
+    const server = appState.servers[firstRunConnectionState.serverName];
+    if (!server) return;
+
+    if (server.connectionStatus === "connected") {
+      setFirstRunConnectionState({ status: "idle" });
+      setFirstRunOverlayDismissed(true);
+      navigateApp(routePaths.playground);
+      return;
+    }
+
+    if (server.connectionStatus === "failed") {
+      setFirstRunConnectionState({
+        status: "failed",
+        error: server.lastError || "MCPJam could not connect to this server.",
+      });
+    }
+  }, [appState.servers, firstRunConnectionState, navigateApp]);
 
   const dismissFirstRunOverlay = useCallback(() => {
     markOnboardingDismissed();
+    setFirstRunConnectionState({ status: "idle" });
     setFirstRunOverlayDismissed(true);
   }, []);
 
@@ -5380,6 +5431,7 @@ export default function App() {
               </HostedShellGate>
               <FirstRunOnboardingOverlay
                 open={shouldShowFirstRunOverlay}
+                connectionState={firstRunConnectionState}
                 onConnectOwnServer={openFirstRunServerConnection}
                 onConnectDemo={connectFirstRunDemo}
                 onSkip={dismissFirstRunOverlay}

@@ -3319,44 +3319,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("opens Servers when a first-run guest chooses their own server", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    mockUnseenOnboardingState();
-    window.history.replaceState({}, "", "/servers");
-    mockHandleOAuthCallback.mockReset();
-    mockConvexAuthState.isAuthenticated = true;
-    mockWorkOsAuthState.user = null;
-    mockHostedShellGateState.value = "ready";
-    mockFreshGuestUser();
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
-      ).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
-      target: { value: "https://mcp.example.com/mcp" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/servers");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(
-      JSON.parse(localStorage.getItem("mcp-onboarding-state") ?? "{}"),
-    ).toEqual(expect.objectContaining({ status: "started" }));
-  });
-
-  it("connects the Excalidraw demo and opens Playground from first-run onboarding", async () => {
+  it("keeps a first-run guest in onboarding while their server connects", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3369,7 +3332,71 @@ describe("App hosted OAuth callback handling", () => {
     const appState = createAppStateMock();
     mockUseAppState.mockReturnValue(appState);
 
-    render(<App />);
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://mcp.example.com/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Connecting to Example" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/home");
+    expect(appState.handleConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Example",
+        type: "http",
+        url: "https://mcp.example.com/mcp",
+        authMethod: "auto",
+      }),
+    );
+    expect(
+      JSON.parse(localStorage.getItem("mcp-onboarding-state") ?? "{}"),
+    ).toEqual(expect.objectContaining({ status: "started" }));
+
+    appState.appState.servers = {
+      Example: {
+        name: "Example",
+        config: { transportType: "http", url: "https://mcp.example.com/mcp" },
+        connectionStatus: "failed",
+        lastError: "Connection refused",
+      },
+    };
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Set up your server" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
+    });
+  });
+
+  it("keeps the Excalidraw demo in onboarding while it connects", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
 
     await waitFor(() => {
       expect(
@@ -3383,10 +3410,14 @@ describe("App hosted OAuth callback handling", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", {
+          name: "Connecting to Excalidraw (App)",
+        }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(appState.handleConnect).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Excalidraw (App)",
@@ -3394,6 +3425,23 @@ describe("App hosted OAuth callback handling", () => {
         url: "https://mcp.excalidraw.com/mcp",
       }),
     );
+
+    appState.appState.servers = {
+      "Excalidraw (App)": {
+        name: "Excalidraw (App)",
+        config: {
+          transportType: "http",
+          url: "https://mcp.excalidraw.com/mcp",
+        },
+        connectionStatus: "connected",
+      },
+    };
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+    });
+    expect(window.location.pathname).toBe("/playground");
   });
 
   it("dismisses first-run onboarding when a guest skips it", async () => {
