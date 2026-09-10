@@ -62,8 +62,16 @@ import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
-import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
-import { isFirstRunEligible } from "./lib/onboarding-state";
+import {
+  EXCALIDRAW_SERVER_CONFIG,
+  EXCALIDRAW_SERVER_NAME,
+} from "./lib/excalidraw-quick-connect";
+import {
+  isFirstRunEligible,
+  markOnboardingDismissed,
+  markOnboardingStarted,
+} from "./lib/onboarding-state";
+import { FirstRunOnboardingOverlay } from "./components/onboarding/FirstRunOnboardingOverlay";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -2512,6 +2520,8 @@ export default function App() {
     setOptimisticallyDeletedOrganizationIds,
   ] = useState<string[]>([]);
   const [playgroundOnboarding, setPlaygroundOnboarding] = useState(false);
+  const [firstRunOverlayDismissed, setFirstRunOverlayDismissed] =
+    useState(false);
   // Bumped to ask the active debugger route to open its own "configure server"
   // modal (XAA / OAuth) instead of the generic Add Server modal — see the
   // onAddServerRequested wiring on the header server picker below.
@@ -3337,8 +3347,36 @@ export default function App() {
       remoteFirstRunOnboardingShown,
       isNewSignedInAccount,
     );
-  const shouldHoldHostedHomeRouteForFirstRunRedirect =
-    HOSTED_MODE && activeTab === "home" && shouldRouteToFirstRunOnboarding;
+  // Once a choice has been made, let its destination render immediately.
+  // The persisted state remains `started` until a later onboarding slice
+  // records a final outcome, so it intentionally remains eligible on reload
+  // if a connection has not created a blocking server yet.
+  const shouldRouteToFirstRunHome =
+    shouldRouteToFirstRunOnboarding &&
+    !firstRunOverlayDismissed &&
+    activeTab !== "home";
+  const shouldShowFirstRunOverlay =
+    shouldRouteToFirstRunOnboarding &&
+    activeTab === "home" &&
+    !firstRunOverlayDismissed;
+
+  const openFirstRunServerConnection = useCallback(() => {
+    setFirstRunOverlayDismissed(true);
+    markOnboardingStarted();
+    navigateApp(routePaths.servers);
+  }, [navigateApp]);
+
+  const connectFirstRunDemo = useCallback(() => {
+    setFirstRunOverlayDismissed(true);
+    markOnboardingStarted();
+    void handleConnect(EXCALIDRAW_SERVER_CONFIG);
+    navigateApp(routePaths.playground);
+  }, [handleConnect, navigateApp]);
+
+  const dismissFirstRunOverlay = useCallback(() => {
+    markOnboardingDismissed();
+    setFirstRunOverlayDismissed(true);
+  }, []);
 
   const previousConnectedServersRef = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -4198,10 +4236,10 @@ export default function App() {
   ]);
 
   useLayoutEffect(() => {
-    if (shouldRouteToFirstRunOnboarding) {
-      navigateApp(routePaths.playground);
+    if (shouldRouteToFirstRunHome) {
+      navigateApp(routePaths.home);
     }
-  }, [shouldRouteToFirstRunOnboarding]);
+  }, [shouldRouteToFirstRunHome]);
 
   // The snap-to-Servers effect that used to live here is gone with the URL
   // migration. It existed because a project switch changed hidden state and
@@ -4845,8 +4883,7 @@ export default function App() {
 
   if (
     shouldHoldHostedDefaultRouteForAuth ||
-    shouldHoldHostedHomeRouteForAppReady ||
-    shouldHoldHostedHomeRouteForFirstRunRedirect
+    shouldHoldHostedHomeRouteForAppReady
   ) {
     return <LoadingScreen />;
   }
@@ -5332,6 +5369,12 @@ export default function App() {
                   appContent
                 )}
               </HostedShellGate>
+              <FirstRunOnboardingOverlay
+                open={shouldShowFirstRunOverlay}
+                onConnectOwnServer={openFirstRunServerConnection}
+                onConnectDemo={connectFirstRunDemo}
+                onSkip={dismissFirstRunOverlay}
+              />
             </div>
             {shouldShowBillingHandoffOverlay ? (
               <BillingHandoffLoading overlay />
