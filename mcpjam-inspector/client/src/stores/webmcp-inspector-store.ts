@@ -294,8 +294,7 @@ interface WebMcpInspectorState {
   chatEnabled: boolean;
   setChatEnabled(enabled: boolean): void;
   /**
-   * Whether this turn may advertise the page's tools: opted in AND still
-   * attached to a live browser.
+   * Whether this turn may advertise the page's tools: a live browser is open.
    */
   pageToolsLive(): boolean;
 
@@ -350,6 +349,14 @@ interface WebMcpInspectorState {
   /** Drive the page from the pane. Batched by the caller, not here. */
   sendInput(events: WebMcpInputEvent[], tabId?: string): Promise<void>;
   clearError(): void;
+  /**
+   * Empty the timeline the person is looking at.
+   *
+   * Seen ids stay: EventSource reconnects replay the ring, and forgetting them
+   * would put every dismissed row back. Pending invocations stay too — clearing
+   * the log is not cancelling a running tool.
+   */
+  clearActivity(): void;
   /**
    * Re-attach the event stream to the session that is still running, e.g. after
    * the surface unmounts and mounts again. Idempotent for the same session.
@@ -1218,12 +1225,11 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
 
       pageToolsLive() {
         // A "closed" status arrives as an ordinary session event, which leaves
-        // `chatEnabled` and the last tool snapshot untouched. Deriving liveness
-        // here means every consumer gets it right; asking each caller to
-        // re-check the status is how a dead session's aliases end up advertised
-        // to a model.
-        const { session, chatEnabled } = get();
-        return chatEnabled && Boolean(session) && session?.status !== "closed";
+        // the last tool snapshot untouched. Deriving liveness here means every
+        // consumer gets it right; asking each caller to re-check the status is
+        // how a dead session's aliases end up advertised to a model.
+        const { session } = get();
+        return Boolean(session) && session?.status !== "closed";
       },
 
       async startSession(url, options) {
@@ -1697,6 +1703,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
 
       clearError() {
         set({ error: undefined });
+      },
+
+      clearActivity() {
+        set({ activity: [] });
       },
 
       disconnect() {

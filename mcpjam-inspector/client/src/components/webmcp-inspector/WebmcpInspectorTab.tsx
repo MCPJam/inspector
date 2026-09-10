@@ -9,6 +9,10 @@ import {
 } from "@/lib/browser-shell/use-browser-session";
 import { decodeStateSnapshot } from "@/shared/browser-pane-wire";
 import { useViewportReporter } from "@/lib/browser-pane/use-viewport-reporter";
+import {
+  readLastWebMcpUrl,
+  writeLastWebMcpUrl,
+} from "@/lib/webmcp-inspector/last-url";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Globe } from "lucide-react";
@@ -91,6 +95,7 @@ export function WebmcpInspectorTab() {
     setScreencast,
     sendInput,
     clearError,
+    clearActivity,
     reconnect,
     disconnect,
   } = useWebmcpInspectorStore(
@@ -112,12 +117,23 @@ export function WebmcpInspectorTab() {
       setScreencast: state.setScreencast,
       sendInput: state.sendInput,
       clearError: state.clearError,
+      clearActivity: state.clearActivity,
       reconnect: state.reconnect,
       disconnect: state.disconnect,
     })),
   );
 
-  const [url, setUrl] = useState("http://localhost:3000");
+  const [url, setUrlState] = useState(readLastWebMcpUrl);
+  const setUrl = useCallback((next: string) => {
+    setUrlState(next);
+    writeLastWebMcpUrl(next);
+  }, []);
+  // The field remounts when you leave this route. The session does not — so
+  // the live page URL is the source of truth, and we write it so the next
+  // visit still has it after the session is gone.
+  useEffect(() => {
+    if (session?.url) setUrl(session.url);
+  }, [session?.url, setUrl]);
   const [selectedToolKey, setSelectedToolKey] = useState<string | undefined>();
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [activityOpen, setActivityOpen] = useState(true);
@@ -618,6 +634,7 @@ export function WebmcpInspectorTab() {
             onCopy={(entries) => void copyActivity(entries)}
             onExportJson={() => exportAs("json")}
             onExportOtlp={() => exportAs("otlp")}
+            onClear={clearActivity}
             onClose={() => setActivityOpen(false)}
           />
         }

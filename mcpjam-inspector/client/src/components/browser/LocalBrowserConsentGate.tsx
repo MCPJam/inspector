@@ -1,6 +1,5 @@
-import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useEffect, useState } from "react";
-import { ShieldQuestion } from "lucide-react";
+import { Globe } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
 
@@ -14,9 +13,6 @@ export function LocalBrowserConsentGate({
   onUseCloud?: () => void;
   location?: "computer_tab_local" | "playground_browser" | "browser_settings";
 }) {
-  const approval = useActiveChatSessionStore((state) =>
-    state.sessionId ? state.approvalSettings[state.sessionId] : undefined,
-  );
   const [granting, setGranting] = useState(false);
   const [error, setError] = useState(false);
 
@@ -63,21 +59,13 @@ export function LocalBrowserConsentGate({
       data-testid="local-browser-consent-gate"
       className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-6 py-8 text-center"
     >
-      <ShieldQuestion className="size-6 text-muted-foreground" aria-hidden />
+      <Globe className="size-6 text-muted-foreground" aria-hidden />
       <h2 className="text-base font-semibold text-foreground">
-        Allow agents to control a browser on this machine?
+        MCPJam supports Browser Use and WebMCP
       </h2>
       <p className="text-sm leading-relaxed text-muted-foreground">
-        Agents can navigate, click, and type in websites you sign into and local
-        network apps. Page content and screenshots used by chat may be sent to
-        your model provider. Browser and WebMCP share this permission; shell
-        permission is separate. With Tool Approval off, chat actions run without
-        asking first.
-      </p>
-      <p className="text-sm text-muted-foreground">
-        {approval === undefined
-          ? "Tool Approval is configured separately for each chat."
-          : `Current chat Tool Approval: ${approval ? "on" : "off"}.`}
+        Allow a browser on this machine. Agents can navigate, click, and type.
+        Chat may send page content to your model.
       </p>
       <div className="mt-1 flex items-center gap-2">
         <Button

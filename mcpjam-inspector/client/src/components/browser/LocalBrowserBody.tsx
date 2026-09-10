@@ -8,7 +8,8 @@ import {
   noteWebmcpStats,
   useBrowserPageToolsStore,
 } from "@/stores/browser-page-tools-store";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { BrowserWorkspaceChrome } from "./BrowserWorkspaceChrome";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { PaneMessage } from "@/components/computer/PaneMessage";
@@ -116,6 +117,7 @@ export function LocalBrowserBody({
   active?: boolean;
 }) {
   const workspaceEnabled = useBrowserWorkspaceEnabled();
+  const comparisonWorkspace = useContext(BrowserWorkspaceChrome);
   const { grant: grantConsent } = useLocalBrowserConsent();
   const [status, setStatus] = useState<LocalBrowserStatus | null>(null);
   const [session, setSession] = useState<{ bootId: string } | null>(null);
@@ -437,6 +439,7 @@ export function LocalBrowserBody({
   // turn into an automatic restart loop.
   useEffect(() => {
     if (
+      comparisonWorkspace ||
       !active ||
       !consentGranted ||
       !projectId ||
@@ -451,6 +454,7 @@ export function LocalBrowserBody({
     autoStartAttempted.current = true;
     void start();
   }, [
+    comparisonWorkspace,
     active,
     consentGranted,
     projectId,

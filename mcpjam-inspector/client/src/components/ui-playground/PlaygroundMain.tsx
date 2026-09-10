@@ -912,11 +912,9 @@ export function PlaygroundMain({
   const isEnvironmentMode = playgroundEnvironment.isEnvironmentMode;
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   // Whether this turn may use the tools of the page open in the WebMCP tab.
-  // Held in the inspector store so the Tools-panel toggle and this transport
-  // read one value without threading a boolean between them.
-  // Derived rather than the raw `chatEnabled`: a session that has closed leaves
-  // the opt-in and the last tool snapshot in place, and advertising a dead
-  // browser's tools to a model is worse than showing none.
+  // Derived from session liveness: a closed status leaves the last tool
+  // snapshot in place, and advertising a dead browser's tools to a model is
+  // worse than showing none.
   const webmcpPageToolsEnabled = useWebmcpInspectorStore((state) =>
     state.pageToolsLive(),
   );
@@ -5635,8 +5633,9 @@ export function PlaygroundMain({
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
-                      {multiHostColumns.map((column) => (
+                      {multiHostColumns.map((column, columnIndex) => (
                         <MultiModelPlaygroundCard
+                          browserWorkspace={{ id: chatSessionId, order: columnIndex, clientCount: multiHostColumns.length }}
                           usePageTools={webmcpPageToolsEnabled}
                           // Include `compareKind` in the key so a mode
                           // swap between multi-model and multi-host can't

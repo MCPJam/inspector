@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Globe, Plus, X } from "lucide-react";
+import { Globe, Loader2, Plus, X } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
 import type { BrowserTabState } from "../../../../shared/browser-session-state";
 
@@ -26,8 +26,14 @@ import type { BrowserTabState } from "../../../../shared/browser-session-state";
  * also what every browser shows and what a person scans for.
  */
 
+export interface BrowserDisplayTab extends BrowserTabState {
+  clientName?: string;
+  clientLogo?: string | null;
+  unavailable?: boolean;
+}
+
 export interface BrowserTabStripProps {
-  tabs: readonly BrowserTabState[];
+  tabs: readonly BrowserDisplayTab[];
   activeTabId: string | null;
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
@@ -41,6 +47,7 @@ export interface BrowserTabStripProps {
    * looks like it crashed.
    */
   disabled?: boolean;
+  newTabDisabled?: boolean;
 }
 
 export function BrowserTabStrip({
@@ -50,6 +57,7 @@ export function BrowserTabStrip({
   onClose,
   onNewTab,
   disabled = false,
+  newTabDisabled = false,
 }: BrowserTabStripProps) {
   return (
     <div
@@ -65,13 +73,13 @@ export function BrowserTabStrip({
           active={tab.id === activeTabId}
           disabled={disabled}
           onActivate={() => onActivate(tab.id)}
-          onClose={() => onClose(tab.id)}
+          onClose={tab.unavailable ? undefined : () => onClose(tab.id)}
         />
       ))}
       <button
         type="button"
         onClick={onNewTab}
-        disabled={disabled}
+        disabled={disabled || newTabDisabled}
         aria-label="New tab"
         title="New tab"
         data-testid="browser-new-tab"
@@ -95,19 +103,21 @@ function BrowserTab({
   onActivate,
   onClose,
 }: {
-  tab: BrowserTabState;
+  tab: BrowserDisplayTab;
   active: boolean;
   disabled: boolean;
   onActivate: () => void;
   onClose?: (() => void) | undefined;
 }) {
-  const label = tabLabel(tab);
+  const pageLabel = tabLabel(tab);
+  const label = tab.clientName ? `${tab.clientName} · ${pageLabel}` : pageLabel;
   return (
     // A DIV rather than nested buttons: the close control lives inside the tab
     // and a button inside a button is invalid HTML that browsers resolve by
     // dropping one of them — usually the one you wanted.
     <div
       role="tab"
+      aria-label={label}
       aria-selected={active}
       // The tab is the thing in the tab order; the close button is reachable
       // after it. `-1` while disabled keeps a dead control out of the sequence
@@ -133,8 +143,26 @@ function BrowserTab({
         disabled && "pointer-events-none opacity-60",
       )}
     >
-      <TabIcon tab={tab} />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {tab.loading ? (
+        <Loader2
+          className="size-3.5 shrink-0 animate-spin"
+          aria-label="Loading"
+        />
+      ) : (
+        <TabIcon
+          tab={
+            tab.clientLogo && tab.clientName
+              ? { ...tab, faviconUrl: tab.clientLogo }
+              : tab
+          }
+        />
+      )}
+      {tab.clientName && (
+        <span className="max-w-[7rem] shrink-0 truncate">
+          {tab.clientName} ·
+        </span>
+      )}
+      <span className="min-w-0 flex-1 truncate">{pageLabel}</span>
       {onClose ? (
         <button
           type="button"

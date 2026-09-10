@@ -344,6 +344,32 @@ describe("webmcp inspector store", () => {
     expect(state.pending).toEqual([]);
   });
 
+  it("clears the timeline without resurrecting dismissed rows or pending", async () => {
+    const source = await openSession();
+    await source.emit(activityEvent(started("a1", "inv-1")));
+    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
+    await source.emit(activityEvent(started("a3", "inv-2"), 3));
+
+    useWebmcpInspectorStore.getState().clearActivity();
+
+    const afterClear = useWebmcpInspectorStore.getState();
+    expect(afterClear.activity).toEqual([]);
+    // Clearing the log is not cancelling a running tool.
+    expect(afterClear.pending.map((item) => item.invokeId)).toEqual(["inv-2"]);
+
+    // EventSource reconnects replay the ring. Forgetting seen ids would put
+    // every dismissed row back the next time the stream hiccups.
+    await source.emit(activityEvent(started("a1", "inv-1")));
+    await source.emit(activityEvent(settled("a2", "inv-1"), 2));
+    expect(useWebmcpInspectorStore.getState().activity).toEqual([]);
+
+    await source.emit(activityEvent(settled("a4", "inv-2"), 4));
+    expect(useWebmcpInspectorStore.getState().activity.map((entry) => entry.id)).toEqual(
+      ["a4"],
+    );
+    expect(useWebmcpInspectorStore.getState().pending).toEqual([]);
+  });
+
   it("does not resurrect pending when only the start is replayed", async () => {
     const source = await openSession();
     await source.emit(activityEvent(started("a1", "inv-1")));
@@ -506,6 +532,12 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().error?.message).toBe(
       "could not close",
     );
+  });
+
+  it("treats a live session as page-tools-live", async () => {
+    await openSession();
+    expect(useWebmcpInspectorStore.getState().pageToolsLive()).toBe(true);
+    expect(useWebmcpInspectorStore.getState().chatEnabled).toBe(false);
   });
 
   it("resets the chat opt-in when the session closes", async () => {

@@ -83,6 +83,7 @@ const ACTIVITY: WebMcpActivityEntry[] = [
 describe("WebmcpInspectorTab — three-panel workspace", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.localStorage.removeItem("webmcp:last-url");
     consentState.granted = true;
     useWebmcpInspectorStore.setState({
       session: SESSION,
@@ -189,6 +190,55 @@ describe("WebmcpInspectorTab — three-panel workspace", () => {
     await user.click(screen.getByRole("button", { name: "More actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Close browser" }));
     expect(closeSession).toHaveBeenCalled();
+  });
+
+  it("fills the field from the live session, not a stale localhost default", () => {
+    window.localStorage.setItem("webmcp:last-url", "http://localhost:3000");
+    render(<WebmcpInspectorTab />);
+    expect(screen.getByLabelText("Page URL to inspect")).toHaveValue(
+      "https://pizza.test/",
+    );
+    expect(window.localStorage.getItem("webmcp:last-url")).toBe(
+      "https://pizza.test/",
+    );
+  });
+
+  it("restores the last page URL from localStorage when no session is open", () => {
+    useWebmcpInspectorStore.setState({
+      session: undefined,
+      tools: [],
+      activity: [],
+    });
+    window.localStorage.setItem(
+      "webmcp:last-url",
+      "https://googlechromelabs.github.io/webmcp-tools/demos/pizza-maker/",
+    );
+    render(<WebmcpInspectorTab />);
+    expect(screen.getByLabelText("Page URL to inspect")).toHaveValue(
+      "https://googlechromelabs.github.io/webmcp-tools/demos/pizza-maker/",
+    );
+  });
+
+  it("remembers a typed URL so coming back restores it", async () => {
+    useWebmcpInspectorStore.setState({
+      session: undefined,
+      tools: [],
+      activity: [],
+    });
+    const user = userEvent.setup();
+    const view = render(<WebmcpInspectorTab />);
+    const field = screen.getByLabelText("Page URL to inspect");
+    await user.clear(field);
+    await user.type(field, "https://pizza.test/");
+    expect(window.localStorage.getItem("webmcp:last-url")).toBe(
+      "https://pizza.test/",
+    );
+
+    view.unmount();
+    render(<WebmcpInspectorTab />);
+    expect(screen.getByLabelText("Page URL to inspect")).toHaveValue(
+      "https://pizza.test/",
+    );
   });
 
   it("centers the local-browser consent gate in the chrome panel", () => {
