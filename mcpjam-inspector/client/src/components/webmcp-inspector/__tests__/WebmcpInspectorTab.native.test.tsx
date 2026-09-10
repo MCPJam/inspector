@@ -24,8 +24,16 @@ vi.mock("@/components/ui/resizable", () => ({
 }));
 
 vi.mock("@/components/browser/ElectronNativeBody", () => ({
-  ElectronNativeBody: ({ session }: { session: { bootId: string } }) => (
-    <div data-testid="native-browser">{session.bootId}</div>
+  ElectronNativeBody: ({
+    session,
+    consentToken,
+  }: {
+    session: { bootId: string };
+    consentToken?: string | null;
+  }) => (
+    <div data-testid="native-browser" data-consent-token={consentToken}>
+      {session.bootId}
+    </div>
   ),
 }));
 class FakeEventSource {
@@ -86,6 +94,12 @@ describe("main-owned browser surface", () => {
     expect(document.querySelector("webview")).toBeNull();
     expect(await screen.findByTestId("native-browser")).toHaveTextContent(
       "native-boot",
+    );
+    // Electron rejects native placement without the device consent used to
+    // start the session, even though navigation and tool discovery succeed.
+    expect(screen.getByTestId("native-browser")).toHaveAttribute(
+      "data-consent-token",
+      "test-consent",
     );
     expect(screen.getByTestId("browser-address")).toBeInTheDocument();
     expect(screen.queryByText("Take control")).toBeNull();
