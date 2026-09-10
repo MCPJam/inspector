@@ -12,6 +12,7 @@ export interface OnboardingPersistedState {
   shownAt?: number;
   completedAt?: number;
   attemptedServerName?: string;
+  playgroundPromptPending?: boolean;
 }
 
 const STORAGE_KEY = "mcp-onboarding-state";
@@ -43,6 +44,10 @@ function readPersistedState(
         attemptedServerName:
           typeof parsed.attemptedServerName === "string"
             ? parsed.attemptedServerName
+            : undefined,
+        playgroundPromptPending:
+          typeof parsed.playgroundPromptPending === "boolean"
+            ? parsed.playgroundPromptPending
             : undefined,
       };
     }
@@ -127,6 +132,7 @@ export function markFirstRunServerChoiceStarted(
     shownAt: current?.shownAt,
     attemptedServerName:
       attemptedServerName ?? current?.attemptedServerName,
+    playgroundPromptPending: current?.playgroundPromptPending,
   });
 }
 
@@ -145,6 +151,7 @@ export function markFirstRunServerChoiceWelcomeShown(): void {
     startedAt: current?.startedAt ?? Date.now(),
     shownAt: Date.now(),
     attemptedServerName: current?.attemptedServerName,
+    playgroundPromptPending: current?.playgroundPromptPending,
   });
 }
 
@@ -164,6 +171,29 @@ export function markFirstRunServerChoiceCompleted(): void {
     status: "completed",
     completedAt: Date.now(),
     shownAt: current?.shownAt,
+    attemptedServerName: current?.attemptedServerName,
+    playgroundPromptPending: current?.playgroundPromptPending,
+  });
+}
+
+/** Keeps the first Playground prompt durable until the user actually sends it. */
+export function markFirstRunPlaygroundPromptPending(): void {
+  const current = readFirstRunServerChoiceState();
+  writeFirstRunServerChoiceState({
+    status: "completed",
+    completedAt: current?.completedAt ?? Date.now(),
+    shownAt: current?.shownAt,
+    attemptedServerName: current?.attemptedServerName,
+    playgroundPromptPending: true,
+  });
+}
+
+export function markFirstRunPlaygroundPromptConsumed(): void {
+  const current = readFirstRunServerChoiceState();
+  if (!current || current.status !== "completed") return;
+  writeFirstRunServerChoiceState({
+    ...current,
+    playgroundPromptPending: false,
   });
 }
 
