@@ -48,7 +48,28 @@ These settings control how the model interacts with tools during a chat session.
 - **Require tool approval** — When on, the model pauses before tool calls so you can approve or deny each one. The setting **raises** the bar and never lowers it, so it is not the whole story in either direction. Some actions pause whether it is on or off: anything driving a browser or a third-party web page in a chat you are watching, anything running on your own machine, and destructive UI actions. Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, and read-only UI actions. Web search follows the switch — its query is your text leaving for a third party, and the call spends credits.
 - **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
 - **Progressive tools** — Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
-- **Built-in tools** — A checkbox list of host-managed built-in tools (for example, `web_search`) that the model can use on each turn. Selected tool IDs are forwarded with the chat request so the server can resolve them alongside your MCP server tools. This section only appears when the deployment has a populated built-in tool catalog; it is hidden otherwise.
+- **Built-in tools** — A checkbox list of host-managed built-in tools (for example, `web_search`) that the model can use on each turn. Selected tool IDs are forwarded with the chat request so the server can resolve them alongside your MCP server tools. Browser is not listed here — it is configured in the **Browser** tab. This section only appears when the deployment has a populated built-in tool catalog; it is hidden otherwise.
+
+### Browser settings
+
+The **Browser** tab in the Client focus panel separates saved browser configuration from your personal browser preferences. It is visible when Browser is enabled for your account or when the client already has a browser configured.
+
+**This client** — Saved configuration that applies to every chat and environment using this client:
+
+- **Browser** — Enable or disable the browser tool for this client. When the feature is not yet rolled out to your account, the toggle is disabled unless the client already has Browser enabled (so existing configurations remain inspectable).
+- **Browser profile** — Optionally pin a saved browser profile for this client. Without a selection, new chats use your personal default profile. This field appears only when Browser is enabled or a profile is already saved.
+
+**Your browser** — Personal preferences that do not change the client configuration:
+
+- **Browser location** — Choose between local and cloud browser for new Playground chats. Changing this affects new chats only; any chat already bound to a browser keeps its existing location. Environments always use Cloud regardless of this preference.
+- **Device permission** — Grant or revoke permission for the local browser on this machine. Appears only when local browser is available and selected.
+- **Saved profiles** — Manage your personal browser profiles.
+
+#### Browser canvas island
+
+The client canvas shows a **Browser** island (or **+ Browser** when not yet enabled) alongside the Computer island. The island displays the active profile label. Clicking it opens the Browser tab.
+
+In environment canvases (read-only views), clicking the Browser island navigates to the referenced client's Browser tab rather than editing the environment inline.
 
 ### MCP App settings (SEP-1865)
 
