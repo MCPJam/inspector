@@ -829,7 +829,25 @@ export function LocalBrowserBody({
   const shellTransport = useMemo(() => {
     if (!bootId) return null;
     return {
-      readState: () => fetchLocalBrowserState({ bootId, holder, consentToken }),
+      readState: async () => {
+        const state = await fetchLocalBrowserState({
+          bootId,
+          holder,
+          consentToken,
+        });
+        if (projectId && state) {
+          // Native Electron has no frame socket to publish tool changes.
+          noteWebmcpStats(
+            browserPageToolsKey(projectId, "local"),
+            {
+              webmcp: state.webmcp,
+              tabs: { active: state.activeTabId ?? undefined },
+            },
+            bootId,
+          );
+        }
+        return state;
+      },
       sendCommand: (args: {
         command: BrowserPaneCommand;
         commandId?: string;
@@ -861,7 +879,7 @@ export function LocalBrowserBody({
         await setLeaseAction("resume");
       },
     };
-  }, [bootId, holder, consentToken, setLeaseAction]);
+  }, [bootId, holder, consentToken, setLeaseAction, projectId]);
 
   // Native views cannot be scaled by the renderer's CSS like streamed frames.
   // Fit the actual page to its slot even when the workspace chrome is disabled.

@@ -1,4 +1,5 @@
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
+import { useBrowserPageToolsStore } from "@/stores/browser-page-tools-store";
 import { beforeAll } from "vitest";
 beforeAll(() => {
   window.PointerEvent = MouseEvent as typeof PointerEvent;
@@ -777,6 +778,44 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(api.socket).toBeNull();
     expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+  });
+
+  it("publishes page-tool changes without a frame socket", async () => {
+    asDesktopApp();
+    useBrowserPageToolsStore.setState({ live: {}, epoch: {} });
+    api.state = {
+      seq: 1,
+      tabs: [
+        {
+          id: "pizza-tab",
+          url: "https://pizza.test",
+          title: "Pizza",
+          loading: false,
+          navCounter: 0,
+        },
+      ],
+      activeTabId: "pizza-tab",
+      canGoBack: false,
+      canGoForward: false,
+      viewport: { width: 1024, height: 768, revision: 0 },
+      policy: "fixed",
+      control: { kind: "agent" },
+      webmcp: { revision: 4, hash: "pizza", count: 7 },
+    };
+    renderBody();
+    await screen.findByTestId("rail-browser-native-slot");
+    await waitFor(() =>
+      expect(
+        useBrowserPageToolsStore.getState().live["proj-1:local"],
+      ).toMatchObject({
+        revision: 4,
+        hash: "pizza",
+        count: 7,
+        tabId: "pizza-tab",
+        bootId: "boot-proj-1",
+      }),
+    );
+    expect(api.socket).toBeNull();
   });
 
   it("still says somebody is watching, with no socket to say it", async () => {

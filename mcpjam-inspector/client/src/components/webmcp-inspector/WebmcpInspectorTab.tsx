@@ -539,6 +539,7 @@ export function WebmcpInspectorTab() {
         ) : live ? (
           <WebMcpBrowserShell
             key={session?.sessionId}
+            consentToken={consent.token}
             streaming={streaming}
             transport={session?.viewportTransport}
             behaviour={behaviour}
@@ -655,7 +656,9 @@ export function WebmcpInspectorTab() {
  * the picture wrongly.
  */
 function WebMcpBrowserShell(
-  props: Parameters<typeof SubscribedViewportPane>[0],
+  props: Parameters<typeof SubscribedViewportPane>[0] & {
+    consentToken: string | null;
+  },
 ) {
   const transport = useMemo<BrowserSessionTransport>(
     () => ({
@@ -711,6 +714,7 @@ function WebMcpBrowserShell(
           control="agent"
           holding={false}
           consentGranted
+          consentToken={props.consentToken}
           chrome="none"
         />
       ) : (
