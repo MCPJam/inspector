@@ -375,6 +375,7 @@ export function openHostedBrowserFrameStream(args: {
   tabId?: string;
   /** `"binary"` asks for the daemon's frame records; omitted keeps JSON. */
   wire?: "binary" | "json";
+  sharp?: boolean;
   /**
    * Ask for H.264 instead of JPEG stills.
    *
@@ -400,6 +401,7 @@ export function openHostedBrowserFrameStream(args: {
   // old to negotiate this ignores the param and keeps sending JSON, which is
   // why the pane branches on the message type rather than assuming.
   if (args.wire === "binary") url.searchParams.set("wire", "binary");
+  if (args.sharp) url.searchParams.set("sharp", "1");
   // WITHOUT THIS THE ROUTE NEVER OFFERS VIDEO. The hosted relay enables H.264
   // only when the URL carries it, so a pane that asked in its own options and
   // not on the wire negotiated JPEG every time and the whole video path was

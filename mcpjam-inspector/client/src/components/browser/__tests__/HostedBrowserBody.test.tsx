@@ -167,6 +167,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 const mintToken = async () => ({ token: "t", expiresAt: Date.now() + 60_000 });
@@ -278,7 +279,7 @@ describe("the hosted pane — who has control", () => {
     renderBody();
     const image = await deliverFrame();
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
     const before = api.sockets.length;
     // Clicking the page IS taking it. There is no button.
     fireEvent.click(image, { clientX: 10, clientY: 10 });
@@ -910,35 +911,44 @@ describe("the hosted pane — quality tiers", () => {
     await waitFor(() => expect(api.sockets.length).toBeGreaterThan(before));
   });
 
-  it("tells the DAEMON when auto steps the quality down", async () => {
-    // Auto used to move only the pane's own state, so a viewer on a link that
-    // could not carry the stream was labelled "Data saver" while the encoder
-    // went on producing exactly the bitrate that was being dropped.
-    renderBody();
-    await deliverFrame();
-    // Three consecutive readings, because the controller refuses to act on
-    // one: half the frames offered are dropped each second.
-    for (let n = 1; n <= 4; n += 1) {
+  it.each(["h264", "jpeg"])(
+    "auto changes the encoder only for negotiated video (%s)",
+    async (codec) => {
+      // Auto used to move only the pane's own state, so a viewer on a link that
+      // could not carry the stream was labelled "Data saver" while the encoder
+      // went on producing exactly the bitrate that was being dropped.
+      vi.stubGlobal("VideoDecoder", class {});
+      renderBody();
+      await deliverFrame();
       act(() => {
         socket().onmessage?.({
-          data: JSON.stringify({
-            type: "stats",
-            framesIn: n * 20,
-            dropped: n * 10,
-            bytes: 0,
-            subscribers: 1,
-          }),
+          data: JSON.stringify({ type: "hello", features: ["input"], codec }),
         });
       });
-    }
-    await waitFor(() =>
-      expect(
-        socket()
-          .sent.map((raw) => JSON.parse(raw))
-          .some((m) => m.type === "quality" && m.tier === "saver"),
-      ).toBe(true),
-    );
-  });
+      // Three consecutive readings, because the controller refuses to act on
+      // one: half the frames offered are dropped each second.
+      for (let n = 1; n <= 4; n += 1) {
+        act(() => {
+          socket().onmessage?.({
+            data: JSON.stringify({
+              type: "stats",
+              framesIn: n * 20,
+              dropped: n * 10,
+              bytes: 0,
+              subscribers: 1,
+            }),
+          });
+        });
+      }
+      await waitFor(() =>
+        expect(
+          socket()
+            .sent.map((raw) => JSON.parse(raw))
+            .some((m) => m.type === "quality" && m.tier === "saver"),
+        ).toBe(codec === "h264"),
+      );
+    },
+  );
 
   it("falls back to JPEG when the box says it cannot encode video", async () => {
     // A generic drop is worth retrying as-is; this one is not — retrying asks

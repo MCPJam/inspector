@@ -1,3 +1,4 @@
+import type { JpegDeliveryStats } from "@/shared/browser-viewport-policy";
 import { useBrowserWorkspaceEnabled } from "@/hooks/useComputersEnabled";
 import {
   browserPageToolsKey,
@@ -646,7 +647,7 @@ export function LocalBrowserBody({
   // apart, and a report that called them the same thing could not say whether
   // the native surface helped.
   const engineRef = useRef<string>("local");
-  engineRef.current = native ? "local-native" : (status?.runtime ?? "local");
+  engineRef.current = native ? "local-native" : status?.runtime ?? "local";
   useEffect(
     () => () => captureBrowserPaneSessionSummary(engineRef.current),
     [],
@@ -734,10 +735,10 @@ export function LocalBrowserBody({
     lease.state === "free"
       ? "agent"
       : holding
-        ? "you"
-        : lease.holderKind === "script"
-          ? "script"
-          : "other";
+      ? "you"
+      : lease.holderKind === "script"
+      ? "script"
+      : "other";
 
   /**
    * The shell's transport, for this engine.
@@ -906,44 +907,48 @@ export function LocalBrowserBody({
           // a network hop: it means the hosted path's decoder runs on every
           // local session instead of only on staging.
           wire: "binary",
+          sharp: true,
         });
         stream = opened;
-        wire = createFrameWireReader({
-          onFrame: (decoded) => {
-            if (closed) return;
-            paneFrameStats.noteTransport("jpeg-binary");
-            paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
-            frameSeqRef.current = decoded.seq;
-            // React can coalesce two `setFrame` calls into one render, and the
-            // surface only ever releases a frame it PAINTED — so a picture
-            // superseded before the commit has nobody to free it.
-            lastBitmap?.close();
-            lastBitmap = decoded.bitmap;
-            setFrame({
-              bitmap: decoded.bitmap,
-              decodeMs: decoded.decodeMs,
-              deviceWidth: decoded.deviceWidth,
-              deviceHeight: decoded.deviceHeight,
-              scale: decoded.scale,
-              ts: decoded.relayTs,
-              relayTs: decoded.relayTs,
-              seq: decoded.seq,
-            });
+        wire = createFrameWireReader(
+          {
+            onFrame: (decoded) => {
+              if (closed) return;
+              paneFrameStats.noteTransport("jpeg-binary");
+              paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
+              frameSeqRef.current = decoded.seq;
+              // React can coalesce two `setFrame` calls into one render, and the
+              // surface only ever releases a frame it PAINTED — so a picture
+              // superseded before the commit has nobody to free it.
+              lastBitmap?.close();
+              lastBitmap = decoded.bitmap;
+              setFrame({
+                bitmap: decoded.bitmap,
+                decodeMs: decoded.decodeMs,
+                deviceWidth: decoded.deviceWidth,
+                deviceHeight: decoded.deviceHeight,
+                scale: decoded.scale,
+                ts: decoded.relayTs,
+                relayTs: decoded.relayTs,
+                seq: decoded.seq,
+              });
+            },
+            onHeartbeat: (daemon) => {
+              if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
+              noteWebmcpStats(
+                browserPageToolsKey(projectId, "local"),
+                daemon as never,
+                session.bootId,
+              );
+            },
+            onFatal: () => {
+              // A reader that has lost its place in a byte stream can never find
+              // it again, so the connection goes rather than the record.
+              opened.close();
+            },
           },
-          onHeartbeat: (daemon) => {
-            if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
-            noteWebmcpStats(
-              browserPageToolsKey(projectId, "local"),
-              daemon as never,
-              session.bootId,
-            );
-          },
-          onFatal: () => {
-            // A reader that has lost its place in a byte stream can never find
-            // it again, so the connection goes rather than the record.
-            opened.close();
-          },
-        });
+          { sharp: true },
+        );
         openedSocket = opened.socket;
         socketRef.current = opened.socket;
         socketInputRef.current = false;
@@ -961,6 +966,7 @@ export function LocalBrowserBody({
               type?: string;
               frame?: PaneFrame;
               t?: number;
+              jpegDelivery?: JpegDeliveryStats;
               framesIn?: number;
               framesOut?: number;
               bytes?: number;
@@ -1017,6 +1023,7 @@ export function LocalBrowserBody({
                 session.bootId,
               );
               paneFrameStats.noteRelayStats({
+                jpegDelivery: parsed.jpegDelivery,
                 framesIn: parsed.framesIn ?? 0,
                 ...(parsed.framesOut !== undefined
                   ? { framesOut: parsed.framesOut }
@@ -1187,8 +1194,8 @@ export function LocalBrowserBody({
               lease.state === "free"
                 ? "agent"
                 : lease.holderKind === "script"
-                  ? "script"
-                  : "human",
+                ? "script"
+                : "human",
             ...(lease.state !== "free" && lease.holder
               ? { holder: lease.holder }
               : {}),
