@@ -4,6 +4,7 @@ import {
   writeOnboardingState,
   clearOnboardingState,
   isFirstRunEligible,
+  markOnboardingDismissed,
   markOnboardingStarted,
   markOnboardingShown,
 } from "../onboarding-state";
@@ -42,6 +43,11 @@ describe("onboarding-state", () => {
       const state = { status: "completed" as const, completedAt: 1234567890 };
       writeOnboardingState(state);
       expect(readOnboardingState()).toEqual(state);
+    });
+
+    it("records an explicit dismissal", () => {
+      markOnboardingDismissed();
+      expect(readOnboardingState()).toEqual({ status: "dismissed" });
     });
 
     it("returns null for invalid JSON", () => {
