@@ -20,6 +20,7 @@
 - Record completion directly from the successful connection outcome instead of relying only on a later runtime-state observation.
 - Add an integration test covering successful onboarding followed by a full refresh.
 - Check the local-development welcome timer restart during project hydration; it should not freeze or visibly restart.
+- Show the welcome splash only once per browser origin. If a user refreshes before choosing or connecting a server—even without clicking Continue—the next load should resume at `Point MCPJam at a server`, not replay Welcome.
 - Stop the blurred background from shifting while the welcome screen is open. Render a stable, intentional first-run background and keep route/project hydration changes visually hidden until the welcome step finishes.
 
 ## Verification notes
