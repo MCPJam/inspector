@@ -251,6 +251,28 @@ describe("agent-browser:set-viewport", () => {
     expect(window_.children).not.toContain(view);
   });
 
+  it("does not report a lease conflict before the first tab exists", async () => {
+    const surface = createContextSurface();
+    const api = install({
+      surfaces: new Map([["boot-1", surface]]),
+    });
+    expect(
+      await api.setViewport({
+        bootId: "boot-1",
+        holder: "rail-1",
+        visible: true,
+        bounds: BOUNDS,
+      }),
+    ).toEqual({ shown: false, inputAllowed: false });
+
+    // The placement request survives startup, so the first tab appears
+    // without requiring another resize or a change of control.
+    const view = fakeView();
+    surface.registerTab(view);
+    expect(window_.children).toContain(view);
+    expect(surface.isShown()).toBe(true);
+  });
+
   it("hides rather than shows a browser somebody else holds", async () => {
     // THE LEASE DECIDES, not the renderer. A visible native view of a page
     // another person is typing their password into is an observation, which is

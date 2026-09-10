@@ -1055,7 +1055,7 @@ export function LocalBrowserBody({
   }, [bootId, holder, consentToken, setLeaseAction]);
 
   useEffect(() => {
-    if (!workspaceEnabled && bootId)
+    if (!workspaceEnabled && !native && bootId)
       void reportLocalPaneViewport({
         bootId,
         consentToken,
@@ -1063,7 +1063,22 @@ export function LocalBrowserBody({
         height: 768,
         policy: "fixed",
       });
-  }, [workspaceEnabled, bootId, consentToken]);
+  }, [workspaceEnabled, native, bootId, consentToken]);
+
+  // Native views cannot be scaled by the renderer's CSS like streamed frames.
+  // Fit the actual page to its slot even when the workspace chrome is disabled.
+  const reportNativeViewport = useCallback(
+    (size: { width: number; height: number }) => {
+      if (!bootId) return;
+      void reportLocalPaneViewport({
+        bootId,
+        consentToken,
+        ...size,
+        policy: "followPane",
+      });
+    },
+    [bootId, consentToken],
+  );
 
   const shell = useBrowserSession({
     transport: workspaceEnabled ? shellTransport : null,
@@ -1148,6 +1163,7 @@ export function LocalBrowserBody({
           <ElectronNativeBody
             consentToken={consentToken}
             session={session}
+            onViewportSize={reportNativeViewport}
             holder={holder}
             control={control}
             holding={holding}
@@ -1213,9 +1229,8 @@ export function LocalBrowserBody({
           onCommand={shell.run}
           {...(session && holding ? { onResumeAgent: shell.resume } : {})}
           resuming={shell.resuming}
-          // The shell owns the picture's SIZE, so it is the shell that
-          // measures. @see BrowserShellProps.onViewportMeasured
-          onViewportMeasured={shell.reportViewport}
+          // Native bodies measure their own slot, including any stats strip.
+          onViewportMeasured={native ? undefined : shell.reportViewport}
           // Not just "is there a browser": an engine too old to answer pane
           // commands has a perfectly real session, and controls that look live
           // and swallow every click read as broken rather than old.
@@ -1249,6 +1264,7 @@ export function LocalBrowserBody({
             <ElectronNativeBody
               consentToken={consentToken}
               session={session}
+              onViewportSize={reportNativeViewport}
               holder={holder}
               control={control}
               holding={holding}
