@@ -4,11 +4,11 @@
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Add browser-style URL/search navigation, Back, Forward, Reload and managed popup tabs to WebMCP and Playground. Browser tabs share one daemon registry across local, cloud and Electron. Node WebMCP uses the shared daemon at pane-sized DPR 1 by default; Electron WebMCP uses native WebContentsView surfaces. Preserve opener relationships and tool invocation bindings across tab changes.",
-      "id": "browser-navigation-tabs"
+      "summary": "Restore bearer-authenticated and OAuth MCP server connections when the backend does not provide credential-origin bindings by temporarily reverting enforcement until backend support and the required backfill are deployed.",
+      "id": "restore-credentialed-mcp-connections"
     },
     {
       "releases": [
@@ -17,42 +17,20 @@
           "type": "patch"
         }
       ],
-      "summary": "Make the local Electron build and dev run work off a clean checkout: raise the\nmain-process build's heap ceiling to match CI, pull in a `node-abi` that knows\nElectron 43, and keep `ws`'s optional native accelerators out of the bundle.",
-      "id": "fix-local-electron-build"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Harden the local Browser and WebMCP runtimes: local Node and Electron engines\nnow enforce navigation and DNS-checked egress policy and refuse MCPJam's own\ncontroller listeners; browser operations, viewers, retained CDP handles and\ndownloads end with the consent that authorized them; WebMCP sessions are bound\nto a verified owner and project with single-use frame-stream nonces, and\nElectron profiles are isolated per actor and project; Electron downloads\nrequire native approval and are staged privately under bounded resources.\nElectron is pinned to 43.6.0.\n\nLocal Browser stays behind its rollout flag, and this release does not enable\nit.",
-      "id": "local-browser-ga-security"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Fix WebMCP scrolling and keyboard/mouse input in development mode by keeping the input forwarder alive when React Strict Mode replays effect setup.",
-      "id": "webmcp-dev-scroll"
+      "summary": "Stop asking the backend for a project default host config under a project id\nthat is not a Convex row. The Playground passes `sharedProjectId ??\nactiveProjectId`, so a guest with no cloud project reached\n`hostConfigsV2:getProjectDefault` with the string sentinel `\"none\"` — truthy,\nand rejected by `v.id(\"projects\")` before the handler runs, where nothing\nclient-side could catch it. All four call sites now gate on\n`shouldQueryProjectId`, the guard the rest of the Convex-reading hooks already\nuse.",
+      "id": "skip-project-default-for-sentinel-project-id"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "3.4.1",
+      "type": "patch",
+      "oldVersion": "3.5.0",
       "changesets": [
-        "browser-navigation-tabs",
-        "fix-local-electron-build",
-        "local-browser-ga-security",
-        "webmcp-dev-scroll"
+        "restore-credentialed-mcp-connections",
+        "skip-project-default-for-sentinel-project-id"
       ],
-      "newVersion": "3.5.0"
+      "newVersion": "3.5.1"
     }
   ]
 }
