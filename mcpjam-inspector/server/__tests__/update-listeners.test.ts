@@ -267,6 +267,58 @@ describe("update-listeners", () => {
     );
   });
 
+  it("keeps a slow download alive when the 10-minute poll is refused mid-download", async () => {
+    // update-electron-app polls on a blind interval and Squirrel refuses a
+    // second check while one is running, so a download slower than 10
+    // minutes errors in RACCommandErrorDomain every 10 minutes. That says
+    // nothing about the download — collapsing on it would retire a build
+    // that was still on its way.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    window.webContents.send.mockClear();
+
+    const refused = Object.assign(new Error("The command is disabled"), {
+      domain: "RACCommandErrorDomain",
+      code: 1,
+    });
+    emitAutoUpdaterEvent("error", refused);
+
+    // No collapse, no error toast, and the queued install survives.
+    expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+    expect(window.webContents.send).not.toHaveBeenCalledWith(
+      "update-status",
+      expect.objectContaining({ kind: "manual" }),
+    );
+
+    emitAutoUpdaterEvent("update-downloaded", {}, "notes", "3.5.2");
+
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("still collapses on a real updater error from a different domain", async () => {
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+
+    const real = Object.assign(new Error("staging failed"), {
+      domain: "SQRLUpdaterErrorDomain",
+      code: 4,
+    });
+    emitAutoUpdaterEvent("error", real);
+
+    expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+      kind: "idle",
+    });
+  });
+
   it("offers a manual download when a user-requested install fails", async () => {
     const window = createWindow();
     windows.push(window);

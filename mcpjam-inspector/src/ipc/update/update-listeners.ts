@@ -34,6 +34,30 @@ let stalledDownloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
 // work (BUG: 17 clicks in 124 seconds, INSPECTOR desktop 2.45.0).
 const MANUAL_FALLBACK_AFTER_COLLAPSES = 2;
 
+// A refused EXTRA check, not a failed download.
+//
+// update-electron-app polls `checkForUpdates()` on a blind 10-minute
+// `setInterval`, and Electron's CheckForUpdates has no dedupe of its own.
+// Squirrel's `checkForUpdatesCommand` is a RACCommand with
+// `allowsConcurrentExecution = NO`, so a poll that lands mid-download is
+// refused on the spot and errors in `RACCommandErrorDomain`.
+//
+// That error describes the POLL, not the download: the download is still
+// running and can still land. Collapsing on it would tell a user on a slow
+// link that the update failed — a ~137MB macOS build has to sustain about
+// 1.9 Mbit/s just to beat the interval — and after two of them it would
+// retire the in-app install for a download that was working fine. The
+// watchdog is the backstop for a download that really is stuck.
+const CONCURRENT_CHECK_ERROR_DOMAIN = "RACCommandErrorDomain";
+
+function isRefusedConcurrentCheck(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { domain?: unknown }).domain === CONCURRENT_CHECK_ERROR_DOMAIN
+  );
+}
+
 let currentStatus: UpdateStatus = { kind: "idle" };
 let isQuittingForUpdate = false;
 let isCheckingOrDownloading = false;
@@ -215,6 +239,14 @@ export function setupAutoUpdaterEvents(): void {
   });
 
   autoUpdater.on("error", (error) => {
+    // Before anything else: leave the in-flight download alone. Its status,
+    // its watchdog and `isCheckingOrDownloading` all stay as they are.
+    if (isRefusedConcurrentCheck(error)) {
+      log.info(
+        "Ignoring update check refused while a download is already in flight",
+      );
+      return;
+    }
     isCheckingOrDownloading = false;
     clearStalledInstallWatchdog();
     log.error("Auto-updater error:", error);
