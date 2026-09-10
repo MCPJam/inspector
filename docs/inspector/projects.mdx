@@ -171,6 +171,12 @@ When your deployment exposes computer-backed tools (such as **Bash**), a **Perso
 - **Detaching the computer also removes computer-backed tool ids** from the config, so the saved config is always consistent.
 - The toggle is hidden until the deployment enables at least one computer-backed tool, so it won't appear as a dead control before launch.
 
+#### Browser
+
+**Browser** can be enabled from the **Tools** tab without attaching a Computer. When Browser is selected (or a saved browser profile is already pinned to the host), a **Browser** section appears in the Tools tab where you can optionally pin a saved browser profile. Without a pin, new chats use your selected default profile.
+
+For local installations, the first time you use the Browser panel the inspector shows a device-consent dialog inline. Granting permission covers both commands and browser control on this machine; it does not enable the Bash tool on the host. Existing grants remain valid and do not require re-authorization.
+
 ## What's Next
 
 - **[Servers](/inspector/connecting-servers)** - Configure MCP servers to add to your projects
