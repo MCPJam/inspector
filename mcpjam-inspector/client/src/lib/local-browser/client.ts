@@ -131,8 +131,7 @@ async function post<T>(
     ...(options?.keepalive ? { keepalive: true } : {}),
   });
   const json = (await response.json().catch(() => null)) as
-    | (T & { error?: string; code?: string })
-    | null;
+    (T & { error?: string; code?: string }) | null;
   if (!response.ok) {
     // A stored grant is only a UI projection; the server can reject it after
     // revocation or a runtime change. Reopen the consent gate, but never let
@@ -362,8 +361,7 @@ export interface LocalBrowserTraceGap {
 }
 
 export type LocalBrowserTraceEntry =
-  | LocalBrowserTraceRow
-  | LocalBrowserTraceGap;
+  LocalBrowserTraceRow | LocalBrowserTraceGap;
 
 export interface LocalBrowserTracePage {
   entries: LocalBrowserTraceEntry[];
@@ -375,6 +373,7 @@ export interface LocalBrowserTracePage {
 export function sendLocalBrowserInput(
   args: {
     bootId: string;
+    tabId?: string;
     holder: string;
     events: BrowserInputEvent[];
     anchor?: import("../../../../shared/browser-pane-command").InteractionAnchor;
@@ -461,6 +460,7 @@ export interface FrameStreamHandlers {
  */
 export function openLocalBrowserFrameStream(args: {
   bootId: string;
+  tabId?: string;
   holder: string;
   nonce: string;
   /** `"binary"` asks for the daemon's frame records; omitted keeps JSON. */
@@ -474,7 +474,7 @@ export function openLocalBrowserFrameStream(args: {
     args.bootId,
   )}&holder=${encodeURIComponent(args.holder)}${
     args.wire === "binary" ? "&wire=binary" : ""
-  }`;
+  }${args.tabId ? `&tabId=${encodeURIComponent(args.tabId)}` : ""}`;
   const socket = new WebSocket(url, [args.nonce]);
   // See the hosted opener: `blob` would make binary messages arrive
   // asynchronously and out of order against the control messages beside them.

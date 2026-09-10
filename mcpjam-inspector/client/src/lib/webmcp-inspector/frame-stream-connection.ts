@@ -50,7 +50,10 @@ export const FRAME_WS_PING_MS = 30_000;
 
 export interface FrameStreamConnection {
   /** Undefined means not negotiated/not sent: use ordered HTTP instead. */
-  sendInput(events: WebMcpInputEvent[]): Promise<void> | undefined;
+  sendInput(
+    events: WebMcpInputEvent[],
+    tabId?: string,
+  ): Promise<void> | undefined;
   /** Forget a queued picture when live view stops, without closing input. */
   discardPendingFrame(): void;
   close(): void;
@@ -273,7 +276,7 @@ export function openWebMcpFrameStream(
 
   return {
     discardPendingFrame,
-    sendInput(events) {
+    sendInput(events, tabId) {
       if (closed || !inputEnabled || ws.readyState !== WebSocket.OPEN)
         return undefined;
       if (awaitingInput.size >= 16)
@@ -293,7 +296,14 @@ export function openWebMcpFrameStream(
         awaitingInput.set(seq, { resolve, reject, timer });
         opts.onInputSent?.(seq);
         try {
-          ws.send(JSON.stringify({ type: "input", seq, events }));
+          ws.send(
+            JSON.stringify({
+              type: "input",
+              seq,
+              events,
+              ...(tabId ? { tabId } : {}),
+            }),
+          );
         } catch {
           abandonInput();
           ws.close();

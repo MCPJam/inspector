@@ -278,7 +278,7 @@ describe("the hosted pane — who has control", () => {
     renderBody();
     const image = await deliverFrame();
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
+      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
     const before = api.sockets.length;
     // Clicking the page IS taking it. There is no button.
     fireEvent.click(image, { clientX: 10, clientY: 10 });
@@ -971,12 +971,10 @@ describe("the hosted pane — quality tiers", () => {
   });
 });
 
-it("keeps the hosted legacy controls when the workspace flag is off", async () => {
+it("keeps hosted navigation when the workspace flag is off", async () => {
   api.workspaceEnabled = false;
   renderBody();
   await deliverFrame();
-  expect(
-    await screen.findByRole("button", { name: "Take control" }),
-  ).toBeTruthy();
-  expect(screen.queryByTestId("browser-new-tab")).toBeNull();
+  expect(await screen.findByTestId("browser-new-tab")).toBeInTheDocument();
+  expect(screen.getByTestId("browser-address")).toBeInTheDocument();
 });

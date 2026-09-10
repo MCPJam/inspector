@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { authFetch } from "@/lib/session-token";
-import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
+import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 import { fetchLocalBrowserSession } from "../client";
 
 vi.mock("@/lib/session-token", () => ({ authFetch: vi.fn() }));
@@ -26,7 +26,7 @@ describe("reading a conversation's live browser", () => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            [LOCAL_CONSENT_HEADER]: "consent",
+            [BROWSER_CONSENT_HEADER]: "consent",
           },
           body: JSON.stringify({ projectId: "project", sessionId: "chat-a" }),
         },

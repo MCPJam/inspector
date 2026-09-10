@@ -41,6 +41,7 @@ import type { BrowserPaneCommand } from "../../../../shared/browser-pane-command
  */
 
 export interface BrowserShellProps {
+  authority?: { kind: "shared" } | { kind: "lease" };
   enabled?: boolean;
   state: BrowserSessionState;
   /** This pane's lease identity, for telling our hold from somebody else's. */
@@ -113,6 +114,7 @@ export interface BrowserShellProps {
 
 export function BrowserShell({
   enabled = true,
+  authority = { kind: "lease" },
   state,
   holderId,
   control: controlOverride,
@@ -231,6 +233,7 @@ export function BrowserShell({
         onBack={() => onCommand({ op: "back" })}
         onForward={() => onCommand({ op: "forward" })}
         onReload={() => onCommand({ op: "reload" })}
+        authority={authority}
         control={control}
         holding={holding}
         {...(onResumeAgent && holding ? { onResumeAgent } : {})}

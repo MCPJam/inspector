@@ -307,3 +307,22 @@ describe("teardown", () => {
     expect(() => surface.hide()).not.toThrow();
   });
 });
+
+it("shows shared inspection without acquiring a lease or installing an input shield", () => {
+  let shields = 0;
+  const surface = createContextSurface({
+    authority: "shared",
+    createShield: () => {
+      shields++;
+      return null;
+    },
+  });
+  const holder = fakeWindow();
+  const view = fakeView("inspection");
+  surface.registerTab(view);
+  surface.show({ holder, bounds: BOUNDS });
+  expect(holder.children).toEqual([view]);
+  expect(surface.inputAllowed()).toBe(true);
+  expect(shields).toBe(0);
+  surface.dispose();
+});
