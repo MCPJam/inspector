@@ -79,6 +79,8 @@ export interface RelayInputForwarder {
 }
 
 export interface RelayInputForwarderOptions {
+  /** Opt-in for Node WebMCP; existing local/hosted callers retain their policy. */
+  preserveGestureBoundaries?: boolean;
   dispatch(args: {
     tabId?: string;
     events: readonly BrowserPaneInputEvent[];
@@ -163,7 +165,10 @@ export function createRelayInputForwarder(
   const flush = (): void => {
     if (inFlight || cancelled || pending.length === 0) return;
     const group = pending.shift()!;
-    const events = coalesceBrowserPaneInput(group.events);
+    const events = coalesceBrowserPaneInput(
+      group.events,
+      options.preserveGestureBoundaries,
+    );
     inFlight = true;
     void dispatchGroup(group.tabId, events)
       .then((outcome) => {

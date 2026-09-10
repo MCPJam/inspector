@@ -126,6 +126,16 @@ export function isBrowserPaneInputEvent(
   }
 }
 
+/** Preserve dominant-axis reversals while tolerating cross-axis trackpad jitter. */
+export function sameWheelDirection(
+  a: { deltaX: number; deltaY: number },
+  b: { deltaX: number; deltaY: number },
+): boolean {
+  const axisA = Math.abs(a.deltaX) > Math.abs(a.deltaY) ? "deltaX" : "deltaY";
+  const axisB = Math.abs(b.deltaX) > Math.abs(b.deltaY) ? "deltaX" : "deltaY";
+  return axisA === axisB && Math.sign(a[axisA]) === Math.sign(b[axisB]);
+}
+
 /**
  * Collapse a batch to what still has to be delivered.
  *
@@ -142,11 +152,16 @@ export function isBrowserPaneInputEvent(
  */
 export function coalesceBrowserPaneInput(
   events: readonly BrowserPaneInputEvent[],
+  preserveGestureBoundaries = false,
 ): BrowserPaneInputEvent[] {
   const out: BrowserPaneInputEvent[] = [];
   for (const event of events) {
     const previous = out[out.length - 1];
-    if (event.type === "mouse_move" && previous?.type === "mouse_move") {
+    if (
+      event.type === "mouse_move" &&
+      previous?.type === "mouse_move" &&
+      (!preserveGestureBoundaries || event.modifiers === previous.modifiers)
+    ) {
       out[out.length - 1] = event;
       continue;
     }
@@ -155,7 +170,8 @@ export function coalesceBrowserPaneInput(
       previous?.type === "wheel" &&
       event.modifiers === previous.modifiers &&
       event.x === previous.x &&
-      event.y === previous.y
+      event.y === previous.y &&
+      (!preserveGestureBoundaries || sameWheelDirection(previous, event))
     ) {
       out[out.length - 1] = {
         ...event,

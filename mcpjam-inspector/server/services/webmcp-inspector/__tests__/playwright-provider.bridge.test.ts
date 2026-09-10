@@ -269,7 +269,7 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
     ).rejects.toBeInstanceOf(WebMcpToolGoneError);
   });
 
-  it("carries WHY an invocation was cancelled", async () => {
+  it("reports a post-dispatch cancellation as an unknown outcome", async () => {
     const h = await started({ onSend: () => ({ invocationId: "inv-1" }) });
     h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
 
@@ -291,7 +291,7 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
     });
   });
 
-  it("keeps a runtime timeout a TIMEOUT, not a user cancel", async () => {
+  it("reports a post-dispatch timeout as an unknown outcome", async () => {
     const h = await started({ onSend: () => ({ invocationId: "inv-1" }) });
     h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
 
@@ -301,9 +301,8 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
       signal: controller.signal,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    // The runtime is the single deadline owner and aborts with its reason. The
-    // browser answers `Canceled` either way, so losing the reason here is what
-    // records a hung tool as something the user chose to stop.
+    // The browser may continue after the runtime stops waiting, so the final
+    // outcome cannot be inferred from its `Canceled` response.
     controller.abort("timeout");
     h.emit("WebMCP.toolResponded", {
       invocationId: "inv-1",

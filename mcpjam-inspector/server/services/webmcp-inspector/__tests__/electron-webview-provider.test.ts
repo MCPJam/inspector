@@ -605,7 +605,7 @@ describe("electron-webview provider — the session surface", () => {
     ).rejects.toThrow(/no longer offers a tool named "checkout"/);
   });
 
-  it("carries WHY an invocation was cancelled, so a timeout is not a user cancel", async () => {
+  it("reports a post-dispatch timeout as an unknown outcome", async () => {
     const { session, guest } = await startSession();
     guest.debugger.emitCdp("WebMCP.toolsAdded", {
       tools: [{ name: "slow", frameId: "main" }],
@@ -620,9 +620,7 @@ describe("electron-webview provider — the session surface", () => {
     });
     await Promise.resolve();
     await Promise.resolve();
-    // The runtime owns the deadline because we handed the signal over; the
-    // browser answers every cancel `Canceled` whatever the reason, so the
-    // reason has to survive the round trip.
+    // Once dispatch happened, cancellation cannot prove the page tool stopped.
     controller.abort("timeout");
     await expect(pending).rejects.toMatchObject({
       name: "WebMcpOutcomeUnknownError",
