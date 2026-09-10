@@ -1,7 +1,3 @@
-// General-agent behavior remains covered with the Describe-only MVP gate disabled.
-vi.mock("../../../../shared/eval-agent-scope.js", async (importOriginal) => ({
-  ...await importOriginal<object>(), DESCRIBE_ONLY_AGENT: false,
-}));
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 
@@ -300,7 +296,7 @@ describe("POST /api/web/mcpjam-agent/widget-content", () => {
 });
 
 describe("eval-scoped agent requests", () => {
-  const scope = { kind: "evals", version: 1, id: "scope-1", projectId: "project-a", suiteId: "suite-a", suiteName: "Support" };
+  const scope = { kind: "evals", version: 1, id: "scope-1", projectId: "project-a", suiteId: "suite-a", suiteName: "Support", caseId: "draft:describe" };
   const request = (extra: Record<string, unknown> = {}) => makeApp().request("/api/web/mcpjam-agent", {
     method: "POST", headers: { "content-type": "application/json", authorization: "Bearer user-token" },
     body: JSON.stringify({ messages: [{ role: "user", parts: [{ type: "text", text: "Generate cases" }] }], model: { id: "anthropic/claude-haiku-4.5" }, chatSessionId: "eval-session", projectId: "project-a", evalScope: scope, ...extra }),

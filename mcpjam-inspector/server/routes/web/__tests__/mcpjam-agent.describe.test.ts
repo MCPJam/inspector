@@ -60,8 +60,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   streamWebChatTurnMock.mockResolvedValue(new Response("ok"));
 });
-it.each([undefined, { ...evalScope, caseId: undefined }])(
-  "rejects general and suite-level chat before model execution",
+it.each([{ ...evalScope, caseId: undefined }])(
+  "rejects suite-level eval chat before model execution",
   async (scope) => {
     const { app, token } = createWebTestApp();
     const response = await postJson(

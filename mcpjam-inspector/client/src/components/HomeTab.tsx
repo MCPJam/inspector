@@ -1,4 +1,3 @@
-import { DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
 import {
   useCallback,
   useEffect,
@@ -317,7 +316,7 @@ export function HomeTab({
   // chose "New chat" from inside the takeover, the entire home screen *becomes*
   // the conversation surface. The greeting, stats, and recommended cards drop
   // out until the user clicks Back.
-  if (!DESCRIBE_ONLY_AGENT && (sessionParam || composeParam)) {
+  if (sessionParam || composeParam) {
     return (
       <McpjamAgentTakeoverFrame
         onBack={handleBackToHome}
@@ -368,14 +367,12 @@ export function HomeTab({
           />
         </header>
 
-        {!DESCRIBE_ONLY_AGENT && (
           <McpjamAgentHero
             surface="home"
             onSessionStart={handleSessionStart}
             onResumeSession={handleResumeSession}
             ready={Boolean(projectId)}
           />
-        )}
 
         <ProductUpdatesRow />
 

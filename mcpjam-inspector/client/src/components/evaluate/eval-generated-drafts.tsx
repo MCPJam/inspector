@@ -1,5 +1,5 @@
 import { ImportedDraftEditor } from "./imported-draft-editor";
-import { DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
+import { EVAL_DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Trash2 } from "lucide-react";
 import {
@@ -333,7 +333,7 @@ export function EvalGeneratedDrafts({
                   >
                     {expanded ? "Close editor" : "Review case"}
                   </Button>
-                  {!hideChat && !DESCRIBE_ONLY_AGENT && (
+                  {!hideChat && !EVAL_DESCRIBE_ONLY_AGENT && (
                     <Button
                       size="sm"
                       variant="ghost"

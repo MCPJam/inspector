@@ -1,4 +1,84 @@
-/** Ask MCPJam is opened from Describe only during the guided-creation MVP. */
+import {
+  openEvalChat,
+  useEvalAgentScopes,
+} from "@/lib/mcpjam-agent/eval-scope";
+import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
+/**
+ * Header sparkle button that toggles the MCPJam Agent side panel.
+ */
+import { useCallback } from "react";
+import { MessageCircle } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+import { useActiveTab } from "@/lib/app-navigation";
+import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
+import { track } from "@/lib/analytics";
+
+const SHORTCUT_LABEL =
+  typeof navigator !== "undefined" &&
+  /Mac|iP(hone|od|ad)/.test(navigator.platform)
+    ? "⌘\\"
+    : "Ctrl+\\";
+
 export function AgentSidePanelTrigger() {
-  return null;
+  const isOpen = useAgentPanelStore((s) => s.isOpen);
+  const toggle = useAgentPanelStore((s) => s.toggle);
+  const activeTab = useActiveTab();
+  const describeScope = useDescribeSurface((s) => s.scope);
+
+  const onClick = useCallback(() => {
+    const next = !isOpen;
+    const context =
+      next && activeTab === "evaluate" ? describeScope : undefined;
+    if (next) {
+      track("mcpjam_agent_panel_opened", {
+        location: "agent_side_panel",
+        via: "click",
+        tab: activeTab,
+      });
+    }
+    if (context) openEvalChat(context);
+    else {
+      const sessionId = useAgentPanelStore.getState().activeSessionId;
+      if (
+        next &&
+        sessionId &&
+        (sessionId.startsWith("eval-") ||
+          useEvalAgentScopes.getState().scopes[sessionId])
+      ) {
+        useAgentPanelStore.getState().setActiveSession(null, null);
+      }
+      toggle();
+    }
+  }, [activeTab, describeScope, isOpen, toggle]);
+
+  if (activeTab === "evaluate" && !describeScope) return null;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          // A chrome control, not a ghost: on the linen ground a fill-less
+          // button had nothing to separate it from the bar.
+          variant="secondary"
+          size="sm"
+          aria-label="Ask MCPJam"
+          aria-pressed={isOpen}
+          onClick={onClick}
+          className="h-9 gap-1.5 px-2.5"
+        >
+          <MessageCircle className="h-4 w-4" aria-hidden />
+          <span>Ask MCPJam</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        Ask MCPJam ({SHORTCUT_LABEL})
+      </TooltipContent>
+    </Tooltip>
+  );
 }
