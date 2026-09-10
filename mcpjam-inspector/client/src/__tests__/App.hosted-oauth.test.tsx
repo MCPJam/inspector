@@ -64,6 +64,7 @@ const {
   mockHandleOAuthCallback,
   mockHeader,
   mockHostedShellGateState,
+  mockListTools,
   mockMCPSidebar,
   mockOAuthFlowTabState,
   mockOrganizationsTab,
@@ -95,6 +96,7 @@ const {
     selectedMCPConfig: null,
     handleConnect: vi.fn(),
     handleDisconnect: vi.fn(),
+    handleRuntimeDisconnect: vi.fn(),
     handleReconnect: vi.fn(),
     handleUpdate: vi.fn().mockResolvedValue({
       ok: true,
@@ -145,6 +147,7 @@ const {
         | "project-loading"
         | "logged-out",
     },
+    mockListTools: vi.fn().mockResolvedValue({ tools: [] }),
     mockMCPSidebar: vi.fn(() => <div />),
     mockOAuthFlowTabState: {
       shouldThrow: false,
@@ -241,6 +244,10 @@ vi.mock("convex/react", () => ({
   // OAuth-token import path; the App test never reaches that path (HOSTED_MODE
   // gate exits early), but the hook still calls useConvex() unconditionally.
   useConvex: () => ({ query: vi.fn() }),
+}));
+
+vi.mock("@/lib/apis/mcp-tools-api", () => ({
+  listTools: (...args: unknown[]) => mockListTools(...args),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -524,6 +531,8 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAuth.mockReturnValue(mockWorkOsAuthState);
     mockUseAppState.mockReset();
     mockUseAppState.mockImplementation(createAppStateMock);
+    mockListTools.mockReset();
+    mockListTools.mockResolvedValue({ tools: [] });
     mockUseConvexAuth.mockReset();
     mockUseConvexAuth.mockReturnValue(mockConvexAuthState);
     mockPosthogState.featureFlags.hasLoadedFlags = true;
@@ -3487,6 +3496,11 @@ describe("App hosted OAuth callback handling", () => {
     mockWorkOsAuthState.user = null;
     mockHostedShellGateState.value = "ready";
     mockFreshGuestUser();
+    mockListTools.mockResolvedValueOnce({
+      tools: Array.from({ length: 6 }, (_, index) => ({
+        name: `tool-${index + 1}`,
+      })),
+    });
     const appState = createAppStateMock();
     mockUseAppState.mockReturnValue(appState);
 
@@ -3533,9 +3547,121 @@ describe("App hosted OAuth callback handling", () => {
     view.rerender(<App />);
 
     await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: "Connected to Excalidraw (App)",
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(mockListTools).toHaveBeenCalledWith({
+      serverId: "Excalidraw (App)",
+      refresh: true,
+    });
+    expect(screen.getByText("6 tools ready to use.")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/home");
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(expect.objectContaining({ status: "started" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
+
+    await waitFor(() => {
       expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
     });
     expect(window.location.pathname).toBe("/playground");
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(expect.objectContaining({ status: "completed" }));
+  });
+
+  it("uses the same real tool-count success handoff for a personal server", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    mockListTools.mockResolvedValueOnce({
+      tools: [{ name: "draw" }, { name: "export" }],
+    });
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://personal.example/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await screen.findByRole("heading", {
+      name: "Connecting to Personal",
+    });
+    appState.appState.servers = {
+      Personal: {
+        name: "Personal",
+        config: {
+          transportType: "http",
+          url: "https://personal.example/mcp",
+        },
+        connectionStatus: "connected",
+      },
+    };
+    view.rerender(<App />);
+
+    await screen.findByRole("heading", {
+      name: "Connected to Personal",
+    });
+    expect(mockListTools).toHaveBeenCalledWith({
+      serverId: "Personal",
+      refresh: true,
+    });
+    expect(screen.getByText("2 tools ready to use.")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/home");
+  });
+
+  it("cancels first-run connection progress without completing onboarding", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+    );
+    await screen.findByRole("heading", {
+      name: "Connecting to Excalidraw (App)",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(appState.handleRuntimeDisconnect).toHaveBeenCalledWith(
+      "Excalidraw (App)",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+    ).toBeInTheDocument();
+    expect(
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
+    ).toEqual(expect.objectContaining({ status: "started" }));
   });
 
   it("waits for project provisioning before starting the first-run handshake", async () => {
