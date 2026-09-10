@@ -107,3 +107,9 @@ export function useBrowserWorkspaceEnabledState(): boolean | undefined {
 export function useBrowserWorkspaceEnabled(): boolean {
   return useBrowserWorkspaceEnabledState() === true;
 }
+
+/** Browser candidacy never depends on the shell cohort. */
+export const LOCAL_BROWSER_FEATURE_FLAG = "local-browser-enabled";
+export function useLocalBrowserEnabled(): boolean {
+  return useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG) === true;
+}

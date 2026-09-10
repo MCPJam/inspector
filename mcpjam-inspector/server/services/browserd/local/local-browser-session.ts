@@ -255,6 +255,7 @@ export interface EnsureLocalBrowserArgs {
 }
 
 interface LocalSession {
+  viewedUntil?: number;
   key: string;
   /**
    * The validated project this browser belongs to, kept alongside the key
@@ -473,8 +474,14 @@ async function startSession(
         formatBrowserdError(
           "profile_in_use",
           owner.host
-            ? `this project's browser profile is held by a process on ${owner.host} (pid ${owner.pid ?? "unknown"}) — it lives on a directory shared between machines, and opening it twice would corrupt it`
-            : `another process (pid ${owner.pid ?? "unknown"}) is already using this project's browser profile; close it, or run this inspector with a different project`,
+            ? `this project's browser profile is held by a process on ${
+                owner.host
+              } (pid ${
+                owner.pid ?? "unknown"
+              }) — it lives on a directory shared between machines, and opening it twice would corrupt it`
+            : `another process (pid ${
+                owner.pid ?? "unknown"
+              }) is already using this project's browser profile; close it, or run this inspector with a different project`,
         ),
       );
     }
@@ -702,6 +709,17 @@ export function touchLocalBrowserSession(
   }
 }
 
+/** A foreground viewer renews a bounded reservation, never agent activity. */
+export function watchLocalBrowserSession(
+  handle: Pick<LocalBrowserSessionHandle, "bootId">,
+  now: number = Date.now(),
+): void {
+  for (const session of sessions.values()) {
+    if (session.stack.bootId === handle.bootId && !session.disposing)
+      session.viewedUntil = now + 45_000;
+  }
+}
+
 /**
  * The live session behind a bootId, for the routes that drive the pane.
  *
@@ -798,7 +816,9 @@ export function findLocalBrowserSessionByKey(
   key: string,
 ): LiveLocalBrowser | undefined {
   const session = sessions.get(key);
-  if (!session) return undefined;
+  if (!session || session.disposing || !session.context.isConnected()) {
+    return undefined;
+  }
   return {
     client: session.inProcessClient,
     handle: session.handle,
@@ -852,6 +872,8 @@ function stillReapable(session: LocalSession, now: number): boolean {
   // A Chromium that has gone away cannot be handed back, whatever its clock or
   // its lease say.
   if (!session.context.isConnected()) return true;
+  if ((session.viewedUntil ?? 0) > now || !session.stack.queue.isIdle())
+    return false;
   const idle = now - session.lastUsedAt;
   const age = now - session.startedAt;
   const expired =
@@ -914,6 +936,12 @@ export async function sweepLocalBrowserSessions(
       const current = sessions.get(session.key);
       if (current !== session || current.disposing) return;
       if (!stillReapable(current, now)) return;
+      // Close admission before the first awaited teardown; queued work and
+      // human input cannot begin between eligibility and driver.close().
+      if (
+        !current.stack.handler.tryRetireIfIdle(!current.context.isConnected())
+      )
+        return;
       await disposeSession(current);
     }).catch(() => {});
   }
@@ -985,8 +1013,7 @@ export async function closeLocalBrowserSession(
 > {
   for (const session of sessions.values()) {
     if (session.stack.bootId !== bootId) continue;
-    if (whileClosed && !session.stack.queue.isIdle())
-      return { closed: false, reason: "busy" };
+    if (!session.stack.queue.isIdle()) return { closed: false, reason: "busy" };
     // CLAIMED, not merely checked. A read says who held the lease a moment ago;
     // `acquire` says who holds it now and keeps holding it. It returns the
     // OTHER holder's state unchanged when somebody already has the browser, so

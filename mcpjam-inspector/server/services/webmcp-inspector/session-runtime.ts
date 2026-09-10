@@ -1000,11 +1000,11 @@ export class WebMcpSessionRuntime {
   private setStatus(status: WebMcpSessionStatus, detail?: string): void {
     this.status = status;
     this.statusDetail = detail;
-    this.publish({
-      type: "session",
-      seq: this.nextSeq(),
-      session: this.toPublic(),
-    });
+    // Initial navigation fires inside the provider's createSession, before
+    // attach supplies the real transport. Replaying that provisional
+    // native-window snapshot would make the client destroy its webview.
+    // Retain the status; the registry publishes once the browser is attached.
+    if (this.session) this.publishSession();
   }
 
   /**

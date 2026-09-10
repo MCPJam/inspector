@@ -407,6 +407,7 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // including status, launch, and activity reads. Local/Electron clients need
   // the account bearer alongside their local session token.
   "/api/mcp/computers/local-browser",
+  "/api/mcp/computers/browser-location",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
   // Registry catalog/star routes are Convex HTTP actions called via absolute

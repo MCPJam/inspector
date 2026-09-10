@@ -1352,6 +1352,17 @@ var BrowserdRequestHandler = class {
    * the very thing this whole compatibility mechanism exists to avoid).
    */
   lastActivityAt = null;
+  retiring = false;
+  suspensionId = null;
+  completedSuspensions = /* @__PURE__ */ new Set();
+  activeOperations = 0;
+  /** Atomic admission barrier held through teardown; a read of isIdle alone races. */
+  tryRetireIfIdle(disconnected = false) {
+    if (this.retiring || this.activeOperations > 0 || !this.queue.isIdle?.() || !disconnected && this.lease.state().state === "held")
+      return false;
+    this.retiring = true;
+    return true;
+  }
   constructor(deps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
@@ -1413,9 +1424,28 @@ var BrowserdRequestHandler = class {
     if (req.origin !== void 0) {
       return { status: 403, body: { error: "cross_origin_forbidden" } };
     }
+    if (this.retiring)
+      return {
+        status: 503,
+        body: { error: "browser_stopped", bootId: this.bootId }
+      };
+    if (this.suspensionId && req.path !== "/v1/status" && req.path !== "/v1/lifecycle")
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId }
+      };
     return void 0;
   }
   async handle(req) {
+    const operation = req.method === "POST" && req.path !== "/v1/lifecycle";
+    if (operation) this.activeOperations += 1;
+    try {
+      return await this.dispatch(req);
+    } finally {
+      if (operation) this.activeOperations -= 1;
+    }
+  }
+  async dispatch(req) {
     if (req.path === "/healthz") {
       if (req.method !== "GET" && req.method !== "HEAD") {
         return { status: 405, headers: { allow: "GET, HEAD" } };
@@ -1425,6 +1455,46 @@ var BrowserdRequestHandler = class {
     }
     const refusal = this.authorize(req);
     if (refusal) return refusal;
+    if (req.path === "/v1/lifecycle" && req.method === "POST") {
+      let body;
+      try {
+        body = JSON.parse(req.body ?? "");
+      } catch {
+        return { status: 400 };
+      }
+      if (!body || body.bootId !== this.bootId)
+        return { status: 409, body: { error: "stale_boot" } };
+      if (typeof body.operationId !== "string" || !body.operationId || body.operationId.length > 128)
+        return { status: 400 };
+      if (body.action === "resume") {
+        if (this.suspensionId && this.suspensionId !== body.operationId)
+          return { status: 409 };
+        if (!this.suspensionId && !this.completedSuspensions.has(body.operationId) && this.completedSuspensions.size >= 4096)
+          return { status: 409 };
+        this.suspensionId = null;
+        this.completedSuspensions.add(body.operationId);
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      }
+      if (body.action !== "prepare_sleep") return { status: 400 };
+      if (this.completedSuspensions.has(body.operationId) || this.completedSuspensions.size >= 4096)
+        return { status: 409 };
+      if (this.suspensionId === body.operationId)
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      if (this.suspensionId || this.activeOperations > 0 || !this.queue.isIdle?.() || this.lease.state().state === "held") {
+        return {
+          status: 409,
+          body: { error: "browser_busy", bootId: this.bootId }
+        };
+      }
+      this.suspensionId = body.operationId;
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
+    }
+    if (this.suspensionId && req.path !== "/v1/status") {
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId }
+      };
+    }
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -1452,7 +1522,7 @@ var BrowserdRequestHandler = class {
         ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) },
         ...this.tabsSnapshot()?.list ? { tabs: this.tabsSnapshot().list } : {}
       };
-      return health.ok ? { status: 200, body: { ok: true, ...identity } } : {
+      return health.ok && !this.suspensionId ? { status: 200, body: { ok: true, ...identity } } : {
         status: 503,
         body: { ok: false, detail: health.detail, ...identity }
       };

@@ -6,10 +6,19 @@ import {
 } from "../use-browser-session";
 import type { BrowserStateSnapshot } from "../../../../../shared/browser-session-state";
 
-function snapshot(over: Partial<BrowserStateSnapshot> = {}): BrowserStateSnapshot {
+function snapshot(
+  over: Partial<BrowserStateSnapshot> = {},
+): BrowserStateSnapshot {
   return {
     seq: 1,
-    tabs: [{ id: "t1", url: "https://example.com/", title: "Example", loading: false }],
+    tabs: [
+      {
+        id: "t1",
+        url: "https://example.com/",
+        title: "Example",
+        loading: false,
+      },
+    ],
     activeTabId: "t1",
     canGoBack: false,
     canGoForward: false,
@@ -39,6 +48,91 @@ function mount(transport: BrowserSessionTransport) {
     useBrowserSession({ transport, holderId: "pane-1", active: true }),
   );
 }
+
+describe("switching browser sessions", () => {
+  it("clears the previous chat's tabs while the next browser is being read", async () => {
+    const a = harness().transport;
+    const b = harness({ readState: async () => null }).transport;
+    const { result, rerender } = renderHook(
+      ({ transport, sessionKey }) =>
+        useBrowserSession({
+          transport,
+          sessionKey,
+          holderId: "pane-1",
+          active: true,
+        }),
+      { initialProps: { transport: a, sessionKey: "a" } },
+    );
+    await waitFor(() => expect(result.current.state.tabs).toHaveLength(1));
+    rerender({ transport: b, sessionKey: "b" });
+    await waitFor(() => expect(result.current.state.tabs).toEqual([]));
+    expect(result.current.state.activeTabId).toBeNull();
+  });
+
+  it("does not apply a command result from the previous chat", async () => {
+    let resolve!: (value: { ok: true }) => void;
+    const a = harness({
+      sendCommand: () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    }).transport;
+    const b = harness({
+      readState: async () =>
+        snapshot({
+          tabs: [
+            { id: "b", url: "https://b.test", title: "B", loading: false },
+          ],
+          activeTabId: "b",
+        }),
+    }).transport;
+    const { result, rerender } = renderHook(
+      ({ transport, sessionKey }) =>
+        useBrowserSession({
+          transport,
+          sessionKey,
+          holderId: "pane-1",
+          active: true,
+        }),
+      { initialProps: { transport: a, sessionKey: "a" } },
+    );
+    await waitFor(() => expect(result.current.state.tabs).toHaveLength(1));
+    act(() => result.current.run({ op: "reload" }));
+    rerender({ transport: b, sessionKey: "b" });
+    await waitFor(() => expect(result.current.state.activeTabId).toBe("b"));
+    await act(async () => resolve({ ok: true }));
+    expect(result.current.state.activeTabId).toBe("b");
+  });
+});
+
+it("rejects the first A's response after A → B → A", async () => {
+  let finish!: (value: { ok: false; reason: "failed"; detail: string }) => void;
+  const transport = harness({
+    sendCommand: () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  }).transport;
+  const { result, rerender } = renderHook(
+    ({ sessionKey }) =>
+      useBrowserSession({
+        transport,
+        sessionKey,
+        holderId: "pane",
+        active: true,
+      }),
+    { initialProps: { sessionKey: "a" } },
+  );
+  await waitFor(() => expect(result.current.state.activeTabId).toBe("t1"));
+  act(() => result.current.run({ op: "reload" }));
+  rerender({ sessionKey: "b" });
+  rerender({ sessionKey: "a" });
+  await act(async () =>
+    finish({ ok: false, reason: "failed", detail: "Error from the old A" }),
+  );
+  expect(result.current.state.activeTabId).toBe("t1");
+  expect(result.current.error).toBeNull();
+});
 
 describe("reporting a panel measurement", () => {
   beforeEach(() => {
@@ -184,7 +278,7 @@ describe("an engine that cannot answer pane commands", () => {
   // frames still paint; only the shell's controls have nothing to talk to.
   it("goes unsupported on the first refusal", async () => {
     const { transport } = harness({
-      sendCommand: async () => ({ ok: false, reason: "unsupported" }) as const,
+      sendCommand: async () => ({ ok: false, reason: "unsupported" } as const),
     });
     const { result } = mount(transport);
     // True up front: nothing has refused yet, and `readState` cannot tell us
@@ -197,7 +291,7 @@ describe("an engine that cannot answer pane commands", () => {
 
   it("says nothing, because the controls going inert is the message", async () => {
     const { transport } = harness({
-      sendCommand: async () => ({ ok: false, reason: "unsupported" }) as const,
+      sendCommand: async () => ({ ok: false, reason: "unsupported" } as const),
     });
     const { result } = mount(transport);
     act(() => result.current.run({ op: "reload" }));
@@ -214,7 +308,11 @@ describe("an engine that cannot answer pane commands", () => {
     // — permanently, for a condition that clears on its own.
     const { transport } = harness({
       sendCommand: async () =>
-        ({ ok: false, reason: "lease_held", holder: { kind: "script" } }) as const,
+        ({
+          ok: false,
+          reason: "lease_held",
+          holder: { kind: "script" },
+        } as const),
     });
     const { result } = mount(transport);
     act(() => result.current.run({ op: "reload" }));
@@ -227,7 +325,7 @@ describe("an engine that cannot answer pane commands", () => {
     // running an old daemon, start one that speaks the shell's language, and
     // its controls would otherwise come up dead.
     const old = harness({
-      sendCommand: async () => ({ ok: false, reason: "unsupported" }) as const,
+      sendCommand: async () => ({ ok: false, reason: "unsupported" } as const),
     }).transport;
     const fresh = harness().transport;
     const { result, rerender } = renderHook(
@@ -249,7 +347,7 @@ describe("an engine that cannot answer pane commands", () => {
     // life against an engine that still refuses. Both bodies memoize
     // `shellTransport` precisely so that cannot happen.
     const { transport } = harness({
-      sendCommand: async () => ({ ok: false, reason: "unsupported" }) as const,
+      sendCommand: async () => ({ ok: false, reason: "unsupported" } as const),
     });
     const { result, rerender } = renderHook(
       ({ transport: t }: { transport: BrowserSessionTransport }) =>

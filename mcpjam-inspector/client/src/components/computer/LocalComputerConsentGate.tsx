@@ -3,14 +3,7 @@ import { ShieldQuestion } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
 
-/**
- * Shared device consent for local commands and agent browser control. Both
- * surfaces use the same grant (see `useLocalComputerConsent`); this dialog
- * describes that scope regardless of which surface opens it.
- *
- * `onUseCloud` is shown only when a cloud computer is also available, so a
- * pure-local inspector doesn't offer a fallback that doesn't exist.
- */
+/** Shell-only device consent; Browser permission is independent. */
 export function LocalComputerConsentGate({
   onAllow,
   onUseCloud,
@@ -68,15 +61,14 @@ export function LocalComputerConsentGate({
     >
       <ShieldQuestion className="size-6 text-muted-foreground" aria-hidden />
       <h2 className="text-base font-semibold text-foreground">
-        Allow agents to run commands and control a browser on this machine?
+        Allow agents to run commands on this machine?
       </h2>
       <p className="text-sm leading-relaxed text-muted-foreground">
-        Enabled tools can run commands and control a browser as your user
-        account, including websites you sign into in that browser. This device
-        permission covers both commands and browser control; it does not enable
-        the Bash tool on this host. The project folder is not a sandbox —
-        commands can read or change files and credentials your user can access.
-        Chat approval settings still apply.
+        Enabled tools can run commands as your user account. This permission
+        authorizes shell commands; it does not enable the Bash tool on this
+        host. The project folder is not a sandbox — commands can read or change
+        files and credentials your user can access. Chat approval settings still
+        apply.
       </p>
       <div className="mt-1 flex items-center gap-2">
         <Button

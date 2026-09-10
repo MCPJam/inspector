@@ -3,12 +3,18 @@ beforeAll(() => {
   window.PointerEvent = MouseEvent as typeof PointerEvent;
 });
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const grantConsent = vi.hoisted(() => vi.fn(async () => true));
-vi.mock("@/hooks/useLocalComputerConsent", () => ({
-  useLocalComputerConsent: () => ({ grant: grantConsent }),
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => ({ grant: grantConsent }),
 }));
 
 const api = vi.hoisted(() => ({
@@ -23,6 +29,14 @@ const api = vi.hoisted(() => ({
   installs: 0,
   inputs: [] as unknown[],
   ensures: [] as string[],
+  lookup: vi.fn(
+    async (
+      _project: string,
+      _token: string | null,
+      _session: string,
+    ): Promise<any> => null,
+  ),
+  streams: [] as string[],
   /** Every "somebody is looking at this" the pane sent, by boot id. */
   watches: [] as string[],
   /** Make `watch` answer 404, as it does for a browser that has gone. */
@@ -41,7 +55,7 @@ const api = vi.hoisted(() => ({
    */
   paneUnsupported: false,
   /** Every panel measurement reported. */
-  viewports: [] as Array<{ width: number; height: number }>,
+  viewports: [] as Array<{ width: number; height: number; policy?: string }>,
   /** The last socket handed to the pane, so a test can deliver a frame. */
   socket: null as {
     readyState: number;
@@ -64,6 +78,7 @@ vi.mock("@/lib/local-browser/client", async () => {
   return {
     ...actual,
     fetchLocalBrowserStatus: async () => api.status,
+    fetchLocalBrowserSession: api.lookup,
     startLocalBrowserInstall: async () => {
       api.installs += 1;
       return { install: { status: "installing" as const, percent: 0 } };
@@ -133,10 +148,15 @@ vi.mock("@/lib/local-browser/client", async () => {
       return { ok: true as const };
     },
     reportLocalPaneViewport: async (args: any) => {
-      api.viewports.push({ width: args.width, height: args.height });
+      api.viewports.push({
+        width: args.width,
+        height: args.height,
+        policy: args.policy,
+      });
       return { width: args.width, height: args.height, revision: 1 };
     },
-    openLocalBrowserFrameStream: () => {
+    openLocalBrowserFrameStream: (args: { bootId: string }) => {
+      api.streams.push(args.bootId);
       const socket = {
         readyState: 1,
         send: () => {},
@@ -162,6 +182,8 @@ beforeEach(() => {
   api.installs = 0;
   api.inputs = [];
   api.ensures = [];
+  api.lookup.mockReset().mockResolvedValue(null);
+  api.streams = [];
   api.watches = [];
   api.leaseGate = null;
   api.watchMissing = false;
@@ -202,7 +224,7 @@ async function deliverFrame() {
 async function clickPicture() {
   const image = await deliverFrame();
   image.getBoundingClientRect = () =>
-    ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+    ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
   fireEvent.click(image, { clientX: 10, clientY: 10 });
   return image;
 }
@@ -219,12 +241,12 @@ function renderBody(over: Record<string, unknown> = {}) {
 }
 
 describe("the agent browser pane", () => {
-  it("grants shared device consent from the Browser panel", async () => {
+  it("grants Browser-only consent from the Browser panel", async () => {
     renderBody({ consentGranted: false });
     expect(await screen.findByTestId("rail-browser-unconsented")).toBeTruthy();
     expect(screen.queryByText(/Open the Computer tab/)).toBeNull();
     expect(
-      screen.getByText(/permission covers both commands and browser control/),
+      screen.getByText(/permission does not authorize shell commands/),
     ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Allow" }));
     expect(grantConsent).toHaveBeenCalled();
@@ -385,7 +407,7 @@ describe("the agent browser pane — driving it", () => {
     const image = await deliverFrame();
     // jsdom lays nothing out, so the pane cannot map a point without one.
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
 
     mouseDown(image, { clientX: 10, clientY: 10, button: 2 });
     mouseUp(image, { clientX: 10, clientY: 10, button: 2 });
@@ -405,7 +427,7 @@ describe("the agent browser pane — driving it", () => {
     await takeControl();
     const image = await deliverFrame();
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
 
     mouseDown(image, { clientX: 10, clientY: 10, button: 1 });
     fireEvent.pointerCancel(image, { clientX: 10, clientY: 10 });
@@ -475,6 +497,100 @@ describe("the agent browser pane — driving it", () => {
     // Reset, NOT auto-resolved: `ensure` launches a Chromium, so opening one
     // for a conversation nobody asked about would be worse than the bug.
     await screen.findByRole("button", { name: /open the browser/i });
+  });
+
+  it("reattaches each chat's existing browser when switching A to B to A", async () => {
+    api.lookup.mockImplementation(async (_project, _token, id) => ({
+      bootId: `boot-${id}`,
+      contextMode: "persistent",
+      lease: { state: "free" },
+    }));
+    const body = (sessionId: string) => (
+      <LocalBrowserBody
+        projectId="proj-1"
+        sessionId={sessionId}
+        consentGranted
+        consentToken="tok"
+      />
+    );
+    const view = render(body("chat-a"));
+    await waitFor(() => expect(api.streams.at(-1)).toBe("boot-chat-a"));
+    view.rerender(body("chat-b"));
+    await waitFor(() => expect(api.streams.at(-1)).toBe("boot-chat-b"));
+    view.rerender(body("chat-a"));
+    await waitFor(() => expect(api.streams.at(-1)).toBe("boot-chat-a"));
+    expect(api.ensures).toEqual([]);
+    expect(api.inputs).toEqual([]);
+    expect(api.paneCommands).toEqual([]);
+  });
+
+  it("ignores a late lookup after leaving a conversation", async () => {
+    let resolve!: (value: any) => void;
+    api.lookup.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const view = renderBody({ sessionId: "chat-a" });
+    await waitFor(() => expect(api.lookup).toHaveBeenCalled());
+    view.rerender(
+      <LocalBrowserBody
+        projectId="proj-1"
+        sessionId="chat-b"
+        consentGranted
+        consentToken="tok"
+      />,
+    );
+    await act(async () =>
+      resolve({
+        bootId: "boot-chat-a",
+        contextMode: "persistent",
+        lease: { state: "free" },
+      }),
+    );
+    expect(api.streams).toEqual([]);
+    expect(api.ensures).toEqual([]);
+    expect(
+      screen.getByRole("button", { name: /open the browser/i }),
+    ).toBeVisible();
+  });
+
+  it("finds a browser the agent opens after the pane is mounted", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      api.lookup.mockResolvedValueOnce(null).mockResolvedValue({
+        bootId: "agent-boot",
+        contextMode: "persistent",
+        lease: { state: "free" },
+      });
+      renderBody({ sessionId: "chat-a" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_100);
+      });
+      expect(api.streams.at(-1)).toBe("agent-boot");
+      expect(api.ensures).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([{ active: false }, { consentGranted: false }])(
+    "does not look up browsers while unavailable: %j",
+    async (over) => {
+      renderBody({ sessionId: "chat-a", ...over });
+      await act(async () => {});
+      expect(api.lookup).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps manual Open available when session lookup is unsupported", async () => {
+    api.lookup.mockRejectedValue(new Error("Not found"));
+    renderBody({ sessionId: "chat-a" });
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    await waitFor(() => expect(api.streams).toContain("boot-proj-1"));
   });
 
   it("ignores a lease answer from a browser the pane has left", async () => {
@@ -629,6 +745,40 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     await userEvent.click(await screen.findByText("Open the browser"));
     await screen.findByTestId("rail-browser-native-slot");
     await waitFor(() => expect(api.watches).toContain("boot-proj-1"));
+  });
+
+  it("fits the native page to its slot with workspace chrome disabled", async () => {
+    asDesktopApp();
+    api.workspaceEnabled = false;
+    const rect = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockReturnValue({
+        x: 700,
+        y: 100,
+        left: 700,
+        top: 100,
+        width: 480,
+        height: 600,
+        right: 1180,
+        bottom: 700,
+        toJSON: () => ({}),
+      } as DOMRect);
+    try {
+      renderBody();
+      await userEvent.click(await screen.findByText("Open the browser"));
+      await screen.findByTestId("rail-browser-native-slot");
+      await waitFor(() =>
+        expect(api.viewports).toContainEqual({
+          width: 480,
+          height: 600,
+          policy: "followPane",
+        }),
+      );
+      expect(api.viewports.at(-1)?.policy).toBe("followPane");
+      expect(api.socket).toBeNull();
+    } finally {
+      rect.mockRestore();
+    }
   });
 
   it("falls back to frames when the box turned the native surface off", async () => {

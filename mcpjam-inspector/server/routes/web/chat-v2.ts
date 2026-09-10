@@ -215,6 +215,18 @@ chatV2.post("/", async (c) => {
   try {
     const bearerToken = assertBearerToken(c);
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
+    if (
+      rawBody.browserEngine === "local" ||
+      c.req.header("x-mcpjam-browser-consent")
+    ) {
+      return c.json(
+        {
+          error: "Local Browser must use the local Inspector chat route",
+          code: "browser_location_mismatch",
+        },
+        409,
+      );
+    }
     rpcCollector = createHostedRpcLogCollector(rawBody);
 
     // ── Convex authorization path: guest and signed-in actors ─────
@@ -941,7 +953,9 @@ chatV2.post("/", async (c) => {
     // (pre-Phase-3 backend) ⇒ the tools fall back to the legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        { executionScope?: ExecutionScope } | null | undefined
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
     )?.executionScope;
 
     // COMP-16: the host-configured computer working directory — the SAME
@@ -1475,7 +1489,8 @@ chatV2.post("/", async (c) => {
     // stream layer calls this right after writing the SSE parts; until it does,
     // the notices stay pending server-side and are re-delivered next turn.
     let ackSandboxNotices:
-      ((delivered: SandboxNoticeReason[]) => void) | undefined;
+      | ((delivered: SandboxNoticeReason[]) => void)
+      | undefined;
     // Drop the personal-computer resource for every suppressing plan, so
     // `bash` is not advertised at all rather than falling back to the member's
     // own box — which is precisely the behaviour this feature replaces:

@@ -545,7 +545,7 @@ describe("the hosted pane — a lease that changes underneath it", () => {
     }
   });
 
-  it("HANDS THE BROWSER BACK when the pane goes away", async () => {
+  it("keeps human control parked when the pane goes away", async () => {
     // `pagehide` covers the tab closing, not this component unmounting — which
     // the rail does on every engine switch. A hold that stops being
     // heartbeaten PARKS rather than frees, on purpose, so the agent stayed
@@ -556,7 +556,7 @@ describe("the hosted pane — a lease that changes underneath it", () => {
     expect(await screen.findByText("You have it")).toBeTruthy();
     api.leaseCalls = [];
     view.unmount();
-    await waitFor(() => expect(api.leaseCalls).toEqual(["resume"]));
+    expect(api.leaseCalls).toEqual([]);
   });
 });
 
@@ -595,11 +595,10 @@ describe("the hosted pane — what keeps the box awake", () => {
       .spyOn(document, "visibilityState", "get")
       .mockReturnValue("hidden");
     renderBody({ active: true });
-    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
-    expect(socket().sent).toHaveLength(0);
+    expect(api.sockets).toHaveLength(0);
     hidden.mockRestore();
     vi.useRealTimers();
   });

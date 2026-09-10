@@ -235,16 +235,6 @@ export function HostedBrowserBody({
   const activeRef = useRef(active);
   activeRef.current = active;
   /**
-   * The hold, readable from a cleanup that must not re-run when it changes.
-   *
-   * The teardown below has to know whether this pane still holds the browser,
-   * but must fire only when the pane GOES AWAY — depending on `holding`
-   * directly would send a second hand-back after every ordinary one.
-   */
-  const holdingRef = useRef(holding);
-  holdingRef.current = holding;
-
-  /**
    * One token cache per project.
    *
    * Per PROJECT because the token names the computer it authorizes; carrying
@@ -254,7 +244,7 @@ export function HostedBrowserBody({
     if (!projectId) return null;
     const mint: MintBrowserToken = () => mintToken({ projectId });
     return createBrowserTokenCache(mint);
-  }, [projectId, mintToken]);
+  }, [projectId, sessionId, mintToken]);
 
   /**
    * Which browser this pane is looking at, as a number that only goes up.
@@ -269,7 +259,6 @@ export function HostedBrowserBody({
     // Captured, not read from a ref: by the time this cleanup runs, a ref
     // assigned during render already holds the NEXT project's cache, and
     // releasing with that would name a different computer.
-    const mine = tokens;
     generation.current += 1;
     setSession(null);
     setLease({ state: "unknown" });
@@ -279,24 +268,11 @@ export function HostedBrowserBody({
     setNotice(null);
     setUnavailable(null);
     tokenRetriesRef.current = 0;
+    // Detaching ends this viewer, never the human's control. Expiry parks.
     return () => {
-      // HAND THE BROWSER BACK ON THE WAY OUT. `pagehide` covers the tab
-      // closing; it does not cover this component being unmounted — which the
-      // rail does on every engine switch — or the project changing under it.
-      // Either left the lease held, and a held lease that stops being
-      // heartbeaten PARKS rather than frees, on purpose. So the agent stayed
-      // blocked on a browser nobody was watching, with no pane left that was
-      // allowed to hand it back: only the holder may, and the holder was gone.
-      if (!holdingRef.current || !mine) return;
-      void actOnHostedBrowserLease(
-        mine,
-        { action: "resume" },
-        { keepalive: true },
-      ).catch(() => {});
+      generation.current += 1;
     };
-    // `tokens` changes only when `projectId` does, so this still runs once per
-    // project — it is in the list because the cleanup closes over it.
-  }, [projectId, tokens]);
+  }, [projectId, sessionId, tokens]);
 
   /**
    * Which read of THIS browser is the latest.
@@ -372,8 +348,23 @@ export function HostedBrowserBody({
   );
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (!active) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let retryMs = 2_000;
+    const poll = async () => {
+      if (document.visibilityState === "visible") await refresh();
+      if (!cancelled && !session) {
+        timer = setTimeout(() => void poll(), retryMs);
+        retryMs = Math.min(retryMs * 2, 30_000);
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [refresh, active, session]);
 
   const open = useCallback(async () => {
     setBusy(true);
@@ -453,6 +444,7 @@ export function HostedBrowserBody({
       // and throwing that away left the pane offering input and a Hand back
       // against a lease the server no longer recognises. Every keystroke then
       // goes nowhere and the person cannot tell why.
+      if (!activeRef.current || document.visibilityState !== "visible") return;
       void actOnHostedBrowserLease(tokens, { action: "heartbeat" })
         .then((outcome) => {
           if (generation.current !== mine) return;
@@ -462,26 +454,6 @@ export function HostedBrowserBody({
         .catch(() => {});
     }, LEASE_HEARTBEAT_MS);
     return () => clearInterval(timer);
-  }, [holding, tokens]);
-
-  // Hand the browser back when this tab goes away.
-  //
-  // Best-effort: `keepalive` lets the request outlive the page, but a hard
-  // crash sends nothing — which is why a hold PARKS rather than freeing, and
-  // why the server answers `yours` for a returning pane. Releasing here is the
-  // difference between the agent carrying on at once and it waiting out a hold
-  // nobody is on the other end of.
-  useEffect(() => {
-    if (!holding || !tokens) return;
-    const release = () => {
-      void actOnHostedBrowserLease(
-        tokens,
-        { action: "resume" },
-        { keepalive: true },
-      ).catch(() => {});
-    };
-    window.addEventListener("pagehide", release);
-    return () => window.removeEventListener("pagehide", release);
   }, [holding, tokens]);
 
   // One POST in flight, the rest queued and consecutive moves collapsed. One
@@ -602,6 +574,7 @@ export function HostedBrowserBody({
 
   const shell = useBrowserSession({
     transport: shellTransport,
+    sessionKey: JSON.stringify([projectId, sessionId, session?.bootId]),
     // The hosted holder is the authenticated user, which this client never
     // sees. `holding` is passed to the shell explicitly instead, so it never
     // has to guess from an id it does not have.
@@ -609,10 +582,12 @@ export function HostedBrowserBody({
     active,
   });
   const forwarder = useMemo(() => {
-    if (!tokens || !holding) return null;
+    if (!active || !tokens || !holding) return null;
     const tabId = shell.state.activeTabId ?? undefined;
     return createInputForwarder(
       (events, seq) => {
+        if (!activeRef.current || document.visibilityState !== "visible")
+          return;
         paneFrameStats.noteInputSent(frameSeqRef.current, seq);
         if (socketSendable()) {
           // Ordered by the socket, so nothing here waits — see the
@@ -636,7 +611,7 @@ export function HostedBrowserBody({
       // nobody aimed, and an unordered press/release leaves a button held.
       { serialize: () => !socketSendable() },
     );
-  }, [tokens, holding, socketSendable, shell.state.activeTabId]);
+  }, [active, tokens, holding, socketSendable, shell.state.activeTabId]);
   useEffect(() => () => forwarder?.cancel(), [forwarder]);
 
   const send = useCallback(

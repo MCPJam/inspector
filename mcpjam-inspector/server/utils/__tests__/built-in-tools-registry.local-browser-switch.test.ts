@@ -35,7 +35,7 @@ const localCtx = {
   projectId: "project-1",
   chatSessionId: "session-1",
   browserApprovalDelivery: { kind: "attested" as const },
-  computerEngine: "local" as const,
+  browserEngine: "local" as const,
 };
 
 describe("resolveHostTools — the local browser kill switch", () => {

@@ -42,6 +42,7 @@ const mockReactiveHistoryState = vi.hoisted(() => ({
 }));
 
 const mockHostQueryState = vi.hoisted(() => ({ result: null as unknown }));
+const mockDefaultHostConfig = vi.hoisted(() => ({ result: null as unknown }));
 // Non-null `harnessId` means the chat executes inside a harness runtime
 // (Claude Code, Codex). Default null = an ordinary model host.
 const mockHarnessState = vi.hoisted(() => ({
@@ -203,6 +204,9 @@ vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     if (name === "hosts:getHost") return mockHostQueryState.result;
+    if (name === "hostConfigsV2:getProjectDefault") {
+      return mockDefaultHostConfig.result;
+    }
     // The reactive chat-history subscription. `useResumedThreadPersistence`
     // reconciles a failed/absent persist receipt against this, so it needs a
     // real cell rather than the blanket null the other queries get.
@@ -748,6 +752,7 @@ describe("PlaygroundMain", () => {
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
     mockHostQueryState.result = null;
+    mockDefaultHostConfig.result = null;
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
     mockHarnessState.harnessId = null;
@@ -804,6 +809,40 @@ describe("PlaygroundMain", () => {
   });
 
   describe("rendering", () => {
+    it("sends the project default's browser capability when no host is selected", () => {
+      mockConvexAuthState.isAuthenticated = true;
+      mockDefaultHostConfig.result = { builtInToolIds: ["browser"] };
+      mockSharedAppState.projects = { default: { sharedProjectId: "project-1" } };
+      try {
+        render(<PlaygroundMain {...defaultProps} />);
+        expect(capturedChatSessionOptions.builtInToolIds).toEqual(["browser"]);
+      } finally {
+        mockSharedAppState.projects = {};
+      }
+    });
+
+    it("does not inherit default capabilities while an explicit host loads or disables them", () => {
+      const hostId = "hlk3m9x2q7v5b8n1t4r6s0dc";
+      mockConvexAuthState.isAuthenticated = true;
+      mockDefaultHostConfig.result = { builtInToolIds: ["browser"] };
+      localStorage.setItem(
+        "mcp-previewed-host-id",
+        JSON.stringify({ "project-1": hostId })
+      );
+      mockHostQueryState.result = undefined;
+      const props = { ...defaultProps, activeProjectId: "project-1" };
+      const { rerender } = render(<PlaygroundMain {...props} />);
+      expect(capturedChatSessionOptions.builtInToolIds).toBeUndefined();
+
+      mockHostQueryState.result = {
+        hostId,
+        name: "Explicit host",
+        config: { builtInToolIds: [] },
+      };
+      rerender(<PlaygroundMain {...props} />);
+      expect(capturedChatSessionOptions.builtInToolIds).toEqual([]);
+    });
+
     it("renders the component", () => {
       render(<PlaygroundMain {...defaultProps} />);
 

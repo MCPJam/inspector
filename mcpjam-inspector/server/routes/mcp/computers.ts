@@ -1,3 +1,10 @@
+import {
+  BROWSER_CONSENT_HEADER,
+  grantLocalBrowserConsent,
+  revokeLocalBrowserConsent,
+  verifyLocalBrowserConsent,
+  verifyAndFingerprintBrowserConsent,
+} from "../../utils/computers/browser-consent.js";
 /**
  * Local-computer consent capability routes — /api/mcp/computers/local-consent.
  *
@@ -51,6 +58,7 @@ import {
   findLocalBrowserSession,
   findLocalBrowserSessionByKey,
   findLocalBrowserSessionForProject,
+  findLocalBrowserSessionForSession,
   type LiveLocalBrowser,
   localBrowserKeyFor,
   closeLocalBrowserSession,
@@ -59,6 +67,7 @@ import {
   resolveLocalBrowserRuntime,
   resolveLocalBrowserSurface,
   touchLocalBrowserSession,
+  watchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
 import { exportBrowserProfileArchive } from "../../services/browserd/profile-archive.js";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
@@ -115,6 +124,35 @@ const INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
  * a `content-type` claims is one redirect away from executing it.
  */
 const ARTIFACT_MEDIA_TYPES = new Set(["image/jpeg", "text/plain"]);
+
+// Metadata only: no Browser grant, launch, or shell permission is implied.
+computers.use("/browser-location", bearerAuthMiddleware, requireVerifiedAuth());
+computers.post("/browser-location", async (c) => {
+  if (c.get("guestId"))
+    return c.json({ error: "Sign in to resolve Browser location" }, 403);
+  const body = await c.req.json().catch(() => null);
+  if (
+    typeof body?.projectId !== "string" ||
+    typeof body?.conversationId !== "string"
+  )
+    return c.json({ error: "projectId and conversationId are required" }, 400);
+  try {
+    const engine = await new BrowserSessionService().conversationLocation({
+      projectId: body.projectId,
+      conversationId: body.conversationId,
+      bearer: c.req.header("authorization") ?? "",
+    });
+    return c.json({ engine });
+  } catch {
+    return c.json(
+      {
+        error: "Browser location could not be resolved",
+        code: "browser_runtime_unavailable",
+      },
+      503,
+    );
+  }
+});
 
 computers.use("/local-consent/*", bearerAuthMiddleware, requireVerifiedAuth());
 computers.use("/local-consent/*", async (c, next) => {
@@ -228,7 +266,13 @@ computers.post("/local-terminal-token", async (c) => {
 computers.use("/local-browser/*", bearerAuthMiddleware, requireVerifiedAuth());
 computers.use("/local-browser/*", async (c, next) => {
   if (!LOCAL_BROWSER_ENABLED) {
-    return c.json({ error: "Not found" }, 404);
+    return c.json(
+      {
+        error: "Browser is disabled on this server",
+        code: "browser_runtime_unavailable",
+      },
+      404,
+    );
   }
   if (c.get("guestId")) {
     return c.json({ error: "Guests cannot use the local browser" }, 403);
@@ -246,6 +290,25 @@ computers.use("/local-browser/*", async (c, next) => {
  * explain what it is asking for. Nothing here is machine-identifying — no
  * paths, no profile directories, no process ids.
  */
+computers.post("/local-browser/consent/grant", async (c) =>
+  c.json(await grantLocalBrowserConsent()),
+);
+computers.post("/local-browser/consent/verify", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  return c.json({
+    valid: await verifyLocalBrowserConsent(
+      typeof body?.token === "string" ? body.token : null,
+    ),
+  });
+});
+computers.post("/local-browser/consent/revoke", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  await revokeLocalBrowserConsent(
+    typeof body?.token === "string" ? body.token : null,
+  );
+  return c.json({ ok: true });
+});
+
 computers.get("/local-browser/status", async (c) => {
   const runtime = resolveLocalBrowserRuntime();
   // The desktop app IS a Chromium. Probing for a downloaded one would report
@@ -285,11 +348,18 @@ computers.get("/local-browser/status", async (c) => {
  * install` runs over the same browser cache.
  */
 computers.post("/local-browser/install", async (c) => {
-  const consent = await verifyLocalComputerConsent(
-    c.req.header(LOCAL_CONSENT_HEADER),
+  const consent = await verifyLocalBrowserConsent(
+    c.req.header(BROWSER_CONSENT_HEADER),
   );
   if (!consent) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   // Electron BRINGS its Chromium, and the packaged app has no `node_modules`
   // for the Playwright CLI to live in — so starting an install here does not
@@ -313,7 +383,9 @@ computers.post("/local-browser/install", async (c) => {
 async function requireConsent(c: {
   req: { header(name: string): string | undefined };
 }): Promise<string | null> {
-  return verifyAndFingerprintLocalConsent(c.req.header(LOCAL_CONSENT_HEADER));
+  return verifyAndFingerprintBrowserConsent(
+    c.req.header(BROWSER_CONSENT_HEADER),
+  );
 }
 
 /**
@@ -332,7 +404,14 @@ async function requireConsent(c: {
  */
 computers.post("/local-browser/watch", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     bootId?: unknown;
@@ -342,7 +421,7 @@ computers.post("/local-browser/watch", async (c) => {
   // A browser that has already gone is not an error worth showing anybody: the
   // pane's next measure will discover it for itself.
   if (!session) return c.json({ watching: false }, 404);
-  touchLocalBrowserSession(session.handle);
+  watchLocalBrowserSession(session.handle);
   // AND who has it. A pane that has been refused its input needs to know when
   // the other holder gives the browser back, and nothing on the frame socket
   // says so — the frames were flowing the whole time. Answering here rather
@@ -355,6 +434,38 @@ computers.post("/local-browser/watch", async (c) => {
   return c.json({ watching: true, lease: lease ?? { state: "free" } });
 });
 
+/** Reattach a conversation's pane without launching or navigating a browser. */
+computers.post("/local-browser/lookup", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Browser consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    sessionId?: unknown;
+  } | null;
+  let session: LiveLocalBrowser | undefined;
+  try {
+    session = findLocalBrowserSessionForSession(
+      typeof body?.projectId === "string" ? body.projectId : "",
+      typeof body?.sessionId === "string" ? body.sessionId : "",
+    );
+  } catch {
+    return c.json(
+      { error: "Invalid project or conversation for the browser" },
+      400,
+    );
+  }
+  if (!session) return c.json({ session: null });
+  const lease = await session.client.lease?.();
+  return c.json({
+    session: {
+      bootId: session.handle.bootId,
+      contextMode: session.handle.contextMode,
+      lease: lease ?? { state: "free" },
+    },
+  });
+});
+
 /**
  * Start (or find) this project's browser and report how to reach it.
  *
@@ -365,7 +476,14 @@ computers.post("/local-browser/watch", async (c) => {
  */
 computers.post("/local-browser/ensure", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
@@ -379,10 +497,65 @@ computers.post("/local-browser/ensure", async (c) => {
   // the wrong one.
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   try {
+    const service = new BrowserSessionService();
+    const bearer = c.req.header("authorization") ?? "";
+    const logical =
+      sessionId && service.enabled
+        ? await service.resolveSession({
+            owner: { kind: "conversation", id: sessionId },
+            projectId,
+            bearer,
+            engine: "local",
+            profile: "blank",
+          })
+        : null;
+    if (sessionId && service.enabled && !logical) {
+      return c.json(
+        {
+          error: "The Browser session could not be resolved",
+          code: "browser_runtime_unavailable",
+        },
+        503,
+      );
+    }
+    if (logical?.box && !("localKey" in logical.box)) {
+      return c.json(
+        {
+          error: "Start a new chat to change Browser location",
+          code: "browser_location_mismatch",
+        },
+        409,
+      );
+    }
     const handle = await ensureLocalBrowserSession({
       projectId,
       ...(sessionId ? { sessionId } : {}),
     });
+    if (logical) {
+      const bound = await service.bindBox({
+        sessionId: logical.sessionId,
+        projectId,
+        bearer,
+        box: { localKey: localBrowserKeyFor({ projectId, sessionId }) },
+      });
+      if (
+        !bound ||
+        !(await service.recordBoot({
+          sessionId: logical.sessionId,
+          projectId,
+          bearer,
+          bootId: handle.bootId,
+        }))
+      ) {
+        return c.json(
+          {
+            error: "The Browser session could not be bound",
+            code: "browser_runtime_unavailable",
+          },
+          503,
+        );
+      }
+    }
     const lease = await handle.client.lease?.();
     return c.json({
       bootId: handle.bootId,
@@ -390,10 +563,29 @@ computers.post("/local-browser/ensure", async (c) => {
       lease: lease ?? { state: "free" },
     });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("browser_location_mismatch")
+    ) {
+      return c.json(
+        {
+          error: "Start a new chat to change Browser location",
+          code: "browser_location_mismatch",
+        },
+        409,
+      );
+    }
     if (error instanceof LocalBrowserUnavailableError) {
       // A typed refusal the pane can act on: "install Chromium", "another
       // process has this profile" — never a stack trace.
-      return c.json({ error: error.message, code: error.code }, 409);
+      return c.json(
+        {
+          error: error.message,
+          code: "browser_runtime_unavailable",
+          reason: error.code,
+        },
+        503,
+      );
     }
     return c.json({ error: "Invalid project for the local browser" }, 400);
   }
@@ -402,7 +594,14 @@ computers.post("/local-browser/ensure", async (c) => {
 /** Export one local persistent session, then leave it closed for a clean copy. */
 computers.post("/local-browser/profile/export", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     bootId?: unknown;
@@ -491,7 +690,14 @@ computers.post("/local-browser/profile/export", async (c) => {
 computers.post("/local-browser/token", async (c) => {
   const consentFingerprint = await requireConsent(c);
   if (!consentFingerprint) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
@@ -521,7 +727,14 @@ computers.post("/local-browser/token", async (c) => {
  */
 computers.post("/local-browser/lease", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     bootId?: unknown;
@@ -570,7 +783,14 @@ computers.post("/local-browser/lease", async (c) => {
  */
 computers.post("/local-browser/input", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     bootId?: unknown;
@@ -635,7 +855,14 @@ computers.post("/local-browser/input", async (c) => {
  */
 computers.post("/local-browser/state", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     bootId?: unknown;
@@ -672,7 +899,14 @@ computers.post("/local-browser/state", async (c) => {
  */
 computers.post("/local-browser/pane-command", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     bootId?: unknown;
@@ -712,10 +946,10 @@ computers.post("/local-browser/pane-command", async (c) => {
       outcome.reason === "lease_held"
         ? 423
         : outcome.reason === "page_changed"
-          ? 409
-          : outcome.reason === "unsupported"
-            ? 501
-            : 502;
+        ? 409
+        : outcome.reason === "unsupported"
+        ? 501
+        : 502;
     return c.json(
       {
         error: outcome.reason,
@@ -741,7 +975,14 @@ computers.post("/local-browser/pane-command", async (c) => {
  */
 computers.post("/local-browser/viewport", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     bootId?: unknown;
@@ -786,7 +1027,14 @@ computers.post("/local-browser/viewport", async (c) => {
  */
 computers.post("/local-browser/page-tools", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
@@ -928,8 +1176,8 @@ function liveBrowserFor(
   const live = stored.browserKey
     ? findLocalBrowserSessionByKey(stored.browserKey)
     : stored.profile === "persistent"
-      ? findLocalBrowserSessionForProject(stored.projectId)
-      : undefined;
+    ? findLocalBrowserSessionForProject(stored.projectId)
+    : undefined;
   // The key is stored, not parsed, so this is the one place that can still
   // catch a record pointing at another project's browser. `stored.projectId` is
   // the validated key the session was opened under.
@@ -946,7 +1194,14 @@ function liveBrowserFor(
  */
 computers.post("/local-browser/session", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
@@ -1191,7 +1446,14 @@ computers.post("/local-browser/session", async (c) => {
  */
 computers.post("/local-browser/sessions", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
@@ -1216,7 +1478,14 @@ computers.post("/local-browser/sessions", async (c) => {
  */
 computers.post("/local-browser/command", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
@@ -1282,7 +1551,14 @@ computers.post("/local-browser/command", async (c) => {
  */
 computers.post("/local-browser/note", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
@@ -1325,7 +1601,14 @@ computers.post("/local-browser/note", async (c) => {
  */
 computers.post("/local-browser/trace", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
@@ -1390,7 +1673,14 @@ computers.post("/local-browser/trace", async (c) => {
 /** One artifact payload, by the id a row names. */
 computers.post("/local-browser/artifact", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
@@ -1469,7 +1759,14 @@ computers.post("/local-browser/artifact", async (c) => {
  */
 computers.post("/local-browser/close", async (c) => {
   if (!(await requireConsent(c))) {
-    return c.json({ error: "Local computer consent is required" }, 403);
+    return c.json(
+      {
+        error:
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        code: "browser_consent_required",
+      },
+      403,
+    );
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;

@@ -1,3 +1,4 @@
+import { verifyLocalBrowserConsent } from "../../../server/utils/computers/browser-consent.js";
 import { ipcMain, WebContentsView } from "electron";
 import type { BrowserWindow } from "electron";
 import log from "electron-log";
@@ -43,6 +44,7 @@ import {
 
 /** What the renderer is allowed to say about where it wants the view. */
 export interface AgentBrowserViewportRequest {
+  consentToken?: string | null;
   bootId: string;
   /** This pane's lease identity, compared against the daemon's holder. */
   holder?: string;
@@ -68,7 +70,7 @@ export interface AgentBrowserViewportResult {
    * holds this browser, and a visible native view of a page they are typing
    * into is an observation.
    */
-  reason?: "unknown" | "no_window" | "bad_bounds" | "lease";
+  reason?: "unknown" | "no_window" | "bad_bounds" | "lease" | "consent";
 }
 
 /**
@@ -135,6 +137,7 @@ export function resolveViewportBounds(
 
 /** Everything the handlers touch, injectable so a test needs no Electron. */
 export interface AgentBrowserDeps {
+  verifyConsent?: typeof verifyLocalBrowserConsent;
   surfaceFor?: (bootId: string) => ContextSurface | undefined;
   /** Does this Electron have the constructors the native surface needs? */
   nativeSurfaceSupported?: () => boolean;
@@ -145,6 +148,8 @@ export function registerAgentBrowserListeners(
   getMainWindow: () => BrowserWindow | null,
   deps: AgentBrowserDeps = {},
 ): void {
+  const consentWatches = new Map<string, ReturnType<typeof setInterval>>();
+  const verifyConsent = deps.verifyConsent ?? verifyLocalBrowserConsent;
   const surfaceFor = deps.surfaceFor ?? contextSurfaceFor;
   const ipc = deps.ipc ?? ipcMain;
   // Asked of the Electron this app is actually running, not of its version: a
@@ -174,16 +179,21 @@ export function registerAgentBrowserListeners(
    * a frame socket — and a pane that opened one and then discovered it had a
    * native surface would have paid for an encode nobody looks at.
    */
-  ipc.handle("agent-browser:capability", (event) => {
-    if (!trusted(event, "agent-browser:capability")) {
-      return { available: false } as const;
-    }
-    return { available: supported() } as const;
-  });
+  ipc.handle(
+    "agent-browser:capability",
+    async (event, consentToken?: string) => {
+      if (!trusted(event, "agent-browser:capability")) {
+        return { available: false } as const;
+      }
+      return {
+        available: (await verifyConsent(consentToken)) && supported(),
+      } as const;
+    },
+  );
 
   ipc.handle(
     "agent-browser:set-viewport",
-    (event, request: AgentBrowserViewportRequest) => {
+    async (event, request: AgentBrowserViewportRequest) => {
       const refused = (
         reason: AgentBrowserViewportResult["reason"],
       ): AgentBrowserViewportResult => ({
@@ -202,6 +212,35 @@ export function registerAgentBrowserListeners(
       // Reported rather than thrown: the pane's answer is to fall back to
       // frames, not to show an error over a browser that is simply not there.
       if (!surface) return refused("unknown");
+
+      if (!(await verifyConsent(request.consentToken))) {
+        surface.hide();
+        return refused("consent");
+      }
+      const priorWatch = consentWatches.get(bootId);
+      if (priorWatch) clearInterval(priorWatch);
+      consentWatches.delete(bootId);
+      // Native views have no frame socket to re-check consent. Stop their
+      // display and input after revocation even if the renderer goes idle.
+      const timer = setInterval(() => {
+        void verifyConsent(request.consentToken)
+          .then((valid) => {
+            if (consentWatches.get(bootId) !== timer) return;
+            if (!valid || !surface.isShown()) {
+              surface.hide();
+              clearInterval(timer);
+              consentWatches.delete(bootId);
+            }
+          })
+          .catch(() => {
+            if (consentWatches.get(bootId) !== timer) return;
+            surface.hide();
+            clearInterval(timer);
+            consentWatches.delete(bootId);
+          });
+      }, 1000);
+      timer.unref?.();
+      consentWatches.set(bootId, timer);
 
       surface.setPaneHolder(
         typeof request.holder === "string" && request.holder
@@ -237,9 +276,9 @@ export function registerAgentBrowserListeners(
       return {
         shown,
         inputAllowed: surface.inputAllowed(),
-        // Not shown despite a good rectangle means the LEASE refused it, which
-        // is the one refusal the pane has something to say about.
-        ...(shown ? {} : { reason: "lease" as const }),
+        // A surface may exist before its first tab does. Only blame another
+        // holder when the lease actually refuses observation.
+        ...(surface.visibilityAllowed() ? {} : { reason: "lease" as const }),
       };
     },
   );

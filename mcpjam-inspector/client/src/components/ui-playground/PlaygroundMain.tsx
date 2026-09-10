@@ -1,3 +1,4 @@
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 /**
  * PlaygroundMain
  *
@@ -810,6 +811,20 @@ export function PlaygroundMain({
   // chat hook. Hosted mode / no local engine ⇒ cloud, and the turn sends
   // nothing extra.
   const playgroundComputerEngine = useComputerEngine(convexProjectId);
+  const playgroundBrowserEngine = useBrowserEngine(convexProjectId);
+  const personalBrowserEngineOption = useMemo(
+    () => ({
+      engine: playgroundBrowserEngine.engine,
+      consentToken: playgroundBrowserEngine.localAvailable
+        ? playgroundBrowserEngine.consent.token
+        : null,
+    }),
+    [
+      playgroundBrowserEngine.engine,
+      playgroundBrowserEngine.localAvailable,
+      playgroundBrowserEngine.consent.token,
+    ],
+  );
   // The resolved engine passed to every chat session on this tab — the root
   // and each comparison column — so "This machine" runs bash consistently
   // across model/host comparison, not just the primary session.
@@ -908,6 +923,18 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  const projectDefaultHostConfig = useQuery(
+    "hostConfigsV2:getProjectDefault" as never,
+    isConvexAuthenticated && convexProjectId
+      ? ({ projectId: convexProjectId } as never)
+      : "skip",
+  ) as HostConfigDtoV2 | null | undefined;
+  // Match the Tools and Browser rails: no explicit selection means the
+  // project default. An explicit host still loading must not inherit another
+  // host's capabilities, and an explicit empty list must stay empty.
+  const effectiveBuiltInToolIds = previewedHostId
+    ? previewedHost?.config?.builtInToolIds
+    : projectDefaultHostConfig?.builtInToolIds;
   // A newly selected host is unknown for one render while its config loads.
   // Fail closed in that gap: it may resolve to Codex or Claude Code, whose
   // opaque harness sessions cannot be safely rewound. Ordinary model hosts get
@@ -965,7 +992,7 @@ export function PlaygroundMain({
     harnessId: previewedHarnessId,
     hostedMode: HOSTED_MODE,
     environmentId: isEnvironmentMode
-      ? (playgroundEnvironment.environmentId ?? null)
+      ? playgroundEnvironment.environmentId ?? null
       : null,
     requiresWebChatApi: isEnvironmentMode,
     // A shared transcript and a replayed one are both somebody else's turn, or
@@ -990,7 +1017,7 @@ export function PlaygroundMain({
     // tell "not answered yet" from "signed out" — it used to say `needs-signin`
     // for that whole window, to a user who was signed in.
     userKey: isConvexAuthenticated
-      ? (currentUserForSender?._id ?? undefined)
+      ? currentUserForSender?._id ?? undefined
       : null,
     inScope: localHarnessInScope,
     scopeKey: localHarnessScopeKey,
@@ -1181,16 +1208,17 @@ export function PlaygroundMain({
       previewedHost?.config?.modelVisibleMcpToolResults,
     mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     // Same live-source pattern: built-in tool attachments flow from the
-    // previewed host's hostConfig. The server re-resolves via the shared
+    // effective host's hostConfig. The server re-resolves via the shared
     // execution-context helper, so this also flows through scenario sessions
     // (where the persisted host config wins via the runtime-config fetch).
-    builtInToolIds: previewedHost?.config?.builtInToolIds,
+    builtInToolIds: effectiveBuiltInToolIds,
     // For the RAW view of a reopened session only. Live turns stream the real
     // advertised set; a rehydrated one has nothing to show, and the browser is
     // the capability most likely to be a host's ONLY one — so without this Raw
     // reads `"tools": {}` beside a conversation that drove a browser.
     builtInToolDefinitions: playgroundBrowserTools.tools,
     personalComputerEngine: personalComputerEngineOption,
+    personalBrowserEngine: personalBrowserEngineOption,
     localHarnessExecution: localHarnessExecutionOption,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
@@ -1920,7 +1948,7 @@ export function PlaygroundMain({
   // axis only — the input model applies to every column.
   const leadHostId = selectedHostIds[0] ?? null;
   const leadHost = leadHostId
-    ? (resolvedSelectedHosts.find((host) => host.hostId === leadHostId) ?? null)
+    ? resolvedSelectedHosts.find((host) => host.hostId === leadHostId) ?? null
     : null;
   const sharedHostColumnModel = selectedModel ?? null;
 
@@ -2048,7 +2076,7 @@ export function PlaygroundMain({
         harnessId: column.hostConfig?.harness ?? null,
         hostedMode: HOSTED_MODE,
         environmentId: isEnvironmentMode
-          ? (playgroundEnvironment.environmentId ?? null)
+          ? playgroundEnvironment.environmentId ?? null
           : null,
         requiresWebChatApi: isEnvironmentMode,
         sharedRun: isSharedSession || viewingHistoryReplay,
@@ -2226,7 +2254,7 @@ export function PlaygroundMain({
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming
       ? liveTraceEnvelope
-      : (preludeTraceEnvelope ?? liveTraceEnvelope);
+      : preludeTraceEnvelope ?? liveTraceEnvelope;
   // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
   // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
   const showTraceViewTabs =
@@ -3199,8 +3227,8 @@ export function PlaygroundMain({
 
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean }) => {
-      if (isStreaming) return;
-      if (!(await ensureDiscardDraftConfirmed())) return;
+      if (isStreaming) return false;
+      if (!(await ensureDiscardDraftConfirmed())) return false;
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
       }
@@ -3214,6 +3242,7 @@ export function PlaygroundMain({
       resetMultiModelSessions();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
+      return true;
     },
     [
       cancelPendingHistorySelection,
@@ -5599,6 +5628,7 @@ export function PlaygroundMain({
                             hostId: column.compareId,
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
+                          personalBrowserEngine={personalBrowserEngineOption}
                           personalComputerEngine={personalComputerEngineOption}
                           localHarnessExecution={
                             localHarnessExecutionByColumn.get(
@@ -5695,8 +5725,7 @@ export function PlaygroundMain({
                                   ?.modelVisibleMcpToolResults,
                               mcpToolResultImageRendering:
                                 effectiveMcpToolResultImageRendering,
-                              builtInToolIds:
-                                previewedHost?.config?.builtInToolIds,
+                              builtInToolIds: effectiveBuiltInToolIds,
                             }}
                             hostedContext={{
                               projectId: convexProjectId,
@@ -5706,6 +5735,7 @@ export function PlaygroundMain({
                                 ? { hostId: previewedHostId }
                                 : {}),
                             }}
+                            personalBrowserEngine={personalBrowserEngineOption}
                             personalComputerEngine={
                               personalComputerEngineOption
                             }

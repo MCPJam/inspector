@@ -104,6 +104,7 @@ export interface ElectronLike {
     id?: number;
   };
   WebContentsView?: new (options: Record<string, unknown>) => SurfaceView & {
+    getBounds(): { x: number; y: number; width: number; height: number };
     webContents: PageWebContents & {
       setWindowOpenHandler?(
         handler: (details: { url: string; disposition?: string }) => {
@@ -139,6 +140,7 @@ export interface ElectronWindowLike {
   isDestroyed(): boolean;
   destroy(): void;
   focus?(): void;
+  setContentSize?(width: number, height: number): void;
 }
 
 /**
@@ -282,6 +284,8 @@ export async function launchElectronContext(
     const shim: ElectronWindowLike = {
       ...(view.webContents.id !== undefined ? { id: view.webContents.id } : {}),
       webContents: view.webContents,
+      setContentSize: (width, height) =>
+        view.setBounds({ ...view.getBounds(), width, height }),
       isDestroyed: () => view.webContents.isDestroyed?.() ?? false,
       destroy: () => {
         options.surface?.forget(view);
@@ -355,6 +359,12 @@ export async function launchElectronContext(
         if (!window.isDestroyed()) window.destroy();
       },
       onBringToFront: () => window.focus?.(),
+      ...(window.setContentSize
+        ? {
+            onResize: (size: { width: number; height: number }) =>
+              window.setContentSize!(size.width, size.height),
+          }
+        : {}),
     });
 
     window.webContents.setWindowOpenHandler?.((details) => {
@@ -408,7 +418,13 @@ export async function launchElectronContext(
       // enables CDP domains; DOM.enable can otherwise wait forever. Popups use
       // adopt() directly because Electron starts their original navigation.
       const page = adopt(window);
-      await window.webContents.loadURL("about:blank");
+      try {
+        await window.webContents.loadURL("about:blank");
+      } catch (error) {
+        forget(window);
+        if (!window.isDestroyed()) window.destroy();
+        throw error;
+      }
       return page;
     },
     isConnected: () => !closed,
