@@ -140,7 +140,10 @@ const {
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
-        "ready" | "auth-loading" | "project-loading" | "logged-out",
+        | "ready"
+        | "auth-loading"
+        | "project-loading"
+        | "logged-out",
     },
     mockMCPSidebar: vi.fn(() => <div />),
     mockOAuthFlowTabState: {
@@ -218,6 +221,7 @@ function mockSeenGuestUser() {
 
 function mockUnseenOnboardingState() {
   localStorage.removeItem("mcp-onboarding-state");
+  localStorage.removeItem("mcp-first-run-server-choice-state");
 }
 
 vi.mock("convex/react", () => ({
@@ -504,6 +508,14 @@ describe("App hosted OAuth callback handling", () => {
     localStorage.setItem(
       "mcp-onboarding-state",
       JSON.stringify({ status: "completed", completedAt: Date.now() }),
+    );
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "completed",
+        shownAt: Date.now(),
+        completedAt: Date.now(),
+      }),
     );
     sessionStorage.clear();
     vi.stubGlobal("__APP_VERSION__", "test");
@@ -3321,6 +3333,60 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
+  it("shows first-run onboarding from a project-scoped Home route", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/p/k5700000000000000000000000a/home");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe(
+      "/p/k5700000000000000000000000a/home",
+    );
+  });
+
+  it("shows first-run onboarding over a project-scoped Servers route", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState(
+      {},
+      "",
+      "/p/k5700000000000000000000000a/servers",
+    );
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe(
+      "/p/k5700000000000000000000000a/servers",
+    );
+  });
+
   it("routes a fresh Playground visitor through the explicit server-choice flow", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -3388,7 +3454,9 @@ describe("App hosted OAuth callback handling", () => {
       }),
     );
     expect(
-      JSON.parse(localStorage.getItem("mcp-onboarding-state") ?? "{}"),
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
     ).toEqual(expect.objectContaining({ status: "started" }));
 
     appState.appState.servers = {
@@ -3555,11 +3623,13 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(window.location.pathname).toBe("/");
     expect(
-      JSON.parse(localStorage.getItem("mcp-onboarding-state") ?? "{}"),
+      JSON.parse(
+        localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+      ),
     ).toEqual({ status: "dismissed" });
   });
 
-  it("does not auto-route a guest row already marked as having seen onboarding", async () => {
+  it("does not let the legacy remote seen flag hide server choice", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3573,10 +3643,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/servers");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
@@ -3812,6 +3885,7 @@ describe("App hosted OAuth callback handling", () => {
       "mcp-onboarding-state",
       JSON.stringify({ status: "seen", shownAt: Date.now() }),
     );
+    localStorage.removeItem("mcp-first-run-server-choice-state");
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
     mockHostedShellGateState.value = "ready";
@@ -3952,18 +4026,18 @@ describe("App hosted OAuth callback handling", () => {
       ref === "users:getCurrentUser"
         ? existingConvexUser
         : ref === "hosts:listHosts"
-          ? [
-              {
-                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
-                name: "Slack",
-                hostConfigId: "host-config-slack",
-                modelId: "claude-sonnet-4",
-                serverCount: 0,
-                createdAt: 0,
-                updatedAt: 0,
-              },
-            ]
-          : undefined,
+        ? [
+            {
+              hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+              name: "Slack",
+              hostConfigId: "host-config-slack",
+              modelId: "claude-sonnet-4",
+              serverCount: 0,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          ]
+        : undefined,
     );
     localStorage.setItem(
       "mcp-previewed-host-id",

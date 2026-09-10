@@ -7,6 +7,11 @@ import {
   markOnboardingDismissed,
   markOnboardingStarted,
   markOnboardingShown,
+  isFirstRunServerChoiceEligible,
+  markFirstRunServerChoiceDismissed,
+  markFirstRunServerChoiceStarted,
+  markFirstRunServerChoiceWelcomeAcknowledged,
+  markFirstRunServerChoiceCompleted,
 } from "../onboarding-state";
 
 describe("onboarding-state", () => {
@@ -27,7 +32,7 @@ describe("onboarding-state", () => {
     it("marks onboarding as started before the NUX is shown", () => {
       markOnboardingStarted();
       expect(readOnboardingState()).toEqual(
-        expect.objectContaining({ status: "started" })
+        expect.objectContaining({ status: "started" }),
       );
     });
 
@@ -35,7 +40,10 @@ describe("onboarding-state", () => {
       markOnboardingStarted();
       markOnboardingShown();
       expect(readOnboardingState()).toEqual(
-        expect.objectContaining({ status: "seen", shownAt: expect.any(Number) })
+        expect.objectContaining({
+          status: "seen",
+          shownAt: expect.any(Number),
+        }),
       );
     });
 
@@ -58,7 +66,7 @@ describe("onboarding-state", () => {
     it("returns null for invalid status", () => {
       localStorage.setItem(
         "mcp-onboarding-state",
-        JSON.stringify({ status: "invalid" })
+        JSON.stringify({ status: "invalid" }),
       );
       expect(readOnboardingState()).toBeNull();
     });
@@ -183,6 +191,37 @@ describe("onboarding-state", () => {
     it("returns false when onboarding was visibly shown", () => {
       writeOnboardingState({ status: "seen", shownAt: Date.now() });
       expect(isFirstRunEligible(false, "")).toBe(false);
+    });
+  });
+
+  describe("isFirstRunServerChoiceEligible", () => {
+    it("does not inherit completion from the legacy automatic flow", () => {
+      writeOnboardingState({ status: "seen", shownAt: Date.now() });
+
+      expect(isFirstRunServerChoiceEligible(false, "home")).toBe(true);
+    });
+
+    it("stays hidden after the user explicitly chooses setup later", () => {
+      markFirstRunServerChoiceDismissed();
+
+      expect(isFirstRunServerChoiceEligible(false, "home")).toBe(false);
+    });
+
+    it("does not hide the welcome after an automatic legacy completion", () => {
+      localStorage.setItem(
+        "mcp-first-run-server-choice-state",
+        JSON.stringify({ status: "completed", completedAt: Date.now() }),
+      );
+
+      expect(isFirstRunServerChoiceEligible(false, "home")).toBe(true);
+    });
+
+    it("stays hidden after an explicit welcome and successful connection", () => {
+      markFirstRunServerChoiceWelcomeAcknowledged();
+      markFirstRunServerChoiceStarted();
+      markFirstRunServerChoiceCompleted();
+
+      expect(isFirstRunServerChoiceEligible(false, "home")).toBe(false);
     });
   });
 });

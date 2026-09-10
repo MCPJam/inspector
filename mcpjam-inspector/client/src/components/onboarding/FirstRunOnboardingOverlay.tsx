@@ -42,6 +42,7 @@ interface FirstRunOnboardingOverlayProps {
   connectionState: FirstRunConnectionState;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
+  onWelcomeAcknowledged: () => void;
   onSkip: () => void;
 }
 
@@ -57,6 +58,7 @@ export function FirstRunOnboardingOverlay({
   connectionState,
   onConnectOwnServer,
   onConnectDemo,
+  onWelcomeAcknowledged,
   onSkip,
 }: FirstRunOnboardingOverlayProps) {
   const prefersReducedMotion = useReducedMotion();
@@ -78,8 +80,9 @@ export function FirstRunOnboardingOverlay({
   }, [open]);
 
   const continueToChoice = useCallback(() => {
+    onWelcomeAcknowledged();
     setStep("choose");
-  }, []);
+  }, [onWelcomeAcknowledged]);
 
   const connectWithInitialDefaults = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
