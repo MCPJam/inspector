@@ -251,8 +251,11 @@ export function createWebMcpFramesWsHandler(
     const pendingInput = new Set<number>();
     let lastInputSeq = -1;
 
+    let unregisterInputDrain: (() => void) | undefined;
     const teardown = () => {
       closed = true;
+      unregisterInputDrain?.();
+      unregisterInputDrain = undefined;
       input?.cancel();
       input = undefined;
       pendingInput.clear();
@@ -322,6 +325,7 @@ export function createWebMcpFramesWsHandler(
               await runtime.dispatchInput(
                 events.map(fromBrowserPaneInput),
                 () => closed || ws.readyState !== 1,
+                "socket",
               );
               return { ok: true };
             },
@@ -331,6 +335,10 @@ export function createWebMcpFramesWsHandler(
                 ws.send(JSON.stringify({ type: "input_ack", ...payload }));
             },
           });
+          const relay = input;
+          unregisterInputDrain = runtime.registerSocketInputDrain(() =>
+            relay.drain(),
+          );
           ws.send(
             JSON.stringify({ type: "capabilities", features: ["input"] }),
           );

@@ -57,6 +57,8 @@ export type BrowserPaneInputEvent =
  * at the far end, and bounds what one socket message can cost.
  */
 export const BROWSER_INPUT_BATCH_LIMIT = 64;
+/** Keep pasted text within every supported input endpoint's event budget. */
+export const BROWSER_INPUT_TEXT_MAX_CHARS = 4 * 1024;
 
 /**
  * An optional field is either absent or the right kind of value.
@@ -73,7 +75,8 @@ export const BROWSER_INPUT_BATCH_LIMIT = 64;
  */
 function optionalInteger(value: unknown): boolean {
   return (
-    value === undefined || (typeof value === "number" && Number.isInteger(value))
+    value === undefined ||
+    (typeof value === "number" && Number.isInteger(value))
   );
 }
 
@@ -120,7 +123,10 @@ export function isBrowserPaneInputEvent(
         optionalString(event.code)
       );
     case "text":
-      return typeof event.text === "string";
+      return (
+        typeof event.text === "string" &&
+        event.text.length <= BROWSER_INPUT_TEXT_MAX_CHARS
+      );
     default:
       return false;
   }

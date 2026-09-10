@@ -1,10 +1,9 @@
-import type React from "react";
+import { useViewportReporter } from "@/lib/browser-pane/use-viewport-reporter";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Globe, RotateCw, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
-import { cn } from "@/lib/utils";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { ThreePanelLayout } from "@/components/ui/three-panel-layout";
@@ -25,10 +24,9 @@ import {
   parseHostedSessionId,
   WEBMCP_VIEWPORT,
 } from "@/shared/webmcp-inspector-protocol";
-import {
-  createInputForwarder,
-  type InputForwarder,
-} from "@/lib/webmcp-inspector/input-forwarder";
+import { createInputForwarder, type PaneFrame } from "@/lib/browser-pane/input";
+import { fromBrowserPaneInput } from "@/shared/webmcp-input";
+import { BrowserPaneSurface } from "@/components/browser/BrowserPaneSurface";
 import type {
   WebMcpActivityEntry,
   WebMcpInputEvent,
@@ -744,6 +742,7 @@ export function WebmcpInspectorTab() {
           </div>
         ) : live ? (
           <SubscribedViewportPane
+            key={session?.sessionId}
             streaming={streaming}
             transport={session?.viewportTransport}
             behaviour={behaviour}
@@ -758,7 +757,9 @@ export function WebmcpInspectorTab() {
         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
           <Globe className="h-5 w-5 text-muted-foreground" />
         </div>
-        <p className="mb-1 text-xs font-semibold text-foreground">Open a page</p>
+        <p className="mb-1 text-xs font-semibold text-foreground">
+          Open a page
+        </p>
         <p className="text-xs font-medium text-muted-foreground">
           {hostedBlocked
             ? "A hosted browser runs on your own MCPJam computer, so it needs a signed-in account and a project to run under. Pick a project to get started — and note it cannot reach anything on your own network, including localhost."
@@ -806,9 +807,7 @@ export function WebmcpInspectorTab() {
                   ? "Opening…"
                   : "Open browser"
             }
-            primaryDisabled={
-              starting || openingSurface || hostedBlocked
-            }
+            primaryDisabled={starting || openingSurface || hostedBlocked}
             primaryTitle={
               hostedBlocked
                 ? "Sign in and pick a project first — the browser runs on that project's computer."
@@ -903,309 +902,112 @@ function ViewportPane({
   streaming: boolean;
   transport: WebMcpViewportTransport | undefined;
   behaviour: ViewportBehaviour;
-  /**
-   * RETURNS the store's promise, and that return value is load-bearing: the
-   * forwarder uses it as its in-flight clock for wheel flushing. Wrapping this
-   * in `void` would leave every scroll looking instantaneous to the forwarder
-   * and put one request on the wire per wheel event.
-   */
+  /** The promise bounds outstanding batches; the ordered socket pipelines them. */
   onInput: (events: WebMcpInputEvent[]) => void | Promise<void>;
 }) {
-  // The screenshot is a FALLBACK for a stream that is meant to be running, not
-  // a still to leave up once it stops. With Live view off, holding it would
-  // freeze the pane on an old picture still labelled "live" — and the "Live
-  // view is off" placeholder would never appear, because a source was present.
-  // The frame carries a ready-to-render `src` — a data URI when it came over
-  // SSE, a blob URL when it came over the socket — so the pane is indifferent
-  // to which transport delivered it. The screenshot fallback is still bare
-  // base64 and is wrapped here.
-  const source =
-    frame?.src ??
-    (streaming && fallbackScreenshot
-      ? `data:image/jpeg;base64,${fallbackScreenshot}`
-      : undefined);
-  /**
-   * Whether this pane drives the page. Read from the one exhaustive table
-   * rather than re-derived here, so a new transport kind cannot answer this
-   * question differently from the rest of the screen.
-   */
-  const interactive = behaviour.drivesPage;
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const paneRef = useRef<HTMLDivElement | null>(null);
-  const [focused, setFocused] = useState(false);
-
-  /**
-   * Aspect ratio, from the frame when there is one and from the transport
-   * before that.
-   *
-   * The transport reports the surface at session start precisely so the box is
-   * the right shape before the first frame: a pane that resizes a moment after
-   * it appears scales any click landing in that moment against the wrong box.
-   */
   const surface = frame
-    ? // CSS pixels, not the frame's device pixels: the aspect ratio is the same
-      // either way, but this box is also what pointer coordinates are scaled
-      // against, and the page's own coordinate space is CSS pixels. A frame
-      // captured at 2x reported in device pixels would double every click.
-      { width: frame.cssWidth, height: frame.cssHeight }
+    ? { width: frame.cssWidth, height: frame.cssHeight }
     : transportSurface(transport);
-
-  const frameSizeRef = useRef(surface);
-  frameSizeRef.current = surface;
-  /**
-   * Keys whose key-DOWN was withheld, so the matching key-up can be withheld
-   * too. See the paste handling in `onKeyDown`.
-   *
-   * Remembered rather than recomputed, because the modifier snapshot on the
-   * key-up is not the one from the key-down: releasing Ctrl before V makes the
-   * `v` key-up look like an ordinary keystroke, and forwarding it hands the
-   * page a release for a key it never saw pressed. The mirror case — pressing
-   * V, then Ctrl, then releasing V — is the same bug the other way round, and
-   * a set gets both right where a predicate cannot.
-   */
-  const withheldKeys = useRef(new Set<string>());
-
-  const forwarder = useMemo<InputForwarder>(
-    () =>
-      createInputForwarder({
-        send: onInput,
-        preserveGestureBoundaries: !HOSTED_MODE && window.isElectron !== true,
-        geometry: () => {
-          const element = imageRef.current;
-          if (!element) return undefined;
-          const rect = element.getBoundingClientRect();
-          return { rect, frame: frameSizeRef.current };
-        },
-      }),
+  // ViewportPane is keyed by sessionId; a retired pane cancels its report.
+  const resize = useViewportReporter((size) => {
+    if (!behaviour.drivesPage) return;
+    return useWebmcpInspectorStore
+      .getState()
+      .sendCommand({ type: "set_viewport", ...size });
+  }, behaviour.drivesPage);
+  const inputLifecycle = useMemo(
+    () => ({
+      forwarder: createInputForwarder((events) =>
+        onInput(events.map(fromBrowserPaneInput)),
+      ),
+      attached: false,
+    }),
     [onInput],
   );
-
-  /**
-   * Give up every piece of input state at once: the forwarder's held keys and
-   * buttons, and the paste keys whose release is still owed.
-   *
-   * One function rather than two calls at four sites, because forgetting the
-   * second half reintroduces exactly what withholding exists to prevent. A
-   * `withheldKeys` left populated across a blur swallows the NEXT ordinary `v`
-   * key-up — whose key-down WAS forwarded — and the page holds that key down
-   * for the rest of the session.
-   */
-  const releaseAll = useCallback(() => {
-    withheldKeys.current.clear();
-    forwarder.releaseHeld();
-  }, [forwarder]);
-
-  useEffect(
-    () => () => {
-      // RELEASE, then dispose. Unmounting is not a blur — tabbing away from
-      // this screen fires no blur on the pane — so disposing alone would clear
-      // the held set locally while the page went on believing a key or button
-      // was still down, for the rest of the session.
-      releaseAll();
-      forwarder.dispose();
-    },
-    [forwarder, releaseAll],
-  );
-
-  /**
-   * Wheel, attached natively and NON-PASSIVELY.
-   *
-   * React registers `wheel` as a passive listener at its root, so
-   * `preventDefault()` inside an `onWheel` prop is ignored — and without it the
-   * same gesture scrolls the inspector's own column, sliding the pane out from
-   * under the person while the page inside it also scrolls. The only way to
-   * consume the event is to register it directly.
-   */
+  const { forwarder } = inputLifecycle;
   useEffect(() => {
-    const element = paneRef.current;
-    if (!element || !interactive) return;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      forwarder.wheel(event);
+    inputLifecycle.attached = true;
+    return () => {
+      inputLifecycle.attached = false;
+      // Child cleanup still needs to release held input. Strict Mode may also
+      // reattach this same forwarder before the deferred cleanup runs.
+      queueMicrotask(() => {
+        if (!inputLifecycle.attached) inputLifecycle.forwarder.cancel();
+      });
     };
-    element.addEventListener("wheel", onWheel, { passive: false });
-    return () => element.removeEventListener("wheel", onWheel);
-  }, [interactive, forwarder]);
-
-  // A pane that is no longer being driven must not leave keys held in the page.
-  useEffect(() => {
-    if (interactive) return;
-    releaseAll();
-  }, [interactive, releaseAll]);
-
-  const pointerHandlers = interactive
-    ? {
-        onPointerMove: (event: React.PointerEvent) =>
-          forwarder.mouseMove(event.nativeEvent),
-        onPointerDown: (event: React.PointerEvent) => {
-          // Captured so a drag that leaves the pane still reports its motion and
-          // its release here, rather than ending in whatever it passed over.
-          event.currentTarget.setPointerCapture?.(event.pointerId);
-          (event.currentTarget as HTMLElement).focus();
-          forwarder.mouseDown(event.nativeEvent);
-        },
-        onPointerUp: (event: React.PointerEvent) => {
-          event.currentTarget.releasePointerCapture?.(event.pointerId);
-          forwarder.mouseUp(event.nativeEvent);
-        },
-        onPointerCancel: (event: React.PointerEvent) => {
-          // The browser can cancel a pointer mid-drag (a touch interrupted, a
-          // gesture taken over) with no pointerup to follow. Without this the
-          // page keeps the button held and every later move reads as a drag.
-          event.currentTarget.releasePointerCapture?.(event.pointerId);
-          releaseAll();
-        },
-        // Suppressed rather than forwarded: a native context menu opens in the
-        // browser running the page, which is headless — so the menu would exist
-        // nowhere and never appear in a frame, while this browser's own menu
-        // covered the pane.
-        onContextMenu: (event: React.MouseEvent) => event.preventDefault(),
-        onKeyDown: (event: React.KeyboardEvent) => {
-          // Only while the pane holds focus, so the app's own shortcuts keep
-          // working everywhere else.
-          if (isComposing(event)) return;
-          // ESCAPE IS THE WAY OUT, and is never forwarded. Tab IS forwarded —
-          // tabbing between fields is most of what people do to a form — which
-          // means Tab cannot also be the way out, and a keyboard-only user
-          // would otherwise be trapped in the pane with no key that leaves it.
-          // The caption says so while the pane has focus.
-          if (event.key === "Escape") {
-            event.preventDefault();
-            (event.currentTarget as HTMLElement).blur();
-            return;
-          }
-          // Paste is the one shortcut NOT swallowed locally: preventing its
-          // default cancels the clipboard action, so no `paste` event fires and
-          // the text never reaches the page. But its keystrokes must not be
-          // FORWARDED either — `onPaste` already sends the clipboard as a text
-          // event, and a `v` key-down with ctrl held would make the remote page
-          // run its own paste as well, from a clipboard that is not the one the
-          // person copied into.
-          if (isPasteShortcut(event)) {
-            withheldKeys.current.add(event.key.toLowerCase());
-            return;
-          }
-          event.preventDefault();
-          forwarder.keyDown(event.nativeEvent);
-        },
-        onKeyUp: (event: React.KeyboardEvent) => {
-          if (isComposing(event)) return;
-          // Matched to the keydown above: forwarding a lone key-up for a press
-          // the page never saw would leave it releasing a key it never got.
-          if (event.key === "Escape") return;
-          // Paired with the key-down, not re-derived from this event's own
-          // modifiers: whether Ctrl is still held when V comes up says nothing
-          // about whether the V going down was forwarded.
-          if (withheldKeys.current.delete(event.key.toLowerCase())) return;
-          event.preventDefault();
-          forwarder.keyUp(event.nativeEvent);
-        },
-        onPaste: (event: React.ClipboardEvent) => {
-          event.preventDefault();
-          forwarder.text(event.clipboardData.getData("text"));
-        },
-        onCompositionEnd: (event: React.CompositionEvent) => {
-          // An IME commits its result here, and only here. Its key events carry
-          // placeholder values like "Process", so a pane forwarding only keys
-          // types nothing at all in Japanese, Chinese or Korean.
-          forwarder.text(event.data);
-        },
-        onFocus: () => setFocused(true),
-        onBlur: () => {
-          setFocused(false);
-          // The page never sees that focus left, so a modifier held at this
-          // moment would stay held in it for the rest of the session and turn
-          // every later click into a ctrl-click.
-          releaseAll();
-        },
-      }
-    : {};
-
+  }, [inputLifecycle]);
+  const input = useCallback(
+    (events: Parameters<typeof forwarder.push>[0]) => {
+      if (behaviour.drivesPage) forwarder.push(events);
+    },
+    [behaviour.drivesPage, forwarder],
+  );
+  const picture = useMemo<PaneFrame | null>(() => {
+    if (frame)
+      return {
+        src: frame.src,
+        deviceWidth: frame.deviceWidth,
+        deviceHeight: frame.deviceHeight,
+        scale: frame.deviceWidth / frame.cssWidth,
+        ts: frame.ts,
+        seq: frame.seq,
+      };
+    if (streaming && fallbackScreenshot)
+      return {
+        data: fallbackScreenshot,
+        deviceWidth: surface.width,
+        deviceHeight: surface.height,
+        scale: 1,
+        ts: fallbackScreenshotAt ?? Date.now(),
+        seq: -1,
+      };
+    return null;
+  }, [
+    frame,
+    streaming,
+    fallbackScreenshot,
+    fallbackScreenshotAt,
+    surface.width,
+    surface.height,
+  ]);
+  const painted = useCallback(() => {
+    if (frame) notePainted(frame);
+    else if (fallbackScreenshotAt !== undefined)
+      notePainted({ ts: fallbackScreenshotAt, rung: "poll" });
+  }, [frame, fallbackScreenshotAt]);
   return (
     <figure className="m-0 flex h-full min-h-0 flex-col bg-muted/20 p-3">
-      <div
-        ref={paneRef}
-        // Focusable only when it drives something: a tab stop that does nothing
-        // is a trap for anyone navigating by keyboard.
-        {...(interactive ? { tabIndex: 0 } : {})}
-        {...pointerHandlers}
-        aria-label={
-          interactive ? "The inspected page — click to interact" : undefined
+      <BrowserPaneSurface
+        frame={picture}
+        authority={
+          behaviour.drivesPage
+            ? { kind: "shared" }
+            : { kind: "lease", holding: false }
         }
-        className={cn(
-          "relative mx-auto w-full max-w-3xl overflow-hidden rounded border bg-black/80",
-          interactive && "cursor-default touch-none",
-          interactive && focused && "ring-2 ring-primary",
-        )}
-        style={{ aspectRatio: `${surface.width} / ${surface.height}` }}
-      >
-        {source ? (
-          <img
-            // Distinct from the manual-capture thumbnail's alt below: two
-            // images described identically would give a screen reader no way
-            // to tell the live view from a snapshot someone took.
-            ref={imageRef}
-            src={source}
-            alt="Live view of the inspected page"
-            className="pointer-events-none h-full w-full object-contain select-none"
-            draggable={false}
-            // The one place a paint is observable. Dark unless the frame-stats
-            // flag is set; see lib/webmcp-inspector/frame-stats.
-            //
-            // Deferred to the next animation frame, because `load` fires when
-            // the image has DECODED, not when the compositor has shown it —
-            // recording there would report a number consistently smaller than
-            // the thing being measured. Re-checked after the wait, so a frame
-            // superseded before it was ever shown is not counted as one that
-            // was.
-            onLoad={(event) => {
-              const image = event.currentTarget;
-              // What this load represents. A polled screenshot is a paint too,
-              // and the one the report is usually opened to look at: the poll
-              // is the slowest rung, so a `byTransport` that could never fill
-              // its bucket would be silent exactly where somebody is
-              // investigating. It carries no `seq` — see `notePainted` for why
-              // the input echo is not a number this transport can honestly
-              // produce.
-              const sample = frame
-                ? image.currentSrc === frame.src
-                  ? frame
-                  : undefined
-                : fallbackScreenshotAt === undefined
-                  ? undefined
-                  : { ts: fallbackScreenshotAt, rung: "poll" as const };
-              if (!sample) return;
-              const shown = image.currentSrc;
-              requestAnimationFrame(() => {
-                // `isConnected` as well as the src: the pane can unmount
-                // between the decode and this frame, and a detached element
-                // was never shown — recording it would put a paint that never
-                // happened into the percentiles.
-                if (image.isConnected && image.currentSrc === shown) {
-                  notePainted(sample);
-                }
-              });
-            }}
-            // Frames arrive faster than a decode; letting the browser paint the
-            // previous one until this decodes is what keeps the pane from
-            // flashing black between frames.
-            decoding="async"
-          />
-        ) : (
-          <p className="absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
+        control="you"
+        chrome="none"
+        label="Live view of the inspected page"
+        interactionLabel={
+          behaviour.drivesPage
+            ? "The inspected page — click to interact"
+            : undefined
+        }
+        onInput={input}
+        onPainted={painted}
+        onViewportSize={behaviour.drivesPage ? resize : undefined}
+        placeholder={
+          <p className="text-center text-xs text-muted-foreground">
             {streaming
               ? "Waiting for the first frame…"
               : behaviour.serverPaints
                 ? "Live view is off. Turn it on to watch the page here."
                 : behaviour.viewOnlyCaption}
           </p>
-        )}
-      </div>
+        }
+      />
       <figcaption className="pt-1 text-center text-[11px] text-muted-foreground">
-        {interactive
-          ? focused
-            ? "Typing and clicking here goes to the page. Press Esc to leave."
-            : "Click to interact with the page."
+        {behaviour.drivesPage
+          ? "Click to interact with the page. Press Shift+Esc to leave."
           : behaviour.viewOnlyCaption}
       </figcaption>
     </figure>
@@ -1223,16 +1025,6 @@ function transportKindOf(
   session: { viewportTransport: WebMcpViewportTransport } | undefined,
 ): WebMcpViewportTransport["kind"] | undefined {
   return session?.viewportTransport.kind;
-}
-
-/** True while an IME is mid-composition; its key events are placeholders. */
-function isComposing(event: React.KeyboardEvent): boolean {
-  return event.nativeEvent.isComposing || event.key === "Process";
-}
-
-/** Ctrl-V / Cmd-V, whose default action is the only way to reach the clipboard. */
-function isPasteShortcut(event: React.KeyboardEvent): boolean {
-  return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v";
 }
 
 function StatusBadge({ status }: { status: WebMcpSessionStatus }) {

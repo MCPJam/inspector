@@ -150,13 +150,6 @@ export interface WebMcpLiveFrame {
  * a long float and three decimals is what a frame's own `scale` carries — the
  * two describe the same ratio and should not disagree in the third place.
  */
-function devicePixelRatioField(): { devicePixelRatio?: number } {
-  if (typeof window === "undefined") return {};
-  const raw = window.devicePixelRatio;
-  if (typeof raw !== "number" || !Number.isFinite(raw)) return {};
-  const ratio = Math.round(Math.min(2, Math.max(1, raw)) * 1_000) / 1_000;
-  return ratio === 1 ? {} : { devicePixelRatio: ratio };
-}
 
 /**
  * Normalize a frame from either transport into what the pane renders.
@@ -1275,7 +1268,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             // looked at here. A window session paints on a real display that
             // already knows its own ratio, and a hosted one is watched from
             // the Browser panel.
-            ...(options?.display === "in-app" ? devicePixelRatioField() : {}),
+            // Pane-sized interactive capture uses DPR 1; explicit API callers can request a higher ratio.
           }),
         });
         if (!result.ok) {
@@ -1597,6 +1590,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         const aimedAt = get().session?.sessionId;
         // Serialized: a release that reached the browser before its press would
         // leave the page mid-drag, and concurrent POSTs give no ordering.
+        const completions: Promise<void>[] = [];
         await inOrder(async () => {
           for (const batch of batches) {
             // Re-checked EVERY batch, not once before the loop: a gesture past
@@ -1609,26 +1603,30 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
                 ? frameSocket?.sendInput(batch)
                 : undefined;
             if (socketResult) {
-              try {
-                await socketResult;
-                if (
-                  get().session?.sessionId === aimedAt &&
-                  get().error !== undefined
-                )
-                  set({ error: undefined });
-              } catch (error) {
-                if (get().session?.sessionId === aimedAt)
-                  set({
-                    error: {
-                      code: "input_interrupted",
-                      message:
-                        error instanceof Error
-                          ? error.message
-                          : "Browser input failed.",
-                    },
-                  });
-                return;
-              }
+              // Ordered sends need not await CDP dispatch. The runtime orders
+              // all callers; HTTP sends still occupy the command tail.
+              completions.push(
+                socketResult
+                  .then(() => {
+                    if (
+                      get().session?.sessionId === aimedAt &&
+                      get().error !== undefined
+                    )
+                      set({ error: undefined });
+                  })
+                  .catch((error) => {
+                    if (get().session?.sessionId === aimedAt)
+                      set({
+                        error: {
+                          code: "input_interrupted",
+                          message:
+                            error instanceof Error
+                              ? error.message
+                              : "Browser input failed.",
+                        },
+                      });
+                  }),
+              );
               continue;
             }
             noteInputDispatched(lastAppliedFrameSeq);
@@ -1638,6 +1636,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             await get().sendCommand({ type: "input", events: batch });
           }
         });
+        await Promise.all(completions);
       },
 
       async setScreencast(enabled) {

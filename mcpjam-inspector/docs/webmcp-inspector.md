@@ -104,10 +104,9 @@ The inspector's center pane shows the page as it paints, over the same session
 that carries tools and invocations:
 
 ```text
-Page.screencastFrame → ack FIRST → drop a byte-identical repeat → oversize
-substitute → 10fps throttle (~30fps during input, mandatory trailing frame)
+Page.screencastFrame → ack FIRST → drop a byte-identical repeat → drop an oversized paint → 10fps throttle (~30fps during input, mandatory trailing frame)
 → runtime publishFrame → hub's coalesced slot → binary WS (or SSE)
-→ Node-local WS: newest JPEG per animation frame → viewport subscription
+→ Node-local WS: newest JPEG per animation frame → shared BrowserPaneSurface
 ```
 
 Six properties hold this together, and each one is a bug if it is dropped:
@@ -129,9 +128,8 @@ Six properties hold this together, and each one is a bug if it is dropped:
 - **A frame identical to the one before it is dropped.** Not an optimisation:
   every `Page.captureScreenshot` makes Chromium produce a compositor frame to
   satisfy the copy request, and the screencast sends that frame back
-  byte-for-byte. Publishing it would undo the settle still below a tenth of a
-  second after it landed, and counting it as a paint would make each still
-  induce the next one — a capture loop on a page doing nothing.
+  byte-for-byte. Dropping the repeated paint avoids unnecessary decode and
+  presentation work.
 - **A frame describes its own geometry.** Dimensions come from the JPEG's SOF
   marker and ride the wire beside a `scale` (device pixels per CSS pixel), so a
   still captured at one scale and a streamed frame captured at another are safe
@@ -166,59 +164,27 @@ proxy; the E2E interaction fixture paints a scroll marker to distinguish a real
 scroll response from an unrelated animation frame. The marker test reports
 input-to-frame-arrival separately from viewer decoding and display.
 
-### Sharp at rest, and adaptive under pressure
+### Shared capture and pane geometry
 
-The stream is encoded for motion — 10fps at quality 75 — which is the wrong
-trade the moment a page stops moving. A housekeeping timer notices 800ms
-without a paint or an input and publishes ONE still of the page at quality 85,
-taken with a raw `Page.captureScreenshot` from the compositor surface.
+Node-local inspection delegates capture and CDP input to browserd's
+`createTabViewport`. The inspection provider retains browser launch, tool bridge,
+popups and session lifecycle; it does not implement another screencast or mouse
+controller. Hosted inspection already uses the Playground browser panel.
 
-Two things about that capture are load-bearing. It is not Playwright's
-`page.screenshot()`, whose `caret: "hide"` writes an inline style onto every
-text field and restores it — two mutations that paint, which makes the still
-discard itself as overtaken. And it carries NO `clip`: measured against
-Chromium 141, a clip capture clobbers the context's own `deviceScaleFactor`
-emulation and pushes an off-content frame into the stream.
+The shared stream uses stable JPEG quality 75, a 100ms resting floor and a 33ms
+floor during human input. Oversized frames are dropped at 256 KiB. Automatic
+settle screenshots, oversize substitutes and quality-driven encoder restarts
+have been removed. Explicit timeline screenshots still use their own budget.
+This trades automatic sharp-at-rest frames for a stable interactive capture path.
 
-A focused text field blinks its caret about twice a second, so the quiet window
-never arrives while somebody is typing into one. The still fires when focus
-leaves. That is accepted rather than worked around — suppressing caret paints
-means telling the page not to draw a caret.
+The Node UI uses DPR 1 and resizes the embedded browser to the pane's content
+bounds after an 80ms resize debounce. Explicit API callers can still request
+DPR up to 2. Native-window sessions retain their window geometry. Frame geometry
+comes from the JPEG itself; pointer coordinates use its device-to-CSS scale.
 
-In the other direction, three sources report a frame that could NOT be handed
-over: the WS pacer replacing a held frame, the SSE route replacing its held one,
-and the provider itself refusing a frame over the 256 KiB cap. The last one
-matters most and is the easiest to miss — it never reaches a transport, so
-nothing downstream is in a position to report it, and a smaller encode is
-exactly the cure. Three of those inside two seconds steps the stream down a
-quality rung; ten
-seconds without one climbs it back, a rung at a time, with a three-second hold
-between moves so the frames still in flight from the old rung are not read as
-fresh pressure. The current quality rides on the session as `streamQuality`, so
-a struggling link is visible as a fact rather than a mystery — and while the
-stream is below its baseline the settle still is skipped entirely.
-
-A refused frame also asks for a budgeted substitute still, so the pane converges
-on the current paint rather than freezing on whatever last fitted. That retry is
-drained by the housekeeping timer rather than by the capture that preceded it: a
-page repainting continuously above the cap lands another refused frame inside
-every capture, and a self-scheduled retry would turn that into an unpaced
-`Page.captureScreenshot` loop on top of an encode already too expensive to
-carry.
-
-The session's render scale is the VIEWER's: the client sends its
-`devicePixelRatio` (clamped to 2) at session start and it becomes the browser
-context's `deviceScaleFactor`, fixed for the session — a second device-metrics
-override would fight the one Playwright re-applies on every navigation. Note
-what that does and does not buy: Chromium clamps a screencast to the CSS size
-of the surface (`maxWidth` can only scale a capture DOWN), so a 2x session
-streams supersampled 1280x800 rather than 2560x1600.
-
-Streaming is demand-driven through the `set_screencast` command, sent when the
-pane is visible and withdrawn when it is not. A server that predates the command
-answers 400, and the client silently falls back to a 1s screenshot poll — which
-is also the path for a hosted session, whose viewport lives in the Browser
-panel.
+The current inspection adapter still owns its socket and SSE/screenshot fallback
+lifecycle. Those adapters are not a second capture/input engine; their remaining
+lifecycle consolidation is tracked in [the unification plan](browser-viewer-unification-plan.md).
 
 Frames are TRANSIENT and deliberately distinct from the screenshots on
 invocation entries: those are persisted evidence at a 64 KiB budget, exported
@@ -324,27 +290,33 @@ forwarding below applies to it.
 Input is a BATCH (`{type:"input", events:[…]}`), capped at 64 events. Pointer
 movement is the flooding vector, and batching solves the rate at the transport
 rather than asking every caller to remember to. The client half lives in
-`client/src/lib/webmcp-inspector/input-forwarder.ts`:
+`client/src/lib/browser-pane/input.ts`, shared with Playground:
 
 - **Scaling** happens on the client, against the CSS dimensions of the frame
   currently on screen (its device size divided by its `scale`) — only the client
   knows its rendered rectangle and how `object-contain` letterboxes the picture
   inside it, and the page's own coordinate space is CSS pixels. A click on a
   letterbox bar is dropped rather than mapped to the nearest edge.
-- **Batching** coalesces moves to the latest and flushes on a ~50ms timer, but
+- **Batching** coalesces moves to the latest and flushes on the next animation frame, but
   button and key transitions flush IMMEDIATELY: a click that waits out a batch
   window reads as a click that did not register.
 - **Held keys are released on blur.** The page never learns that focus left the
   pane, so a modifier held at that moment would stay held for the rest of the
   session and turn every later click into a ctrl-click.
 
-Server-side, `dispatchInput` goes through Playwright's `page.mouse` /
-`page.keyboard` rather than raw `Input.dispatchMouseEvent`: those primitives
-want a modifier bitmask, a `text`/`unmodifiedText` pair and a virtual key code
-per key and per layout, and Playwright already carries that table. Text uses
-`keyboard.insertText`, because paste and IME composition have no keystrokes to
-replay. Each event is applied under its own catch — one exotic key must not
-swallow the click behind it — and coordinates are clamped to the viewport.
+Server-side, the session runtime orders input from every socket and HTTP caller.
+The shared viewport sends each wheel directly through CDP, including coordinates
+and modifier snapshot in one call. Paste and IME use `Input.insertText`.
+The shared client preserves dominant-axis wheel reversals and merges minor-axis
+trackpad jitter. It pipelines ordered socket batches and serializes HTTP fallback.
+Ack timeout disables socket input without closing the frame stream or replaying
+input whose outcome is uncertain.
+
+`BrowserPaneSurface` uses explicit shared authority for local inspection; it
+renders no takeover ceremony. Hosted/Playground authority remains lease-based.
+Pointer capture continues a drag outside the pane; blur/cancellation releases
+held input. Native non-passive wheel handling prevents host scrolling. Paste is
+sent as text once. Shift+Escape leaves the pane; bare Escape reaches the page.
 
 Input ticks the idle clock (a human driving the pane must not be reaped) and
 writes NO timeline entry, mirroring `capture_screenshot`. Its consequences
@@ -441,10 +413,10 @@ relaunch, which `pkill`s their Chromium.
 
 So `ensureBrowserSession` takes a TARGET:
 
-| Target             | Reserves         | Stream | Relaunch claim / lease fence | Lifetime          |
-| ------------------ | ---------------- | ------ | ---------------------------- | ----------------- |
-| `computer` (default) | yes, per member | yes    | yes                          | the member's box  |
-| `sandbox`          | no — already provisioned | no | no                     | the run           |
+| Target               | Reserves                 | Stream | Relaunch claim / lease fence | Lifetime         |
+| -------------------- | ------------------------ | ------ | ---------------------------- | ---------------- |
+| `computer` (default) | yes, per member          | yes    | yes                          | the member's box |
+| `sandbox`            | no — already provisioned | no     | no                           | the run          |
 
 `ensureBrowserSession` REFUSES `ephemeral` on a computer target by name
 (`ephemeral_requires_sandbox`), mirroring the local engine's
@@ -685,14 +657,14 @@ Measured per navigation shape (`webmcp-cdp.spike.test.ts`, "cross-document tool
 results"), and end to end through the provider and runtime
 (`playwright-provider.integration.test.ts`):
 
-| shape | delivered | output |
-| --- | --- | --- |
-| same-tab `toolautosubmit` | yes | array of the destination's JSON-LD |
-| named `target` frame | yes | same, while the invoking document survives |
-| imperative `location.href` | yes | same |
-| no `toolautosubmit`, a person submits | yes, when they do | same |
-| returns a value, then navigates | yes, **twice** | its own value first |
-| `target="_blank"` | **no** | nothing, ever |
+| shape                                 | delivered         | output                                     |
+| ------------------------------------- | ----------------- | ------------------------------------------ |
+| same-tab `toolautosubmit`             | yes               | array of the destination's JSON-LD         |
+| named `target` frame                  | yes               | same, while the invoking document survives |
+| imperative `location.href`            | yes               | same                                       |
+| no `toolautosubmit`, a person submits | yes, when they do | same                                       |
+| returns a value, then navigates       | yes, **twice**    | its own value first                        |
+| `target="_blank"`                     | **no**            | nothing, ever                              |
 
 Details worth keeping:
 
@@ -714,7 +686,7 @@ Details worth keeping:
 - **A pending DECLARATIVE invocation cannot be cancelled at all.** A form
   waiting on a person is not a "pending execution" to the domain, so
   `cancelInvocation` rejects its id — where the same call on a pending
-  *imperative* invocation is accepted and answers `Canceled`. Stopping one still
+  _imperative_ invocation is accepted and answers `Canceled`. Stopping one still
   frees the caller, through the grace timer that settles a cancel the page never
   answers; what it does not do is stop the page. So the form stays live, a
   person submitting later answers an invocation already reported as unknown,

@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.3.6",
+  "version": "3.4.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -76,7 +76,7 @@
     "deps:ci": "npm --prefix .. ci --legacy-peer-deps --cache .npm-cache",
     "build:lib": "tsup --config lib/tsup.config.ts",
     "build:client": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts",
-    "pretypecheck:client": "npm run check:renderer-tier-b",
+    "pretypecheck:client": "npm run check:renderer-tier-b && npm run check:browser-viewer",
     "typecheck:client": "tsc --noEmit -p client/tsconfig.typecheck.json",
     "check:renderer-tier-b": "node client/scripts/check-renderer-tier-b-imports.mjs",
     "build:client:clean": "rm -rf node_modules/.vite && cross-env FORCE_OPTIMIZE=true NODE_OPTIONS=--max-old-space-size=6144 vite build --config client/vite.config.ts",
@@ -103,7 +103,8 @@
     "test:e2e": "playwright test",
     "test:github-checks-cleanup:e2b": "cross-env RUN_GITHUB_CHECKS_E2B_CLEANUP=1 vitest run server/services/github-checks/__tests__/cleanup.e2b.integration.test.ts",
     "test:e2e:oauth-debugger": "npm run sdk:build && playwright test -c playwright.oauth-debugger.config.ts",
-    "ship": "bash scripts/ship.sh"
+    "ship": "bash scripts/ship.sh",
+    "check:browser-viewer": "node client/scripts/check-browser-viewer-imports.mjs"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -138,7 +139,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^8.6.0",
+    "@mcpjam/sdk": "^8.7.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@novnc/novnc": "^1.7.0",
@@ -251,6 +252,7 @@
     "concurrently": "^9.1.0",
     "cross-env": "^10.1.0",
     "electron": "^43.4.0",
+    "esbuild": "^0.27.0",
     "eslint": "^9",
     "jsdom": "^27.4.0",
     "png-to-ico": "^2.1.8",

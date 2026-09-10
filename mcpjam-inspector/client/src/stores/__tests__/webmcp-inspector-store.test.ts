@@ -84,7 +84,10 @@ class FakeWebSocket {
   sent: string[] = [];
   closedByClient = false;
 
-  constructor(readonly url: string, readonly protocols?: string[]) {
+  constructor(
+    readonly url: string,
+    readonly protocols?: string[],
+  ) {
     FakeWebSocket.instances.push(this);
   }
 
@@ -364,13 +367,11 @@ describe("webmcp inspector store", () => {
 
   it("refreshes tool metadata without navigating or invoking", async () => {
     useWebmcpInspectorStore.setState({ session: SESSION, tools: [] });
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(JSON.stringify({ session: SESSION, tools: [TOOL] }), {
-          status: 200,
-        }),
-      );
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ session: SESSION, tools: [TOOL] }), {
+        status: 200,
+      }),
+    );
     expect(
       await useWebmcpInspectorStore
         .getState()
@@ -810,7 +811,7 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().session).toEqual(SESSION);
   });
 
-  it("tells the server the viewer's pixel ratio, and only for an in-app session", async () => {
+  it("uses server DPR 1 even when the viewer uses a Retina display", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(
@@ -825,46 +826,7 @@ describe("webmcp inspector store", () => {
       await useWebmcpInspectorStore
         .getState()
         .startSession("https://shop.test/", { display: "in-app" });
-      // The browser runs headless on the server, with no display to ask.
       expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toEqual({
-        url: "https://shop.test/",
-        display: "in-app",
-        devicePixelRatio: 2,
-      });
-
-      // A window session paints on a real display that already knows its own
-      // ratio, so the field is left off entirely.
-      await useWebmcpInspectorStore
-        .getState()
-        .startSession("https://shop.test/");
-      expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toEqual({
-        url: "https://shop.test/",
-      });
-
-      // A ratio with more precision than the wire carries. Three decimals,
-      // because that is what a frame's own `scale` carries — the two describe
-      // the same ratio and should not disagree in the third place.
-      Object.defineProperty(window, "devicePixelRatio", {
-        configurable: true,
-        value: 1.3333333,
-      });
-      await useWebmcpInspectorStore
-        .getState()
-        .startSession("https://shop.test/", { display: "in-app" });
-      expect(
-        JSON.parse(String(fetchSpy.mock.calls[2][1]?.body)).devicePixelRatio,
-      ).toBe(1.333);
-
-      Object.defineProperty(window, "devicePixelRatio", {
-        configurable: true,
-        value: 1,
-      });
-      await useWebmcpInspectorStore
-        .getState()
-        .startSession("https://shop.test/", { display: "in-app" });
-      // Omitted at 1: the server's own default, so the common case puts
-      // nothing new on the wire and an older server strips nothing.
-      expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).toEqual({
         url: "https://shop.test/",
         display: "in-app",
       });
@@ -1406,24 +1368,66 @@ describe("webmcp inspector store — frame transport", () => {
     unsubscribe();
   });
 
+  it("sends the next ordered socket batch before the previous ack", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "capabilities", features: ["input"] }),
+    });
+    const first = useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "text", text: "first" }]);
+    const second = useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "text", text: "second" }]);
+    await vi.waitFor(() =>
+      expect(
+        ws.sent.filter((s) => JSON.parse(s).type === "input"),
+      ).toHaveLength(2),
+    );
+    const messages = ws.sent
+      .map((s) => JSON.parse(s))
+      .filter((s) => s.type === "input");
+    expect(messages.map((m) => m.events[0].text)).toEqual(["first", "second"]);
+    for (const message of messages)
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "input_ack",
+          seq: message.seq,
+          dispatched: 1,
+        }),
+      });
+    await Promise.all([first, second]);
+  });
+
   it("keeps binary frames after an ack timeout and sends only later input over HTTP", async () => {
     const { ws, sse } = await openFrameSession();
     vi.useFakeTimers();
     ws.open();
-    ws.onmessage?.({ data: JSON.stringify({ type: "capabilities", features: ["input"] }) });
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "capabilities", features: ["input"] }),
+    });
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     fetchSpy.mockClear();
-    const pending = useWebmcpInspectorStore.getState().sendInput([{ kind: "text", text: "uncertain" }]);
+    const pending = useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "text", text: "uncertain" }]);
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(5001);
     await pending;
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(sse.url).toContain("frames=off");
     const count = ws.sent.length;
-    await useWebmcpInspectorStore.getState().sendInput([{ kind: "text", text: "later" }]);
+    await useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "text", text: "later" }]);
     expect(ws.sent).toHaveLength(count);
     expect(fetchSpy).toHaveBeenCalled();
-    expect(fetchSpy.mock.calls.some(([, init]) => String(init?.body).includes("uncertain"))).toBe(false);
+    expect(
+      fetchSpy.mock.calls.some(([, init]) =>
+        String(init?.body).includes("uncertain"),
+      ),
+    ).toBe(false);
   });
 
   it("surfaces interrupted socket input without replaying it over HTTP", async () => {

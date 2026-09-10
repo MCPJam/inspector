@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BROWSER_INPUT_BATCH_LIMIT,
+  BROWSER_INPUT_TEXT_MAX_CHARS,
   coalesceBrowserPaneInput,
   isBrowserPaneInputEvent,
   parseBrowserPaneInputMessage,
@@ -184,7 +185,12 @@ describe("fields CDP declares as integers", () => {
     // one hop past the acknowledgement — in CDP, on a batch this relay had
     // already told the pane was delivered.
     expect(
-      isBrowserPaneInputEvent({ type: "mouse_move", x: 1, y: 1, modifiers: 1.5 }),
+      isBrowserPaneInputEvent({
+        type: "mouse_move",
+        x: 1,
+        y: 1,
+        modifiers: 1.5,
+      }),
     ).toBe(false);
     expect(
       isBrowserPaneInputEvent({ type: "mouse_move", x: 1, y: 1, modifiers: 2 }),
@@ -214,4 +220,19 @@ describe("fields CDP declares as integers", () => {
       }),
     ).toBe(true);
   });
+});
+
+it("enforces the text cap at the canonical event and message boundaries", () => {
+  for (const length of [
+    0,
+    BROWSER_INPUT_TEXT_MAX_CHARS,
+    BROWSER_INPUT_TEXT_MAX_CHARS + 1,
+  ]) {
+    const event = { type: "text", text: "a".repeat(length) };
+    const accepted = length <= BROWSER_INPUT_TEXT_MAX_CHARS;
+    expect(isBrowserPaneInputEvent(event)).toBe(accepted);
+    expect(parseBrowserPaneInputMessage({ seq: 1, events: [event] }).ok).toBe(
+      accepted,
+    );
+  }
 });

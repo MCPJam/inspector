@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useViewportReporter } from "../browser-pane/use-viewport-reporter";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import {
   EMPTY_BROWSER_SESSION_STATE,
   isHeldBy,
@@ -73,16 +81,6 @@ export interface UseBrowserSessionArgs {
 }
 
 const DEFAULT_POLL_MS = 2_000;
-/**
- * How long a panel measurement waits for a quieter one to replace it.
- *
- * Shorter than the barrier's own debounce on the far side, deliberately: this
- * one is only removing requests that would be coalesced anyway, and making it
- * longer would add latency to the common case — one resize, nobody dragging —
- * for no saving at all.
- */
-const RESIZE_COALESCE_MS = 80;
-
 export interface BrowserSessionHandle {
   state: BrowserSessionState;
   /** True while this pane holds the browser. */
@@ -160,7 +158,9 @@ export function useBrowserSession({
     let cancelled = false;
     let timer: number | undefined;
     const tick = async () => {
-      const snapshot = await transportRef.current?.readState().catch(() => null);
+      const snapshot = await transportRef.current
+        ?.readState()
+        .catch(() => null);
       if (cancelled) return;
       if (snapshot) {
         dispatch({ type: "snapshot", snapshot });
@@ -189,47 +189,42 @@ export function useBrowserSession({
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  const run = useCallback(
-    (command: BrowserPaneCommand) => {
-      const current = transportRef.current;
-      if (!current) return;
-      void (async () => {
-        const outcome = await current.sendCommand({ command });
-        if (outcome.ok) {
-          setError(null);
-          // Reconcile immediately rather than waiting out the poll: a person
-          // who clicked Back expects the address to move now, and two seconds
-          // of a stale address bar reads as a click that did nothing.
-          const snapshot = await current.readState().catch(() => null);
-          if (snapshot) dispatch({ type: "snapshot", snapshot });
+  const run = useCallback((command: BrowserPaneCommand) => {
+    const current = transportRef.current;
+    if (!current) return;
+    void (async () => {
+      const outcome = await current.sendCommand({ command });
+      if (outcome.ok) {
+        setError(null);
+        // Reconcile immediately rather than waiting out the poll: a person
+        // who clicked Back expects the address to move now, and two seconds
+        // of a stale address bar reads as a click that did nothing.
+        const snapshot = await current.readState().catch(() => null);
+        if (snapshot) dispatch({ type: "snapshot", snapshot });
+        return;
+      }
+      switch (outcome.reason) {
+        case "lease_held":
+          setNotice(takeoverRefusedNotice(outcome.holder ?? { kind: "human" }));
           return;
-        }
-        switch (outcome.reason) {
-          case "lease_held":
-            setNotice(
-              takeoverRefusedNotice(outcome.holder ?? { kind: "human" }),
-            );
-            return;
-          case "page_changed":
-            setNotice(TAKEOVER_RETRY_NOTICE);
-            return;
-          case "no_session":
-            setError("This browser is no longer running.");
-            return;
-          case "unsupported":
-            // No message, because the latch IS the message: the controls this
-            // click came from go inert on the same render, which says "this
-            // browser cannot do that" in the place the person is already
-            // looking. A banner would say it twice.
-            setUnsupported(true);
-            return;
-          default:
-            setError(outcome.detail ?? "The browser did not accept that.");
-        }
-      })();
-    },
-    [],
-  );
+        case "page_changed":
+          setNotice(TAKEOVER_RETRY_NOTICE);
+          return;
+        case "no_session":
+          setError("This browser is no longer running.");
+          return;
+        case "unsupported":
+          // No message, because the latch IS the message: the controls this
+          // click came from go inert on the same render, which says "this
+          // browser cannot do that" in the place the person is already
+          // looking. A banner would say it twice.
+          setUnsupported(true);
+          return;
+        default:
+          setError(outcome.detail ?? "The browser did not accept that.");
+      }
+    })();
+  }, []);
 
   const resume = useCallback(() => {
     const current = transportRef.current;
@@ -261,58 +256,12 @@ export function useBrowserSession({
    * The LAST measurement wins, not the first: a drag's earlier sizes are
    * places the divider passed through, not places anybody left it.
    */
-  const pendingSizeRef = useRef<{ width: number; height: number } | null>(null);
-  const resizeTimerRef = useRef<number | undefined>(undefined);
-  const sentSizeRef = useRef<{ width: number; height: number } | null>(null);
-  useEffect(
-    () => () => {
-      if (resizeTimerRef.current !== undefined) {
-        window.clearTimeout(resizeTimerRef.current);
-      }
-    },
-    [],
-  );
-  const reportViewport = useCallback(
-    (size: { width: number; height: number }) => {
-      // Rounded before comparing, because CSS layout is fractional and a
-      // sub-pixel wobble is not a resize. The server rounds too; agreeing here
-      // is what makes "the size did not change" mean the same on both sides.
-      const next = {
-        width: Math.round(size.width),
-        height: Math.round(size.height),
-      };
-      const sent = sentSizeRef.current;
-      if (sent && sent.width === next.width && sent.height === next.height) {
-        return;
-      }
-      pendingSizeRef.current = next;
-      if (resizeTimerRef.current !== undefined) {
-        window.clearTimeout(resizeTimerRef.current);
-      }
-      resizeTimerRef.current = window.setTimeout(() => {
-        resizeTimerRef.current = undefined;
-        const pending = pendingSizeRef.current;
-        pendingSizeRef.current = null;
-        if (!pending) return;
-        sentSizeRef.current = pending;
-        // Fire and forget: the far side answers with the size it settled on,
-        // and the next poll carries that back, so there is nothing here worth
-        // awaiting.
-        void transportRef.current?.reportViewport?.(pending).catch(() => {
-          // A failed report must not stick: the next measurement has to be
-          // sent even if it is the same size, or a transient failure freezes
-          // the session at a stale one.
-          sentSizeRef.current = null;
-        });
-      }, RESIZE_COALESCE_MS);
-    },
-    [],
+  const reportViewport = useViewportReporter(
+    (size) => transportRef.current?.reportViewport?.(size),
+    holderId,
   );
 
-  const holding = useMemo(
-    () => isHeldBy(state, holderId),
-    [state, holderId],
-  );
+  const holding = useMemo(() => isHeldBy(state, holderId), [state, holderId]);
 
   return {
     state,

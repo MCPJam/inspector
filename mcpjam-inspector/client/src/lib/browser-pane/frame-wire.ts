@@ -96,8 +96,6 @@ export function createFrameWireReader(
      * kind it does not know.
      */
     video?: boolean;
-    /** Node-local JPEGs: one decode in flight and one replaceable pending frame. */
-    latestOnly?: boolean;
   } = {},
 ): {
   push(chunk: ArrayBuffer | Uint8Array): void;
@@ -111,12 +109,8 @@ export function createFrameWireReader(
   /**
    * The newest sequence already handed to the caller.
    *
-   * `createImageBitmap` runs concurrently for every record and resolves in
-   * whatever order the browser's image pipeline finishes them — so without
-   * this a slow older JPEG lands after a fast newer one and paints the page
-   * backwards, taking the click mapping with it. The JSON path in the surface
-   * has always guarded this with a `stale` flag; the binary path is the one
-   * both panes now ask for.
+   * JPEG decode is serial with one newest pending record. A late or replayed
+   * record must still not paint over a newer frame already delivered.
    */
   let deliveredSeq = -1;
 
@@ -214,14 +208,14 @@ export function createFrameWireReader(
           continue;
         }
         if (record.kind !== FRAME_STREAM_KIND.frame) continue;
-        if (options.latestOnly && decoding) {
+        if (decoding) {
           if (
             record.seq > deliveredSeq &&
             (!pendingRecord || record.seq > pendingRecord.seq)
           ) {
             pendingRecord = { ...record, jpeg: record.jpeg.slice() };
           }
-        } else if (!options.latestOnly || record.seq > deliveredSeq) {
+        } else if (record.seq > deliveredSeq) {
           decodeRecord(record);
         }
       }
