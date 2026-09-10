@@ -29,7 +29,7 @@
 - Chrome demonstrated the expected completed-refresh behavior.
 - Focused onboarding state and App tests currently pass.
 
-## Next feature: connection progress and success
+## Connection progress and success
 
 - This was part of the original v3 direction, but was not included in the save-and-connect slice.
 - Show three honest progress steps: reach the server, negotiate MCP compatibility, and load tools.
@@ -40,3 +40,14 @@
 - Keep this frontend-owned by mapping the existing connection and discovery state into the overlay. Add backend work only if the current APIs cannot expose a truthful stage or cancellation result.
 - Test progress transitions, cancellation, success details, and refresh after completion.
 - Keep failure recovery path-specific: personal-server failures open the editable form; demo failures use the dedicated demo-unavailable screen.
+
+### Implementation notes
+
+- Implemented on `feature/onboarding-connect-progress`; no backend change was needed.
+- Reused the existing save-and-connect handshake, then called the existing tools-list API with a live refresh to obtain the real tool count.
+- The first two checks complete only when the server reports connected; tool loading remains active until the list request resolves. No timed or simulated protocol progress is shown.
+- Cancel returns to server choice, invalidates the current onboarding attempt, and disconnects its visible runtime state without completing onboarding.
+- Successful setup remains on the confirmation screen until `Open Playground`; that action records completion and navigates.
+- Interactive preview against the live Excalidraw demo returned 5 tools and opened the populated Playground correctly.
+- Refresh after that success reproduced the already-listed stale first-run persistence bug on `localhost`; keep that repair in its own follow-up branch.
+- Verification: 96 focused component/App tests passed, including both connection paths and cancellation; client type-check and design-token drift checks passed.

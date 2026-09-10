@@ -16,11 +16,16 @@ vi.mock("framer-motion", () => ({
 import {
   FIRST_RUN_WELCOME_AUTO_ADVANCE_MS,
   FirstRunOnboardingOverlay,
+  type FirstRunConnectionState,
 } from "../FirstRunOnboardingOverlay";
 
-function renderOverlay(connectionState = { status: "idle" } as const) {
+function renderOverlay(
+  connectionState: FirstRunConnectionState = { status: "idle" },
+) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
+  const onCancelConnection = vi.fn();
+  const onOpenPlayground = vi.fn();
   const onWelcomeAcknowledged = vi.fn();
   const onSkip = vi.fn();
   const view = render(
@@ -29,6 +34,8 @@ function renderOverlay(connectionState = { status: "idle" } as const) {
       connectionState={connectionState}
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
+      onCancelConnection={onCancelConnection}
+      onOpenPlayground={onOpenPlayground}
       onWelcomeAcknowledged={onWelcomeAcknowledged}
       onSkip={onSkip}
     />,
@@ -36,14 +43,12 @@ function renderOverlay(connectionState = { status: "idle" } as const) {
   return {
     onConnectOwnServer,
     onConnectDemo,
+    onCancelConnection,
+    onOpenPlayground,
     onWelcomeAcknowledged,
     onSkip,
     rerenderWithConnectionState: (
-      nextConnectionState:
-        | { status: "idle" }
-        | { status: "preparing"; serverName: string }
-        | { status: "connecting"; serverName: string }
-        | { status: "failed"; error: string },
+      nextConnectionState: FirstRunConnectionState,
     ) =>
       view.rerender(
         <FirstRunOnboardingOverlay
@@ -51,6 +56,8 @@ function renderOverlay(connectionState = { status: "idle" } as const) {
           connectionState={nextConnectionState}
           onConnectOwnServer={onConnectOwnServer}
           onConnectDemo={onConnectDemo}
+          onCancelConnection={onCancelConnection}
+          onOpenPlayground={onOpenPlayground}
           onWelcomeAcknowledged={onWelcomeAcknowledged}
           onSkip={onSkip}
         />,
@@ -142,6 +149,8 @@ describe("FirstRunOnboardingOverlay", () => {
 
     rerenderWithConnectionState({
       status: "failed",
+      serverName: "Example",
+      serverKind: "personal",
       error: "Connection refused",
     });
     expect(
@@ -177,6 +186,7 @@ describe("FirstRunOnboardingOverlay", () => {
     rerenderWithConnectionState({
       status: "preparing",
       serverName: "Excalidraw (App)",
+      serverKind: "demo",
     });
 
     expect(
@@ -187,6 +197,74 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByText(/Getting your project ready to connect/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows honest progress, supports cancel, and waits for an explicit Playground action", () => {
+    const {
+      onCancelConnection,
+      onOpenPlayground,
+      rerenderWithConnectionState,
+    } = renderOverlay();
+
+    rerenderWithConnectionState({
+      status: "connecting",
+      serverName: "My server",
+      serverKind: "personal",
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Connecting to My server" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Reach server")).toBeInTheDocument();
+    expect(screen.getByText("Negotiate MCP compatibility")).toBeInTheDocument();
+    expect(screen.getByText("Load tools")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCancelConnection).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+    ).toBeInTheDocument();
+
+    rerenderWithConnectionState({
+      status: "loading-tools",
+      serverName: "My server",
+      serverKind: "personal",
+    });
+    expect(screen.getByText("Load tools").parentElement).toHaveClass(
+      "text-left",
+    );
+
+    rerenderWithConnectionState({
+      status: "connected",
+      serverName: "My server",
+      serverKind: "personal",
+      toolCount: 3,
+    });
+    expect(
+      screen.getByRole("heading", { name: "Connected to My server" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("3 tools ready to use.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
+    expect(onOpenPlayground).toHaveBeenCalledOnce();
+  });
+
+  it("keeps demo failures out of the personal-server credential form", () => {
+    const { onConnectDemo, rerenderWithConnectionState } = renderOverlay();
+    rerenderWithConnectionState({
+      status: "failed",
+      serverName: "Excalidraw (App)",
+      serverKind: "demo",
+      error: "Service unavailable",
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Demo server unavailable" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Set up your server" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try demo again" }));
+    expect(onConnectDemo).toHaveBeenCalledOnce();
   });
 
   it("uses the prototype's welcome and server-choice copy", () => {
