@@ -1,3 +1,4 @@
+import { useBrowserChatHandoff } from "@/lib/browser-shell/chat-handoff";
 import { useBrowserWorkspaceEnabled } from "@/hooks/useComputersEnabled";
 import {
   browserPageToolsKey,
@@ -432,6 +433,13 @@ export function HostedBrowserBody({
     [tokens, session],
   );
 
+  useBrowserChatHandoff({
+    projectId,
+    sessionId,
+    holding: holding,
+    release: () => setLeaseAction("resume"),
+  });
+
   // Keep a held lease alive. It expires into `parked` on purpose — a timer
   // running out is not evidence the private moment ended — and a person
   // mid-login should not have to re-take a browser they never let go of.
@@ -534,10 +542,10 @@ export function HostedBrowserBody({
   const control: PaneControl = holding
     ? "you"
     : lease.state === "free" || lease.state === "unknown"
-      ? "agent"
-      : lease.holderKind === "script"
-        ? "script"
-        : "other";
+    ? "agent"
+    : lease.holderKind === "script"
+    ? "script"
+    : "other";
 
   /**
    * The shell's transport, for this engine.
@@ -562,15 +570,6 @@ export function HostedBrowserBody({
       },
     };
   }, [tokens, session, setLeaseAction]);
-
-  useEffect(() => {
-    if (!workspaceEnabled && tokens && session)
-      void reportHostedPaneViewport(tokens, {
-        width: 1024,
-        height: 768,
-        policy: "fixed",
-      });
-  }, [workspaceEnabled, tokens, session?.bootId]);
 
   const shell = useBrowserSession({
     transport: shellTransport,
@@ -1293,16 +1292,14 @@ export function HostedBrowserBody({
           control === "you"
             ? "human"
             : control === "script"
-              ? "script"
-              : control === "other"
-                ? "human"
-                : "agent",
+            ? "script"
+            : control === "other"
+            ? "human"
+            : "agent",
         ...(lease.state === "parked" ? { parked: true } : {}),
       }}
       onCommand={shell.run}
-      {...(session && holding ? { onResumeAgent: shell.resume } : {})}
-      resuming={shell.resuming}
-      onViewportMeasured={workspaceEnabled ? shell.reportViewport : undefined}
+      onViewportMeasured={shell.reportViewport}
       // Not just "is there a browser": an engine too old to answer pane
       // commands has a perfectly real session, and controls that look live
       // and swallow every click read as broken rather than old.
@@ -1316,7 +1313,13 @@ export function HostedBrowserBody({
       error={error ?? shell.error}
       {...(placeholder ? { placeholder } : {})}
       trailing={
-        <>
+        <PaneSettingsMenu
+          statsOpen={statsOpen}
+          onToggleStats={onStatsToggle}
+          tier={tierPreference}
+          tiers={HOSTED_TIERS}
+          onTier={onTier}
+        >
           {session && sessionId ? (
             <BrowserProfileSaveButton
               projectId={projectId ?? ""}
@@ -1324,14 +1327,7 @@ export function HostedBrowserBody({
               disabled={holding || busy}
             />
           ) : null}
-          <PaneSettingsMenu
-            statsOpen={statsOpen}
-            onToggleStats={onStatsToggle}
-            tier={tierPreference}
-            tiers={HOSTED_TIERS}
-            onTier={onTier}
-          />
-        </>
+        </PaneSettingsMenu>
       }
     >
       <BrowserPaneSurface

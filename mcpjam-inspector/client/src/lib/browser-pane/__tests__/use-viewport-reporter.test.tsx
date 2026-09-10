@@ -23,8 +23,12 @@ it("cancels retired generations and reports the same geometry for a new session"
     ({ generation }) => useViewportReporter(send, generation),
     { initialProps: { generation: 1 } },
   );
+  const firstReporter = result.current;
   act(() => result.current({ width: 600, height: 700 }));
   rerender({ generation: 2 });
+  // A new identity prompts ResizeObserver consumers to remeasure even when
+  // the new session occupies exactly the same pane.
+  expect(result.current).not.toBe(firstReporter);
   await act(() => vi.advanceTimersByTimeAsync(80));
   expect(send).not.toHaveBeenCalled();
   act(() => result.current({ width: 600, height: 700 }));

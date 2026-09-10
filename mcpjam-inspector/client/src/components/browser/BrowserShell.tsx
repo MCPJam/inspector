@@ -66,9 +66,6 @@ export interface BrowserShellProps {
    * browser acquires it, and that happens inside this call.
    */
   onCommand: (command: BrowserPaneCommand) => void;
-  /** Hand the browser back and let the agent continue from a fresh look. */
-  onResumeAgent?: (() => void) | undefined;
-  resuming?: boolean;
   /** The picture: a canvas, a video, or nothing at all on the native surface. */
   children?: ReactNode;
   /** The quality menu and the stats toggle, which differ per engine. */
@@ -109,7 +106,8 @@ export interface BrowserShellProps {
    * Absent on an engine that cannot resize, in which case nothing observes.
    */
   onViewportMeasured?:
-    ((size: { width: number; height: number }) => void) | undefined;
+    | ((size: { width: number; height: number }) => void)
+    | undefined;
 }
 
 export function BrowserShell({
@@ -120,8 +118,6 @@ export function BrowserShell({
   control: controlOverride,
   holding: holdingOverride,
   onCommand,
-  onResumeAgent,
-  resuming = false,
   children,
   trailing,
   placeholder,
@@ -187,7 +183,7 @@ export function BrowserShell({
   measuredRef.current = onViewportMeasured;
   useEffect(() => {
     const element = pageRef.current;
-    if (!enabled || !element || !onViewportMeasured) return;
+    if (!enabled || !ready || !element || !onViewportMeasured) return;
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver((entries) => {
       const box = entries[0]?.contentRect;
@@ -199,7 +195,7 @@ export function BrowserShell({
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [enabled, onViewportMeasured]);
+  }, [enabled, ready, onViewportMeasured]);
 
   if (!enabled) {
     return (
@@ -236,11 +232,13 @@ export function BrowserShell({
         authority={authority}
         control={control}
         holding={holding}
-        {...(onResumeAgent && holding ? { onResumeAgent } : {})}
-        resuming={resuming}
         {...(trailing ? { trailing } : {})}
       />
-      <div ref={pageRef} className="relative min-h-0 flex-1 overflow-hidden">
+      <div
+        ref={pageRef}
+        data-testid="browser-page-area"
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
         {notice ? (
           <div
             data-testid="browser-notice"

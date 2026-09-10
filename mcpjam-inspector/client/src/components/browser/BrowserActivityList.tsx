@@ -59,13 +59,18 @@ export function BrowserActivityList({
   consentToken,
   active,
   className,
+  collapsible = false,
+  title = "Activity",
 }: {
   projectId: string | null;
   consentToken: string | null;
   /** False while the tab is hidden: a pane nobody is looking at polls nothing. */
   active: boolean;
   className?: string;
+  collapsible?: boolean;
+  title?: string;
 }) {
+  const [expanded, setExpanded] = useState(!collapsible);
   const [entries, setEntries] = useState<LocalBrowserTraceEntry[]>([]);
   /**
    * The session being read, WITH the project it belongs to.
@@ -76,9 +81,10 @@ export function BrowserActivityList({
    * which asked the new project for the old project's history. Two fields that
    * must agree are two fields that eventually will not.
    */
-  const [reading, setReading] = useState<
-    { projectId: string; sessionId: string } | null
-  >(null);
+  const [reading, setReading] = useState<{
+    projectId: string;
+    sessionId: string;
+  } | null>(null);
   const sessionId = reading?.projectId === projectId ? reading.sessionId : null;
   const [warning, setWarning] = useState<string | null>(null);
   const cursor = useRef(0);
@@ -139,7 +145,10 @@ export function BrowserActivityList({
       // ephemeral runs open at once, so "switch to the newest" handed the pane
       // to whichever run started last and wiped the history somebody was
       // reading, for a session that had never closed.
-      if (currentSession && quietTicks.current >= REDISCOVER_AFTER_QUIET_TICKS) {
+      if (
+        currentSession &&
+        quietTicks.current >= REDISCOVER_AFTER_QUIET_TICKS
+      ) {
         quietTicks.current = 0;
         const sessions = await listLocalBrowserSessions(projectId, consentToken)
           .then((r) => r.sessions)
@@ -201,7 +210,9 @@ export function BrowserActivityList({
       // applying it would file one project's rows under another's name.
       if (generation.current !== mine) return;
       if (!page) {
-        setWarning("this session's history could not be read just now; retrying");
+        setWarning(
+          "this session's history could not be read just now; retrying",
+        );
         return;
       }
       // Never silent: a hole in the history is the pane's to report, not
@@ -277,7 +288,20 @@ export function BrowserActivityList({
   return (
     <div className={cn("flex min-h-0 flex-col", className)}>
       <div className="flex shrink-0 items-center justify-between border-b px-3 py-1.5">
-        <span className="text-xs font-medium text-foreground">Activity</span>
+        {collapsible ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+            className="flex flex-1 items-center gap-2 text-left text-xs text-muted-foreground hover:text-foreground"
+          >
+            <span aria-hidden>{expanded ? "⌄" : "›"}</span>
+            {title}
+            {entries.length > 0 ? ` · ${entries.length}` : ""}
+          </button>
+        ) : (
+          <span className="text-xs font-medium text-foreground">{title}</span>
+        )}
         {warning ? (
           <span
             className="flex items-center gap-1 text-[11px] text-destructive"
@@ -291,6 +315,7 @@ export function BrowserActivityList({
         ) : null}
       </div>
       <div
+        hidden={!expanded}
         ref={listRef}
         onScroll={onScroll}
         data-testid="rail-browser-activity"
@@ -327,7 +352,9 @@ function CommandRow({ row }: { row: LocalBrowserTraceRow }) {
           {actorLabel(row)}
         </span>
         {row.url ? <span className="min-w-0 truncate">{row.url}</span> : null}
-        <span className="ml-auto shrink-0 tabular-nums">{row.durationMs}ms</span>
+        <span className="ml-auto shrink-0 tabular-nums">
+          {row.durationMs}ms
+        </span>
       </div>
     </div>
   );
@@ -391,8 +418,10 @@ function GapRow({
         {entry.reason === "daemon_restart"
           ? "the browser restarted here"
           : entry.reason === "ring_overflow"
-            ? `${entry.toSeq - entry.fromSeq + 1} earlier commands are no longer kept`
-            : "some history could not be recorded"}
+          ? `${
+              entry.toSeq - entry.fromSeq + 1
+            } earlier commands are no longer kept`
+          : "some history could not be recorded"}
       </span>
     </div>
   );

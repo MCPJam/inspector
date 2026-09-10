@@ -1,3 +1,4 @@
+import { useBrowserChatHandoff } from "@/lib/browser-shell/chat-handoff";
 import { useState } from "react";
 import { useConversationTargetRestoration } from "../use-conversation-target-restoration";
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -342,6 +343,24 @@ describe("useChatSession hosted mode", () => {
     vi.mocked(generateId).mockReturnValue("chat-session-id");
     useTrafficLogStore.getState().clear();
   });
+
+
+it("waits for browser control before dispatching the next user message", async () => {
+  let finish!: (ok: boolean) => void;
+  const release = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+  const { result, unmount } = renderHook(() => {
+    const chat = useChatSession({ selectedServers: [], hostedContext: { projectId: "handoff-test", selectedServerIds: [] } });
+    useBrowserChatHandoff({ projectId: "handoff-test", sessionId: chat.chatSessionId, holding: true, release });
+    return chat;
+  });
+  let send!: Promise<boolean>;
+  act(() => { send = result.current.sendMessage({ text: "continue" }); });
+  expect(release).toHaveBeenCalledOnce();
+  expect(mockState.authFetch).not.toHaveBeenCalled();
+  await act(async () => { finish(true); await send; });
+  await waitFor(() => expect(mockState.authFetch).toHaveBeenCalledOnce());
+  unmount();
+});
 
   it("announces the hosted-elicitation handshake", async () => {
     // The server registers its elicitation callback (and therefore advertises

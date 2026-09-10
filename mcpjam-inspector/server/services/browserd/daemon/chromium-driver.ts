@@ -877,6 +877,23 @@ export class ChromiumDriver implements BrowserDriver {
             ),
           };
         }
+        // The pane's + button only needs a blank tab. newPage already made
+        // one, so navigating it again would unnecessarily await WebMCP setup,
+        // network quiet and a rendered frame (up to the full settle timeout).
+        // Agent navigations still take the observation/token path below.
+        if (
+          command.source === "manual" &&
+          action.newTab &&
+          action.url === "about:blank" &&
+          action.observe === "none" &&
+          safeUrl(entry.page) === "about:blank"
+        ) {
+          return permit()
+            ? { ok: true }
+            : this.leaseBlockedResult(
+                "browser control changed while opening the tab; nothing was observed",
+              );
+        }
         return this.navigateVerb(
           tabId,
           entry,

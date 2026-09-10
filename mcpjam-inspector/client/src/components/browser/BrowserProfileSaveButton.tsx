@@ -1,6 +1,6 @@
 import { Loader2, Save } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@mcpjam/design-system/button";
+import { DropdownMenuItem } from "@mcpjam/design-system/dropdown-menu";
 import { toast } from "@/lib/toast";
 import { saveBrowserProfile } from "@/lib/browser-profiles/client";
 
@@ -49,24 +49,24 @@ export function BrowserProfileSaveButton({
   };
 
   return (
-    <Button
-      size="sm"
-      variant="ghost"
-      type="button"
+    <DropdownMenuItem
       disabled={disabled || saving}
-      onClick={() => void onSave()}
+      onSelect={(event) => {
+        event.preventDefault();
+        void onSave();
+      }}
       title={
         disabled
-          ? "Hand back control before saving a browser profile"
+          ? "Available when the agent has browser control"
           : "Save this browser profile"
       }
     >
       {saving ? (
-        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
       ) : (
-        <Save className="mr-1.5 h-3.5 w-3.5" />
+        <Save className="h-3.5 w-3.5" />
       )}
-      Save profile
-    </Button>
+      {saving ? "Saving profile…" : "Save profile for other chats…"}
+    </DropdownMenuItem>
   );
 }

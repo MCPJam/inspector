@@ -7,7 +7,7 @@
  * never carried one.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const listSessions = vi.fn();
 const readTrace = vi.fn();
@@ -17,9 +17,11 @@ vi.mock("@/lib/local-browser/client", () => ({
   readLocalBrowserTrace: (...args: unknown[]) => readTrace(...args),
 }));
 
-const { BrowserActivityList, actorLabel, describe: describeRow } = await import(
-  "../BrowserActivityList"
-);
+const {
+  BrowserActivityList,
+  actorLabel,
+  describe: describeRow,
+} = await import("../BrowserActivityList");
 import type { LocalBrowserTraceRow } from "@/lib/local-browser/client";
 
 /** The pane's own poll interval, so a test waits exactly one tick. */
@@ -121,7 +123,9 @@ describe("BrowserActivityList", () => {
     // appended while leaving the cursor past it — so a session's opening rows
     // vanished and were never fetched again.
     readTrace.mockResolvedValueOnce({
-      entries: [row({ seq: 1, command: { kind: "navigate", url: "https://x.test" } })],
+      entries: [
+        row({ seq: 1, command: { kind: "navigate", url: "https://x.test" } }),
+      ],
       headSeq: 1,
     });
     readTrace.mockResolvedValue({ entries: [], headSeq: 1 });
@@ -138,7 +142,9 @@ describe("BrowserActivityList", () => {
     // the one mistake a per-project profile exists to prevent.
     listSessions.mockResolvedValue({ sessions: [{ sessionId: "bs_a" }] });
     readTrace.mockResolvedValueOnce({
-      entries: [row({ seq: 1, command: { kind: "navigate", url: "https://a.test" } })],
+      entries: [
+        row({ seq: 1, command: { kind: "navigate", url: "https://a.test" } }),
+      ],
       headSeq: 1,
     });
     readTrace.mockResolvedValue({ entries: [], headSeq: 1 });
@@ -305,7 +311,12 @@ describe("BrowserActivityList", () => {
     // `refused` means nothing ran; `unknown` means we cannot say.
     readTrace.mockResolvedValueOnce({
       entries: [
-        row({ seq: 1, outcome: "refused", errorCode: "lease_held", ok: undefined }),
+        row({
+          seq: 1,
+          outcome: "refused",
+          errorCode: "lease_held",
+          ok: undefined,
+        }),
         row({
           seq: 2,
           outcome: "unknown",
@@ -400,11 +411,13 @@ describe("describe — what a row says it did", () => {
 
   it("names each command kind readably", () => {
     expect(
-      describeRow(row({ command: { kind: "navigate", url: "https://x.test" } })),
+      describeRow(
+        row({ command: { kind: "navigate", url: "https://x.test" } }),
+      ),
     ).toBe("navigate https://x.test");
-    expect(describeRow(row({ command: { kind: "observe", mode: "a11y" } }))).toBe(
-      "observe a11y",
-    );
+    expect(
+      describeRow(row({ command: { kind: "observe", mode: "a11y" } })),
+    ).toBe("observe a11y");
     expect(
       describeRow(row({ command: { kind: "note", value: "signing in" } })),
     ).toContain("signing in");
@@ -418,7 +431,11 @@ describe("describe — what a row says it did", () => {
     expect(
       describeRow(
         row({
-          command: { kind: "act", verb: "click", target: { coordinates: [4, 9] } },
+          command: {
+            kind: "act",
+            verb: "click",
+            target: { coordinates: [4, 9] },
+          },
         }),
       ),
     ).toBe("click (4, 9)");
@@ -434,8 +451,21 @@ describe("actorLabel", () => {
       "model",
     );
     // Two agents on one session must not read as one.
-    expect(actorLabel(row({ actor: { kind: "agent", id: "mcp:claude" } }))).toBe(
-      "mcp:claude",
-    );
+    expect(
+      actorLabel(row({ actor: { kind: "agent", id: "mcp:claude" } })),
+    ).toBe("mcp:claude");
   });
+});
+
+it("keeps activity collapsed until requested and preserves its history", async () => {
+  readTrace.mockResolvedValue({ entries: [row()], headSeq: 1 });
+  mount({ collapsible: true });
+  const toggle = screen.getByRole("button", { name: /Activity/ });
+  await waitFor(() => expect(toggle).toHaveTextContent("1"));
+  expect(screen.getByTestId("rail-browser-activity")).not.toBeVisible();
+  fireEvent.click(toggle);
+  expect(screen.getByTestId("rail-browser-activity")).toBeVisible();
+  expect(screen.getAllByText("reload")[0]).toBeVisible();
+  fireEvent.click(toggle);
+  expect(screen.getByTestId("rail-browser-activity")).not.toBeVisible();
 });

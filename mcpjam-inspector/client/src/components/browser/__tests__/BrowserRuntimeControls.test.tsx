@@ -60,3 +60,12 @@ it("revokes only through the Browser permission controller", () => {
   fireEvent.click(screen.getByText("Revoke Browser"));
   expect(state.revoke).toHaveBeenCalledOnce();
 });
+
+it("keeps runtime controls in the compact options menu", async () => {
+  render(<BrowserRuntimeControls projectId="p" compact />);
+  expect(screen.queryByLabelText("Browser location")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Browser options" }));
+  expect(await screen.findByLabelText("Browser location")).toBeVisible();
+  fireEvent.click(screen.getByText("Revoke Browser"));
+  expect(state.revoke).toHaveBeenCalledOnce();
+});

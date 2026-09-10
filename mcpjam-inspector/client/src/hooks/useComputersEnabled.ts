@@ -90,7 +90,8 @@ export function useLocalHarnessEnabled(): boolean {
  * panel before that is shipping a browser that resizes on two engines and
  * pretends to on the third.
  *
- * The flag controls panel placement and responsive viewport sizing only.
+ * The flag controls panel placement only. Both placements resize the browser
+ * to the available page area.
  * Both placements share tabs, URL/search navigation and implicit human takeover.
  * Server routes and session authority are independent of panel placement.
  */

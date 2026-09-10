@@ -1,3 +1,4 @@
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 /**
@@ -4168,6 +4169,7 @@ export function useChatSession(
         // during the preflight below would post this turn under an unrelated
         // session and ingest it into that transcript.
         const sessionAtSend = chatSessionIdRef.current;
+        const browserProjectAtSend = hostedProjectIdRef.current;
         // NEVER for an environment target. The environment's servers already
         // carry authoritative Convex ids and are re-resolved server-side; some
         // of them are plugin-contributed and deliberately absent from
@@ -4222,6 +4224,26 @@ export function useChatSession(
             );
             return false; // fail closed — do not send with unresolved servers
           }
+        }
+        try {
+          await releaseBrowserForChat(browserProjectAtSend, sessionAtSend);
+          if (
+            chatSessionIdRef.current !== sessionAtSend ||
+            hostedProjectIdRef.current !== browserProjectAtSend
+          ) {
+            throw new Error(
+              "The chat changed while returning browser control. Send your message again.",
+            );
+          }
+        } catch (error) {
+          pendingWidgetModelContextRef.current = undefined;
+          resolvedHostedServersRef.current = null;
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Couldn't return browser control.",
+          );
+          return false;
         }
         try {
           const timestampedMetadata = withMessageTimestampMetadata(
