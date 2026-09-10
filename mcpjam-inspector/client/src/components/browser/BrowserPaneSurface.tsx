@@ -240,7 +240,7 @@ export function BrowserPaneSurface({
    * page and then the composed text on top.
    */
   const composingRef = useRef(false);
-  const heldKeys = useRef(new Set<string>());
+  const heldKeys = useRef(new Map<string, { key: string; code: string }>());
   const withheldKeys = useRef(new Set<string>());
   const lastPoint = useRef({ x: 0, y: 0 });
 
@@ -313,7 +313,7 @@ export function BrowserPaneSurface({
         record(decodeMs?: number): void;
       }>((image, packet, decodeMs) => {
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        if (!canvas?.isConnected) return;
         const context = canvas.getContext("2d");
         if (!context) return;
         canvas.width = packet.frame.deviceWidth;
@@ -396,8 +396,8 @@ export function BrowserPaneSurface({
     composingRef.current = false;
     if (button)
       send([{ type: "mouse_up", ...lastPoint.current, button, modifiers: 0 }]);
-    for (const key of heldKeys.current)
-      send([{ type: "key_up", key, modifiers: 0 }]);
+    for (const key of heldKeys.current.values())
+      send([{ type: "key_up", ...key, modifiers: 0 }]);
     heldKeys.current.clear();
     withheldKeys.current.clear();
   }, [send]);
@@ -499,6 +499,13 @@ export function BrowserPaneSurface({
           if (!point) return;
           event.currentTarget.setPointerCapture?.(event.pointerId);
           paneRef.current?.focus();
+        }}
+        // Pointer events own capture; compatibility mouse events carry the
+        // browser's click count (PointerEvent.detail is always zero).
+        onMouseDown={(event) => {
+          if (!holding) return;
+          const point = pointAt(event);
+          if (!point) return;
           draggingRef.current = buttonOf(event);
           send([
             {
@@ -512,6 +519,8 @@ export function BrowserPaneSurface({
         }}
         onPointerUp={(event) => {
           event.currentTarget.releasePointerCapture?.(event.pointerId);
+        }}
+        onMouseUp={(event) => {
           // The release always lands. Dropping it because the pointer drifted
           // onto a bar leaves the page holding the button down forever, stuck
           // mid-selection with no way for the person to let go.
@@ -589,7 +598,7 @@ export function BrowserPaneSurface({
       <div
         ref={paneRef}
         aria-label={interactionLabel}
-        className="relative min-h-0 flex-1 px-3 pb-3 outline-none"
+        className="relative min-h-0 flex-1 px-3 pb-3 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         // FOCUSABLE EVEN WHEN THE AGENT IS DRIVING, because typing is now one
         // of the things that takes the browser. It used to be `-1` while not
         // holding, which was right when taking control was a button: there was
@@ -625,14 +634,16 @@ export function BrowserPaneSurface({
         }}
         onBlur={() => releaseHeld()}
         onKeyUp={(event) => {
-          if (withheldKeys.current.delete(event.key.toLowerCase())) return;
-          if (!heldKeys.current.delete(event.key)) return;
+          const identity = event.code || event.key.toLowerCase();
+          if (withheldKeys.current.delete(identity)) return;
+          const pressed = heldKeys.current.get(identity);
+          if (!pressed) return;
+          heldKeys.current.delete(identity);
           event.preventDefault();
           send([
             {
               type: "key_up",
-              key: event.key,
-              code: event.code,
+              ...pressed,
               modifiers: modifiersOf(event),
             },
           ]);
@@ -643,7 +654,7 @@ export function BrowserPaneSurface({
             (event.ctrlKey || event.metaKey) &&
             !event.altKey
           ) {
-            withheldKeys.current.add("v");
+            withheldKeys.current.add(event.code || event.key.toLowerCase());
             return;
           }
           if (!holding) {
@@ -702,7 +713,10 @@ export function BrowserPaneSurface({
             send([{ type: "text", text: event.key }]);
             return;
           }
-          heldKeys.current.add(event.key);
+          heldKeys.current.set(event.code || event.key.toLowerCase(), {
+            key: event.key,
+            code: event.code,
+          });
           send([
             {
               type: "key_down",

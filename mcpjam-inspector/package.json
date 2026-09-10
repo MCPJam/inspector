@@ -252,6 +252,7 @@
     "concurrently": "^9.1.0",
     "cross-env": "^10.1.0",
     "electron": "^43.4.0",
+    "esbuild": "^0.27.0",
     "eslint": "^9",
     "jsdom": "^27.4.0",
     "png-to-ico": "^2.1.8",

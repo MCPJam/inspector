@@ -22,6 +22,8 @@
  * already does for the local engine. So: a chunked response, read back through
  * the `fetch` the client already has.
  *
+ * Protocol edits rotate the daemon bundleHash and relaunch hosted sessions.
+ *
  * The inspection socket's single-message adapter delegates to this codec.
  * That adapter additionally requires one complete JPEG per message; this byte
  * stream also supports heartbeat, end and negotiated video records. Keeping

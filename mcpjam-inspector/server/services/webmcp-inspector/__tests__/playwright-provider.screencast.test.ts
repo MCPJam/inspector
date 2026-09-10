@@ -666,7 +666,7 @@ describe("inspection delegates capture and input to the shared viewport", () => 
     expect(h.driven).toEqual([]);
   });
 
-  it("drops oversize paints without captures or quality restarts", async () => {
+  it("recovers oversize paints once without substitute captures or repeated restarts", async () => {
     const h = await startedWithFakeClock();
     await h.session.setScreencast(true);
     for (let i = 0; i < 20; i++) {
@@ -681,7 +681,11 @@ describe("inspection delegates capture and input to the shared viewport", () => 
     expect(h.stills).not.toHaveBeenCalled();
     expect(
       h.cdp.methods().filter((method) => method === "Page.startScreencast"),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
+    expect(
+      h.cdp.sent.filter((call) => call.method === "Page.startScreencast").at(-1)
+        ?.params,
+    ).toMatchObject({ quality: 40 });
   });
 
   it("follows the pane only for embedded sessions", async () => {

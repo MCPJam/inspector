@@ -170,7 +170,8 @@ export function createTabViewport(
   cdp: CdpLike,
   options: TabViewportOptions,
 ): TabViewport {
-  const quality = options.quality ?? DEFAULT_QUALITY;
+  let quality = options.quality ?? DEFAULT_QUALITY;
+  let oversizeRecoveryAttempted = false;
   const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const now = options.now ?? Date.now;
   const listeners = new Set<ViewportListener>();
@@ -259,6 +260,20 @@ export function createTabViewport(
     const bytes = Math.floor((frame.data.length * 3) / 4);
     if (bytes > maxBytes) {
       counters.dropped.oversize += 1;
+      // A static oversized picture has no future paint to recover on. Restart
+      // once at a lower quality; never oscillate quality during a gesture.
+      if (!oversizeRecoveryAttempted) {
+        oversizeRecoveryAttempted = true;
+        quality = Math.min(quality, 40);
+        const run = resizeChain.then(async () => {
+          if (disposed || listeners.size === 0) return;
+          await stop();
+          if (disposed || listeners.size === 0) return;
+          await start();
+        });
+        resizeChain = run.catch(() => {});
+        startPending = resizeChain;
+      }
       return;
     }
 

@@ -186,7 +186,7 @@ describe("the pane surface — a hold that ends", () => {
     const { onInput, view } = renderSurface({
       authority: { kind: "lease", holding: true },
     });
-    fireEvent.pointerDown(image(), { clientX: 10, clientY: 10, button: 0 });
+    mouseDown(image(), { clientX: 10, clientY: 10, button: 0 });
     expect(onInput).toHaveBeenCalledTimes(1);
 
     view.rerender(
@@ -229,7 +229,7 @@ describe("the pane surface — a hold that ends", () => {
         onInput={onInput}
       />,
     );
-    fireEvent.pointerDown(image(), { clientX: 10, clientY: 10, button: 0 });
+    mouseDown(image(), { clientX: 10, clientY: 10, button: 0 });
 
     view.rerender(
       <BrowserPaneSurface
@@ -251,7 +251,7 @@ describe("the pane surface — a hold that ends", () => {
       control: "other",
     });
     fireEvent.pointerMove(image(), { clientX: 100, clientY: 100 });
-    fireEvent.pointerDown(image(), { clientX: 100, clientY: 100 });
+    mouseDown(image(), { clientX: 100, clientY: 100 });
     fireEvent.wheel(image(), { clientX: 100, clientY: 100, deltaY: 20 });
     expect(onInput).not.toHaveBeenCalled();
   });
@@ -281,7 +281,7 @@ describe("the pane surface — stats for nerds", () => {
 
   it("turning it on from the menu persists the choice", async () => {
     renderSurface();
-    fireEvent.pointerDown(
+    mouseDown(
       screen.getByTestId("pane-settings"),
       new MouseEvent("pointerdown", { bubbles: true }) as never,
     );
@@ -354,7 +354,7 @@ describe("shared inspection behavior", () => {
       onTakeControl: vi.fn(),
     });
     expect(screen.queryByText("Take control")).toBeNull();
-    fireEvent.pointerDown(image(), { clientX: 10, clientY: 20, button: 0 });
+    mouseDown(image(), { clientX: 10, clientY: 20, button: 0 });
     expect(onInput).toHaveBeenCalledWith([
       expect.objectContaining({ type: "mouse_down", x: 10, y: 20 }),
     ]);
@@ -365,7 +365,7 @@ describe("shared inspection behavior", () => {
     const canvas = image();
     const capture = vi.fn();
     Object.defineProperty(canvas, "setPointerCapture", { value: capture });
-    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 20, button: 0 });
+    mouseDown(canvas, { clientX: 10, clientY: 20, button: 0 });
     expect(capture).toHaveBeenCalled();
     onInput.mockClear();
     fireEvent.pointerLeave(canvas);
@@ -412,6 +412,12 @@ describe("shared inspection behavior", () => {
   });
 
   it("records only the image actually drawn and ignores retired decodes", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) =>
+      frames.push(fn),
+    );
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const tick = () => frames.splice(0).forEach((fn) => fn(0));
     const images: Array<{ onload: (() => void) | null; src: string }> = [];
     vi.stubGlobal(
       "Image",
@@ -443,10 +449,13 @@ describe("shared inspection behavior", () => {
       />,
     );
     stale();
+    expect(drawImage).not.toHaveBeenCalled();
+    tick();
     // A slow active decode still paints, then the latest pending image starts.
     expect(drawImage).toHaveBeenCalledTimes(1);
     const late = images[1].onload!;
     late();
+    tick();
     expect(drawImage).toHaveBeenCalledTimes(2);
     expect(onPainted).toHaveBeenCalledWith(
       expect.objectContaining({ seq: 2 }),
@@ -458,3 +467,31 @@ describe("shared inspection behavior", () => {
     vi.unstubAllGlobals();
   });
 });
+
+// jsdom does not generate the compatibility mouse event after a pointer event.
+function mouseDown(element: Element, init?: MouseEventInit) {
+  fireEvent.pointerDown(element, init);
+  fireEvent.mouseDown(element, init);
+}
+function mouseUp(element: Element, init?: MouseEventInit) {
+  fireEvent.pointerUp(element, init);
+  fireEvent.mouseUp(element, init);
+}
+
+it.each([
+  { down: "ƒ", up: "f", code: "KeyF", altKey: true },
+  { down: "A", up: "a", code: "KeyA", ctrlKey: true, shiftKey: true },
+])(
+  "releases the original $down when the physical key reports $up on release",
+  ({ down, up, code, ...modifiers }) => {
+    const { onInput } = renderSurface({ authority: { kind: "shared" } });
+    const pane = image().parentElement!;
+    fireEvent.keyDown(pane, { key: down, code, ...modifiers });
+    fireEvent.keyUp(pane, { key: up, code });
+    fireEvent.blur(pane);
+    expect(onInput.mock.calls.flat(2)).toEqual([
+      expect.objectContaining({ type: "key_down", key: down, code }),
+      expect.objectContaining({ type: "key_up", key: down, code }),
+    ]);
+  },
+);

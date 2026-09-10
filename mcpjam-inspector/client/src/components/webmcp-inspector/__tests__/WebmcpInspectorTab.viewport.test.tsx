@@ -1,3 +1,4 @@
+import { waitFor } from "@testing-library/react";
 /**
  * The pane's two jobs: ask for frames only while someone is looking, and show
  * SOMETHING whatever the server can do.
@@ -174,7 +175,7 @@ describe("WebmcpInspectorTab — viewport", () => {
       }
       expect(panelRenders.activity - before.activity).toBe(0);
       expect(panelRenders.tools - before.tools).toBe(0);
-      expect(loadedImages.at(-1)?.src).toBe("frame-30");
+      await waitFor(() => expect(loadedImages.at(-1)?.src).toBe("frame-30"));
     },
   );
 
@@ -294,14 +295,18 @@ describe("WebmcpInspectorTab — viewport", () => {
     await act(async () => {});
     // No frame yet: the middle rung of the chain is what keeps the pane from
     // being a hole for the first few hundred milliseconds.
-    expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,manual");
+    await waitFor(() =>
+      expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,manual"),
+    );
 
     await act(async () => {
       useWebmcpInspectorStore.setState({
         liveFrame: liveFrame("data:image/jpeg;base64,paint"),
       });
     });
-    expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,paint");
+    await waitFor(() =>
+      expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,paint"),
+    );
     view.unmount();
   });
 
@@ -319,7 +324,9 @@ describe("WebmcpInspectorTab — viewport", () => {
         liveFrame: liveFrame("blob:http://localhost/abc-123"),
       });
     });
-    expect(loadedImages.at(-1)?.src).toBe("blob:http://localhost/abc-123");
+    await waitFor(() =>
+      expect(loadedImages.at(-1)?.src).toBe("blob:http://localhost/abc-123"),
+    );
 
     // …and a data URI from SSE, through the same prop.
     await act(async () => {
@@ -327,7 +334,9 @@ describe("WebmcpInspectorTab — viewport", () => {
         liveFrame: liveFrame("data:image/jpeg;base64,sse", 2),
       });
     });
-    expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,sse");
+    await waitFor(() =>
+      expect(loadedImages.at(-1)?.src).toBe("data:image/jpeg;base64,sse"),
+    );
     view.unmount();
   });
 
@@ -400,7 +409,7 @@ describe("WebmcpInspectorTab — viewport", () => {
       ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
 
     await act(async () => {
-      fireEvent.pointerDown(image, { clientX: 640, clientY: 400, button: 0 });
+      mouseDown(image, { clientX: 640, clientY: 400, button: 0 });
     });
 
     // The middle of the pane is the middle of the PAGE — 640,400 — and not the
@@ -849,3 +858,13 @@ describe("WebmcpInspectorTab — viewport", () => {
     );
   });
 });
+
+// jsdom does not generate the compatibility mouse event after a pointer event.
+function mouseDown(element: Element, init?: MouseEventInit) {
+  fireEvent.pointerDown(element, init);
+  fireEvent.mouseDown(element, init);
+}
+function mouseUp(element: Element, init?: MouseEventInit) {
+  fireEvent.pointerUp(element, init);
+  fireEvent.mouseUp(element, init);
+}

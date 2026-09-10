@@ -192,3 +192,11 @@ The Node release requires shared viewing/capture/input on Node-local inspection,
 ## First implementation ticket
 
 Implement in a new inspector worktree. Start with the as-shipped inventory and Stage 1 canonical input/behavior contract. Use attribution to choose capture or frontend next, and include every stage actually completed, deferred, or blocked in the PR validation report. Keep this document as the status ledger, linking each PR and its measured exit evidence as it lands.
+
+## PR #4882 review follow-up
+
+The shared Node viewer/capture/input delivery remains ready for review; full roadmap completion and resolution of visible lag are not claimed. See the validation report and 30-sample candidate-geometry comparison: historical baseline 66 ms versus pane-sized DPR 1 candidate 64 ms capture arrival; same-driver geometry sweep does not show a latency win.
+
+The shared surface preserves real mouse click counts alongside pointer capture, releases keys by physical code, restores visible keyboard focus and measures JPEG presentation at animation frame. Both products use one normalized viewport reporter. Oversized captures get one shared quality-40 restart with no oscillation. DPR 1 / quality 75 intentionally trades Retina sharpness for the Playground rendering policy; a shared settle still remains a follow-up.
+
+Add to the next transport migration's same-PR removal list: consume the inspection socket through `createFrameWireReader` directly, then delete `PaneFrame.src`, the WebMCP blob-URL `frame-presenter.ts` accommodation and its private binary-message adapter. Keep one stream/resource owner; do not leave both presentation paths running. Shared `useFrameStream`, SSE/poll removal, unified diagnostics and the separate Electron primitive migration remain open. Hosted and Electron-viewing-hosted manual checks and the physical trackpad reproduction remain release evidence to collect.

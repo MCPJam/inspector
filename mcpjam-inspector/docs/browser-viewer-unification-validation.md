@@ -19,9 +19,23 @@ The small samples show lower inspection dispatch medians; marker arrival differe
 
 Reproduce the capture comparison with `RUN_BROWSER_PIPELINE_BENCHMARK=1 BROWSER_PIPELINE_REPORT=/tmp/browser-pipeline.json npx vitest run --project server server/services/webmcp-inspector/__tests__/browser-pipeline-benchmark.test.ts`.
 
+## Candidate geometry follow-up (TL review)
+
+A fresh baseline run uses the original provider at `ca99d5ed1b`. The candidate runs both the historical preset and the new default geometry, with **30 gestures per case** on the same Apple M4 Pro / Chromium 151 environment. The candidate calls the real `resizeViewport(600, 700)` path; it is not a raw viewport substitute. The harness defaults to 30 samples and now includes a named `candidate` preset. The baseline runs historical/matched presets because that provider has no pane resize API.
+
+| WebMCP configuration                  | Dispatch median (ms) | Marker arrival median (ms) |
+| ------------------------------------- | -------------------: | -------------------------: |
+| Original provider, 1280×800 / DPR 2   |                   12 |                         66 |
+| Shared provider, 1280×800 / DPR 2     |                   12 |                       58.5 |
+| Shared provider, pane 600×700 / DPR 1 |                   12 |                         64 |
+
+At the new defaults, arrival is **66 → 64 ms** compared with the fresh original-provider baseline. Holding the candidate driver constant, changing geometry gives **58.5 → 64 ms**, not a latency improvement. Cases were sequential, not randomized; scheduler/compositor phase can dominate differences this small. The fixture is deliberately cheap to raster. This run closes the missing candidate-preset measurement, but **does not establish a visible scrolling improvement** or quantify the savings on a complex page. Raw baseline and candidate records are in `reviewGeometryComparison` in the samples artifact.
+
+The product decision remains pane-sized DPR 1, quality 75: fewer raster pixels and consistent behavior with Playground, with less Retina sharpness than the old DPR 2 / sharp-at-rest view. The shared capture path now retries an oversized picture once at quality 40, serialized with resize. It does not oscillate or retry indefinitely; a picture still above the cap at quality 40 remains dropped. A shared settle-still enhancement is a follow-up, not silently retained inspection-only policy.
+
 ## Checks
 
-Final focused runs: **473 client tests passed**, **1,243 server/shared tests passed** (7 gated tests skipped), plus **7 built-server E2E tests passed**. Client typecheck and both import guards passed; design checks passed (zero design-lint errors).
+Initial implementation runs: **473 client tests passed**, **1,243 server/shared tests passed** (7 gated tests skipped), plus **7 built-server E2E tests passed**. Client typecheck and both import guards passed; design checks passed (zero design-lint errors).
 
 - Shared surface/input, inspector isolation at 500 activity rows, store and both browser bodies: focused Vitest suites.
 - Provider bridge, window/embedded modes, explicit screenshots, DPR 2, cross-origin frames, navigation/declarative results, hosted and Electron provider behavior: server regression suites, including real Chromium.
@@ -33,4 +47,15 @@ The full server TypeScript check reports 296 diagnostics outside the changed fil
 
 ## Open release evidence
 
-The physical trackpad/ten-minute run, actual Playground-versus-inspection UI timing, Windows/Linux Node check and packaged Electron smoke are not completed by these tests. Shared code and successful mocks are not proof that the reported visible lag is resolved. The PR should remain a draft until its intended release scope and these outstanding checks are reviewed.
+The physical trackpad/ten-minute run, actual Playground-versus-inspection UI timing, Windows/Linux Node check and packaged Electron smoke are not completed by these tests. Shared code and successful mocks are not proof that the reported visible lag is resolved. The PR is ready for review of the Node viewing/capture/input scope. The unresolved visible-lag and platform evidence remains explicit; ready-for-review does not mean those release checks have passed.
+
+## Review fixes and regression scope
+
+- Mouse compatibility events carry real double/triple-click counts; pointer events retain capture and focus. `e2e/browser-pane-input.spec.ts` bundles the actual shared React surface, drives Chromium clicks, and replays its output into a real page to verify `dblclick`. It also checks a modifier released before the letter.
+- Held shortcuts use physical `code` identity and release the original `key`, including Option-modified letters. Blur releases every held input. Paste remains host-delivered text.
+- Inspection and BrowserShell share one normalized, debounced viewport reporter using `browser-viewport.ts` bounds. Obsolete measurements and retired generations are cancelled.
+- JPEG drawing/measurement happens on animation frame after decode again; retired images cannot report a paint. Decode duration excludes animation-frame wait.
+- Playground now uses actual keyup timing, pointer capture past the pane edge, non-passive wheel prevention, blur release, focus on pointerdown and bounded newest-pending JPEG decoding (including hosted viewing from Electron). These are intentional shared behavior changes, not only inspection changes. Native Electron drawing remains separate.
+- Focus visibility is restored, per-push coalescing only examines the queue tail, the daemon bundle warning is retained, and a patch changeset names the Retina quality trade.
+
+Review follow-up: **340 client tests passed**, **1,131 server tests passed** (7 gated cases skipped, including daemon bundle freshness), and **8 real-browser/built-server E2E tests passed**. Client typecheck, both import guards and design checks passed. The cross-origin discovery test now waits for the subframe tool it asserts rather than only the main-frame tool count. Production client and server builds passed. Hosted and Electron-viewing-hosted manual sessions were not exercised; local component tests and Chromium input tests do not substitute for those platform checks.

@@ -140,9 +140,13 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
 
   it("discovers the page's tools with stable keys and provenance", async () => {
     const { runtime } = await open();
-    await vi.waitFor(() =>
-      expect(runtime.currentTools().length).toBeGreaterThanOrEqual(5),
-    );
+    // Main-frame tools can arrive before the cross-origin target attaches.
+    await vi.waitFor(() => {
+      expect(runtime.currentTools().length).toBeGreaterThanOrEqual(5);
+      expect(
+        runtime.currentTools().some((tool) => tool.name === "sub_tool"),
+      ).toBe(true);
+    });
 
     const tools = runtime.currentTools();
     const echo = tools.find((tool) => tool.name === "echo");

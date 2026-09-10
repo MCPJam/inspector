@@ -1,3 +1,4 @@
+import { useViewportReporter } from "@/lib/browser-pane/use-viewport-reporter";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Globe, RotateCw, X } from "lucide-react";
@@ -907,35 +908,13 @@ function ViewportPane({
   const surface = frame
     ? { width: frame.cssWidth, height: frame.cssHeight }
     : transportSurface(transport);
-  const resizeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
-  const resizeLast = useRef("");
-  const resize = useCallback(
-    ({
-      width: measuredWidth,
-      height: measuredHeight,
-    }: {
-      width: number;
-      height: number;
-    }) => {
-      if (!behaviour.drivesPage) return;
-      clearTimeout(resizeTimer.current);
-      const width = Math.max(240, Math.min(2560, measuredWidth));
-      const height = Math.max(180, Math.min(1600, measuredHeight));
-      const next = `${width}:${height}`;
-      if (next === resizeLast.current) return;
-      const sessionId = useWebmcpInspectorStore.getState().session?.sessionId;
-      resizeTimer.current = setTimeout(() => {
-        const state = useWebmcpInspectorStore.getState();
-        if (state.session?.sessionId !== sessionId) return;
-        resizeLast.current = next;
-        void state.sendCommand({ type: "set_viewport", width, height });
-      }, 80);
-    },
-    [behaviour.drivesPage],
-  );
-  useEffect(() => () => clearTimeout(resizeTimer.current), []);
+  // ViewportPane is keyed by sessionId; a retired pane cancels its report.
+  const resize = useViewportReporter((size) => {
+    if (!behaviour.drivesPage) return;
+    return useWebmcpInspectorStore
+      .getState()
+      .sendCommand({ type: "set_viewport", ...size });
+  }, behaviour.drivesPage);
   const forwarder = useMemo(
     () =>
       createInputForwarder((events) =>

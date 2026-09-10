@@ -5600,7 +5600,8 @@ var DEFAULT_QUALITY = BROWSER_VIEWPORT_POLICY.quality;
 var DEFAULT_MIN_INTERVAL_MS = BROWSER_VIEWPORT_POLICY.minIntervalMs;
 var DEFAULT_MAX_FRAME_BYTES = BROWSER_VIEWPORT_POLICY.maxFrameBytes;
 function createTabViewport(cdp, options) {
-  const quality = options.quality ?? DEFAULT_QUALITY;
+  let quality = options.quality ?? DEFAULT_QUALITY;
+  let oversizeRecoveryAttempted = false;
   const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const now = options.now ?? Date.now;
   const listeners = /* @__PURE__ */ new Set();
@@ -5653,6 +5654,19 @@ function createTabViewport(cdp, options) {
     const bytes = Math.floor(frame.data.length * 3 / 4);
     if (bytes > maxBytes) {
       counters.dropped.oversize += 1;
+      if (!oversizeRecoveryAttempted) {
+        oversizeRecoveryAttempted = true;
+        quality = Math.min(quality, 40);
+        const run = resizeChain.then(async () => {
+          if (disposed || listeners.size === 0) return;
+          await stop();
+          if (disposed || listeners.size === 0) return;
+          await start();
+        });
+        resizeChain = run.catch(() => {
+        });
+        startPending = resizeChain;
+      }
       return;
     }
     const measured = measure(frame.data, options.surface);

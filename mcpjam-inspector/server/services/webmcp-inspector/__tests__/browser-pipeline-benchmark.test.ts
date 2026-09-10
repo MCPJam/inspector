@@ -21,7 +21,8 @@ describe.skipIf(!enabled)("actual browser capture/input pipelines", () => {
     const fixture = await startWebMcpFixturePage({ variant: "interaction" });
     const report: unknown[] = [];
     try {
-      for (const matched of [false, true]) {
+      for (const preset of ["historical", "candidate", "matched"] as const) {
+        const matched = preset === "matched";
         for (const engine of ["webmcp", "playground"]) {
           const frames: Array<{ data: string; width: number; at: number }> = [];
           const record = (f: { data: string; deviceWidth: number }) =>
@@ -30,10 +31,10 @@ describe.skipIf(!enabled)("actual browser capture/input pipelines", () => {
           let input: () => Promise<void>;
           let version = "provider-managed";
           const viewport =
-            engine === "webmcp" || matched
+            (engine === "webmcp" && preset === "historical") || matched
               ? { width: 1280, height: 800 }
               : { width: 600, height: 700 };
-          const dpr = matched ? 1 : engine === "webmcp" ? 2 : 1;
+          const dpr = preset === "historical" && engine === "webmcp" ? 2 : 1;
           if (engine === "webmcp") {
             const session = await new PlaywrightWebMcpProvider().createSession({
               url: fixture.url,
@@ -49,6 +50,10 @@ describe.skipIf(!enabled)("actual browser capture/input pipelines", () => {
                 onFrame: record,
               },
             });
+            if (preset === "candidate") {
+              await session.resizeViewport!(viewport.width, viewport.height);
+              frames.length = 0;
+            }
             dispose = () => session.dispose();
             input = () =>
               session.dispatchInput([
@@ -87,7 +92,11 @@ describe.skipIf(!enabled)("actual browser capture/input pipelines", () => {
               .poll(() => frames.length, { timeout: 10000 })
               .toBeGreaterThan(0);
             const samples = [];
-            for (let gesture = 1; gesture <= 5; gesture++) {
+            for (
+              let gesture = 1;
+              gesture <= Number(process.env.BROWSER_PIPELINE_SAMPLES ?? 30);
+              gesture++
+            ) {
               frames.length = 0;
               const start = Date.now();
               await input();
@@ -134,7 +143,15 @@ describe.skipIf(!enabled)("actual browser capture/input pipelines", () => {
                 markerArrivalMs: arrival,
               });
             }
-            report.push({ engine, matched, viewport, dpr, version, samples });
+            report.push({
+              engine,
+              preset,
+              matched,
+              viewport,
+              dpr,
+              version,
+              samples,
+            });
           } finally {
             await dispose();
           }
@@ -157,5 +174,5 @@ describe.skipIf(!enabled)("actual browser capture/input pipelines", () => {
     } finally {
       await fixture.close();
     }
-  }, 90000);
+  }, 180000);
 });

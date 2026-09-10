@@ -387,8 +387,8 @@ describe("the agent browser pane — driving it", () => {
     image.getBoundingClientRect = () =>
       ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
 
-    fireEvent.pointerDown(image, { clientX: 10, clientY: 10, button: 2 });
-    fireEvent.pointerUp(image, { clientX: 10, clientY: 10, button: 2 });
+    mouseDown(image, { clientX: 10, clientY: 10, button: 2 });
+    mouseUp(image, { clientX: 10, clientY: 10, button: 2 });
 
     await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
     const buttons = api.inputs
@@ -407,7 +407,7 @@ describe("the agent browser pane — driving it", () => {
     image.getBoundingClientRect = () =>
       ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
 
-    fireEvent.pointerDown(image, { clientX: 10, clientY: 10, button: 1 });
+    mouseDown(image, { clientX: 10, clientY: 10, button: 1 });
     fireEvent.pointerCancel(image, { clientX: 10, clientY: 10 });
 
     await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
@@ -843,3 +843,13 @@ it("takes control but drops the first click if the daemon cannot identify the pa
   expect(await screen.findByTestId("browser-notice")).toBeTruthy();
   expect(api.inputs).toEqual([]);
 });
+
+// jsdom does not generate the compatibility mouse event after a pointer event.
+function mouseDown(element: Element, init?: MouseEventInit) {
+  fireEvent.pointerDown(element, init);
+  fireEvent.mouseDown(element, init);
+}
+function mouseUp(element: Element, init?: MouseEventInit) {
+  fireEvent.pointerUp(element, init);
+  fireEvent.mouseUp(element, init);
+}

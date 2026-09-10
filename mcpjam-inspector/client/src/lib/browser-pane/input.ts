@@ -285,7 +285,10 @@ export function createInputForwarder(
             start = end;
           }
         } else {
-          queue = coalesceBrowserPaneInput([...queue, event], true);
+          const tail = queue.pop();
+          queue.push(
+            ...coalesceBrowserPaneInput(tail ? [tail, event] : [event], true),
+          );
         }
       }
       if (urgent) {

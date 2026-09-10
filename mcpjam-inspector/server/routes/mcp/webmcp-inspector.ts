@@ -1,3 +1,7 @@
+import {
+  MIN_SESSION_VIEWPORT,
+  MAX_SESSION_VIEWPORT,
+} from "@/shared/browser-viewport";
 import { inputEventSchema } from "@/shared/webmcp-input";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -216,8 +220,16 @@ const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("set_screencast"), enabled: z.boolean() }),
   z.object({
     type: z.literal("set_viewport"),
-    width: z.number().int().min(240).max(2560),
-    height: z.number().int().min(180).max(1600),
+    width: z
+      .number()
+      .int()
+      .min(MIN_SESSION_VIEWPORT.width)
+      .max(MAX_SESSION_VIEWPORT.width),
+    height: z
+      .number()
+      .int()
+      .min(MIN_SESSION_VIEWPORT.height)
+      .max(MAX_SESSION_VIEWPORT.height),
   }),
   z.object({
     type: z.literal("input"),

@@ -597,3 +597,37 @@ describe("shared viewport lifecycle", () => {
     await h.viewport.dispose();
   });
 });
+
+it("restarts an oversized static picture once at lower quality without oscillating", async () => {
+  const h = make({ maxFrameBytes: 1024 });
+  h.viewport.subscribe((f) => h.frames.push(f));
+  await h.viewport.ready();
+  h.emitFrame("x".repeat(2048));
+  await h.viewport.ready();
+  expect(
+    h.sent
+      .filter((c) => c.method === "Page.startScreencast")
+      .map((c) => c.params?.quality),
+  ).toEqual([75, 40]);
+  h.emitFrame(JPEG_1PX);
+  expect(h.frames).toHaveLength(1);
+  h.emitFrame("y".repeat(2048));
+  await h.viewport.ready();
+  expect(
+    h.sent.filter((c) => c.method === "Page.startScreencast"),
+  ).toHaveLength(2);
+  await h.viewport.dispose();
+});
+
+it("does not restart oversize recovery after the viewer retires", async () => {
+  const h = make({ maxFrameBytes: 8 });
+  const unsubscribe = h.viewport.subscribe(() => {});
+  await h.viewport.ready();
+  h.emitFrame(JPEG_1PX);
+  unsubscribe();
+  await h.viewport.dispose();
+  await h.viewport.ready();
+  expect(
+    h.sent.filter((c) => c.method === "Page.startScreencast"),
+  ).toHaveLength(1);
+});
