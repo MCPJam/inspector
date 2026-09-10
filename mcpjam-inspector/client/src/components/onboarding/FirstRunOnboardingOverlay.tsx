@@ -185,7 +185,7 @@ export function FirstRunOnboardingOverlay({
               <Button
                 type="button"
                 variant="link"
-                className="mt-7 h-auto p-0 text-[12.5px] font-semibold text-primary-foreground decoration-primary-foreground/35 underline-offset-4 hover:text-primary-foreground hover:decoration-primary-foreground"
+                className="mt-7 h-auto justify-self-start p-0 text-[12.5px] font-semibold text-primary-foreground underline decoration-primary-foreground/35 underline-offset-4 hover:text-primary-foreground hover:decoration-primary-foreground focus-visible:!border-0 focus-visible:!ring-0"
                 onClick={continueToChoice}
               >
                 Continue
