@@ -62,6 +62,7 @@ import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
+import { PLAYGROUND_FIRST_RUN_PROMPT } from "./components/ui-playground/hooks/use-playground-state";
 import {
   EXCALIDRAW_SERVER_CONFIG,
   EXCALIDRAW_SERVER_NAME,
@@ -2298,10 +2299,12 @@ export function PlaygroundRoute() {
     isSelectedServerSyncing,
     isWorkOsLoading,
     playgroundServerSelectorProps,
+    firstRunPlaygroundPrompt,
     projectServers,
     remoteFirstRunOnboardingShown,
     selectedMCPConfig,
     setPlaygroundOnboarding,
+    setFirstRunPlaygroundPrompt,
     setEvalChatHandoff,
     workOsUser,
   } = useAppRouteContext();
@@ -2327,6 +2330,8 @@ export function PlaygroundRoute() {
       ensureServersReady={ensureServersReady}
       onOnboardingChange={setPlaygroundOnboarding}
       playgroundServerSelectorProps={playgroundServerSelectorProps}
+      firstRunPrompt={firstRunPlaygroundPrompt}
+      onFirstRunPromptConsumed={() => setFirstRunPlaygroundPrompt(null)}
       activeHost={activeHost}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
@@ -2535,6 +2540,9 @@ export default function App() {
     useState(false);
   const [firstRunConnectionState, setFirstRunConnectionState] =
     useState<FirstRunConnectionState>({ status: "idle" });
+  const [firstRunPlaygroundPrompt, setFirstRunPlaygroundPrompt] = useState<
+    string | null
+  >(null);
   const [pendingFirstRunConnection, setPendingFirstRunConnection] =
     useState<ServerFormData | null>(null);
   const firstRunConnectionAttemptRef = useRef(0);
@@ -3507,6 +3515,7 @@ export default function App() {
     setPendingFirstRunConnection(null);
     setFirstRunConnectionState({ status: "idle" });
     setFirstRunOverlayDismissed(true);
+    setFirstRunPlaygroundPrompt(PLAYGROUND_FIRST_RUN_PROMPT);
     markFirstRunServerChoiceCompleted();
     navigateApp(routePaths.playground);
   }, [navigateApp]);
@@ -5240,6 +5249,7 @@ export default function App() {
     defaultHubRoute,
     ensureServersReady,
     evalChatHandoff,
+    firstRunPlaygroundPrompt,
     handleCheckoutIntentNavigationStarted,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
@@ -5281,6 +5291,7 @@ export default function App() {
     selectedMCPConfig,
     selectedServerEntry,
     setPlaygroundOnboarding,
+    setFirstRunPlaygroundPrompt,
     setActiveHostId,
     setEvalChatHandoff,
     setHostsTabSelectedHostId,

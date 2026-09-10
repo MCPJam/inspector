@@ -7,6 +7,7 @@ import { render, screen } from "@testing-library/react";
 // screen shows, so neutralize everything else and drive `loadingState`.
 
 const mockLoadingScreen = vi.hoisted(() => vi.fn());
+const mockPlaygroundCenter = vi.hoisted(() => vi.fn());
 const mockLoadingState = vi.hoisted(() => ({
   current: { kind: "skeleton" } as { kind: string },
 }));
@@ -86,7 +87,10 @@ vi.mock("@/components/playground/PlaygroundRightRail", () => ({
 // Relative to PlaygroundTab.tsx, so "../X" from this __tests__ dir resolves to
 // the same module the source imports as "./X".
 vi.mock("../PlaygroundCenter", () => ({
-  PlaygroundCenter: () => <div data-testid="playground-center" />,
+  PlaygroundCenter: (props: unknown) => {
+    mockPlaygroundCenter(props);
+    return <div data-testid="playground-center" />;
+  },
 }));
 vi.mock("../PlaygroundPreviewedClientSync", () => ({
   PlaygroundPreviewedClientSync: () => null,
@@ -105,6 +109,7 @@ const baseProps: ComponentProps<typeof PlaygroundTab> = {
 describe("PlaygroundTab loading branch", () => {
   beforeEach(() => {
     mockLoadingScreen.mockClear();
+    mockPlaygroundCenter.mockClear();
     mockLoadingState.current = { kind: "skeleton" };
   });
 
@@ -129,5 +134,25 @@ describe("PlaygroundTab loading branch", () => {
 
     expect(mockLoadingScreen).not.toHaveBeenCalled();
     expect(screen.getByTestId("playground-center")).toBeInTheDocument();
+  });
+
+  it("passes the one-shot first-run prompt into the Playground center", () => {
+    mockLoadingState.current = { kind: "ready" };
+    const onFirstRunPromptConsumed = vi.fn();
+
+    render(
+      <PlaygroundTab
+        {...baseProps}
+        firstRunPrompt="What can this server do?"
+        onFirstRunPromptConsumed={onFirstRunPromptConsumed}
+      />,
+    );
+
+    expect(mockPlaygroundCenter).toHaveBeenCalledWith(
+      expect.objectContaining({
+        firstRunPrompt: "What can this server do?",
+        onFirstRunPromptConsumed,
+      }),
+    );
   });
 });
