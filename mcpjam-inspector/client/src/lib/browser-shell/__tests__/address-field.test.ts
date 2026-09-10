@@ -105,17 +105,19 @@ describe("committing and abandoning", () => {
       { type: "edit", value: "  localhost:3000/x " },
     ]);
     expect(addressFieldTarget(state)).toBe("http://localhost:3000/x");
-    expect(addressFieldValue(reduceAddressField(state, { type: "commit" }))).toBe(
-      "https://a.test/",
-    );
+    expect(
+      addressFieldValue(reduceAddressField(state, { type: "commit" })),
+    ).toBe("https://a.test/");
   });
 
-  it("hands back nothing for a draft that is not a place", () => {
+  it("searches for ordinary text", () => {
     const state = run([
       { type: "focus" },
       { type: "edit", value: "how do I center a div" },
     ]);
-    expect(addressFieldTarget(state)).toBeNull();
+    expect(addressFieldTarget(state)).toBe(
+      "https://www.google.com/search?q=how+do+I+center+a+div",
+    );
   });
 
   it("hands back nothing when there is no draft at all", () => {
@@ -175,10 +177,25 @@ describe("focus is not an edit", () => {
 describe("identity", () => {
   it("returns the same object when nothing moved", () => {
     const state = run([{ type: "url", url: "https://a.test/" }]);
-    expect(reduceAddressField(state, { type: "url", url: "https://a.test/" })).toBe(
-      state,
-    );
+    expect(
+      reduceAddressField(state, { type: "url", url: "https://a.test/" }),
+    ).toBe(state);
     expect(reduceAddressField(state, { type: "blur" })).toBe(state);
     expect(reduceAddressField(state, { type: "cancel" })).toBe(state);
   });
 });
+
+it.each([
+  ["localhost:3000", "http://localhost:3000/"],
+  ["example.com/path", "https://example.com/path"],
+  ["settings", "https://www.google.com/search?q=settings"],
+  ["café & tea", "https://www.google.com/search?q=caf%C3%A9+%26+tea"],
+  ["javascript:alert(1)", null],
+  ["file:///etc/passwd", null],
+  ["   ", null],
+])(
+  "classifies %s without sending search text to the daemon",
+  (value, target) => {
+    expect(addressFieldTarget(run([{ type: "edit", value }]))).toBe(target);
+  },
+);

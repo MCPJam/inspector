@@ -66,9 +66,12 @@ export function decodeBrowserTab(raw: unknown): BrowserTabState | null {
     id: value.id,
     url: typeof value.url === "string" ? value.url.slice(0, MAX_URL_CHARS) : "",
     title:
-      typeof value.title === "string" ? value.title.slice(0, MAX_TITLE_CHARS) : "",
+      typeof value.title === "string"
+        ? value.title.slice(0, MAX_TITLE_CHARS)
+        : "",
     ...(favicon ? { faviconUrl: favicon } : {}),
     loading: value.loading === true,
+    ...(typeof value.openerId === "string" ? { openerId: value.openerId } : {}),
     ...(Number.isSafeInteger(value.navCounter)
       ? { navCounter: value.navCounter as number }
       : {}),
@@ -113,7 +116,7 @@ export function decodeStateSnapshot(raw: unknown): BrowserStateSnapshot | null {
     activeTabId:
       activeTabId && tabs.some((tab) => tab.id === activeTabId)
         ? activeTabId
-        : tabs[0]?.id ?? null,
+        : (tabs[0]?.id ?? null),
     canGoBack: body.canGoBack === true,
     canGoForward: body.canGoForward === true,
     control: decodeBrowserControl(body.control),

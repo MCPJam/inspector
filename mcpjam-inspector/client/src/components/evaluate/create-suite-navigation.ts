@@ -42,6 +42,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
           testCaseId: options?.testCaseId,
           insightsFocus: options?.insightsFocus,
           compareToRunId: options?.compareToRunId,
+          comparison: options?.comparison,
         },
         { replace: options?.replace }
       );
@@ -61,6 +62,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
           suiteId,
           testId,
           ...(options?.openCompare ? { openCompare: true } : {}),
+          ...(options?.checks ? { checks: true } : {}),
           ...(options?.iteration ? { iteration: options.iteration } : {}),
           ...(options?.fromEvalServer
             ? { fromEvalServer: options.fromEvalServer }

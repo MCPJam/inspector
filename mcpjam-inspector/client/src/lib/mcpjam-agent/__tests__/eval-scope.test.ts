@@ -1,6 +1,7 @@
+import { useDescribeSurface } from "../describe-surface";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  openEvalChat,
+  openEvalChat as openRegisteredEvalChat,
   newEvalChat,
   readEvalScope,
   pinEvalTurn,
@@ -24,6 +25,16 @@ const context = {
   suiteName: "Support",
   caseId: "case-a",
 };
+// Simulate mounting the target Describe editor before opening its conversation.
+function openEvalChat(
+  input: Parameters<typeof openRegisteredEvalChat>[0],
+  options?: Parameters<typeof openRegisteredEvalChat>[1],
+) {
+  useDescribeSurface.setState({
+    scope: { ...input, kind: "evals", version: 1, id: "mounted" },
+  });
+  return openRegisteredEvalChat(input, options);
+}
 beforeEach(() => {
   useAgentPanelStore.setState({
     activeSessionId: null,
@@ -31,6 +42,9 @@ beforeEach(() => {
     isOpen: false,
   });
   useEvalAgentScopes.setState({ scopes: {} });
+  useDescribeSurface.setState({
+    scope: { ...context, kind: "evals", version: 1, id: "mounted" },
+  });
   useUiToolsRegistry.setState({
     tools: new Map(),
     globalNames: new Set(),
@@ -156,14 +170,16 @@ describe("eval conversation boundaries", () => {
       "context changed",
     );
     pinEvalTurn(a);
-    expect(() => assertEvalToolAllowed(a, "ui_eval_edit_case")).not.toThrow();
+    expect(() =>
+      assertEvalToolAllowed(a, "ui_eval_propose_cases"),
+    ).not.toThrow();
   });
 
   it("follows suite navigation while preserving a closed panel and leaves general chat alone", () => {
     const a = openEvalChat(context);
     useAgentPanelStore.getState().setOpen(false);
     syncEvalChatContext({ ...context, caseId: undefined });
-    expect(useAgentPanelStore.getState().activeSessionId).not.toBe(a);
+    expect(useAgentPanelStore.getState().activeSessionId).toBe(a);
     expect(useAgentPanelStore.getState().isOpen).toBe(false);
     useAgentPanelStore.getState().setActiveSession("general", "project-a");
     syncEvalChatContext(context);
@@ -171,21 +187,35 @@ describe("eval conversation boundaries", () => {
   });
 });
 
-
 it("continues the same logical case when a Describe draft is saved", () => {
   const draft = { ...context, caseId: "draft:describe" };
   const sessionId = openEvalChat(draft, { fresh: true });
   pinEvalTurn(sessionId);
   promoteEvalDraftChat(draft, "saved-case");
   expect(openEvalChat({ ...context, caseId: "saved-case" })).toBe(sessionId);
-  expect(() => assertEvalToolAllowed(sessionId, "ui_eval_edit_case")).toThrow("context changed");
+  expect(() => assertEvalToolAllowed(sessionId, "ui_eval_edit_case")).toThrow(
+    "context changed",
+  );
   expect(openEvalChat(draft, { fresh: true })).not.toBe(sessionId);
 });
 
 it("replaces a legacy mixed eval conversation instead of importing its history", () => {
-  useAgentPanelStore.getState().setActiveSession("eval-legacy-mixed", context.projectId);
+  useAgentPanelStore
+    .getState()
+    .setActiveSession("eval-legacy-mixed", context.projectId);
   syncEvalChatContext(context);
   const next = useAgentPanelStore.getState().activeSessionId!;
   expect(next).not.toBe("eval-legacy-mixed");
   expect(readEvalScope(next)?.caseId).toBe(context.caseId);
+});
+
+it("cannot open or execute Describe tools outside the mounted surface", () => {
+  useDescribeSurface.setState({ scope: null });
+  expect(openRegisteredEvalChat(context)).toBe("");
+  const session = openEvalChat(context);
+  pinEvalTurn(session);
+  useDescribeSurface.setState({ scope: null });
+  expect(() => assertEvalToolAllowed(session, "ui_eval_context")).toThrow(
+    "Return to Describe",
+  );
 });

@@ -275,7 +275,7 @@ export const navigationSections: NavSection[] = [
         // is dogfooded — the point of a second tab is being able to compare
         // them. When the redesign wins, this item takes the "Evaluate" name
         // and the one above is deleted.
-        title: "Evaluate (New)",
+        title: "Ding Dong",
         url: "/evaluate",
         icon: FlaskConical,
         featureFlag: "evaluate-enabled",

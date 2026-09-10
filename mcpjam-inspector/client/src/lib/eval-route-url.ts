@@ -99,12 +99,13 @@ export function parseEvalRouteFromUrl(
     return { type: "suite-edit", suiteId };
   }
 
-  if (rest.length === 2 && rest[0] === "runs" && rest[1]) {
+  if ((rest.length === 2 || (rest.length === 3 && rest[2] === "compare")) && rest[0] === "runs" && rest[1]) {
     const insightsFocus = parseTruthyParam(params.get("insights"));
     return {
       type: "run-detail",
       suiteId,
       runId: decodePathSegment(rest[1]),
+      ...(rest[2] === "compare" ? { comparison: true } : {}),
       iteration: params.get("iteration") || undefined,
       testCaseId: params.get("case") || undefined,
       ...(insightsFocus ? { insightsFocus: true } : {}),
@@ -132,6 +133,7 @@ export function parseEvalRouteFromUrl(
         suiteId,
         testId,
         ...(openCompare ? { openCompare: true } : {}),
+        ...(parseTruthyParam(params.get("checks")) ? { checks: true } : {}),
         ...(params.get("iteration")
           ? { iteration: params.get("iteration") || undefined }
           : {}),

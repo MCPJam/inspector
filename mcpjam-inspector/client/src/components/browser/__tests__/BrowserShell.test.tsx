@@ -114,10 +114,10 @@ describe("the tab strip", () => {
     expect(commands).toEqual([{ op: "close_tab", tabId: "b" }]);
   });
 
-  it("offers no close button on a one-tab browser", () => {
+  it("allows closing the last tab to a fresh start page", () => {
     // With one tab the control reads as "close the browser", which it is not.
     renderShell({ tabs: [tab("a")], activeTabId: "a" });
-    expect(screen.queryByTestId("browser-tab-close")).toBeNull();
+    expect(screen.getByTestId("browser-tab-close")).toBeInTheDocument();
   });
 
   it("keeps the strip when there is only one tab", () => {
@@ -165,13 +165,18 @@ describe("the address field", () => {
     expect(document.activeElement).not.toBe(field);
   });
 
-  it("sends nothing for text that is not a place", () => {
+  it("searches for text that is not a URL", () => {
     const { commands } = renderShell();
     const field = screen.getByTestId("browser-address");
     fireEvent.focus(field);
     fireEvent.change(field, { target: { value: "how do I center a div" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    expect(commands).toEqual([]);
+    expect(commands).toEqual([
+      {
+        op: "navigate",
+        url: "https://www.google.com/search?q=how+do+I+center+a+div",
+      },
+    ]);
   });
 
   it("keeps what somebody is typing while the agent navigates", () => {

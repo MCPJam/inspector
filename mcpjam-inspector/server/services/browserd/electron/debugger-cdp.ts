@@ -1,11 +1,8 @@
 /**
  * `webContents.debugger` as a `CdpLike`.
  *
- * Lifted out of `webmcp-inspector/electron-webview-provider.ts`, which imports
- * it back, because two unrelated features now need it: that provider attaches
- * to a `<webview>` the renderer already mounted, and the Electron browser
- * engine drives hidden `BrowserWindow`s of its own. One adapter, so a fix to
- * either one is a fix to both.
+ * Shared by the Electron browser engine and WebMCP inspection. Both use
+ * main-process-owned contents through the same CDP adapter.
  *
  * WHY IT LIVES OUTSIDE `daemon/`. Everything under `daemon/**` is bundled and
  * uploaded to an E2B box, where `electron` does not exist and must never be

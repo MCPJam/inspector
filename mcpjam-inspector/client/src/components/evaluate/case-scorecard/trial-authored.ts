@@ -1,3 +1,4 @@
+import { caseViewModel } from "../case-workspace/case-view-model";
 /**
  * Which authored inputs describe the trial on screen.
  *
@@ -34,7 +35,7 @@ import type {
 } from "@/components/evals/types";
 import type { SelectedTrial } from "../case-workspace/selected-trial";
 import { trialMatchesDraft } from "../case-workspace/selected-trial";
-import { promptTurnsToSteps, type TestStep } from "@/shared/steps";
+import { type TestStep } from "@/shared/steps";
 import { isToolCalledWithAssert } from "../simple-case/simple-case-model";
 import type { CaseScorecardInput } from "./case-scorecard-model";
 
@@ -47,8 +48,9 @@ export type AuthoredForTrial = {
 function snapshotPredicates(
   iteration: EvalIteration | undefined,
 ): Predicate[] | undefined {
-  const frozen = iteration?.testCaseSnapshot?.predicates;
-  return Array.isArray(frozen) ? frozen : undefined;
+  const frozen = iteration?.testCaseSnapshot?.predicates as
+    Predicate[] | CasePredicates | undefined;
+  return Array.isArray(frozen) ? frozen : frozen?.list;
 }
 
 function asCasePredicates(
@@ -83,17 +85,21 @@ export function authoredForTrial(input: {
     // An attempt in flight was launched from a snapshot taken at launch, which
     // is what it will be graded against even if the author keeps typing.
     const launch = trial.record.launchSnapshot;
-    if (!launch?.steps) return { authored: input.draft, basis: "draft" };
+    if (!launch?.steps)
+      return {
+        authored: { steps: [], toolsChoice: "unset" },
+        basis: "snapshot",
+      };
     return {
       authored: {
-        ...input.draft,
-        steps: launch.steps,
+        numbering: input.draft.numbering,
+        steps: caseViewModel("live", launch).steps,
         predicates: asCasePredicates(launch.predicates),
         matchOptions: launch.matchOptions,
         expectedOutput: launch.expectedOutput,
         toolsChoice: launch.isNegativeTest ? "noTool" : "unset",
       },
-      basis: "draft",
+      basis: "snapshot",
     };
   }
 
@@ -118,19 +124,20 @@ export function authoredForTrial(input: {
 
   const iteration = trial.iteration;
   const snapshot = iteration.testCaseSnapshot;
-  const frozenSteps =
-    snapshot?.steps ??
-    (snapshot?.promptTurns
-      ? promptTurnsToSteps(snapshot.promptTurns)
-      : undefined);
+  const view = caseViewModel("historical", snapshot);
+  const frozenSteps = view.steps;
   const frozenJudge: EvalJudgeConfig | undefined =
-    input.run?.configSnapshot?.judgeConfig ?? input.draft.suiteJudgeConfig;
+    input.run?.configSnapshot?.judgeConfig;
 
   return {
     authored: {
       ...input.draft,
-      steps: frozenSteps ?? input.draft.steps,
-      matchOptions: snapshot?.matchOptions ?? input.draft.matchOptions,
+      steps: frozenSteps,
+      matchOptions: view.matchOptions,
+      suiteDefaultMatchOptions: undefined,
+      kind: undefined,
+      judgeConfigOverride: undefined,
+      suiteJudgeRubric: undefined,
       /**
        * The tool question as the TRIAL froze it, not as the case reads today.
        *
@@ -144,9 +151,9 @@ export function authoredForTrial(input: {
         ? snapshot.isNegativeTest
           ? "noTool"
           : snapshotHasRouteTools(frozenSteps)
-          ? "tools"
-          : "unset"
-        : input.draft.toolsChoice,
+            ? "tools"
+            : "unset"
+        : "unset",
       expectedOutput: snapshot?.expectedOutput ?? undefined,
       // Both are superseded by the resolved list; passing it as
       // `snapshotPredicates` is what makes the rows say "Run snapshot".

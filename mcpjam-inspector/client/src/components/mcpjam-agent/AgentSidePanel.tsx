@@ -1,3 +1,7 @@
+import {
+  setDescribeNeedsResume,
+  useDescribeFlow,
+} from "@/lib/mcpjam-agent/describe-flow";
 import { getOrCreateAgentChat } from "@/lib/mcpjam-agent/agent-chat-instances";
 import { dismissAskUserQuestions } from "@/lib/webmcp/ask-user-store";
 /**
@@ -10,8 +14,8 @@ import { dismissAskUserQuestions } from "@/lib/webmcp/ask-user-store";
  * hidden when closed) so closing the panel never tears down an in-flight
  * stream.
  *
- * On narrow viewports it docks below the workspace without an overlay or
- * focus trap. Both regions remain interactive and the chat stays mounted.
+ * On narrow viewports it overlays the right edge of the workspace with a
+ * responsive width. The same chat stays mounted across breakpoints.
  */
 import {
   useCallback,
@@ -33,7 +37,8 @@ import {
 import { McpjamAgentHero } from "@/components/mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "@/components/mcpjam-agent/McpjamAgentThread";
 import {
-  AGENT_PANEL_MIN_WIDTH,
+  agentPanelWidthBounds,
+  clampAgentPanelWidth,
   useAgentPanelStore,
 } from "@/stores/agent-panel/agent-panel-store";
 import { track } from "@/lib/analytics";
@@ -53,13 +58,16 @@ export function AgentSidePanel({
   organizationId,
   activeTab,
 }: AgentSidePanelProps) {
-  const [dockBottom, setDockBottom] = useState(
+  const [overlay, setOverlay] = useState(
     () => window.matchMedia("(max-width: 1023px)").matches,
   );
-  const [height, setHeight] = useState(400);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 1023px)");
-    const update = () => setDockBottom(media.matches);
+    const update = () => {
+      setOverlay(media.matches);
+      setViewportWidth(window.innerWidth);
+    };
     update();
     media.addEventListener("change", update);
     window.addEventListener("resize", update);
@@ -96,13 +104,24 @@ export function AgentSidePanel({
   const previousOpenRef = useRef(isOpen);
   useEffect(() => {
     if (previousOpenRef.current && !isOpen) {
+      if (activeSessionId && evalScope) {
+        const chat = getOrCreateAgentChat(activeSessionId).chat;
+        if (
+          (chat.status === "submitted" || chat.status === "streaming") &&
+          useDescribeFlow.getState().sessions[activeSessionId]?.phase ===
+            "describing"
+        ) {
+          setDescribeNeedsResume(activeSessionId, true);
+          invalidateEvalTurn(activeSessionId);
+        }
+      }
       track("mcpjam_agent_panel_closed", {
         location: "agent_side_panel",
         tab: activeTab,
       });
     }
     previousOpenRef.current = isOpen;
-  }, [activeTab, isOpen]);
+  }, [activeTab, isOpen, activeSessionId, evalScope]);
 
   const abandonCurrentEvalTurn = useCallback(() => {
     if (!activeSessionId || !evalScope) return;
@@ -220,13 +239,12 @@ export function AgentSidePanel({
   return (
     <InlineSidePanelShell
       isOpen={isOpen}
-      dockBottom={dockBottom}
-      height={height}
-      onHeightChange={setHeight}
-      width={width}
+      overlay={overlay}
+      viewportWidth={viewportWidth}
+      width={clampAgentPanelWidth(width, viewportWidth)}
       onWidthChange={setWidth}
       onWidthCommit={(committed) => {
-        if (committed < AGENT_PANEL_MIN_WIDTH * 0.9) {
+        if (committed < agentPanelWidthBounds(viewportWidth).min * 0.9) {
           setOpen(false);
         } else {
           track("mcpjam_agent_panel_resized", {
@@ -244,9 +262,8 @@ export function AgentSidePanel({
 
 interface InlineSidePanelShellProps {
   isOpen: boolean;
-  dockBottom: boolean;
-  height: number;
-  onHeightChange: (height: number) => void;
+  overlay: boolean;
+  viewportWidth: number;
   width: number;
   onWidthChange: (next: number) => void;
   onWidthCommit: (committed: number) => void;
@@ -255,9 +272,8 @@ interface InlineSidePanelShellProps {
 
 function InlineSidePanelShell({
   isOpen,
-  dockBottom,
-  height,
-  onHeightChange,
+  overlay,
+  viewportWidth,
   width,
   onWidthChange,
   onWidthCommit,
@@ -275,17 +291,7 @@ function InlineSidePanelShell({
       const onPointerMove = (moveEvent: PointerEvent) => {
         if (!draggingRef.current) return;
         // Panel sits on the right edge; pulling left increases width.
-        if (dockBottom)
-          onHeightChange(
-            Math.max(
-              220,
-              Math.min(
-                window.innerHeight * 0.6,
-                window.innerHeight - moveEvent.clientY,
-              ),
-            ),
-          );
-        else onWidthChange(window.innerWidth - moveEvent.clientX);
+        onWidthChange(window.innerWidth - moveEvent.clientX);
       };
       const onPointerUp = (upEvent: PointerEvent) => {
         if (!draggingRef.current) return;
@@ -294,18 +300,17 @@ function InlineSidePanelShell({
         window.removeEventListener("pointermove", onPointerMove);
         window.removeEventListener("pointerup", onPointerUp);
         const committed = window.innerWidth - upEvent.clientX;
-        if (!dockBottom) onWidthCommit(committed);
+        onWidthCommit(committed);
       };
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
     },
-    [onWidthChange, onWidthCommit, dockBottom, onHeightChange],
+    [onWidthChange, onWidthCommit],
   );
 
   const style: CSSProperties = {
-    width: dockBottom ? "100%" : `${width}px`,
-    height: dockBottom ? `min(${height}px, 60dvh)` : undefined,
-    maxHeight: dockBottom ? "60dvh" : undefined,
+    width: `${width}px`,
+    maxWidth: "calc(100% - 24px)",
     // Keep the panel mounted even when closed so an in-flight stream isn't
     // canceled by toggling the trigger. `display: none` is enough to drop it
     // out of the flex layout without unmounting `useChat`.
@@ -315,48 +320,31 @@ function InlineSidePanelShell({
   return (
     <aside
       data-slot="agent-side-panel"
-      data-agent-dock={isOpen && dockBottom ? "bottom" : "side"}
+      data-agent-dock="side"
       aria-label="Ask MCPJam"
       className={cn(
-        "relative flex min-h-0 shrink-0 flex-col border-border/60 bg-background",
-        dockBottom ? "border-t" : "border-l",
+        "flex min-h-0 shrink-0 flex-col border-l border-input bg-background",
+        overlay ? "absolute inset-y-0 right-0 z-30" : "relative",
       )}
       style={style}
     >
       <div
         role="separator"
-        aria-orientation={dockBottom ? "horizontal" : "vertical"}
+        aria-orientation="vertical"
         aria-label="Resize MCPJam Agent panel"
         tabIndex={0}
-        aria-valuemin={dockBottom ? 220 : AGENT_PANEL_MIN_WIDTH}
-        aria-valuemax={
-          dockBottom
-            ? Math.round(window.innerHeight * 0.6)
-            : Math.round(window.innerWidth * 0.5)
-        }
-        aria-valuenow={
-          dockBottom
-            ? Math.min(height, Math.round(window.innerHeight * 0.6))
-            : width
-        }
+        aria-valuemin={agentPanelWidthBounds(viewportWidth).min}
+        aria-valuemax={agentPanelWidthBounds(viewportWidth).max}
+        aria-valuenow={width}
         onKeyDown={(event) => {
-          const increase = dockBottom ? "ArrowUp" : "ArrowLeft";
-          const decrease = dockBottom ? "ArrowDown" : "ArrowRight";
-          if (event.key !== increase && event.key !== decrease) return;
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
           event.preventDefault();
-          const delta = event.key === increase ? 24 : -24;
-          if (dockBottom)
-            onHeightChange(
-              Math.max(220, Math.min(window.innerHeight * 0.6, height + delta)),
-            );
-          else onWidthChange(width + delta);
+          onWidthChange(width + (event.key === "ArrowLeft" ? 24 : -24));
         }}
         onPointerDown={onPointerDown}
         className={cn(
-          "absolute z-10 touch-none bg-transparent transition hover:bg-border/70 active:bg-border focus-visible:outline-ring",
-          dockBottom
-            ? "inset-x-0 top-0 h-2 -translate-y-1/2 cursor-row-resize"
-            : "inset-y-0 left-0 w-1.5 -translate-x-1/2 cursor-col-resize",
+          "absolute z-10 touch-none bg-transparent transition hover:bg-input/70 active:bg-input focus-visible:outline-ring",
+          "inset-y-0 left-0 w-1.5 -translate-x-1/2 cursor-col-resize",
         )}
       />
       {children}

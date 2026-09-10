@@ -4,7 +4,7 @@ import {
 } from "@/lib/mcpjam-agent/eval-scope";
 import { createPortal } from "react-dom";
 import { useEvalChatHost } from "@/lib/mcpjam-agent/eval-chat-host";
-import { currentEvalPageScope } from "@/lib/mcpjam-agent/eval-workspace";
+import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
 /** Keep scoped eval chat in its dashboard and general chat available app-wide. */
 import { useEffect } from "react";
 import { AgentSidePanel } from "@/components/mcpjam-agent/AgentSidePanel";
@@ -40,6 +40,8 @@ export function AgentSidePanelMount({
   const toggle = useAgentPanelStore((s) => s.toggle);
   const host = useEvalChatHost((s) => s.host);
   const inEvaluate = activeTab === "evaluate";
+  const describeScope = useDescribeSurface((s) => s.scope);
+  const describeReady = !!describeScope && !!host && host.projectId === describeScope.projectId;
   const resolvedProjectId = inEvaluate && host ? host.projectId : projectId;
 
   useEffect(() => {
@@ -48,6 +50,7 @@ export function AgentSidePanelMount({
   }, [inEvaluate, scoped, isOpen]);
 
   useEffect(() => {
+    if (inEvaluate && !describeReady) return;
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "\\") return;
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -55,7 +58,7 @@ export function AgentSidePanelMount({
       if (isEditableTarget(event.target)) return;
       const willOpen = !useAgentPanelStore.getState().isOpen;
       const context =
-        willOpen && inEvaluate ? currentEvalPageScope() : undefined;
+        willOpen && inEvaluate ? describeScope : undefined;
 
       event.preventDefault();
       if (willOpen) {
@@ -74,7 +77,7 @@ export function AgentSidePanelMount({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTab, inEvaluate, scoped, toggle]);
+  }, [activeTab, inEvaluate, describeReady, describeScope, scoped, toggle]);
 
   // Drop the persisted session pointer whenever the panel state and the
   // current active project disagree about which project the session belongs
@@ -104,6 +107,7 @@ export function AgentSidePanelMount({
     host,
   ]);
 
+  if (inEvaluate && (!describeReady || !scoped)) return null;
   if (!inEvaluate && scoped) return null;
   if (inEvaluate && scoped && !host) return null;
   const panel = (

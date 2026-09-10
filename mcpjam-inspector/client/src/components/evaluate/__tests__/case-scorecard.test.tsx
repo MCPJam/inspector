@@ -31,7 +31,9 @@ const baseInput: CaseScorecardInput = {
   suiteDefaultPredicates: [
     { type: "tokenBudgetUnder", tokens: 4000 } as Predicate,
   ],
-  suiteJudgeConfig: { goalCompletion: { judgeModel: "anthropic/x", threshold: 0.7 } },
+  suiteJudgeConfig: {
+    goalCompletion: { judgeModel: "anthropic/x", threshold: 0.7 },
+  },
 };
 
 function renderCard(
@@ -106,7 +108,9 @@ describe("CaseScorecard", () => {
     expect(
       within(suite).queryByRole("button", { name: /^Remove/ }),
     ).not.toBeInTheDocument();
-    within(suite).getByRole("button", { name: "Edit in suite settings" }).click();
+    within(suite)
+      .getByRole("button", { name: "Edit in suite settings" })
+      .click();
     expect(onOpenSuiteSettings).toHaveBeenCalled();
   });
 });
@@ -208,9 +212,7 @@ describe("CaseScorecard — roles", () => {
       checkPolicy: true,
     });
     const row = rowFor("No tool errors so far");
-    await user.click(
-      within(row).getByRole("button", { name: "Warn" }),
-    );
+    await user.click(within(row).getByRole("button", { name: "Warn" }));
     expect(onStepPredicateChange).toHaveBeenCalledWith("a2", {
       type: "noToolErrors",
       role: "advisory",
@@ -243,7 +245,9 @@ describe("CaseScorecard — roles", () => {
     const row = rowFor("Final message does not end with a question");
     const group = within(row).getByRole("group", { name: /^Role for/ });
     expect(within(group).queryByRole("button", { name: "Gate" })).toBeNull();
-    expect(within(group).getByRole("button", { name: "Warn" })).toBeInTheDocument();
+    expect(
+      within(group).getByRole("button", { name: "Warn" }),
+    ).toBeInTheDocument();
     expect(
       within(group).getByRole("button", { name: "Report" }),
     ).toBeInTheDocument();
@@ -264,7 +268,7 @@ describe("CaseScorecard — the library", () => {
     const user = userEvent.setup();
     const { onAddScorer } = renderCard();
     await user.click(screen.getByRole("button", { name: "Add scorer" }));
-    await user.click(screen.getByTestId("add-scorer-noToolErrors"));
+    await user.click(screen.getByTestId("add-step-item-check:noToolErrors"));
     expect(onAddScorer).toHaveBeenCalledWith({ type: "noToolErrors" });
   });
 
@@ -272,7 +276,9 @@ describe("CaseScorecard — the library", () => {
     const user = userEvent.setup();
     renderCard();
     await user.click(screen.getByRole("button", { name: "Add scorer" }));
-    expect(screen.queryByTestId("add-scorer-toolCalledWith")).toBeNull();
+    expect(
+      screen.queryByTestId("add-step-item-check:toolCalledWith"),
+    ).toBeNull();
   });
 });
 
@@ -358,9 +364,9 @@ describe("CaseScorecard — read-only", () => {
         },
       },
     });
-    expect(
-      screen.getByTestId("case-scorecard-replaced").textContent,
-    ).toContain("1 is not applied");
+    expect(screen.getByTestId("case-scorecard-replaced").textContent).toContain(
+      "1 is not applied",
+    );
     expect(
       rows().some((row) => row.getAttribute("data-provenance") === "suite"),
     ).toBe(false);

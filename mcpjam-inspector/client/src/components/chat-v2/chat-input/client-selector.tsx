@@ -1,3 +1,4 @@
+import { navigateApp, routePaths } from "@/lib/app-navigation";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, MoreHorizontal, Plus, X } from "lucide-react";
@@ -218,7 +219,7 @@ export function ClientSelector({
   );
 
   const leadHostId = effectiveSelectedHostIds[0] ?? currentHostId ?? null;
-  const leadHost = leadHostId ? hostsById.get(leadHostId) ?? null : null;
+  const leadHost = leadHostId ? (hostsById.get(leadHostId) ?? null) : null;
   const leadHostName = leadHost ? clientDisplayName(leadHost) : "Select host";
   const leadHostLogo = leadHost?.name
     ? resolveHostLogoByName(leadHost.name, themeMode)
@@ -564,46 +565,51 @@ export function ClientSelector({
               })}
             </CommandList>
 
-            {projectId ? (
+            {
               <div className="flex items-center gap-2 overflow-hidden border-t px-2 py-1.5">
                 <button
                   type="button"
-                  onClick={() => openCreateWithTemplate(undefined)}
+                  onClick={() => {
+                    setIsOpen(false);
+                    navigateApp(routePaths.hosts);
+                  }}
                   className="flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-sm text-foreground transition-colors hover:bg-accent"
                   data-testid="client-add-host"
                 >
                   <Plus className="size-3.5" />
-                  <span>Add client</span>
+                  <span>Manage clients</span>
                 </button>
-                <span className="flex flex-1 items-center justify-between gap-0.5">
-                  {orderedCatalogHosts
-                    .slice(0, QUICK_ADD_VISIBLE)
-                    .map((host) => {
-                      const catalogHost =
-                        catalogState.status === "live"
-                          ? getCatalogHost(catalogState.catalog, host.id)
-                          : undefined;
-                      if (!catalogHost) return null;
-                      return (
-                        <button
-                          key={host.id}
-                          type="button"
-                          aria-label={`Add ${catalogHost.label} client`}
-                          title={`Add ${catalogHost.label}`}
-                          data-testid={`client-quick-add-${host.id}`}
-                          onClick={() => openCreateWithTemplate(host.id)}
-                          className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-accent"
-                        >
-                          <img
-                            src={getHostLogoSrc(host.id, modalThemeMode)}
-                            alt=""
-                            className="size-4 object-contain"
-                          />
-                        </button>
-                      );
-                    })}
-                </span>
-                {orderedCatalogHosts.length > QUICK_ADD_VISIBLE ? (
+                {projectId && (
+                  <span className="flex flex-1 items-center justify-between gap-0.5">
+                    {orderedCatalogHosts
+                      .slice(0, QUICK_ADD_VISIBLE)
+                      .map((host) => {
+                        const catalogHost =
+                          catalogState.status === "live"
+                            ? getCatalogHost(catalogState.catalog, host.id)
+                            : undefined;
+                        if (!catalogHost) return null;
+                        return (
+                          <button
+                            key={host.id}
+                            type="button"
+                            aria-label={`Add ${catalogHost.label} client`}
+                            title={`Add ${catalogHost.label}`}
+                            data-testid={`client-quick-add-${host.id}`}
+                            onClick={() => openCreateWithTemplate(host.id)}
+                            className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-accent"
+                          >
+                            <img
+                              src={getHostLogoSrc(host.id, modalThemeMode)}
+                              alt=""
+                              className="size-4 object-contain"
+                            />
+                          </button>
+                        );
+                      })}
+                  </span>
+                )}
+                {projectId && orderedCatalogHosts.length > QUICK_ADD_VISIBLE ? (
                   <button
                     type="button"
                     aria-label="More clients"
@@ -616,7 +622,7 @@ export function ClientSelector({
                   </button>
                 ) : null}
               </div>
-            ) : null}
+            }
           </Command>
         </PopoverContent>
       </Popover>

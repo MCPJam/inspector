@@ -57,7 +57,7 @@ const run = (over: Partial<EvalSuiteRun> = {}): EvalSuiteRun =>
     completedAt: Date.now() - 30_000,
     summary: { total: 3, passed: 2, failed: 1, passRate: 0.67 },
     ...over,
-  } as EvalSuiteRun);
+  }) as EvalSuiteRun;
 
 const entry = (
   over: Partial<EvalSuiteOverviewEntry> = {},
@@ -97,7 +97,9 @@ describe("SuitesOverview", () => {
     expect(
       screen.getByRole("columnheader", { name: "Pass rate" }),
     ).toBeVisible();
-    expect(screen.getByRole("columnheader", { name: "Last run" })).toBeVisible();
+    expect(
+      screen.getByRole("columnheader", { name: "Last run" }),
+    ).toBeVisible();
     const clientHeader = screen.getByRole("columnheader", { name: "Client" });
     const serverHeader = screen.getByRole("columnheader", { name: "Server" });
     const clientFilter = within(clientHeader).getByRole("combobox", {
@@ -126,7 +128,9 @@ describe("SuitesOverview", () => {
     ).toHaveTextContent("67%");
     expect(screen.getByText("3 minutes ago")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Run Excalidraw Draw Small House" }),
+      screen.getByRole("button", {
+        name: "Setup Run Excalidraw Draw Small House",
+      }),
     ).toBeInTheDocument();
   });
 
@@ -211,7 +215,9 @@ describe("SuitesOverview", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Run Excalidraw Draw Small House" }),
+      screen.getByRole("button", {
+        name: "Setup Run Excalidraw Draw Small House",
+      }),
     );
     expect(onRerun).toHaveBeenCalledWith(suiteWithServers);
     expect(onSelectSuite).not.toHaveBeenCalled();
@@ -240,7 +246,9 @@ describe("SuitesOverview", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Run Excalidraw Draw Small House" }),
+      screen.getByRole("button", {
+        name: "Setup Run Excalidraw Draw Small House",
+      }),
     );
     expect(onRerun).toHaveBeenCalledWith(attachmentOnly);
   });
