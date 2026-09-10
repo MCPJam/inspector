@@ -705,7 +705,10 @@ chatV2.post("/", async (c) => {
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
         hostStyle:
           body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
-        builtInToolIds: body.builtInToolIds,
+        builtInToolIds:
+          isScenarioSession || environmentSpec
+            ? undefined
+            : body.builtInToolIds,
       },
       // Scenario: the published host wins (a share-link client can't override).
       // Host preview (Playground): the owner's in-session tweaks win, while
