@@ -433,6 +433,34 @@ describe("webmcp-inspector routes", () => {
     expect(status).toBe(400);
   });
 
+  it.each([true, false])(
+    "handles resize rejection during teardown (%s) without hiding live failures",
+    async (closing) => {
+      const started = await openSession(provider);
+      let entered!: () => void;
+      let reject!: (error: Error) => void;
+      const applying = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      Object.assign(provider.sessions[0], {
+        resizeViewport: () => {
+          entered();
+          return new Promise<void>((_resolve, fail) => {
+            reject = fail;
+          });
+        },
+      });
+      const result = call(
+        `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+        json({ type: "set_viewport", width: 600, height: 700 }),
+      );
+      await applying;
+      if (closing) await webMcpSessions.close(started.sessionId);
+      reject(new Error("resize failed"));
+      expect((await result).status).toBe(closing ? 200 : 500);
+    },
+  );
+
   it("validates pane geometry before resizing the existing session", async () => {
     const started = await openSession(provider);
     const resize = vi.fn().mockResolvedValue(undefined);

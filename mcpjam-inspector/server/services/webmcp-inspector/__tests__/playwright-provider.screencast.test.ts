@@ -175,6 +175,7 @@ function harness(
     screenshot: screenshots,
     mainFrame: () => mainFrame,
     frames: () => [mainFrame],
+    isClosed: () => false,
     mouse: {
       move: record("move"),
       down: record("down"),
@@ -707,3 +708,20 @@ describe("inspection delegates capture and input to the shared viewport", () => 
     expect(window.page.setViewportSize).not.toHaveBeenCalled();
   });
 });
+
+it.each([true, false])(
+  "only suppresses a resize rejection when the page is closed (%s)",
+  async (closed) => {
+    const h = await started({ viewportMode: "embedded" });
+    h.page.isClosed = () => closed;
+    h.page.setViewportSize = vi
+      .fn()
+      .mockRejectedValue(new Error("resize failed"));
+    if (closed)
+      await expect(h.session.resizeViewport(600, 700)).resolves.toBeUndefined();
+    else
+      await expect(h.session.resizeViewport(600, 700)).rejects.toThrow(
+        "resize failed",
+      );
+  },
+);

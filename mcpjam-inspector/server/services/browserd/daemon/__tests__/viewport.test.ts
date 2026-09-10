@@ -631,3 +631,58 @@ it("does not restart oversize recovery after the viewer retires", async () => {
     h.sent.filter((c) => c.method === "Page.startScreencast"),
   ).toHaveLength(1);
 });
+
+it("defers first-subscriber startup until all queued viewport changes finish", async () => {
+  const h = make();
+  let release!: () => void;
+  let entered!: () => void;
+  const applying = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const first = h.viewport.resize({ width: 600, height: 700 }, async () => {
+    entered();
+    await gate;
+  });
+  const second = h.viewport.resize({ width: 800, height: 500 });
+  await applying;
+  h.viewport.subscribe(() => {});
+  const ready = h.viewport.ready();
+  expect(h.methods()).not.toContain("Page.startScreencast");
+  release();
+  await Promise.all([first, second]);
+  expect(await ready).toBe(true);
+  expect(
+    h.sent
+      .filter((c) => c.method === "Page.startScreencast")
+      .map((c) => c.params),
+  ).toEqual([expect.objectContaining({ maxWidth: 800, maxHeight: 500 })]);
+  await h.viewport.dispose();
+});
+
+it("releases resize ownership after a failed apply and after disposal", async () => {
+  const h = make();
+  let release!: () => void;
+  let entered!: () => void;
+  const applying = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const resizing = h.viewport.resize({ width: 600, height: 700 }, async () => {
+    entered();
+    await gate;
+    throw new Error("closed");
+  });
+  const rejected = expect(resizing).rejects.toThrow("closed");
+  await applying;
+  h.viewport.subscribe(() => {});
+  await h.viewport.dispose();
+  release();
+  await rejected;
+  expect(await h.viewport.ready()).toBe(false);
+  expect(h.methods()).not.toContain("Page.startScreencast");
+});

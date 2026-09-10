@@ -316,8 +316,10 @@ export function BrowserPaneSurface({
         if (!canvas?.isConnected) return;
         const context = canvas.getContext("2d");
         if (!context) return;
-        canvas.width = packet.frame.deviceWidth;
-        canvas.height = packet.frame.deviceHeight;
+        if (canvas.width !== packet.frame.deviceWidth)
+          canvas.width = packet.frame.deviceWidth;
+        if (canvas.height !== packet.frame.deviceHeight)
+          canvas.height = packet.frame.deviceHeight;
         context.drawImage(image, 0, 0);
         displayedFrame.current = packet.frame;
         packet.record(decodeMs);

@@ -123,7 +123,10 @@ export function isBrowserPaneInputEvent(
         optionalString(event.code)
       );
     case "text":
-      return typeof event.text === "string";
+      return (
+        typeof event.text === "string" &&
+        event.text.length <= BROWSER_INPUT_TEXT_MAX_CHARS
+      );
     default:
       return false;
   }

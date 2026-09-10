@@ -202,6 +202,7 @@ export function createTabViewport(
    */
   let inputChain: Promise<void> = Promise.resolve();
   let resizeChain: Promise<void> = Promise.resolve();
+  let pendingResizes = 0;
   /** Whose input the current `buttonMask` describes. */
   let inputHolder: string | undefined;
   let lastData: string | undefined;
@@ -331,7 +332,11 @@ export function createTabViewport(
   return {
     subscribe(listener) {
       listeners.add(listener);
-      if (listeners.size === 1) startPending = start();
+      if (listeners.size === 1) {
+        // Resize owns stop/apply/start, including subscribers arriving while
+        // apply is awaiting the browser. Its finalizer starts the latest size.
+        startPending = pendingResizes > 0 ? resizeChain : start();
+      }
       return () => {
         listeners.delete(listener);
         // Property 4's other half: nobody is watching, so stop painting.
@@ -347,27 +352,30 @@ export function createTabViewport(
       lastData = undefined;
     },
     resize(surface, apply) {
+      pendingResizes++;
       const run = resizeChain.then(async () => {
-        if (
-          disposed ||
-          (options.surface.width === surface.width &&
-            options.surface.height === surface.height)
-        )
-          return;
-        await stop();
-        if (disposed) return;
         try {
+          if (
+            disposed ||
+            (options.surface.width === surface.width &&
+              options.surface.height === surface.height)
+          )
+            return;
+          await stop();
+          if (disposed) return;
           await apply?.();
           Object.assign(options.surface, surface);
         } finally {
-          // A rejected resize must not leave an otherwise healthy page dark.
-          if (!disposed && listeners.size > 0) {
-            startPending = start();
-            await startPending;
+          pendingResizes--;
+          // Release ownership even after failure/disposal. Only the final
+          // resize may restart, using the surface that actually applied.
+          if (pendingResizes === 0 && !disposed && listeners.size > 0) {
+            await start();
           }
         }
       });
       resizeChain = run.catch(() => {});
+      startPending = resizeChain;
       return run;
     },
     boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),

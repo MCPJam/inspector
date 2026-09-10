@@ -5612,6 +5612,7 @@ function createTabViewport(cdp, options) {
   let buttonMask = 0;
   let inputChain = Promise.resolve();
   let resizeChain = Promise.resolve();
+  let pendingResizes = 0;
   let inputHolder;
   let lastData;
   let seq = 0;
@@ -5707,7 +5708,9 @@ function createTabViewport(cdp, options) {
   return {
     subscribe(listener) {
       listeners.add(listener);
-      if (listeners.size === 1) startPending = start();
+      if (listeners.size === 1) {
+        startPending = pendingResizes > 0 ? resizeChain : start();
+      }
       return () => {
         listeners.delete(listener);
         if (listeners.size === 0) void stop();
@@ -5722,23 +5725,25 @@ function createTabViewport(cdp, options) {
       lastData = void 0;
     },
     resize(surface, apply) {
+      pendingResizes++;
       const run = resizeChain.then(async () => {
-        if (disposed || options.surface.width === surface.width && options.surface.height === surface.height)
-          return;
-        await stop();
-        if (disposed) return;
         try {
+          if (disposed || options.surface.width === surface.width && options.surface.height === surface.height)
+            return;
+          await stop();
+          if (disposed) return;
           await apply?.();
           Object.assign(options.surface, surface);
         } finally {
-          if (!disposed && listeners.size > 0) {
-            startPending = start();
-            await startPending;
+          pendingResizes--;
+          if (pendingResizes === 0 && !disposed && listeners.size > 0) {
+            await start();
           }
         }
       });
       resizeChain = run.catch(() => {
       });
+      startPending = resizeChain;
       return run;
     },
     boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),

@@ -505,9 +505,17 @@ export class WebMcpSessionRuntime {
   /** Resize the embedded viewport on the same dispatch tail as input. */
   async resizeViewport(width: number, height: number): Promise<void> {
     const session = this.requireSession();
+    // Drain before joining the tail: queued relay batches must retain the
+    // geometry their coordinates were captured against.
+    await Promise.all([...this.socketInputDrains].map((drain) => drain()));
     const pending = this.inputTail.then(async () => {
       if (this.inputClosed || this.session !== session) return;
-      await session.resizeViewport?.(width, height);
+      try {
+        await session.resizeViewport?.(width, height);
+      } catch (error) {
+        if (this.inputClosed || this.session !== session) return;
+        throw error;
+      }
       if (this.session === session) this.publishSession();
     });
     this.inputTail = pending.catch(() => {});

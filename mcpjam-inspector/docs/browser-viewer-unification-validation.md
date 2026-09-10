@@ -59,3 +59,9 @@ The physical trackpad/ten-minute run, actual Playground-versus-inspection UI tim
 - Focus visibility is restored, per-push coalescing only examines the queue tail, the daemon bundle warning is retained, and a patch changeset names the Retina quality trade.
 
 Review follow-up: **340 client tests passed**, **1,131 server tests passed** (7 gated cases skipped, including daemon bundle freshness), and **8 real-browser/built-server E2E tests passed**. Client typecheck, both import guards and design checks passed. The cross-origin discovery test now waits for the subframe tool it asserts rather than only the main-frame tool count. Production client and server builds passed. Hosted and Electron-viewing-hosted manual sessions were not exercised; local component tests and Chromium input tests do not substitute for those platform checks.
+
+## Automated review triage
+
+All five findings were verified against the current code and fixed: viewport resize drains previously queued socket input before joining the runtime tail; pending resize work owns screencast startup even when a viewer subscribes mid-apply; resize failures during session/page teardown are no-ops while live failures remain errors; canonical input validation enforces the 4,096-character text limit; and image presentation avoids resetting unchanged canvas dimensions.
+
+Follow-up validation: 192 server/shared tests and 49 client tests passed, including queued-input ordering, subscription during multiple resizes, disposal during apply, closed/live provider failures, route teardown behavior, text-limit boundaries and daemon bundle freshness. Client typecheck/import guards and the production server build passed.

@@ -913,6 +913,48 @@ describe("input forwarding", () => {
     relay.cancel();
   });
 
+  it("keeps resize behind work still queued in the socket relay", async () => {
+    const { runtime, session } = makeRuntime();
+    let release!: () => void;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const dispatch = vi
+      .spyOn(session, "dispatchInput")
+      .mockImplementationOnce(() => gate)
+      .mockResolvedValue(undefined);
+    const relay = createRelayInputForwarder({
+      dispatch: async ({ events }) => {
+        await runtime.dispatchInput(
+          events.map(fromBrowserPaneInput),
+          () => false,
+          "socket",
+        );
+        return { ok: true };
+      },
+      ack() {},
+    });
+    const unregister = runtime.registerSocketInputDrain(() => relay.drain());
+    relay.submit({ seq: 1, events: [{ type: "text", text: "socket 1" }] });
+    relay.submit({ seq: 2, events: [{ type: "text", text: "socket 2" }] });
+    const resize = vi.fn(async () => {
+      expect(dispatch).toHaveBeenCalledTimes(2);
+    });
+    Object.assign(session, { resizeViewport: resize });
+    const fallback = runtime.resizeViewport(600, 700);
+    await Promise.resolve();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    release();
+    await fallback;
+    expect(dispatch.mock.calls.map(([events]) => events[0])).toEqual([
+      { kind: "text", text: "socket 1" },
+      { kind: "text", text: "socket 2" },
+    ]);
+    expect(resize).toHaveBeenCalledWith(600, 700);
+    unregister();
+    relay.cancel();
+  });
+
   it("serializes all input callers and continues after a dispatch rejection", async () => {
     const { runtime, session } = makeRuntime();
     let release!: () => void;

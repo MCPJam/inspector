@@ -573,9 +573,16 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
 
   async resizeViewport(width: number, height: number): Promise<void> {
     if (this.disposed || this.viewportMode !== "embedded") return;
-    await this.viewport.resize({ width, height }, () =>
-      this.page.setViewportSize({ width, height }),
-    );
+    try {
+      await this.viewport.resize({ width, height }, () =>
+        this.page.setViewportSize({ width, height }),
+      );
+    } catch (error) {
+      // Closing a page while its resize is in flight is normal teardown.
+      // A failure on a live page must still reach the caller.
+      if (this.disposed || this.page.isClosed()) return;
+      throw error;
+    }
   }
 
   viewportTransport(): WebMcpViewportTransport {
