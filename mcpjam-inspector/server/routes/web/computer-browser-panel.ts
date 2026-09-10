@@ -75,6 +75,7 @@ import {
 import {
   shouldTouchActivity,
   shouldTouchSessionCommand,
+  shouldTouchSessionPanel,
 } from "../../utils/computers/activity-touch.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
@@ -512,6 +513,22 @@ export function createComputerBrowserPanelRoutes(
         action,
         took: outcome.took,
       });
+      // HOLDING THE BROWSER IS BEING HERE. The pane beats this every ~30s
+      // while visible, which is the only presence signal on the VNC tier (no
+      // frame socket, so no pings) and the strongest one anywhere: somebody
+      // mid-login or mid-2FA is typing into this machine. Reclaiming it under
+      // them is the failure this guards.
+      if (outcome.took && shouldTouchSessionPanel(session.sessionId)) {
+        void touchSession({ sessionId: session.sessionId, kind: "panel" })
+          .then(({ counted }) => {
+            const computerId = auth.claims.computerId;
+            if (!counted || !computerId || !shouldTouchActivity(computerId)) {
+              return;
+            }
+            void touchActivity({ computerId }).catch(() => {});
+          })
+          .catch(() => {});
+      }
       return c.json(
         {
           ok: outcome.took,

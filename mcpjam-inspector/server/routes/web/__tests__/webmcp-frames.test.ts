@@ -427,6 +427,36 @@ describe("webmcp frames WS — the stream", () => {
     expect(runtime.expiresAt).toBeGreaterThan(before);
   });
 
+  it("counts a binary-wire viewer as a subscriber", async () => {
+    // This socket used to subscribe to `runtime.hub` directly, which delivers
+    // frames but is invisible to `hasSubscribers` — so a viewer on this wire
+    // counted as nobody: the idle sweep could reap a session being watched,
+    // and the hosted tool poll stayed silent for a pane someone had open.
+    const session = await openSession();
+    expect(webMcpSessions.hasSubscribers(session.sessionId)).toBe(false);
+
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+    await ws.settle();
+
+    expect(webMcpSessions.hasSubscribers(session.sessionId)).toBe(true);
+  });
+
+  it("marks the session WATCHED on a ping, not merely attached", async () => {
+    // Attachment survives a background tab; the ping does not. For a hosted
+    // session that difference is what holds a metered desktop box awake.
+    const session = await openSession();
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+    await ws.settle();
+    expect(webMcpSessions.isWatched(session.sessionId)).toBe(false);
+
+    ws.ws.send(JSON.stringify({ type: "ping" }));
+    await ws.settle();
+
+    expect(webMcpSessions.isWatched(session.sessionId)).toBe(true);
+  });
+
   it("closes 4404 when the session it is watching goes away", async () => {
     const session = await openSession();
     const ws = connect(server.port, session.sessionId, token);

@@ -973,3 +973,64 @@ describe("browser panel — ensure wakes a sleeping box", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("browser panel — holding the browser is being here", () => {
+  it("reports presence when a lease is taken or beaten", async () => {
+    // The VNC tier opens no frame socket, so its pane never pings — this is
+    // the only thing telling the control plane somebody is at the machine.
+    // And a lease holder is the strongest case there is: they may be mid-login
+    // or mid-2FA, and reclaiming the box under them is the failure to avoid.
+    for (const action of ["acquire", "heartbeat", "resume"]) {
+      resetPanelActivityThrottleForTests();
+      const panel = build();
+
+      const res = await panel.call("/lease", {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(panel.touchSession).toHaveBeenCalledWith({
+        sessionId: SESSION.sessionId,
+        kind: "panel",
+      });
+    }
+  });
+
+  it("does not report presence for a lease it failed to take", async () => {
+    resetPanelActivityThrottleForTests();
+    const panel = build({
+      createClient: () =>
+        ({
+          lease: async () => ({ state: "held", bootId: "boot-1" }),
+          leaseAction: async () => ({
+            took: false,
+            lease: { state: "held", holder: "users_other", bootId: "boot-1" },
+          }),
+          status: async () => ({ kind: "ok", bootId: SESSION.bootId }),
+        }) as never,
+    });
+
+    const res = await panel.call("/lease", {
+      method: "POST",
+      body: JSON.stringify({ action: "acquire" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(panel.touchSession).not.toHaveBeenCalled();
+  });
+
+  it("throttles presence rather than writing once per heartbeat", async () => {
+    resetPanelActivityThrottleForTests();
+    const panel = build();
+
+    for (let i = 0; i < 4; i += 1) {
+      await panel.call("/lease", {
+        method: "POST",
+        body: JSON.stringify({ action: "heartbeat" }),
+      });
+    }
+
+    expect(panel.touchSession).toHaveBeenCalledTimes(1);
+  });
+});

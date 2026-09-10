@@ -282,6 +282,12 @@ export class WebMcpSessionRuntime {
   /** Set by the registry; the runtime reports it but does not own it. */
   expiresAt = 0;
   hardExpiresAt = 0;
+  /**
+   * When the last "somebody is looking" ping stops counting. Also the
+   * registry's, for the same reason — the runtime carries it, the registry
+   * decides it.
+   */
+  watchedUntil = 0;
 
   constructor(startUrl: string, options: WebMcpSessionRuntimeOptions = {}) {
     this.sessionId = options.sessionId ?? randomUUID();

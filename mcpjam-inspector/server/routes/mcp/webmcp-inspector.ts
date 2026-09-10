@@ -56,7 +56,10 @@ import type {
 } from "../../services/webmcp-inspector/session-runtime";
 import { touchBrowserSession } from "../../services/browserd/browser-sessions-client.js";
 import { touchComputerActivity } from "../../utils/computers/control-plane-client.js";
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionPanel,
+} from "../../utils/computers/activity-touch.js";
 import { isHostedDesktopUnavailable } from "../../utils/computers/runtime-config.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
@@ -409,6 +412,10 @@ function hostedIdentity(
 function hostedPresence(runtime: WebMcpSessionRuntime): void {
   const target = runtime.hostedTarget();
   if (!target) return;
+  // The stream ticks every 15s; the control plane needs to hear once a minute.
+  // Without this, one open pane is four control-plane writes a minute, and the
+  // extra three change nothing.
+  if (!shouldTouchSessionPanel(target.sessionId)) return;
   void touchBrowserSession({ sessionId: target.sessionId, kind: "panel" })
     .then(({ counted }) => {
       if (counted && shouldTouchActivity(target.computerId)) {
@@ -921,7 +928,16 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
         // commands, so a session someone has open and is reading — the normal
         // way to watch an agent drive a page — is reaped mid-view.
         webMcpSessions.touchWatchedSessions();
-        if (resolved) hostedPresence(resolved);
+        // A HOSTED session's presence costs money, so it needs the stronger
+        // claim: not "a stream is attached" — which stays true from a
+        // background tab, a minimised window, and a pane behind another tab —
+        // but "somebody has this on screen", which only the pane's own ping
+        // establishes. Reporting on attachment alone held a metered desktop
+        // box awake for the full 2-hour ceiling for a picture nobody was
+        // looking at.
+        if (resolved && webMcpSessions.isWatched(resolved.sessionId)) {
+          hostedPresence(resolved);
+        }
       }, 15_000);
 
       c.req.raw.signal.addEventListener("abort", () => {
