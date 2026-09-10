@@ -1,3 +1,4 @@
+import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { WebApiError } from "./base";
@@ -51,6 +52,8 @@ export interface ChatHistoryListResponse {
 }
 
 export interface ResumeConfig {
+  /** Destination of the last saved turn; re-authorized when resumed. */
+  executionTarget?: ResumeExecutionTarget;
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
@@ -58,13 +61,7 @@ export interface ResumeConfig {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
-  /**
-   * The environment this session is PINNED to, written only by the Agent
-   * Playground turn route (`origin: "api"`) and first-write-wins at the ingest
-   * boundary. Browser Playground turns persist no target field at all, so
-   * absence here does NOT mean "ran without an environment" — see
-   * `lib/conversation-execution-target.ts`.
-   */
+  /** Legacy environment pin; target-aware writers also record executionTarget. */
   environmentId?: string;
 }
 

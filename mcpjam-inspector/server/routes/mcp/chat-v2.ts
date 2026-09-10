@@ -1973,6 +1973,9 @@ chatV2.post("/", async (c) => {
                   : {
                       directVisibility: body.directVisibility,
                       resumeConfig: {
+                        executionTarget: bodyHostId
+                          ? { kind: "host", hostId: bodyHostId }
+                          : { kind: "adhoc" },
                         systemPrompt,
                         temperature,
                         requireToolApproval,
@@ -2074,6 +2077,9 @@ chatV2.post("/", async (c) => {
                 : {
                     directVisibility: body.directVisibility,
                     resumeConfig: {
+                      executionTarget: bodyHostId
+                        ? { kind: "host", hostId: bodyHostId }
+                        : { kind: "adhoc" },
                       systemPrompt,
                       temperature,
                       requireToolApproval,
@@ -2291,6 +2297,9 @@ chatV2.post("/", async (c) => {
                 : {
                     directVisibility: body.directVisibility,
                     resumeConfig: {
+                      executionTarget: bodyHostId
+                        ? { kind: "host", hostId: bodyHostId }
+                        : { kind: "adhoc" },
                       systemPrompt,
                       temperature,
                       requireToolApproval,

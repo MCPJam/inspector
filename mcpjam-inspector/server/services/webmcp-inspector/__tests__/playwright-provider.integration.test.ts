@@ -21,7 +21,7 @@ import { chromium } from "playwright";
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
 import { startWebMcpSession, WebMcpSessionRegistry } from "../session-registry";
 import { PlaywrightWebMcpProvider } from "../playwright-provider";
-import { WebMcpToolGoneError } from "../provider";
+import { WebMcpOutcomeUnknownError, WebMcpToolGoneError } from "../provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_HOUSEKEEPING_INTERVAL_MS,
@@ -340,10 +340,14 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // timeout and leave the first promise rejecting with nobody listening —
     // which vitest reports as an unhandled rejection and fails the run.
     const hung = runtime.invoke(`${origin}::slow`, {}, "manual");
-    await expect(hung.settled).rejects.toThrow(/timeout.*may continue/i);
+    const error = await hung.settled.catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(WebMcpOutcomeUnknownError);
+    expect((error as Error).message).toMatch(
+      /after a timeout.*execution may continue/i,
+    );
 
-    // A deadline stops our wait, but Chromium may continue page execution.
-    // The timeline must preserve uncertainty rather than imply no side effects.
+    // The timeline must retain uncertainty: a timeout is not evidence that
+    // a dispatched page tool stopped or that its effects were rolled back.
     await vi.waitFor(() => {
       const settled = activity.find(
         (entry) =>
@@ -582,13 +586,16 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // still exists for: what a person reads is the picture still on screen a
     // second after everything stopped moving, and the stream is encoded for
     // motion.
-    const { frames } = await open({ viewportMode: "embedded" });
+    // Subscribe before starting the stream so hub replay cannot replace the
+    // initial streaming frame with an already sharpened still.
+    const { runtime, frames } = await open();
+    await runtime.setScreencast(true);
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
       timeout: 15_000,
     });
 
-    const streamedCount = frames.length;
-    const streamed = frames.at(-1)!;
+    const streamedCount = 1;
+    const streamed = frames[0];
 
     // Long enough for the page's own paints to stop and for the quiet window
     // to elapse, DERIVED from the constants that decide it rather than a

@@ -5214,7 +5214,14 @@ export function useChatSession(
     isAuthLoading,
     authHeaders,
     isAuthReady,
-    isSessionBootstrapComplete,
+    // A target change is unready in the first render, before the auth effect
+    // can reset its state. History restoration must not hydrate in that gap.
+    isSessionBootstrapComplete:
+      isSessionBootstrapComplete &&
+      areHostedSessionScopesEqual(lastResolvedHostedScopeRef.current, {
+        projectId: hostedProjectId,
+        targetKey: hostedTargetKeyValue,
+      }),
 
     // Config
     systemPrompt,

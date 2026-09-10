@@ -1,3 +1,4 @@
+import { toResumeExecutionTarget } from "@/shared/execution-target";
 import type { BrowserPageToolsSnapshot } from "../../utils/built-in-tools/browser.js";
 import {
   peekPageToolsForChatTurn,
@@ -1985,6 +1986,7 @@ chatV2.post("/", async (c) => {
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
         },
         persist: {
+          executionTarget: toResumeExecutionTarget(executionTarget),
           chatSessionId: body.chatSessionId,
           projectId: hostedBody.projectId,
           sourceType,

@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { useConversationTargetRestoration } from "../use-conversation-target-restoration";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { generateId } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -645,6 +647,40 @@ describe("useChatSession hosted mode", () => {
 
     expect(mockState.setMessages).toHaveBeenCalledTimes(1);
     expect(onReset).toHaveBeenCalledWith("auth-bootstrap");
+  });
+
+  it("restores a saved host before hydrating, so its scope reset cannot erase the reopened session", async () => {
+    const onReset = vi.fn();
+    const { result } = renderHook(() => {
+      const [hostId, setHostId] = useState<string | null>("host-a");
+      const chat = useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", hostId: hostId ?? undefined, selectedServerIds: [] },
+        onReset,
+      });
+      const restoration = useConversationTargetRestoration({
+        projectId: "project-1", composer: { kind: "host", hostId },
+        settled: chat.isSessionBootstrapComplete, hostsLoading: false,
+        hostIds: ["host-a", "host-b"], environmentsEnabled: false,
+        selectHost: setHostId, selectEnvironment: () => {}, clearEnvironment: () => {},
+      });
+      return { chat, restoration, hostId };
+    });
+    await waitFor(() => expect(result.current.chat.isSessionBootstrapComplete).toBe(true));
+    onReset.mockClear();
+    let resumed!: Promise<void>;
+    act(() => {
+      resumed = result.current.restoration.restoreTarget({ kind: "host", hostId: "host-b" }, () => true).then(async (apply) => {
+        expect(apply).toBe(true);
+        await result.current.chat.loadChatSession({ chatSessionId: "saved-chat", messagesBlobUrl: null, version: 3 });
+      });
+    });
+    await waitFor(() => expect(result.current.chat.chatSessionId).toBe("saved-chat"));
+    await resumed;
+    expect(result.current.hostId).toBe("host-b");
+    expect(result.current.chat.chatSessionId).toBe("saved-chat");
+    expect(result.current.chat.resumedVersion).toBe(3);
+    expect(onReset.mock.calls.map(([reason]) => reason)).toEqual(["auth-bootstrap", "hydrate"]);
   });
 
   it("marks session bootstrap complete only after auth setup finishes", async () => {

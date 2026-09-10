@@ -605,7 +605,7 @@ describe("electron-webview provider — the session surface", () => {
     ).rejects.toThrow(/no longer offers a tool named "checkout"/);
   });
 
-  it("reports a post-dispatch timeout as an unknown outcome", async () => {
+  it("reports uncertain page effects when a dispatched invocation times out", async () => {
     const { session, guest } = await startSession();
     guest.debugger.emitCdp("WebMCP.toolsAdded", {
       tools: [{ name: "slow", frameId: "main" }],
@@ -620,11 +620,13 @@ describe("electron-webview provider — the session surface", () => {
     });
     await Promise.resolve();
     await Promise.resolve();
-    // Once dispatch happened, cancellation cannot prove the page tool stopped.
+    // Timing out the wait cannot confirm that page execution stopped.
     controller.abort("timeout");
     await expect(pending).rejects.toMatchObject({
       name: "WebMcpOutcomeUnknownError",
-      message: expect.stringMatching(/timeout.*may continue/i),
+      message: expect.stringMatching(
+        /after a timeout.*execution may continue/i,
+      ),
     });
   });
 });

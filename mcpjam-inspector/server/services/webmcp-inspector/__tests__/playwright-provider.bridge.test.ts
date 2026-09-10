@@ -269,7 +269,7 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
     ).rejects.toBeInstanceOf(WebMcpToolGoneError);
   });
 
-  it("reports a post-dispatch cancellation as an unknown outcome", async () => {
+  it("reports uncertain page effects after cancellation was dispatched", async () => {
     const h = await started({ onSend: () => ({ invocationId: "inv-1" }) });
     h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
 
@@ -287,11 +287,13 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
 
     await expect(pending).rejects.toMatchObject({
       name: "WebMcpOutcomeUnknownError",
-      message: expect.stringContaining("may continue"),
+      message: expect.stringMatching(
+        /cancellation requested.*execution may continue/i,
+      ),
     });
   });
 
-  it("reports a post-dispatch timeout as an unknown outcome", async () => {
+  it("reports uncertain page effects after a runtime timeout", async () => {
     const h = await started({ onSend: () => ({ invocationId: "inv-1" }) });
     h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
 
@@ -301,8 +303,7 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
       signal: controller.signal,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    // The browser may continue after the runtime stops waiting, so the final
-    // outcome cannot be inferred from its `Canceled` response.
+    // The deadline stops waiting; it cannot prove page execution stopped.
     controller.abort("timeout");
     h.emit("WebMCP.toolResponded", {
       invocationId: "inv-1",
@@ -311,7 +312,9 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
 
     const error = await pending.catch((e: unknown) => e);
     expect(error).toBeInstanceOf(WebMcpOutcomeUnknownError);
-    expect((error as Error).message).toMatch(/timeout.*may continue/i);
+    expect((error as Error).message).toMatch(
+      /after a timeout.*execution may continue/i,
+    );
   });
 
   it("passes a page-side failure up with the page's own message", async () => {
