@@ -158,6 +158,16 @@ The **Sessions** tab in the left rail lists every saved conversation in the curr
 
 Sessions are project-scoped, so teammates in the same project see (and can resume) shared sessions.
 
+### Execution target restoration
+
+When you reopen a saved session, the Playground restores the host or environment the conversation originally ran on before loading the transcript. The composer and send button are disabled while the target is being restored.
+
+- If the session ran on a named host, that host is re-selected automatically.
+- If the session ran inside an environment, that environment is re-selected automatically.
+- If the session ran without any named host or environment (an ad-hoc run), the host selection is cleared so follow-up messages go to the same ad-hoc target.
+- If the original host or environment is no longer available, the transcript still loads and a notice describes the mismatch so you can acknowledge it before sending a follow-up.
+- Sessions saved before this feature was introduced show an "as-run configuration unavailable" notice rather than silently running on your current selection.
+
 ## Host Context Toolbar
 
 The toolbar above the chat thread controls how the active host renders your widgets. Every change applies to the next tool call and to already-rendered widgets where applicable.
