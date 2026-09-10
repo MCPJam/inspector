@@ -5,61 +5,32 @@
         {
           "name": "@mcpjam/inspector",
           "type": "patch"
-        },
+        }
+      ],
+      "summary": "Restore bearer-authenticated and OAuth MCP server connections when the backend does not provide credential-origin bindings by temporarily reverting enforcement until backend support and the required backfill are deployed.",
+      "id": "restore-credentialed-mcp-connections"
+    },
+    {
+      "releases": [
         {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
+          "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Cut a fresh patch of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.\n\nThe last release job reported `@mcpjam/sdk@8.7.0` as published, but that version never reached the npm registry — `latest` is still 8.6.0, while `@mcpjam/cli@5.7.0` and `@mcpjam/inspector@3.4.0` from the same run did land. This changeset is a version bump only, with no code changes, so the release job re-publishes the three packages together and the SDK on npm catches up with main.",
-      "id": "republish-inspector-cli-sdk"
+      "summary": "Stop asking the backend for a project default host config under a project id\nthat is not a Convex row. The Playground passes `sharedProjectId ??\nactiveProjectId`, so a guest with no cloud project reached\n`hostConfigsV2:getProjectDefault` with the string sentinel `\"none\"` — truthy,\nand rejected by `v.id(\"projects\")` before the handler runs, where nothing\nclient-side could catch it. All four call sites now gate on\n`shouldQueryProjectId`, the guard the rest of the Convex-reading hooks already\nuse.",
+      "id": "skip-project-default-for-sentinel-project-id"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "3.4.0",
+      "oldVersion": "3.5.0",
       "changesets": [
-        "republish-inspector-cli-sdk"
+        "restore-credentialed-mcp-connections",
+        "skip-project-default-for-sentinel-project-id"
       ],
-      "newVersion": "3.4.1"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "patch",
-      "oldVersion": "5.7.0",
-      "changesets": [
-        "republish-inspector-cli-sdk"
-      ],
-      "newVersion": "5.7.1"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "patch",
-      "oldVersion": "8.7.0",
-      "changesets": [
-        "republish-inspector-cli-sdk"
-      ],
-      "newVersion": "8.7.1"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
-    },
-    {
-      "name": "@mcpjam/slack-app",
-      "type": "none",
-      "oldVersion": "0.1.0",
-      "changesets": [],
-      "newVersion": "0.1.0"
+      "newVersion": "3.5.1"
     }
   ]
 }

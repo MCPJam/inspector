@@ -22,11 +22,20 @@ const state = vi.hoisted(() => ({
   pageTabIds: [] as Array<string | undefined>,
   pageSessionIds: [] as Array<string | undefined>,
   pageHolders: [] as Array<string | undefined>,
+  projectDefaultQueryArgs: [] as unknown[],
 }));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
-  useQuery: () => state.projectDefault ?? undefined,
+  // Records what the hook ASKS FOR, not just what it gets back. The
+  // project-default query is the one place this hook hands a caller-supplied
+  // project scope to a `v.id("projects")` validator, and "skip" vs. an
+  // argument object is the whole difference between a quiet render and a
+  // server-side throw.
+  useQuery: (_name: unknown, args: unknown) => {
+    state.projectDefaultQueryArgs.push(args);
+    return state.projectDefault ?? undefined;
+  },
   useAction: () => vi.fn(),
 }));
 
@@ -126,6 +135,7 @@ beforeEach(() => {
   state.pageTabIds = [];
   state.pageSessionIds = [];
   state.pageHolders = [];
+  state.projectDefaultQueryArgs = [];
   sessionStorage.clear();
   useBrowserPageToolsStore.setState({ live: {}, epoch: {} });
   useActiveChatSessionStore.setState({
@@ -289,5 +299,40 @@ describe("useBrowserTools — the read follows the tab the signal came from", ()
     );
     expect(state.pageTabIds.at(-1)).toBe("t2");
     expect(result.current.attached).toBe(true);
+  });
+});
+
+describe("useBrowserTools — what it sends to Convex", () => {
+  /**
+   * The Playground passes `sharedProjectId ?? activeProjectId`, so a guest with
+   * no cloud project reaches this hook with the string sentinel "none". It is
+   * truthy, so the old guard forwarded it to `hostConfigsV2:getProjectDefault`,
+   * whose `v.id("projects")` validator rejects it BEFORE the handler runs —
+   * unhandleable client-side, and the top Convex error in production
+   * (Sentry CONVEX-HQ, 636 users).
+   */
+  it.each(["none", "null", "undefined", "local_abc", "project_abc", "  "])(
+    "skips the project-default query for the non-Convex id %j",
+    async (projectId) => {
+      renderHook(() => useBrowserTools({ projectId, hostId: null }));
+
+      await waitFor(() =>
+        expect(state.projectDefaultQueryArgs.length).toBeGreaterThan(0),
+      );
+      expect(state.projectDefaultQueryArgs).not.toContainEqual({ projectId });
+      expect(new Set(state.projectDefaultQueryArgs)).toEqual(new Set(["skip"]));
+    },
+  );
+
+  it("still asks for a real Convex project id", async () => {
+    renderHook(() =>
+      useBrowserTools({ projectId: "v97cz533abc", hostId: null }),
+    );
+
+    await waitFor(() =>
+      expect(state.projectDefaultQueryArgs).toContainEqual({
+        projectId: "v97cz533abc",
+      }),
+    );
   });
 });
