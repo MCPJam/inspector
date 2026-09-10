@@ -4,62 +4,55 @@
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "patch"
-        },
+          "type": "minor"
+        }
+      ],
+      "summary": "Add browser-style URL/search navigation, Back, Forward, Reload and managed popup tabs to WebMCP and Playground. Browser tabs share one daemon registry across local, cloud and Electron. Node WebMCP uses the shared daemon at pane-sized DPR 1 by default; Electron WebMCP uses native WebContentsView surfaces. Preserve opener relationships and tool invocation bindings across tab changes.",
+      "id": "browser-navigation-tabs"
+    },
+    {
+      "releases": [
         {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
+          "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Cut a fresh patch of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.\n\nThe last release job reported `@mcpjam/sdk@8.7.0` as published, but that version never reached the npm registry — `latest` is still 8.6.0, while `@mcpjam/cli@5.7.0` and `@mcpjam/inspector@3.4.0` from the same run did land. This changeset is a version bump only, with no code changes, so the release job re-publishes the three packages together and the SDK on npm catches up with main.",
-      "id": "republish-inspector-cli-sdk"
+      "summary": "Make the local Electron build and dev run work off a clean checkout: raise the\nmain-process build's heap ceiling to match CI, pull in a `node-abi` that knows\nElectron 43, and keep `ws`'s optional native accelerators out of the bundle.",
+      "id": "fix-local-electron-build"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Harden the local Browser and WebMCP runtimes: local Node and Electron engines\nnow enforce navigation and DNS-checked egress policy and refuse MCPJam's own\ncontroller listeners; browser operations, viewers, retained CDP handles and\ndownloads end with the consent that authorized them; WebMCP sessions are bound\nto a verified owner and project with single-use frame-stream nonces, and\nElectron profiles are isolated per actor and project; Electron downloads\nrequire native approval and are staged privately under bounded resources.\nElectron is pinned to 43.6.0.\n\nLocal Browser stays behind its rollout flag, and this release does not enable\nit.",
+      "id": "local-browser-ga-security"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Fix WebMCP scrolling and keyboard/mouse input in development mode by keeping the input forwarder alive when React Strict Mode replays effect setup.",
+      "id": "webmcp-dev-scroll"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "patch",
-      "oldVersion": "3.4.0",
+      "type": "minor",
+      "oldVersion": "3.4.1",
       "changesets": [
-        "republish-inspector-cli-sdk"
+        "browser-navigation-tabs",
+        "fix-local-electron-build",
+        "local-browser-ga-security",
+        "webmcp-dev-scroll"
       ],
-      "newVersion": "3.4.1"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "patch",
-      "oldVersion": "5.7.0",
-      "changesets": [
-        "republish-inspector-cli-sdk"
-      ],
-      "newVersion": "5.7.1"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "patch",
-      "oldVersion": "8.7.0",
-      "changesets": [
-        "republish-inspector-cli-sdk"
-      ],
-      "newVersion": "8.7.1"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
-    },
-    {
-      "name": "@mcpjam/slack-app",
-      "type": "none",
-      "oldVersion": "0.1.0",
-      "changesets": [],
-      "newVersion": "0.1.0"
+      "newVersion": "3.5.0"
     }
   ]
 }
