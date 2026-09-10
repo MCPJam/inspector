@@ -436,6 +436,17 @@ If a tool call fails because the server requires you to complete an out-of-band 
 
 When a server requires multiple interactions before a tool can run, the notice walks you through them one at a time and only dismisses once you have handled all of them.
 
+## API session transcripts
+
+When you open a Playground conversation that was started through the [session API](/reference/public-api#browser-tools-on-chat-sessions) (for example, via `cloud sessions send` or `POST /chat-sessions/messages`), the Playground shows the transcript in read-only mode. The composer is disabled and a notice reads **"This conversation is driven by an agent. Continue it through the session API."**
+
+This is intentional: API sessions have a single writer (the agent), and the Playground is a viewer. You can still:
+
+- Read the full transcript, trace, and raw views.
+- Take over the session's live browser — if the session has a browser attached, the notice adds **"You can take over its browser here."** The browser panel opens normally and you can interact with the page. Select **Resume agent** in the browser panel when you are done to hand control back.
+
+To open an API session in the Playground, use the **Open in Playground** link printed by `cloud sessions send`, or navigate to `/playground?conversation=<chatSessionId>`. If the session has browser artifacts, append `&browser=open` to open the browser panel automatically.
+
 ## Temporary Browser override
 
 When Browser is available in your deployment, a **Browser** selector appears above the Playground layout. It lets you enable or disable Browser for the current Playground session without changing the selected client's saved configuration.
