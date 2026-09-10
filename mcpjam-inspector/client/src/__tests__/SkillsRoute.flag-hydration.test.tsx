@@ -34,16 +34,11 @@ vi.mock("../hooks/useSkillsEnabled", () => ({
 // The route no longer reads this flag — the Local/Cloud browse toggle moved to
 // `skills-enabled` with the rest of the project store. Mocked because App.tsx's
 // module graph still calls it elsewhere.
-vi.mock("../hooks/useComputersEnabled", () => ({
+vi.mock("../hooks/useComputersEnabled", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useComputersEnabled")>()),
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => true,
   useComputersEnabled: () => true,
-  // This mock replaces the module wholesale, so an export the render tree reads
-  // has to be here or accessing it throws instead of falling through to the
-  // real hook. `WebmcpPageToolsSection` reads both of these at module scope via
-  // `useWebmcpInspectorEnabled`, which picks between them on `HOSTED_MODE`.
-  LOCAL_BROWSER_FEATURE_FLAG: "local-browser-enabled",
-  HOSTED_BROWSER_FEATURE_FLAG: "hosted-browser-enabled",
 }));
 
 // The route guard only applies the flag under HOSTED_MODE.

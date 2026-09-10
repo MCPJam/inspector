@@ -11,17 +11,10 @@ import type {
   WebMcpToolDescriptor,
 } from "@/shared/webmcp-inspector-protocol";
 
-const navigate = vi.fn();
 let flagOn = true;
 
 vi.mock("@/hooks/useWebmcpInspectorEnabled", () => ({
   useWebmcpInspectorEnabled: () => flagOn,
-}));
-
-vi.mock("@/lib/app-navigation", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  useAppNavigate: () => navigate,
-  useCurrentPathname: () => "/playground",
 }));
 
 const SESSION: WebMcpSessionPublic = {
@@ -57,7 +50,6 @@ function setStore(
 describe("WebmcpPageToolsSection", () => {
   beforeEach(() => {
     flagOn = true;
-    navigate.mockClear();
     setStore({});
   });
 
@@ -67,12 +59,9 @@ describe("WebmcpPageToolsSection", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("offers a way to open a page when none is running", () => {
-    render(<WebmcpPageToolsSection />);
-    fireEvent.click(
-      screen.getByRole("button", { name: /open one in webmcp/i }),
-    );
-    expect(navigate).toHaveBeenCalled();
+  it("renders nothing when no page is open", () => {
+    const { container } = render(<WebmcpPageToolsSection />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("says so when a live page has registered nothing yet", () => {
@@ -81,13 +70,13 @@ describe("WebmcpPageToolsSection", () => {
     expect(screen.getByText(/no tools registered yet/i)).toBeInTheDocument();
   });
 
-  it("counts the tools and states that every call asks first", () => {
+  it("counts the tools and states the effective Tool Approval setting", () => {
     setStore({ session: SESSION, tools: [TOOL] });
     render(<WebmcpPageToolsSection />);
     // The approval promise is part of the offer: opting in must not read as
     // handing a third-party page unattended access.
     expect(
-      screen.getByText(/1 tool — every call asks first/i),
+      screen.getByText(/1 tool — Tool Approval uses chat setting/i),
     ).toBeInTheDocument();
   });
 
@@ -111,9 +100,9 @@ describe("WebmcpPageToolsSection", () => {
       tools: [TOOL],
       chatEnabled: true,
     });
-    render(<WebmcpPageToolsSection />);
+    const { container } = render(<WebmcpPageToolsSection />);
 
-    expect(screen.getByText(/no page open/i)).toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(useWebmcpInspectorStore.getState().pageToolsLive()).toBe(false);
   });

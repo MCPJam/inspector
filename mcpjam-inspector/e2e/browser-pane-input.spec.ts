@@ -16,7 +16,7 @@ test.beforeAll(async () => {
         import { BrowserPaneSurface } from './client/src/components/browser/BrowserPaneSurface';
         window.inputs = [];
         createRoot(document.getElementById('root')).render(
-          <BrowserPaneSurface frame={{deviceWidth:400,deviceHeight:300,scale:1,ts:1,seq:1}}
+          <BrowserPaneSurface frame={{deviceWidth:400,deviceHeight:300,scale:1,ts:1,seq:1,src:document.createElement("canvas").toDataURL()}}
             authority={{kind:'shared'}} control="you" onInput={events => window.inputs.push(...events)} />
         );`,
       loader: "tsx",
@@ -111,3 +111,54 @@ test("pointer capture preserves browser double/triple click counts and physical 
     expect.objectContaining({ x: 400, button: "left" }),
   ]);
 });
+
+for (const deviceScaleFactor of [1, 2]) {
+  test(`stream canvas fits without enlargement at DPR ${deviceScaleFactor}`, async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      deviceScaleFactor,
+      viewport: { width: 1000, height: 800 },
+    });
+    const page = await context.newPage();
+    await page.route("http://pane.test/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        // Include both current and old fill utilities so reverting the component fails.
+        body: `<style>
+        #root { display:flex; flex-direction:column; width:800px; height:600px }
+        .relative { position:relative } .flex { display:flex } .flex-1 { flex:1 1 0% }
+        .min-h-0 { min-height:0 } .items-center { align-items:center } .justify-center { justify-content:center }
+        .max-w-full { max-width:100% } .max-h-full { max-height:100% }
+        .w-full { width:100% } .h-full { height:100% } .object-contain { object-fit:contain }
+      </style><div id="root"></div>`,
+      }),
+    );
+    await page.goto("http://pane.test/");
+    await page.addScriptTag({ content: script });
+    const canvas = page.getByTestId("rail-browser-frame");
+    await expect
+      .poll(async () => (await canvas.boundingBox())?.width)
+      .toBe(400);
+    await expect
+      .poll(async () => (await canvas.boundingBox())?.height)
+      .toBe(300);
+    await page.evaluate(() => {
+      const root = document.getElementById("root")!;
+      root.style.width = "200px";
+      root.style.height = "100px";
+    });
+    await expect
+      .poll(async () => (await canvas.boundingBox())?.height)
+      .toBeCloseTo(100, 0);
+    const box = (await canvas.boundingBox())!;
+    expect(box.width).toBeCloseTo(400 / 3, 0);
+    await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
+    const input = await page.evaluate(() =>
+      (window as any).inputs.find((e: any) => e.type === "mouse_down"),
+    );
+    expect(input.x).toBeCloseTo(200, -1);
+    expect(input.y).toBeCloseTo(150, -1);
+    await context.close();
+  });
+}

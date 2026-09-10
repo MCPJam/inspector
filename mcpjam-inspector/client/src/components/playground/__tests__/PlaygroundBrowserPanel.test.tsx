@@ -322,3 +322,8 @@ describe("the browser a chat owns", () => {
     expect(screen.queryByTestId("browser-pane")).toBeNull();
   });
 });
+
+it("makes a restored session browser available to its authenticated owner without a host", () => {
+  expect(browserPanelAvailable({ hostHasBrowser: false, sessionHasBrowser: true, selectedEngine: "cloud", isAuthenticated: true, localBrowserRunning: false })).toBe(true);
+  expect(browserPanelAvailable({ hostHasBrowser: false, sessionHasBrowser: true, selectedEngine: "cloud", isAuthenticated: false, localBrowserRunning: false })).toBe(false);
+});

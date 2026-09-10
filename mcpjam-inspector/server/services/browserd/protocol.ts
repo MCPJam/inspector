@@ -779,6 +779,7 @@ export const BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  "browser_policy_refused",
   /** A `fill_form` stopped partway; the detail names which field and why. */
   "fill_form_failed",
   "out_of_viewport",

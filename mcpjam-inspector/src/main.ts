@@ -1,4 +1,6 @@
 /// <reference path="./forge.env.d.ts" />
+import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
+import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 // MUST stay the first import: it sets WS_NO_BUFFER_UTIL, which `ws` reads at
 // module-eval time, and the bundled `ws` is otherwise handed an empty stub for
 // its optional `bufferutil` dep. See the file for the full story (#4208).
@@ -116,6 +118,8 @@ if (process.platform === "win32") {
  * WebMCP on the floor. A future feature must comma-join it into this one call.
  */
 app.commandLine.appendSwitch("enable-features", "WebMCP");
+// Chromium 150 (Electron 43) also needs the explicit Blink feature override.
+app.commandLine.appendSwitch("enable-blink-features", "WebMCP");
 
 // Register custom protocol for OAuth callbacks
 if (!app.isDefaultProtocolClient("mcpjam")) {
@@ -277,13 +281,13 @@ function createElectronHostedAuthNavigationUrl(url: string): string {
             [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
           }
         : parsedState === undefined
-          ? {
-              [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
-            }
-          : {
-              [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
-              originalState: parsedState,
-            };
+        ? {
+            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+          }
+        : {
+            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+            originalState: parsedState,
+          };
 
     urlObj.searchParams.set("state", JSON.stringify(nextState));
     return urlObj.toString();
@@ -489,8 +493,9 @@ async function startHonoServer(): Promise<number> {
     // workspace grant through the server's own route. Read here, after the
     // server module has generated it, and re-read on every restart.
     try {
-      const { getSessionToken } =
-        await import("../server/services/session-token.js");
+      const { getSessionToken } = await import(
+        "../server/services/session-token.js"
+      );
       localHarnessSessionToken = getSessionToken();
     } catch {
       localHarnessSessionToken = null;
@@ -500,8 +505,9 @@ async function startHonoServer(): Promise<number> {
     // rather than imported by the server, which has to stay loadable under
     // `npx` where there is no Electron and no keychain at all.
     try {
-      const { setInstanceKeyStore } =
-        await import("../server/utils/harness/local/instance-key.js");
+      const { setInstanceKeyStore } = await import(
+        "../server/utils/harness/local/instance-key.js"
+      );
       setInstanceKeyStore(createSafeStorageKeyStore());
     } catch (err) {
       log.warn(
@@ -547,6 +553,7 @@ async function startHonoServer(): Promise<number> {
       port,
       hostname,
     });
+    registerBrowserController(`http://127.0.0.1:${port}`);
     // Attach the computer terminal WebSocket upgrade handler (mirror of
     // server/index.ts). Without this the Computer tab's Shell can't upgrade.
     injectWebSocket(server);
@@ -595,6 +602,7 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   });
 
   // Load the app
+  setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);
   window.loadURL(rendererDevServerUrl ?? serverUrl);
 
   if (isDev) {

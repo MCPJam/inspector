@@ -6,6 +6,18 @@ interface BrowserLocation {
   engine: "local" | "cloud";
 }
 interface ActiveChatSessionState {
+  restorationPending: boolean;
+  setRestorationPending: (pending: boolean) => void;
+  restoredSession: {
+    sessionId: string;
+    origin?: string;
+    browser?: { browserSessionId: string; state: string } | null;
+  } | null;
+  setRestoredSession: (
+    session: NonNullable<ActiveChatSessionState["restoredSession"]>,
+  ) => void;
+  approvalSettings: Record<string, boolean>;
+  setApprovalSetting: (id: string, enabled: boolean) => void;
   sessionId: string | null;
   browserLocation: BrowserLocation | null;
   setBrowserLocation: (location: BrowserLocation) => void;
@@ -23,11 +35,28 @@ interface ActiveChatSessionState {
  */
 export const useActiveChatSessionStore = create<ActiveChatSessionState>(
   (set) => ({
+    restorationPending: false,
+    setRestorationPending: (restorationPending) => set({ restorationPending }),
+    restoredSession: null,
+    setRestoredSession: (restoredSession) =>
+      set({ restoredSession, sessionId: restoredSession.sessionId }),
+    approvalSettings: {},
+    setApprovalSetting: (id, enabled) =>
+      set((state) => ({
+        approvalSettings: { ...state.approvalSettings, [id]: enabled },
+      })),
     sessionId: null,
     browserLocation: null,
     setBrowserLocation: (browserLocation) => set({ browserLocation }),
     browserSessionId: null,
-    setSessionId: (sessionId) => set({ sessionId }),
+    setSessionId: (sessionId) =>
+      set((state) => ({
+        sessionId,
+        ...(sessionId !== state.sessionId &&
+        state.restoredSession?.sessionId !== sessionId
+          ? { restoredSession: null }
+          : {}),
+      })),
     markBrowserSessionActive: (sessionId) =>
       set({ browserSessionId: sessionId }),
   }),

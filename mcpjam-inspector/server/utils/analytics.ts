@@ -173,6 +173,9 @@ export async function evaluateBrowserRollout(
     return (
       (await getClient(true)?.isFeatureEnabled(key, distinctId, {
         sendFeatureFlagEvents: false,
+        ...(key === "local-browser-enabled"
+          ? { personProperties: { local_browser_security_version: "1" } }
+          : {}),
       })) === true
     );
   } catch {

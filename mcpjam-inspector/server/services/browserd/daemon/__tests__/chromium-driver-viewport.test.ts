@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ChromiumDriver } from "../chromium-driver";
 import type { BrowserCommand } from "../../protocol";
-import { fakeContext, fakePage } from "./fake-page";
+import { fakeContext, fakePage, fakeCdpSession } from "./fake-page";
 import type { SessionViewport } from "../../../../../shared/browser-viewport";
 
 /**
@@ -94,6 +94,80 @@ describe("session viewport", () => {
     });
     // One event for the session, not one per tab.
     expect(changes).toEqual([{ width: 1400, height: 900, revision: 1 }]);
+  });
+
+  it("restarts an open capture at each new pane size", async () => {
+    const page = fakePage();
+    const cdp = fakeCdpSession();
+    page.cdpSession = cdp;
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, responsive());
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const capture = (await driver.viewport())!;
+    const unsubscribe = capture.subscribe(() => {});
+    await capture.ready();
+    const resize = page.setViewportSize!.bind(page);
+    page.setViewportSize = async (size) => {
+      // Capture must stop before the page changes geometry.
+      expect(cdp.sent.at(-1)?.method).toBe("Page.stopScreencast");
+      await resize(size);
+    };
+    try {
+      for (const size of [
+        { width: 620, height: 1160 },
+        { width: 1400, height: 900 },
+        { width: 640, height: 800 },
+      ]) {
+        await driver.requestViewport(size);
+        expect(cdp.sent.at(-1)).toMatchObject({
+          method: "Page.startScreencast",
+          params: { maxWidth: size.width, maxHeight: size.height, quality: 85 },
+        });
+      }
+    } finally {
+      unsubscribe();
+      await driver.close();
+    }
+  });
+
+  it("restores capture dimensions when another tab refuses a resize", async () => {
+    const a = fakePage();
+    const b = fakePage();
+    const cdp = fakeCdpSession();
+    a.cdpSession = cdp;
+    const { context } = fakeContext({ pages: [a, b] });
+    const driver = new ChromiumDriver(context, responsive());
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://a.test/" }, "a"),
+    );
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://b.test/" }, "b"),
+    );
+    const capture = (await driver.viewport("a"))!;
+    const unsubscribe = capture.subscribe(() => {});
+    await capture.ready();
+    b.setViewportSize = async () => {
+      throw new Error("resize refused");
+    };
+    try {
+      await driver.requestViewport({ width: 1400, height: 900 });
+      expect(
+        cdp.sent
+          .filter((call) => call.method === "Page.startScreencast")
+          .map((call) => [call.params?.maxWidth, call.params?.maxHeight]),
+      ).toEqual([
+        [1024, 768],
+        [1400, 900],
+        [1024, 768],
+      ]);
+      expect(driver.sessionViewportState()).toMatchObject({
+        width: 1024,
+        height: 768,
+      });
+    } finally {
+      unsubscribe();
+      await driver.close();
+    }
   });
 
   it("does not bump the revision for a request that changed no pixel", async () => {

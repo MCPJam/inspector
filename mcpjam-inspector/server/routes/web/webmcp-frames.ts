@@ -61,7 +61,8 @@ import type { MiddlewareHandler } from "hono";
 import type { WSContext } from "hono/ws";
 import { WEBMCP_INSPECTOR_ENABLED } from "../../config.js";
 import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
-import { validateToken } from "../../services/session-token.js";
+import { consumeLocalNonce } from "../../utils/computers/local-terminal-auth.js";
+import { inspectionNonceScope } from "../../services/webmcp-inspector/local-authorization.js";
 import { webMcpSessions } from "../../services/webmcp-inspector/session-registry.js";
 import {
   createFramePacer,
@@ -203,13 +204,14 @@ export function createWebMcpFramesWsHandler(
     { onError: (err: unknown) => void }
   >,
 ): MiddlewareHandler {
-  return upgradeWebSocket((c) => {
+  return upgradeWebSocket(async (c) => {
     // The token rides `Sec-WebSocket-Protocol`: no custom headers on a browser
     // WS handshake, and a query string would land in access logs. No fallback.
     const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
     const token = protocolHeader.split(",")[0]?.trim() ?? "";
     const origin = c.req.header("Origin");
     const sessionId = c.req.param("id") ?? "";
+    const claim = consumeLocalNonce("webmcp-frames", token);
 
     // Everything resolvable before the socket opens is resolved here; a
     // failure becomes an immediate close-with-code in `onOpen`, because
@@ -231,12 +233,20 @@ export function createWebMcpFramesWsHandler(
       // on a bare Hono app.
       rejectCode = CLOSE_UNAUTHORIZED;
       rejectMessage = "Frame requests must come from the inspector UI.";
-    } else if (!validateToken(token)) {
+    } else if (!claim) {
       rejectCode = CLOSE_UNAUTHORIZED;
       rejectMessage = "Invalid session token.";
     } else {
       try {
-        webMcpSessions.get(sessionId);
+        const runtime = webMcpSessions.get(sessionId);
+        const scope = runtime.localAuthorization?.scope;
+        if (
+          !scope ||
+          claim.projectId !== inspectionNonceScope(sessionId, scope) ||
+          claim.consentFingerprint !== scope.consentFingerprint
+        )
+          throw new Error("unauthorized");
+        await runtime.assertAuthorized();
       } catch {
         rejectCode = CLOSE_GONE;
         rejectMessage = "That WebMCP session no longer exists.";
@@ -252,8 +262,10 @@ export function createWebMcpFramesWsHandler(
     let lastInputSeq = -1;
 
     let unregisterInputDrain: (() => void) | undefined;
+    let unregisterConsent: (() => void) | undefined;
     const teardown = () => {
       closed = true;
+      unregisterConsent?.();
       unregisterInputDrain?.();
       unregisterInputDrain = undefined;
       input?.cancel();
@@ -266,7 +278,7 @@ export function createWebMcpFramesWsHandler(
     };
 
     return {
-      onOpen: (_evt, ws) => {
+      onOpen: async (_evt, ws) => {
         if (rejectCode !== null) {
           ws.close(rejectCode, rejectMessage.slice(0, 120));
           return;
@@ -282,6 +294,14 @@ export function createWebMcpFramesWsHandler(
         let runtime;
         try {
           runtime = webMcpSessions.get(sessionId);
+          await runtime.assertAuthorized();
+          unregisterConsent = runtime.localAuthorization?.lifetime.onRevoked(
+            () => {
+              teardown();
+              liveSockets.delete(ws);
+              ws.close(CLOSE_UNAUTHORIZED, "Browser permission changed.");
+            },
+          );
         } catch {
           // Reaped between the handshake and the open.
           ws.close(CLOSE_GONE, "That WebMCP session no longer exists.");
@@ -318,6 +338,7 @@ export function createWebMcpFramesWsHandler(
                 ) {
                   return { ok: false, refused: "no_browser_session" };
                 }
+                await runtime.assertAuthorized();
                 webMcpSessions.touch(runtime);
               } catch {
                 return { ok: false, refused: "no_browser_session" };
@@ -346,7 +367,7 @@ export function createWebMcpFramesWsHandler(
         }
 
         unsubscribe = runtime.hub.subscribe((event) => {
-          if (closed) return;
+          if (closed || !runtime.isAuthorized()) return;
           if (event.type === "frame") {
             // Base64 → bytes ONCE, here, per send. The in-memory frame stays
             // base64 so the hub and the SSE route are untouched by this
@@ -384,7 +405,14 @@ export function createWebMcpFramesWsHandler(
         }, FRAME_REPLAY);
       },
 
-      onMessage: (evt, ws) => {
+      onMessage: async (evt, ws) => {
+        try {
+          await webMcpSessions.get(sessionId).assertAuthorized();
+        } catch {
+          teardown();
+          ws.close(CLOSE_UNAUTHORIZED, "Browser permission changed.");
+          return;
+        }
         const data = evt.data;
         if (closed || rejectCode !== null || typeof data !== "string") return;
         if (!isFramePingMessage(data)) {

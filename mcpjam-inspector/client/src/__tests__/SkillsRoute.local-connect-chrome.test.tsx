@@ -25,16 +25,11 @@ vi.mock("../hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => skillsFlag.value === true,
 }));
 
-vi.mock("../hooks/useComputersEnabled", () => ({
+vi.mock("../hooks/useComputersEnabled", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useComputersEnabled")>()),
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => true,
   useComputersEnabled: () => true,
-  // This mock replaces the module wholesale, so an export the render tree reads
-  // has to be here or accessing it throws instead of falling through to the
-  // real hook. `WebmcpPageToolsSection` reads both of these at module scope via
-  // `useWebmcpInspectorEnabled`, which picks between them on `HOSTED_MODE`.
-  LOCAL_BROWSER_FEATURE_FLAG: "local-browser-enabled",
-  HOSTED_BROWSER_FEATURE_FLAG: "hosted-browser-enabled",
 }));
 
 vi.mock("../lib/config", async (importOriginal) => {
