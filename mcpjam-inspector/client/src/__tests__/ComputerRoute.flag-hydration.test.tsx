@@ -34,6 +34,12 @@ vi.mock("../hooks/useComputersEnabled", () => ({
   // rather than falling through to the real hook.
   LOCAL_COMPUTER_FEATURE_FLAG: "local-computer-enabled",
   useLocalComputerEnabled: () => false,
+  // Same trap as the local-computer flag above: `useWebmcpInspectorEnabled`
+  // reads these two at MODULE scope, and this mock replaces the module
+  // wholesale, so an omitted export throws at import time rather than falling
+  // through to the real hook.
+  LOCAL_BROWSER_FEATURE_FLAG: "local-browser-enabled",
+  HOSTED_BROWSER_FEATURE_FLAG: "hosted-browser-enabled",
 }));
 
 vi.mock("react-router", async (importOriginal) => {
@@ -69,8 +75,7 @@ vi.mock("../hooks/use-previewed-client-id", () => ({
 }));
 
 vi.mock("../lib/app-navigation", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../lib/app-navigation")>();
+  const actual = await importOriginal<typeof import("../lib/app-navigation")>();
   return { ...actual, useAppNavigate: () => mockNavigate };
 });
 
@@ -147,7 +152,7 @@ describe("ComputerRoute — flag hydration", () => {
     rerender(
       <MemoryRouter>
         <ComputerRoute />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
@@ -192,7 +197,7 @@ describe("ComputerRoute — the actor behind the computer", () => {
     memberActor.value = undefined;
     renderRoute(<ComputerRoute />);
     expect(screen.getByTestId("computer-view").dataset.member).toBe(
-      "undefined"
+      "undefined",
     );
   });
 

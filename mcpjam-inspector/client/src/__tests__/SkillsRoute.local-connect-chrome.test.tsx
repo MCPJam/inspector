@@ -29,6 +29,12 @@ vi.mock("../hooks/useComputersEnabled", () => ({
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => true,
   useComputersEnabled: () => true,
+  // `useWebmcpInspectorEnabled` reads these two at MODULE scope
+  // (`WEBMCP_INSPECTOR_FEATURE_FLAG` is a top-level const), and this mock
+  // replaces the module wholesale, so an omitted export throws at import time
+  // rather than falling through to the real hook.
+  LOCAL_BROWSER_FEATURE_FLAG: "local-browser-enabled",
+  HOSTED_BROWSER_FEATURE_FLAG: "hosted-browser-enabled",
 }));
 
 vi.mock("../lib/config", async (importOriginal) => {
@@ -184,7 +190,7 @@ describe("SkillsRoute — the project store's gate in local mode", () => {
 
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
-      "false"
+      "false",
     );
   });
 
@@ -195,7 +201,7 @@ describe("SkillsRoute — the project store's gate in local mode", () => {
 
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
-      "false"
+      "false",
     );
   });
 
@@ -206,7 +212,7 @@ describe("SkillsRoute — the project store's gate in local mode", () => {
 
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
-      "true"
+      "true",
     );
   });
 
@@ -219,7 +225,7 @@ describe("SkillsRoute — the project store's gate in local mode", () => {
 
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
-      "false"
+      "false",
     );
   });
 
@@ -233,7 +239,7 @@ describe("SkillsRoute — the project store's gate in local mode", () => {
 
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
-      "false"
+      "false",
     );
   });
 
@@ -255,7 +261,7 @@ describe("SkillsRoute — the project store's gate in local mode", () => {
 
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
-      "false"
+      "false",
     );
   });
 });

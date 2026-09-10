@@ -38,6 +38,12 @@ vi.mock("../hooks/useComputersEnabled", () => ({
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => true,
   useComputersEnabled: () => true,
+  // `useWebmcpInspectorEnabled` reads these two at MODULE scope
+  // (`WEBMCP_INSPECTOR_FEATURE_FLAG` is a top-level const), and this mock
+  // replaces the module wholesale, so an omitted export throws at import time
+  // rather than falling through to the real hook.
+  LOCAL_BROWSER_FEATURE_FLAG: "local-browser-enabled",
+  HOSTED_BROWSER_FEATURE_FLAG: "hosted-browser-enabled",
 }));
 
 // The route guard only applies the flag under HOSTED_MODE.
@@ -146,7 +152,7 @@ describe("SkillsRoute — cloud-skills flag + Connect chrome", () => {
     // than holding every user behind PostHog.
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
-      "false"
+      "false",
     );
   });
 
@@ -155,7 +161,7 @@ describe("SkillsRoute — cloud-skills flag + Connect chrome", () => {
     const { rerender } = renderRoute(<SkillsRoute />);
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
-      "false"
+      "false",
     );
 
     // PostHog resolves the flag to enabled.
@@ -166,13 +172,13 @@ describe("SkillsRoute — cloud-skills flag + Connect chrome", () => {
     rerender(
       <MemoryRouter>
         <SkillsRoute />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
-      "true"
+      "true",
     );
     expect(screen.getByTestId("connect-header")).toBeInTheDocument();
   });
@@ -186,7 +192,7 @@ describe("SkillsRoute — cloud-skills flag + Connect chrome", () => {
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
-      "false"
+      "false",
     );
   });
 
