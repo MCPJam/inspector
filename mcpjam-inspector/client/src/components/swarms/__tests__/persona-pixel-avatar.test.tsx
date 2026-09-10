@@ -175,14 +175,22 @@ describe("PersonaPixelAvatar — wave pose", () => {
     // hides: rolling for an arm length there would shift every draw after it.
     // Head cells witness the shift — they are laid out downstream of the arm
     // block and nowhere near the raised hand, so they move only if the stream
-    // did. Every family reaches the arm roll on the same draw (five size
-    // draws, two chipped corners, one leg offset), so this seed misses it for
-    // all four armed ones: Brute, Runt, Warden, Waif.
-    const seed = "missed-arm-roll";
-    for (const shapeIndex of [0, 2, 4, 5]) {
-      expect(headCells(sprite({ seed, shapeIndex, pose: "wave" }))).toEqual(
-        headCells(sprite({ seed, shapeIndex })),
-      );
+    // did.
+    //
+    // Two seeds, because the contract has two halves and either seed alone is
+    // blind to one. `missed-arm-roll` takes the forced branch, so it catches a
+    // length rolled there. `swarm-hero-lapis` is roll-true, the only way to
+    // catch a wave that skips the roll itself — on a roll-false seed both paths
+    // draw once and the two shifts cancel. Every family reaches the roll on the
+    // same draw (five size draws, two chipped corners, one leg offset), so each
+    // seed lands the same way for all four armed ones: Brute, Runt, Warden,
+    // Waif.
+    for (const seed of ["missed-arm-roll", "swarm-hero-lapis"]) {
+      for (const shapeIndex of [0, 2, 4, 5]) {
+        expect(headCells(sprite({ seed, shapeIndex, pose: "wave" }))).toEqual(
+          headCells(sprite({ seed, shapeIndex })),
+        );
+      }
     }
   });
 
