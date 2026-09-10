@@ -321,6 +321,22 @@ describe("webmcp inspector store", () => {
     expect(state.pending.map((item) => item.invokeId)).toEqual(["inv-1"]);
   });
 
+  it("keeps an active browser during shared setup, but closes it on device revoke", () => {
+    const key = "mcp-local-browser-consent-v1";
+    localStorage.setItem(key, JSON.stringify({ token: "existing-browser-capability", grantedAt: "now" }));
+    window.dispatchEvent(new CustomEvent("local-browser-consent-changed"));
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    const close = vi.spyOn(useWebmcpInspectorStore.getState(), "closeSession").mockResolvedValue(undefined);
+    localStorage.setItem("mcp-local-browser-setup-pending-v1", "true");
+    window.dispatchEvent(new CustomEvent("local-browser-consent-changed"));
+    localStorage.removeItem("mcp-local-browser-setup-pending-v1");
+    window.dispatchEvent(new CustomEvent("local-browser-consent-changed"));
+    expect(close).not.toHaveBeenCalled();
+    localStorage.removeItem(key);
+    window.dispatchEvent(new StorageEvent("storage", { key }));
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it("clears pending once an invocation settles", async () => {
     const source = await openSession();
     await source.emit(activityEvent(started("a1", "inv-1")));

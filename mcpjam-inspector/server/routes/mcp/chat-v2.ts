@@ -929,7 +929,7 @@ chatV2.post("/", async (c) => {
     if (!HOSTED_MODE && !isScenarioSession && body.browserEngine === "local") {
       let enabled = typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
         ? hostRuntimeConfig.localBrowserEnabled : undefined;
-      if (!hostRuntimeConfig && typeof body.projectId === "string" && body.projectId && c.req.header("authorization")) {
+      if (!hostRuntimeConfig && typeof body.projectId === "string" && body.projectId && c.req.header("authorization") && !isGuestChatRequest(c.req.header("authorization"))) {
         try {
           enabled = await readLocalBrowserSetting(await getConvexBearerForRequest(c), body.projectId);
         } catch {

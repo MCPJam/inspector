@@ -1730,7 +1730,11 @@ useHostContextStore.subscribe((state, previous) => {
       void store.closeSession();
   }
 });
+let observedConsentToken = loadStoredLocalBrowserConsent()?.token ?? null;
 subscribeLocalBrowserConsent(() => {
+  const token = loadStoredLocalBrowserConsent()?.token ?? null;
+  if (token === observedConsentToken) return;
+  observedConsentToken = token;
   const store = useWebmcpInspectorStore.getState();
   if (store.session && !store.session.sessionId.startsWith("hosted:"))
     void store.closeSession();

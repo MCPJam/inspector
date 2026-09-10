@@ -1,15 +1,10 @@
 /**
  * React face of the local-browser consent capability (`lib/local-browser-consent.ts`).
  *
- * `granted` is a SYNCHRONOUS projection of localStorage: consent exists iff a
- * capability token is stored on this device. There is deliberately no
- * client-side verification loop — the server re-verifies the token on every
- * actual Browser use, so a stale or
- * tampered token just fails the next server check without changing location. That
- * makes this hook a pure store projection (via `useSyncExternalStore`), which
- * has no async status to race: earlier versions that verified on mount grew
- * five rounds of out-of-order/self-supersede/cross-tab-clobber guards for no
- * safety the server wasn't already providing.
+ * Readiness projects the stored capability and pending shared setup. Mounting
+ * never grants permission, verifies a token, or changes client settings. Only
+ * an explicit Allow verifies/reuses or mints a capability and enables clients.
+ * The server still verifies the token on every actual Browser use.
  *
  * Reads reflect writes from any tab/hook immediately (same-tab custom event +
  * cross-tab storage event); concurrent grant/revoke are plain last-write-wins
@@ -34,11 +29,11 @@ export type LocalBrowserConsentStatus = "granted" | "absent";
 
 export interface LocalBrowserConsent {
   status: LocalBrowserConsentStatus;
-  /** `true` — a capability token is stored; safe to gate the engine on. */
+  /** A capability is stored and explicit shared setup is not pending. */
   granted: boolean;
   /** The capability token to send as `X-MCPJam-Browser-Consent`. */
   token: string | null;
-  /** Mint + persist; resolves to whether consent ended up stored. */
+  /** Explicitly allow device access and enable shared local-client settings. */
   grant: () => Promise<boolean>;
   /** Forget locally (synchronously) + best-effort server unlink. */
   revoke: () => Promise<void>;
@@ -58,7 +53,11 @@ export function useLocalBrowserConsent(): LocalBrowserConsent {
   // A primitive string snapshot — value-compared by React, so writes from any
   // tab re-render and stale reads are impossible.
   const token = useSyncExternalStore(subscribe, getStoredToken, () => null);
-  const setupPending = useSyncExternalStore(subscribe, localBrowserSetupPending, () => false);
+  const setupPending = useSyncExternalStore(
+    subscribe,
+    localBrowserSetupPending,
+    () => false,
+  );
 
   const grant = useCallback(async (): Promise<boolean> => {
     if (HOSTED_MODE) return false;

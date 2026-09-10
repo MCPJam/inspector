@@ -23,10 +23,17 @@ const mocks = vi.hoisted(() => ({
   mint: vi.fn(),
   transports: vi.fn(),
   granted: true,
+  grant: vi.fn(async () => true),
+  hosted: false,
 }));
+vi.mock("@/lib/config", () => ({ get HOSTED_MODE() { return mocks.hosted; } }));
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: null }) }));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/hooks/useBrowserEngine", () => ({
   useBrowserEngine: () => ({
-    consent: { granted: mocks.granted, token: "consent" },
+    selectedEngine: "local",
+    localAvailable: true,
+    consent: { granted: mocks.granted, token: "consent", grant: mocks.grant },
   }),
 }));
 vi.mock("@/hooks/useProjectComputer", () => ({
@@ -105,12 +112,31 @@ const mount = (active = true) =>
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.granted = true;
+  mocks.hosted = false;
   mocks.read.mockResolvedValue(snapshot());
   mocks.send.mockResolvedValue({ ok: true });
   store.setState({ clients: {}, selected: {} });
 });
 
 describe("one combined browser strip", () => {
+  it("shows guests Allow before any client has started browsing", async () => {
+    mocks.granted = false;
+    mount();
+    expect(screen.getByRole("button", { name: "Allow" })).toBeInTheDocument();
+    expect(screen.queryByText("Waiting for a client to browse…")).toBeNull();
+    expect(mocks.grant).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(mocks.grant).toHaveBeenCalledOnce());
+    expect(mocks.transports).not.toHaveBeenCalled();
+  });
+
+  it("never shows local permission to hosted guests", () => {
+    mocks.hosted = true;
+    mocks.granted = false;
+    mount();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(mocks.grant).not.toHaveBeenCalled();
+  });
   it("keeps following the selected client when a background read hangs, and stops when hidden", async () => {
     vi.useFakeTimers();
     register("a", 0);
@@ -261,7 +287,7 @@ describe("one combined browser strip", () => {
       <ComparisonBrowser projectId="project" workspaceId="workspace" active />,
     );
     expect(mocks.read).not.toHaveBeenCalled();
-    expect(screen.getByText(/Allow local browser access/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Allow" })).toBeInTheDocument();
     expect(screen.queryByTestId("local-body")).not.toBeInTheDocument();
   });
 });

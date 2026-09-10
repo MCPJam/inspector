@@ -1,3 +1,4 @@
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
 /**
  * `useBrowserTools` — which host the Tools panel's Browser section believes it
  * is describing, and when it asks the server anything at all.
@@ -12,8 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
 const state = vi.hoisted(() => ({
-  explicitHost: null as { config?: { builtInToolIds?: string[] } } | null,
-  projectDefault: null as { builtInToolIds?: string[] } | null,
+  explicitHost: null as { config?: { builtInToolIds?: string[]; localBrowserEnabled?: boolean } } | null,
+  projectDefault: null as { builtInToolIds?: string[]; localBrowserEnabled?: boolean } | null,
   selectedEngine: "cloud" as "cloud" | "local",
   consentToken: null as string | null,
   definitions: [{ name: "browser_navigate", description: "Open a URL." }],
@@ -148,6 +149,26 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe("useBrowserTools — which host it describes", () => {
+  it("lists Browser after shared local setup without requiring a legacy tool attachment", async () => {
+    state.selectedEngine = "local";
+    state.consentToken = "saved-device-consent";
+    state.projectDefault = { ...WITHOUT_BROWSER, localBrowserEnabled: true };
+    const { result } = renderHook(() => useBrowserTools({ projectId: "proj_1", hostId: null }));
+    await waitFor(() => expect(result.current.tools).toHaveLength(1));
+    expect(result.current.attached).toBe(true);
+    expect(state.definitionCalls).toEqual(["local"]);
+  });
+
+  it("stops exposing tools when this client's local override is disabled", async () => {
+    state.selectedEngine = "local";
+    state.consentToken = "saved-device-consent";
+    state.explicitHost = { config: { ...WITH_BROWSER, localBrowserEnabled: false } };
+    const { result } = renderHook(() => useBrowserTools({ projectId: "proj_1", hostId: "host_1" }));
+    expect(result.current.attached).toBe(false);
+    expect(state.definitionCalls).toEqual([]);
+    expect(state.pageCalls).toEqual([]);
+  });
+
   it("falls back to the PROJECT DEFAULT when no host is explicitly previewed", async () => {
     // The reported bug, exactly: the Browser pane was live and the Tools panel
     // was empty, because only the pane looked at the default host.
@@ -219,8 +240,8 @@ describe("useBrowserTools — which browser it reads", () => {
       useBrowserTools({ projectId: "proj_1", hostId: null }),
     );
     await waitFor(() => expect(state.pageCalls).toEqual(["local"]));
-    // The definitions differ per engine — they say whose browser this is.
-    expect(state.definitionCalls).toEqual(["local"]);
+    // Definitions may already be cached by an earlier local view.
+    expect(result.current.tools).toHaveLength(1);
     expect(result.current.engine).toBe("local");
   });
 

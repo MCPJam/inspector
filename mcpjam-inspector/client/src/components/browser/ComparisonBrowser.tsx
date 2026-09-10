@@ -10,6 +10,8 @@ import { BrowserTabStrip, type BrowserDisplayTab } from "./BrowserTabStrip";
 import { BrowserWorkspaceChrome } from "./BrowserWorkspaceChrome";
 import { LocalBrowserBody } from "./LocalBrowserBody";
 import { HostedBrowserBody } from "./HostedBrowserBody";
+import { LocalBrowserConsentGate } from "./LocalBrowserConsentGate";
+import { HOSTED_MODE } from "@/lib/config";
 
 type SessionView = { snapshot: BrowserStateSnapshot | null; stale: boolean };
 const tabKey = (sessionId: string, tabId: string) =>
@@ -140,8 +142,8 @@ export function ComparisonBrowser({
           result.reason === "lease_held"
             ? "Someone else has control of this browser."
             : result.reason === "no_session"
-              ? "This browser is no longer running."
-              : "The browser could not complete that action. Try again.",
+            ? "This browser is no longer running."
+            : "The browser could not complete that action. Try again.",
         );
         return;
       }
@@ -174,8 +176,8 @@ export function ComparisonBrowser({
               title: views[client.sessionId]?.stale
                 ? "Reconnecting…"
                 : snapshot
-                  ? "No open tabs"
-                  : "Connecting…",
+                ? "No open tabs"
+                : "Connecting…",
               loading: !snapshot,
             },
           ];
@@ -189,7 +191,7 @@ export function ComparisonBrowser({
             clientName: showNames ? client.name : undefined,
             clientLogo: showNames ? client.logo : undefined,
             unavailable: !tab.id,
-          }) satisfies BrowserDisplayTab & { sessionId: string; tabId: string },
+          } satisfies BrowserDisplayTab & { sessionId: string; tabId: string }),
       );
     });
   const selectedView = selectedId ? views[selectedId] : undefined;
@@ -262,7 +264,17 @@ export function ComparisonBrowser({
         </p>
       )}
       <BrowserWorkspaceChrome.Provider value={chrome}>
-        {selected && selectedView?.snapshot ? (
+        {!HOSTED_MODE &&
+        (selected?.engine ?? engine.selectedEngine) === "local" &&
+        engine.localAvailable &&
+        !engine.consent.granted ? (
+          <div className="flex flex-1 items-center justify-center p-6">
+            <LocalBrowserConsentGate
+              onAllow={engine.consent.grant}
+              location="playground_browser"
+            />
+          </div>
+        ) : selected && selectedView?.snapshot ? (
           selected.engine === "local" ? (
             <LocalBrowserBody
               key={selected.sessionId}
@@ -287,8 +299,8 @@ export function ComparisonBrowser({
               ? selected.engine === "local" && !engine.consent.granted
                 ? "Allow local browser access in Browser settings to view this client."
                 : showNames
-                  ? `Connecting to ${selected.name}’s browser…`
-                  : "Connecting to browser…"
+                ? `Connecting to ${selected.name}’s browser…`
+                : "Connecting to browser…"
               : "Waiting for a client to browse…"}
           </p>
         )}

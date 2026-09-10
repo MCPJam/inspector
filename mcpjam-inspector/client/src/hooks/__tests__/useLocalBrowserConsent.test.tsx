@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 
 const request = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
+const mode = vi.hoisted(() => ({ hosted: false }));
+vi.mock("@/lib/config", () => ({
+  get HOSTED_MODE() {
+    return mode.hosted;
+  },
+}));
 vi.mock("@/lib/session-token", () => ({ authFetch: request }));
 
 import { useLocalBrowserConsent } from "../useLocalBrowserConsent";
@@ -14,9 +19,35 @@ const grant = {
 };
 
 describe("shared Browser permission", () => {
+  it("explains a server rollout denial without saving consent or enabling clients", async () => {
+    request.mockResolvedValue(
+      Response.json(
+        {
+          error: "Browser is disabled on this server",
+          code: "browser_runtime_unavailable",
+        },
+        { status: 404 },
+      ),
+    );
+    const hook = renderHook(() => useLocalBrowserConsent());
+    await act(async () => {
+      await expect(hook.result.current.grant()).rejects.toThrow(
+        "Local Browser isn't enabled for this user or server.",
+      );
+    });
+    expect(hook.result.current.granted).toBe(false);
+    expect(hook.result.current.token).toBeNull();
+    expect(request).toHaveBeenCalledOnce();
+  });
+
   beforeEach(() => {
     localStorage.clear();
-    request.mockReset().mockImplementation(async () => Response.json(grant));
+    mode.hosted = false;
+    request
+      .mockReset()
+      .mockImplementation(async (url: string) =>
+        Response.json(url.endsWith("/verify") ? { valid: true } : grant),
+      );
   });
 
   it("shares one grant with mounted clients and views opened later", async () => {
@@ -32,10 +63,16 @@ describe("shared Browser permission", () => {
     webmcp.unmount();
     const anotherClient = renderHook(() => useLocalBrowserConsent());
     expect(anotherClient.result.current.token).toBe(grant.token);
-    expect(request).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledTimes(2);
     expect(request).toHaveBeenCalledWith(
       "/api/mcp/computers/local-browser/consent/grant",
       expect.objectContaining({ method: "POST" }),
+    );
+    expect(request).toHaveBeenLastCalledWith(
+      "/api/mcp/computers/local-browser/enable-clients",
+      expect.objectContaining({
+        headers: { "X-MCPJam-Browser-Consent": grant.token },
+      }),
     );
   });
 
@@ -80,14 +117,54 @@ describe("shared Browser permission", () => {
       });
       expect(webmcp.result.current.granted).toBe(false);
       expect(playground.result.current.granted).toBe(false);
-      expect(request).toHaveBeenLastCalledWith(
-        "/api/mcp/computers/local-browser/consent/revoke",
-        expect.objectContaining({
-          body: JSON.stringify({ token: grant.token }),
-        }),
-      );
+      expect(request).not.toHaveBeenCalled();
     } finally {
       save.mockRestore();
     }
+  });
+
+  it("keeps failed setup pending across reload and retries without rotating consent", async () => {
+    request.mockImplementation(async (url: string) =>
+      url.endsWith("/enable-clients")
+        ? Response.json({}, { status: 503 })
+        : Response.json(url.endsWith("/verify") ? { valid: true } : grant),
+    );
+    const first = renderHook(() => useLocalBrowserConsent());
+    await act(async () => {
+      await expect(first.result.current.grant()).rejects.toThrow("Retry setup");
+    });
+    expect(first.result.current.granted).toBe(false);
+    expect(first.result.current.token).toBe(grant.token);
+    first.unmount();
+    request.mockClear();
+    const reloaded = renderHook(() => useLocalBrowserConsent());
+    expect(reloaded.result.current.granted).toBe(false);
+    expect(request).not.toHaveBeenCalled();
+    request.mockImplementation(async () => Response.json({ valid: true }));
+    await act(async () => {
+      expect(await reloaded.result.current.grant()).toBe(true);
+    });
+    expect(request.mock.calls.map(([url]) => url)).toEqual([
+      "/api/mcp/computers/local-browser/consent/verify",
+      "/api/mcp/computers/local-browser/enable-clients",
+    ]);
+    expect(reloaded.result.current.granted).toBe(true);
+    expect(reloaded.result.current.token).toBe(grant.token);
+  });
+
+  it("does not apply shared settings merely by mounting with an existing grant", () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(grant));
+    const hook = renderHook(() => useLocalBrowserConsent());
+    expect(hook.result.current.granted).toBe(true);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("cannot activate local permission in hosted mode", async () => {
+    mode.hosted = true;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(grant));
+    const hook = renderHook(() => useLocalBrowserConsent());
+    expect(hook.result.current.granted).toBe(false);
+    expect(await hook.result.current.grant()).toBe(false);
+    expect(request).not.toHaveBeenCalled();
   });
 });

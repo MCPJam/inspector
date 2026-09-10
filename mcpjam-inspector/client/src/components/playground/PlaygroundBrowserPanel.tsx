@@ -222,5 +222,5 @@ export function browserPanelAvailable(args: {
   // client has Browser attached. Callers already enforce the rollout gate.
   if (args.selectedEngine === "local") return true;
   if (!args.hostHasBrowser) return false;
-  return args.selectedEngine === "local" || args.isAuthenticated;
+  return args.isAuthenticated;
 }

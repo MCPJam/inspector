@@ -344,6 +344,10 @@ computers.post("/local-browser/enable-clients", async (c) => {
   if (!(await verifyLocalBrowserConsent(c.req.header(BROWSER_CONSENT_HEADER)))) {
     return c.json({ error: "Allow Browser first.", code: "browser_consent_required" }, 403);
   }
+  // Guests can authorize their own machine, but cannot change shared projects.
+  if (c.get("guestId")) {
+    return c.json({ enabledProjects: 0, skippedProjects: 0, scope: "device" });
+  }
   try {
     const bearer = await getConvexBearerForRequest(c);
     return c.json(await enableLocalBrowserClients(bearer));

@@ -1,3 +1,4 @@
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { useBrowserPageToolsStore } from "@/stores/browser-page-tools-store";
 import { beforeAll } from "vitest";
@@ -280,7 +281,7 @@ describe("the agent browser pane", () => {
     expect(await screen.findByTestId("rail-browser-unconsented")).toBeTruthy();
     expect(screen.queryByText(/Open the Computer tab/)).toBeNull();
     expect(
-      screen.getByText(/Agents can navigate, click, and type/),
+      screen.getByText(/Allow agents to navigate, click, type, and read pages/),
     ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Allow" }));
     expect(grantConsent).toHaveBeenCalled();

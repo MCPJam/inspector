@@ -11,6 +11,7 @@ import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { usePlaygroundChatHistoryBridge } from "@/components/playground/playground-chat-history-bridge";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
+import { HOSTED_MODE } from "@/lib/config";
 
 export function BrowserRuntimeControls({
   projectId,
@@ -108,17 +109,24 @@ export function BrowserRuntimeControls({
           </Button>
         ) : null}
       </div>
-      {engine.selectedEngine === "local" && engine.localAvailable && engine.consent.granted && !showSetup ? (
+      {!HOSTED_MODE &&
+      engine.selectedEngine === "local" &&
+      engine.localAvailable &&
+      engine.consent.granted &&
+      !showSetup ? (
         <Button variant="outline" size="sm" onClick={() => setShowSetup(true)}>
           Enable for all clients
         </Button>
       ) : null}
       {showSetup && engine.selectedEngine === "local" ? (
-        <LocalBrowserConsentGate location="browser_settings" onAllow={async () => {
-          const ok = await engine.consent.grant();
-          if (ok) setShowSetup(false);
-          return ok;
-        }} />
+        <LocalBrowserConsentGate
+          location="browser_settings"
+          onAllow={async () => {
+            const ok = await engine.consent.grant();
+            if (ok) setShowSetup(false);
+            return ok;
+          }}
+        />
       ) : null}
       {settings &&
       !showSetup &&

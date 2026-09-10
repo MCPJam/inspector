@@ -3,8 +3,9 @@ import { Globe } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
+import { useAuth } from "@workos-inc/authkit-react";
 
-/** Browser-only device consent; shell permission is independent. */
+/** Explicit device consent and shared local-client setup. */
 export function LocalBrowserConsentGate({
   onAllow,
   onUseCloud,
@@ -14,6 +15,7 @@ export function LocalBrowserConsentGate({
   onUseCloud?: () => void;
   location?: "computer_tab_local" | "playground_browser" | "browser_settings";
 }) {
+  const { user } = useAuth();
   const [granting, setGranting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,7 +43,11 @@ export function LocalBrowserConsentGate({
         outcome: ok ? "stored" : "failed",
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't finish Browser setup. Try again.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't finish Browser setup. Try again.",
+      );
       track("local_browser_consent_granted", {
         location,
         outcome: "failed",
@@ -68,10 +74,17 @@ export function LocalBrowserConsentGate({
       </h2>
       <p className="text-sm leading-relaxed text-muted-foreground">
         Allow agents to navigate, click, type, and read pages on this machine.
-        Page content may be sent to your model. This enables local Browser for
-        all clients in projects you manage, including shared clients. You can
-        remove it in each client's Connect settings.
+        Page content may be sent to your model.{" "}
+        {user
+          ? "This enables local Browser for all clients in projects you manage, including shared clients. You can remove it in each client's Connect settings."
+          : "This enables Browser for your local clients across WebMCP, Playground, and tabs on this device."}
       </p>
+      {user && (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          New clients inherit this setting. Clients you've disabled stay
+          disabled. Teammates must allow browser access on their own machines.
+        </p>
+      )}
       <div className="mt-1 flex items-center gap-2">
         <Button
           size="sm"

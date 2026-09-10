@@ -1,3 +1,4 @@
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
 const consentState = vi.hoisted(() => ({
   granted: true,
   grant: vi.fn(async () => true),
