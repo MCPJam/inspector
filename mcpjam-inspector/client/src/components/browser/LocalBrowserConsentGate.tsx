@@ -12,7 +12,7 @@ export function LocalBrowserConsentGate({
 }: {
   onAllow: () => Promise<boolean> | boolean;
   onUseCloud?: () => void;
-  location?: "computer_tab_local" | "playground_browser";
+  location?: "computer_tab_local" | "playground_browser" | "browser_settings";
 }) {
   const approval = useActiveChatSessionStore((state) =>
     state.sessionId ? state.approvalSettings[state.sessionId] : undefined,

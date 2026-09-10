@@ -42,6 +42,7 @@ const sessionState = vi.hoisted(() => ({
   browsers: new Map<string, string>(),
   /** Frame listeners, so a test can push a frame or revoke a subscription. */
   subscriptions: [] as Array<{
+    maxFrameBytes?: number;
     holder?: string;
     listener: (frame: unknown) => void;
     onRevoked?: (reason: string) => void;
@@ -168,13 +169,16 @@ function connect(
     nonce: string;
     origin?: string | null;
     wire?: "binary";
+    sharp?: boolean;
   },
 ): WebSocket {
   const origin = args.origin === undefined ? ALLOWED_ORIGIN : args.origin;
   return new WebSocket(
     `ws://127.0.0.1:${port}${PATH}?bootId=${encodeURIComponent(
       args.bootId,
-    )}&holder=rail-1${args.wire === "binary" ? "&wire=binary" : ""}`,
+    )}&holder=rail-1${args.wire === "binary" ? "&wire=binary" : ""}${
+      args.sharp ? "&sharp=1" : ""
+    }`,
     [args.nonce],
     origin === null ? {} : { origin },
   );
@@ -646,6 +650,70 @@ describe("the binary wire", () => {
       });
     });
     expect(await hello).toMatchObject({ wire: "binary" });
+    ws.close();
+  });
+});
+
+describe("local sharp frame negotiation", () => {
+  it.each([undefined, "binary"] as const)(
+    "carries larger frames on %s transport when requested",
+    async (wire) => {
+      const ws = connect(server.port, {
+        bootId: "boot-a",
+        nonce: mint("proj-a"),
+        wire,
+        sharp: true,
+      });
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+      await vi.waitFor(() =>
+        expect(sessionState.subscriptions).toHaveLength(1),
+      );
+      expect(sessionState.subscriptions[0]?.maxFrameBytes).toBe(
+        2 * 1024 * 1024,
+      );
+      const frame = {
+        data: Buffer.alloc(300_000, 1).toString("base64"),
+        seq: 1,
+        deviceWidth: 620,
+        deviceHeight: 1160,
+        ts: 1,
+        scale: 1,
+      };
+      const received = new Promise<void>((resolve, reject) => {
+        ws.on("message", (data, binary) => {
+          try {
+            if (binary) {
+              const decoded = createFrameStreamDecoder({ sharp: true }).push(
+                new Uint8Array(data as Buffer),
+              );
+              expect(decoded.ok && decoded.records[0]?.kind).toBe(
+                FRAME_STREAM_KIND.frame,
+              );
+              resolve();
+            } else {
+              const message = JSON.parse(String(data));
+              if (message.type !== "frame") return;
+              expect(message.frame.data).toBe(frame.data);
+              resolve();
+            }
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+      sessionState.subscriptions[0]?.listener(frame);
+      await received;
+      ws.close();
+    },
+  );
+  it("keeps the legacy ceiling without opt-in", async () => {
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
+    await new Promise<void>((resolve) => ws.on("open", resolve));
+    await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
+    expect(sessionState.subscriptions[0]?.maxFrameBytes).toBe(256 * 1024);
     ws.close();
   });
 });

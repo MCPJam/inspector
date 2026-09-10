@@ -12,6 +12,78 @@ function cmd(action: BrowserCommand["action"], tabId?: string): BrowserCommand {
 }
 
 describe("ChromiumDriver — navigation (W1 subset)", () => {
+  it("opens the pane's blank tab without navigation, settling or observation", async () => {
+    const page = fakePage({ url: "about:blank" });
+    const network = vi.spyOn(page, "waitForNetworkIdle");
+    const frame = vi.spyOn(page, "requestAnimationFrame");
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+
+    const result = await driver.execute({
+      ...cmd(
+        { kind: "navigate", url: "about:blank", newTab: true, observe: "none" },
+        "pane-new",
+      ),
+      source: "manual",
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(driver.tabsSnapshot()).toMatchObject({
+      active: "pane-new",
+      list: [{ id: "pane-new", url: "about:blank" }],
+    });
+    expect(page.calls.goto).toEqual([]);
+    expect(network).not.toHaveBeenCalled();
+    expect(frame).not.toHaveBeenCalled();
+    expect(page.calls.shots).toBe(0);
+  });
+
+  it("still captures an observation when a manual blank-tab request asks for one", async () => {
+    const page = fakePage({ url: "about:blank" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    const result = await driver.execute({
+      ...cmd(
+        {
+          kind: "navigate",
+          url: "about:blank",
+          newTab: true,
+          observe: "screenshot",
+        },
+        "manual-observe",
+      ),
+      source: "manual",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.settled).toBe(true);
+    expect(result.stateToken).toMatchObject({
+      tabId: "manual-observe",
+      navCounter: 1,
+    });
+    expect(page.calls.shots).toBe(1);
+  });
+
+  it.each([
+    { source: "chat" as const, url: "about:blank" },
+    { source: "manual" as const, url: "https://x.test/" },
+  ])(
+    "still navigates and settles $source new tabs at $url",
+    async ({ source, url }) => {
+      const page = fakePage({ url: "about:blank" });
+      const frame = vi.spyOn(page, "requestAnimationFrame");
+      const { context } = fakeContext({ pages: [page] });
+      const driver = new ChromiumDriver(context);
+      const result = await driver.execute({
+        ...cmd({ kind: "navigate", url, newTab: true, observe: "none" }, "new"),
+        source,
+      });
+      expect(result.ok).toBe(true);
+      expect(result.stateToken).toMatchObject({ tabId: "new", navCounter: 1 });
+      expect(page.calls.goto).toEqual([url]);
+      expect(frame).toHaveBeenCalled();
+    },
+  );
+
   it("navigates, settles, and returns the observation with a state token (L2/L3)", async () => {
     const page = fakePage();
     const { context } = fakeContext({ pages: [page] });

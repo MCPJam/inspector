@@ -529,6 +529,7 @@ export class BrowserdClient {
      * has no concept of a tab. Per-tab watching stays JPEG.
      */
     codec?: "jpeg" | "h264";
+    sharp?: boolean;
     /** One H.264 access unit. Only called on a `codec: "h264"` stream. */
     onVideo?: (record: FrameStreamVideo) => void;
     /** Caller's lifetime. Aborting is how a reader hangs up. */
@@ -560,6 +561,7 @@ export class BrowserdClient {
     if (args.tabId && args.codec !== "h264") query.set("tabId", args.tabId);
     if (args.holder) query.set("holder", args.holder);
     if (args.codec === "h264") query.set("codec", "h264");
+    if (args.sharp) query.set("sharp", "1");
     const suffix = query.toString() ? `?${query}` : "";
 
     // Checked BEFORE anything is opened. `addEventListener("abort")` does not
@@ -624,6 +626,7 @@ export class BrowserdClient {
     args: {
       signal: AbortSignal;
       codec?: "jpeg" | "h264";
+      sharp?: boolean;
       onFrame: (frame: FrameStreamFrame) => void;
       onVideo?: (record: FrameStreamVideo) => void;
       onStats?: (stats: FrameStreamStats) => void;
@@ -634,9 +637,10 @@ export class BrowserdClient {
     // Video records are accepted only on a stream that ASKED for them, exactly
     // as the daemon's own reader does it: an unknown kind stays fatal, which is
     // what protects a reader that negotiated nothing.
-    const decoder = createFrameStreamDecoder(
-      args.codec === "h264" ? { video: true } : {},
-    );
+    const decoder = createFrameStreamDecoder({
+      video: args.codec === "h264",
+      sharp: args.sharp,
+    });
     const reader = body.getReader();
     let reason: string | undefined;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;

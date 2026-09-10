@@ -56,6 +56,24 @@ const LIVE_STATES: ReadonlySet<string> = new Set([
  * gets it back on the next tool call, which is what "open it when browsing
  * starts" means when browsing never stopped.
  */
+/**
+ * The right rail starts collapsed ("Show logs"). Switching its Browser tab
+ * does nothing until the rail itself is on screen. When the workspace flag
+ * owns the browser, leave the rail alone — that surface is a panel beside
+ * chat, not this tab.
+ */
+export function railShouldOpenForBrowse(args: {
+  conversationId: string | null;
+  revealConversationId: string | null;
+  workspacePanelVisible: boolean;
+}): boolean {
+  return (
+    !!args.conversationId &&
+    args.revealConversationId === args.conversationId &&
+    !args.workspacePanelVisible
+  );
+}
+
 export function useOpenBrowserOnBrowsing(args: {
   conversationId?: string;
   toolName: string | undefined;

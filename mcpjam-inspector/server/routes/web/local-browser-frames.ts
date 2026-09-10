@@ -1,4 +1,8 @@
 import { createBrowserConsentLifetime } from "../../services/browserd/local/consent-lifetime.js";
+import {
+  jpegFrameLimit,
+  SHARP_STREAM_FEATURE,
+} from "@/shared/browser-viewport-policy";
 /**
  * The live picture of the local agent browser — `/api/web/computers/local-browser/frames`.
  *
@@ -122,6 +126,7 @@ export function createLocalBrowserFramesWsHandler(
      * rather than only on staging.
      */
     const binaryWire = c.req.query("wire") === "binary";
+    const sharp = c.req.query("sharp") === "1";
     const origin = c.req.header("Origin");
 
     // Everything resolvable before the socket opens is resolved here; a
@@ -143,8 +148,7 @@ export function createLocalBrowserFramesWsHandler(
     let nonceProject: string | undefined;
     let fingerprint: string | undefined;
     let lifetime:
-      | Awaited<ReturnType<typeof createBrowserConsentLifetime>>
-      | undefined;
+      Awaited<ReturnType<typeof createBrowserConsentLifetime>> | undefined;
 
     if (shuttingDown) {
       rejectCode = CLOSE_UNAVAILABLE;
@@ -253,6 +257,7 @@ export function createLocalBrowserFramesWsHandler(
         }
 
         const subscription = await session.handler.subscribeFrames({
+          maxFrameBytes: jpegFrameLimit(sharp),
           tabId,
           ...(holder ? { holder } : {}),
           onRevoked: (reason) => {
@@ -297,7 +302,7 @@ export function createLocalBrowserFramesWsHandler(
                   jpeg: new Uint8Array(Buffer.from(frame.data, "base64")),
                 }),
               );
-              stats?.offer(bytes.byteLength, () => {
+              stats?.offerJpeg(bytes.byteLength, () => {
                 if (!closed && lifetime?.isActive()) ws.send(bytes);
               });
               return;
@@ -307,7 +312,7 @@ export function createLocalBrowserFramesWsHandler(
             // frame to know which field it may subtract from its own clock.
             const stamped = { ...frame, relayTs: Date.now() };
             const payload = JSON.stringify({ type: "frame", frame: stamped });
-            stats?.offer(payload.length, () => {
+            stats?.offerJpeg(payload.length, () => {
               if (!closed && lifetime?.isActive()) ws.send(payload);
             });
           },
@@ -369,6 +374,7 @@ export function createLocalBrowserFramesWsHandler(
             // and permanently stale on the one a developer debugs against.
             const webmcp = session.handler.webmcpSnapshot?.();
             stats?.mergeDaemon({
+              jpeg: counters.jpeg,
               framesIn: counters.framesIn,
               framesOut: counters.framesOut,
               bytesOut: counters.bytesOut,
@@ -400,8 +406,7 @@ export function createLocalBrowserFramesWsHandler(
             } catch {
               return { ok: false, refused: "no_browser_session" };
             }
-            if (closed)
-              return { ok: false, refused: "no_browser_session" };
+            if (closed) return { ok: false, refused: "no_browser_session" };
             // Resolved per batch rather than captured: the browser can be
             // relaunched under a live pane, and the handle this socket opened
             // with would then dispatch into a session that is gone.
@@ -442,7 +447,7 @@ export function createLocalBrowserFramesWsHandler(
           ws.send(
             JSON.stringify({
               type: "hello",
-              features: ["input"],
+              features: ["input", ...(sharp ? [SHARP_STREAM_FEATURE] : [])],
               codecs: ["jpeg"],
               wire: binaryWire ? "binary" : "json",
             }),
