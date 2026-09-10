@@ -155,15 +155,33 @@ that image — not on your personal computer.
 
 When a host configuration includes a browser tool, the Playground shows a browser panel alongside the chat. Each conversation owns its own browser — switching between chats reattaches the existing browser for that conversation rather than opening a new one or navigating away.
 
+### Opening the browser
+
+The browser opens automatically when you open the Browser tab and consent is granted. You do not need to click a separate button to start it. If startup fails, a **Try again** button appears so you can retry without the panel looping on its own.
+
+### Returning control to the agent
+
+When you interact with the browser directly, the status bar shows **You're in control**. To hand control back to the agent, simply send your next chat message — the Playground waits for the handoff to complete before dispatching the turn. There is no separate "Resume agent" button.
+
 ### Switching conversations
 
-When you switch from one conversation to another, the Playground reconnects to that conversation's existing browser. The live tabs, page content, unsaved form text, and scroll position are preserved exactly as you left them. No navigation happens on reattach.
-
-If the conversation's browser is not yet running when you open it, the panel shows an **Open a browser for this conversation** button. The panel also polls in the background so it can attach automatically if the agent starts a browser after the pane is already open.
+When you switch from one conversation to another, the Playground reconnects to that conversation's existing browser. The live tabs, page content, unsaved form text, and scroll position are preserved exactly as you left them. No navigation happens on reattach. Switching conversations does not automatically launch a new browser for the newly selected chat.
 
 ### Closing the browser pane
 
-Closing the browser panel stops the viewer — it does not hand control back to the agent. If you held the browser (took manual control), that hold stays parked after you close the pane. The agent remains blocked until you explicitly click **Hand back** to release control. A parked hold does not keep a metered cloud browser running indefinitely, but it does keep the agent waiting.
+Closing the browser panel stops the viewer but does not release browser control. If you held the browser (took manual control), that hold stays parked after you close the pane. The agent remains blocked until you send a chat message, which triggers the automatic handoff. A parked hold does not keep a metered cloud browser running indefinitely, but it does keep the agent waiting.
+
+### Browser activity
+
+Browser activity (the history of commands the agent and you have run) appears in the **Logs** tab as a collapsible **Browser activity** section. It only polls while the Logs tab is open and the section is expanded. Switching to the Browser tab stops polling.
+
+### Saving a browser profile
+
+To save the current browser profile for use in other chats, open the **Browser view settings** menu (the gear icon in the browser panel header) and choose **Save profile for other chats…**. The browser hands control back to the agent automatically before the export runs.
+
+### Browser settings
+
+Location and permission controls (browser engine selection, consent management) are available in the **Browser options** menu in the panel header rather than in a separate bar below the navigation controls.
 
 ### Browser panel layout
 
