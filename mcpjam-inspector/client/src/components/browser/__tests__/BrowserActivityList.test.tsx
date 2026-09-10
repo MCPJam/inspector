@@ -458,14 +458,31 @@ describe("actorLabel", () => {
 });
 
 it("keeps activity collapsed until requested and preserves its history", async () => {
-  readTrace.mockResolvedValue({ entries: [row()], headSeq: 1 });
+  readTrace.mockResolvedValueOnce({ entries: [row()], headSeq: 1 });
   mount({ collapsible: true });
   const toggle = screen.getByRole("button", { name: /Activity/ });
-  await waitFor(() => expect(toggle).toHaveTextContent("1"));
+  expect(readTrace).not.toHaveBeenCalled();
   expect(screen.getByTestId("rail-browser-activity")).not.toBeVisible();
   fireEvent.click(toggle);
   expect(screen.getByTestId("rail-browser-activity")).toBeVisible();
+  await waitFor(() => expect(toggle).toHaveTextContent("1"));
   expect(screen.getAllByText("reload")[0]).toBeVisible();
   fireEvent.click(toggle);
   expect(screen.getByTestId("rail-browser-activity")).not.toBeVisible();
+});
+
+it("scrolls pinned history to the bottom again when expanded", async () => {
+  mount({ collapsible: true });
+  const list = screen.getByTestId("rail-browser-activity");
+  Object.defineProperty(list, "scrollHeight", {
+    configurable: true,
+    get: () => (list.hidden ? 0 : 500),
+  });
+  const toggle = screen.getByRole("button", { name: /Activity/ });
+  fireEvent.click(toggle);
+  expect(list.scrollTop).toBe(500);
+  fireEvent.click(toggle);
+  list.scrollTop = 0;
+  fireEvent.click(toggle);
+  expect(list.scrollTop).toBe(500);
 });

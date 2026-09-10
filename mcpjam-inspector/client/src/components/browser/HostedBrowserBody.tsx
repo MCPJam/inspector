@@ -1,4 +1,7 @@
-import { useBrowserChatHandoff } from "@/lib/browser-shell/chat-handoff";
+import {
+  releaseBrowserForChat,
+  useBrowserChatHandoff,
+} from "@/lib/browser-shell/chat-handoff";
 import { useBrowserWorkspaceEnabled } from "@/hooks/useComputersEnabled";
 import {
   browserPageToolsKey,
@@ -337,6 +340,8 @@ export function HostedBrowserBody({
           return;
         if (cause instanceof HostedBrowserError && cause.status === 409) {
           // No browser on this computer yet — an offer, not a failure.
+          setHolding(false);
+          setLease({ state: "free" });
           setSession(null);
           setUnavailable(null);
           setError(null);
@@ -437,7 +442,25 @@ export function HostedBrowserBody({
     projectId,
     sessionId,
     holding: holding,
-    release: () => setLeaseAction("resume"),
+    release: async (isCurrent) => {
+      if (!tokens || !session) return true;
+      const mine = generation.current;
+      try {
+        const outcome = await actOnHostedBrowserLease(tokens, {
+          action: "resume",
+        });
+        if (isCurrent() && generation.current === mine) {
+          setLease(outcome.lease);
+          setHolding(outcome.yours);
+          setStreamAttempt((n) => n + 1);
+        }
+        return outcome.took;
+      } catch (cause) {
+        if (cause instanceof HostedBrowserError && cause.status === 409)
+          return true;
+        throw cause;
+      }
+    },
   });
 
   // Keep a held lease alive. It expires into `parked` on purpose — a timer
@@ -496,8 +519,9 @@ export function HostedBrowserBody({
 
   const exportProfile = useCallback(async () => {
     if (!tokens) throw new Error("The hosted browser is not ready yet.");
+    await releaseBrowserForChat(projectId, sessionId);
     return fetchHostedBrowserProfileArchive(tokens);
-  }, [tokens]);
+  }, [tokens, projectId, sessionId]);
 
   const placeholder = (() => {
     if (!projectId) {
@@ -542,10 +566,10 @@ export function HostedBrowserBody({
   const control: PaneControl = holding
     ? "you"
     : lease.state === "free" || lease.state === "unknown"
-    ? "agent"
-    : lease.holderKind === "script"
-    ? "script"
-    : "other";
+      ? "agent"
+      : lease.holderKind === "script"
+        ? "script"
+        : "other";
 
   /**
    * The shell's transport, for this engine.
@@ -1292,10 +1316,10 @@ export function HostedBrowserBody({
           control === "you"
             ? "human"
             : control === "script"
-            ? "script"
-            : control === "other"
-            ? "human"
-            : "agent",
+              ? "script"
+              : control === "other"
+                ? "human"
+                : "agent",
         ...(lease.state === "parked" ? { parked: true } : {}),
       }}
       onCommand={shell.run}
@@ -1324,7 +1348,7 @@ export function HostedBrowserBody({
             <BrowserProfileSaveButton
               projectId={projectId ?? ""}
               exportArchive={exportProfile}
-              disabled={holding || busy}
+              disabled={busy}
             />
           ) : null}
         </PaneSettingsMenu>

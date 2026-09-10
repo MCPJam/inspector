@@ -106,8 +106,7 @@ export interface BrowserShellProps {
    * Absent on an engine that cannot resize, in which case nothing observes.
    */
   onViewportMeasured?:
-    | ((size: { width: number; height: number }) => void)
-    | undefined;
+    ((size: { width: number; height: number }) => void) | undefined;
 }
 
 export function BrowserShell({

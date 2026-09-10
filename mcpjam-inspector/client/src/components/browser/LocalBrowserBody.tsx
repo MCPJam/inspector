@@ -1,4 +1,7 @@
-import { useBrowserChatHandoff } from "@/lib/browser-shell/chat-handoff";
+import {
+  releaseBrowserForChat,
+  useBrowserChatHandoff,
+} from "@/lib/browser-shell/chat-handoff";
 import { useBrowserWorkspaceEnabled } from "@/hooks/useComputersEnabled";
 import {
   browserPageToolsKey,
@@ -330,9 +333,12 @@ export function LocalBrowserBody({
     if (projectRef.current === projectId && sessionRef.current === sessionId) {
       return;
     }
+    // Switching chats reconnects existing tabs but does not launch another
+    // Chromium merely because the browser pane was left open.
+    autoStartAttempted.current =
+      projectRef.current === projectId && sessionRef.current !== sessionId;
     projectRef.current = projectId;
     sessionRef.current = sessionId;
-    autoStartAttempted.current = false;
     setLookupComplete(null);
     railGeneration.current += 1;
     setSession(null);
@@ -340,6 +346,10 @@ export function LocalBrowserBody({
     setFrame(null);
     setError(null);
   }, [projectId, sessionId]);
+
+  useEffect(() => {
+    if (active) autoStartAttempted.current = false;
+  }, [active]);
 
   // The browser outlives this pane. Returning to a conversation reconnects to
   // its live tabs; it must not create a new browser or reload the saved URL.
@@ -401,6 +411,7 @@ export function LocalBrowserBody({
 
   const start = useCallback(async () => {
     if (!projectId || !consentGranted) return;
+    autoStartAttempted.current = true;
     setBusy(true);
     setError(null);
     // Captured BEFORE the await, and compared after, exactly as `exportProfile`
@@ -486,6 +497,7 @@ export function LocalBrowserBody({
       throw new Error("Open a browser before saving its profile.");
     }
     const generation = railGeneration.current;
+    await releaseBrowserForChat(projectId, sessionId);
     const result = await fetchLocalBrowserProfileArchive({
       bootId: session.bootId,
       projectId,
@@ -549,7 +561,25 @@ export function LocalBrowserBody({
     projectId,
     sessionId,
     holding: consentGranted && holding,
-    release: () => setLeaseAction("resume"),
+    // Capture this browser's identity, without pane generation guards: the
+    // handoff must still work after switching conversations or closing the pane.
+    release: async (isCurrent) => {
+      if (!session) return true;
+      const mine = railGeneration.current;
+      try {
+        const outcome = await actOnLocalBrowserLease(
+          { bootId: session.bootId, action: "resume", holder },
+          consentToken,
+        );
+        if (isCurrent() && railGeneration.current === mine)
+          setLease(outcome.lease);
+        return true;
+      } catch (cause) {
+        if (cause instanceof LocalBrowserRequestError && cause.status === 404)
+          return true;
+        throw cause;
+      }
+    },
   });
 
   /**
@@ -715,7 +745,7 @@ export function LocalBrowserBody({
   // apart, and a report that called them the same thing could not say whether
   // the native surface helped.
   const engineRef = useRef<string>("local");
-  engineRef.current = native ? "local-native" : status?.runtime ?? "local";
+  engineRef.current = native ? "local-native" : (status?.runtime ?? "local");
   useEffect(
     () => () => captureBrowserPaneSessionSummary(engineRef.current),
     [],
@@ -765,7 +795,7 @@ export function LocalBrowserBody({
       );
     }
     if (!session) {
-      const opening = busy || (!autoStartAttempted.current && !!projectId);
+      const opening = busy;
       return (
         <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
           {opening ? (
@@ -810,10 +840,10 @@ export function LocalBrowserBody({
     lease.state === "free"
       ? "agent"
       : holding
-      ? "you"
-      : lease.holderKind === "script"
-      ? "script"
-      : "other";
+        ? "you"
+        : lease.holderKind === "script"
+          ? "script"
+          : "other";
 
   /**
    * The shell's transport, for this engine.
@@ -1252,8 +1282,8 @@ export function LocalBrowserBody({
               lease.state === "free"
                 ? "agent"
                 : lease.holderKind === "script"
-                ? "script"
-                : "human",
+                  ? "script"
+                  : "human",
             ...(lease.state !== "free" && lease.holder
               ? { holder: lease.holder }
               : {}),
@@ -1285,7 +1315,7 @@ export function LocalBrowserBody({
                 <BrowserProfileSaveButton
                   projectId={projectId ?? ""}
                   exportArchive={exportProfile}
-                  disabled={holding || busy}
+                  disabled={busy}
                 />
               ) : null}
             </PaneSettingsMenu>

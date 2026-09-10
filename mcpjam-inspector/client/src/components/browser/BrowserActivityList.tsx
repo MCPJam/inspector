@@ -239,7 +239,7 @@ export function BrowserActivityList({
   }, [projectId, sessionId, consentToken]);
 
   useEffect(() => {
-    if (!active || !projectId) return;
+    if (!active || !expanded || !projectId) return;
     let cancelled = false;
     const tick = () => {
       if (cancelled) return;
@@ -251,13 +251,13 @@ export function BrowserActivityList({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [active, projectId, poll]);
+  }, [active, expanded, projectId, poll]);
 
   useEffect(() => {
-    if (!pinned.current) return;
+    if (!active || !expanded || !pinned.current) return;
     const node = listRef.current;
     if (node) node.scrollTop = node.scrollHeight;
-  }, [entries]);
+  }, [entries, active, expanded]);
 
   const onScroll = useCallback(() => {
     const node = listRef.current;
@@ -283,7 +283,7 @@ export function BrowserActivityList({
         <CommandRow key={`row-${entry.seq}`} row={entry} />
       ),
     );
-  }, [entries]);
+  }, [entries, active, expanded]);
 
   return (
     <div className={cn("flex min-h-0 flex-col", className)}>
@@ -418,10 +418,10 @@ function GapRow({
         {entry.reason === "daemon_restart"
           ? "the browser restarted here"
           : entry.reason === "ring_overflow"
-          ? `${
-              entry.toSeq - entry.fromSeq + 1
-            } earlier commands are no longer kept`
-          : "some history could not be recorded"}
+            ? `${
+                entry.toSeq - entry.fromSeq + 1
+              } earlier commands are no longer kept`
+            : "some history could not be recorded"}
       </span>
     </div>
   );

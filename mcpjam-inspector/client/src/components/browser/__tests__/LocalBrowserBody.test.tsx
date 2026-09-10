@@ -231,7 +231,7 @@ async function deliverFrame() {
 async function clickPicture() {
   const image = await deliverFrame();
   image.getBoundingClientRect = () =>
-    ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
+    ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
   fireEvent.click(image, { clientX: 10, clientY: 10 });
   return image;
 }
@@ -347,7 +347,9 @@ describe("the agent browser pane", () => {
 
     await clickPicture();
     expect(await screen.findByText(/you’re in control/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /let agent browse/i })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /let agent browse/i }),
+    ).toBeNull();
   });
 
   it("takes the browser on a paste, and sends the text", async () => {
@@ -441,7 +443,7 @@ describe("the agent browser pane — driving it", () => {
     const image = await deliverFrame();
     // jsdom lays nothing out, so the pane cannot map a point without one.
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
+      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
 
     mouseDown(image, { clientX: 10, clientY: 10, button: 2 });
     mouseUp(image, { clientX: 10, clientY: 10, button: 2 });
@@ -461,7 +463,7 @@ describe("the agent browser pane — driving it", () => {
     await takeControl();
     const image = await deliverFrame();
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
+      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
 
     mouseDown(image, { clientX: 10, clientY: 10, button: 1 });
     fireEvent.pointerCancel(image, { clientX: 10, clientY: 10 });
@@ -524,6 +526,11 @@ describe("the agent browser pane — driving it", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("rail-browser-frame")).toBeNull(),
     );
+    await screen.findByRole("button", { name: "Open the browser" });
+    expect(api.ensures).toEqual(["proj-1"]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open the browser" }),
+    );
     await waitFor(() => expect(api.ensures).toEqual(["proj-1", "proj-1"]));
   });
 
@@ -577,8 +584,9 @@ describe("the agent browser pane — driving it", () => {
         lease: { state: "free" },
       }),
     );
-    await waitFor(() => expect(api.streams).toEqual(["boot-proj-1"]));
-    expect(api.streams).not.toContain("boot-chat-a");
+    await screen.findByRole("button", { name: "Open the browser" });
+    expect(api.streams).toEqual([]);
+    expect(api.ensures).toEqual([]);
   });
 
   it("finds a browser the agent opens after automatic startup fails", async () => {
@@ -726,7 +734,9 @@ describe("the agent browser pane — a hold you can get back", () => {
     renderBody();
     await waitFor(() => expect(api.ensures.length).toBeGreaterThan(0));
     expect(await screen.findByText(/someone else is driving/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /let agent browse/i })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /let agent browse/i }),
+    ).toBeNull();
   });
 });
 
@@ -1073,9 +1083,34 @@ it("resizes the streamed browser to the rail even with workspace placement off",
 
 it("keeps profile saving in settings rather than the browser toolbar", async () => {
   renderBody({ sessionId: "profile-chat" });
-  await waitFor(() => expect(screen.getByTestId("browser-new-tab")).not.toBeDisabled());
+  await waitFor(() =>
+    expect(screen.getByTestId("browser-new-tab")).not.toBeDisabled(),
+  );
   expect(screen.queryByRole("button", { name: "Save profile" })).toBeNull();
   expect(screen.queryByText("Save profile for other chats…")).toBeNull();
-  await userEvent.click(screen.getByRole("button", { name: "Browser view settings" }));
-  expect(await screen.findByRole("menuitem", { name: "Save profile for other chats…" })).toBeVisible();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Browser view settings" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Save profile for other chats…",
+    }),
+  ).toBeVisible();
+});
+
+it("finishes automatic handoff when the pane unmounts during the request", async () => {
+  const view = renderBody();
+  await screen.findByText(/agent is driving/i);
+  await clickPicture();
+  await screen.findByText("You’re in control");
+  let finish!: () => void;
+  api.leaseGate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const handoff = releaseBrowserForChat("proj-1");
+  view.unmount();
+  finish();
+  await expect(handoff).resolves.toBeUndefined();
+  expect(api.lease.state).toBe("free");
+  await expect(releaseBrowserForChat("proj-1")).resolves.toBeUndefined();
 });

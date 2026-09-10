@@ -81,3 +81,48 @@ it("leaves another holder alone", async () => {
   expect(release).not.toHaveBeenCalled();
   view.unmount();
 });
+
+it("retains the old conversation's release without letting it update the new pane", async () => {
+  const currentChecks: boolean[] = [];
+  const release = vi.fn(async (isCurrent: () => boolean) => {
+    currentChecks.push(isCurrent());
+    return true;
+  });
+  const view = renderHook(
+    ({ sessionId }) =>
+      useBrowserChatHandoff({
+        projectId: "switch",
+        sessionId,
+        holding: true,
+        release,
+      }),
+    { initialProps: { sessionId: "a" } },
+  );
+  view.rerender({ sessionId: "b" });
+  await releaseBrowserForChat("switch", "a");
+  await releaseBrowserForChat("switch", "b");
+  expect(currentChecks).toEqual([false, true]);
+  view.unmount();
+});
+
+it("retries a failed release after the pane has closed", async () => {
+  const release = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Offline"))
+    .mockResolvedValue(true);
+  const view = renderHook(() =>
+    useBrowserChatHandoff({
+      projectId: "offline",
+      sessionId: "a",
+      holding: true,
+      release,
+    }),
+  );
+  view.unmount();
+  await expect(releaseBrowserForChat("offline", "a")).rejects.toThrow(
+    "Offline",
+  );
+  await expect(releaseBrowserForChat("offline", "a")).resolves.toBeUndefined();
+  await releaseBrowserForChat("offline", "a");
+  expect(release).toHaveBeenCalledTimes(2);
+});

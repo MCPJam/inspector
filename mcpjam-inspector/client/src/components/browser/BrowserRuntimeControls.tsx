@@ -68,14 +68,14 @@ export function BrowserRuntimeControls({
           {!engine.resolved
             ? "Checking Browser…"
             : engine.selectedEngine === "local"
-            ? !engine.localAvailable
-              ? "Browser unavailable on this machine"
-              : engine.consent.granted
-              ? "Browser authorized"
-              : "Browser permission required"
-            : engine.cloudAvailable
-            ? "Cloud Browser"
-            : "Cloud Browser unavailable"}
+              ? !engine.localAvailable
+                ? "Browser unavailable on this machine"
+                : engine.consent.granted
+                  ? "Browser authorized"
+                  : "Browser permission required"
+              : engine.cloudAvailable
+                ? "Cloud Browser"
+                : "Cloud Browser unavailable"}
         </span>
         {engine.selectedEngine === "local" && engine.consent.granted ? (
           <Button

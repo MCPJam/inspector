@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 
 type Holder = {
   holding: boolean;
-  release: () => Promise<boolean>;
+  release: (isCurrent: () => boolean) => Promise<boolean>;
   mounted: boolean;
 };
 const holders = new Map<string, Holder>();
@@ -19,7 +19,7 @@ export function useBrowserChatHandoff({
   projectId: string | null;
   sessionId?: string;
   holding: boolean;
-  release: () => Promise<boolean>;
+  release: (isCurrent: () => boolean) => Promise<boolean>;
 }) {
   const key = keyFor(projectId, sessionId);
   const ref = useRef<{ key: string; holder: Holder } | null>(null);
@@ -49,7 +49,10 @@ export async function releaseBrowserForChat(
   const key = keyFor(projectId, sessionId);
   const holder = holders.get(key);
   if (!holder) return;
-  if (holder.holding && !(await holder.release())) {
+  if (
+    holder.holding &&
+    !(await holder.release(() => holder.mounted && holders.get(key) === holder))
+  ) {
     throw new Error(
       "Couldn't return browser control to the agent. Try sending your message again.",
     );

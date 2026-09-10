@@ -21,6 +21,10 @@ import userEvent from "@testing-library/user-event";
 
 const api = vi.hoisted(() => ({
   workspaceEnabled: true,
+  exportProfile: vi.fn(async () => ({
+    archive: new Blob(),
+    savedFrom: "profile-chat",
+  })),
   /** What `/session` answers, or an error to throw. */
   session: null as unknown,
   sessionError: null as { status: number } | null,
@@ -55,6 +59,7 @@ vi.mock("@/lib/hosted-browser/client", async () => {
   >("@/lib/hosted-browser/client");
   return {
     ...actual,
+    fetchHostedBrowserProfileArchive: api.exportProfile,
     createBrowserTokenCache: () => ({
       get: async () => {
         api.mints += 1;
@@ -983,9 +988,64 @@ it("keeps hosted navigation when the workspace flag is off", async () => {
 
 it("keeps profile saving in settings rather than the browser toolbar", async () => {
   renderBody({ sessionId: "profile-chat" });
-  await waitFor(() => expect(screen.getByTestId("browser-new-tab")).not.toBeDisabled());
+  await waitFor(() =>
+    expect(screen.getByTestId("browser-new-tab")).not.toBeDisabled(),
+  );
   expect(screen.queryByRole("button", { name: "Save profile" })).toBeNull();
   expect(screen.queryByText("Save profile for other chats…")).toBeNull();
-  await userEvent.click(screen.getByRole("button", { name: "Browser view settings" }));
-  expect(await screen.findByRole("menuitem", { name: "Save profile for other chats…" })).toBeVisible();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Browser view settings" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Save profile for other chats…",
+    }),
+  ).toBeVisible();
+});
+
+vi.mock("@/lib/browser-profiles/client", () => ({
+  saveBrowserProfile: vi.fn(),
+}));
+
+it("returns control before exporting a profile after the user signs in", async () => {
+  api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+  api.lease = { took: true, lease: { state: "free" }, yours: false };
+  api.exportProfile.mockClear();
+  const prompt = vi.spyOn(window, "prompt").mockReturnValue("Signed in");
+  try {
+    renderBody({ sessionId: "profile-chat" });
+    await screen.findByText("You’re in control");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Browser view settings" }),
+    );
+    const item = await screen.findByRole("menuitem", {
+      name: "Save profile for other chats…",
+    });
+    expect(item).not.toHaveAttribute("data-disabled");
+    await userEvent.click(item);
+    await waitFor(() => expect(api.exportProfile).toHaveBeenCalledOnce());
+    expect(api.leaseCalls).toEqual(["resume"]);
+  } finally {
+    prompt.mockRestore();
+  }
+});
+
+it("clears automatic handoff when a previously held browser disappears", async () => {
+  api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+  const view = renderBody();
+  await screen.findByText("You’re in control");
+  api.sessionError = { status: 409 };
+  view.rerender(
+    <HostedBrowserBody
+      projectId="proj-1"
+      mintToken={mintToken}
+      active={false}
+    />,
+  );
+  view.rerender(
+    <HostedBrowserBody projectId="proj-1" mintToken={mintToken} active />,
+  );
+  await screen.findByTestId("hosted-browser-idle");
+  await act(async () => releaseBrowserForChat("proj-1"));
+  expect(api.leaseCalls).toEqual([]);
 });

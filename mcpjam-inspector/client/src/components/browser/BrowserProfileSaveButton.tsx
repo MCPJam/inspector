@@ -55,11 +55,7 @@ export function BrowserProfileSaveButton({
         event.preventDefault();
         void onSave();
       }}
-      title={
-        disabled
-          ? "Available when the agent has browser control"
-          : "Save this browser profile"
-      }
+      title={disabled ? "The browser is busy" : "Save this browser profile"}
     >
       {saving ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin" />

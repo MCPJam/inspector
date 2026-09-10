@@ -465,11 +465,7 @@ export interface UseChatSessionOptions {
 }
 
 export type ChatSessionResetReason =
-  | "auth-bootstrap"
-  | "hydrate"
-  | "fork"
-  | "servers-changed"
-  | "reset";
+  "auth-bootstrap" | "hydrate" | "fork" | "servers-changed" | "reset";
 
 /**
  * Shown when `detachToLocalFork` could not confirm its fork went live. The
@@ -2345,8 +2341,8 @@ export function useChatSession(
               ];
             const server =
               (log.serverName
-                ? appState?.servers?.[log.serverName] ??
-                  activeProject?.servers?.[log.serverName]
+                ? (appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName])
                 : undefined) ??
               appState?.servers?.[log.serverId] ??
               activeProject?.servers?.[log.serverId];
@@ -2818,9 +2814,8 @@ export function useChatSession(
               body: patchBodyAccessVersion(init.body, recovery.accessVersion),
             });
             if (!response.ok) {
-              const replayError = await classifyScenarioAccessResponse(
-                response,
-              );
+              const replayError =
+                await classifyScenarioAccessResponse(response);
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
               }
@@ -3054,13 +3049,13 @@ export function useChatSession(
                 : {}),
             }
           : // Host-bound direct preview: forward the saved host id so the server
-          // re-resolves the host's authoritative runtime config (harness /
-          // computer included). Only on the direct path — scenario sessions own
-          // their host via scenarioId and the server ignores hostId when
-          // scenarioId is set.
-          isHostedDirectChat && hostedHostId
-          ? { hostId: hostedHostId }
-          : {}),
+            // re-resolves the host's authoritative runtime config (harness /
+            // computer included). Only on the direct path — scenario sessions own
+            // their host via scenarioId and the server ignores hostId when
+            // scenarioId is set.
+            isHostedDirectChat && hostedHostId
+            ? { hostId: hostedHostId }
+            : {}),
         ...(hostedScenarioId && hostedScenarioSurface
           ? { surface: hostedScenarioSurface }
           : {}),
@@ -3078,7 +3073,7 @@ export function useChatSession(
         // the data-part handler, whose closure is recreated on a project
         // switch and would stamp the NEW project on a late part.
         turnTaskScopeRef.current = shouldUseOrgAwareChatApi
-          ? hostedProjectId ?? undefined
+          ? (hostedProjectId ?? undefined)
           : getTrackedTaskScope();
         // And the approval value this turn is SENT with, for the same reason.
         // The server declares each tool's `needsApproval` from the value in
@@ -3731,6 +3726,10 @@ export function useChatSession(
   statusRef.current = status;
   const hostedProjectIdRef = useRef(hostedProjectId);
   hostedProjectIdRef.current = hostedProjectId;
+  const browserProjectIdRef = useRef(
+    hostedProjectId ?? appState?.activeProjectId,
+  );
+  browserProjectIdRef.current = hostedProjectId ?? appState?.activeProjectId;
 
   // Bounded wait for the turn to land server-side. There is no "persisted"
   // event on the wire, so this polls the same detail row the post-stream
@@ -4169,7 +4168,7 @@ export function useChatSession(
         // during the preflight below would post this turn under an unrelated
         // session and ingest it into that transcript.
         const sessionAtSend = chatSessionIdRef.current;
-        const browserProjectAtSend = hostedProjectIdRef.current;
+        const browserProjectAtSend = browserProjectIdRef.current;
         // NEVER for an environment target. The environment's servers already
         // carry authoritative Convex ids and are re-resolved server-side; some
         // of them are plugin-contributed and deliberately absent from
@@ -4229,7 +4228,7 @@ export function useChatSession(
           await releaseBrowserForChat(browserProjectAtSend, sessionAtSend);
           if (
             chatSessionIdRef.current !== sessionAtSend ||
-            hostedProjectIdRef.current !== browserProjectAtSend
+            browserProjectIdRef.current !== browserProjectAtSend
           ) {
             throw new Error(
               "The chat changed while returning browser control. Send your message again.",
