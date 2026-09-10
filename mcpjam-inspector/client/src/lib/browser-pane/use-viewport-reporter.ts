@@ -22,26 +22,29 @@ export function useViewportReporter(
       clearTimeout(timer.current);
     };
   }, [generation]);
-  return useCallback((size: ViewportSize) => {
-    const next = normalizeViewportSize(size);
-    clearTimeout(timer.current);
-    if (
-      sent.current?.width === next.width &&
-      sent.current?.height === next.height
-    )
-      return;
-    const mine = epoch.current;
-    timer.current = setTimeout(() => {
-      if (mine !== epoch.current) return;
-      sent.current = next;
-      Promise.resolve()
-        .then(() => {
-          if (mine === epoch.current) return reportRef.current(next);
-        })
-        .catch(() => {
-          if (mine === epoch.current && sent.current === next)
-            sent.current = undefined;
-        });
-    }, 80);
-  }, []);
+  return useCallback(
+    (size: ViewportSize) => {
+      const next = normalizeViewportSize(size);
+      clearTimeout(timer.current);
+      if (
+        sent.current?.width === next.width &&
+        sent.current?.height === next.height
+      )
+        return;
+      const mine = epoch.current;
+      timer.current = setTimeout(() => {
+        if (mine !== epoch.current) return;
+        sent.current = next;
+        Promise.resolve()
+          .then(() => {
+            if (mine === epoch.current) return reportRef.current(next);
+          })
+          .catch(() => {
+            if (mine === epoch.current && sent.current === next)
+              sent.current = undefined;
+          });
+      }, 80);
+    },
+    [generation],
+  );
 }

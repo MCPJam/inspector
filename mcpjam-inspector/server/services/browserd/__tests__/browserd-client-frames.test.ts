@@ -278,7 +278,6 @@ describe("streamFrames", () => {
   });
 });
 
-
 /**
  * V-5. The video stream is the ACTIVE tab: the encoder grabs the X display,
  * which has no concept of a tab. Sending a `tabId` alongside `codec=h264`
@@ -327,4 +326,22 @@ describe("streamFrames — asking for video", () => {
     });
     expect(urls[0]).toContain("tabId=tab-2");
   });
+});
+
+it("threads large-frame negotiation through the request and decoder", async () => {
+  const body = pushableResponse();
+  const sink = collector();
+  const fetchImpl = vi.fn(async () => body.response);
+  await clientFor(fetchImpl as unknown as typeof fetch).streamFrames({
+    sharp: true,
+    signal: new AbortController().signal,
+    ...sink,
+  });
+  expect((fetchImpl.mock.calls[0] as unknown as [string])[0]).toContain(
+    "sharp=1",
+  );
+  body.push(frameBytes({ jpeg: new Uint8Array(300_000) }));
+  body.finish();
+  await sink.ended;
+  expect(sink.frames[0]?.jpeg.byteLength).toBe(300_000);
 });

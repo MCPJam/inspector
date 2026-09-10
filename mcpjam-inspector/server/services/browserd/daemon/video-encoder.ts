@@ -79,7 +79,10 @@ export interface VideoEncoder {
    * A new subscriber is replayed the current GOP, so it sees a picture within
    * a frame rather than waiting out the next keyframe.
    */
-  subscribe(listener: (unit: VideoAccessUnit) => void): () => void;
+  subscribe(
+    listener: (unit: VideoAccessUnit) => void,
+    sharp?: boolean,
+  ): () => void;
   subscriberCount(): number;
   /** Why the encoder is not running, once something has gone wrong. */
   failure(): string | undefined;
@@ -128,7 +131,17 @@ const NAL_IDR = 5;
 const MAX_RING_BYTES = 3 * 1024 * 1024;
 
 /** Per-tier ffmpeg arguments, after the input and before the output. */
-export function tierArgs(tier: VideoTier): string[] {
+export function tierArgs(tier: VideoTier, sharp = false): string[] {
+  if (sharp)
+    return [
+      "-crf",
+      tier === "sharp" ? "18" : tier === "saver" ? "23" : "20",
+      "-maxrate",
+      tier === "sharp" ? "6M" : "2500k",
+      "-bufsize",
+      tier === "sharp" ? "12M" : "5M",
+    ];
+
   switch (tier) {
     case "sharp":
       // Text stays readable at the cost of bandwidth: the tier somebody picks
@@ -188,8 +201,16 @@ export function ffmpegArgs(options: {
   width: number;
   height: number;
   tier: VideoTier;
+  sharp?: boolean;
 }): string[] {
-  const tier = tierArgs(options.tier);
+  const tier = tierArgs(options.tier, options.sharp);
+  const fps = options.sharp
+    ? options.tier === "sharp"
+      ? 30
+      : options.tier === "saver"
+      ? 10
+      : 20
+    : 30;
   // The saver tier brings its own `-vf` (it scales); everything else gets the
   // plain decimator. Two `-vf` flags would silently keep only the last.
   const filters = tier.includes("-vf") ? [] : ["-vf", "mpdecimate"];
@@ -199,7 +220,7 @@ export function ffmpegArgs(options: {
     "-f",
     "x11grab",
     "-framerate",
-    "30",
+    String(fps),
     "-video_size",
     `${options.width}x${options.height}`,
     "-draw_mouse",
@@ -220,7 +241,7 @@ export function ffmpegArgs(options: {
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "120",
+    String(fps * 4),
     "-sc_threshold",
     "0",
     "-x264-params",
@@ -336,6 +357,8 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const listeners = new Set<(unit: VideoAccessUnit) => void>();
   let tier: VideoTier = options.tier ?? "auto";
+  const sharpSubscribers = new Set<(unit: VideoAccessUnit) => void>();
+  let sharp = false;
   /**
    * The display's size, which MOVES on a responsive session.
    *
@@ -411,6 +434,7 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
           width,
           height,
           tier,
+          sharp,
         }),
         { stdio: ["ignore", "pipe", "pipe"] },
       );
@@ -441,8 +465,17 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
   };
 
   return {
-    subscribe(listener) {
+    subscribe(listener, wantsSharp = false) {
       listeners.add(listener);
+      if (wantsSharp) sharpSubscribers.add(listener);
+      const nextSharp = sharpSubscribers.size === listeners.size;
+      if (sharp !== nextSharp) {
+        sharp = nextSharp;
+        if (child) {
+          stop();
+          start();
+        }
+      }
       if (listeners.size === 1) start();
       // The current GOP first, so this subscriber has a picture immediately
       // rather than after up to four seconds of waiting for the next keyframe.
@@ -455,7 +488,16 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
       }
       return () => {
         listeners.delete(listener);
+        sharpSubscribers.delete(listener);
         if (listeners.size === 0) stop();
+        else {
+          const nextSharp = sharpSubscribers.size === listeners.size;
+          if (sharp !== nextSharp) {
+            sharp = nextSharp;
+            stop();
+            start();
+          }
+        }
       };
     },
     subscriberCount: () => listeners.size,
