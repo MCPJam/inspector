@@ -325,14 +325,11 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // which vitest reports as an unhandled rejection and fails the run.
     const hung = runtime.invoke(`${origin}::slow`, {}, "manual");
     await expect(hung.settled).rejects.toThrow(
-      /did not respond in time|cancel/i,
+      /did not respond in time|after a timeout|cancel/i,
     );
 
-    // END TO END, through the shared bridge: the RUNTIME owns the deadline, so
-    // the browser's `Canceled` — which says nothing about why — must still be
-    // recorded as a timeout and not as a user cancellation. That distinction is
-    // the whole reason the reason is carried, and it is the exact bug a naive
-    // adoption of the bridge introduces.
+    // END TO END, through the shared bridge: after dispatch, a timeout cannot
+    // prove that page execution stopped, so the result must remain unknown.
     await vi.waitFor(() => {
       const settled = activity.find(
         (entry) =>
@@ -340,7 +337,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
           entry.invokeId === hung.invokeId,
       );
       expect(settled && "state" in settled ? settled.state : undefined).toBe(
-        "timeout",
+        "unknown",
       );
     });
 

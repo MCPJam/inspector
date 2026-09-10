@@ -99,6 +99,9 @@ type Harness = {
   completions: Completion[];
   events: string[];
   heartbeats: string[];
+  liveSandboxes: Set<string>;
+  liveServers: Set<string>;
+  savedEvalResults: Set<string>;
   /**
    * The box `resolveAndStart` hands back. Exposed so a test can wrap its
    * command channel — the post-failure liveness diagnostic is the one thing the
@@ -126,6 +129,9 @@ function harness(
   const completions: Completion[] = [];
   const events: string[] = [];
   const heartbeats: string[] = [];
+  const liveSandboxes = new Set(["sb_1", "sb_unrelated"]);
+  const liveServers = new Set(["server_unrelated"]);
+  const savedEvalResults = new Set(["run_unrelated"]);
   const resolveArgs: Array<{ cloneToken?: string }> = [];
   const {
     runEvalSuite: runEvalSuiteOverride,
@@ -208,7 +214,8 @@ function harness(
         },
       };
     },
-    killSandbox: async () => {
+    killSandbox: async (box) => {
+      if (box) liveSandboxes.delete(box.sandboxId);
       events.push("killSandbox");
     },
     reportCredentialBlocked: async () => {
@@ -222,10 +229,12 @@ function harness(
     },
     createEphemeralServer: async (args) => {
       events.push(`createServer:${args.name}:${args.url}`);
+      liveServers.add("server-1");
       return "server-1";
     },
     deleteEphemeralServer: async (args) => {
       events.push(`deleteServer:${args.serverId}`);
+      liveServers.delete(args.serverId);
     },
     recordServer: async (triggerId, serverId) => {
       events.push(`recordServer:${triggerId}:${serverId}`);
@@ -254,6 +263,7 @@ function harness(
       heartbeats.push(triggerId);
     },
     heartbeatIntervalMs: 1_000,
+    cleanupTimeoutMs: 15_000,
     ...restOverrides,
   };
 
@@ -265,8 +275,19 @@ function harness(
     completions,
     events,
     heartbeats,
+    liveSandboxes,
+    liveServers,
+    savedEvalResults,
     sandbox,
   };
+}
+
+function expectOnlyCheckResourcesRemoved(h: Harness): void {
+  expect(h.liveSandboxes.has("sb_1")).toBe(false);
+  expect(h.liveServers.has("server-1")).toBe(false);
+  expect(h.liveSandboxes).toEqual(new Set(["sb_unrelated"]));
+  expect(h.liveServers).toEqual(new Set(["server_unrelated"]));
+  expect(h.savedEvalResults).toEqual(new Set(["run_unrelated"]));
 }
 
 describe("executeClaimedCheck — happy path", () => {
@@ -666,6 +687,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
     expect(h.completions).toHaveLength(0);
     expect(h.reports).toHaveLength(0);
     expect(h.events).toContain("killSandbox");
+    expectOnlyCheckResourcesRemoved(h);
   });
 
   it("abandons the check when the lease is lost during the liveness diagnostic", async () => {
@@ -702,6 +724,7 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
     // Abandoned, not completed — and the box is still torn down.
     expect(h.completions).toHaveLength(0);
     expect(h.events).toContain("killSandbox");
+    expectOnlyCheckResourcesRemoved(h);
   });
 
   it("checks liveness over the command RPC, never the public URL", async () => {
@@ -770,6 +793,39 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
 });
 
 describe("executeClaimedCheck — cleanup and heartbeat", () => {
+  it.each([
+    ["successful run", "passed"],
+    ["failed assertions", "failed"],
+    ["run timeout", "timed_out"],
+    ["run cancellation", "cancelled"],
+  ])("removes only this check's resources after a %s", async (_name, result) => {
+    const h = harness({
+      runEvalSuite: async (args) => {
+        await args.onRunStarted?.("run-1");
+        return { runId: "run-1", result };
+      },
+    });
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expectOnlyCheckResourcesRemoved(h);
+    expect(h.completions[0].runId).toBe("run-1");
+  });
+
+  it("removes a sandbox left behind by a build or start failure", async () => {
+    const h = harness();
+    h.deps.resolveAndStart = async (_args, overrides) => {
+      overrides.onSandbox?.(h.sandbox);
+      throw new CheckStepError("build_failed", "build exited 1");
+    };
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.liveSandboxes).toEqual(new Set(["sb_unrelated"]));
+    expect(h.liveServers).toEqual(new Set(["server_unrelated"]));
+    expect(h.savedEvalResults).toEqual(new Set(["run_unrelated"]));
+  });
+
   it("deletes the ephemeral server row and kills the box even when the run throws", async () => {
     const h = harness({
       runEvalSuite: async () => {
@@ -779,6 +835,7 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.events).toContain("deleteServer:server-1");
     expect(h.events).toContain("killSandbox");
+    expectOnlyCheckResourcesRemoved(h);
   });
 
   it("kills the box even if deleting the server row fails", async () => {
@@ -791,6 +848,43 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
     // A cleanup failure that costs money (a live sandbox) must not be skipped
     // because a cheaper one (a soft-deletable row) failed first.
     expect(h.events).toContain("killSandbox");
+    expect(h.completions[0].runId).toBe("run-1");
+  });
+
+  it("kills the sandbox when server deletion times out", async () => {
+    const h = harness({
+      deleteEphemeralServer: () => new Promise<void>(() => {}),
+      cleanupTimeoutMs: 5,
+    });
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.liveSandboxes).toEqual(new Set(["sb_unrelated"]));
+    expect(h.completions[0].runId).toBe("run-1");
+  });
+
+  it("deletes the server when sandbox cleanup fails", async () => {
+    const h = harness({
+      killSandbox: async () => {
+        throw new Error("E2B unavailable");
+      },
+    });
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.liveServers).toEqual(new Set(["server_unrelated"]));
+    expect(h.completions[0].runId).toBe("run-1");
+  });
+
+  it("deletes the server when sandbox cleanup times out", async () => {
+    const h = harness({
+      killSandbox: () => new Promise<void>(() => {}),
+      cleanupTimeoutMs: 5,
+    });
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.liveServers).toEqual(new Set(["server_unrelated"]));
     expect(h.completions[0].runId).toBe("run-1");
   });
 
