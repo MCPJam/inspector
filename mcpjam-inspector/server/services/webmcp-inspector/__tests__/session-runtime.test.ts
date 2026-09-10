@@ -53,8 +53,7 @@ function entryOfKind<K extends WebMcpActivityEntry["kind"]>(
   kind: K,
 ): Extract<WebMcpActivityEntry, { kind: K }> | undefined {
   return entries.find((e) => e.kind === kind) as
-    | Extract<WebMcpActivityEntry, { kind: K }>
-    | undefined;
+    Extract<WebMcpActivityEntry, { kind: K }> | undefined;
 }
 
 describe("tool identity", () => {
@@ -212,6 +211,8 @@ describe("invocation", () => {
       "https://example.test::echo",
       { n: 2 },
       "chat",
+      undefined,
+      runtime.currentTools()[0].binding,
     );
     first.settled.catch(() => {});
     second.settled.catch(() => {});
@@ -909,4 +910,99 @@ describe("input forwarding", () => {
       runtime.dispatchInput([{ kind: "mouse_move", x: 1, y: 1 }]),
     ).rejects.toThrow(/not ready/i);
   });
+});
+
+describe("registration bindings", () => {
+  it("refuses a queued chat call after same-name replacement", async () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool()]);
+    const binding = runtime.currentTools()[0].binding!;
+    session.hangOnInvoke = true;
+    const first = runtime.invoke(
+      "https://example.test::echo",
+      { n: 1 },
+      "manual",
+    );
+    await vi.waitFor(() => expect(session.pending).toBeDefined());
+    const queued = runtime.invoke(
+      "https://example.test::echo",
+      { n: 2 },
+      "chat",
+      undefined,
+      binding,
+    );
+    session.emitTools([fakeTool({ registrationSeq: 2 })]);
+    session.pending!.resolve({ output: "first" });
+    await first.settled;
+    await expect(queued.settled).rejects.toBeInstanceOf(WebMcpToolGoneError);
+    expect(session.invocations).toHaveLength(1);
+    await runtime.close();
+  });
+
+  it("requires the advertised binding for chat instead of inferring the live one", () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool()]);
+    expect(() =>
+      runtime.invoke("https://example.test::echo", {}, "chat"),
+    ).toThrow(WebMcpToolGoneError);
+    expect(session.invocations).toHaveLength(0);
+  });
+
+  it("does not reuse an invocation id for a different registration", async () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool()]);
+    const binding = runtime.currentTools()[0].binding!;
+    const first = runtime.invoke(
+      "https://example.test::echo",
+      {},
+      "chat",
+      "id",
+      binding,
+    );
+    await first.settled;
+    expect(() =>
+      runtime.invoke("https://example.test::echo", {}, "chat", "id", {
+        ...binding,
+        registrationSeq: 2,
+      }),
+    ).toThrow(WebMcpInvokeIdReusedError);
+    expect(session.invocations).toHaveLength(1);
+    await runtime.close();
+  });
+
+  it("reads a pending or completed outcome without executing again", async () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool()]);
+    session.hangOnInvoke = true;
+    const call = runtime.invoke(
+      "https://example.test::echo",
+      {},
+      "manual",
+      "read-id",
+    );
+    expect(runtime.invocationResult(call.invokeId)).toEqual({ pending: true });
+    await vi.waitFor(() => expect(session.pending).toBeDefined());
+    session.pending!.resolve({ output: "paid" });
+    await call.settled;
+    const retained = runtime.invocationResult(call.invokeId)!;
+    expect("settled" in retained).toBe(true);
+    if ("settled" in retained)
+      await expect(retained.settled).resolves.toMatchObject({ output: "paid" });
+    expect(runtime.invocationResult("missing")).toBeUndefined();
+    expect(session.invocations).toHaveLength(1);
+    await runtime.close();
+  });
+});
+
+it("keeps distinct frames addressable when their four-character hashes collide", () => {
+  const frames = [
+    "87A4D1F43B315A289F0F44348FCA2E0E",
+    "053054454A0136E6B929F5931FBB18FB",
+  ];
+  const descriptors = frames.map((frameId) =>
+    fakeTool({ frameId, isMainFrame: false }),
+  );
+  const tools = assignToolKeys(descriptors);
+  expect(new Set(tools.map((tool) => tool.toolKey)).size).toBe(2);
+  expect(assignToolKeys([...descriptors].reverse()).reverse()).toEqual(tools);
 });

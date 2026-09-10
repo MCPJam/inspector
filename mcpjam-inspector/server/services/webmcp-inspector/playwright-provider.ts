@@ -152,10 +152,7 @@ interface CdpScreencastFrame {
  * The abandoned promise is left to settle on its own — it is one CDP reply,
  * and nothing is waiting on it once the caller has given up.
  */
-function withTimeout<T>(
-  work: Promise<T>,
-  ms: number,
-): Promise<T | undefined> {
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
   return new Promise<T | undefined>((resolve, reject) => {
     const timer = setTimeout(() => resolve(undefined), ms);
     timer.unref?.();
@@ -184,9 +181,7 @@ function withTimeout<T>(
  * stopped painting, so no later frame and no timer comes back for it.
  */
 type StillAttempt =
-  | { got: "picture"; data: string }
-  | { got: "busy" }
-  | { got: "failed" };
+  { got: "picture"; data: string } | { got: "busy" } | { got: "failed" };
 
 /** As in the widget harness: a hung close must not block shutdown. */
 async function waitForClose(promise: Promise<unknown> | undefined) {
@@ -724,8 +719,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // gate open, which is the accumulation this exists to prevent.
       void sent.then(free, free);
       const result = (await withTimeout(sent, STILL_TIMEOUT_MS)) as
-        | { data?: string }
-        | undefined;
+        { data?: string } | undefined;
       return typeof result?.data === "string"
         ? { got: "picture", data: result.data }
         : { got: "failed" };
@@ -1238,6 +1232,8 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
         // The frame the runtime resolved from its own registry, so a subframe's
         // tool is not shadowed by a same-named one in the main frame.
         ...(request.frameId ? { frameId: request.frameId } : {}),
+        strictFrame: true,
+        expectedRegistrationSeq: request.expectedBinding?.registrationSeq,
         input: request.input,
         // Handing the signal over also hands the DEADLINE over: the bridge
         // stops arming its own, so the runtime stays the single owner of what

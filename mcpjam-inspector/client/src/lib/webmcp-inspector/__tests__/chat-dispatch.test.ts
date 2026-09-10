@@ -21,6 +21,7 @@ import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import type { PageToolSnapshotEntry } from "@/shared/chat-v2";
 
 const ENTRY: PageToolSnapshotEntry = {
+  binding: { frameId: "frame-main", registrationSeq: 1 },
   alias: "page_1a2b3c4d",
   sessionId: "session-1",
   toolKey: "https://shop.test::add_to_cart",
@@ -46,6 +47,7 @@ function stubStore(
           typeof useWebmcpInspectorStore.getState
         >["session"])
       : undefined,
+    tools: [{ toolKey: ENTRY.toolKey, binding: ENTRY.binding }] as never,
     invokeToolForResult: invoke as never,
   } as ReturnType<typeof useWebmcpInspectorStore.getState>);
 }
@@ -74,6 +76,65 @@ describe("invokePageToolForChat", () => {
     },
   );
 
+  it("rejects an approval after the page replaces the advertised registration", async () => {
+    const invoke = vi.fn(async () => ({
+      state: "succeeded",
+      output: "wrong tool",
+    }));
+    stubStore("session-1", invoke);
+    deferPageToolCallForApproval({
+      toolName: ENTRY.alias,
+      toolCallId: "changed",
+      input: {},
+    });
+    const state = useWebmcpInspectorStore.getState();
+    vi.mocked(useWebmcpInspectorStore.getState).mockReturnValue({
+      ...state,
+      tools: [
+        {
+          ...state.tools[0],
+          binding: { frameId: "frame-main", registrationSeq: 2 },
+        },
+      ],
+    });
+    const addToolOutput = vi.fn();
+    await fulfillApprovedPageToolCall({ toolCallId: "changed", addToolOutput });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(addToolOutput.mock.calls[0][0].output).toMatchObject({
+      isError: true,
+    });
+    expect(textOf(addToolOutput.mock.calls[0][0].output)).toMatch(
+      /registration.*changed/i,
+    );
+  });
+
+  it("keeps a deferred approval bound even if a later snapshot reuses its alias", async () => {
+    const invoke = vi.fn(async () => ({
+      state: "succeeded",
+      output: "wrong tool",
+    }));
+    stubStore("session-1", invoke);
+    deferPageToolCallForApproval({
+      toolName: ENTRY.alias,
+      toolCallId: "reused",
+      input: {},
+    });
+    const replacement = {
+      ...ENTRY,
+      binding: { frameId: "frame-main", registrationSeq: 2 },
+    };
+    setAdvertisedPageTools([replacement]);
+    const state = useWebmcpInspectorStore.getState();
+    vi.mocked(useWebmcpInspectorStore.getState).mockReturnValue({
+      ...state,
+      tools: [{ ...state.tools[0], binding: replacement.binding }],
+    });
+    const addToolOutput = vi.fn();
+    await fulfillApprovedPageToolCall({ toolCallId: "reused", addToolOutput });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(addToolOutput.mock.calls[0][0].output.isError).toBe(true);
+  });
+
   it("returns the tool's output on success", async () => {
     stubStore("session-1", async () => ({
       state: "succeeded",
@@ -88,7 +149,11 @@ describe("invokePageToolForChat", () => {
     const invoke = vi.fn(async () => ({ state: "succeeded", output: "ok" }));
     stubStore("session-1", invoke as never);
     await invokePageToolForChat(ENTRY.alias, { sku: "XYZ" });
-    expect(invoke).toHaveBeenCalledWith(ENTRY.toolKey, { sku: "XYZ" });
+    expect(invoke).toHaveBeenCalledWith(
+      ENTRY.toolKey,
+      { sku: "XYZ" },
+      ENTRY.binding,
+    );
   });
 
   it("says so when a truncated result was shortened", async () => {
@@ -188,7 +253,11 @@ describe("page-tool approval dispatch", () => {
     });
 
     expect(invoke).toHaveBeenCalledTimes(1);
-    expect(invoke).toHaveBeenCalledWith(ENTRY.toolKey, { sku: "ABC-123" });
+    expect(invoke).toHaveBeenCalledWith(
+      ENTRY.toolKey,
+      { sku: "ABC-123" },
+      ENTRY.binding,
+    );
     expect(addToolOutput).toHaveBeenCalledTimes(1);
     expect(addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -235,6 +304,7 @@ describe("snapshotPageToolsForTurn", () => {
   } as ReturnType<typeof useWebmcpInspectorStore.getState>["session"];
 
   const TOOL = {
+    binding: ENTRY.binding,
     toolKey: "https://shop.test::add_to_cart",
     name: "add_to_cart",
     origin: "https://shop.test",

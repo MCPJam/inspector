@@ -114,6 +114,58 @@ describe("webmcp-inspector routes", () => {
     provider = new FakeProvider();
   });
 
+  it("reads pending and settled outcomes without invoking again", async () => {
+    const session = await openSession(provider);
+    const browser = provider.sessions.at(-1)!;
+    browser.emitTools([fakeTool()]);
+    browser.hangOnInvoke = true;
+    const { body } = await call(
+      `/api/mcp/webmcp/sessions/${session.sessionId}/command`,
+      json({
+        type: "invoke_tool",
+        toolKey: "https://example.test::echo",
+        input: {},
+        invokeId: "recover-me",
+      }),
+    );
+    expect(body.invokeId).toBe("recover-me");
+    const path = `/api/mcp/webmcp/sessions/${session.sessionId}/invocations/recover-me`;
+    expect(await call(path)).toMatchObject({
+      status: 202,
+      body: { pending: true },
+    });
+    await vi.waitFor(() => expect(browser.pending).toBeDefined());
+    browser.pending!.resolve({ output: "paid" });
+    await vi.waitFor(async () =>
+      expect(await call(path)).toMatchObject({
+        status: 200,
+        body: { outcome: { state: "succeeded", output: "paid" } },
+      }),
+    );
+    expect(await call(path.replace("recover-me", "missing"))).toMatchObject({
+      status: 200,
+      body: { outcome: { state: "unknown" } },
+    });
+    expect(browser.invocations).toHaveLength(1);
+  });
+
+  it("refuses chat calls without a registration binding", async () => {
+    const session = await openSession(provider);
+    provider.sessions.at(-1)!.emitTools([fakeTool()]);
+    expect(
+      await call(
+        `/api/mcp/webmcp/sessions/${session.sessionId}/command`,
+        json({
+          type: "invoke_tool",
+          source: "chat",
+          toolKey: "https://example.test::echo",
+          input: {},
+        }),
+      ),
+    ).toMatchObject({ status: 409 });
+    expect(provider.sessions.at(-1)!.invocations).toHaveLength(0);
+  });
+
   it("404s every route when the kill switch is off", async () => {
     configState.enabled = false;
     // Not 403: a disabled capability should not be discoverable.

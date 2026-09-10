@@ -116,9 +116,25 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     } = {},
   ) {
     registry = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
+    // Observe from provider creation: an embedded browser can paint before
+    // startWebMcpSession returns. A replay=0 subscription misses that frame
+    // and mistakes the later sharp still for the first streamed frame.
+    const frames: WebMcpFrame[] = [];
     const session = await startWebMcpSession({
       url: options.url ?? fixture.url,
-      provider,
+      provider: {
+        createSession: (args) =>
+          provider.createSession({
+            ...args,
+            callbacks: {
+              ...args.callbacks,
+              onFrame: (frame) => {
+                frames.push(frame);
+                args.callbacks.onFrame(frame);
+              },
+            },
+          }),
+      },
       registry,
       headless: true,
       ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
@@ -128,10 +144,8 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     });
     const runtime = registry.get(session.sessionId);
     const activity: WebMcpActivityEntry[] = [];
-    const frames: WebMcpFrame[] = [];
     runtime.hub.subscribe((event) => {
       if (event.type === "activity") activity.push(event.entry);
-      if (event.type === "frame") frames.push(event.frame);
     }, 0);
     return { session, runtime, activity, frames };
   }
@@ -160,7 +174,9 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     expect(sub!.fromSubframe).toBe(true);
     expect(sub!.origin).toBe(new URL(fixture.subOriginUrl).origin);
     expect(sub!.origin).not.toBe(echo!.origin);
-    expect(sub!.toolKey).toBe(`${new URL(fixture.subOriginUrl).origin}::sub_tool`);
+    expect(sub!.toolKey).toBe(
+      `${new URL(fixture.subOriginUrl).origin}::sub_tool`,
+    );
     await registry.disposeAll();
   }, 60_000);
 
@@ -168,9 +184,9 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     const { runtime } = await open();
     const subKey = `${new URL(fixture.subOriginUrl).origin}::${FIXTURE_TOOLS.sub}`;
     await vi.waitFor(() =>
-      expect(
-        runtime.currentTools().map((tool) => tool.toolKey),
-      ).toContain(subKey),
+      expect(runtime.currentTools().map((tool) => tool.toolKey)).toContain(
+        subKey,
+      ),
     );
 
     // The frame id belongs to another target, so this call can only succeed by
@@ -324,15 +340,10 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // timeout and leave the first promise rejecting with nobody listening —
     // which vitest reports as an unhandled rejection and fails the run.
     const hung = runtime.invoke(`${origin}::slow`, {}, "manual");
-    await expect(hung.settled).rejects.toThrow(
-      /did not respond in time|cancel/i,
-    );
+    await expect(hung.settled).rejects.toThrow(/timeout.*may continue/i);
 
-    // END TO END, through the shared bridge: the RUNTIME owns the deadline, so
-    // the browser's `Canceled` — which says nothing about why — must still be
-    // recorded as a timeout and not as a user cancellation. That distinction is
-    // the whole reason the reason is carried, and it is the exact bug a naive
-    // adoption of the bridge introduces.
+    // A deadline stops our wait, but Chromium may continue page execution.
+    // The timeline must preserve uncertainty rather than imply no side effects.
     await vi.waitFor(() => {
       const settled = activity.find(
         (entry) =>
@@ -340,7 +351,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
           entry.invokeId === hung.invokeId,
       );
       expect(settled && "state" in settled ? settled.state : undefined).toBe(
-        "timeout",
+        "unknown",
       );
     });
 

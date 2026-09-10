@@ -54,6 +54,7 @@ import type {
   BrowserCommandResult,
 } from "../browserd/protocol";
 import {
+  WebMcpToolGoneError,
   WebMcpInvocationCancelledError,
   WebMcpLeaseBlockedError,
   WebMcpOutcomeUnknownError,
@@ -86,7 +87,9 @@ export interface BrowserdProviderDeps {
    */
   handle: ComputerHostedBrowserSessionHandle;
   /** Overridable for tests; defaults to the handle's own client. */
-  transportFor?(handle: ComputerHostedBrowserSessionHandle): BrowserdSessionTransport;
+  transportFor?(
+    handle: ComputerHostedBrowserSessionHandle,
+  ): BrowserdSessionTransport;
   /** Poll cadence; 0 disables polling (tests, and the future push path). */
   toolPollMs?: number;
   /**
@@ -156,11 +159,6 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
    * happened to invoke anything after control came back.
    */
   private leaseBlockedUntil = 0;
-  /**
-   * The in-flight "cancel it once we know its id" chain from an aborted
-   * invocation. Held only so tests can await it; production never needs to.
-   */
-  cancelWhenIdentified: Promise<void> = Promise.resolve();
   private readonly pollMs: number;
   private readonly onCommand?: (info: {
     computerId: string;
@@ -253,101 +251,68 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
   }
 
   async invokeTool(request: WebMcpInvokeRequest): Promise<{ output: unknown }> {
-    // Aborting must cancel the invocation IN THE BROWSER, not merely stop our
-    // wait for it — a tool left running after the user hit stop keeps acting
-    // on the page. The daemon reports its invocation id on the way back, but
-    // an abort can land before that, so record it as soon as it is known and
-    // let the abort listener fire whenever it fires.
-    // BEFORE anything is sent. A caller that has already given up must not
-    // have its tool run at all — the daemon's `webmcp_invoke` is synchronous
-    // and side-effecting, and our signal does not travel with the command, so
-    // a request dispatched here runs to completion no matter what this side
-    // does afterwards. Reading the flag and sending anyway is how a cancelled
-    // checkout still gets submitted.
     if (request.signal.aborted) {
       throw new WebMcpInvocationCancelledError(
-        request.signal.reason === "timeout"
-          ? "The page tool did not respond in time."
-          : "Cancelled before it started.",
+        "Cancelled before it started.",
         request.signal.reason === "timeout" ? "timeout" : "cancelled",
       );
     }
-    // Typed rather than inferred: the guard above narrows `aborted` to
-    // `false`, and the abort listener has to be able to set it.
-    let aborted: boolean = false;
-    /** Settles the caller's wait on abort; see the race below. */
-    let onAborted: (() => void) | undefined;
+    const binding = request.expectedBinding;
+    if (
+      binding &&
+      (!binding.browser || binding.browser.bootId !== this.handle.bootId)
+    ) {
+      throw new WebMcpToolGoneError(
+        "The browser that offered this registration is no longer available.",
+      );
+    }
+    const commandId = request.invokeId
+      ? `hosted:${request.invokeId}`
+      : randomUUID();
+    let rejectAborted!: (error: Error) => void;
+    const aborted = new Promise<never>((_, reject) => {
+      rejectAborted = reject;
+    });
     const onAbort = () => {
-      aborted = true;
-      onAborted?.();
+      // The daemon can cancel a queued or running command before its invocation
+      // ID is known. Waiting for the invoke response would cancel only AFTER it ran.
+      void this.run(
+        { kind: "webmcp_cancel", commandId },
+        { tabId: binding?.browser?.tabId },
+      ).catch(() => {});
+      rejectAborted(
+        new WebMcpOutcomeUnknownError(
+          request.signal.reason === "timeout"
+            ? "Stopped waiting for the page tool after a timeout. Execution may continue; verify the page state before retrying."
+            : "Cancellation requested. Page execution may continue; verify the page state before retrying.",
+        ),
+      );
     };
     request.signal.addEventListener("abort", onAbort, { once: true });
     try {
       const sent = this.run(
         {
           kind: "webmcp_invoke",
-          // The TOOL'S OWN NAME, and the frame beside it — not a composite.
-          // The daemon resolves `toolKey` by name against the live page, so
-          // `frameId::name` looked for a tool literally called that, matched
-          // nothing, and answered `webmcp_tool_gone` for every hosted
-          // invocation. `frameId` is what disambiguates a subframe's tool from
-          // a same-named one in the main frame; the daemon falls back to name
-          // resolution if that frame has since gone.
           toolKey: request.toolName,
           frameId: request.frameId,
           input: request.input,
+          ...(binding?.browser
+            ? {
+                expectedBinding: {
+                  ...binding.browser,
+                  frameId: binding.frameId,
+                  registrationSeq: binding.registrationSeq,
+                },
+              }
+            : {}),
         },
         {
-          // The IDEMPOTENCY key, supplied by the caller and carried all the way
-          // to the daemon's at-most-once queue. A retry of the same logical
-          // invocation — after a dropped connection, or onto a different
-          // replica — is recognised there and returns the original outcome
-          // instead of running a side-effecting page tool a second time.
-          commandId: request.invokeId
-            ? `hosted:${request.invokeId}`
-            : undefined,
+          commandId,
+          tabId: binding?.browser?.tabId,
           timeoutMs: WEBMCP_INVOKE_TIMEOUT_MS,
         },
       );
-
-      // STOPPING THE PAGE and STOPPING OUR WAIT are two different things, and
-      // an abort has to do both. They are separated here because the daemon's
-      // `webmcp_invoke` is synchronous — it answers only once the tool has
-      // settled — so the id needed to cancel the invocation does not exist
-      // until the invocation is already over.
-      //
-      // So: the cancel is chained onto the daemon's eventual reply and runs
-      // whenever that lands, while the caller's wait is raced against the
-      // signal and ends immediately. Without the race, "stop" could not
-      // settle anything until the very thing being stopped finished. Without
-      // the chained cancel, a stopped tool would keep acting on the page.
-      this.cancelWhenIdentified = sent
-        .then((result) => {
-          const invocationId = readString(result.output, "invocationId");
-          if (aborted && invocationId) {
-            return this.cancel(invocationId).then(
-              () => {},
-              () => {},
-            );
-          }
-        })
-        .catch(() => {});
-
-      const result = await new Promise<BrowserCommandResult>(
-        (resolve, reject) => {
-          onAborted = () =>
-            reject(
-              new WebMcpInvocationCancelledError(
-                request.signal.reason === "timeout"
-                  ? "The page tool did not respond in time."
-                  : "The invocation was cancelled.",
-                request.signal.reason === "timeout" ? "timeout" : "cancelled",
-              ),
-            );
-          if (aborted) onAborted();
-          sent.then(resolve, reject);
-        },
-      );
+      const result = await Promise.race([sent, aborted]);
       return { output: result.output };
     } finally {
       request.signal.removeEventListener("abort", onAbort);
@@ -436,7 +401,11 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
         { kind: "observe", mode: "webmcp_tools" },
         { background: true },
       );
-      const tools = parseTools(result.output);
+      const tools = parseTools(
+        result.output,
+        this.handle.bootId,
+        result.stateToken,
+      );
       // Snapshot semantics: the interface takes the COMPLETE set each time, so
       // comparing serialized snapshots is both the change check and the guard
       // against a missed event leaving a dead tool advertised.
@@ -456,6 +425,7 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     action: BrowserAction,
     options: {
       commandId?: string;
+      tabId?: string;
       timeoutMs?: number;
       /**
        * This command is the POLL's own, not a person's.
@@ -481,6 +451,7 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
         // invocation passes its own — see `invokeTool`.
         commandId: options.commandId ?? randomUUID(),
         source: "inspector",
+        ...(options.tabId ? { tabId: options.tabId } : {}),
         action,
       },
       this.handle.bootId,
@@ -563,7 +534,11 @@ export function createBrowserdWebMcpProvider(
 }
 
 /** The daemon reports `{tools:[{frameId,name,…}]}`; V1 wants raw browser facts. */
-function parseTools(output: unknown): ProviderToolDescriptor[] {
+function parseTools(
+  output: unknown,
+  bootId: string,
+  state?: BrowserCommandResult["stateToken"],
+): ProviderToolDescriptor[] {
   if (typeof output !== "object" || output === null) return [];
   const raw = (output as { tools?: unknown }).tools;
   if (!Array.isArray(raw)) return [];
@@ -575,6 +550,22 @@ function parseTools(output: unknown): ProviderToolDescriptor[] {
     const frameId = typeof tool.frameId === "string" ? tool.frameId : "";
     if (!name || !frameId) continue;
     tools.push({
+      ...(state &&
+      typeof tool.registrationSeq === "number" &&
+      Number.isSafeInteger(tool.registrationSeq) &&
+      tool.registrationSeq >= 0
+        ? {
+            binding: {
+              frameId,
+              registrationSeq: tool.registrationSeq,
+              browser: {
+                bootId,
+                tabId: state.tabId,
+                navCounter: state.navCounter,
+              },
+            },
+          }
+        : {}),
       frameId,
       name,
       description: typeof tool.description === "string" ? tool.description : "",

@@ -385,6 +385,7 @@ describe("hosted WebMCP inspector — the invocation's answer", () => {
       toolKey: "https://example.test::echo",
       input,
       source: "chat",
+      expectedBinding: { frameId: "frame-main", registrationSeq: 1 },
     });
 
   beforeEach(async () => {

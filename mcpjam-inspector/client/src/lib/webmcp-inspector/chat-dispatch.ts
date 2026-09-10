@@ -13,6 +13,7 @@
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { buildPageToolSnapshot } from "./page-tool-aliases";
 import type { PageToolSnapshotEntry } from "@/shared/chat-v2";
+import { sameWebMcpRegistration } from "@/shared/webmcp-inspector-protocol";
 import { isPageToolAlias } from "@/shared/client-fulfilled-tools";
 
 /** The turn's snapshot, so an alias can be resolved when its call arrives. */
@@ -27,7 +28,7 @@ let advertised: PageToolSnapshotEntry[] = [];
  */
 const deferredPageToolCalls = new Map<
   string,
-  { alias: string; input: unknown }
+  { alias: string; input: unknown; entry: PageToolSnapshotEntry | null }
 >();
 const settledPageToolCallIds = new Set<string>();
 const shippedPageToolAliases = new Set<string>();
@@ -93,6 +94,7 @@ export function deferPageToolCallForApproval(options: {
   deferredPageToolCalls.set(options.toolCallId, {
     alias: options.toolName,
     input: options.input,
+    entry: structuredClone(resolvePageToolAlias(options.toolName) ?? null),
   });
   return true;
 }
@@ -144,8 +146,12 @@ function textResult(text: string, isError = false): McpToolResult {
 export async function invokePageToolForChat(
   alias: string,
   input: Record<string, unknown>,
+  advertisedEntry?: PageToolSnapshotEntry | null,
 ): Promise<McpToolResult> {
-  const entry = resolvePageToolAlias(alias);
+  const entry =
+    advertisedEntry === undefined
+      ? resolvePageToolAlias(alias)
+      : advertisedEntry;
   if (!entry) {
     return textResult(
       "That page tool is no longer available — the WebMCP browser session was closed after this tool was offered.",
@@ -164,7 +170,18 @@ export async function invokePageToolForChat(
     );
   }
 
-  const result = await store.invokeToolForResult(entry.toolKey, input);
+  const live = store.tools.find((tool) => tool.toolKey === entry.toolKey);
+  if (!sameWebMcpRegistration(entry.binding, live?.binding)) {
+    return textResult(
+      `The registration of "${entry.rawName}" changed after it was offered. Refresh the page tools before calling it.`,
+      true,
+    );
+  }
+  const result = await store.invokeToolForResult(
+    entry.toolKey,
+    input,
+    entry.binding,
+  );
 
   if (result.state === "succeeded") {
     const text =
@@ -179,8 +196,7 @@ export async function invokePageToolForChat(
   }
   if (result.state === "unknown") {
     return textResult(
-      result.errorMessage ??
-        `The outcome of "${entry.rawName}" is unknown. Page execution may continue; verify the page state before retrying.`,
+      `${result.errorMessage ?? `The outcome of "${entry.rawName}" is unknown. Page execution may continue; verify the page state before retrying.`}${result.invokeId ? `\nInvocation ID: ${result.invokeId}` : ""}`,
       true,
     );
   }
@@ -212,7 +228,7 @@ export async function fulfillApprovedPageToolCall(options: {
 }): Promise<void> {
   if (settledPageToolCallIds.has(options.toolCallId)) return;
   const deferred = deferredPageToolCalls.get(options.toolCallId);
-  const alias = options.alias ?? deferred?.alias;
+  const alias = deferred?.alias ?? options.alias;
   if (!alias) return;
   const input = options.input !== undefined ? options.input : deferred?.input;
   markPageToolCallSettled(options.toolCallId);
@@ -225,6 +241,7 @@ export async function fulfillApprovedPageToolCall(options: {
       input && typeof input === "object" && !Array.isArray(input)
         ? (input as Record<string, unknown>)
         : {},
+      deferred?.entry,
     );
   } catch (error) {
     output = textResult(

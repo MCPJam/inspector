@@ -513,6 +513,8 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
       const { output } = await this.bridge.invoke({
         toolName: request.toolName,
         ...(request.frameId ? { frameId: request.frameId } : {}),
+        strictFrame: true,
+        expectedRegistrationSeq: request.expectedBinding?.registrationSeq,
         input: request.input,
         // Handing the signal over also hands the DEADLINE over: the bridge
         // stops arming its own, so the runtime stays the single owner of what

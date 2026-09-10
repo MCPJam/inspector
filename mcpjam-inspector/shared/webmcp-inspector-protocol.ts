@@ -82,7 +82,32 @@ export interface WebMcpToolRef {
   fromSubframe: boolean;
 }
 
+/** Identity of one observed registration, independent of its display key. */
+export interface WebMcpRegistrationBinding {
+  frameId: string;
+  registrationSeq: number;
+  /** Hosted bindings remain valid across inspector replicas, but not browser boots. */
+  browser?: { bootId: string; tabId: string; navCounter: number };
+}
+
+export function sameWebMcpRegistration(
+  a: WebMcpRegistrationBinding | undefined,
+  b: WebMcpRegistrationBinding | undefined,
+): boolean {
+  return (
+    !!a &&
+    !!b &&
+    a.frameId === b.frameId &&
+    a.registrationSeq === b.registrationSeq &&
+    a.browser?.bootId === b.browser?.bootId &&
+    a.browser?.tabId === b.browser?.tabId &&
+    a.browser?.navCounter === b.browser?.navCounter
+  );
+}
+
 export interface WebMcpToolDescriptor extends WebMcpToolRef {
+  /** Missing on older providers; such tools cannot be offered to chat. */
+  binding?: WebMcpRegistrationBinding;
   description: string;
   /** JSON Schema for the tool's input, as published by the page. */
   inputSchema?: Record<string, unknown>;
@@ -296,6 +321,7 @@ export type WebMcpCommand =
        * twice.
        */
       invokeId?: string;
+      expectedBinding?: WebMcpRegistrationBinding;
       toolKey: string;
       input: Record<string, unknown>;
       source: WebMcpInvocationSource;

@@ -338,6 +338,47 @@ describe("webmcp inspector store", () => {
     expect(FakeEventSource.instances).toHaveLength(0);
   });
 
+  it("recovers a retained result through a read-only request", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          invokeId: "recover",
+          outcome: { state: "succeeded", output: "paid" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const result = await useWebmcpInspectorStore
+      .getState()
+      .recoverInvocationResult("original-session", "recover");
+    expect(result).toMatchObject({
+      state: "succeeded",
+      output: "paid",
+      invokeId: "recover",
+    });
+    expect(String(fetchSpy.mock.calls[0][0])).toContain(
+      "/sessions/original-session/invocations/recover",
+    );
+    expect(fetchSpy.mock.calls[0][1]?.method).toBe("GET");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a pending recovery unknown without issuing an invoke", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ invokeId: "recover", pending: true }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await expect(
+      useWebmcpInspectorStore
+        .getState()
+        .recoverInvocationResult("original-session", "recover"),
+    ).resolves.toMatchObject({ state: "unknown", invokeId: "recover" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][1]?.method).toBe("GET");
+  });
+
   it("reports a session that went away and drops its state", async () => {
     const source = await openSession();
     source.emit({ type: "session_gone", error: "That session is gone." });
@@ -442,7 +483,10 @@ describe("webmcp inspector store", () => {
 
     // A model turn must not block for the full timeout on a browser that has
     // already gone away.
-    await expect(pending).resolves.toMatchObject({ state: "failed" });
+    await expect(pending).resolves.toMatchObject({
+      state: "unknown",
+      invokeId: expect.any(String),
+    });
   });
 
   it("settles waiters when the server reports the session is gone", async () => {
@@ -456,7 +500,10 @@ describe("webmcp inspector store", () => {
     await Promise.resolve();
 
     source.emit({ type: "session_gone", error: "That session is gone." });
-    await expect(pending).resolves.toMatchObject({ state: "failed" });
+    await expect(pending).resolves.toMatchObject({
+      state: "unknown",
+      invokeId: expect.any(String),
+    });
   });
 
   it("does not hand one session's cached result to the next", async () => {
@@ -981,7 +1028,9 @@ describe("webmcp inspector store", () => {
         ),
     );
 
-    await useWebmcpInspectorStore.getState().captureScreenshot({ silent: true });
+    await useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
 
     // The measurement needs the same definition of "captured" a streamed
     // frame's `ts` carries. Timed from arrival here instead, the poll's
@@ -1006,7 +1055,9 @@ describe("webmcp inspector store", () => {
         ),
     );
 
-    await useWebmcpInspectorStore.getState().captureScreenshot({ silent: true });
+    await useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
     expect(useWebmcpInspectorStore.getState().lastScreenshotAt).toBe(1_234);
 
     // Somebody presses the Screenshot button. The picture changes; the poll
@@ -1849,4 +1900,35 @@ describe("webmcp inspector store — frame transport", () => {
     resumed.emitFrame(binaryFrame(1));
     expect(useWebmcpInspectorStore.getState().liveFrame?.seq).toBe(1);
   });
+});
+
+it("allows the server queue budget, then returns unknown with the original id on a lost settle", async () => {
+  vi.useFakeTimers();
+  const before = useWebmcpInspectorStore.getState();
+  let acceptedId: string | undefined;
+  useWebmcpInspectorStore.setState({
+    sendCommand: async (command) => {
+      if (command.type !== "invoke_tool") throw new Error("unexpected command");
+      acceptedId = command.invokeId;
+      return { invokeId: acceptedId };
+    },
+  });
+  try {
+    const settled = vi.fn();
+    const result = useWebmcpInspectorStore
+      .getState()
+      .invokeToolForResult("origin::pay", {});
+    void result.then(settled);
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(500_000);
+    await expect(result).resolves.toMatchObject({
+      state: "unknown",
+      invokeId: acceptedId,
+      errorMessage: expect.stringContaining("before retrying"),
+    });
+  } finally {
+    useWebmcpInspectorStore.setState(before);
+    vi.useRealTimers();
+  }
 });
