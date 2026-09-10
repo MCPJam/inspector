@@ -120,7 +120,8 @@ vi.mock("@/state/app-state-context", () => ({
 vi.mock("../thread/thread-helpers", () => ({
   isToolPart: (part: any) => part.type === "tool-invocation",
   isDynamicTool: (part: any) => part.type === "dynamic-tool",
-  isDataPart: (part: any) => part.type?.endsWith("-data"),
+  isDataPart: (part: any) =>
+    part.type?.startsWith("data-") || part.type?.endsWith("-data"),
   getToolInfo: (part: any) => ({
     toolName: part.toolName || "test-tool",
     toolCallId: part.toolCallId || "call-123",
@@ -188,6 +189,19 @@ describe("PartSwitch", () => {
     vi.clearAllMocks();
     mockDetectUIType.mockReturnValue(null);
   });
+
+  it.each([null, "browser_consent_required"])(
+    "hides internal browser readiness (%s)",
+    (reason) => {
+      const { container } = render(
+        <PartSwitch
+          {...defaultProps}
+          part={{ type: "data-browser-readiness", data: { reason } } as any}
+        />,
+      );
+      expect(container.textContent).toBe("");
+    },
+  );
 
   describe("text parts", () => {
     it("renders TextPart for text type", () => {

@@ -55,8 +55,10 @@ function serverPlatform(): string {
 
 let client: PostHog | null = null;
 
-function getClient(): PostHog | null {
-  if (isAnalyticsDisabled()) return null;
+// Feature evaluation controls product availability, independently of tracking.
+// Callers using this exception must suppress feature-flag exposure events.
+function getClient(forFeatureFlags = false): PostHog | null {
+  if (!forFeatureFlags && isAnalyticsDisabled()) return null;
   if (!client) {
     client = new PostHog(POSTHOG_PROJECT_KEY, {
       host: POSTHOG_HOST,
@@ -169,7 +171,7 @@ export async function evaluateBrowserRollout(
   if (!distinctId) return false;
   try {
     return (
-      (await getClient()?.isFeatureEnabled(key, distinctId, {
+      (await getClient(true)?.isFeatureEnabled(key, distinctId, {
         sendFeatureFlagEvents: false,
       })) === true
     );
