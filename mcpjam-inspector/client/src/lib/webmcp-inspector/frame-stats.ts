@@ -9,11 +9,9 @@
  * globals, and the exact report shape its diagnostics payload and its tests
  * already read.
  *
- * The report is DELIBERATELY NARROWER than the shared one. The pane's instance
- * also tracks input→ack, rtt and decode time, none of which this transport can
- * produce: its frames come over a socket with no ack message and no separate
- * decode step. A report carrying three permanently empty buckets would invite
- * somebody to read them as zeros.
+ * Socket input acknowledgements split dispatch waiting from the next-frame
+ * latency proxy. HTTP fallback has no socket ack samples. Neither metric proves
+ * a particular input caused the next frame; use a gesture marker for that.
  *
  * Enabled by `localStorage["webmcp:frame-stats"]`, read once. Off, every
  * function here is an immediate return.
@@ -31,6 +29,8 @@ export type { FrameStatsBucket, FrameTransportRung };
 export interface FrameStatsReport {
   captureToPaint: FrameStatsBucket;
   inputToPaint: FrameStatsBucket;
+  /** Socket acknowledgements measure dispatch completion, not visible effect. */
+  inputToAck: FrameStatsBucket;
   byTransport: Partial<Record<FrameTransportRung, FrameStatsBucket>>;
 }
 
@@ -54,8 +54,12 @@ export function noteFrameTransportRung(rung: FrameTransportRung): void {
 }
 
 /** Called when a gesture leaves the client, with the seq currently on screen. */
-export function noteInputSent(afterSeq: number): void {
-  stats.noteInputSent(afterSeq);
+export function noteInputSent(afterSeq: number, seq?: number): void {
+  stats.noteInputSent(afterSeq, seq);
+}
+
+export function noteInputAck(seq: number): void {
+  stats.noteInputAck(seq);
 }
 
 /**
@@ -83,6 +87,7 @@ export function frameStatsReport(): FrameStatsReport {
   return {
     captureToPaint: full.captureToPaint,
     inputToPaint: full.inputToPaint,
+    inputToAck: full.inputToAck,
     byTransport: full.byTransport,
   };
 }

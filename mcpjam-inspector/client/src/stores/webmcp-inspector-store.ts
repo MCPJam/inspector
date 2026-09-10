@@ -40,6 +40,7 @@ import {
 import {
   noteFrameTransportRung,
   noteInputSent,
+  noteInputAck,
   resetFrameStats,
 } from "@/lib/webmcp-inspector/frame-stats";
 
@@ -958,6 +959,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       publishFrameTransport();
       frameSocket = openWebMcpFrameStream({
         sessionId,
+        coalesceFrames:
+          typeof window !== "undefined" && window.isElectron !== true,
         onOpen: () => {
           if (generation !== connectionGeneration) return;
           // A socket that opened is proof the failure before it was
@@ -974,6 +977,13 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // a successful retry it is what puts SSE back to carrying only the
           // session, its tools and its timeline.
           ensureSseFrames(sessionId, "off");
+        },
+        onInputSent: (seq) => {
+          if (generation === connectionGeneration)
+            noteInputSent(lastAppliedFrameSeq, seq);
+        },
+        onInputAck: (seq) => {
+          if (generation === connectionGeneration) noteInputAck(seq);
         },
         onFrame: (frame) => {
           if (generation !== connectionGeneration) return;
@@ -1079,6 +1089,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
      * the session's counter did not restart, so neither should ours.
      */
     function invalidateFrame() {
+      frameSocket?.discardPendingFrame();
       set({ liveFrame: undefined });
       presenter.clear();
     }
@@ -1309,7 +1320,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           set({ error: result.error });
           return undefined;
         }
-        set({ error: undefined });
+        if (get().error !== undefined) set({ error: undefined });
         return result.data;
       },
 
@@ -1504,11 +1515,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
 
       async sendInput(events) {
         if (events.length === 0) return;
-        // Dark unless the stats flag is set. Recorded HERE rather than in the
-        // forwarder because this is where the seq currently on screen is
-        // known, and "the first paint newer than that" is the definition of a
-        // visible echo.
-        noteInputSent(lastAppliedFrameSeq);
+        // Record next-frame latency at dispatch, not while queued. It is a
+        // proxy: a newer frame need not contain the result of this input.
         // Chunked to the route's cap rather than sent whole and refused. A
         // flush that happened to exceed it would otherwise drop the gesture
         // entirely — the one outcome worse than sending it as two requests.
@@ -1529,6 +1537,34 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             // turn over while the first is in flight. The rest would then land
             // on whichever page replaced it.
             if (get().session?.sessionId !== aimedAt) return;
+            const socketResult =
+              typeof window !== "undefined" && window.isElectron !== true
+                ? frameSocket?.sendInput(batch)
+                : undefined;
+            if (socketResult) {
+              try {
+                await socketResult;
+                if (
+                  get().session?.sessionId === aimedAt &&
+                  get().error !== undefined
+                )
+                  set({ error: undefined });
+              } catch (error) {
+                if (get().session?.sessionId === aimedAt)
+                  set({
+                    error: {
+                      code: "input_interrupted",
+                      message:
+                        error instanceof Error
+                          ? error.message
+                          : "Browser input failed.",
+                    },
+                  });
+                return;
+              }
+              continue;
+            }
+            noteInputSent(lastAppliedFrameSeq);
             // Through `sendCommand`, unlike `set_screencast`: input the server
             // refuses is a person's click going nowhere, which they should be
             // told about rather than left to wonder at.

@@ -13,6 +13,7 @@ import {
   noteFrameTransportRung,
   notePainted,
   noteInputSent,
+  noteInputAck,
   resetFrameStats,
   resetFrameStatsFlagForTests,
 } from "../frame-stats";
@@ -45,10 +46,21 @@ describe("frame stats", () => {
     expect(frameStatsReport()).toEqual({
       captureToPaint: { n: 0, p50: undefined, p95: undefined },
       inputToPaint: { n: 0, p50: undefined, p95: undefined },
+      inputToAck: { n: 0 },
       // No samples, so no buckets — rather than four empty ones for rungs this
       // session never used.
       byTransport: {},
     });
+  });
+
+  it("measures socket acknowledgement separately from the next frame", () => {
+    localStorage.setItem("webmcp:frame-stats", "1");
+    resetFrameStatsFlagForTests();
+    noteInputSent(1, 7);
+    vi.advanceTimersByTime(20);
+    noteInputAck(7);
+    expect(frameStatsReport().inputToAck).toMatchObject({ n: 1, p50: 20 });
+    expect(frameStatsReport().inputToPaint.n).toBe(0);
   });
 
   it("splits the percentiles by the transport that carried them", () => {

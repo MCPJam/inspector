@@ -66,6 +66,8 @@ export interface InputForwarderOptions {
   send: (events: WebMcpInputEvent[]) => void | Promise<void>;
   /** Read the CURRENT geometry — it changes with every layout and every frame. */
   geometry: () => ViewportGeometry | undefined;
+  /** Node-local gestures must not merge across nested targets or direction changes. */
+  preserveGestureBoundaries?: boolean;
   flushMs?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -287,11 +289,23 @@ export function createInputForwarder(
       // Coalesce to the latest: the intermediate positions of a drag are not
       // information the page can use, and sending them is the flood.
       const last = buffer[buffer.length - 1];
-      if (last?.kind === "mouse_move") buffer[buffer.length - 1] = event;
+      if (
+        last?.kind === "mouse_move" &&
+        (!options.preserveGestureBoundaries || sameModifiers(last, event))
+      )
+        buffer[buffer.length - 1] = event;
       else buffer.push(event);
     } else if (event.kind === "wheel") {
       const last = buffer[buffer.length - 1];
-      if (last?.kind === "wheel" && sameModifiers(last, event)) {
+      if (
+        last?.kind === "wheel" &&
+        sameModifiers(last, event) &&
+        (!options.preserveGestureBoundaries ||
+          (last.x === event.x &&
+            last.y === event.y &&
+            Math.sign(last.deltaX) === Math.sign(event.deltaX) &&
+            Math.sign(last.deltaY) === Math.sign(event.deltaY)))
+      ) {
         // SUM the deltas rather than keep the latest: scroll distance is
         // additive, and keeping only the newest would make a fast flick move
         // the page less than a slow one. The newest coordinate wins, because

@@ -105,9 +105,9 @@ that carries tools and invocations:
 
 ```text
 Page.screencastFrame → ack FIRST → drop a byte-identical repeat → oversize
-substitute → 10fps throttle (with a mandatory trailing frame) → runtime
-publishFrame → hub's coalesced slot → binary WS (or SSE) → store liveFrame →
-the pane
+substitute → 10fps throttle (~30fps during input, mandatory trailing frame)
+→ runtime publishFrame → hub's coalesced slot → binary WS (or SSE)
+→ Node-local WS: newest JPEG per animation frame → viewport subscription
 ```
 
 Six properties hold this together, and each one is a bug if it is dropped:
@@ -137,6 +137,34 @@ Six properties hold this together, and each one is a bug if it is dropped:
   still captured at one scale and a streamed frame captured at another are safe
   to mix. CDP's screencast metadata reports DIP whatever the device scale
   factor is, and clicks are scaled against whatever a frame claims to be.
+
+### Human interaction in the Node package
+
+The workspace subscribes only to session, tools, activity, and control state.
+Frame and screenshot subscriptions live inside the viewport, so streaming does
+not rerender the activity rail or tools panel. Node-local binary frames are
+coalesced before blob allocation and store publication. A socket write callback
+proves transport progress, not that a viewer rendered a frame; this client
+coalescing reduces presentation work without claiming to bound upstream buffers.
+
+A local `frame-stream` socket advertises `{type:"capabilities",features:["input"]}`.
+The viewer can then send `{type:"input",seq,events}` and receives
+`{type:"input_ack",seq,dispatched,refused?}`. HTTP and socket input share the same
+validation. The server adapts WebMCP events to the existing browser-pane relay
+queue, preserving pointer modifiers, wheel direction/target changes, and input
+order. Pending messages are bounded. The client retains ordering across socket
+batches and HTTP fallback; it does not wait for an HTTP response per gesture.
+
+A refused or interrupted input is surfaced. Unacknowledged input is never
+replayed automatically, because the browser may already have executed it. Old
+servers omit the capability and keep receiving ordered HTTP input. Electron's
+native surface and hosted browser transport do not opt into this path.
+
+The `webmcp:frame-stats` report includes `inputToAck` for socket input. It measures
+dispatch completion, not the resulting paint. `inputToPaint` remains a next-frame
+proxy; the E2E interaction fixture paints a scroll marker to distinguish a real
+scroll response from an unrelated animation frame. The marker test reports
+input-to-frame-arrival separately from viewer decoding and display.
 
 ### Sharp at rest, and adaptive under pressure
 

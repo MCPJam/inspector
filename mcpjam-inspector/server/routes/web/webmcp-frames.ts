@@ -4,7 +4,7 @@
  *
  * The pixels half of a frame-stream session. Everything else about the
  * session — status, tools, activity, and the commands that drive it — stays on
- * the SSE stream and the HTTP command route; this carries ONLY painted frames,
+ * the SSE stream and the HTTP command route; this carries painted frames,
  * as binary, and carries them for exactly the reason SSE could not: a JPEG
  * base64'd into a JSON envelope costs a third more bytes, a `JSON.parse` of a
  * quarter-megabyte string per paint, and a second decode on the way to an
@@ -19,10 +19,11 @@
  * TRUST MODEL. The token here is the ORDINARY inspector session token — the
  * same one `addTokenToUrl` already puts on the SSE stream — rather than a
  * single-use nonce like the local terminal's. That is a deliberate difference
- * in kind: the terminal opens an interactive shell, while this hands back
- * read-only pixels of a session that same token can already start, drive and
- * close through `/api/mcp/webmcp/*`. A nonce would add ceremony without adding
- * a boundary. The gates, in order:
+ * in kind: the terminal opens an interactive shell, while this views and,
+ * after capability negotiation, drives a browser session the same token can
+ * already start, drive and close through `/api/mcp/webmcp/*`. Socket input is
+ * a write path with the same validation and authority as HTTP input.
+ * The gates, in order:
  *   1. Shutdown latch → 4503 (see `shutdownWebMcpFrameSockets`).
  *   2. `WEBMCP_INSPECTOR_ENABLED` → 4503; the route is additionally mounted
  *      only when `!HOSTED_MODE`, so a hosted replica has no path here at all.
@@ -33,15 +34,28 @@
  *   5. A session that exists → else 4404.
  *
  * Wire protocol:
- *   client → server  text JSON {type:"ping"}
+ *   client → server  text JSON {type:"ping"} or {type:"input",seq,events}
+ *   server → client  text JSON {type:"capabilities",features:["input"]}
+ *   server → client  text JSON {type:"input_ack",seq,dispatched,refused?}
  *   server → client  binary frame   24-byte header + JPEG, see
  *                                   `encodeWebMcpBinaryFrame`
  *   server → client  text JSON {type:"pong"}
  *   server → client  close 4401 unauthorized | 4404 gone | 4503 unavailable
  *
- * No client → server binary, and no commands: input still travels the HTTP
- * command route, which already serializes a gesture's events in order.
+ * No client → server binary. Input is capability-gated for local frame-stream
+ * sessions and ordered by the existing relay queue. Other commands remain HTTP.
+ * Older servers omit the capability, so clients continue ordered HTTP input.
  */
+import {
+  createRelayInputForwarder,
+  type RelayInputForwarder,
+} from "./browser-pane-input-forwarder.js";
+import {
+  webMcpSocketInputSchema,
+  WEBMCP_SOCKET_INPUT_MAX_CHARS,
+  toBrowserPaneInput,
+  fromBrowserPaneInput,
+} from "../../../shared/webmcp-input.js";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { MiddlewareHandler } from "hono";
 import type { WSContext } from "hono/ws";
@@ -233,9 +247,15 @@ export function createWebMcpFramesWsHandler(
     let unsubscribe: (() => void) | undefined;
     let pacer: FramePacer | undefined;
     let closed = false;
+    let input: RelayInputForwarder | undefined;
+    const pendingInput = new Set<number>();
+    let lastInputSeq = -1;
 
     const teardown = () => {
       closed = true;
+      input?.cancel();
+      input = undefined;
+      pendingInput.clear();
       unsubscribe?.();
       unsubscribe = undefined;
       pacer?.close();
@@ -281,6 +301,33 @@ export function createWebMcpFramesWsHandler(
         });
         pacer = framePacer;
 
+        // Only a local streamed page accepts socket input. Electron surfaces
+        // receive native input, and hosted viewers use their own connection.
+        if (runtime.toPublic().viewportTransport.kind === "frame-stream") {
+          input = createRelayInputForwarder({
+            preserveGestureBoundaries: true,
+            dispatch: async ({ events }) => {
+              if (
+                closed ||
+                ws.readyState !== 1 ||
+                webMcpSessions.get(sessionId) !== runtime
+              ) {
+                return { ok: false, refused: "no_browser_session" };
+              }
+              await runtime.dispatchInput(events.map(fromBrowserPaneInput));
+              return { ok: true };
+            },
+            ack: (payload) => {
+              pendingInput.delete(payload.seq);
+              if (!closed)
+                ws.send(JSON.stringify({ type: "input_ack", ...payload }));
+            },
+          });
+          ws.send(
+            JSON.stringify({ type: "capabilities", features: ["input"] }),
+          );
+        }
+
         unsubscribe = runtime.hub.subscribe((event) => {
           if (closed) return;
           if (event.type === "frame") {
@@ -321,12 +368,54 @@ export function createWebMcpFramesWsHandler(
       },
 
       onMessage: (evt, ws) => {
-        // Text control messages only. This direction carries no input: a
-        // gesture's events are ordered by the HTTP command chain, and a second
-        // ordering domain would be a second way to get a drag wrong.
         const data = evt.data;
-        if (typeof data !== "string") return;
-        if (!isFramePingMessage(data)) return;
+        if (closed || rejectCode !== null || typeof data !== "string") return;
+        if (!isFramePingMessage(data)) {
+          if (!input || data.length > WEBMCP_SOCKET_INPUT_MAX_CHARS) return;
+          let payload: unknown;
+          try {
+            payload = JSON.parse(data);
+          } catch {
+            return;
+          }
+          const parsed = webMcpSocketInputSchema.safeParse(payload);
+          if (!parsed.success) {
+            const seq = (payload as { seq?: unknown } | null)?.seq;
+            if (
+              typeof seq === "number" &&
+              Number.isSafeInteger(seq) &&
+              seq >= 0
+            ) {
+              ws.send(
+                JSON.stringify({
+                  type: "input_ack",
+                  seq,
+                  dispatched: 0,
+                  refused: "invalid_input",
+                }),
+              );
+            }
+            return;
+          }
+          const { seq, events } = parsed.data;
+          // Bound pending acknowledgements and raw events even when a browser
+          // stalls. Replayed sequence IDs must never repeat a click or paste.
+          if (seq <= lastInputSeq || pendingInput.size >= 16) {
+            ws.send(
+              JSON.stringify({
+                type: "input_ack",
+                seq,
+                dispatched: 0,
+                refused: seq <= lastInputSeq ? "invalid_input" : "overloaded",
+              }),
+            );
+            return;
+          }
+          lastInputSeq = seq;
+          pendingInput.add(seq);
+          input.submit({ seq, events: events.map(toBrowserPaneInput) });
+          return;
+        }
         // A ping is a viewer saying they are still watching, so it refreshes
         // the idle deadline. Without this a session whose only audience is the
         // pane — no navigation, no invocation, nothing else touching the

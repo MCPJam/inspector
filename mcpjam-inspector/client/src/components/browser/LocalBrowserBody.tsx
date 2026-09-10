@@ -420,42 +420,45 @@ export function LocalBrowserBody({
           wire: "binary",
         });
         stream = opened;
-        wire = createFrameWireReader({
-          onFrame: (decoded) => {
-            if (closed) return;
-            paneFrameStats.noteTransport("jpeg-binary");
-            paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
-            frameSeqRef.current = decoded.seq;
-            // React can coalesce two `setFrame` calls into one render, and the
-            // surface only ever releases a frame it PAINTED — so a picture
-            // superseded before the commit has nobody to free it.
-            lastBitmap?.close();
-            lastBitmap = decoded.bitmap;
-            setFrame({
-              bitmap: decoded.bitmap,
-              decodeMs: decoded.decodeMs,
-              deviceWidth: decoded.deviceWidth,
-              deviceHeight: decoded.deviceHeight,
-              scale: decoded.scale,
-              ts: decoded.relayTs,
-              relayTs: decoded.relayTs,
-              seq: decoded.seq,
-            });
+        wire = createFrameWireReader(
+          {
+            onFrame: (decoded) => {
+              if (closed) return;
+              paneFrameStats.noteTransport("jpeg-binary");
+              paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
+              frameSeqRef.current = decoded.seq;
+              // React can coalesce two `setFrame` calls into one render, and the
+              // surface only ever releases a frame it PAINTED — so a picture
+              // superseded before the commit has nobody to free it.
+              lastBitmap?.close();
+              lastBitmap = decoded.bitmap;
+              setFrame({
+                bitmap: decoded.bitmap,
+                decodeMs: decoded.decodeMs,
+                deviceWidth: decoded.deviceWidth,
+                deviceHeight: decoded.deviceHeight,
+                scale: decoded.scale,
+                ts: decoded.relayTs,
+                relayTs: decoded.relayTs,
+                seq: decoded.seq,
+              });
+            },
+            onHeartbeat: (daemon) => {
+              if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
+              noteWebmcpStats(
+                browserPageToolsKey(projectId, "local"),
+                daemon as never,
+                session.bootId,
+              );
+            },
+            onFatal: () => {
+              // A reader that has lost its place in a byte stream can never find
+              // it again, so the connection goes rather than the record.
+              opened.close();
+            },
           },
-          onHeartbeat: (daemon) => {
-            if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
-            noteWebmcpStats(
-              browserPageToolsKey(projectId, "local"),
-              daemon as never,
-              session.bootId,
-            );
-          },
-          onFatal: () => {
-            // A reader that has lost its place in a byte stream can never find
-            // it again, so the connection goes rather than the record.
-            opened.close();
-          },
-        });
+          { latestOnly: window.isElectron !== true },
+        );
         openedSocket = opened.socket;
         socketRef.current = opened.socket;
         socketInputRef.current = false;

@@ -1,5 +1,6 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Globe, RotateCw, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -75,9 +76,6 @@ export function WebmcpInspectorTab() {
     pending,
     starting,
     error,
-    lastScreenshot,
-    lastScreenshotAt,
-    liveFrame,
     frameTransport,
     noteScreenshotPolling,
     startSession,
@@ -91,7 +89,29 @@ export function WebmcpInspectorTab() {
     clearError,
     reconnect,
     disconnect,
-  } = useWebmcpInspectorStore();
+  } = useWebmcpInspectorStore(
+    useShallow((state) => ({
+      session: state.session,
+      tools: state.tools,
+      activity: state.activity,
+      pending: state.pending,
+      starting: state.starting,
+      error: state.error,
+      frameTransport: state.frameTransport,
+      noteScreenshotPolling: state.noteScreenshotPolling,
+      startSession: state.startSession,
+      closeSession: state.closeSession,
+      sendCommand: state.sendCommand,
+      invokeTool: state.invokeTool,
+      cancelInvocation: state.cancelInvocation,
+      captureScreenshot: state.captureScreenshot,
+      setScreencast: state.setScreencast,
+      sendInput: state.sendInput,
+      clearError: state.clearError,
+      reconnect: state.reconnect,
+      disconnect: state.disconnect,
+    })),
+  );
 
   const [url, setUrl] = useState("http://localhost:3000");
   const [selectedToolKey, setSelectedToolKey] = useState<string | undefined>();
@@ -625,7 +645,8 @@ export function WebmcpInspectorTab() {
       ? [
           {
             label: "Copy diagnostics",
-            onSelect: () =>
+            onSelect: () => {
+              const { liveFrame } = useWebmcpInspectorStore.getState();
               void copyWebMcpDiagnostics({
                 session,
                 frameTransport,
@@ -636,7 +657,8 @@ export function WebmcpInspectorTab() {
                       seq: liveFrame.seq,
                     }
                   : undefined,
-              }),
+              });
+            },
           },
         ]
       : []),
@@ -721,10 +743,7 @@ export function WebmcpInspectorTab() {
             <BrowserPanel projectId={sessionProjectId} ensure={false} />
           </div>
         ) : live ? (
-          <ViewportPane
-            frame={liveFrame}
-            fallbackScreenshot={lastScreenshot}
-            fallbackScreenshotAt={lastScreenshotAt}
+          <SubscribedViewportPane
             streaming={streaming}
             transport={session?.viewportTransport}
             behaviour={behaviour}
@@ -844,6 +863,30 @@ export function WebmcpInspectorTab() {
  * during a resize, and that is exactly when a stale aspect ratio would letterbox
  * the picture wrongly.
  */
+/** Frames update only the viewport, never the tools and activity workspace. */
+function SubscribedViewportPane(
+  props: Omit<
+    Parameters<typeof ViewportPane>[0],
+    "frame" | "fallbackScreenshot" | "fallbackScreenshotAt"
+  >,
+) {
+  const frame = useWebmcpInspectorStore((state) => state.liveFrame);
+  const fallbackScreenshot = useWebmcpInspectorStore(
+    (state) => state.lastScreenshot,
+  );
+  const fallbackScreenshotAt = useWebmcpInspectorStore(
+    (state) => state.lastScreenshotAt,
+  );
+  return (
+    <ViewportPane
+      {...props}
+      frame={frame}
+      fallbackScreenshot={fallbackScreenshot}
+      fallbackScreenshotAt={fallbackScreenshotAt}
+    />
+  );
+}
+
 function ViewportPane({
   frame,
   fallbackScreenshot,
@@ -926,6 +969,7 @@ function ViewportPane({
     () =>
       createInputForwarder({
         send: onInput,
+        preserveGestureBoundaries: !HOSTED_MODE && window.isElectron !== true,
         geometry: () => {
           const element = imageRef.current;
           if (!element) return undefined;

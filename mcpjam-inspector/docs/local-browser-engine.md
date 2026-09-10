@@ -109,6 +109,15 @@ pinned real UA, the hover/pointer media pins).
 `MCPJAM_BROWSER_HEADED=1` opens a real window where a display exists. The pane
 streams either way.
 
+## Node-local frame presentation
+
+The local Playground pane opts into bounded JPEG decoding: one decode in flight
+and one replaceable pending frame. Older queued frames are skipped before
+starting another decode, and teardown releases pending work. The decoder's
+existing sequence guard still prevents backwards presentation. Electron and
+hosted consumers retain their existing policies; H.264 frames are not subjected
+to JPEG frame dropping.
+
 ## The profile singleton
 
 A Chromium profile directory is a singleton, guarded by `SingletonLock`. The

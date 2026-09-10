@@ -142,11 +142,16 @@ export function isBrowserPaneInputEvent(
  */
 export function coalesceBrowserPaneInput(
   events: readonly BrowserPaneInputEvent[],
+  preserveGestureBoundaries = false,
 ): BrowserPaneInputEvent[] {
   const out: BrowserPaneInputEvent[] = [];
   for (const event of events) {
     const previous = out[out.length - 1];
-    if (event.type === "mouse_move" && previous?.type === "mouse_move") {
+    if (
+      event.type === "mouse_move" &&
+      previous?.type === "mouse_move" &&
+      (!preserveGestureBoundaries || event.modifiers === previous.modifiers)
+    ) {
       out[out.length - 1] = event;
       continue;
     }
@@ -155,7 +160,10 @@ export function coalesceBrowserPaneInput(
       previous?.type === "wheel" &&
       event.modifiers === previous.modifiers &&
       event.x === previous.x &&
-      event.y === previous.y
+      event.y === previous.y &&
+      (!preserveGestureBoundaries ||
+        (Math.sign(event.deltaX) === Math.sign(previous.deltaX) &&
+          Math.sign(event.deltaY) === Math.sign(previous.deltaY)))
     ) {
       out[out.length - 1] = {
         ...event,
