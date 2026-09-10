@@ -16,6 +16,11 @@ export function BrowserRuntimeControls({
   const reason = useBrowserReadinessStore(
     (s) => s.reasons[`${projectId}:${sessionId}`],
   );
+  const visibleReason = reason?.startsWith("browser_consent_required:")
+    ? engine.consent.granted
+      ? null
+      : "Allow Browser below, then retry your request."
+    : reason?.replace(/^browser_[a-z_]+:\s*/, "");
   const [pending, setPending] = useState<"local" | "cloud" | null>(null);
   const [starting, setStarting] = useState(false);
   const choose = (location: "local" | "cloud") => {
@@ -95,9 +100,9 @@ export function BrowserRuntimeControls({
           </Button>
         </div>
       ) : null}
-      {reason ? (
+      {visibleReason ? (
         <p role="status" className="text-muted-foreground">
-          {reason}
+          {visibleReason}
         </p>
       ) : null}
     </div>

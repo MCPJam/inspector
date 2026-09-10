@@ -157,6 +157,20 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
 }));
 
 describe("PartSwitch", () => {
+  it("keeps browser readiness in the panel instead of rendering internal JSON", () => {
+    const { container } = render(
+      <PartSwitch
+        {...defaultProps}
+        part={
+          {
+            type: "data-browser-readiness",
+            data: { reason: "browser_consent_required: Allow Browser" },
+          } as any
+        }
+      />,
+    );
+    expect(container.textContent).toBe("");
+  });
   const defaultProps = {
     role: "user" as UIMessage["role"],
     onSendFollowUp: vi.fn(),
