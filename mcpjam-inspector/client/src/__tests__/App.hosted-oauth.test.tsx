@@ -3234,7 +3234,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("auto-routes a Convex-authenticated hosted guest into Playground onboarding once startup is ready", async () => {
+  it("routes a Convex-authenticated hosted guest to Home and shows first-run onboarding once startup is ready", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3248,19 +3248,15 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-    expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        isSignedInWithWorkOs: false,
-        isWorkOsAuthLoading: false,
-        isConvexAuthenticated: true,
-        hasSeenFirstRunOnboarding: false,
-      }),
-    );
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("leaves an IdP-initiated visitor on /login instead of auto-routing to Playground", async () => {
@@ -3297,7 +3293,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("auto-routes a Convex-authenticated hosted guest from the default route into Playground onboarding", async () => {
+  it("shows first-run onboarding on Home from the default route", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3311,11 +3307,125 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    // The root URL resolves to Home already, so no history replacement is
+    // needed merely to open the overlay.
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("opens Servers when a first-run guest chooses their own server", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://mcp.example.com/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/servers");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      JSON.parse(localStorage.getItem("mcp-onboarding-state") ?? "{}"),
+    ).toEqual(expect.objectContaining({ status: "started" }));
+  });
+
+  it("connects the Excalidraw demo and opens Playground from first-run onboarding", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+    );
+
+    await waitFor(() => {
       expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
     });
 
     expect(window.location.pathname).toBe("/playground");
-    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(appState.handleConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      }),
+    );
+  });
+
+  it("dismisses first-run onboarding when a guest skips it", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(
+      JSON.parse(localStorage.getItem("mcp-onboarding-state") ?? "{}"),
+    ).toEqual({ status: "dismissed" });
   });
 
   it("does not auto-route a guest row already marked as having seen onboarding", async () => {
@@ -3339,7 +3449,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("auto-routes an unseen guest when the only saved server is the incomplete first-run Excalidraw row", async () => {
+  it("shows onboarding when the only saved server is the incomplete first-run Excalidraw row", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3369,10 +3479,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
   });
 
   it("does not auto-route to Playground when any saved server already exists", async () => {
@@ -3561,7 +3674,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("does not let localStorage hide NUX for a fresh guest user row", async () => {
+  it("does not let a local seen state hide NUX for a fresh guest user row", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     localStorage.setItem(
@@ -3577,10 +3690,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 

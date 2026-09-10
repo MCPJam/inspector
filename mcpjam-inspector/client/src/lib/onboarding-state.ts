@@ -68,6 +68,20 @@ export function markOnboardingShown(): void {
   writeOnboardingState({ status: "seen", shownAt: Date.now() });
 }
 
+/**
+ * Records an explicit decision to leave the first-run flow.
+ *
+ * This stays local for now. A later account-level onboarding pass can persist
+ * the same decision remotely once the sign-in and guest-promotion surfaces are
+ * part of the flow; writing it here keeps a guest from being trapped in the
+ * overlay during this first UI slice.
+ */
+export function markOnboardingDismissed(): void {
+  const current = readOnboardingState();
+  if (current?.status === "completed") return;
+  writeOnboardingState({ status: "dismissed" });
+}
+
 export function clearOnboardingState(): void {
   localStorage.removeItem(STORAGE_KEY);
 }
