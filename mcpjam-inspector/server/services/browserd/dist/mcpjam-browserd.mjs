@@ -6148,7 +6148,17 @@ function createTabViewport(cdp, options) {
       disposed = true;
       buttonMask = 0;
       listeners.clear();
-      await stop();
+      let timer;
+      try {
+        await Promise.race([
+          stop(),
+          new Promise((resolve2) => {
+            timer = setTimeout(resolve2, 1e3);
+          })
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
     }
   };
   async function dispatchBatch(events, stillPermitted, holder) {

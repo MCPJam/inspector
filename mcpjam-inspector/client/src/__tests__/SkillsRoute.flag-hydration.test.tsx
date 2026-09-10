@@ -34,7 +34,8 @@ vi.mock("../hooks/useSkillsEnabled", () => ({
 // The route no longer reads this flag — the Local/Cloud browse toggle moved to
 // `skills-enabled` with the rest of the project store. Mocked because App.tsx's
 // module graph still calls it elsewhere.
-vi.mock("../hooks/useComputersEnabled", () => ({
+vi.mock("../hooks/useComputersEnabled", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useComputersEnabled")>()),
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => true,
   useComputersEnabled: () => true,

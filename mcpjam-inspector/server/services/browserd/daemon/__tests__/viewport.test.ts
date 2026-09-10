@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createTabViewport, type ViewportFrame } from "../viewport";
 import type { CdpLike } from "../webmcp-bridge";
 
@@ -777,4 +777,20 @@ it("resets capture quality on main-frame navigation, not an iframe navigation", 
   await h.viewport.ready();
   expect(h.viewport.counters().jpeg?.quality).toBe(85);
   await h.viewport.dispose();
+});
+
+it("does not block context teardown on an unanswered stopScreencast", async () => {
+  vi.useFakeTimers();
+  try {
+    const fake = fakeCdp();
+    const send = fake.cdp.send.bind(fake.cdp);
+    fake.cdp.send = (method, params) => method === "Page.stopScreencast" ? new Promise(() => {}) : send(method, params);
+    const viewport = createTabViewport(fake.cdp, { surface: { width: 800, height: 600 } });
+    viewport.subscribe(() => {});
+    await Promise.resolve();
+    const disposed = viewport.dispose();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await disposed;
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
 });

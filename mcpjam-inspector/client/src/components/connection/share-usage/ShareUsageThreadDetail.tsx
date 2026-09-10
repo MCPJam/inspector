@@ -641,6 +641,21 @@ export function ShareUsageThreadDetail({
           <SessionFeedbackMark thread={thread} variant="header" />
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {thread.sourceType === "direct" && thread.chatSessionId && (
+            <Button asChild variant="outline" size="sm">
+              <a
+                href={`/playground?${new URLSearchParams({
+                  conversation: thread.chatSessionId,
+                  ...(hasBrowserArtifacts ? { browser: "open" } : {}),
+                  ...(thread.projectId ?? promote?.projectId
+                    ? { project: (thread.projectId ?? promote?.projectId)! }
+                    : {}),
+                }).toString()}`}
+              >
+                Open in Playground
+              </a>
+            </Button>
+          )}
           {canPromoteThread ? (
             <Button
               type="button"

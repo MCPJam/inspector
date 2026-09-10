@@ -254,6 +254,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // The browser panel's own layout, which is a STORE rather than state here
   // because three unrelated things move it: the agent starting to browse, the
   // person dragging the divider, and the panel's own controls.
+  const restorationPending = useActiveChatSessionStore(state => state.restorationPending);
+  const sessionHasBrowser = useActiveChatSessionStore(state => !!state.restoredSession?.browser);
   const conversationId = useActiveChatSessionStore((state) => state.sessionId);
   const browserOpen = useBrowserWorkspaceStore((state) =>
     conversationId ? !!state.conversations[conversationId]?.open : false,
@@ -314,6 +316,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     workspaceState === true &&
     browsersEnabled === true &&
     browserPanelAvailable({
+      sessionHasBrowser,
       hostHasBrowser: !!browserToolIds?.includes("browser"),
       selectedEngine: browserEngine.selectedEngine,
       isAuthenticated: isConvexAuthenticated,
@@ -341,8 +344,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     // during that window was closed again the moment this ran — and the
     // auto-open effect does not fire a second time when the flags land,
     // because nothing it watches changed. The browser simply never appeared.
-    if (browserOpen && canBrowseResolved && !canBrowse) closeBrowser();
-  }, [browserOpen, canBrowse, canBrowseResolved, closeBrowser]);
+    if (!restorationPending && browserOpen && canBrowseResolved && !canBrowse) closeBrowser();
+  }, [restorationPending, browserOpen, canBrowse, canBrowseResolved, closeBrowser]);
 
   // Panel handles let us programmatically expand a collapsed rail when the
   // user clicks the corresponding `CollapsedPanelStrip` peek button.

@@ -195,10 +195,12 @@ export function PlaygroundBrowserPanel({
  */
 export function browserPanelAvailable(args: {
   hostHasBrowser: boolean;
+  sessionHasBrowser?: boolean;
   selectedEngine: "local" | "cloud";
   isAuthenticated: boolean;
   localBrowserRunning: boolean;
 }): boolean {
+  if (args.sessionHasBrowser && args.isAuthenticated) return true;
   if (args.localBrowserRunning) return true;
   if (!args.hostHasBrowser) return false;
   return args.selectedEngine === "local" || args.isAuthenticated;
