@@ -21,21 +21,25 @@ import {
 
 function renderOverlay(
   connectionState: FirstRunConnectionState = { status: "idle" },
+  skipWelcome = false,
 ) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
   const onCancelConnection = vi.fn();
   const onOpenPlayground = vi.fn();
+  const onWelcomeShown = vi.fn();
   const onWelcomeAcknowledged = vi.fn();
   const onSkip = vi.fn();
   const view = render(
     <FirstRunOnboardingOverlay
       open
+      skipWelcome={skipWelcome}
       connectionState={connectionState}
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
       onCancelConnection={onCancelConnection}
       onOpenPlayground={onOpenPlayground}
+      onWelcomeShown={onWelcomeShown}
       onWelcomeAcknowledged={onWelcomeAcknowledged}
       onSkip={onSkip}
     />,
@@ -45,6 +49,7 @@ function renderOverlay(
     onConnectDemo,
     onCancelConnection,
     onOpenPlayground,
+    onWelcomeShown,
     onWelcomeAcknowledged,
     onSkip,
     rerenderWithConnectionState: (
@@ -53,11 +58,13 @@ function renderOverlay(
       view.rerender(
         <FirstRunOnboardingOverlay
           open
+          skipWelcome={skipWelcome}
           connectionState={nextConnectionState}
           onConnectOwnServer={onConnectOwnServer}
           onConnectDemo={onConnectDemo}
           onCancelConnection={onCancelConnection}
           onOpenPlayground={onOpenPlayground}
+          onWelcomeShown={onWelcomeShown}
           onWelcomeAcknowledged={onWelcomeAcknowledged}
           onSkip={onSkip}
         />,
@@ -72,9 +79,26 @@ afterEach(() => {
 });
 
 describe("FirstRunOnboardingOverlay", () => {
+  it("records the welcome when it is shown and can resume at server choice", () => {
+    const { onWelcomeShown } = renderOverlay();
+    expect(onWelcomeShown).toHaveBeenCalledOnce();
+
+    cleanup();
+    renderOverlay({ status: "idle" }, true);
+    expect(
+      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("advances from the welcome card with Continue", () => {
     const { onWelcomeAcknowledged } = renderOverlay();
 
+    expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
+      "backdrop-blur-[32px]",
+    );
     const continueButton = screen.getByRole("button", { name: "Continue" });
     expect(continueButton).toHaveClass(
       "justify-self-start",
@@ -87,6 +111,9 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("heading", { name: "Point MCPJam at a server" }),
     ).toBeInTheDocument();
+    expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
+      "backdrop-blur-sm",
+    );
   });
 
   it("advances from the welcome card with Enter", () => {
