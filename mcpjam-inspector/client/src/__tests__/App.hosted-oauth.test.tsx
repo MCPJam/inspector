@@ -912,19 +912,13 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const entitlementsCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationEntitlements",
-    );
-    const orgPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationPremiumness",
-    );
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness",
+    // Status, entitlements, both premiumness states and the plan catalog now
+    // ride on one bundled subscription.
+    const bundleCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(entitlementsCall?.[1]).toBe("skip");
-    expect(orgPremiumnessCall?.[1]).toBe("skip");
-    expect(wsPremiumnessCall?.[1]).toBe("skip");
+    expect(bundleCall?.[1]).toBe("skip");
   });
 
   it("skips billing queries while a project org id is still unvalidated", () => {
@@ -944,19 +938,13 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const entitlementsCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationEntitlements",
-    );
-    const orgPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationPremiumness",
-    );
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness",
+    // Status, entitlements, both premiumness states and the plan catalog now
+    // ride on one bundled subscription.
+    const bundleCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(entitlementsCall?.[1]).toBe("skip");
-    expect(orgPremiumnessCall?.[1]).toBe("skip");
-    expect(wsPremiumnessCall?.[1]).toBe("skip");
+    expect(bundleCall?.[1]).toBe("skip");
   });
 
   it("skips project billing and clears stale synced selection when the active project is missing", async () => {
@@ -991,11 +979,16 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness",
+    // The bundle may still run for the organization, but it must not carry a
+    // projectId while the project's org is unvalidated.
+    const bundleCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(wsPremiumnessCall?.[1]).toBe("skip");
+    expect(bundleCalls.length).toBeGreaterThan(0);
+    for (const [, bundleArgs] of bundleCalls) {
+      expect(bundleArgs === "skip" || !("projectId" in bundleArgs)).toBe(true);
+    }
     await waitFor(() => {
       expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     });
@@ -1051,11 +1044,16 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness",
+    // The bundle may still run for the organization, but it must not carry a
+    // projectId while the project's org is unvalidated.
+    const bundleCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(wsPremiumnessCall?.[1]).toBe("skip");
+    expect(bundleCalls.length).toBeGreaterThan(0);
+    for (const [, bundleArgs] of bundleCalls) {
+      expect(bundleArgs === "skip" || !("projectId" in bundleArgs)).toBe(true);
+    }
     await waitFor(() => {
       expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     });
@@ -1667,6 +1665,49 @@ describe("App hosted OAuth callback handling", () => {
       ...createAppStateMock(),
       activeOrganizationId: "org-1",
     }));
+    const orgThreeBillingStatus = {
+      organizationId: "org-3",
+      organizationName: "Org Three",
+      plan: "free",
+      effectivePlan: "free",
+      source: "free",
+      billingInterval: null,
+      billingConfigured: true,
+      subscriptionStatus: null,
+      canManageBilling: true,
+      isOwner: true,
+      hasCustomer: false,
+      stripeCurrentPeriodEnd: null,
+      stripePriceId: null,
+      trialStatus: "none",
+      trialPlan: null,
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialDaysRemaining: null,
+      decisionRequired: false,
+      trialDecision: null,
+    };
+    const orgThreePremiumness = {
+      plan: "free",
+      effectivePlan: "free",
+      billingInterval: null,
+      source: "free",
+      enforcementState: "active",
+      decisionRequired: false,
+      gates: [
+        {
+          gateKey: "maxProjects",
+          kind: "limit",
+          scope: "organization",
+          canAccess: true,
+          shouldShowUpsell: false,
+          upgradePlan: null,
+          reason: "within_limit",
+          currentValue: 1,
+          allowedValue: null,
+        },
+      ],
+    };
     mockUseQuery.mockImplementation((name: string, args?: any) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -1688,58 +1729,21 @@ describe("App hosted OAuth callback handling", () => {
           },
         ];
       }
-      if (
-        name === "billing:getOrganizationBillingStatus" &&
-        args?.organizationId === "org-3"
-      ) {
-        return {
-          organizationId: "org-3",
-          organizationName: "Org Three",
-          plan: "free",
-          effectivePlan: "free",
-          source: "free",
-          billingInterval: null,
-          billingConfigured: true,
-          subscriptionStatus: null,
-          canManageBilling: true,
-          isOwner: true,
-          hasCustomer: false,
-          stripeCurrentPeriodEnd: null,
-          stripePriceId: null,
-          trialStatus: "none",
-          trialPlan: null,
-          trialStartedAt: null,
-          trialEndsAt: null,
-          trialDaysRemaining: null,
-          decisionRequired: false,
-          trialDecision: null,
-        };
-      }
-      if (
-        name === "billing:getOrganizationPremiumness" &&
-        args?.organizationId === "org-3"
-      ) {
-        return {
-          plan: "free",
-          effectivePlan: "free",
-          billingInterval: null,
-          source: "free",
-          enforcementState: "active",
-          decisionRequired: false,
-          gates: [
-            {
-              gateKey: "maxProjects",
-              kind: "limit",
-              scope: "organization",
-              canAccess: true,
-              shouldShowUpsell: false,
-              upgradePlan: null,
-              reason: "within_limit",
-              currentValue: 1,
-              allowedValue: null,
-            },
-          ],
-        };
+      if (args?.organizationId === "org-3") {
+        // `useOrganizationBillingStatus` is still its own subscription; the
+        // rest of the billing reads arrive together in the bundle.
+        if (name === "billing:getOrganizationBillingStatus") {
+          return orgThreeBillingStatus;
+        }
+        if (name === "billing:getOrganizationBillingBundle") {
+          return {
+            billingStatus: orgThreeBillingStatus,
+            entitlements: undefined,
+            organizationPremiumness: orgThreePremiumness,
+            projectPremiumness: null,
+            planCatalog: undefined,
+          };
+        }
       }
 
       return undefined;
@@ -3948,25 +3952,31 @@ describe("App hosted OAuth callback handling", () => {
         ];
       }
 
-      if (name === "billing:getProjectPremiumness") {
+      if (name === "billing:getOrganizationBillingBundle") {
         return {
-          plan: "free",
-          enforcementState: "active",
-          effectivePlan: "free",
-          billingInterval: null,
-          source: "free",
-          decisionRequired: false,
-          gates: [
-            {
-              gateKey: "evals",
-              kind: "feature",
-              scope: "organization",
-              canAccess: false,
-              shouldShowUpsell: true,
-              upgradePlan: "team",
-              reason: "feature_not_included",
-            },
-          ],
+          billingStatus: undefined,
+          entitlements: undefined,
+          organizationPremiumness: undefined,
+          projectPremiumness: {
+            plan: "free",
+            enforcementState: "active",
+            effectivePlan: "free",
+            billingInterval: null,
+            source: "free",
+            decisionRequired: false,
+            gates: [
+              {
+                gateKey: "evals",
+                kind: "feature",
+                scope: "organization",
+                canAccess: false,
+                shouldShowUpsell: true,
+                upgradePlan: "team",
+                reason: "feature_not_included",
+              },
+            ],
+          },
+          planCatalog: undefined,
         };
       }
 
@@ -3975,11 +3985,11 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness",
+    const bundleCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(wsPremiumnessCall?.[1]).toEqual({
+    expect(bundleCall?.[1]).toEqual({
       organizationId: "org-1",
       projectId: "shared-ws-1",
     });
