@@ -1,4 +1,6 @@
-vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { id: "member" } }),
+}));
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { useBrowserPageToolsStore } from "@/stores/browser-page-tools-store";
 import { beforeAll } from "vitest";
@@ -251,6 +253,54 @@ function renderBody(over: Record<string, unknown> = {}) {
 }
 
 describe("the agent browser pane", () => {
+  it("offers Chromium installation before a comparison session exists", async () => {
+    api.status = {
+      ...api.status,
+      installed: false,
+      install: { status: "idle" },
+    } as typeof api.status;
+    render(
+      <BrowserWorkspaceChrome.Provider
+        value={{ holderId: "comparison-holder" }}
+      >
+        <LocalBrowserBody
+          projectId="proj-1"
+          sessionId="cursor-session"
+          consentGranted
+          consentToken="tok"
+        />
+      </BrowserWorkspaceChrome.Provider>,
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Install Chromium" }),
+    );
+    expect(api.installs).toBe(1);
+    expect(api.ensures).toEqual([]);
+  });
+
+  it("notifies comparison chrome when an existing session is discovered", async () => {
+    const ready = vi.fn();
+    api.lookup.mockResolvedValue({
+      bootId: "existing",
+      lease: { state: "free" },
+    });
+    render(
+      <BrowserWorkspaceChrome.Provider
+        value={{ holderId: "comparison-holder" }}
+      >
+        <LocalBrowserBody
+          projectId="proj-1"
+          sessionId="cursor-session"
+          consentGranted
+          consentToken="tok"
+          onSessionReady={ready}
+        />
+      </BrowserWorkspaceChrome.Provider>,
+    );
+    await waitFor(() => expect(ready).toHaveBeenCalledOnce());
+    expect(api.ensures).toEqual([]);
+  });
+
   it("only attaches to existing sessions when viewing a comparison client", async () => {
     render(
       <BrowserWorkspaceChrome.Provider

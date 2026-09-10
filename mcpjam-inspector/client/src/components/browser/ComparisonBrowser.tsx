@@ -44,6 +44,8 @@ export function ComparisonBrowser({
   );
   const showNames = clients.some((client) => client.clientCount > 1);
   const selected = clients.find((client) => client.sessionId === selectedId);
+  // Local setup must be reachable before Chromium can produce a snapshot.
+  const localClient = selected ?? clients[0];
   const engine = useBrowserEngine(projectId);
   const mint = useMintConversationBrowserToken();
   const mintRef = useRef(mint);
@@ -142,8 +144,8 @@ export function ComparisonBrowser({
           result.reason === "lease_held"
             ? "Someone else has control of this browser."
             : result.reason === "no_session"
-            ? "This browser is no longer running."
-            : "The browser could not complete that action. Try again.",
+              ? "This browser is no longer running."
+              : "The browser could not complete that action. Try again.",
         );
         return;
       }
@@ -176,8 +178,8 @@ export function ComparisonBrowser({
               title: views[client.sessionId]?.stale
                 ? "Reconnecting…"
                 : snapshot
-                ? "No open tabs"
-                : "Connecting…",
+                  ? "No open tabs"
+                  : "Connecting…",
               loading: !snapshot,
             },
           ];
@@ -191,7 +193,7 @@ export function ComparisonBrowser({
             clientName: showNames ? client.name : undefined,
             clientLogo: showNames ? client.logo : undefined,
             unavailable: !tab.id,
-          } satisfies BrowserDisplayTab & { sessionId: string; tabId: string }),
+          }) satisfies BrowserDisplayTab & { sessionId: string; tabId: string },
       );
     });
   const selectedView = selectedId ? views[selectedId] : undefined;
@@ -274,33 +276,36 @@ export function ComparisonBrowser({
               location="playground_browser"
             />
           </div>
+        ) : localClient?.engine === "local" ? (
+          <LocalBrowserBody
+            key={localClient.sessionId}
+            projectId={projectId}
+            sessionId={localClient.sessionId}
+            consentGranted={engine.consent.granted}
+            consentToken={engine.consent.token}
+            active={active}
+            onSessionReady={() =>
+              useBrowserComparisonStore
+                .getState()
+                .noteBrowsing(localClient.sessionId)
+            }
+          />
         ) : selected && selectedView?.snapshot ? (
-          selected.engine === "local" ? (
-            <LocalBrowserBody
-              key={selected.sessionId}
-              projectId={projectId}
-              sessionId={selected.sessionId}
-              consentGranted={engine.consent.granted}
-              consentToken={engine.consent.token}
-              active={active}
-            />
-          ) : (
-            <HostedBrowserBody
-              key={selected.sessionId}
-              projectId={projectId}
-              sessionId={selected.sessionId}
-              mintToken={mintSelected}
-              active={active}
-            />
-          )
+          <HostedBrowserBody
+            key={selected.sessionId}
+            projectId={projectId}
+            sessionId={selected.sessionId}
+            mintToken={mintSelected}
+            active={active}
+          />
         ) : (
           <p role="status" className="p-4 text-sm text-muted-foreground">
             {selected
               ? selected.engine === "local" && !engine.consent.granted
                 ? "Allow local browser access in Browser settings to view this client."
                 : showNames
-                ? `Connecting to ${selected.name}’s browser…`
-                : "Connecting to browser…"
+                  ? `Connecting to ${selected.name}’s browser…`
+                  : "Connecting to browser…"
               : "Waiting for a client to browse…"}
           </p>
         )}

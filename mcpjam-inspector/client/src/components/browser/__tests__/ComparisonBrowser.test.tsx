@@ -26,8 +26,14 @@ const mocks = vi.hoisted(() => ({
   grant: vi.fn(async () => true),
   hosted: false,
 }));
-vi.mock("@/lib/config", () => ({ get HOSTED_MODE() { return mocks.hosted; } }));
-vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: null }) }));
+vi.mock("@/lib/config", () => ({
+  get HOSTED_MODE() {
+    return mocks.hosted;
+  },
+}));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: null }),
+}));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/hooks/useBrowserEngine", () => ({
   useBrowserEngine: () => ({
@@ -119,6 +125,30 @@ beforeEach(() => {
 });
 
 describe("one combined browser strip", () => {
+  it("mounts local setup before the first browser session or snapshot exists", async () => {
+    register("a", 0);
+    store.setState((state) => ({
+      clients: { a: { ...state.clients.a, started: false } },
+      selected: {},
+    }));
+    mocks.read.mockResolvedValue(null);
+    mount();
+    expect(screen.getByTestId("local-body")).toHaveAttribute(
+      "data-session",
+      "a",
+    );
+    expect(mocks.transports).not.toHaveBeenCalled();
+  });
+
+  it("keeps local installation and recovery available when a started client has no snapshot", () => {
+    register("a", 0);
+    mocks.read.mockResolvedValue(null);
+    mount();
+    expect(screen.getByTestId("local-body")).toHaveAttribute(
+      "data-session",
+      "a",
+    );
+  });
   it("shows guests Allow before any client has started browsing", async () => {
     mocks.granted = false;
     mount();

@@ -8,7 +8,14 @@ import {
   noteWebmcpStats,
   useBrowserPageToolsStore,
 } from "@/stores/browser-page-tools-store";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { BrowserWorkspaceChrome } from "./BrowserWorkspaceChrome";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -99,6 +106,7 @@ export function LocalBrowserBody({
   consentGranted,
   consentToken,
   active = true,
+  onSessionReady,
 }: {
   projectId: string | null;
   /** Durable logical session, when this pane belongs to a conversation. */
@@ -115,12 +123,19 @@ export function LocalBrowserBody({
    * idle reap, so a hidden pane must stop claiming somebody is watching.
    */
   active?: boolean;
+  /** Notify comparison chrome when a manual start or an existing session is found. */
+  onSessionReady?: () => void;
 }) {
   const workspaceEnabled = useBrowserWorkspaceEnabled();
   const comparisonWorkspace = useContext(BrowserWorkspaceChrome);
   const { grant: grantConsent } = useLocalBrowserConsent();
   const [status, setStatus] = useState<LocalBrowserStatus | null>(null);
   const [session, setSession] = useState<{ bootId: string } | null>(null);
+  const sessionReadyRef = useRef(onSessionReady);
+  sessionReadyRef.current = onSessionReady;
+  useEffect(() => {
+    if (session) sessionReadyRef.current?.();
+  }, [session]);
   const [lease, setLease] = useState<LocalBrowserLease>({ state: "free" });
   const [frame, setFrame] = useState<PaneFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
