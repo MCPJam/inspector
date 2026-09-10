@@ -28,15 +28,30 @@ const HOSTED_TRANSPORT_FAILURE_DETAIL =
  * REACHED. It does not, on its own, stop the attempt describing what it found:
  * `normalizeServerDoctorError` copies the raw transport message onto
  * `connection.detail`, `checks.connection.detail` and `error.message`, and the
- * probe copies it onto `attempts[].error`. Those four fields are the residue.
+ * probe copies it onto `attempts[].error`. OAuth discovery adds one more:
+ * `oauth.discoveryError` is the failure of a fetch to a host the TARGET named
+ * in its own `WWW-Authenticate` challenge, so it is a second origin, chosen
+ * separately from the server URL, and the same port oracle pointed at it.
+ * `bench-probe-child` copies that string onto a user-visible check detail.
  *
  * THE TEST IS STRUCTURAL, NOT A PATTERN LIST. A denylist of socket-error
- * spellings leaks the first time undici renames one. Instead: if NO probe
- * attempt received a response, then nothing HTTP-level happened, so every one
- * of those strings can only be describing a socket, DNS or TLS outcome — and it
- * is replaced wholesale. Once some attempt has a response the target answered
- * as a public host, and its detail is the diagnostic the product exists to
- * show, so it passes through untouched.
+ * spellings leaks the first time undici renames one. Instead: an attempt that
+ * received no response got no further than the socket, so what it says can only
+ * be describing a socket, DNS or TLS outcome — and it is replaced wholesale. An
+ * attempt that did receive one reached a host answering as a public server, and
+ * its detail is the diagnostic the product exists to show, so it passes through
+ * untouched. That reasoning is per attempt, so the decision is too: a target
+ * whose first transport answers and whose second is refused at the socket used
+ * to have the second one's message pass through with the first's.
+ *
+ * THE ENVELOPE-LEVEL FIELDS TAKE THE STRICTER GATE. `probe.error`,
+ * `connection.detail`, `checks[].detail`, `error.message` and
+ * `oauth.discoveryError` summarise the whole run and name no attempt, so a
+ * mixed run cannot be resolved per attempt and the summary may well be quoting
+ * the refused hop. They survive only when EVERY recorded attempt received a
+ * response, the one state in which no socket text existed to be summarised. A
+ * run that recorded no attempt at all offers no such proof and is redacted with
+ * the rest.
  *
  * An egress refusal keeps its own message: `classifyPinnedTransportError`
  * already phrases it without the address the hostname resolved to, so it is a
@@ -61,6 +76,7 @@ export function redactHostedDoctorTransportDetail<T>(result: T): T {
       transport?: {
         attempts?: Array<{ response?: unknown; error?: string }>;
       };
+      oauth?: { discoveryError?: string };
     } | null;
     connection?: { status?: string; detail?: string };
     checks?: Record<string, { status?: string; detail?: string } | undefined>;
@@ -68,9 +84,8 @@ export function redactHostedDoctorTransportDetail<T>(result: T): T {
   };
 
   const attempts = envelope.probe?.transport?.attempts ?? [];
-  if (attempts.some((attempt) => attempt?.response !== undefined)) {
-    return result;
-  }
+  const answered = (attempt: { response?: unknown } | undefined) =>
+    attempt?.response !== undefined;
 
   const rewrite = (detail: string | undefined): string | undefined =>
     detail === undefined || isEgressRefusalDetail(detail)
@@ -78,9 +93,19 @@ export function redactHostedDoctorTransportDetail<T>(result: T): T {
       : HOSTED_TRANSPORT_FAILURE_DETAIL;
 
   for (const attempt of attempts) {
-    if (attempt?.error !== undefined) {
+    if (attempt?.error !== undefined && !answered(attempt)) {
       attempt.error = rewrite(attempt.error);
     }
+  }
+
+  if (attempts.length > 0 && attempts.every(answered)) {
+    return result;
+  }
+
+  if (envelope.probe?.oauth?.discoveryError !== undefined) {
+    envelope.probe.oauth.discoveryError = rewrite(
+      envelope.probe.oauth.discoveryError
+    );
   }
   if (envelope.probe?.error !== undefined) {
     envelope.probe.error = rewrite(envelope.probe.error);

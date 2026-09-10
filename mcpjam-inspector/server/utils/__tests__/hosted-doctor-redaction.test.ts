@@ -30,6 +30,8 @@ type DoctorEnvelope = {
         error?: string;
       }>;
     };
+    /** Set by the probe when RFC 9728 discovery failed — see the redactor. */
+    oauth?: { discoveryError?: string };
   } | null;
   connection: { status: string; detail: string };
   checks: Record<string, { status: string; detail: string }>;
@@ -63,6 +65,44 @@ function socketFailureEnvelope(socketError: string): DoctorEnvelope {
       tools: { status: "skipped", detail: "Tools were not collected." },
     },
     error: { code: "SERVER_UNREACHABLE", message: socketError },
+  };
+}
+
+/**
+ * Scenario B routed through OAuth discovery. The server URL answers a
+ * challenge; the metadata host it names is a second origin, picked by whoever
+ * controls the target, and `oauth.discoveryError` is the only field that
+ * reports what happened when the inspector dialled it.
+ */
+function oauthDiscoveryEnvelope(metadataError: string): DoctorEnvelope {
+  return {
+    probe: {
+      status: "oauth_required",
+      transport: {
+        attempts: [
+          {
+            request: { url: "https://mcp.example.test/mcp" },
+            response: {
+              status: 401,
+              headers: {
+                "www-authenticate":
+                  'Bearer resource_metadata="https://metadata.example.test/prm"',
+              },
+            },
+          },
+          {
+            request: { url: "https://metadata.example.test/prm" },
+            error: metadataError,
+          },
+        ],
+      },
+      oauth: { discoveryError: metadataError },
+    },
+    connection: { status: "error", detail: metadataError },
+    checks: {
+      resourceMetadata: { status: "error", detail: metadataError },
+    },
+    error: { code: "OAUTH_DISCOVERY_FAILED", message: metadataError },
   };
 }
 
@@ -163,5 +203,69 @@ describe("hosted doctor transport-detail redaction", () => {
     const redacted = loaded.redact(socketFailureEnvelope(CLOSED_PORT));
     expect(redacted.connection.detail).toBe(CLOSED_PORT);
     expect(redacted.error?.message).toBe(CLOSED_PORT);
+  });
+
+  it("makes the metadata host's open and closed ports indistinguishable", async () => {
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    const closed = loaded.redact(oauthDiscoveryEnvelope(CLOSED_PORT));
+    const open = loaded.redact(oauthDiscoveryEnvelope(OPEN_CLEARTEXT_PORT));
+
+    expect(JSON.stringify(closed)).toBe(JSON.stringify(open));
+    expect(JSON.stringify(closed)).not.toMatch(
+      /ECONNREFUSED|6379|127\.0\.0\.1/
+    );
+    expect(closed.probe?.oauth?.discoveryError).toBe(closed.connection.detail);
+  });
+
+  it("keeps an egress refusal's own wording on the discovery error", async () => {
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    const refusal =
+      'Metadata pointer hostname "metadata.example.test" resolves to a private or internal address that the hosted inspector will not dial.';
+    const redacted = loaded.redact(oauthDiscoveryEnvelope(refusal));
+
+    expect(redacted.probe?.oauth?.discoveryError).toBe(refusal);
+  });
+
+  it("leaves the discovery error alone outside hosted mode", async () => {
+    const loaded = await loadRedactor(false);
+    restore = loaded.restore;
+
+    const redacted = loaded.redact(oauthDiscoveryEnvelope(CLOSED_PORT));
+    expect(redacted.probe?.oauth?.discoveryError).toBe(CLOSED_PORT);
+  });
+
+  it("redacts a refused attempt even when a sibling attempt answered", async () => {
+    const loaded = await loadRedactor(true);
+    restore = loaded.restore;
+
+    const envelope = socketFailureEnvelope("initialize failed: -32600");
+    envelope.probe!.transport.attempts[0].response = {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    };
+    envelope.probe!.transport.attempts.push({
+      request: { url: "https://mcp.example.test/sse" },
+      error: CLOSED_PORT,
+    });
+
+    const redacted = loaded.redact(envelope);
+
+    // The answered attempt reached a public responder, so its diagnostic is
+    // still the product. The refused one is a socket outcome against whatever
+    // the second transport dialled, and used to ride out on the first's
+    // response.
+    expect(redacted.probe!.transport.attempts[0].error).toBe(
+      "initialize failed: -32600"
+    );
+    expect(redacted.probe!.transport.attempts[1].error).toBe(
+      redacted.connection.detail
+    );
+    expect(JSON.stringify(redacted)).not.toMatch(
+      /ECONNREFUSED|6379|127\.0\.0\.1/
+    );
   });
 });
