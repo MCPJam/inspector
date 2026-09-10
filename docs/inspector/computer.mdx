@@ -155,6 +155,17 @@ that image — not on your personal computer.
 
 When a host configuration includes a browser tool, the Playground shows a browser panel alongside the chat. Each conversation owns its own browser — switching between chats reattaches the existing browser for that conversation rather than opening a new one or navigating away.
 
+The Browser feature has its own rollout, independent of the Computer (shell) feature. The browser panel appears when Browser is enabled for your account — you do not need a Computer attached to use it.
+
+### Browser location
+
+When the browser panel is available, a location selector lets you choose where the browser runs:
+
+- **This machine** — runs a local Chromium on the same machine as the Inspector. Available to both signed-in members and verified guests when the local Browser rollout is active.
+- **Cloud** — runs a hosted browser. Available to signed-in members only when the hosted Browser rollout is active.
+
+Guests can use **This machine** but the **Cloud** option is not available to them. If only one location is available, the selector is replaced by a label.
+
 ### Switching conversations
 
 When you switch from one conversation to another, the Playground reconnects to that conversation's existing browser. The live tabs, page content, unsaved form text, and scroll position are preserved exactly as you left them. No navigation happens on reattach.
