@@ -338,6 +338,7 @@ export function BrowserPaneSurface({
     }
 
     const record = (decodeMs?: number) => {
+      paneFrameStats.noteDisplayed?.(canvas.getBoundingClientRect());
       if (onPainted) {
         onPainted(frame, decodeMs);
         return;
@@ -476,7 +477,7 @@ export function BrowserPaneSurface({
         data-testid="rail-browser-frame"
         aria-label={label}
         role="img"
-        className="h-full w-full select-none object-contain"
+        className="max-h-full max-w-full select-none object-contain"
         onPointerMove={(event) => {
           // Mid-drag a move must still land, even over a letterbox bar: the
           // page is tracking the pointer and a gap reads as a jump.
@@ -602,7 +603,7 @@ export function BrowserPaneSurface({
         ref={paneRef}
         aria-label={interactionLabel}
         className={cn(
-          "relative min-h-0 flex-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          "relative flex min-h-0 flex-1 items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           chrome !== "none" && "px-3 pb-3",
         )}
         // FOCUSABLE EVEN WHEN THE AGENT IS DRIVING, because typing is now one

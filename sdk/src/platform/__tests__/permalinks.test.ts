@@ -465,7 +465,7 @@ describe("the route registry is the type list", () => {
       eval_run: `/evals/suite/p-1/runs/id-1?project=${PROJECT}`,
       eval_run_group: `/evals/suite/p-1?view=runs&project=${PROJECT}`,
       chat_session: `/sessions?session=id-1&project=${PROJECT}`,
-      playground_conversation: `/playground?browser=open&conversation=id-1&project=${PROJECT}`,
+      playground_conversation: `/playground?conversation=id-1&project=${PROJECT}`,
       conformance_run: `/conformance/runs/id-1?project=${PROJECT}`,
       journey_run: `/swarms/id-1?project=${PROJECT}`,
       user_testing_scenario: `/user-testing/id-1?project=${PROJECT}`,
