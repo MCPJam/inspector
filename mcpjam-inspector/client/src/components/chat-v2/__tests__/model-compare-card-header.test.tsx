@@ -40,6 +40,28 @@ function getMetricRunningSpinnerCount(container: ParentNode): number {
 }
 
 describe("ModelCompareCardHeader", () => {
+  it("omits status from tabs when the drawer header owns it", () => {
+    render(<ModelCompareCardHeader summary={idleSummary} allSummaries={[]} mode="chat" onModeChange={vi.fn()} showTraceTabs showComparisonChrome={false} compactCompareHeader={false} tabsInline result="passed" hideStatus />);
+    expect(screen.queryByLabelText("Passed")).not.toBeInTheDocument();
+    expect(screen.getByTitle("Chat view")).toBeInTheDocument();
+  });
+
+  it("omits the running dot from the run detail tabs", () => {
+    render(
+      <ModelCompareCardHeader
+        summary={{ ...idleSummary, status: "running" }}
+        allSummaries={[]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs
+        showComparisonChrome={false}
+        tabsInline
+      />,
+    );
+    expect(screen.queryByLabelText("Running")).not.toBeInTheDocument();
+    expect(screen.getByTitle("Chat view")).toBeInTheDocument();
+  });
+
   it("renders nothing when comparison chrome is off, trace tabs are hidden, and identity is off", () => {
     const { container } = render(
       <ModelCompareCardHeader

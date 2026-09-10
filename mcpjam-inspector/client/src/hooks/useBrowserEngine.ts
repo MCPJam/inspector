@@ -3,6 +3,7 @@ import { useProjectEnvironmentsEnabled } from "./useProjectEnvironmentsEnabled";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { HOSTED_MODE } from "@/lib/config";
+import { useAuth } from "@workos-inc/authkit-react";
 import {
   loadBrowserEngine,
   saveBrowserEngine,
@@ -10,17 +11,26 @@ import {
   type BrowserEngineChoice,
 } from "@/lib/browser-engine-storage";
 import { useLocalBrowserConsent } from "./useLocalBrowserConsent";
-import { useLocalBrowserEnabled } from "./useComputersEnabled";
+import {
+  useLocalBrowserEnabled,
+  useHostedBrowserEnabled,
+} from "./useComputersEnabled";
 import { useComputersDataPlaneConfig } from "./useProjectComputer";
 
 /** Selection is independent of consent and readiness: never silently move a browser. */
-export function useBrowserEngine(projectId: string | null) {
+export function useBrowserEngine(
+  projectId: string | null,
+  scope: "conversation" | "preference" = "conversation",
+) {
+  const { user } = useAuth();
   const config = useComputersDataPlaneConfig();
   const consent = useLocalBrowserConsent();
   const enabled = useLocalBrowserEnabled();
+  const hostedEnabled = useHostedBrowserEnabled();
   const [environmentId] = usePreviewedEnvironmentId(projectId);
   const environmentsEnabled = useProjectEnvironmentsEnabled();
-  const environmentMode = environmentsEnabled && Boolean(environmentId);
+  const environmentMode =
+    scope === "conversation" && environmentsEnabled && Boolean(environmentId);
   const boundLocation = useActiveChatSessionStore((state) =>
     state.browserLocation?.projectId === projectId &&
     state.browserLocation.sessionId === state.sessionId
@@ -46,18 +56,22 @@ export function useBrowserEngine(projectId: string | null) {
     },
     [projectId, environmentMode],
   );
+  // Rollout chooses the default; explicit/bound local selection still needs
+  // truthful server readiness so users can grant Browser permission.
   const localAvailable =
     !HOSTED_MODE &&
     !environmentMode &&
-    enabled &&
     config?.engines.local.browserAvailable === true;
   // Only an explicit preference or a bound conversation survives loss of
   // candidacy. An unseeded rollout continues using the existing Cloud path.
   const selectedEngine: BrowserEngineChoice =
     HOSTED_MODE || environmentMode
       ? "cloud"
-      : boundLocation ?? preference ?? (localAvailable ? "local" : "cloud");
-  const cloudAvailable = config?.engines.cloud.available ?? false;
+      : (scope === "conversation" ? boundLocation : null) ??
+        preference ??
+        (enabled && localAvailable ? "local" : "cloud");
+  const cloudAvailable =
+    Boolean(user) && hostedEnabled && config?.engines.cloud.available === true;
   return {
     engine: selectedEngine,
     selectedEngine,
@@ -65,7 +79,11 @@ export function useBrowserEngine(projectId: string | null) {
     resolved: config !== undefined,
     localAvailable,
     cloudAvailable,
-    toggleVisible: !HOSTED_MODE && !environmentMode,
+    // Same rule as the Computer tab: a location picker only exists when
+    // both engines are real options. `cloudAvailable` already includes the
+    // hosted-browser rollout, so a local-only launch never offers Cloud.
+    toggleVisible:
+      !HOSTED_MODE && !environmentMode && localAvailable && cloudAvailable,
     environmentMode,
     consent,
   };

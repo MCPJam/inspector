@@ -1,3 +1,4 @@
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 /**
@@ -464,11 +465,7 @@ export interface UseChatSessionOptions {
 }
 
 export type ChatSessionResetReason =
-  | "auth-bootstrap"
-  | "hydrate"
-  | "fork"
-  | "servers-changed"
-  | "reset";
+  "auth-bootstrap" | "hydrate" | "fork" | "servers-changed" | "reset";
 
 /**
  * Shown when `detachToLocalFork` could not confirm its fork went live. The
@@ -2344,8 +2341,8 @@ export function useChatSession(
               ];
             const server =
               (log.serverName
-                ? appState?.servers?.[log.serverName] ??
-                  activeProject?.servers?.[log.serverName]
+                ? (appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName])
                 : undefined) ??
               appState?.servers?.[log.serverId] ??
               activeProject?.servers?.[log.serverId];
@@ -2954,10 +2951,7 @@ export function useChatSession(
       Boolean(localConsentToken) &&
       authIsMemberRef.current;
     const sendLocalBrowser =
-      !shouldUseOrgAwareChatApi &&
-      localBrowserRequested &&
-      !hostedScenarioId &&
-      authIsMemberRef.current;
+      !shouldUseOrgAwareChatApi && localBrowserRequested && !hostedScenarioId;
     if (sendLocalBrowser && browserConsentToken)
       mergedHeaders[BROWSER_CONSENT_HEADER] = browserConsentToken;
     if (sendLocalEngine && localConsentToken) {
@@ -3079,7 +3073,7 @@ export function useChatSession(
         // the data-part handler, whose closure is recreated on a project
         // switch and would stamp the NEW project on a late part.
         turnTaskScopeRef.current = shouldUseOrgAwareChatApi
-          ? hostedProjectId ?? undefined
+          ? (hostedProjectId ?? undefined)
           : getTrackedTaskScope();
         // And the approval value this turn is SENT with, for the same reason.
         // The server declares each tool's `needsApproval` from the value in
@@ -3221,11 +3215,8 @@ export function useChatSession(
             ? { expectedVersion: resumedVersionRef.current }
             : {}),
           ...(rewind ? { rewind } : {}),
-          // Host-managed built-in tools (e.g. ["web_search"]). Forwarded only
-          // when non-empty so pre-feature traces stay byte-identical. The
-          // scenario path overrides this with the persisted host config server-
-          // side; playground trusts this value (same as systemPrompt etc.).
-          ...(builtInToolIdsRef.current && builtInToolIdsRef.current.length > 0
+          // Preserve []: it explicitly disables the client's built-in tools.
+          ...(builtInToolIdsRef.current !== undefined
             ? { builtInToolIds: builtInToolIdsRef.current }
             : {}),
           // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
@@ -3732,6 +3723,10 @@ export function useChatSession(
   statusRef.current = status;
   const hostedProjectIdRef = useRef(hostedProjectId);
   hostedProjectIdRef.current = hostedProjectId;
+  const browserProjectIdRef = useRef(
+    hostedProjectId ?? appState?.activeProjectId,
+  );
+  browserProjectIdRef.current = hostedProjectId ?? appState?.activeProjectId;
 
   // Bounded wait for the turn to land server-side. There is no "persisted"
   // event on the wire, so this polls the same detail row the post-stream
@@ -4170,6 +4165,7 @@ export function useChatSession(
         // during the preflight below would post this turn under an unrelated
         // session and ingest it into that transcript.
         const sessionAtSend = chatSessionIdRef.current;
+        const browserProjectAtSend = browserProjectIdRef.current;
         // NEVER for an environment target. The environment's servers already
         // carry authoritative Convex ids and are re-resolved server-side; some
         // of them are plugin-contributed and deliberately absent from
@@ -4224,6 +4220,26 @@ export function useChatSession(
             );
             return false; // fail closed — do not send with unresolved servers
           }
+        }
+        try {
+          await releaseBrowserForChat(browserProjectAtSend, sessionAtSend);
+          if (
+            chatSessionIdRef.current !== sessionAtSend ||
+            browserProjectIdRef.current !== browserProjectAtSend
+          ) {
+            throw new Error(
+              "The chat changed while returning browser control. Send your message again.",
+            );
+          }
+        } catch (error) {
+          pendingWidgetModelContextRef.current = undefined;
+          resolvedHostedServersRef.current = null;
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Couldn't return browser control.",
+          );
+          return false;
         }
         try {
           const timestampedMetadata = withMessageTimestampMetadata(

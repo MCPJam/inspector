@@ -1,3 +1,4 @@
+import { jpegFrameLimit } from "@/shared/browser-viewport-policy";
 /**
  * `GET /v1/frames` — the daemon's way of getting screencast frames out of its
  * sandbox.
@@ -46,7 +47,8 @@ const WRITE_STALL_MS = 15_000;
  * How many streams one daemon will serve.
  *
  * Each holds a viewport subscription (keeping the screencast and its encoder
- * alive) plus an in-flight write of up to 256 KiB. The cap is what stops an
+ * alive) plus one in-flight and one pending JPEG (each up to the negotiated
+ * 2 MiB ceiling). The cap is what stops an
  * abandoned pane from taxing a box the agent is still driving.
  */
 const MAX_CONCURRENT_STREAMS = 4;
@@ -201,7 +203,11 @@ export function createFrameStreamHost(
     // JPEG, and the pane draws its own tab strip because kiosk hides
     // Chromium's.
     if (query?.get("codec") === "h264") {
-      void startVideoSubscription({ res, holder }).catch(() => {
+      void startVideoSubscription({
+        res,
+        holder,
+        sharp: query?.get("sharp") === "1",
+      }).catch(() => {
         writeEndAndClose(res, "video_unavailable");
       });
       return true;
@@ -214,7 +220,12 @@ export function createFrameStreamHost(
     // later caller inherits it. Unhandled, that ends the daemon process. Left
     // merely unfinished it is nearly as bad: the response never ends and its
     // entry holds one of four cap slots until the client gives up.
-    void startSubscription({ res, tabId, holder }).catch(() => {
+    void startSubscription({
+      res,
+      tabId,
+      holder,
+      sharp: query?.get("sharp") === "1",
+    }).catch(() => {
       writeEndAndClose(res, "tab_gone");
     });
     return true;
@@ -235,6 +246,7 @@ export function createFrameStreamHost(
    * about who is encoding.
    */
   async function startVideoSubscription(args: {
+    sharp: boolean;
     res: ServerResponse;
     holder: string | undefined;
   }): Promise<void> {
@@ -374,7 +386,7 @@ export function createFrameStreamHost(
         // next GOP, four seconds later, being sent units it cannot decode.
         unit.key ? { essential: true } : {},
       );
-    });
+    }, args.sharp);
 
     // Checked AFTER subscribing: a spawn that fails does so synchronously
     // inside `subscribe`, and asking first would race the answer.
@@ -522,6 +534,7 @@ export function createFrameStreamHost(
   }
 
   async function startSubscription(args: {
+    sharp: boolean;
     res: ServerResponse;
     tabId: string | undefined;
     holder: string | undefined;
@@ -540,7 +553,8 @@ export function createFrameStreamHost(
      * itself to, and is skipped rather than guessed at.
      */
     let subscription:
-      Awaited<ReturnType<typeof handler.subscribeFrames>> | undefined;
+      | Awaited<ReturnType<typeof handler.subscribeFrames>>
+      | undefined;
 
     const entry = {
       end: (reason: FrameStreamEndReason) => end(reason),
@@ -617,6 +631,7 @@ export function createFrameStreamHost(
     });
 
     subscription = await handler.subscribeFrames({
+      maxFrameBytes: jpegFrameLimit(args.sharp),
       ...(tabId ? { tabId } : {}),
       ...(holder ? { holder } : {}),
       listener: (frame) => {
@@ -745,6 +760,7 @@ export function createFrameStreamHost(
 function statsFor(
   subscription: {
     counters: () => {
+      jpeg?: FrameStreamStats["jpeg"];
       framesIn: number;
       framesOut: number;
       bytesOut: number;
@@ -757,6 +773,7 @@ function statsFor(
 ): FrameStreamStats {
   const counters = subscription.counters();
   return {
+    jpeg: counters.jpeg,
     framesIn: counters.framesIn,
     framesOut: counters.framesOut,
     bytesOut: counters.bytesOut,

@@ -5,13 +5,15 @@ const state = vi.hoisted(() => ({
   setEngine: vi.fn(),
   newChat: vi.fn(async () => true),
   revoke: vi.fn(),
+  toggleVisible: true,
 }));
 vi.mock("@/hooks/useBrowserEngine", () => ({
   useBrowserEngine: () => ({
     selectedEngine: "local",
-    toggleVisible: true,
+    toggleVisible: state.toggleVisible,
     resolved: true,
     localAvailable: true,
+    cloudAvailable: state.toggleVisible,
     consent: { granted: true, revoke: state.revoke },
     setEngine: state.setEngine,
   }),
@@ -34,6 +36,7 @@ import { BrowserRuntimeControls } from "../BrowserRuntimeControls";
 beforeEach(() => {
   vi.clearAllMocks();
   state.sessionId = "chat-1";
+  state.toggleVisible = true;
   state.newChat.mockResolvedValue(true);
 });
 it("changes a bound location only after a new chat succeeds", async () => {
@@ -59,4 +62,29 @@ it("revokes only through the Browser permission controller", () => {
   render(<BrowserRuntimeControls projectId="p" />);
   fireEvent.click(screen.getByText("Revoke Browser"));
   expect(state.revoke).toHaveBeenCalledOnce();
+});
+
+it("keeps runtime controls in the compact options menu", async () => {
+  render(<BrowserRuntimeControls projectId="p" compact />);
+  expect(screen.queryByLabelText("Browser location")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Browser options" }));
+  expect(await screen.findByLabelText("Browser location")).toBeVisible();
+  fireEvent.click(screen.getByText("Revoke Browser"));
+  expect(state.revoke).toHaveBeenCalledOnce();
+});
+
+it("changes the personal preference without resetting or starting a chat", () => {
+  render(<BrowserRuntimeControls projectId="p" settings />);
+  fireEvent.change(screen.getByLabelText("Browser location"), { target: { value: "cloud" } });
+  expect(state.setEngine).toHaveBeenCalledWith("cloud");
+  expect(state.newChat).not.toHaveBeenCalled();
+});
+
+it("hides Cloud location chrome when only This machine is offered", () => {
+  state.toggleVisible = false;
+  render(<BrowserRuntimeControls projectId="p" settings />);
+  expect(screen.queryByLabelText("Browser location")).toBeNull();
+  expect(screen.queryByText(/environments use Cloud/)).toBeNull();
+  expect(screen.queryByText("Cloud")).toBeNull();
+  expect(screen.getByText("Browser authorized")).toBeInTheDocument();
 });

@@ -5,12 +5,7 @@ import type { PredicateResult } from "@mcpjam/sdk/predicates";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
 export type EvalTraceSpanCategory =
-  | "step"
-  | "llm"
-  | "tool"
-  | "error"
-  | "connection"
-  | "discovery";
+  "step" | "llm" | "tool" | "error" | "connection" | "discovery";
 export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpan = {
@@ -296,9 +291,7 @@ export type EvalTraceBrowserAction =
   | "wait";
 
 export type EvalTraceBrowserStepNote =
-  | "no_rendered_widget"
-  | "step_budget_exceeded"
-  | "screenshot_budget_exceeded";
+  "no_rendered_widget" | "step_budget_exceeded" | "screenshot_budget_exceeded";
 
 const EVAL_TRACE_BROWSER_STEP_NOTES: ReadonlySet<string> = new Set([
   "no_rendered_widget",
@@ -314,7 +307,7 @@ const EVAL_TRACE_BROWSER_STEP_NOTES: ReadonlySet<string> = new Set([
  * unrecognized note.
  */
 export function isEvalTraceBrowserStepNote(
-  value: unknown
+  value: unknown,
 ): value is EvalTraceBrowserStepNote {
   return typeof value === "string" && EVAL_TRACE_BROWSER_STEP_NOTES.has(value);
 }
@@ -404,7 +397,9 @@ export type RunnerBrowserInteractionStep = {
   // a model-driven Computer Use step (back-compat). `action` carries the verb
   // (an `assert` step maps to `"screenshot"`); `assertion` is set only on assert
   // steps; `locatorLabel` is the human-readable target.
-  source?: "computer_use" | "scripted";
+  source?: "computer_use" | "scripted" | "browser_tool";
+  toolName?: string;
+  turnId?: string;
   locatorLabel?: string;
   assertion?: EvalTraceScriptedAssertion;
   // Per-step outcome for a pure action (click/type/key/scroll/wait): `true` when
@@ -501,7 +496,9 @@ export type EvalTraceBrowserInteractionStepView = {
   ts: number;
   // Scripted "Widget interaction checks" replay fields (see
   // RunnerBrowserInteractionStep). Absent ⇒ a Computer Use step.
-  source?: "computer_use" | "scripted";
+  source?: "computer_use" | "scripted" | "browser_tool";
+  toolName?: string;
+  turnId?: string;
   locatorLabel?: string;
   assertion?: EvalTraceScriptedAssertion;
   // Per-step action outcome (see RunnerBrowserInteractionStep.ok). Absent ⇒
@@ -628,7 +625,7 @@ const promptTraceSummaryZ = z.object({
       expected: traceToolCallZ,
       actual: traceToolCallZ,
       mismatchedArguments: z.array(z.string()),
-    })
+    }),
   ),
 });
 
@@ -689,14 +686,14 @@ export const evalTraceBlobV1Z = z.object({
 
 export function msOffsetFromRunStart(
   runStartedAt: number,
-  absoluteMs: number
+  absoluteMs: number,
 ): number {
   return absoluteMs - runStartedAt;
 }
 
 export function normalizeSpanInterval(
   startMs: number,
-  endMs: number
+  endMs: number,
 ): { startMs: number; endMs: number } {
   if (endMs <= startMs) return { startMs, endMs: startMs + 1 };
   return { startMs, endMs };
@@ -705,11 +702,11 @@ export function normalizeSpanInterval(
 export function createOffsetInterval(
   runStartedAt: number,
   startAbs: number,
-  endAbs: number
+  endAbs: number,
 ): { startMs: number; endMs: number } {
   return normalizeSpanInterval(
     msOffsetFromRunStart(runStartedAt, startAbs),
-    msOffsetFromRunStart(runStartedAt, endAbs)
+    msOffsetFromRunStart(runStartedAt, endAbs),
   );
 }
 
@@ -726,7 +723,7 @@ function messageDedupeKey(message: ModelMessage): string {
 /** Append `incoming` to `acc`, skipping duplicates (by `id` or JSON identity). */
 export function appendDedupedModelMessages(
   acc: ModelMessage[],
-  incoming: ModelMessage[]
+  incoming: ModelMessage[],
 ): void {
   const seen = new Set(acc.map(messageDedupeKey));
   for (const m of incoming) {

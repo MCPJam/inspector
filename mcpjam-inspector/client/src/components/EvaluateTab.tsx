@@ -1,7 +1,9 @@
+import { normalizeGeneratedDraft } from "@/lib/evals/normalize-generated-draft";
 import { evalChatSuiteContext } from "@/lib/mcpjam-agent/eval-chat-context";
 import { syncEvalChatContext } from "@/lib/mcpjam-agent/eval-scope";
 import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
+import type { GenerationOptions } from "@/lib/apis/evals-api";
 import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 /**
  * Evaluate (New) — the redesigned Evaluate tab, behind `evaluate-enabled`.
@@ -35,6 +37,13 @@ import { useConvex, useConvexAuth, useMutation } from "convex/react";
 import { FlaskConical, Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@mcpjam/design-system/sheet";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { EvalsEmptyHero } from "./evaluate/evals-empty-hero";
@@ -84,7 +93,7 @@ import { SuitesOverview } from "./evaluate/suites-overview";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
-import { isDraftTestCaseId } from "./evals/draft-test-case";
+import { draftTestCaseId, isDraftTestCaseId } from "./evals/draft-test-case";
 import {
   CreateSuitePage,
   type CreateSuitePayload,
@@ -121,6 +130,7 @@ interface EvaluateTabProps {
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   ensureServersReady?: (
     serverNames: string[],
+    options?: { allowInteractiveOAuthFlow?: boolean },
   ) => Promise<EnsureServersReadyResult>;
   handleConnect?: (config: ServerFormData) => void;
 }
@@ -242,17 +252,17 @@ function EvaluateTabContent({
   const selectedSuiteId = isPreparedCaseEdit
     ? null
     : route.type === "suite-overview" ||
-      route.type === "run-detail" ||
-      route.type === "test-detail" ||
-      route.type === "test-edit" ||
-      route.type === "suite-edit"
-    ? route.suiteId
-    : null;
+        route.type === "run-detail" ||
+        route.type === "test-detail" ||
+        route.type === "test-edit" ||
+        route.type === "suite-edit"
+      ? route.suiteId
+      : null;
   const selectedTestId = isPreparedCaseEdit
     ? null
     : route.type === "test-detail" || route.type === "test-edit"
-    ? route.testId
-    : null;
+      ? route.testId
+      : null;
 
   const overviewQueries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(projectId),
@@ -598,6 +608,7 @@ function EvaluateTabContent({
     [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments],
   );
 
+  const [suiteAction, setSuiteAction] = useState<"run" | "case" | null>(null);
   const [runReviewSuiteId, setRunReviewSuiteId] = useState<string | null>(null);
   useEffect(() => {
     if (route.type === "run-detail") setRunReviewSuiteId(null);
@@ -625,6 +636,7 @@ function EvaluateTabContent({
       suite: EvalSuite,
       refinement?: string,
       stageCase?: (input: CreateEvalTestCaseInput) => Promise<unknown>,
+      options?: GenerationOptions,
     ) => {
       const suiteServers = getEffectiveSuiteServers(suite);
       if (suiteServers.length === 0) {
@@ -645,23 +657,28 @@ function EvaluateTabContent({
             resolvedServerNames: suiteAttachment.resolvedServerNames,
           }
         : undefined;
-      // Per-suite generation config from the "Generate" popover (count, mix,
-      // vary-user-styles). Defaults reproduce today's behavior, so the one-click
-      // Generate keeps working unchanged when the popover was never touched. A
-      // degenerate all-zero persisted mix falls back to default generation rather
-      // than sending an empty caseMix (mirrors the popover's total >= 1 guard).
+      // A confirmed batch keeps its options on retries. Legacy callers without
+      // explicit options continue using the suite's persisted configuration.
       const generateConfig = loadGenerateConfig(suite._id);
       const generationOptions =
-        totalCases(generateConfig) >= 1
+        options ??
+        (totalCases(generateConfig) >= 1
           ? {
               ...toGenerationOptions(generateConfig),
               ...(refinement?.trim() ? { refinement: refinement.trim() } : {}),
             }
           : refinement?.trim()
-          ? { refinement: refinement.trim() }
-          : undefined;
+            ? { refinement: refinement.trim() }
+            : undefined);
       await handlers.handleGenerateTests(suite._id, suiteServers, {
-        ...(stageCase ? { stageCase } : {}),
+        ...(stageCase
+          ? {
+              stageCase: (input: CreateEvalTestCaseInput) =>
+                stageCase(
+                  normalizeGeneratedDraft(input, suite.defaultPredicates),
+                ),
+            }
+          : {}),
         ...(serverAttachment ? { serverAttachment } : {}),
         ...(generationOptions ? { generationOptions } : {}),
       });
@@ -704,8 +721,8 @@ function EvaluateTabContent({
             );
           return result;
         },
-        generate: (instructions, stage) =>
-          generateTestsForSuite(selectedSuite, instructions, stage),
+        generate: (instructions, stage, options) =>
+          generateTestsForSuite(selectedSuite, instructions, stage, options),
         save: (input) => mutations.createTestCaseMutation(input as any),
       },
     );
@@ -1078,7 +1095,8 @@ function EvaluateTabContent({
       }
       const currentRun =
         route.type === "run-detail"
-          ? runsForSelectedSuite.find((run) => run._id === route.runId) ?? null
+          ? (runsForSelectedSuite.find((run) => run._id === route.runId) ??
+            null)
           : null;
       return {
         view: route.type,
@@ -1195,10 +1213,10 @@ function EvaluateTabContent({
             (testCase) => testCase._id === selectedTestId,
           )?.title || "Test case"
       : route.type === "suite-edit"
-      ? "Settings"
-      : route.type === "run-detail"
-      ? "Run"
-      : null;
+        ? "Settings"
+        : route.type === "run-detail"
+          ? "Run"
+          : null;
 
   const renderPlaygroundBreadcrumb = () => {
     if (!hasDetailRoute) return null;
@@ -1207,18 +1225,18 @@ function EvaluateTabContent({
 
   const evalServer =
     route.type === "eval-server"
-      ? emptyHeroServers.find((server) => server.id === route.serverId) ?? {
+      ? (emptyHeroServers.find((server) => server.id === route.serverId) ?? {
           id: route.serverId,
           name: "Connected server",
-        }
+        })
       : null;
   const fromEvalServerId =
     route.type === "test-edit" ? route.fromEvalServer : undefined;
   const evalServerReturn = fromEvalServerId
-    ? emptyHeroServers.find((server) => server.id === fromEvalServerId) ?? {
+    ? (emptyHeroServers.find((server) => server.id === fromEvalServerId) ?? {
         id: fromEvalServerId,
         name: "Connected server",
-      }
+      })
     : null;
 
   const handleBackToEvalServer = useCallback((serverId: string) => {
@@ -1325,6 +1343,7 @@ function EvaluateTabContent({
           data-testid="evals-runs-landing"
         >
           <ProjectRunsTable
+            metricBars
             historyMetricsEnabled
             projectId={projectId}
             onSelectRun={handleSelectRunFromAllRuns}
@@ -1522,8 +1541,21 @@ function EvaluateTabContent({
       header={
         route.type === "create" ? undefined : (
           <EvalsHeader
+            onSetupRun={() => setSuiteAction("run")}
+            onAddCase={() => setSuiteAction("case")}
             onCreateSuite={
               route.type === "list" ? handleOpenCreateSuite : undefined
+            }
+            detailCrumb={
+              route.type === "test-edit" && route.checks
+                ? { label: "UVC checks" }
+                : undefined
+            }
+            onCurrentCrumbClick={
+              route.type === "test-edit" && route.checks
+                ? () =>
+                    playgroundNavigation.toTestEdit(route.suiteId, route.testId)
+                : undefined
             }
             landingView={landingView}
             onLandingViewChange={setLandingView}
@@ -1537,23 +1569,23 @@ function EvaluateTabContent({
                       handleBackToEvalServer(route.fromEvalServer!),
                   }
                 : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
-                ? {
-                    label: suiteBreadcrumbLabel,
-                    onClick: () =>
-                      playgroundNavigation.toSuiteOverview(selectedSuiteId),
-                  }
-                : undefined
+                  ? {
+                      label: suiteBreadcrumbLabel,
+                      onClick: () =>
+                        playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                    }
+                  : undefined
             }
           >
             {route.type === "eval-server"
               ? evalServer?.name
               : route.type === "test-edit" && route.fromEvalServer
-              ? previewCaseTitleFromDraft(
-                  route.fromEvalServer,
-                  route.suiteId,
-                  route.testId,
-                ) ?? nestedPageLabel
-              : renderPlaygroundBreadcrumb()}
+                ? (previewCaseTitleFromDraft(
+                    route.fromEvalServer,
+                    route.suiteId,
+                    route.testId,
+                  ) ?? nestedPageLabel)
+                : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }
@@ -1582,6 +1614,71 @@ function EvaluateTabContent({
             {renderPlaygroundBody()}
           </div>
         )}
+
+        <Sheet
+          open={route.type === "list" && suiteAction !== null}
+          onOpenChange={(open) => {
+            if (!open) setSuiteAction(null);
+          }}
+        >
+          <SheetContent
+            side="right"
+            className="flex w-full flex-col sm:max-w-lg"
+          >
+            <SheetHeader>
+              <SheetTitle>
+                {suiteAction === "run" ? "Setup Run" : "Add case"}
+              </SheetTitle>
+              <SheetDescription>
+                {suiteAction === "run"
+                  ? "Choose a suite to configure its next run."
+                  : "Choose a suite for the new case."}
+              </SheetDescription>
+            </SheetHeader>
+            <div className="flex min-h-0 flex-col gap-2 overflow-y-auto p-4">
+              {visibleSuites.map(({ suite }) => (
+                <Button
+                  key={suite._id}
+                  variant="outline"
+                  className="h-auto justify-start whitespace-normal py-3 text-left"
+                  disabled={suiteAction === "case" && isCiOwnedSuite(suite)}
+                  title={
+                    suiteAction === "case" && isCiOwnedSuite(suite)
+                      ? "Cases for this suite are managed in its repository."
+                      : undefined
+                  }
+                  onClick={() => {
+                    const action = suiteAction;
+                    setSuiteAction(null);
+                    if (action === "run") setRunReviewSuiteId(suite._id);
+                    else
+                      playgroundNavigation.toTestEdit(
+                        suite._id,
+                        draftTestCaseId("prompt"),
+                      );
+                  }}
+                >
+                  {suite.name}
+                </Button>
+              ))}
+              {visibleSuites.length === 0 && (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Create a suite to get started.
+                  </p>
+                  <Button
+                    onClick={() => {
+                      setSuiteAction(null);
+                      handleOpenCreateSuite();
+                    }}
+                  >
+                    Create suite
+                  </Button>
+                </>
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
 
         {route.type === "list" &&
           runReviewSuiteId &&

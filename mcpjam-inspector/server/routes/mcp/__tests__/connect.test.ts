@@ -193,10 +193,6 @@ describe("POST /api/mcp/connect", () => {
               url: "http://localhost:3000/mcp",
               headers: { "X-Foo": "bar" },
               useOAuth: true,
-              // MJ-003: a credential-bearing row not bound to its own url is
-              // refused before any token is attached, so the fixture carries
-              // the binding a real post-backfill row carries.
-              secretsBoundOrigin: "http://localhost:3000",
             },
             oauthAccessToken: "oauth-token-123",
           },
@@ -302,9 +298,6 @@ describe("POST /api/mcp/connect", () => {
               url: "http://localhost:3000/mcp",
               headers: {},
               useOAuth: true,
-              // Bound: the MJ-003 gate runs ahead of the force-refresh below,
-              // so an unbound row would 403 here instead of reaching the 401.
-              secretsBoundOrigin: "http://localhost:3000",
             },
             // no oauthAccessToken
           },

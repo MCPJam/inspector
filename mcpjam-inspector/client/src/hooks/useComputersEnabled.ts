@@ -1,4 +1,5 @@
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { HOSTED_MODE } from "@/lib/config";
 
 /**
  * PostHog rollout gate for ALL Project Computers UI (the host-editor computer
@@ -89,7 +90,8 @@ export function useLocalHarnessEnabled(): boolean {
  * panel before that is shipping a browser that resizes on two engines and
  * pretends to on the third.
  *
- * The flag controls panel placement and responsive viewport sizing only.
+ * The flag controls panel placement only. Both placements resize the browser
+ * to the available page area.
  * Both placements share tabs, URL/search navigation and implicit human takeover.
  * Server routes and session authority are independent of panel placement.
  */
@@ -112,4 +114,22 @@ export function useBrowserWorkspaceEnabled(): boolean {
 export const LOCAL_BROWSER_FEATURE_FLAG = "local-browser-enabled";
 export function useLocalBrowserEnabled(): boolean {
   return useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG) === true;
+}
+
+export const HOSTED_BROWSER_FEATURE_FLAG = "hosted-browser-enabled";
+export function useHostedBrowserEnabled(): boolean {
+  return useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG) === true;
+}
+
+/** Browser has two location rollouts, neither nested under Computers. */
+export function useBrowserEnabledState(): boolean | undefined {
+  const local = useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG);
+  const hosted = useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG);
+  if (HOSTED_MODE) return hosted;
+  if (local === true || hosted === true) return true;
+  return local === undefined || hosted === undefined ? undefined : false;
+}
+
+export function useBrowserEnabled(): boolean {
+  return useBrowserEnabledState() === true;
 }

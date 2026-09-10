@@ -2,6 +2,7 @@ import {
   resolveBrowserEngine,
   coerceBrowserEngineForActor,
 } from "../computers/browser-engine.js";
+import { guestBrowserProject } from "../computers/browser-rollout.js";
 import { requireGithubToolSelection } from "../../services/github-checks/credential-policy.js";
 /**
  * Host tool resolver: resolved host config → AI SDK ToolSet.
@@ -194,6 +195,8 @@ export interface BuiltInToolContext {
    */
   computerEngine?: ComputerEngine;
   browserEngine?: ComputerEngine;
+  /** Verified local guest, supplied by the request boundary, never the body. */
+  localBrowserGuestId?: string;
   browserConsentToken?: string;
   localBrowserRequested?: boolean;
   browserUnavailableReason?: string;
@@ -261,6 +264,15 @@ export interface BuiltInToolContext {
   browserSessionScope?: BrowserSessionScope;
   /** Explicit profile pin from a host/eval config. */
   browserProfileId?: string;
+  browserHandoffMaxWaitMs?: number;
+  onBrowserHandoffWaiting?: Parameters<
+    typeof buildBrowserTools
+  >[0]["onHandoffWaiting"];
+  browserSessionHandle?: Awaited<
+    ReturnType<
+      NonNullable<Parameters<typeof buildBrowserTools>[0]["ensureSession"]>
+    >
+  >;
   /** Surface notices while a conversation browser waits for capacity. */
   onBrowserNotice?: (notice: string) => void;
   /**
@@ -562,6 +574,7 @@ export function resolveHostTools(
         ctx.browserEngine ?? resolveBrowserEngine({ localConsentValid: false });
       const resolvedEngine = coerceBrowserEngineForActor(requestedEngine, {
         isGuest: Boolean(ctx.isGuest),
+        localGuestAuthorized: Boolean(ctx.localBrowserGuestId),
         isScenarioSession: Boolean(ctx.isScenarioSession),
         isJourneySession: Boolean(ctx.isJourneySession),
         executionScopeKind: ctx.executionScope?.kind,
@@ -621,6 +634,7 @@ export function resolveHostTools(
           "[built-in-tools] browser requested while HOSTED_BROWSER_TOOLS_ENABLED is off; skipping",
           { projectId: ctx.projectId },
         );
+        ctx.onToolSuppressed?.({ id, reason: "HOSTED_BROWSER_TOOLS_ENABLED is disabled on this server." });
         continue;
       }
       // The backend's own gate (catalog entry + desktop template + desktop
@@ -724,7 +738,7 @@ export function resolveHostTools(
         );
         continue;
       }
-      if (ctx.isGuest) {
+      if (ctx.isGuest && !(isLocalBrowser && ctx.localBrowserGuestId)) {
         logger.debug(
           "[built-in-tools] browser not advertised to guest actors; skipping",
           { projectId: ctx.projectId },
@@ -745,9 +759,17 @@ export function resolveHostTools(
       }
       const browser = buildBrowserTools({
         authHeader,
-        projectId: ctx.projectId,
+        projectId: ctx.localBrowserGuestId
+          ? guestBrowserProject(ctx.projectId, ctx.localBrowserGuestId)
+          : ctx.projectId,
+        localGuest: Boolean(ctx.localBrowserGuestId),
         engine: isLocalBrowser ? "local" : "hosted",
         localConsentToken: ctx.browserConsentToken,
+        handoffMaxWaitMs: ctx.browserHandoffMaxWaitMs,
+        onHandoffWaiting: ctx.onBrowserHandoffWaiting,
+        ...(ctx.browserSessionHandle
+          ? { ensureSession: async () => ctx.browserSessionHandle! }
+          : {}),
         // The host's switch, exactly as bash gets it. This family follows it
         // rather than overruling it.
         requireToolApproval: ctx.requireToolApproval,
@@ -755,7 +777,7 @@ export function resolveHostTools(
         // The run's own identity, falling back to the chat session when a
         // surface has one — both name a single run, which is all the ephemeral
         // profile key needs. Unused on an interactive turn.
-        ...(ctx.runKey ?? ctx.chatSessionId
+        ...((ctx.runKey ?? ctx.chatSessionId)
           ? { runKey: ctx.runKey ?? ctx.chatSessionId }
           : {}),
         // ABSENT ⇒ buildBrowserTools advertises nothing. That is what keeps
@@ -781,6 +803,7 @@ export function resolveHostTools(
               sandboxTarget: {
                 sandboxRowId: sandboxBrowser.sandboxRowId!,
                 sandboxId: sandboxBrowser.sandboxId,
+                record: ctx.browserApprovalDelivery?.kind === "unattended",
               },
             }
           : {}),

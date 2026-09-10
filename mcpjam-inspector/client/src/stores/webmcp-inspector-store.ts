@@ -1,3 +1,9 @@
+import { useHostContextStore } from "@/stores/client-context-store";
+import {
+  BROWSER_CONSENT_HEADER,
+  loadStoredLocalBrowserConsent,
+  subscribeLocalBrowserConsent,
+} from "@/lib/local-browser-consent";
 /**
  * Client state for the WebMCP Inspector: one browser session, its live tool
  * registry, and its activity timeline.
@@ -8,11 +14,7 @@
  * snapshot without reasoning about what it missed.
  */
 import { create } from "zustand";
-import {
-  addTokenToUrl,
-  getAuthHeaders,
-  hasSessionToken,
-} from "@/lib/session-token";
+import { getAuthHeaders, hasSessionToken } from "@/lib/session-token";
 import {
   WEBMCP_INPUT_BATCH_LIMIT,
   type WebMcpInvocationOutcome,
@@ -458,6 +460,12 @@ async function request<T>(
       headers: {
         ...(init?.body ? { "content-type": "application/json" } : {}),
         ...getAuthHeaders(),
+        ...(!isHostedMode()
+          ? {
+              [BROWSER_CONSENT_HEADER]:
+                loadStoredLocalBrowserConsent()?.token ?? "",
+            }
+          : {}),
         ...(init?.headers ?? {}),
       },
     });
@@ -816,23 +824,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         publishFrameTransport();
       }
 
-      if (isHostedMode()) {
-        // `EventSource` cannot set headers, and hosted auth is a bearer — the
-        // query-string accommodation below is a LOCAL session token, which
-        // means nothing here. Same pattern the eval run stream uses: authFetch
-        // plus a reader over the same `data:` framing.
-        openHostedEventStream(path, handlePayload);
-        return;
-      }
-
-      // The token rides in the query string because EventSource cannot send
-      // headers, which is the same accommodation the traffic-log stream makes.
-      source = new EventSource(addTokenToUrl(path));
-      source.onmessage = (message) => handlePayload(message.data);
-      source.onerror = () => {
-        // EventSource reconnects on its own, and replay plus full tool
-        // snapshots make that safe; nothing to do but let it.
-      };
+      // Fetch streaming carries both actor and consent in headers in local mode.
+      openHostedEventStream(path, handlePayload);
     }
 
     /**
@@ -860,7 +853,15 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         ) {
           try {
             const response = await authFetch(path, {
-              headers: { accept: "text/event-stream" },
+              headers: {
+                accept: "text/event-stream",
+                ...(!isHostedMode()
+                  ? {
+                      [BROWSER_CONSENT_HEADER]:
+                        loadStoredLocalBrowserConsent()?.token ?? "",
+                    }
+                  : {}),
+              },
               signal: controller.signal,
             });
             if (!response.ok || !response.body) {
@@ -965,11 +966,23 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
      * message, a close, or a retry belonging to a session that has since been
      * replaced can never touch the current one.
      */
-    function openFrameSocket(sessionId: string, generation: number) {
+    async function openFrameSocket(sessionId: string, generation: number) {
       if (frameSocketLatched) return;
       frameAttempts += 1;
       publishFrameTransport();
+      const auth = await request<{ nonce: string }>(
+        `/sessions/${sessionId}/stream-nonce`,
+        { method: "POST" },
+      );
+      if (generation !== connectionGeneration) return;
+      if (!auth.ok) {
+        set({ error: auth.error });
+        frameSocketLatched = true;
+        ensureSseFrames(sessionId, "on");
+        return;
+      }
       frameSocket = openWebMcpFrameStream({
+        token: auth.data.nonce,
         sessionId,
         coalesceFrames:
           typeof window !== "undefined" && window.isElectron !== true,
@@ -1252,7 +1265,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             url,
             ...(options?.transport === "hosted"
               ? { transport: "hosted", projectId: options.projectId }
-              : {}),
+              : { projectId: options?.projectId }),
             // Omitted for a window session, so an older server that strips the
             // unknown field lands on exactly the same behaviour it would have
             // chosen anyway.
@@ -1374,7 +1387,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           expectedBinding,
           invokeId,
         })) as
-          { invokeId?: string; outcome?: PageToolInvocationResult } | undefined;
+          | { invokeId?: string; outcome?: PageToolInvocationResult }
+          | undefined;
 
         // HOSTED answers inline, because the event stream carrying the settle
         // may be attached to a different replica than the one that ran the
@@ -1479,7 +1493,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           pending?: boolean;
           outcome?: PageToolInvocationResult;
         }>(
-          `/sessions/${encodeURIComponent(sessionId)}/invocations/${encodeURIComponent(invokeId)}`,
+          `/sessions/${encodeURIComponent(
+            sessionId,
+          )}/invocations/${encodeURIComponent(invokeId)}`,
           { method: "GET" },
         );
         return response.ok && response.data?.outcome
@@ -1694,3 +1710,18 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
 export function getActiveWebMcpSessionId(): string | undefined {
   return useWebmcpInspectorStore.getState().session?.sessionId;
 }
+
+// These subscriptions outlive the inspector tab: a hidden pane must not carry
+// tools or a native view into the next project or consent lifetime.
+useHostContextStore.subscribe((state, previous) => {
+  if (state.activeProjectId !== previous.activeProjectId) {
+    const store = useWebmcpInspectorStore.getState();
+    if (store.session && !store.session.sessionId.startsWith("hosted:"))
+      void store.closeSession();
+  }
+});
+subscribeLocalBrowserConsent(() => {
+  const store = useWebmcpInspectorStore.getState();
+  if (store.session && !store.session.sessionId.startsWith("hosted:"))
+    void store.closeSession();
+});

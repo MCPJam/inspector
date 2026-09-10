@@ -126,7 +126,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "project-environments-enabled",
   "unified-sessions-enabled",
   "evaluate-enabled",
-  "webmcp-inspector-enabled",
+  WEBMCP_INSPECTOR_FEATURE_FLAG,
 ] as const;
 
 /**
@@ -275,7 +275,7 @@ export const navigationSections: NavSection[] = [
         // is dogfooded — the point of a second tab is being able to compare
         // them. When the redesign wins, this item takes the "Evaluate" name
         // and the one above is deleted.
-        title: "Evaluate (New)",
+        title: "Ding Dong",
         url: "/evaluate",
         icon: FlaskConical,
         featureFlag: "evaluate-enabled",
@@ -361,7 +361,7 @@ export const navigationSections: NavSection[] = [
         title: "WebMCP",
         url: "/webmcp",
         icon: Globe,
-        featureFlag: "webmcp-inspector-enabled",
+        featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
       },
     ],
   },
@@ -634,11 +634,9 @@ export function MCPSidebar({
       // Project-scoped like the rows above: every screen behind it needs a
       // project to resolve suites against.
       "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
-      // Not auth-scoped, unlike the rows above: the browser and the page run
-      // on this machine, so a signed-out local user has everything the surface
-      // needs. It is hostedBlocked, so hosted builds drop it before this map
-      // is consulted.
-      "webmcp-inspector-enabled": webmcpInspectorEnabled === true,
+      // Deployment-specific Browser rollout; local guests are eligible too.
+      // Hosted execution retains its server-side sign-in/entitlement checks.
+      [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
     }),
     [
       learningEnabled,

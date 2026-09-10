@@ -62,7 +62,8 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 const providerState = vi.hoisted(() => ({
   deps: [] as Array<Record<string, unknown>>,
 }));
-vi.mock("../../../services/webmcp-inspector/browserd-provider", () => ({
+vi.mock("../../../services/webmcp-inspector/browserd-provider", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../services/webmcp-inspector/browserd-provider")>()),
   createBrowserdWebMcpProvider: (deps: Record<string, unknown>) => {
     providerState.deps.push(deps);
     return {

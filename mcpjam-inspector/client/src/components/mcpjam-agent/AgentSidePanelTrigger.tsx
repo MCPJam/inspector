@@ -2,7 +2,7 @@ import {
   openEvalChat,
   useEvalAgentScopes,
 } from "@/lib/mcpjam-agent/eval-scope";
-import { currentEvalPageScope } from "@/lib/mcpjam-agent/eval-workspace";
+import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
 /**
  * Header sparkle button that toggles the MCPJam Agent side panel.
  */
@@ -28,11 +28,12 @@ export function AgentSidePanelTrigger() {
   const isOpen = useAgentPanelStore((s) => s.isOpen);
   const toggle = useAgentPanelStore((s) => s.toggle);
   const activeTab = useActiveTab();
+  const describeScope = useDescribeSurface((s) => s.scope);
 
   const onClick = useCallback(() => {
     const next = !isOpen;
     const context =
-      next && activeTab === "evaluate" ? currentEvalPageScope() : undefined;
+      next && activeTab === "evaluate" ? describeScope : undefined;
     if (next) {
       track("mcpjam_agent_panel_opened", {
         location: "agent_side_panel",
@@ -53,7 +54,9 @@ export function AgentSidePanelTrigger() {
       }
       toggle();
     }
-  }, [activeTab, isOpen, toggle]);
+  }, [activeTab, describeScope, isOpen, toggle]);
+
+  if (activeTab === "evaluate" && !describeScope) return null;
 
   return (
     <Tooltip>
