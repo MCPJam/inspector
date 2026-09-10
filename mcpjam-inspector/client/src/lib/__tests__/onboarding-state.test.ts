@@ -101,6 +101,10 @@ describe("onboarding-state", () => {
       expect(isFirstRunEligible(false, "#home")).toBe(true);
     });
 
+    it("returns true from the Playground entry route", () => {
+      expect(isFirstRunEligible(false, "playground")).toBe(true);
+    });
+
     it("returns false when hash points to a specific tab", () => {
       expect(isFirstRunEligible(false, "#tools")).toBe(false);
     });

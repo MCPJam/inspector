@@ -112,6 +112,9 @@ export function isFirstRunEligible(
 
   // Drop query strings and trailing slashes so `connect?foo=bar` and
   // `/connect/` still pass the allowlist — both land on the same hub route.
+  // Playground is also an entry route: a fresh visitor can arrive there from
+  // the local preview URL, and must be sent through the explicit server-choice
+  // flow before the legacy Playground bootstrap can do anything on their behalf.
   const rawRoute = currentRouteTab.replace(/^#?\/?/, "");
   const [routePath = ""] = rawRoute.split("?");
   const routeTab = routePath.replace(/\/+$/, "");
@@ -121,6 +124,7 @@ export function isFirstRunEligible(
     routeTab !== "clients" &&
     routeTab !== "hosts" &&
     routeTab !== "home" &&
+    routeTab !== "playground" &&
     routeTab
   )
     return false;

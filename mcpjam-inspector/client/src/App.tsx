@@ -2369,6 +2369,7 @@ export function PlaygroundRoute() {
       isClientConfigSyncPending={isClientConfigSyncPending}
       areServersHydrated={areServersHydrated}
       hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
+      autoConnectFirstRun={false}
       isServerSyncing={isSelectedServerSyncing}
       onConnect={handleConnect}
       onSaveHostContext={handleUpdateHostContext}

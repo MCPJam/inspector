@@ -113,6 +113,8 @@ export interface UsePlaygroundStateOptions {
   /** False while the Convex servers query is still in flight. */
   areServersHydrated?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
+  /** Whether this caller retains the legacy auto-connect onboarding path. */
+  autoConnectFirstRun?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
@@ -186,6 +188,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     isClientConfigSyncPending = false,
     areServersHydrated = true,
     hasSeenFirstRunOnboarding,
+    autoConnectFirstRun,
     isServerSyncing = false,
     onConnect,
     onOnboardingChange,
@@ -216,6 +219,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     isProjectProvisioned,
     isClientConfigSyncPending,
     areServersHydrated,
+    autoConnectFirstRun,
   });
 
   const firstRunComposerSeed =
