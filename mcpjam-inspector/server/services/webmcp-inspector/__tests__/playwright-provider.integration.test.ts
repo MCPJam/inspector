@@ -129,6 +129,17 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     const runtime = registry.get(session.sessionId);
     const activity: WebMcpActivityEntry[] = [];
     const frames: WebMcpFrame[] = [];
+    // The page can paint before this subscription lands, and a subscription
+    // without replay never sees that paint. The hub keeps it for late joiners,
+    // so take it the way a reconnecting client would: otherwise the first
+    // frame collected here is a still taken later, and a test that waits for
+    // the still after "the first frame" waits for a second one that a quiet
+    // page never sends. Seeded BEFORE subscribing, so nothing can land in
+    // between.
+    const retained = runtime.hub
+      .buffered()
+      .find((event) => event.type === "frame");
+    if (retained) frames.push(retained.frame);
     runtime.hub.subscribe((event) => {
       if (event.type === "activity") activity.push(event.entry);
       if (event.type === "frame") frames.push(event.frame);
@@ -160,7 +171,9 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     expect(sub!.fromSubframe).toBe(true);
     expect(sub!.origin).toBe(new URL(fixture.subOriginUrl).origin);
     expect(sub!.origin).not.toBe(echo!.origin);
-    expect(sub!.toolKey).toBe(`${new URL(fixture.subOriginUrl).origin}::sub_tool`);
+    expect(sub!.toolKey).toBe(
+      `${new URL(fixture.subOriginUrl).origin}::sub_tool`,
+    );
     await registry.disposeAll();
   }, 60_000);
 
@@ -168,9 +181,9 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     const { runtime } = await open();
     const subKey = `${new URL(fixture.subOriginUrl).origin}::${FIXTURE_TOOLS.sub}`;
     await vi.waitFor(() =>
-      expect(
-        runtime.currentTools().map((tool) => tool.toolKey),
-      ).toContain(subKey),
+      expect(runtime.currentTools().map((tool) => tool.toolKey)).toContain(
+        subKey,
+      ),
     );
 
     // The frame id belongs to another target, so this call can only succeed by
@@ -576,15 +589,19 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     const streamedCount = frames.length;
     const streamed = frames.at(-1)!;
 
-    // Long enough for the page's own paints to stop and for the quiet window
-    // to elapse, DERIVED from the constants that decide it rather than a
-    // number that would quietly stop matching them. What arrives after that is
-    // the still — plus, on a build that answers a capture with a repaint it
-    // does not deduplicate, possibly one more frame, which is why this takes
-    // the LARGEST rather than the last.
-    await new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS));
-    expect(frames.length, "a still after the paints").toBeGreaterThan(
-      streamedCount,
+    // Wait for the page's own paints to stop and the quiet window to elapse.
+    // The bound is DERIVED from the constants that decide it rather than a
+    // number that would quietly stop matching them, and polled rather than
+    // slept: a loaded runner can land the housekeeping tick late, and the
+    // still is still the still. What arrives is the still — plus, on a build
+    // that answers a capture with a repaint it does not deduplicate, possibly
+    // one more frame, which is why this takes the LARGEST rather than the last.
+    await vi.waitFor(
+      () =>
+        expect(frames.length, "a still after the paints").toBeGreaterThan(
+          streamedCount,
+        ),
+      { timeout: SETTLE_WAIT_MS * 3, interval: 250 },
     );
 
     const sharpest = Math.max(
