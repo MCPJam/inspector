@@ -71,7 +71,10 @@ import {
   markOnboardingDismissed,
   markOnboardingStarted,
 } from "./lib/onboarding-state";
-import { FirstRunOnboardingOverlay } from "./components/onboarding/FirstRunOnboardingOverlay";
+import {
+  FirstRunOnboardingOverlay,
+  type FirstRunServerDraft,
+} from "./components/onboarding/FirstRunOnboardingOverlay";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -3360,11 +3363,17 @@ export default function App() {
     activeTab === "home" &&
     !firstRunOverlayDismissed;
 
-  const openFirstRunServerConnection = useCallback(() => {
-    setFirstRunOverlayDismissed(true);
-    markOnboardingStarted();
-    navigateApp(routePaths.servers);
-  }, [navigateApp]);
+  const openFirstRunServerConnection = useCallback(
+    (_draft: FirstRunServerDraft) => {
+      // The draft is captured in the onboarding overlay today. The next
+      // save-and-connect slice will submit it directly instead of handing off
+      // to the existing Servers surface.
+      setFirstRunOverlayDismissed(true);
+      markOnboardingStarted();
+      navigateApp(routePaths.servers);
+    },
+    [navigateApp],
+  );
 
   const connectFirstRunDemo = useCallback(() => {
     setFirstRunOverlayDismissed(true);
