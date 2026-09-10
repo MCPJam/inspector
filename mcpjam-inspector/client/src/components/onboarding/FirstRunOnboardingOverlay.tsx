@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { useReducedMotion } from "framer-motion";
-import { ArrowRight, Sparkles } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -10,8 +9,8 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 
-/** Time a welcome card remains visible before it advances to server choice. */
-export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 3_500;
+/** Time the welcome splash remains visible before it advances to server choice. */
+export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 8_500;
 
 type FirstRunOverlayStep = "welcome" | "choose";
 
@@ -37,6 +36,8 @@ export function FirstRunOnboardingOverlay({
 }: FirstRunOnboardingOverlayProps) {
   const prefersReducedMotion = useReducedMotion();
   const [step, setStep] = useState<FirstRunOverlayStep>("welcome");
+  const [isWelcomeCountdownRunning, setIsWelcomeCountdownRunning] =
+    useState(false);
 
   useEffect(() => {
     if (!open) setStep("welcome");
@@ -55,6 +56,19 @@ export function FirstRunOnboardingOverlay({
     return () => window.clearTimeout(timeoutId);
   }, [continueToChoice, open, prefersReducedMotion, step]);
 
+  // Start the CSS transition in a later browser task so the countdown paints at
+  // full width before it begins shrinking. The same duration drives the visual
+  // cue and the auto-advance timeout above.
+  useEffect(() => {
+    setIsWelcomeCountdownRunning(false);
+    if (!open || step !== "welcome" || prefersReducedMotion) return;
+
+    const startId = window.setTimeout(() => {
+      setIsWelcomeCountdownRunning(true);
+    }, 0);
+    return () => window.clearTimeout(startId);
+  }, [open, prefersReducedMotion, step]);
+
   useEffect(() => {
     if (!open || step !== "welcome") return;
 
@@ -71,7 +85,11 @@ export function FirstRunOnboardingOverlay({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onSkip()}>
       <DialogContent
-        className="max-w-md gap-6 border-border p-7 sm:p-8"
+        className={
+          step === "welcome"
+            ? "max-w-[420px] gap-0 border-0 bg-transparent p-1 text-left shadow-none"
+            : "max-w-[408px] gap-0 rounded-xl border-border bg-card p-6 shadow-none"
+        }
         showCloseButton={false}
         onEscapeKeyDown={(event) => event.preventDefault()}
         onPointerDownOutside={(event) => {
@@ -81,72 +99,92 @@ export function FirstRunOnboardingOverlay({
       >
         {step === "welcome" ? (
           <>
-            <DialogHeader className="gap-4 text-left">
-              <div className="flex size-10 items-center justify-center rounded-lg border border-border bg-accent text-accent-foreground">
-                <Sparkles className="size-5" aria-hidden />
-              </div>
-              <div className="space-y-2">
-                <DialogTitle className="text-2xl text-card-foreground">
-                  Welcome to MCPJam
-                </DialogTitle>
-                <DialogDescription className="text-sm leading-6 text-muted-foreground">
-                  Connect one server, then use its tools from a real MCP client.
-                </DialogDescription>
-              </div>
+            <DialogHeader className="gap-0 text-left">
+              <DialogTitle className="max-w-[12ch] pb-0 text-[2rem] leading-[1.12] font-semibold tracking-[-0.038em] text-primary-foreground">
+                Welcome to MCPJam
+              </DialogTitle>
+              <span
+                className="mt-4 block h-px w-[72px] bg-primary"
+                aria-hidden
+              />
+              <DialogDescription className="mt-4 max-w-[42ch] text-[14.5px] leading-[1.5] text-primary-foreground/80">
+                From your first prompt to a continuous gate on every release,
+                MCPJam shows what breaks across every AI client, and how to fix
+                it.
+              </DialogDescription>
             </DialogHeader>
-            <Button type="button" className="w-full" onClick={continueToChoice}>
+            <Button
+              type="button"
+              variant="link"
+              className="mt-7 h-auto p-0 text-[12.5px] font-semibold text-primary-foreground decoration-primary-foreground/35 underline-offset-4 hover:text-primary-foreground hover:decoration-primary-foreground"
+              onClick={continueToChoice}
+            >
               Continue
-              <ArrowRight aria-hidden />
             </Button>
-            <p className="text-center text-xs text-muted-foreground">
-              Press Enter or click outside this card to continue.
-            </p>
+            {!prefersReducedMotion ? (
+              <div
+                className="mt-6 h-px w-full overflow-hidden bg-primary-foreground/25"
+                data-testid="welcome-countdown"
+                aria-hidden
+              >
+                <div
+                  className="h-full w-full origin-left bg-primary transition-transform ease-linear motion-reduce:hidden"
+                  data-testid="welcome-countdown-bar"
+                  style={{
+                    transform: isWelcomeCountdownRunning
+                      ? "scaleX(0)"
+                      : "scaleX(1)",
+                    transitionDuration: `${FIRST_RUN_WELCOME_AUTO_ADVANCE_MS}ms`,
+                  }}
+                />
+              </div>
+            ) : null}
           </>
         ) : (
           <>
-            <DialogHeader className="gap-2 text-left">
-              <DialogTitle className="text-2xl text-card-foreground">
+            <DialogHeader className="gap-0 text-left">
+              <DialogTitle className="pb-0 text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
                 Point MCPJam at a server
               </DialogTitle>
-              <DialogDescription className="text-sm leading-6 text-muted-foreground">
-                Bring your own MCP server, or try the Excalidraw demo with no
-                setup.
+              <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
+                MCPJam connects to your MCP server and lets you call its tools,
+                inspect traces, and see how different clients handle it.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="grid gap-3">
+            <div className="mt-[18px] grid gap-0">
               <Button
                 type="button"
-                size="lg"
-                className="w-full justify-between"
+                className="h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
                 onClick={onConnectOwnServer}
               >
                 Connect your server
-                <ArrowRight aria-hidden />
               </Button>
+              <div
+                className="flex items-center gap-3 py-4 text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border"
+                role="separator"
+              >
+                or
+              </div>
               <Button
                 type="button"
                 variant="outline"
-                size="lg"
-                className="h-auto w-full items-start justify-between px-4 py-3 text-left"
+                className="h-auto w-full bg-card px-4 py-2.5 text-[12.5px] font-semibold shadow-none hover:border-primary hover:bg-card hover:text-foreground"
                 onClick={onConnectDemo}
               >
-                <span className="grid gap-1">
-                  <span>Try the Excalidraw demo</span>
-                  <span className="text-xs font-normal text-muted-foreground">
-                    6 tools · no setup
-                  </span>
-                </span>
-                <ArrowRight className="mt-0.5" aria-hidden />
+                Try the Excalidraw demo server
               </Button>
+              <p className="mt-1.5 text-center text-[10.5px] text-muted-foreground">
+                6 tools · no setup · nothing to install
+              </p>
             </div>
             <Button
               type="button"
               variant="link"
-              className="mx-auto text-muted-foreground"
+              className="mx-auto mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground no-underline hover:text-foreground hover:no-underline"
               onClick={onSkip}
             >
-              Skip for now
+              I&apos;ll set this up later
             </Button>
           </>
         )}

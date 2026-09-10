@@ -3414,7 +3414,9 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "I'll set this up later" }),
+    );
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
