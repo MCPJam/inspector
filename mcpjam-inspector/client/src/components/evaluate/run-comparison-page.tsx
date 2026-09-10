@@ -67,7 +67,10 @@ export function RunComparisonPage({
       const metrics = complete
         ? buildSuiteMetricStripData([run], trials)?.latest
         : null;
-      return { run, trials, complete, metrics };
+      // The stamped summary is partial until the run settles. It does not
+      // wait on loaded trials the way derived metrics do.
+      const summary = settled ? run.summary : undefined;
+      return { run, trials, complete, metrics, summary };
     });
   type Column = (typeof columns)[number];
   const rows: { name: string; value: (column: Column) => string }[] = [
@@ -108,22 +111,20 @@ export function RunComparisonPage({
     },
     {
       name: "Pass rate",
-      value: ({ run }) =>
-        run.summary?.passRate != null
-          ? `${toPercent(run.summary.passRate)}%`
-          : "—",
+      value: ({ summary }) =>
+        summary?.passRate != null ? `${toPercent(summary.passRate)}%` : "—",
     },
     {
       name: "Passed iterations",
-      value: ({ run }) => number(run.summary?.passed),
+      value: ({ summary }) => number(summary?.passed),
     },
     {
       name: "Failed iterations",
-      value: ({ run }) => number(run.summary?.failed),
+      value: ({ summary }) => number(summary?.failed),
     },
     {
       name: "Total iterations",
-      value: ({ run }) => number(run.summary?.total),
+      value: ({ summary }) => number(summary?.total),
     },
     {
       name: "Latency P50",
