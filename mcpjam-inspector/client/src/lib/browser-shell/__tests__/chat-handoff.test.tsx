@@ -126,3 +126,39 @@ it("retries a failed release after the pane has closed", async () => {
   await releaseBrowserForChat("offline", "a");
   expect(release).toHaveBeenCalledTimes(2);
 });
+
+it.each([true, false])(
+  "shares concurrent releases and allows retry after failure: %s",
+  async (succeeds) => {
+    let finish!: (ok: boolean) => void;
+    const release = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = renderHook(() =>
+      useBrowserChatHandoff({
+        projectId: `concurrent-${succeeds}`,
+        sessionId: "a",
+        holding: true,
+        release,
+      }),
+    );
+    const first = releaseBrowserForChat(`concurrent-${succeeds}`, "a");
+    const second = releaseBrowserForChat(`concurrent-${succeeds}`, "a");
+    expect(release).toHaveBeenCalledOnce();
+    const outcomes = Promise.allSettled([first, second]);
+    finish(succeeds);
+    expect((await outcomes).map((result) => result.status)).toEqual(
+      succeeds ? ["fulfilled", "fulfilled"] : ["rejected", "rejected"],
+    );
+    if (!succeeds) {
+      const retry = releaseBrowserForChat(`concurrent-${succeeds}`, "a");
+      expect(release).toHaveBeenCalledTimes(2);
+      finish(true);
+      await retry;
+    }
+    view.unmount();
+  },
+);

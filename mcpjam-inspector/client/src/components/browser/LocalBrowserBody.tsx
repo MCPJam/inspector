@@ -76,7 +76,8 @@ const HOLDER_STORAGE_KEY = "mcpjam.localBrowser.holder";
 function usePaneHolderId(): string {
   const ref = useRef<string | null>(null);
   if (ref.current === null) {
-    const minted = `rail-${Math.random().toString(36).slice(2, 10)}`;
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    const minted = `rail-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
     try {
       const stored = window.sessionStorage.getItem(HOLDER_STORAGE_KEY);
       if (stored) {

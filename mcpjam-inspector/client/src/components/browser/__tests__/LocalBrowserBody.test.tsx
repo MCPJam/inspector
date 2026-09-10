@@ -1114,3 +1114,17 @@ it("finishes automatic handoff when the pane unmounts during the request", async
   expect(api.lease.state).toBe("free");
   await expect(releaseBrowserForChat("proj-1")).resolves.toBeUndefined();
 });
+
+it("uses cryptographic randomness for a new lease holder", async () => {
+  const random = vi.spyOn(crypto, "getRandomValues");
+  try {
+    renderBody();
+    await screen.findByText(/agent is driving/i);
+    expect(random).toHaveBeenCalledWith(expect.any(Uint8Array));
+    expect(window.sessionStorage.getItem("mcpjam.localBrowser.holder")).toMatch(
+      /^rail-[0-9a-f]{32}$/,
+    );
+  } finally {
+    random.mockRestore();
+  }
+});

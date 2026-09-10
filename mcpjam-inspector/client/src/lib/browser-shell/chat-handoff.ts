@@ -4,6 +4,7 @@ type Holder = {
   holding: boolean;
   release: (isCurrent: () => boolean) => Promise<boolean>;
   mounted: boolean;
+  releaseInFlight?: Promise<void>;
 };
 const holders = new Map<string, Holder>();
 const keyFor = (projectId: string | null, sessionId?: string | null) =>
@@ -49,14 +50,22 @@ export async function releaseBrowserForChat(
   const key = keyFor(projectId, sessionId);
   const holder = holders.get(key);
   if (!holder) return;
-  if (
-    holder.holding &&
-    !(await holder.release(() => holder.mounted && holders.get(key) === holder))
-  ) {
-    throw new Error(
-      "Couldn't return browser control to the agent. Try sending your message again.",
-    );
+  if (!holder.releaseInFlight && holder.holding) {
+    holder.releaseInFlight = holder
+      .release(() => holder.mounted && holders.get(key) === holder)
+      .then((released) => {
+        if (!released) {
+          throw new Error(
+            "Couldn't return browser control to the agent. Try sending your message again.",
+          );
+        }
+        holder.holding = false;
+        if (!holder.mounted && holders.get(key) === holder) holders.delete(key);
+      })
+      .finally(() => {
+        holder.releaseInFlight = undefined;
+      });
   }
-  holder.holding = false;
-  if (!holder.mounted && holders.get(key) === holder) holders.delete(key);
+  // Also await an existing request if a render already updated holding.
+  await holder.releaseInFlight;
 }
