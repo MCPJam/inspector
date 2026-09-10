@@ -416,7 +416,7 @@ function toProjectInfo(project: PlatformProject): ProjectInfo {
 }
 
 type PrimitiveCheck = {
-  status: "ok" | "error" | "skipped";
+  status: "ok" | "warn" | "error" | "skipped";
   detail: string;
 };
 

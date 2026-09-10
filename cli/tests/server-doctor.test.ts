@@ -185,6 +185,7 @@ test("formatServerDoctorHuman renders a concise summary and artifact path", () =
     capabilities: null,
     tools: [],
     toolsMetadata: {},
+    toolLints: [],
     resources: [],
     resourceTemplates: [],
     prompts: [],
@@ -209,6 +210,10 @@ test("formatServerDoctorHuman renders a concise summary and artifact path", () =
       tools: {
         status: "skipped",
         detail: "Tools were not collected.",
+      },
+      toolHygiene: {
+        status: "skipped",
+        detail: "Tool hygiene lints did not run.",
       },
       resources: {
         status: "skipped",
@@ -241,6 +246,73 @@ test("formatServerDoctorHuman renders a concise summary and artifact path", () =
   assert.match(rendered, /^Status: oauth_required/m);
   assert.match(rendered, /^OAuth: required \(dcr, cimd\)$/m);
   assert.match(rendered, /^Artifact: \/tmp\/doctor\.json$/m);
+  assert.doesNotMatch(rendered, /^Tool hygiene:/m);
+});
+
+test("formatServerDoctorHuman renders advisory tool hygiene warnings", () => {
+  const result: ServerDoctorResult<import("../src/lib/server-doctor.js").ServerDoctorTargetSummary> = {
+    target: {
+      kind: "http",
+      label: "https://example.com/mcp",
+      url: "https://example.com/mcp",
+      commandArgs: [],
+      envKeys: [],
+      headerNames: [],
+      timeoutMs: 4_000,
+      hasAccessToken: false,
+      hasRefreshToken: false,
+      hasClientSecret: false,
+    },
+    generatedAt: "2026-04-11T00:00:00.000Z",
+    status: "ready",
+    probe: createProbeResult(),
+    connection: { status: "connected", detail: "ok" },
+    initInfo: null,
+    capabilities: null,
+    tools: [{ name: "insight-get" }],
+    toolsMetadata: {},
+    toolLints: [
+      {
+        rule: "unknowable-required-id",
+        tools: ["insight-get"],
+        param: "insightId",
+        message:
+          '"insightId" is required and looks like an opaque identifier, but nothing says where to get one.',
+      },
+      {
+        rule: "unbounded-list-tool",
+        tools: ["traces-list"],
+        message: "Looks like a list/query tool with no limit parameter.",
+      },
+    ],
+    resources: [],
+    resourceTemplates: [],
+    prompts: [],
+    checks: {
+      probe: { status: "ok", detail: "ok" },
+      connection: { status: "ok", detail: "ok" },
+      initialization: { status: "ok", detail: "ok" },
+      capabilities: { status: "ok", detail: "ok" },
+      tools: { status: "ok", detail: "1 tool discovered." },
+      toolHygiene: {
+        status: "warn",
+        detail:
+          "2 hygiene warnings (advisory; does not affect readiness). See toolLints for details.",
+      },
+      resources: { status: "ok", detail: "0 resources discovered." },
+      resourceTemplates: { status: "ok", detail: "0 resource templates discovered." },
+      prompts: { status: "ok", detail: "0 prompts discovered." },
+    },
+    error: null,
+  };
+
+  const rendered = formatServerDoctorHuman(result);
+
+  assert.match(rendered, /^Status: ready/m);
+  assert.match(rendered, /^- toolHygiene: warn /m);
+  assert.match(rendered, /^Tool hygiene: 2 warnings \(advisory; readiness is unaffected\)$/m);
+  assert.match(rendered, /^- \[unknowable-required-id\] insight-get · insightId: /m);
+  assert.match(rendered, /^- \[unbounded-list-tool\] traces-list: /m);
 });
 
 test("server doctor JSON payload redacts probe Authorization headers", () => {
