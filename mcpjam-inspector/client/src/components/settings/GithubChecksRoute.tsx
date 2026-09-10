@@ -704,6 +704,7 @@ export function GithubChecksRoute({
     value: string,
   ) => {
     if (pendingOAuth.has(row._id)) return;
+    const submittedForOrganization = activeOrganizationId;
     setPendingOAuth((current) => new Set(current).add(row._id));
     try {
       await setRepoPrServerOAuth({
@@ -711,7 +712,9 @@ export function GithubChecksRoute({
         sourceServerId: value === "none" ? null : value,
       });
     } catch (error) {
-      handleWriteError(error);
+      if (organizationIdRef.current === submittedForOrganization) {
+        handleWriteError(error);
+      }
     } finally {
       setPendingOAuth((current) => {
         const next = new Set(current);

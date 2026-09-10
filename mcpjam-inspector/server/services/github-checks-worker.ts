@@ -248,10 +248,11 @@ async function resolvePrServerOAuthToken(args: {
   if (
     status !== 200 ||
     body?.ok !== true ||
-    typeof body.accessToken !== "string"
+    typeof body.accessToken !== "string" ||
+    body.accessToken.trim().length === 0
   )
     throw new Error("PR server OAuth token unavailable");
-  return body.accessToken;
+  return body.accessToken.trim();
 }
 
 async function credentialPreflight(
@@ -447,6 +448,9 @@ export const sendHeartbeatForTests = sendHeartbeat;
  * mapping (409 ⇒ lease loss, 502 ⇒ mint failure) is worth pinning at the wire.
  */
 export const mintCloneTokenForTests = mintCloneToken;
+
+/** Test seam for the hand-mirrored OAuth token route contract. */
+export const resolvePrServerOAuthTokenForTests = resolvePrServerOAuthToken;
 
 /**
  * Test seam: `repoPrivate` arriving intact is the difference between cloning a
@@ -1751,6 +1755,14 @@ export async function executeClaimedCheck(
     const recipe = resolved.recipe;
     const started = resolved.started;
     assertLeaseHeld();
+    const sourceServerId = started.authorizationRequired
+      ? claimed.prServerOAuthSourceServerId
+      : undefined;
+    if (started.authorizationRequired && !sourceServerId) {
+      throw new PrServerAuthorizationRequiredError(
+        "oauth_connection_not_selected",
+      );
+    }
 
     logger.info("[github-checks] PR server is reachable", {
       ...logContext,
@@ -1778,12 +1790,6 @@ export async function executeClaimedCheck(
     // recovery needs the pointer to soft-delete the row.
     await deps.recordServer(claimed.triggerId, serverId);
     if (started.authorizationRequired) {
-      const sourceServerId = claimed.prServerOAuthSourceServerId;
-      if (!sourceServerId) {
-        throw new PrServerAuthorizationRequiredError(
-          "oauth_connection_not_selected",
-        );
-      }
       oauthAccessToken = await deps.resolvePrServerOAuthToken({
         claimed,
         claimedBy,

@@ -32,6 +32,7 @@
  */
 
 import { Sandbox } from "e2b";
+import { hasBearerChallenge } from "@mcpjam/sdk/browser";
 import {
   DEFAULT_EGRESS_DENY_CIDRS,
   resolveEgressPolicy,
@@ -1171,7 +1172,7 @@ export async function probeMcpInitialize(
       const challenge = response.headers.get("www-authenticate") ?? "";
       if (
         (response.status === 401 || response.status === 403) &&
-        /^\s*Bearer(?:\s|$)/i.test(challenge)
+        hasBearerChallenge(challenge)
       ) {
         return "authorization_required";
       }

@@ -22,6 +22,7 @@ import {
   CloneTokenUnavailableError,
   LeaseLostError,
   mintCloneTokenForTests,
+  resolvePrServerOAuthTokenForTests,
   startGithubChecksWorker,
   type CheckExecutionDeps,
   type PlanlessCheckReport,
@@ -331,6 +332,13 @@ describe("executeClaimedCheck — happy path", () => {
       "authorizationRequired:oauth_connection_not_selected",
     );
     expect(h.events).not.toContain("runEvalSuite");
+    expect(h.events).not.toContain("getBearer");
+    expect(h.events.some((event) => event.startsWith("createServer:"))).toBe(
+      false,
+    );
+    expect(h.events.some((event) => event.startsWith("recordServer:"))).toBe(
+      false,
+    );
     expectOnlyCheckResourcesRemoved(h);
   });
 
@@ -1876,6 +1884,19 @@ describe("the clone-token wire contract", () => {
     });
     const claimed = await claimNextForTests("worker-1");
     expect(claimed).toMatchObject({ triggerId: "trig-9", repoPrivate: true });
+  });
+
+  it("rejects an empty PR-server OAuth token", async () => {
+    stubFetch(200, { ok: true, accessToken: "   " });
+    await expect(
+      resolvePrServerOAuthTokenForTests({
+        claimed: CLAIM,
+        claimedBy: "worker-1",
+        sourceServerId: "source-server",
+        targetServerId: "target-server",
+        targetResourceUrl: "https://preview.test/mcp",
+      }),
+    ).rejects.toThrow("PR server OAuth token unavailable");
   });
 });
 

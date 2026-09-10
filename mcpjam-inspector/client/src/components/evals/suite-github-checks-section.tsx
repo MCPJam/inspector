@@ -82,7 +82,9 @@ export function SuiteGithubChecksSection({
     GithubCheckOutagePolicy | ""
   >("");
   const [connecting, setConnecting] = useState(false);
-  const [oauthBusy, setOauthBusy] = useState<string | null>(null);
+  const [pendingOAuth, setPendingOAuth] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   // Whether this instance is still on screen. The `ErrorBoundary` wrapping this
   // section in `suite-iterations-view` is KEYED BY organizationId, so switching
@@ -279,18 +281,29 @@ export function SuiteGithubChecksSection({
                 <Select
                   value={row.prServerOAuthSourceServerId ?? "none"}
                   disabled={
-                    oauthBusy === row._id || availability?.canManage !== true
+                    pendingOAuth.has(row._id) ||
+                    availability?.canManage !== true
                   }
                   onValueChange={(value) => {
-                    setOauthBusy(row._id);
+                    if (pendingOAuth.has(row._id)) return;
+                    setPendingOAuth((current) => new Set(current).add(row._id));
                     void setRepoPrServerOAuth({
                       configId: row._id,
                       sourceServerId: value === "none" ? null : value,
                     })
-                      .catch((error) =>
-                        toast.error(githubChecksWriteErrorMessage(error)),
-                      )
-                      .finally(() => setOauthBusy(null));
+                      .catch((error) => {
+                        if (mountedRef.current) {
+                          toast.error(githubChecksWriteErrorMessage(error));
+                        }
+                      })
+                      .finally(() => {
+                        if (!mountedRef.current) return;
+                        setPendingOAuth((current) => {
+                          const next = new Set(current);
+                          next.delete(row._id);
+                          return next;
+                        });
+                      });
                   }}
                 >
                   <SelectTrigger

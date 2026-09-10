@@ -886,7 +886,9 @@ describe("waitForMcpInitialize", () => {
     const fetchImpl = vi.fn(async () =>
       new Response("unauthorized", {
         status: 401,
-        headers: { "www-authenticate": 'Bearer realm="mcp"' },
+        headers: {
+          "www-authenticate": 'Basic realm="legacy", Bearer realm="mcp"',
+        },
       })
     );
     const options = {

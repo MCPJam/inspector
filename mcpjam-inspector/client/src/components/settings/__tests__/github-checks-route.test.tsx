@@ -1277,6 +1277,37 @@ describe("GithubChecksRoute organization switching", () => {
       "Fail open",
     );
   });
+
+  it("drops an OAuth failure that arrives after the organization changed", async () => {
+    mockRepos.value = [ROW];
+    mockPrServerOAuthSources.value = [
+      {
+        serverId: "server-oauth",
+        projectId: ROW.projectId,
+        name: "Test OAuth server",
+        authorized: true,
+      },
+    ];
+    mockListInstallationRepos.mockResolvedValue([]);
+    let rejectStaleWrite: ((error: unknown) => void) | undefined;
+    mockSetRepoPrServerOAuth.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectStaleWrite = reject;
+        }),
+    );
+
+    const { rerender } = render(routeTree("org-1"));
+    await chooseOption(
+      userEvent.setup(),
+      `Server authentication for ${ROW.repoFullName}`,
+      "Test OAuth server",
+    );
+    rerender(routeTree("org-2"));
+    await act(async () => rejectStaleWrite?.(new Error("stale failure")));
+
+    expect(toast.error).not.toHaveBeenCalled();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
