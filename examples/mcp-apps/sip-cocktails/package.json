@@ -25,7 +25,7 @@
     "dev": "cross-env NODE_ENV=development concurrently 'npm run watch' 'npm run serve'"
   },
   "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^0.4.0",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@workos-inc/node": "^8.0.0",
     "convex": "^1.31.4",
