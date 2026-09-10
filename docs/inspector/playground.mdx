@@ -304,7 +304,9 @@ Click **Edit** on a tool-result card to make the **Input** and **Result** JSON e
 
 ## Right Rail
 
-The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached.
+The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached. When a browser is active, a **Browser** tab also appears.
+
+When the agent starts a live browser tool call, the right rail opens automatically and switches to the **Browser** tab so you can follow along. If you switch to **Logs** (or **Shell**) while browsing is in progress, the rail respects that choice and will not switch back — it only auto-opens once per browse session. Switching to a different conversation resets this behavior for the new conversation.
 
 ### Logs tab
 
