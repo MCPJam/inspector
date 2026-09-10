@@ -257,7 +257,7 @@ export const APPS_CHECK_CATALOG = {
   "ui-listed-resources-valid": {
     title: "Listed UI Resources Valid",
     description:
-      "UI resources returned by resources/list use ui:// URIs and the MCP Apps HTML MIME type.",
+      "UI resources returned by resources/list use ui:// URIs; declaring the MCP Apps HTML MIME type there is a SHOULD, so a different value warns rather than fails.",
   },
   "ui-resources-readable": {
     title: "UI Resources Readable",
@@ -267,7 +267,7 @@ export const APPS_CHECK_CATALOG = {
   "ui-resource-contents-valid": {
     title: "UI Resource Contents Valid",
     description:
-      "UI resource contents use the MCP Apps HTML MIME type and provide exactly one HTML payload via text or blob.",
+      "resources/read returns at least one content entry, and every entry uses the MCP Apps HTML MIME type and carries an HTML document via text or blob.",
   },
   "ui-resource-meta-valid": {
     title: "UI Resource Metadata Valid",
