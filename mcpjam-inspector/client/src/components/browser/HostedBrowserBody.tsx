@@ -1265,31 +1265,30 @@ export function HostedBrowserBody({
   }
 
   const onTier = (next: QualityTier) => {
-        setTierPreference(next);
-        const resolved = tierController.current.setPreference(next);
-        const wasVideo =
-          tierRef.current !== "mjpeg" && tierRef.current !== "vnc";
-        const isVideo = resolved !== "mjpeg" && resolved !== "vnc";
-        setTier(resolved);
-        tierRef.current = resolved;
-        paneFrameStats.noteTier(resolved);
-        // Only a change of TRANSPORT needs a new socket. Reconnecting for a
-        // bitrate change would drop the picture to buy nothing.
-        if (wasVideo !== isVideo) setStreamAttempt((n) => n + 1);
-        const socket = socketRef.current;
-        if (socket?.readyState === WebSocket.OPEN) {
-          // The daemon re-encodes at the new tier, which restarts ffmpeg and
-          // produces the fresh keyframe every watcher needs. A relay too old
-          // to understand this ignores it, and the tier stays a client-side
-          // preference — which is still the right picture, just not a cheaper
-          // one.
-          socket.send(
-            JSON.stringify({
-              type: "quality",
-              tier: encoderTierFor(resolved),
-            }),
-          );
-        }
+    setTierPreference(next);
+    const resolved = tierController.current.setPreference(next);
+    const wasVideo = tierRef.current !== "mjpeg" && tierRef.current !== "vnc";
+    const isVideo = resolved !== "mjpeg" && resolved !== "vnc";
+    setTier(resolved);
+    tierRef.current = resolved;
+    paneFrameStats.noteTier(resolved);
+    // Only a change of TRANSPORT needs a new socket. Reconnecting for a
+    // bitrate change would drop the picture to buy nothing.
+    if (wasVideo !== isVideo) setStreamAttempt((n) => n + 1);
+    const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      // The daemon re-encodes at the new tier, which restarts ffmpeg and
+      // produces the fresh keyframe every watcher needs. A relay too old
+      // to understand this ignores it, and the tier stays a client-side
+      // preference — which is still the right picture, just not a cheaper
+      // one.
+      socket.send(
+        JSON.stringify({
+          type: "quality",
+          tier: encoderTierFor(resolved),
+        }),
+      );
+    }
   };
 
   return (
@@ -1349,7 +1348,7 @@ export function HostedBrowserBody({
     >
       <BrowserPaneSurface
         frame={frame}
-        holding={holding}
+        authority={{ kind: "lease", holding }}
         control={control}
         // NO take-control button. Using the browser is what takes it now, and
         // the shell's second row already says who is driving.

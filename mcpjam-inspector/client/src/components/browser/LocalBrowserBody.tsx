@@ -8,8 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { PaneMessage } from "@/components/computer/PaneMessage";
-import { LocalComputerConsentGate } from "@/components/computer/LocalComputerConsentGate";
-import { useLocalComputerConsent } from "@/hooks/useLocalComputerConsent";
+import { LocalBrowserConsentGate } from "@/components/browser/LocalBrowserConsentGate";
+import { useLocalBrowserConsent } from "@/hooks/useLocalBrowserConsent";
 import {
   BrowserPaneSurface,
   type PaneControl,
@@ -140,7 +140,7 @@ export function LocalBrowserBody({
   active?: boolean;
 }) {
   const workspaceEnabled = useBrowserWorkspaceEnabled();
-  const { grant: grantConsent } = useLocalComputerConsent();
+  const { grant: grantConsent } = useLocalBrowserConsent();
   const [status, setStatus] = useState<LocalBrowserStatus | null>(null);
   const [session, setSession] = useState<{ bootId: string } | null>(null);
   const [lease, setLease] = useState<LocalBrowserLease>({ state: "free" });
@@ -205,7 +205,7 @@ export function LocalBrowserBody({
     }
     let cancelled = false;
     void api
-      .capability()
+      .capability(consentToken)
       .then((result) => {
         if (!cancelled) setNativeCapable(Boolean(result?.available));
       })
@@ -215,7 +215,7 @@ export function LocalBrowserBody({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [consentToken]);
   /**
    * Show the page itself rather than a screencast of it.
    *
@@ -344,7 +344,12 @@ export function LocalBrowserBody({
       // still in flight against the last one must not land on this one.
       railGeneration.current += 1;
       setSession({ bootId: next.bootId });
-      if (sessionId) markBrowserSessionActive(sessionId);
+      if (sessionId) {
+        markBrowserSessionActive(sessionId);
+        useActiveChatSessionStore
+          .getState()
+          .setBrowserLocation({ projectId, sessionId, engine: "local" });
+      }
       setLease(next.lease);
     } catch (err) {
       if (
@@ -873,7 +878,7 @@ export function LocalBrowserBody({
   // apart, and a report that called them the same thing could not say whether
   // the native surface helped.
   const engineRef = useRef<string>("local");
-  engineRef.current = native ? "local-native" : status?.runtime ?? "local";
+  engineRef.current = native ? "local-native" : (status?.runtime ?? "local");
   useEffect(
     () => () => captureBrowserPaneSessionSummary(engineRef.current),
     [],
@@ -890,7 +895,7 @@ export function LocalBrowserBody({
       return (
         <PaneMessage dashed>
           <div data-testid="rail-browser-unconsented">
-            <LocalComputerConsentGate
+            <LocalBrowserConsentGate
               onAllow={grantConsent}
               location="playground_browser"
             />
@@ -976,8 +981,7 @@ export function LocalBrowserBody({
   const shellTransport = useMemo(() => {
     if (!bootId) return null;
     return {
-      readState: () =>
-        fetchLocalBrowserState({ bootId, holder, consentToken }),
+      readState: () => fetchLocalBrowserState({ bootId, holder, consentToken }),
       sendCommand: (args: {
         command: BrowserPaneCommand;
         commandId?: string;
@@ -1102,6 +1106,7 @@ export function LocalBrowserBody({
             flex container to grow in, and the picture collapses to nothing. */}
         <div className="flex min-h-0 flex-1 flex-col">
           <ElectronNativeBody
+            consentToken={consentToken}
             session={session}
             holder={holder}
             control={control}
@@ -1202,6 +1207,7 @@ export function LocalBrowserBody({
         >
           {native ? (
             <ElectronNativeBody
+              consentToken={consentToken}
               session={session}
               holder={holder}
               control={control}
@@ -1216,7 +1222,7 @@ export function LocalBrowserBody({
               // Gated as well as cleared: a frame that lands in the same tick as
               // the revocation must not be the one that gets painted.
               frame={consentGranted ? frame : null}
-              holding={holding}
+              authority={{ kind: "lease", holding }}
               control={control}
               // NO take-control button. Using the browser is what takes it now,
               // and the shell's second row already says who is driving.

@@ -54,7 +54,7 @@ function build(
   const touches: Array<{ computerId: string; sessionId: string }> = [];
   const provider = createBrowserdWebMcpProvider({
     handle: HANDLE,
-    transportFor: () => ({ sendCommand } as never),
+    transportFor: () => ({ sendCommand }) as never,
     toolPollMs: 0, // no background polling in tests
     onCommand: (info) => touches.push(info),
     ...(extras ?? {}),
@@ -431,50 +431,43 @@ describe("browserd WebMCP provider", () => {
     expect(commands.length).toBe(before);
   });
 
-  it("cancels IN THE BROWSER when the caller aborts mid-invocation", async () => {
-    // Stopping our wait is not enough: a tool left running keeps acting on the
-    // page after the user hit stop.
-    const controller = new AbortController();
-    const { provider, callbacks, commands } = build((command) => {
-      const action = command.action as any;
-      if (action.kind === "webmcp_cancel") {
-        return {
-          status: "ok",
-          result: { ok: true, output: { cancelled: true } },
-          bootId: "b",
-        };
-      }
-      if (action.kind === "webmcp_invoke") {
-        return {
-          status: "ok",
-          result: { ok: true, output: { invocationId: "inv-7" } },
-          bootId: "b",
-        };
-      }
-      return { status: "ok", result: { ok: true, output: {} }, bootId: "b" };
+  it("cancels by command ID before the invocation responds, and reports an unknown outcome", async () => {
+    let finish!: (reply: Reply) => void;
+    const pending = new Promise<Reply>((resolve) => {
+      finish = resolve;
+    });
+    const { provider, callbacks, commands, sendCommand } = build();
+    sendCommand.mockImplementation(async (command) => {
+      commands.push(command);
+      if (command.action.kind === "webmcp_invoke") return pending;
+      return { status: "ok", bootId: "b", result: { ok: true, output: {} } };
     });
     const session = await provider.createSession({
       url: "https://x.test/",
       callbacks,
     });
+    const controller = new AbortController();
     const invoked = session.invokeTool({
       frameId: "f1",
       toolName: "slow",
       input: {},
+      invokeId: "test-call",
       signal: controller.signal,
     });
     controller.abort();
-    // The CALLER is freed at once. It has to be: the daemon's invoke is
-    // synchronous, so awaiting it would mean "stop" could not take effect
-    // until the thing being stopped had finished on its own.
-    await expect(invoked).rejects.toThrow(/cancelled/i);
-    // ...and the page is still told to stop, once the daemon's reply supplies
-    // the invocation id that the cancel needs.
-    await (session as unknown as { cancelWhenIdentified: Promise<void> })
-      .cancelWhenIdentified;
+    await expect(invoked).rejects.toMatchObject({
+      name: "WebMcpOutcomeUnknownError",
+      message: expect.stringContaining("may continue"),
+    });
     expect(
-      commands.some((c) => (c.action as any).kind === "webmcp_cancel"),
-    ).toBe(true);
+      commands.find((c) => c.action.kind === "webmcp_cancel")?.action,
+    ).toEqual({ kind: "webmcp_cancel", commandId: "hosted:test-call" });
+    finish({
+      status: "ok",
+      bootId: "b",
+      result: { ok: true, output: { invocationId: "inv-7" } },
+    });
+    await session.dispose();
   });
 
   it("says a person has the browser rather than reporting a generic failure", async () => {
@@ -519,4 +512,123 @@ describe("browserd WebMCP provider", () => {
     expect(commands).toHaveLength(before);
     await expect(session.reload()).rejects.toThrow(/disposed/);
   });
+});
+
+it("pins hosted calls to the observed boot, tab, navigation and registration", async () => {
+  const stateToken = {
+    tabId: "tab-observed",
+    navCounter: 4,
+    urlHash: "u",
+    domHash: "d",
+  };
+  const { provider, callbacks, commands, toolSets } = build((command) => ({
+    status: "ok",
+    bootId: "boot-1",
+    result: {
+      ok: true,
+      stateToken,
+      output:
+        command.action.kind === "observe"
+          ? {
+              tools: [
+                {
+                  frameId: "f",
+                  name: "pay",
+                  origin: "https://x.test",
+                  registrationSeq: 7,
+                },
+              ],
+            }
+          : {},
+    },
+  }));
+  const session = await provider.createSession({
+    url: "https://x.test/",
+    callbacks,
+  });
+  const expectedBinding = toolSets.at(-1)![0].binding!;
+  expect(expectedBinding).toEqual({
+    frameId: "f",
+    registrationSeq: 7,
+    browser: { bootId: "boot-1", tabId: "tab-observed", navCounter: 4 },
+  });
+  await session.invokeTool({
+    frameId: "f",
+    toolName: "pay",
+    input: {},
+    expectedBinding,
+    signal: new AbortController().signal,
+  });
+  expect(commands.find((c) => c.action.kind === "webmcp_invoke")).toMatchObject(
+    {
+      tabId: "tab-observed",
+      action: {
+        expectedBinding: {
+          frameId: "f",
+          registrationSeq: 7,
+          bootId: "boot-1",
+          tabId: "tab-observed",
+          navCounter: 4,
+        },
+      },
+    },
+  );
+  const before = commands.length;
+  await expect(
+    session.invokeTool({
+      frameId: "f",
+      toolName: "pay",
+      input: {},
+      expectedBinding: {
+        ...expectedBinding,
+        browser: { ...expectedBinding.browser!, bootId: "old-boot" },
+      },
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toMatchObject({ name: "WebMcpToolGoneError" });
+  expect(commands).toHaveLength(before);
+  await session.dispose();
+});
+
+it.each(["stale_binding: changed", "webmcp_tool_gone: removed"])(
+  "exposes definite hosted refusal %s for safe refresh",
+  async (error) => {
+    const { provider, callbacks, commands } = build((command) => ({
+      status: "ok",
+      bootId: "boot-1",
+      result:
+        command.action.kind === "webmcp_invoke"
+          ? { ok: false, error }
+          : { ok: true, output: {} },
+    }));
+    const session = await provider.createSession({
+      url: "https://x.test",
+      callbacks,
+    });
+    await expect(
+      session.invokeTool({
+        frameId: "f",
+        toolName: "pay",
+        input: {},
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({ name: "WebMcpToolGoneError" });
+    const before = commands.length;
+    await session.refreshTools!();
+    expect(commands.slice(before).map((command) => command.action)).toEqual([
+      { kind: "observe", mode: "webmcp_tools" },
+    ]);
+    await session.dispose();
+  },
+);
+
+it("reports an explicit tool-refresh failure instead of claiming success", async () => {
+  const { provider, callbacks, sendCommand } = build();
+  const session = await provider.createSession({
+    url: "https://x.test",
+    callbacks,
+  });
+  sendCommand.mockRejectedValueOnce(new Error("offline"));
+  await expect(session.refreshTools!()).rejects.toThrow("offline");
+  await session.dispose();
 });

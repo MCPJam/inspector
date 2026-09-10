@@ -188,6 +188,7 @@ export interface ComputerEnginesConfig {
     available: boolean;
     /** Bash may work while the terminal doesn't (node-pty failed to load). */
     terminalAvailable: boolean;
+    browserAvailable?: boolean;
     /** Tilde display root ("~/.mcpjam/computer") — render `${root}/<projectId>`. */
     workspaceDisplayRoot: string | null;
     reason?: string;
@@ -270,6 +271,7 @@ function parseEngines(value: unknown): ComputerEnginesConfig | null {
     local: {
       available: local.available,
       terminalAvailable: local.terminalAvailable === true,
+      browserAvailable: local.browserAvailable === true,
       workspaceDisplayRoot:
         typeof local.workspaceDisplayRoot === "string"
           ? local.workspaceDisplayRoot
@@ -335,7 +337,8 @@ export function useEphemeralCloudAvailable(): boolean | undefined {
 /** `undefined` while loading. On fetch failure assumes a local data plane —
  * the pre-config behavior, where the terminal WS surfaces the real error. */
 export function useComputersDataPlaneConfig():
-  ComputersDataPlaneConfig | undefined {
+  | ComputersDataPlaneConfig
+  | undefined {
   const [config, setConfig] = useState<ComputersDataPlaneConfig | undefined>(
     cachedDataPlaneConfig ?? undefined,
   );

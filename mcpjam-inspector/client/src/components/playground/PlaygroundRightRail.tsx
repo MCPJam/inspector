@@ -1,3 +1,5 @@
+import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Cloud,
@@ -65,9 +67,7 @@ export function PlaygroundRightRail({
   isAuthenticated: boolean;
 }) {
   const computersEnabled = useComputersEnabledState();
-  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
-
-  if (!shellAvailable) {
+  if (computersEnabled !== true) {
     return <LoggerView onClose={onClose} />;
   }
   return (
@@ -111,6 +111,7 @@ function RightRailTabbed({
   hostId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
+  const shellAvailable = !!hostConfig?.computer;
   // Which engine serves this project's computer work. The rail is an INDICATOR
   // only — switching lives on the Computer tab, which owns the consent gate.
   //
@@ -118,6 +119,7 @@ function RightRailTabbed({
   // PlaygroundMain's engine reads `sharedProjectId` only. The divergence is
   // harmless (the engine hooks no-op without a shared project) and deliberate.
   const engine = useComputerEngine(projectId);
+  const browserEngine = useBrowserEngine(projectId);
   // The BODY follows `selectedEngine` (consent-blind), mirroring the Computer
   // tab's face choice: someone who picked "This machine" but hasn't authorized
   // it yet must see the local body's pointer, not a cloud terminal they didn't
@@ -129,20 +131,20 @@ function RightRailTabbed({
   // with the flag off it is the rail's third tab again, exactly as it was.
   const workspaceEnabled = useBrowserWorkspaceEnabled();
   const localBrowserRunning = useLocalBrowserRunning(
-    !workspaceEnabled && engine.selectedEngine === "local",
+    !workspaceEnabled && browserEngine.selectedEngine === "local",
   );
   const hasBrowser =
     !workspaceEnabled &&
     browserPanelAvailable({
       hostHasBrowser: !!hostConfig?.builtInToolIds?.includes("browser"),
-      selectedEngine: engine.selectedEngine,
+      selectedEngine: browserEngine.selectedEngine,
       isAuthenticated,
       localBrowserRunning,
     });
   // Which body. Follows `selectedEngine` like the Shell above, so someone who
   // picked "This machine" but has not authorized it yet sees the local body's
   // pointer rather than a cloud browser they did not ask for.
-  const isLocalBrowser = engine.selectedEngine === "local";
+  const isLocalBrowser = browserEngine.selectedEngine === "local";
   const mintBrowserToken = useMintBrowserToken();
   const mintConversationBrowserToken = useMintConversationBrowserToken();
   const activeChatSessionId = useActiveChatSessionStore(
@@ -163,8 +165,12 @@ function RightRailTabbed({
   // A tab that disappears cannot stay selected: leaving `activeTab` on a
   // hidden pane hides all of them and the rail looks broken.
   useEffect(() => {
-    if (!hasBrowser && activeTab === "browser") setActiveTab("logs");
-  }, [hasBrowser, activeTab]);
+    if (
+      (!hasBrowser && activeTab === "browser") ||
+      (!shellAvailable && activeTab === "shell")
+    )
+      setActiveTab("logs");
+  }, [hasBrowser, shellAvailable, activeTab]);
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
       if (next === activeTab) return;
@@ -178,6 +184,12 @@ function RightRailTabbed({
     [activeTab],
   );
 
+  // Browser-only hosts must reach the tabbed rail (and its consent gate)
+  // without mounting a shell or requiring a Computer attachment.
+  if (!shellAvailable && !hasBrowser) {
+    return <LoggerView onClose={onClose} />;
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-0.5 border-b border-border px-2 py-1">
@@ -187,12 +199,14 @@ function RightRailTabbed({
           isActive={activeTab === "logs"}
           onClick={() => handleTabClick("logs")}
         />
-        <TabButton
-          icon={TerminalSquare}
-          label="Shell"
-          isActive={activeTab === "shell"}
-          onClick={() => handleTabClick("shell")}
-        />
+        {shellAvailable ? (
+          <TabButton
+            icon={TerminalSquare}
+            label="Shell"
+            isActive={activeTab === "shell"}
+            onClick={() => handleTabClick("shell")}
+          />
+        ) : null}
         {hasBrowser ? (
           <TabButton
             icon={Globe}
@@ -233,12 +247,18 @@ function RightRailTabbed({
               is what makes that safe — a pane behind the Logs tab must stop
               claiming somebody is watching, and on the hosted engine that claim
               keeps a METERED box awake. */}
-          {isLocalBrowser ? (
+          <BrowserRuntimeControls projectId={projectId} />
+          {isLocalBrowser && browserEngine.localAvailable === false ? (
+            <p className="p-4 text-sm text-muted-foreground">
+              Browser is unavailable on this machine. Check Browser settings or
+              choose Cloud for a new chat.
+            </p>
+          ) : isLocalBrowser ? (
             <LocalBrowserBody
               projectId={projectId}
               sessionId={browserSessionId}
-              consentGranted={engine.consent.granted}
-              consentToken={engine.consent.token}
+              consentGranted={browserEngine.consent.granted}
+              consentToken={browserEngine.consent.token}
               active={activeTab === "browser"}
             />
           ) : (
@@ -251,31 +271,33 @@ function RightRailTabbed({
           )}
         </div>
       ) : null}
-      <div
-        className={cn(
-          "min-h-0 flex-1 flex-col",
-          activeTab === "shell" ? "flex" : "hidden",
-        )}
-      >
-        {/* The local body deliberately does NOT mount the cloud terminal
+      {shellAvailable ? (
+        <div
+          className={cn(
+            "min-h-0 flex-1 flex-col",
+            activeTab === "shell" ? "flex" : "hidden",
+          )}
+        >
+          {/* The local body deliberately does NOT mount the cloud terminal
             controller: `useComputerTerminal` reserves (and wakes) a cloud box
             on open, which would be a real machine started behind the user's
             back while their chat bash runs on this laptop. Swapping bodies
             mid-session drops a live cloud socket — the reserved box stays up
             until the idle sweep, and switching back reconnects with a fresh
             token mint. */}
-        {isLocalShell ? (
-          <LocalShellBody engine={engine} projectId={projectId} />
-        ) : (
-          <CloudShellBody
-            engine={engine}
-            projectId={projectId}
-            isAuthenticated={isAuthenticated}
-            hostConfig={hostConfig}
-            hostId={hostId}
-          />
-        )}
-      </div>
+          {isLocalShell ? (
+            <LocalShellBody engine={engine} projectId={projectId} />
+          ) : (
+            <CloudShellBody
+              engine={engine}
+              projectId={projectId}
+              isAuthenticated={isAuthenticated}
+              hostConfig={hostConfig}
+              hostId={hostId}
+            />
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

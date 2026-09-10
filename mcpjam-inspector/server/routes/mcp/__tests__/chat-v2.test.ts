@@ -500,6 +500,29 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
+    it("emits Browser readiness as data, never as assistant text", async () => {
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        builtInToolIds: ["browser"],
+        browserEngine: "local",
+      });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      const readiness = capturedStreamEvents.find(
+        (event) => event.type === "data-browser-readiness",
+      );
+      expect(readiness?.data.reason).toContain("browser_consent_required");
+      expect(
+        capturedStreamEvents
+          .filter((event) => event.type?.startsWith("text-"))
+          .some((event) =>
+            JSON.stringify(event).includes("browser_consent_required"),
+          ),
+      ).toBe(false);
+    });
+
     it("returns streaming response", async () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
@@ -1556,6 +1579,7 @@ describe("POST /api/mcp/chat-v2", () => {
         );
         expect(body.resumeConfig).toEqual(
           expect.objectContaining({
+            executionTarget: { kind: "adhoc" },
             modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
           })
         );
@@ -2281,8 +2305,81 @@ describe("POST /api/mcp/chat-v2", () => {
         ).toBe(true);
         expect(
           fetchMock.mock.calls.some(([input]) =>
-            String(input).includes("/stream/org/resolve")
-          )
+            String(input).includes("/stream/org/resolve"),
+          ),
+        ).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("keeps org credentials in Convex for an explicit local Browser even without the client routing hint", async () => {
+      // A `custom:` provider is local-runtime-eligible, so without the flag this
+      // chat resolves + runs the model locally (see the test above). When a
+      // selected MCP server is local-only, `localMcpRuntimeRequired` must force
+      // the CLOUD runtime so the org key stays in Convex and the model call is
+      // proxied through /stream/org — the tool loop still runs locally against
+      // the local MCP connection.
+      const originalFetch = global.fetch;
+      const fetchMock = vi.fn().mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org") {
+          const headers = new Headers(
+            (init as RequestInit | undefined)?.headers,
+          );
+          expect(headers.get("X-Inspector-Service-Token")).toBeNull();
+          expect(headers.get("Authorization")).toBe(
+            "Bearer signed-in-test-token",
+          );
+          const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
+          expect(body).toMatchObject({
+            projectId: "project-1",
+            providerKey: "custom:local-one",
+          });
+          return createSseResponse([
+            {
+              type: "finish",
+              finishReason: "stop",
+              messageMetadata: {
+                inputTokens: 1,
+                outputTokens: 1,
+                totalTokens: 2,
+              },
+            },
+          ]);
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock;
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: {
+            id: "custom:local-one:m-1",
+            provider: "custom",
+            customProviderName: "local-one",
+          },
+          projectId: "project-1",
+          selectedServers: ["server-1"],
+          selectedServerIds: ["server-1"],
+          browserEngine: "local",
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        // Cloud proxy hit; the local-runtime resolve path is never taken, so
+        // the org key never leaves Convex.
+        expect(
+          fetchMock.mock.calls.some(
+            ([input]) =>
+              String(input) === "https://test-convex.example.com/stream/org",
+          ),
+        ).toBe(true);
+        expect(
+          fetchMock.mock.calls.some(([input]) =>
+            String(input).includes("/stream/org/resolve"),
+          ),
         ).toBe(false);
       } finally {
         global.fetch = originalFetch;

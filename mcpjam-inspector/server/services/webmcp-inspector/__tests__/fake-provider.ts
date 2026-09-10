@@ -41,6 +41,7 @@ export function fakeTool(
 ): ProviderToolDescriptor {
   return {
     frameId: "frame-main",
+    registrationSeq: 1,
     name: "echo",
     description: "Echoes",
     inputSchema: { type: "object", properties: {} },

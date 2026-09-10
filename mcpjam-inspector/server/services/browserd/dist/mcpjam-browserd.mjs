@@ -5473,6 +5473,15 @@ function declaredToolsFromWebmcp(tools) {
   }));
 }
 
+// shared/browser-viewport-policy.ts
+var BROWSER_VIEWPORT_POLICY = {
+  quality: 75,
+  maxFrameBytes: 256 * 1024,
+  minIntervalMs: 100,
+  inputIntervalMs: 33,
+  inputBoostWindowMs: 1500
+};
+
 // server/services/webmcp-inspector/frame-throttle.ts
 function createFrameThrottle(options) {
   const now = options.now ?? Date.now;
@@ -5587,19 +5596,23 @@ function base64Bytes(data) {
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
 }
-var DEFAULT_QUALITY = 75;
-var DEFAULT_MIN_INTERVAL_MS = 100;
-var DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
+var DEFAULT_QUALITY = BROWSER_VIEWPORT_POLICY.quality;
+var DEFAULT_MIN_INTERVAL_MS = BROWSER_VIEWPORT_POLICY.minIntervalMs;
+var DEFAULT_MAX_FRAME_BYTES = BROWSER_VIEWPORT_POLICY.maxFrameBytes;
 function createTabViewport(cdp, options) {
-  const quality = options.quality ?? DEFAULT_QUALITY;
+  let quality = options.quality ?? DEFAULT_QUALITY;
+  let oversizeRecoveryAttempted = false;
   const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const now = options.now ?? Date.now;
   const listeners = /* @__PURE__ */ new Set();
   let streaming = false;
+  let startPending = Promise.resolve();
   let streamGeneration = 0;
   let disposed = false;
   let buttonMask = 0;
   let inputChain = Promise.resolve();
+  let resizeChain = Promise.resolve();
+  let pendingResizes = 0;
   let inputHolder;
   let lastData;
   let seq = 0;
@@ -5642,6 +5655,19 @@ function createTabViewport(cdp, options) {
     const bytes = Math.floor(frame.data.length * 3 / 4);
     if (bytes > maxBytes) {
       counters.dropped.oversize += 1;
+      if (!oversizeRecoveryAttempted) {
+        oversizeRecoveryAttempted = true;
+        quality = Math.min(quality, 40);
+        const run = resizeChain.then(async () => {
+          if (disposed || listeners.size === 0) return;
+          await stop();
+          if (disposed || listeners.size === 0) return;
+          await start();
+        });
+        resizeChain = run.catch(() => {
+        });
+        startPending = resizeChain;
+      }
       return;
     }
     const measured = measure(frame.data, options.surface);
@@ -5682,13 +5708,44 @@ function createTabViewport(cdp, options) {
   return {
     subscribe(listener) {
       listeners.add(listener);
-      if (listeners.size === 1) void start();
+      if (listeners.size === 1) {
+        startPending = pendingResizes > 0 ? resizeChain : start();
+      }
       return () => {
         listeners.delete(listener);
         if (listeners.size === 0) void stop();
       };
     },
     subscriberCount: () => listeners.size,
+    ready: async () => {
+      await startPending;
+      return streaming && !disposed;
+    },
+    invalidate() {
+      lastData = void 0;
+    },
+    resize(surface, apply) {
+      pendingResizes++;
+      const run = resizeChain.then(async () => {
+        try {
+          if (disposed || options.surface.width === surface.width && options.surface.height === surface.height)
+            return;
+          await stop();
+          if (disposed) return;
+          await apply?.();
+          Object.assign(options.surface, surface);
+        } finally {
+          pendingResizes--;
+          if (pendingResizes === 0 && !disposed && listeners.size > 0) {
+            await start();
+          }
+        }
+      });
+      resizeChain = run.catch(() => {
+      });
+      startPending = resizeChain;
+      return run;
+    },
     boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),
     counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
     noteTransportDrop() {

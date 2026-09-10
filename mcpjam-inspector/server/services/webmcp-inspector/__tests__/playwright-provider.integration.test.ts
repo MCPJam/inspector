@@ -21,11 +21,9 @@ import { chromium } from "playwright";
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
 import { startWebMcpSession, WebMcpSessionRegistry } from "../session-registry";
 import { PlaywrightWebMcpProvider } from "../playwright-provider";
-import { WebMcpToolGoneError } from "../provider";
+import { WebMcpOutcomeUnknownError, WebMcpToolGoneError } from "../provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
-  WEBMCP_HOUSEKEEPING_INTERVAL_MS,
-  WEBMCP_SETTLE_QUIET_MS,
   WEBMCP_VIEWPORT,
   type WebMcpActivityEntry,
   type WebMcpFrame,
@@ -71,16 +69,6 @@ if (process.env.CI && CHROMIUM_AVAILABLE && !WEBMCP_CDP_AVAILABLE) {
   );
 }
 
-/**
- * How long to wait for a settled page's still, with slop.
- *
- * Derived from the constants the provider actually uses — the quiet window
- * plus a housekeeping tick to notice it — rather than a round number that
- * would keep passing while meaning something else.
- */
-const SETTLE_WAIT_MS =
-  WEBMCP_SETTLE_QUIET_MS + WEBMCP_HOUSEKEEPING_INTERVAL_MS + 2_000;
-
 /** Headless for tests; a real session opens a window the developer drives. */
 class HeadlessProvider extends PlaywrightWebMcpProvider {
   async createSession(
@@ -116,9 +104,25 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     } = {},
   ) {
     registry = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
+    // Observe from provider creation: an embedded browser can paint before
+    // startWebMcpSession returns. A replay=0 subscription misses that frame
+    // and mistakes the later sharp still for the first streamed frame.
+    const frames: WebMcpFrame[] = [];
     const session = await startWebMcpSession({
       url: options.url ?? fixture.url,
-      provider,
+      provider: {
+        createSession: (args) =>
+          provider.createSession({
+            ...args,
+            callbacks: {
+              ...args.callbacks,
+              onFrame: (frame) => {
+                frames.push(frame);
+                args.callbacks.onFrame(frame);
+              },
+            },
+          }),
+      },
       registry,
       headless: true,
       ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
@@ -128,30 +132,21 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     });
     const runtime = registry.get(session.sessionId);
     const activity: WebMcpActivityEntry[] = [];
-    const frames: WebMcpFrame[] = [];
-    // The page can paint before this subscription lands, and a subscription
-    // without replay never sees that paint. The hub keeps it for late joiners,
-    // so take it the way a reconnecting client would: otherwise the first
-    // frame collected here is a still taken later, and a test that waits for
-    // the still after "the first frame" waits for a second one that a quiet
-    // page never sends. Seeded BEFORE subscribing, so nothing can land in
-    // between.
-    const retained = runtime.hub
-      .buffered()
-      .find((event) => event.type === "frame");
-    if (retained) frames.push(retained.frame);
     runtime.hub.subscribe((event) => {
       if (event.type === "activity") activity.push(event.entry);
-      if (event.type === "frame") frames.push(event.frame);
     }, 0);
     return { session, runtime, activity, frames };
   }
 
   it("discovers the page's tools with stable keys and provenance", async () => {
     const { runtime } = await open();
-    await vi.waitFor(() =>
-      expect(runtime.currentTools().length).toBeGreaterThanOrEqual(5),
-    );
+    // Main-frame tools can arrive before the cross-origin target attaches.
+    await vi.waitFor(() => {
+      expect(runtime.currentTools().length).toBeGreaterThanOrEqual(5);
+      expect(
+        runtime.currentTools().some((tool) => tool.name === "sub_tool"),
+      ).toBe(true);
+    });
 
     const tools = runtime.currentTools();
     const echo = tools.find((tool) => tool.name === "echo");
@@ -337,12 +332,14 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // timeout and leave the first promise rejecting with nobody listening —
     // which vitest reports as an unhandled rejection and fails the run.
     const hung = runtime.invoke(`${origin}::slow`, {}, "manual");
-    await expect(hung.settled).rejects.toThrow(
-      /did not respond in time|after a timeout|cancel/i,
+    const error = await hung.settled.catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(WebMcpOutcomeUnknownError);
+    expect((error as Error).message).toMatch(
+      /after a timeout.*execution may continue/i,
     );
 
-    // END TO END, through the shared bridge: after dispatch, a timeout cannot
-    // prove that page execution stopped, so the result must remain unknown.
+    // The timeline must retain uncertainty: a timeout is not evidence that
+    // a dispatched page tool stopped or that its effects were rolled back.
     await vi.waitFor(() => {
       const settled = activity.find(
         (entry) =>
@@ -576,52 +573,19 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await registry.disposeAll();
   }, 60_000);
 
-  it("sharpens the picture once the page stops painting", async () => {
-    // The fixture paints on load and then stops, which is the case the settle
-    // still exists for: what a person reads is the picture still on screen a
-    // second after everything stopped moving, and the stream is encoded for
-    // motion.
-    const { frames } = await open({ viewportMode: "embedded" });
+  it("keeps a quiet page stable and still supports explicit screenshots", async () => {
+    const { runtime, frames } = await open();
+    await runtime.setScreencast(true);
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
       timeout: 15_000,
     });
-
-    const streamedCount = frames.length;
-    const streamed = frames.at(-1)!;
-
-    // Wait for the page's own paints to stop and the quiet window to elapse.
-    // The bound is DERIVED from the constants that decide it rather than a
-    // number that would quietly stop matching them, and polled rather than
-    // slept: a loaded runner can land the housekeeping tick late, and the
-    // still is still the still. What arrives is the still — plus, on a build
-    // that answers a capture with a repaint it does not deduplicate, possibly
-    // one more frame, which is why this takes the LARGEST rather than the last.
-    await vi.waitFor(
-      () =>
-        expect(frames.length, "a still after the paints").toBeGreaterThan(
-          streamedCount,
-        ),
-      { timeout: SETTLE_WAIT_MS * 3, interval: 250 },
-    );
-
-    const sharpest = Math.max(
-      ...frames
-        .slice(streamedCount)
-        .map((frame) => Buffer.byteLength(frame.data, "base64")),
-    );
-    // Same picture, more bytes: the still is encoded well above the streaming
-    // baseline, which is the entire point of taking it.
-    expect(sharpest).toBeGreaterThan(
-      Buffer.byteLength(streamed.data, "base64"),
-    );
-    expect(sharpest).toBeLessThanOrEqual(WEBMCP_FRAME_MAX_BYTES);
-    // And no capture loop: a still induces a repaint, and a repaint counted as
-    // activity would take another still, forever.
-    const after = frames.length;
-    await new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS));
-    expect(frames.length - after, "no capture loop").toBeLessThan(2);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const settled = frames.length;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(frames.length).toBe(settled);
+    expect(await runtime.screenshotNow()).toBeTruthy();
     await registry.disposeAll();
-  }, 60_000);
+  }, 30_000);
 
   it("boots an embedded session that streams unprompted and takes input", async () => {
     const { session, runtime, frames } = await open({

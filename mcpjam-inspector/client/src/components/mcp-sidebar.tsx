@@ -535,11 +535,20 @@ export function MCPSidebar({
     HOSTED_MODE && !user && (isWorkOsAuthLoading || isConvexAuthLoading);
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const { status: updateStatus, restartAndInstall } = useUpdateNotification();
+  const {
+    status: updateStatus,
+    restartRequested,
+    restartAndInstall,
+  } = useUpdateNotification();
   const showUpdateButton =
     updateStatus.kind === "pending" || updateStatus.kind === "downloaded";
+  // Two ways to be mid-install, and both must disable the button: waiting on a
+  // download that was asked to install when it finishes, and waiting on the
+  // app to quit for one already downloaded. The second is the one a repeat
+  // click used to get through.
   const updateInstalling =
-    updateStatus.kind === "pending" && updateStatus.installRequested;
+    restartRequested ||
+    (updateStatus.kind === "pending" && updateStatus.installRequested);
   const handleUpdateClick = () => {
     if (!updateInstalling) {
       restartAndInstall();

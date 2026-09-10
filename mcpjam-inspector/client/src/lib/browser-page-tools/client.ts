@@ -15,7 +15,7 @@
  * to be told apart.
  */
 import { authFetch } from "@/lib/session-token";
-import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
+import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 import type {
   BrowserPageToolsErrorCode,
   BrowserPageToolsResponse,
@@ -110,7 +110,7 @@ export async function fetchLocalPageTools(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(consentToken ? { [LOCAL_CONSENT_HEADER]: consentToken } : {}),
+      ...(consentToken ? { [BROWSER_CONSENT_HEADER]: consentToken } : {}),
     },
     body: JSON.stringify(args),
     ...(signal ? { signal } : {}),

@@ -378,8 +378,7 @@ describe("electron-webview provider — the session surface", () => {
     expect(
       guest.debugger.calls.some(
         (call) =>
-          call.sessionId === "sess-1" &&
-          call.method === "Target.setAutoAttach",
+          call.sessionId === "sess-1" && call.method === "Target.setAutoAttach",
       ),
     ).toBe(true);
 
@@ -496,9 +495,9 @@ describe("electron-webview provider — the session surface", () => {
     // order, so a later registration would move the entry this checks while the
     // name assertion above still passed.
     expect(
-      (recorder.toolSnapshots.at(-1) as { name: string; origin: string }[]).find(
-        (tool) => tool.name === "inner_tool",
-      )?.origin,
+      (
+        recorder.toolSnapshots.at(-1) as { name: string; origin: string }[]
+      ).find((tool) => tool.name === "inner_tool")?.origin,
     ).toBe("https://inner.test");
   });
 
@@ -606,7 +605,7 @@ describe("electron-webview provider — the session surface", () => {
     ).rejects.toThrow(/no longer offers a tool named "checkout"/);
   });
 
-  it("reports a post-dispatch timeout as an unknown outcome", async () => {
+  it("reports uncertain page effects when a dispatched invocation times out", async () => {
     const { session, guest } = await startSession();
     guest.debugger.emitCdp("WebMCP.toolsAdded", {
       tools: [{ name: "slow", frameId: "main" }],
@@ -621,11 +620,13 @@ describe("electron-webview provider — the session surface", () => {
     });
     await Promise.resolve();
     await Promise.resolve();
-    // Once dispatch happened, cancellation cannot prove the page tool stopped.
+    // Timing out the wait cannot confirm that page execution stopped.
     controller.abort("timeout");
     await expect(pending).rejects.toMatchObject({
       name: "WebMcpOutcomeUnknownError",
-      message: expect.stringContaining("after a timeout"),
+      message: expect.stringMatching(
+        /after a timeout.*execution may continue/i,
+      ),
     });
   });
 });

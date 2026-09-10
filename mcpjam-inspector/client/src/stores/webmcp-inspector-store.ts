@@ -16,10 +16,13 @@ import {
 import {
   WEBMCP_INPUT_BATCH_LIMIT,
   type WebMcpInvocationOutcome,
+  WEBMCP_INVOKE_QUEUE_LIMIT,
+  WEBMCP_INVOKE_TIMEOUT_MS,
 } from "@/shared/webmcp-inspector-protocol";
 import { isHostedMode } from "@/lib/apis/mode-client";
 import { authFetch } from "@/lib/session-token";
 import type {
+  WebMcpRegistrationBinding,
   WebMcpActivityEntry,
   WebMcpBinaryFrame,
   WebMcpCommand,
@@ -40,6 +43,8 @@ import {
 import {
   noteFrameTransportRung,
   noteInputSent,
+  noteInputDispatched,
+  noteInputAck,
   resetFrameStats,
 } from "@/lib/webmcp-inspector/frame-stats";
 
@@ -76,8 +81,10 @@ export interface PageToolInvocationResult extends WebMcpInvocationOutcome {
   invokeId?: string;
 }
 
-/** How long to wait for a settle event before giving up on the stream. */
-const INVOCATION_WAIT_TIMEOUT_MS = 90_000;
+/** Queue + execution + budgeted before/after screenshots, then transport grace. */
+const INVOCATION_WAIT_TIMEOUT_MS =
+  (WEBMCP_INVOKE_QUEUE_LIMIT + 1) * (WEBMCP_INVOKE_TIMEOUT_MS + 30_000) +
+  30_000;
 
 /**
  * A client-minted id for one invocation, so a retry is recognisable as one.
@@ -143,13 +150,6 @@ export interface WebMcpLiveFrame {
  * a long float and three decimals is what a frame's own `scale` carries — the
  * two describe the same ratio and should not disagree in the third place.
  */
-function devicePixelRatioField(): { devicePixelRatio?: number } {
-  if (typeof window === "undefined") return {};
-  const raw = window.devicePixelRatio;
-  if (typeof raw !== "number" || !Number.isFinite(raw)) return {};
-  const ratio = Math.round(Math.min(2, Math.max(1, raw)) * 1_000) / 1_000;
-  return ratio === 1 ? {} : { devicePixelRatio: ratio };
-}
 
 /**
  * Normalize a frame from either transport into what the pane renders.
@@ -319,6 +319,14 @@ interface WebMcpInspectorState {
   invokeToolForResult(
     toolKey: string,
     input: Record<string, unknown>,
+    expectedBinding?: WebMcpRegistrationBinding,
+  ): Promise<PageToolInvocationResult>;
+  /** Refresh metadata without navigating or executing any page tool. */
+  refreshToolsForChat(sessionId: string): Promise<boolean>;
+  /** Read only: an expired/missing outcome must never cause another invocation. */
+  recoverInvocationResult(
+    sessionId: string,
+    invokeId: string,
   ): Promise<PageToolInvocationResult>;
   cancelInvocation(invokeId: string): Promise<void>;
   /**
@@ -538,7 +546,11 @@ function failOutstandingWaiters(errorMessage: string) {
   sessionGeneration += 1;
   for (const [invokeId, waiter] of [...invocationWaiters]) {
     invocationWaiters.delete(invokeId);
-    waiter({ state: "failed", errorMessage });
+    waiter({
+      state: "unknown",
+      invokeId,
+      errorMessage: `${errorMessage} The outcome is unknown; verify the page state before retrying.`,
+    });
   }
   settledResults.clear();
 }
@@ -702,6 +714,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           outputTruncated: entry.outputTruncated,
           outputBytes: entry.outputBytes,
           errorMessage: entry.errorMessage,
+          errorCode: entry.errorCode,
         };
         const waiter = invocationWaiters.get(entry.invokeId);
         if (waiter) {
@@ -958,6 +971,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       publishFrameTransport();
       frameSocket = openWebMcpFrameStream({
         sessionId,
+        coalesceFrames:
+          typeof window !== "undefined" && window.isElectron !== true,
         onOpen: () => {
           if (generation !== connectionGeneration) return;
           // A socket that opened is proof the failure before it was
@@ -974,6 +989,13 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // a successful retry it is what puts SSE back to carrying only the
           // session, its tools and its timeline.
           ensureSseFrames(sessionId, "off");
+        },
+        onInputSent: (seq) => {
+          if (generation === connectionGeneration)
+            noteInputDispatched(lastAppliedFrameSeq, seq);
+        },
+        onInputAck: (seq) => {
+          if (generation === connectionGeneration) noteInputAck(seq);
         },
         onFrame: (frame) => {
           if (generation !== connectionGeneration) return;
@@ -1079,6 +1101,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
      * the session's counter did not restart, so neither should ours.
      */
     function invalidateFrame() {
+      frameSocket?.discardPendingFrame();
       set({ liveFrame: undefined });
       presenter.clear();
     }
@@ -1245,7 +1268,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             // looked at here. A window session paints on a real display that
             // already knows its own ratio, and a hosted one is watched from
             // the Browser panel.
-            ...(options?.display === "in-app" ? devicePixelRatioField() : {}),
+            // Pane-sized interactive capture uses DPR 1; explicit API callers can request a higher ratio.
           }),
         });
         if (!result.ok) {
@@ -1309,7 +1332,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           set({ error: result.error });
           return undefined;
         }
-        set({ error: undefined });
+        if (get().error !== undefined) set({ error: undefined });
         return result.data;
       },
 
@@ -1320,6 +1343,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           toolKey,
           input,
           source: "manual",
+          expectedBinding: get().tools.find((tool) => tool.toolKey === toolKey)
+            ?.binding,
           invokeId,
         })) as { outcome?: PageToolInvocationResult } | undefined;
         // Locally the outcome arrives on the activity stream and this response
@@ -1332,7 +1357,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         }
       },
 
-      async invokeToolForResult(toolKey, input) {
+      async invokeToolForResult(toolKey, input, expectedBinding) {
         const generation = sessionGeneration;
         // MINTED HERE, so this call has one identity for its whole life. A
         // hosted request can be dropped in flight or retried onto another
@@ -1346,6 +1371,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           toolKey,
           input,
           source: "chat",
+          expectedBinding,
           invokeId,
         })) as
           { invokeId?: string; outcome?: PageToolInvocationResult } | undefined;
@@ -1391,16 +1417,17 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // The session went away while this call was being queued; nothing
           // will ever settle it.
           return {
-            state: "failed",
+            state: "unknown",
+            invokeId,
             errorMessage:
-              "The browser session went away before this tool finished.",
+              "The browser session went away before this tool finished. The outcome is unknown; verify the page state before retrying.",
           };
         }
         // The settle may already have arrived while the POST was in flight.
         const early = settledResults.get(invokeId);
         if (early) {
           settledResults.delete(invokeId);
-          return early;
+          return early.state === "unknown" ? { ...early, invokeId } : early;
         }
 
         return new Promise<PageToolInvocationResult>((resolve) => {
@@ -1411,17 +1438,60 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             // answer rather than waiting forever.
             if (!invocationWaiters.delete(invokeId)) return;
             resolve({
-              state: "failed",
+              state: "unknown",
+              invokeId,
               errorMessage:
-                "Lost track of this invocation — the connection to the browser session dropped.",
+                "Lost track of this invocation. The outcome is unknown; verify the page state before retrying.",
             });
           }, INVOCATION_WAIT_TIMEOUT_MS);
 
           invocationWaiters.set(invokeId, (result) => {
             clearTimeout(timer);
-            resolve(result);
+            resolve(
+              result.state === "unknown" ? { ...result, invokeId } : result,
+            );
           });
         });
+      },
+
+      async refreshToolsForChat(sessionId) {
+        const generation = sessionGeneration;
+        const response = await request<{
+          session: WebMcpSessionPublic;
+          tools: WebMcpToolDescriptor[];
+        }>(`/sessions/${encodeURIComponent(sessionId)}?refreshTools=1`, {
+          method: "GET",
+        });
+        if (
+          !response.ok ||
+          !response.data ||
+          generation !== sessionGeneration ||
+          get().session?.sessionId !== sessionId ||
+          response.data.session.sessionId !== sessionId
+        )
+          return false;
+        set({ tools: response.data.tools });
+        return true;
+      },
+
+      async recoverInvocationResult(sessionId, invokeId) {
+        const response = await request<{
+          pending?: boolean;
+          outcome?: PageToolInvocationResult;
+        }>(
+          `/sessions/${encodeURIComponent(sessionId)}/invocations/${encodeURIComponent(invokeId)}`,
+          { method: "GET" },
+        );
+        return response.ok && response.data?.outcome
+          ? { ...response.data.outcome, invokeId }
+          : {
+              state: "unknown",
+              invokeId,
+              errorMessage:
+                response.ok && response.data?.pending
+                  ? "The invocation is still pending. Do not invoke it again to obtain its result."
+                  : "The invocation's outcome could not be recovered. Verify the page state before retrying.",
+            };
       },
 
       async cancelInvocation(invokeId) {
@@ -1504,10 +1574,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
 
       async sendInput(events) {
         if (events.length === 0) return;
-        // Dark unless the stats flag is set. Recorded HERE rather than in the
-        // forwarder because this is where the seq currently on screen is
-        // known, and "the first paint newer than that" is the definition of a
-        // visible echo.
+        // Preserve the queue-inclusive headline; a newer frame remains only
+        // a proxy, not proof that it contains this gesture's effect.
         noteInputSent(lastAppliedFrameSeq);
         // Chunked to the route's cap rather than sent whole and refused. A
         // flush that happened to exceed it would otherwise drop the gesture
@@ -1522,6 +1590,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         const aimedAt = get().session?.sessionId;
         // Serialized: a release that reached the browser before its press would
         // leave the page mid-drag, and concurrent POSTs give no ordering.
+        const completions: Promise<void>[] = [];
         await inOrder(async () => {
           for (const batch of batches) {
             // Re-checked EVERY batch, not once before the loop: a gesture past
@@ -1529,12 +1598,45 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             // turn over while the first is in flight. The rest would then land
             // on whichever page replaced it.
             if (get().session?.sessionId !== aimedAt) return;
+            const socketResult =
+              typeof window !== "undefined" && window.isElectron !== true
+                ? frameSocket?.sendInput(batch)
+                : undefined;
+            if (socketResult) {
+              // Ordered sends need not await CDP dispatch. The runtime orders
+              // all callers; HTTP sends still occupy the command tail.
+              completions.push(
+                socketResult
+                  .then(() => {
+                    if (
+                      get().session?.sessionId === aimedAt &&
+                      get().error !== undefined
+                    )
+                      set({ error: undefined });
+                  })
+                  .catch((error) => {
+                    if (get().session?.sessionId === aimedAt)
+                      set({
+                        error: {
+                          code: "input_interrupted",
+                          message:
+                            error instanceof Error
+                              ? error.message
+                              : "Browser input failed.",
+                        },
+                      });
+                  }),
+              );
+              continue;
+            }
+            noteInputDispatched(lastAppliedFrameSeq);
             // Through `sendCommand`, unlike `set_screencast`: input the server
             // refuses is a person's click going nowhere, which they should be
             // told about rather than left to wonder at.
             await get().sendCommand({ type: "input", events: batch });
           }
         });
+        await Promise.all(completions);
       },
 
       async setScreencast(enabled) {

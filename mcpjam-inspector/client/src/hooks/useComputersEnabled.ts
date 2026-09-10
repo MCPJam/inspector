@@ -75,7 +75,6 @@ export function useLocalHarnessEnabled(): boolean {
   return useFeatureFlagEnabled(LOCAL_HARNESS_FEATURE_FLAG) === true;
 }
 
-
 /**
  * The Codex-style browser WORKSPACE — the panel beside chat, the tab strip,
  * automatic takeover, and the responsive viewport.
@@ -109,4 +108,10 @@ export function useBrowserWorkspaceEnabledState(): boolean | undefined {
 
 export function useBrowserWorkspaceEnabled(): boolean {
   return useBrowserWorkspaceEnabledState() === true;
+}
+
+/** Browser candidacy never depends on the shell cohort. */
+export const LOCAL_BROWSER_FEATURE_FLAG = "local-browser-enabled";
+export function useLocalBrowserEnabled(): boolean {
+  return useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG) === true;
 }

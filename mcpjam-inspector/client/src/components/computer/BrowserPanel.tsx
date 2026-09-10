@@ -149,13 +149,18 @@ export function BrowserPanel({
         return;
       }
       setSession(body as SessionInfo);
-      if (sessionId) markBrowserSessionActive(sessionId);
+      if (sessionId) {
+        markBrowserSessionActive(sessionId);
+        useActiveChatSessionStore
+          .getState()
+          .setBrowserLocation({ projectId, sessionId, engine: "cloud" });
+      }
       setError(null);
     } catch (cause) {
       if (stale()) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [authorized, ensure, markBrowserSessionActive, sessionId]);
+  }, [authorized, ensure, markBrowserSessionActive, projectId, sessionId]);
 
   /**
    * A conversation switch is a change of BROWSER, so none of this panel's

@@ -66,8 +66,10 @@ export function SuiteGithubChecksSection({
     availability,
     repos,
     bindings,
+    prServerOAuthSources,
     connectVerifiedRepo,
     setRepoForkCredentials,
+    setRepoPrServerOAuth,
     listInstallationRepos,
   } = useGithubChecksSettings(organizationId);
 
@@ -80,6 +82,9 @@ export function SuiteGithubChecksSection({
     GithubCheckOutagePolicy | ""
   >("");
   const [connecting, setConnecting] = useState(false);
+  const [pendingOAuth, setPendingOAuth] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   // Whether this instance is still on screen. The `ErrorBoundary` wrapping this
   // section in `suite-iterations-view` is KEYED BY organizationId, so switching
@@ -269,6 +274,68 @@ export function SuiteGithubChecksSection({
                 canManage={availability?.canManage === true}
                 onChange={setRepoForkCredentials}
               />
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  Server authentication
+                </span>
+                <Select
+                  value={row.prServerOAuthSourceServerId ?? "none"}
+                  disabled={
+                    pendingOAuth.has(row._id) ||
+                    availability?.canManage !== true
+                  }
+                  onValueChange={(value) => {
+                    if (pendingOAuth.has(row._id)) return;
+                    setPendingOAuth((current) => new Set(current).add(row._id));
+                    void setRepoPrServerOAuth({
+                      configId: row._id,
+                      sourceServerId: value === "none" ? null : value,
+                    })
+                      .catch((error) => {
+                        if (mountedRef.current) {
+                          toast.error(githubChecksWriteErrorMessage(error));
+                        }
+                      })
+                      .finally(() => {
+                        if (!mountedRef.current) return;
+                        setPendingOAuth((current) => {
+                          const next = new Set(current);
+                          next.delete(row._id);
+                          return next;
+                        });
+                      });
+                  }}
+                >
+                  <SelectTrigger
+                    className="w-60"
+                    aria-label={`Server authentication for ${row.repoFullName}`}
+                  >
+                    <SelectValue placeholder="No saved authorization" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No saved authorization</SelectItem>
+                    {(prServerOAuthSources ?? [])
+                      .filter((source) => source.projectId === row.projectId)
+                      .map((source) => (
+                        <SelectItem
+                          key={source.serverId}
+                          value={source.serverId}
+                          disabled={!source.authorized}
+                        >
+                          {source.name}
+                          {source.authorized ? "" : " — authorize first"}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={() => appNavigate(`/p/${row.projectId}/servers`)}
+                >
+                  Authorize or reconnect
+                </Button>
+              </div>
             </div>
           ))}
         </div>

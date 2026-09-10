@@ -131,7 +131,9 @@ function SessionsBody() {
       refreshSignal={bridge.refreshSignal}
       onSelectThread={bridge.onSelectThread}
       onPrefetchThread={bridge.onPrefetchThread}
-      onNewChat={bridge.onNewChat}
+      onNewChat={(options) => {
+        void bridge.onNewChat(options);
+      }}
       beforeResetChatAfterArchiveAll={bridge.beforeResetChatAfterArchiveAll}
       onArchiveAllComplete={bridge.onArchiveAllComplete}
       onSessionAction={bridge.onSessionAction}

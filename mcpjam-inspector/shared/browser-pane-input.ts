@@ -57,6 +57,8 @@ export type BrowserPaneInputEvent =
  * at the far end, and bounds what one socket message can cost.
  */
 export const BROWSER_INPUT_BATCH_LIMIT = 64;
+/** Keep pasted text within every supported input endpoint's event budget. */
+export const BROWSER_INPUT_TEXT_MAX_CHARS = 4 * 1024;
 
 /**
  * An optional field is either absent or the right kind of value.
@@ -73,7 +75,8 @@ export const BROWSER_INPUT_BATCH_LIMIT = 64;
  */
 function optionalInteger(value: unknown): boolean {
   return (
-    value === undefined || (typeof value === "number" && Number.isInteger(value))
+    value === undefined ||
+    (typeof value === "number" && Number.isInteger(value))
   );
 }
 
@@ -120,10 +123,23 @@ export function isBrowserPaneInputEvent(
         optionalString(event.code)
       );
     case "text":
-      return typeof event.text === "string";
+      return (
+        typeof event.text === "string" &&
+        event.text.length <= BROWSER_INPUT_TEXT_MAX_CHARS
+      );
     default:
       return false;
   }
+}
+
+/** Preserve dominant-axis reversals while tolerating cross-axis trackpad jitter. */
+export function sameWheelDirection(
+  a: { deltaX: number; deltaY: number },
+  b: { deltaX: number; deltaY: number },
+): boolean {
+  const axisA = Math.abs(a.deltaX) > Math.abs(a.deltaY) ? "deltaX" : "deltaY";
+  const axisB = Math.abs(b.deltaX) > Math.abs(b.deltaY) ? "deltaX" : "deltaY";
+  return axisA === axisB && Math.sign(a[axisA]) === Math.sign(b[axisB]);
 }
 
 /**
@@ -142,11 +158,16 @@ export function isBrowserPaneInputEvent(
  */
 export function coalesceBrowserPaneInput(
   events: readonly BrowserPaneInputEvent[],
+  preserveGestureBoundaries = false,
 ): BrowserPaneInputEvent[] {
   const out: BrowserPaneInputEvent[] = [];
   for (const event of events) {
     const previous = out[out.length - 1];
-    if (event.type === "mouse_move" && previous?.type === "mouse_move") {
+    if (
+      event.type === "mouse_move" &&
+      previous?.type === "mouse_move" &&
+      (!preserveGestureBoundaries || event.modifiers === previous.modifiers)
+    ) {
       out[out.length - 1] = event;
       continue;
     }
@@ -155,7 +176,8 @@ export function coalesceBrowserPaneInput(
       previous?.type === "wheel" &&
       event.modifiers === previous.modifiers &&
       event.x === previous.x &&
-      event.y === previous.y
+      event.y === previous.y &&
+      (!preserveGestureBoundaries || sameWheelDirection(previous, event))
     ) {
       out[out.length - 1] = {
         ...event,

@@ -1,3 +1,4 @@
+import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 /**
  * The Playground rail's half of the local agent browser.
  *
@@ -9,7 +10,11 @@
  * coordinate space.
  */
 import { authFetch } from "@/lib/session-token";
-import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
+import {
+  BROWSER_CONSENT_HEADER,
+  clearStoredLocalBrowserConsent,
+  loadStoredLocalBrowserConsent,
+} from "@/lib/local-browser-consent";
 import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
 
 /**
@@ -120,15 +125,26 @@ async function post<T>(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(consentToken ? { [LOCAL_CONSENT_HEADER]: consentToken } : {}),
+      ...(consentToken ? { [BROWSER_CONSENT_HEADER]: consentToken } : {}),
     },
     body: JSON.stringify(body),
     ...(options?.keepalive ? { keepalive: true } : {}),
   });
   const json = (await response.json().catch(() => null)) as
-    | (T & { error?: string })
+    | (T & { error?: string; code?: string })
     | null;
   if (!response.ok) {
+    // A stored grant is only a UI projection; the server can reject it after
+    // revocation or a runtime change. Reopen the consent gate, but never let
+    // a late failure erase a newer grant minted while this request was flying.
+    if (
+      response.status === 403 &&
+      json?.code === "browser_consent_required" &&
+      consentToken &&
+      loadStoredLocalBrowserConsent()?.token === consentToken
+    ) {
+      clearStoredLocalBrowserConsent();
+    }
     throw new LocalBrowserRequestError(
       typeof json?.error === "string"
         ? json.error
@@ -136,6 +152,17 @@ async function post<T>(
       response.status,
       json as Record<string, unknown> | null,
     );
+  }
+  if (
+    path === "ensure" &&
+    body &&
+    typeof body === "object" &&
+    "projectId" in body
+  ) {
+    const request = body as { projectId: string; sessionId?: string };
+    useBrowserReadinessStore
+      .getState()
+      .setReason(`${request.projectId}:${request.sessionId ?? null}`, null);
   }
   return json as T;
 }
@@ -194,6 +221,20 @@ export function ensureLocalBrowser(
     { projectId, ...(sessionId ? { sessionId } : {}) },
     consentToken,
   );
+}
+
+/** Read a conversation's live browser without creating a new one. */
+export async function fetchLocalBrowserSession(
+  projectId: string,
+  consentToken: string | null,
+  sessionId: string,
+): Promise<LocalBrowserSession | null> {
+  const result = await post<{ session: LocalBrowserSession | null }>(
+    "session",
+    { projectId, sessionId },
+    consentToken,
+  );
+  return result.session;
 }
 
 export function mintLocalBrowserFrameNonce(
@@ -358,7 +399,7 @@ export async function fetchLocalBrowserProfileArchive(args: {
       headers: {
         "Content-Type": "application/json",
         ...(args.consentToken
-          ? { [LOCAL_CONSENT_HEADER]: args.consentToken }
+          ? { [BROWSER_CONSENT_HEADER]: args.consentToken }
           : {}),
       },
       body: JSON.stringify({
@@ -448,7 +489,6 @@ export function openLocalBrowserFrameStream(args: {
     },
   };
 }
-
 
 /**
  * The browser shell's three calls, on the local engine.

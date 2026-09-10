@@ -53,7 +53,7 @@ describe("generic app sign-in return path", () => {
 
   it("does not report a queued return when storage rejects the write", () => {
     const setItem = vi
-      .spyOn(Storage.prototype, "setItem")
+      .spyOn(Object.getPrototypeOf(sessionStorage), "setItem")
       .mockImplementation(() => {
         throw new Error("storage unavailable");
       });

@@ -13,6 +13,7 @@
  * at once.
  */
 import type {
+  WebMcpRegistrationBinding,
   WebMcpFrame,
   WebMcpInputEvent,
   WebMcpToolAnnotations,
@@ -21,6 +22,9 @@ import type {
 
 /** A tool as the browser reports it, before identity policy is applied. */
 export interface ProviderToolDescriptor {
+  registrationSeq?: number;
+  /** Hosted observation identity; local providers use frameId + registrationSeq. */
+  binding?: WebMcpRegistrationBinding;
   /** CDP frame id. Churns across page loads — never persist it as identity. */
   frameId: string;
   name: string;
@@ -90,6 +94,7 @@ export interface WebMcpSessionCallbacks {
 }
 
 export interface WebMcpInvokeRequest {
+  expectedBinding?: WebMcpRegistrationBinding;
   frameId: string;
   toolName: string;
   input: Record<string, unknown>;
@@ -138,6 +143,7 @@ export interface WebMcpBrowserSession {
    * a failed command on a session whose viewport may be working fine.
    */
   setScreencast(enabled: boolean): Promise<boolean>;
+  resizeViewport?(width: number, height: number): Promise<void>;
   /**
    * Apply a batch of input to the page, in order.
    *
@@ -162,6 +168,8 @@ export interface WebMcpBrowserSession {
    * this, and should not have to carry an empty method to say so.
    */
   noteFramePressure?(): void;
+  /** Refresh a polled provider after a definite stale-registration refusal. */
+  refreshTools?(): Promise<void>;
   /** Idempotent, and must not hang: teardown races a timeout internally. */
   dispose(): Promise<void>;
 }
