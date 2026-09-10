@@ -1,3 +1,4 @@
+import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
@@ -99,6 +100,8 @@ export function pickEnrichmentHeaders(
 }
 
 export interface ResumeConfig {
+  /** Destination of the last saved turn; re-authorized when resumed. */
+  executionTarget?: ResumeExecutionTarget;
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;

@@ -3253,7 +3253,18 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
 
       expect(
-        screen.queryByTestId("conversation-target-notice")
+        screen.queryByTestId("conversation-target-notice"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
+    });
+
+    it("reopens an explicitly ad-hoc conversation without the unavailable-configuration gate", async () => {
+      await openRestoredConversation({ executionTarget: { kind: "adhoc" } });
+      await waitFor(() =>
+        expect(mockUseChatSession.loadChatSession).toHaveBeenCalled(),
+      );
+      expect(
+        screen.queryByTestId("conversation-target-notice"),
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
     });

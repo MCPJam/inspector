@@ -10,6 +10,7 @@
  * Device/display mode handling is delegated to the Thread component
  * which manages PiP/fullscreen at the widget level.
  */
+import { useConversationTargetRestoration } from "@/hooks/use-conversation-target-restoration";
 
 import {
   FormEvent,
@@ -658,7 +659,7 @@ export function PlaygroundMain({
   const appliedHistoryContentSignatureRef = useRef<string | null>(null);
   // Assigned during render from `needsConversationTargetAck` below; read by the
   // send paths, which are declared above it.
-  const needsConversationTargetAckRef = useRef(false);
+  const conversationSendBlockedRef = useRef(false);
   const resumedThreadSendBaselineRef = useRef<{
     sessionId: string;
     version: number;
@@ -903,7 +904,7 @@ export function PlaygroundMain({
   const webmcpPageToolsEnabled = useWebmcpInspectorStore((state) =>
     state.pageToolsLive(),
   );
-  const { host: previewedHost } = useHost({
+  const { host: previewedHost, isLoading: previewedHostLoading } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
@@ -1476,6 +1477,38 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     projectId: multiHostProjectId,
   });
+  const { restoreTarget, restoringTarget } = useConversationTargetRestoration({
+    projectId: multiHostProjectId,
+    composer:
+      isEnvironmentMode && playgroundEnvironment.environmentId
+        ? {
+            kind: "environment",
+            environmentId: playgroundEnvironment.environmentId,
+          }
+        : { kind: "host", hostId: previewedHostId },
+    settled:
+      isSessionBootstrapComplete &&
+      !previewedHostLoading &&
+      (!isEnvironmentMode ||
+        (!playgroundEnvironment.isResolutionPending &&
+          !playgroundEnvironment.isPreviewLoading &&
+          (!environmentHostId || environmentHostId === previewedHostId))),
+    hostsLoading: hostListLoading,
+    hostIds: hostList.map((host) => host.hostId),
+    environmentsEnabled,
+    selectHost: setPreviewedHostId,
+    selectEnvironment: playgroundEnvironment.selectEnvironment,
+    clearEnvironment: playgroundEnvironment.clearEnvironment,
+  });
+  // A recorded ad-hoc session intentionally has no named host. Do not let the
+  // new-project default picker replace that explicit choice while reopening it.
+  const restoringAdhoc =
+    restoringTarget?.kind === "adhoc" ||
+    (restoredConversation?.target.kind === "adhoc" &&
+      (restoredConversation.chatSessionId === chatSessionId ||
+        loadingHistorySessionId !== null));
+  const restoringAdhocRef = useRef(restoringAdhoc);
+  restoringAdhocRef.current = restoringAdhoc;
   const { createHost: createPlaygroundHost, deleteHost: deletePlaygroundHost } =
     useHostMutations();
   const seedCatalogState = useHostCatalog();
@@ -1557,6 +1590,7 @@ export function PlaygroundMain({
       hostListLoading ||
       !multiHostProjectId ||
       hostList.length > 0 ||
+      restoringAdhoc ||
       playgroundSeededProjectIdsRef.current.has(multiHostProjectId) ||
       seedCatalogState.status === "loading"
     ) {
@@ -1609,6 +1643,11 @@ export function PlaygroundMain({
         }),
       })
         .then(({ hostId }) => {
+          if (
+            activeMultiHostProjectIdRef.current === seedProjectId &&
+            restoringAdhocRef.current
+          )
+            return;
           // As in the 3-host path: a lead now pointing at the host THIS
           // fallback just created is our own "no valid previewed host"
           // effect auto-picking it once the host list caught up, not a user
@@ -1755,6 +1794,11 @@ export function PlaygroundMain({
         // `seedProjectId` later picks this up. Lead is set explicitly
         // alongside the array since a bare array write can't promote a lead
         // when `previewedHostId` is still null (brand-new project).
+        if (
+          activeMultiHostProjectIdRef.current === seedProjectId &&
+          restoringAdhocRef.current
+        )
+          return;
         savePreviewedHostId(seedProjectId, leadHostId);
         saveSelectedHostIds(seedProjectId, hostIds);
         if (activeMultiHostProjectIdRef.current === seedProjectId) {
@@ -1779,6 +1823,7 @@ export function PlaygroundMain({
     hostListLoading,
     multiHostProjectId,
     hostList.length,
+    restoringAdhoc,
     createPlaygroundHost,
     deletePlaygroundHost,
     setPreviewedHostId,
@@ -1802,6 +1847,7 @@ export function PlaygroundMain({
     if (playgroundSeedingProjectIdsRef.current.has(multiHostProjectId)) {
       return;
     }
+    if (restoringAdhoc) return;
     const previewedHostIsValid =
       previewedHostId !== null &&
       hostList.some((host) => host.hostId === previewedHostId);
@@ -1815,6 +1861,7 @@ export function PlaygroundMain({
     hostList,
     previewedHostId,
     resolveFallbackHostId,
+    restoringAdhoc,
     setPreviewedHostId,
     seedCompletionTick,
   ]);
@@ -2266,6 +2313,8 @@ export function PlaygroundMain({
       composer.submitGatedByServer ||
       isPreparingServerForSend ||
       isEnvironmentTargetPending ||
+      loadingHistorySessionId !== null ||
+      restoringTarget !== null ||
       localHarnessBlocksSend,
   });
 
@@ -2515,7 +2564,8 @@ export function PlaygroundMain({
   // Read at SEND time by callbacks defined above this line, so it has to be a
   // ref rather than a dependency — the send paths must not be re-created (and
   // re-armed) on every host or environment change.
-  needsConversationTargetAckRef.current = needsConversationTargetAck;
+  conversationSendBlockedRef.current =
+    needsConversationTargetAck || loadingHistorySessionId !== null || restoringTarget !== null;
   const acknowledgeConversationTarget = useCallback(() => {
     setRestoredConversation((previous) =>
       previous ? { ...previous, acknowledged: true } : previous,
@@ -2605,11 +2655,20 @@ export function PlaygroundMain({
       detail: ChatHistoryDetailSession,
       widgetSnapshots?: ChatHistoryWidgetSnapshot[],
       options?: {
+        restoreExecutionTarget?: boolean;
         shouldRestoreComposerState?: () => boolean;
         shouldApply?: () => boolean;
         turnTraces?: ChatHistoryTurnTrace[];
       },
     ) => {
+      if (options?.restoreExecutionTarget) {
+        adoptRestoredConversationTarget(detail);
+        const apply = await restoreTarget(
+          readConversationExecutionTarget(detail),
+          options.shouldApply ?? (() => true),
+        );
+        if (!apply) return false;
+      }
       await loadChatSession(
         {
           chatSessionId: detail.chatSessionId,
@@ -2646,10 +2705,13 @@ export function PlaygroundMain({
       );
       syncResumedVersion(detail.version);
       void markHistorySessionRead(detail._id);
+      return true;
     },
     [
       availableModels,
       loadChatSession,
+      adoptRestoredConversationTarget,
+      restoreTarget,
       markHistorySessionRead,
       setSelectedModel,
       syncResumedVersion,
@@ -2955,11 +3017,21 @@ export function PlaygroundMain({
           return;
         }
 
-        await loadHistorySession(detail.session, detail.widgetSnapshots, {
-          turnTraces: detail.turnTraces,
-        });
+        const applied = await loadHistorySession(
+          detail.session,
+          detail.widgetSnapshots,
+          {
+            restoreExecutionTarget: true,
+            turnTraces: detail.turnTraces,
+            shouldApply: () =>
+              historySelectionRequestIdRef.current === selectionRequestId,
+          },
+        );
 
-        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+        if (
+          !applied ||
+          historySelectionRequestIdRef.current !== selectionRequestId
+        ) {
           return;
         }
         restoreHistoryServerSelection(
@@ -3001,6 +3073,7 @@ export function PlaygroundMain({
       // lives on the single chat session, so the compare grid must stand down
       // rather than render over it.
       setViewingHistoryReplay(true);
+      setLoadingHistorySessionId(conversationId);
       let restored = false;
 
       try {
@@ -3013,13 +3086,21 @@ export function PlaygroundMain({
           return "failed";
         }
 
-        await loadHistorySession(detail.session, detail.widgetSnapshots, {
-          turnTraces: detail.turnTraces,
-          shouldApply: () =>
-            historySelectionRequestIdRef.current === selectionRequestId,
-        });
+        const applied = await loadHistorySession(
+          detail.session,
+          detail.widgetSnapshots,
+          {
+            restoreExecutionTarget: true,
+            turnTraces: detail.turnTraces,
+            shouldApply: () =>
+              historySelectionRequestIdRef.current === selectionRequestId,
+          },
+        );
 
-        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+        if (
+          !applied ||
+          historySelectionRequestIdRef.current !== selectionRequestId
+        ) {
           return "failed";
         }
         restoreHistoryServerSelection(
@@ -3055,6 +3136,8 @@ export function PlaygroundMain({
         );
         return "failed";
       } finally {
+        if (historySelectionRequestIdRef.current === selectionRequestId)
+          setLoadingHistorySessionId(null);
         // Nothing restored means nothing to replay — release the compare
         // suppression so the user's own layout isn't stuck off.
         if (
@@ -3634,7 +3717,7 @@ export function PlaygroundMain({
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
         // action in between to make that a choice.
-        if (needsConversationTargetAckRef.current) {
+        if (conversationSendBlockedRef.current) {
           return;
         }
         if (!(await ensureSelectedServerReadyForChat())) {
@@ -4159,7 +4242,7 @@ export function PlaygroundMain({
     }
     // The composer is disabled in this state, so this is the belt to that
     // brace: Enter-to-send, starter chips and eval Quick Run all land here.
-    if (needsConversationTargetAckRef.current) {
+    if (conversationSendBlockedRef.current) {
       return false;
     }
     if (!(await ensureSelectedServerReadyForChat())) {
@@ -4318,7 +4401,7 @@ export function PlaygroundMain({
       // would both execute somewhere the transcript never ran AND fork the
       // thread to record it. `editDisabled` below carries the same condition
       // so the affordance reads as unavailable rather than failing on click.
-      if (needsConversationTargetAckRef.current) return false;
+      if (conversationSendBlockedRef.current) return false;
       // Same fire-and-forget exposure as the rewind below, and it lands FIRST:
       // `ensureSelectedServerReadyForChat` wraps `ensureServersReady` in
       // try/FINALLY with no catch, so a rejected connect propagates straight
@@ -4486,7 +4569,7 @@ export function PlaygroundMain({
       if (
         composerDisabled ||
         sendBlocked ||
-        needsConversationTargetAckRef.current
+        conversationSendBlockedRef.current
       ) {
         composer.setInput(prompt);
         return;
@@ -4563,7 +4646,7 @@ export function PlaygroundMain({
       if (
         composerDisabled ||
         sendBlocked ||
-        needsConversationTargetAckRef.current
+        conversationSendBlockedRef.current
       ) {
         composer.setInput(text);
         return;

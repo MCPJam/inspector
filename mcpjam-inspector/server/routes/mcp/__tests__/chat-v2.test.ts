@@ -1556,6 +1556,7 @@ describe("POST /api/mcp/chat-v2", () => {
         );
         expect(body.resumeConfig).toEqual(
           expect.objectContaining({
+            executionTarget: { kind: "adhoc" },
             modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
           })
         );

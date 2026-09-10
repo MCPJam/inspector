@@ -900,6 +900,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         directVisibility: "project",
         resumeConfig: expect.objectContaining({
           selectedServers: ["Asana"],
+          executionTarget: { kind: "adhoc" },
         }),
         hostConfig: expect.objectContaining({
           // Phase 3: hostStyle defaults to 'claude' when omitted —
