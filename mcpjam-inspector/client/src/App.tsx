@@ -73,9 +73,11 @@ import {
   EXCALIDRAW_SERVER_NAME,
 } from "./lib/excalidraw-quick-connect";
 import {
-  isFirstRunEligible,
-  markOnboardingDismissed,
-  markOnboardingStarted,
+  isFirstRunServerChoiceEligible,
+  markFirstRunServerChoiceCompleted,
+  markFirstRunServerChoiceDismissed,
+  markFirstRunServerChoiceStarted,
+  markFirstRunServerChoiceWelcomeAcknowledged,
 } from "./lib/onboarding-state";
 import {
   FirstRunOnboardingOverlay,
@@ -3362,7 +3364,6 @@ export default function App() {
       ? undefined
       : currentUser.hasSeenOnboarding === true ||
         currentUser.hasCompletedOnboarding === true;
-  const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
   // A signed-in user counts as "new" (and thus gets the first-run Playground
   // redirect) only when their account was created on/after the rollout cutoff.
   // This keeps every pre-existing account on Home even if its onboarding flag
@@ -3404,22 +3405,10 @@ export default function App() {
       const raw = new URLSearchParams(window.location.search).get("template");
       return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
     })();
-  // Same clobber hazard for a project-bearing entry — either shape. The
-  // onboarding redirect would drop the path before it is normalized onto
-  // `/p/<projectId>/...`, taking the destination the link named with it.
-  //
-  // The path test asks whether the URL CLAIMS a project, not whether that
-  // claim is usable: `/p/<malformed>/servers` matches the `p/:projectId`
-  // route, and the boundary answers it with the generic inaccessible state.
-  // Testing for a well-formed id instead would let the onboarding redirect
-  // fire on exactly those URLs and replace the error with Playground — the
-  // requested URL gone, and no way to tell the user what was wrong with it.
-  //
-  // A legacy `?project=` still counts only when it is USABLE: that one is
-  // stripped rather than reported, so a malformed value must not suppress
-  // onboarding. Either way the suppression is transient — the normalizer
-  // resolves or gives up on the first render after project data settles.
-  const hasProjectSwitchDeepLinkParam =
+  // First-run onboarding can render over a project-scoped destination. This
+  // preserves a shared project URL while still showing the explicit server
+  // choice; redirecting it to unscoped Home created a loop back to Servers.
+  const hasProjectScopedFirstRunDestination =
     typeof window !== "undefined" &&
     (hasProjectDeepLinkParam(window.location.search) ||
       readProjectPathSegment(window.location.pathname) !== null);
@@ -3429,22 +3418,19 @@ export default function App() {
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
-    !hasProjectSwitchDeepLinkParam &&
     !isWorkOsLoading &&
     effectiveHostedShellGateState === "ready" &&
     !(isAuthenticated && currentUser === undefined) &&
-    !hasSeenFirstRunOnboarding &&
     (!HOSTED_MODE ||
       (isAuthenticated &&
         !isLoadingRemoteProjects &&
         areServersHydrated &&
         !!activeProjectId &&
         activeProjectId !== "none")) &&
-    isFirstRunEligible(
+    isFirstRunServerChoiceEligible(
       hasAnyFirstRunBlockingProjectServers && !isFirstRunConnectionActive,
       activeTab,
       !!workOsUser,
-      remoteFirstRunOnboardingShown,
       isNewSignedInAccount,
     );
   // Once a choice has been made, let its destination render immediately.
@@ -3454,10 +3440,11 @@ export default function App() {
   const shouldRouteToFirstRunHome =
     shouldRouteToFirstRunOnboarding &&
     !firstRunOverlayDismissed &&
-    activeTab !== "home";
+    activeTab !== "home" &&
+    !hasProjectScopedFirstRunDestination;
   const shouldShowFirstRunOverlay =
     shouldRouteToFirstRunOnboarding &&
-    activeTab === "home" &&
+    (activeTab === "home" || hasProjectScopedFirstRunDestination) &&
     !firstRunOverlayDismissed;
 
   const openFirstRunServerConnection = useCallback(
@@ -3480,7 +3467,7 @@ export default function App() {
         return;
       }
 
-      markOnboardingStarted();
+      markFirstRunServerChoiceStarted();
       setPendingFirstRunConnection(formData);
       setFirstRunConnectionState({
         status: "preparing",
@@ -3491,7 +3478,7 @@ export default function App() {
   );
 
   const connectFirstRunDemo = useCallback(() => {
-    markOnboardingStarted();
+    markFirstRunServerChoiceStarted();
     setPendingFirstRunConnection(EXCALIDRAW_SERVER_CONFIG);
     setFirstRunConnectionState({
       status: "preparing",
@@ -3540,6 +3527,7 @@ export default function App() {
       setPendingFirstRunConnection(null);
       setFirstRunConnectionState({ status: "idle" });
       setFirstRunOverlayDismissed(true);
+      markFirstRunServerChoiceCompleted();
       navigateApp(routePaths.playground);
       return;
     }
@@ -3554,7 +3542,7 @@ export default function App() {
   }, [appState.servers, firstRunConnectionState, navigateApp]);
 
   const dismissFirstRunOverlay = useCallback(() => {
-    markOnboardingDismissed();
+    markFirstRunServerChoiceDismissed();
     setPendingFirstRunConnection(null);
     setFirstRunConnectionState({ status: "idle" });
     setFirstRunOverlayDismissed(true);
@@ -5585,6 +5573,9 @@ export default function App() {
                 connectionState={firstRunConnectionState}
                 onConnectOwnServer={openFirstRunServerConnection}
                 onConnectDemo={connectFirstRunDemo}
+                onWelcomeAcknowledged={
+                  markFirstRunServerChoiceWelcomeAcknowledged
+                }
                 onSkip={dismissFirstRunOverlay}
               />
             </div>

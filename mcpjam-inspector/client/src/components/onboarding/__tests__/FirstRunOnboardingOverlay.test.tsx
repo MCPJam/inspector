@@ -21,6 +21,7 @@ import {
 function renderOverlay(connectionState = { status: "idle" } as const) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
+  const onWelcomeAcknowledged = vi.fn();
   const onSkip = vi.fn();
   const view = render(
     <FirstRunOnboardingOverlay
@@ -28,12 +29,14 @@ function renderOverlay(connectionState = { status: "idle" } as const) {
       connectionState={connectionState}
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
+      onWelcomeAcknowledged={onWelcomeAcknowledged}
       onSkip={onSkip}
     />,
   );
   return {
     onConnectOwnServer,
     onConnectDemo,
+    onWelcomeAcknowledged,
     onSkip,
     rerenderWithConnectionState: (
       nextConnectionState:
@@ -48,6 +51,7 @@ function renderOverlay(connectionState = { status: "idle" } as const) {
           connectionState={nextConnectionState}
           onConnectOwnServer={onConnectOwnServer}
           onConnectDemo={onConnectDemo}
+          onWelcomeAcknowledged={onWelcomeAcknowledged}
           onSkip={onSkip}
         />,
       ),
@@ -62,7 +66,7 @@ afterEach(() => {
 
 describe("FirstRunOnboardingOverlay", () => {
   it("advances from the welcome card with Continue", () => {
-    renderOverlay();
+    const { onWelcomeAcknowledged } = renderOverlay();
 
     const continueButton = screen.getByRole("button", { name: "Continue" });
     expect(continueButton).toHaveClass(
@@ -72,14 +76,16 @@ describe("FirstRunOnboardingOverlay", () => {
     );
 
     fireEvent.click(continueButton);
+    expect(onWelcomeAcknowledged).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("heading", { name: "Point MCPJam at a server" }),
     ).toBeInTheDocument();
   });
 
   it("advances from the welcome card with Enter", () => {
-    renderOverlay();
+    const { onWelcomeAcknowledged } = renderOverlay();
     fireEvent.keyDown(window, { key: "Enter" });
+    expect(onWelcomeAcknowledged).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("heading", { name: "Point MCPJam at a server" }),
     ).toBeInTheDocument();
