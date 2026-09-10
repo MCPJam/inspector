@@ -500,6 +500,29 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
+    it("emits Browser readiness as data, never as assistant text", async () => {
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        builtInToolIds: ["browser"],
+        browserEngine: "local",
+      });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      const readiness = capturedStreamEvents.find(
+        (event) => event.type === "data-browser-readiness",
+      );
+      expect(readiness?.data.reason).toContain("browser_consent_required");
+      expect(
+        capturedStreamEvents
+          .filter((event) => event.type?.startsWith("text-"))
+          .some((event) =>
+            JSON.stringify(event).includes("browser_consent_required"),
+          ),
+      ).toBe(false);
+    });
+
     it("returns streaming response", async () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],

@@ -15,10 +15,19 @@ entitlements, templates, or rates are changed by these PRs.
 - The Browser panel provides location, permission, revocation, and installation
   in both layouts. Changing a conversation's Browser location starts a new chat.
 - Existing logical-session bindings reject location changes. Resume reads the
-  binding; a resume pointer is never an execution capability.
+  binding into session state without changing device preferences; a resume
+  pointer is never an execution capability.
 - CLI requires the Browser-consent capability bit and a human-issued Browser
   grant. Node-local, frame streams, Electron IPC, and profile operations use
   the same Browser scope.
+
+Unattended Browser+Bash targets must use blank profiles. Saved profile pins
+are refused before launch and at runtime; Browser-only targets may keep pins.
+This explicitly preserves the user-requested coexistence without importing
+saved credentials onto a box where Bash can read them.
+
+Node-local defaults to Cloud until local candidacy is enabled. Environment mode
+always shows and uses Cloud. Refusals are data parts, never assistant text.
 
 ## Deployment order
 

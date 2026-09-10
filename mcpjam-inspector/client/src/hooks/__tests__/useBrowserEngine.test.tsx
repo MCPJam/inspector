@@ -1,10 +1,22 @@
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import {
+  loadBrowserEngine,
+  saveBrowserEngine,
+} from "@/lib/browser-engine-storage";
 import { beforeEach, it, expect, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 const state = vi.hoisted(() => ({
+  environment: false,
   hosted: false,
   flag: true,
   granted: false,
   browserAvailable: true,
+}));
+vi.mock("@/hooks/use-previewed-environment-id", () => ({
+  usePreviewedEnvironmentId: () => [state.environment ? "env-1" : null],
+}));
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => true,
 }));
 vi.mock("@/lib/config", () => ({
   get HOSTED_MODE() {
@@ -36,6 +48,11 @@ import { useBrowserEngine } from "../useBrowserEngine";
 import { saveComputerEngine } from "@/lib/computer-engine-storage";
 beforeEach(() => {
   localStorage.clear();
+  state.environment = false;
+  useActiveChatSessionStore.setState({
+    sessionId: null,
+    browserLocation: null,
+  });
   state.hosted = false;
   state.flag = true;
   state.granted = false;
@@ -77,4 +94,37 @@ it("Browser candidacy uses its own flag", () => {
   state.flag = false;
   const { result } = renderHook(() => useBrowserEngine("p"));
   expect(result.current.localAvailable).toBe(false);
+});
+
+it("defaults to Cloud outside the local cohort, but preserves explicit local refusal", () => {
+  state.flag = false;
+  const { result } = renderHook(() => useBrowserEngine("p"));
+  expect(result.current.engine).toBe("cloud");
+  act(() => result.current.setEngine("local"));
+  expect(result.current.engine).toBe("local");
+  expect(result.current.localAvailable).toBe(false);
+});
+it("environment mode shows Cloud and does not overwrite the device preference", () => {
+  saveBrowserEngine("p", "local");
+  state.environment = true;
+  const { result, rerender } = renderHook(() => useBrowserEngine("p"));
+  expect(result.current.engine).toBe("cloud");
+  expect(result.current.toggleVisible).toBe(false);
+  act(() => result.current.setEngine("cloud"));
+  expect(loadBrowserEngine("p")).toBe("local");
+  state.environment = false;
+  rerender();
+  expect(result.current.engine).toBe("local");
+});
+it("resuming Cloud affects only that conversation and leaves new chats local", () => {
+  saveBrowserEngine("p", "local");
+  useActiveChatSessionStore.setState({
+    sessionId: "old-chat",
+    browserLocation: { projectId: "p", sessionId: "old-chat", engine: "cloud" },
+  });
+  const { result } = renderHook(() => useBrowserEngine("p"));
+  expect(result.current.engine).toBe("cloud");
+  expect(loadBrowserEngine("p")).toBe("local");
+  act(() => useActiveChatSessionStore.getState().setSessionId("new-chat"));
+  expect(result.current.engine).toBe("local");
 });

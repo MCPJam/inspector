@@ -1200,3 +1200,24 @@ describe("resolveHostTools — first-class page tools", () => {
     ]);
   });
 });
+
+it("refuses both tools before a saved profile can reach an unattended shared box", () => {
+  expect(() =>
+    resolveHostTools(
+      { builtInToolIds: ["bash", "browser"], computer },
+      {
+        ...ctx,
+        browserProfileId: "saved-profile",
+        browserApprovalDelivery: {
+          kind: "unattended",
+          policy: { mode: "allow_all" },
+        },
+        sandboxBinding: {
+          sandboxId: "sandbox",
+          sandboxRowId: "row",
+          runtimeKind: "desktop-browser",
+        },
+      },
+    ),
+  ).toThrow("browser_profile_shell_conflict");
+});

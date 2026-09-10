@@ -20,12 +20,23 @@ Before PR 1, reconcile checkout state against current main. The TL's checkout is
 ## Decisions and boundaries
 
 - Include independent Browser location selection and browser-only device consent.
-- Fresh Node-local/Electron installations default to **This machine**; hosted defaults to **Cloud**.
+- Node-local/Electron defaults to **This machine** only when local Browser candidacy is enabled; otherwise it defaults to **Cloud**. Explicit saved local preferences still produce a refusal when candidacy is lost. Hosted and environment mode select **Cloud** without rewriting the device preference.
 - Do not migrate Computer location preferences. The features are not publicly enabled.
 - Require a new chat to change an existing conversation’s Browser location. Never silently move tabs, logins, or execution between machines.
 - Existing shell grants remain valid for shell use. Browser requires a new, explicit grant once.
 - Add the distinct `local-browser-enabled` candidacy flag, initially seeded from the existing local-computer cohort without widening exposure. Browser must no longer read `local-computer-enabled`. Preserve the broader Browser-authoring cohort, hosted entitlements, desktop billing, and chat approval behavior. Remove Browser/Bash mutual exclusivity while preserving separate authorization for each capability.
 - Defer account-free OSS admission, the separate WebMCP Inspector’s permission model, unattended-policy UI, and cohort expansion. Browser-exposed WebMCP tools remain covered by Browser permission.
+
+## Explicit coexistence decision
+
+The user requested that Browser and Bash remain independently enabled and not
+block one another. This supersedes the earlier blanket exclusivity decision.
+It does not permit importing saved Browser credentials into an unattended box
+with Bash: reject that target before materialization/provisioning and again at
+runtime. Use a blank profile or remove Bash. Interactive conversations on
+separate boxes retain profile support; browser-only unattended targets can
+still use an explicit pin. Unattended sessions never inherit the user's
+default interactive profile.
 
 ## Implementation
 
@@ -38,7 +49,7 @@ Before PR 1, reconcile checkout state against current main. The TL's checkout is
 - Remove Browser/Bash mutual-exclusion checks from client selection, request validation, and server tool construction. Advertise and execute both tool sets in the same chat when each is independently enabled, authorized, ready, and supported by the selected model. A denial or unavailable runtime for one must not suppress the other. Keep Browser and shell routing tied to their respective engine selections; enabling both must not silently change either location.
 - Audit all Computer engine hook consumers. Cut Browser consumers over explicitly: both Playground browser surfaces, Playground tab and main, the chat-session hook, and `useBrowserTools` (the Tools pane). Keep genuine shell consumers on the Computer hook. Thread the Browser resolver through tool construction, descriptions, page-tool discovery, profile operations, and local unattended browser execution too.
 - Extend the existing local-harness routing exception for a requested local Browser. In the inspected local chat route, org BYOK already supports `localMcpRuntimeRequired`: it uses the hosted org-model broker with the tool loop in Inspector and the org key remaining in Convex. Use and test that path; merely forcing the client URL is not proof. If a particular provider cannot support that broker path, mark local Browser unsupported for that model, suppress Browser visibly, and continue unrelated chat rather than falling back to a different machine or exporting its key.
-- For an unsatisfiable explicit-local chat request, preserve tool suppression but emit a stable reason code, a visible thread notice, and persistent panel state with the remedy. Do not fail an otherwise usable chat turn. Clear the state only when readiness is restored; never silently substitute Cloud.
+- For an unsatisfiable explicit-local chat request, preserve tool suppression but emit a stable reason code in a readiness data part and persistent panel state with the remedy. Do not insert runtime diagnostics into assistant text or model history. Do not fail an otherwise usable chat turn. Clear the state only when readiness is restored; never silently substitute Cloud.
 - Browser open/ensure/control endpoints hard-fail instead. Use structured codes for `browser_consent_required` (403), `browser_runtime_unavailable` (503), and `browser_location_mismatch` (409); unsupported-model suppression uses `browser_model_unsupported`. A disabled deployment may retain its 404 stop, with a structured reason. Missing tools, their sidebar availability, and the panel status must agree.
 - Hosted web chat must reject `browserEngine: "local"` and any Browser-consent header before tool construction, just as it refuses local Computer credentials. Hosted/internal unattended paths explicitly resolve Cloud.
 
@@ -58,7 +69,7 @@ Before PR 1, reconcile checkout state against current main. The TL's checkout is
 
 - Put **This machine / Cloud**, connection/readiness status, grant/revoke controls, and installation actions in the Browser panel. Support both expanded workspace and right-rail layouts.
 - Show browser-only permission copy explaining browser control and access to signed-in websites. State that this does not authorize shell commands; chat approval settings still apply. Revert the shared/shell dialog's new “commands and control a browser” wording to shell-only when enforcement switches.
-- Reuse the existing logical Browser session's `box` binding as the server-authoritative location: it already supports local-key, computer, and sandbox arms, and local execution binds on first use. Derive location from that binding and validate subsequent open/turn requests against it. Use the resume pointer only as a UI destination hint; it never authorizes access. Without a control plane, use the existing local ledger. Do not add another conversation binding field or a third store.
+- Reuse the existing logical Browser session's `box` binding as the server-authoritative location: it already supports local-key, computer, and sandbox arms, and local execution binds on first use. Derive location from that binding and validate subsequent open/turn requests against it. Keep a resumed location in the existing active-session UI state, never the project preference. Use the resume pointer only as a UI destination hint; it never authorizes access. Without a control plane, use the existing local ledger. Do not add another conversation binding field or a third store.
 - Changing location offers **Start new chat**. Existing conversations retain their location; no automatic context or profile transfer occurs.
 - Keep Browser profile selection in host Tools. Leave Computer controls responsible only for Computer functionality.
 - Allow Browser and Bash to be enabled together in the same chat. Selecting or opening either must not deselect, hide, or disable the other; show permission and readiness state independently.
@@ -88,7 +99,7 @@ Keep public exposure disabled while preparing the cutover. Seed the new flag thr
 - Test both Browser layouts before consent, after consent, after revocation, and after server rejection; neither may mount a shell.
 - Verify shell, Browser, and harness tokens are not interchangeable. Preserve shell/harness persistence and concurrency tests during primitive extraction. Test stale responses, concurrent grants, frame/nonces after revocation, and both Electron IPC channels.
 - Verify location independence, reload persistence, new-chat switching, and rejection of mismatched conversation locations using the existing logical-session binding. Confirm resume pointers confer no authorization and local-ledger behavior works without a control plane.
-- Verify a denied local Browser leaves unrelated chat usable with a thread notice and persistent panel reason; open/ensure returns the corresponding structured error. Verify recovery removes the stale state.
+- Verify a denied local Browser leaves unrelated chat usable with a readiness data part and persistent panel reason; open/ensure returns the corresponding structured error. Verify recovery removes the stale state.
 - Verify hosted web chat rejects local Browser engine/header input. Verify local candidacy works with the local-computer flag off and the new local-browser flag on; turning the Browser flag off must not enable shell or weaken server consent enforcement.
 - Test CLI flag/environment/stored-token precedence, wrong-scope tokens, missing capability bit, the consent subcommand, and rejection of legacy shell-token fallback. Confirm no token appears in logs or diagnostic output.
 - Verify hosted Browser-only conversations still provision desktops and retain entitlement, ownership, idle cleanup, and metering behavior.

@@ -1381,15 +1381,16 @@ chatV2.post("/", async (c) => {
     ) {
       try {
         const browserSessions = new BrowserSessionService();
-        const logical = await browserSessions.resolveSession({
-          owner: { kind: "conversation", id: body.chatSessionId },
+        const location = await browserSessions.conversationLocation({
+          conversationId: body.chatSessionId,
           projectId: body.projectId,
           bearer: builtInAuthHeader,
-          engine: localBrowserRequested ? "local" : "hosted",
-          profile: "blank",
         });
-        if (browserSessions.enabled && !logical)
-          throw new Error("Browser session could not be resolved");
+        if (
+          location &&
+          location !== (localBrowserRequested ? "local" : "cloud")
+        )
+          throw new Error("browser_location_mismatch");
       } catch (error) {
         browserEngine = "unavailable";
         browserUnavailableReason =
@@ -1412,14 +1413,6 @@ chatV2.post("/", async (c) => {
         type: "data-browser-readiness",
         data: { reason: browserUnavailableReason ?? null },
       });
-      if (!browserUnavailableReason) return;
-      writer.write({ type: "text-start", id: "browser-readiness" });
-      writer.write({
-        type: "text-delta",
-        id: "browser-readiness",
-        delta: browserUnavailableReason + "\n\n",
-      });
-      writer.write({ type: "text-end", id: "browser-readiness" });
     };
 
     // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built. See

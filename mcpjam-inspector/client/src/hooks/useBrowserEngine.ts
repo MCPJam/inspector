@@ -1,3 +1,6 @@
+import { usePreviewedEnvironmentId } from "./use-previewed-environment-id";
+import { useProjectEnvironmentsEnabled } from "./useProjectEnvironmentsEnabled";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { HOSTED_MODE } from "@/lib/config";
 import {
@@ -15,6 +18,15 @@ export function useBrowserEngine(projectId: string | null) {
   const config = useComputersDataPlaneConfig();
   const consent = useLocalBrowserConsent();
   const enabled = useLocalBrowserEnabled();
+  const [environmentId] = usePreviewedEnvironmentId(projectId);
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const environmentMode = environmentsEnabled && Boolean(environmentId);
+  const boundLocation = useActiveChatSessionStore((state) =>
+    state.browserLocation?.projectId === projectId &&
+    state.browserLocation.sessionId === state.sessionId
+      ? state.browserLocation.engine
+      : null,
+  );
   const { subscribe, getSnapshot } = useMemo(
     () =>
       !HOSTED_MODE && projectId
@@ -29,15 +41,22 @@ export function useBrowserEngine(projectId: string | null) {
   const preference = useSyncExternalStore(subscribe, getSnapshot, () => null);
   const setEngine = useCallback(
     (engine: BrowserEngineChoice) => {
-      if (!HOSTED_MODE && projectId) saveBrowserEngine(projectId, engine);
+      if (!HOSTED_MODE && !environmentMode && projectId)
+        saveBrowserEngine(projectId, engine);
     },
-    [projectId],
+    [projectId, environmentMode],
   );
-  const selectedEngine: BrowserEngineChoice = HOSTED_MODE
-    ? "cloud"
-    : preference ?? "local";
   const localAvailable =
-    !HOSTED_MODE && enabled && config?.engines.local.browserAvailable === true;
+    !HOSTED_MODE &&
+    !environmentMode &&
+    enabled &&
+    config?.engines.local.browserAvailable === true;
+  // Only an explicit preference or a bound conversation survives loss of
+  // candidacy. An unseeded rollout continues using the existing Cloud path.
+  const selectedEngine: BrowserEngineChoice =
+    HOSTED_MODE || environmentMode
+      ? "cloud"
+      : boundLocation ?? preference ?? (localAvailable ? "local" : "cloud");
   const cloudAvailable = config?.engines.cloud.available ?? false;
   return {
     engine: selectedEngine,
@@ -46,7 +65,8 @@ export function useBrowserEngine(projectId: string | null) {
     resolved: config !== undefined,
     localAvailable,
     cloudAvailable,
-    toggleVisible: !HOSTED_MODE,
+    toggleVisible: !HOSTED_MODE && !environmentMode,
+    environmentMode,
     consent,
   };
 }

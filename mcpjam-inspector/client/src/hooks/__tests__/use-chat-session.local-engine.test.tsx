@@ -271,6 +271,61 @@ describe("useChatSession — local computer engine transmission", () => {
     expect(JSON.stringify(body)).not.toContain("browser-capability");
   });
 
+  it("environment transport never carries local Browser credentials", async () => {
+    await renderWithEngine(
+      undefined,
+      {
+        projectId: "p",
+        requiresWebChatApi: true,
+        executionTarget: { kind: "environment", environmentId: "env-1" },
+      },
+      {
+        personalBrowserEngine: {
+          engine: "local",
+          consentToken: "browser-capability",
+        },
+      },
+    );
+    const { body, headers } = lastTransport();
+    expect(body.browserEngine).not.toBe("local");
+    expect(headers[BROWSER_CONSENT_HEADER]).toBeUndefined();
+  });
+
+  it("resume stores the authenticated Browser location in session state, not preferences", async () => {
+    const { authFetch } = await import("@/lib/session-token");
+    const { saveBrowserEngine, loadBrowserEngine } = await import(
+      "@/lib/browser-engine-storage"
+    );
+    const { useActiveChatSessionStore } = await import(
+      "@/stores/active-chat-session-store"
+    );
+    saveBrowserEngine("p", "local");
+    vi.mocked(authFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ engine: "cloud" }), { status: 200 }),
+    );
+    const { result } = await renderWithEngine(
+      undefined,
+      { projectId: "p" },
+      { personalBrowserEngine: { engine: "local", consentToken: null } },
+    );
+    act(() => {
+      void result.current.loadChatSession({
+        chatSessionId: "old-cloud-chat",
+        messagesBlobUrl: null,
+        version: 1,
+      });
+    });
+    await waitFor(() =>
+      expect(result.current.chatSessionId).toBe("old-cloud-chat"),
+    );
+    expect(useActiveChatSessionStore.getState().browserLocation).toEqual({
+      projectId: "p",
+      sessionId: "old-cloud-chat",
+      engine: "cloud",
+    });
+    expect(loadBrowserEngine("p")).toBe("local");
+  });
+
   it("forwards computerEngine:local in the body and the consent header when local + consented", async () => {
     await renderWithEngine({ engine: "local", consentToken: "cap-token-123" });
     const { body, headers } = lastTransport();

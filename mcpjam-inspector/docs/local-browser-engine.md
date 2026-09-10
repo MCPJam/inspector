@@ -65,8 +65,8 @@ control of Chromium and its **signed-in websites**; it never authorizes Bash.
 ## Location and Browser permission
 
 The Browser panel owns **This machine / Cloud**, grant/revoke, and Chromium
-installation in both layouts. Node-local and Electron default to This machine;
-hosted defaults to Cloud. Browser selection is stored separately from Computer
+installation in both layouts. Node-local and Electron default to This machine within the local Browser
+cohort, otherwise Cloud. Hosted and environment mode select Cloud. Browser selection is stored separately from Computer
 selection. Local candidacy uses `local-browser-enabled` and
 `engines.local.browserAvailable`; neither Bash availability nor
 `local-computer-enabled` enables or disables Browser.
@@ -83,13 +83,19 @@ Enable Browser alone, Bash alone, or both. Each retains its own authorization
 and destination. Local Browser and local Bash share this machine. Two Cloud
 selections do not by themselves guarantee the same box: conversation Browser
 uses its watched desktop, while personal Bash uses its configured computer.
-A run with an explicit shared desktop binding uses that box for both. Never
+A run with an explicit shared desktop binding uses that box for both and
+must use a blank profile. A saved-profile pin with both tools is rejected
+before unattended launch and at the runtime boundary. Unattended sessions
+never inherit the interactive default profile. Never
 assume `localhost` or files are shared across different boxes.
 
 A conversation's existing logical-session `box` determines Browser location;
-changing it requires **Start new chat**. Resume looks up that binding, which
+changing it requires **Start new chat**. Resume keeps the binding in
+conversation UI state without rewriting the project preference. That binding
 never grants execution access. Explicit local requests that cannot run suppress
-Browser with a thread notice and panel remedy; unrelated chat remains usable.
+Browser with a readiness data part and panel remedy; unrelated chat remains usable.
+Runtime diagnostics never become assistant text. The pre-turn location check is
+read-only; the first Browser use opens and binds the logical session.
 Open/control requests instead return `browser_consent_required` (403),
 `browser_runtime_unavailable` (503), or `browser_location_mismatch` (409).
 A disabled deployment can return 404 with a structured reason.
@@ -125,8 +131,9 @@ use the same logical identity when the hosted control plane is configured, and
 degrade to the existing local ledger when it is not.
 
 The backend also persists project-scoped browser-profile archives with a
-256 MB cap and default-profile selection. The runtime honors an explicit host
-or suite profile pin before the user's default. From the browser pane, a
+256 MB cap and default-profile selection. Interactive chats honor an explicit
+host pin before the user's default; unattended targets use only an explicit
+pin, and reject that pin when Bash is also attached. From the browser pane, a
 person can save a drained persistent profile; the archive is filtered to omit
 Chromium caches and singleton locks, uploaded to Convex storage, and imported
 only on the next fresh boot. Computer settings lists the saved profiles and
@@ -558,3 +565,12 @@ Profile export reserves an exclusive lease, closes Chromium to flush its
 persistent storage, and holds the reservation until archiving finishes. Local
 export also holds the session's creation lock, so reopening cannot race the
 archive. Export closes the live browser; the next ensure call relaunches it.
+
+### Ensure refusal compatibility
+
+The Browser cutover changes runtime refusals from HTTP 409 with a specific
+runtime `code` to HTTP 503 with `code: "browser_runtime_unavailable"` and the
+specific value (for example `chromium_not_installed` or `profile_in_use`) in
+`reason`. Location mismatches remain 409 and consent refusals remain 403.
+No first-party consumer of the old runtime codes was found. CLI/script clients
+that branch on those fields must update their status/code checks.

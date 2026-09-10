@@ -397,6 +397,21 @@ export function resolveHostTools(
     return undefined;
   }
 
+  // Reject the whole unattended target before advertising either tool: a
+  // shell on the shared box could read the pinned profile or daemon secrets.
+  if (
+    (ctx.sandboxBinding ||
+      ctx.isJourneySession ||
+      ctx.browserApprovalDelivery?.kind === "unattended") &&
+    ctx.browserProfileId &&
+    ids.includes(BASH_TOOL_NAME) &&
+    ids.includes(BROWSER_BUILT_IN_TOOL_ID)
+  ) {
+    throw new Error(
+      "browser_profile_shell_conflict: An unattended target with Browser and Bash must use a blank Browser profile. Remove the saved profile pin or Bash.",
+    );
+  }
+
   const authHeader = normalizeAuthHeader(ctx.authHeader);
   const computer = narrowHostComputer(config.computer);
   const out: ToolSet = {};

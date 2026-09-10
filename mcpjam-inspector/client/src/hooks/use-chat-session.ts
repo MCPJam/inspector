@@ -1,4 +1,3 @@
-import { saveBrowserEngine } from "@/lib/browser-engine-storage";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 /**
@@ -4715,7 +4714,11 @@ export function useChatSession(
               (!options?.shouldApply || options.shouldApply()) &&
               (location.engine === "local" || location.engine === "cloud")
             )
-              saveBrowserEngine(hostedContext.projectId, location.engine);
+              useActiveChatSessionStore.getState().setBrowserLocation({
+                projectId: hostedContext.projectId,
+                sessionId: session.chatSessionId,
+                engine: location.engine,
+              });
           }
         } catch {
           /* A failed lookup grants nothing; the turn/open boundary still refuses a mismatch. */

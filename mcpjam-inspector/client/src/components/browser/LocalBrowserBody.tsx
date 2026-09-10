@@ -344,7 +344,12 @@ export function LocalBrowserBody({
       // still in flight against the last one must not land on this one.
       railGeneration.current += 1;
       setSession({ bootId: next.bootId });
-      if (sessionId) markBrowserSessionActive(sessionId);
+      if (sessionId) {
+        markBrowserSessionActive(sessionId);
+        useActiveChatSessionStore
+          .getState()
+          .setBrowserLocation({ projectId, sessionId, engine: "local" });
+      }
       setLease(next.lease);
     } catch (err) {
       if (
