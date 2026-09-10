@@ -80,6 +80,7 @@ import {
 } from "./components/onboarding/FirstRunOnboardingOverlay";
 import type { ServerFormData } from "@/shared/types.js";
 import { validateServerFormData } from "@/lib/server-form-validation";
+import { listTools } from "@/lib/apis/mcp-tools-api";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -2536,6 +2537,7 @@ export default function App() {
     useState<FirstRunConnectionState>({ status: "idle" });
   const [pendingFirstRunConnection, setPendingFirstRunConnection] =
     useState<ServerFormData | null>(null);
+  const firstRunConnectionAttemptRef = useRef(0);
   // Bumped to ask the active debugger route to open its own "configure server"
   // modal (XAA / OAuth) instead of the generic Add Server modal — see the
   // onAddServerRequested wiring on the header server picker below.
@@ -3378,27 +3380,33 @@ export default function App() {
       if (validationError) {
         setFirstRunConnectionState({
           status: "failed",
+          serverName: formData.name,
+          serverKind: "personal",
           error: validationError,
         });
         return;
       }
 
+      firstRunConnectionAttemptRef.current += 1;
       markFirstRunServerChoiceStarted();
       setPendingFirstRunConnection(formData);
       setFirstRunConnectionState({
         status: "preparing",
         serverName: formData.name,
+        serverKind: "personal",
       });
     },
     [],
   );
 
   const connectFirstRunDemo = useCallback(() => {
+    firstRunConnectionAttemptRef.current += 1;
     markFirstRunServerChoiceStarted();
     setPendingFirstRunConnection(EXCALIDRAW_SERVER_CONFIG);
     setFirstRunConnectionState({
       status: "preparing",
       serverName: EXCALIDRAW_SERVER_NAME,
+      serverKind: "demo",
     });
   }, []);
 
@@ -3424,6 +3432,7 @@ export default function App() {
     setFirstRunConnectionState({
       status: "connecting",
       serverName: pendingFirstRunConnection.name,
+      serverKind: firstRunConnectionState.serverKind,
     });
     void handleConnect(pendingFirstRunConnection);
   }, [
@@ -3440,11 +3449,36 @@ export default function App() {
     if (!server) return;
 
     if (server.connectionStatus === "connected") {
+      const attemptId = firstRunConnectionAttemptRef.current;
+      const { serverKind, serverName } = firstRunConnectionState;
       setPendingFirstRunConnection(null);
-      setFirstRunConnectionState({ status: "idle" });
-      setFirstRunOverlayDismissed(true);
-      markFirstRunServerChoiceCompleted();
-      navigateApp(routePaths.playground);
+      setFirstRunConnectionState({
+        status: "loading-tools",
+        serverName,
+        serverKind,
+      });
+      void listTools({ serverId: serverName, refresh: true })
+        .then(({ tools }) => {
+          if (firstRunConnectionAttemptRef.current !== attemptId) return;
+          setFirstRunConnectionState({
+            status: "connected",
+            serverName,
+            serverKind,
+            toolCount: tools.length,
+          });
+        })
+        .catch((error: unknown) => {
+          if (firstRunConnectionAttemptRef.current !== attemptId) return;
+          setFirstRunConnectionState({
+            status: "failed",
+            serverName,
+            serverKind,
+            error:
+              error instanceof Error
+                ? error.message
+                : "MCPJam connected, but could not load this server's tools.",
+          });
+        });
       return;
     }
 
@@ -3452,12 +3486,33 @@ export default function App() {
       setPendingFirstRunConnection(null);
       setFirstRunConnectionState({
         status: "failed",
+        serverName: firstRunConnectionState.serverName,
+        serverKind: firstRunConnectionState.serverKind,
         error: server.lastError || "MCPJam could not connect to this server.",
       });
     }
-  }, [appState.servers, firstRunConnectionState, navigateApp]);
+  }, [appState.servers, firstRunConnectionState]);
+
+  const cancelFirstRunConnection = useCallback(() => {
+    firstRunConnectionAttemptRef.current += 1;
+    setPendingFirstRunConnection(null);
+    if (firstRunConnectionState.status !== "idle") {
+      handleRuntimeDisconnect(firstRunConnectionState.serverName);
+    }
+    setFirstRunConnectionState({ status: "idle" });
+  }, [firstRunConnectionState, handleRuntimeDisconnect]);
+
+  const openFirstRunPlayground = useCallback(() => {
+    firstRunConnectionAttemptRef.current += 1;
+    setPendingFirstRunConnection(null);
+    setFirstRunConnectionState({ status: "idle" });
+    setFirstRunOverlayDismissed(true);
+    markFirstRunServerChoiceCompleted();
+    navigateApp(routePaths.playground);
+  }, [navigateApp]);
 
   const dismissFirstRunOverlay = useCallback(() => {
+    firstRunConnectionAttemptRef.current += 1;
     markFirstRunServerChoiceDismissed();
     setPendingFirstRunConnection(null);
     setFirstRunConnectionState({ status: "idle" });
@@ -5461,6 +5516,8 @@ export default function App() {
                 connectionState={firstRunConnectionState}
                 onConnectOwnServer={openFirstRunServerConnection}
                 onConnectDemo={connectFirstRunDemo}
+                onCancelConnection={cancelFirstRunConnection}
+                onOpenPlayground={openFirstRunPlayground}
                 onWelcomeAcknowledged={
                   markFirstRunServerChoiceWelcomeAcknowledged
                 }

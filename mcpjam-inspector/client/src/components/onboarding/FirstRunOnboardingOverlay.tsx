@@ -13,6 +13,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
+import { Check, Circle, Loader2 } from "lucide-react";
 
 /** Time the welcome splash remains visible before it advances to server choice. */
 export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 8_500;
@@ -21,13 +22,31 @@ type FirstRunOverlayStep =
   | "welcome"
   | "choose"
   | "connecting"
+  | "connected"
+  | "demo-failed"
   | "server-details";
+
+export type FirstRunServerKind = "demo" | "personal";
 
 export type FirstRunConnectionState =
   | { status: "idle" }
-  | { status: "preparing"; serverName: string }
-  | { status: "connecting"; serverName: string }
-  | { status: "failed"; error: string };
+  | {
+      status: "preparing" | "connecting" | "loading-tools";
+      serverName: string;
+      serverKind: FirstRunServerKind;
+    }
+  | {
+      status: "connected";
+      serverName: string;
+      serverKind: FirstRunServerKind;
+      toolCount: number;
+    }
+  | {
+      status: "failed";
+      serverName: string;
+      serverKind: FirstRunServerKind;
+      error: string;
+    };
 
 export interface FirstRunServerDraft {
   name: string;
@@ -42,6 +61,8 @@ interface FirstRunOnboardingOverlayProps {
   connectionState: FirstRunConnectionState;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
+  onCancelConnection: () => void;
+  onOpenPlayground: () => void;
   onWelcomeAcknowledged: () => void;
   onSkip: () => void;
 }
@@ -58,6 +79,8 @@ export function FirstRunOnboardingOverlay({
   connectionState,
   onConnectOwnServer,
   onConnectDemo,
+  onCancelConnection,
+  onOpenPlayground,
   onWelcomeAcknowledged,
   onSkip,
 }: FirstRunOnboardingOverlayProps) {
@@ -137,11 +160,18 @@ export function FirstRunOnboardingOverlay({
     if (!open) return;
     if (
       connectionState.status === "preparing" ||
-      connectionState.status === "connecting"
+      connectionState.status === "connecting" ||
+      connectionState.status === "loading-tools"
     ) {
       setStep("connecting");
+    } else if (connectionState.status === "connected") {
+      setStep("connected");
     } else if (connectionState.status === "failed") {
-      setStep("server-details");
+      setStep(
+        connectionState.serverKind === "demo"
+          ? "demo-failed"
+          : "server-details",
+      );
     }
   }, [connectionState, open]);
 
@@ -327,28 +357,116 @@ export function FirstRunOnboardingOverlay({
                 Set up later
               </Button>
             </>
-          ) : step === "connecting" ? (
-            <div className="py-3 text-center">
-              <div
-                className="mx-auto size-7 animate-spin rounded-full border-2 border-muted border-t-primary"
-                role="status"
-                aria-label="Connecting to server"
-              />
-              <DialogHeader className="mt-5 gap-0 text-center">
+          ) : step === "connecting" &&
+            (connectionState.status === "preparing" ||
+              connectionState.status === "connecting" ||
+              connectionState.status === "loading-tools") ? (
+            <div className="py-1">
+              <DialogHeader className="gap-0 text-left">
                 <DialogTitle className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
                   {connectionState.status === "preparing"
                     ? "Preparing your MCPJam workspace"
                     : "Connecting to "}
-                  {connectionState.status === "connecting"
+                  {connectionState.status !== "preparing"
                     ? connectionState.serverName
                     : null}
                 </DialogTitle>
                 <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
                   {connectionState.status === "preparing"
                     ? "Getting your project ready to connect to an MCP server."
-                    : "Negotiating MCP compatibility and loading tools."}
+                    : "Checking the connection before MCPJam opens the playground."}
                 </DialogDescription>
               </DialogHeader>
+              <ConnectionProgress
+                status={connectionState.status}
+                prefersReducedMotion={prefersReducedMotion}
+              />
+              <Button
+                type="button"
+                variant="link"
+                className="mx-auto mt-4 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+                onClick={() => {
+                  onCancelConnection();
+                  setStep("choose");
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : step === "connected" && connectionState.status === "connected" ? (
+            <div className="py-2 text-center">
+              <div
+                className={cn(
+                  "mx-auto flex size-12 items-center justify-center rounded-full border border-success bg-success text-success-foreground",
+                  !prefersReducedMotion &&
+                    "animate-in fade-in zoom-in-50 duration-500",
+                )}
+                data-testid="first-run-success-indicator"
+                aria-hidden
+              >
+                <span
+                  className={cn(
+                    "flex",
+                    !prefersReducedMotion &&
+                      "animate-in fade-in zoom-in-50 delay-150 duration-300",
+                  )}
+                >
+                  <Check className="size-6" strokeWidth={2.25} />
+                </span>
+              </div>
+              <DialogHeader className="mt-5 gap-0 !text-center">
+                <DialogTitle className="text-center text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
+                  Connected to{" "}
+                  <span className="text-success">
+                    {connectionState.serverName}
+                  </span>
+                </DialogTitle>
+                <DialogDescription className="mt-1 text-center text-[12.5px] leading-[1.55] text-muted-foreground">
+                  {connectionState.toolCount}{" "}
+                  {connectionState.toolCount === 1 ? "tool" : "tools"} ready to
+                  use.
+                </DialogDescription>
+              </DialogHeader>
+              <Button
+                type="button"
+                className="mt-5 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
+                onClick={onOpenPlayground}
+              >
+                Open Playground
+              </Button>
+            </div>
+          ) : step === "demo-failed" && connectionState.status === "failed" ? (
+            <div>
+              <DialogHeader className="gap-0 text-left">
+                <DialogTitle className="pb-0 text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
+                  Demo server unavailable
+                </DialogTitle>
+                <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
+                  MCPJam couldn&apos;t reach the Excalidraw demo server. You can
+                  try again or connect your own server instead.
+                </DialogDescription>
+              </DialogHeader>
+              <p
+                className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] leading-[1.45] text-destructive"
+                role="alert"
+              >
+                {connectionState.error}
+              </p>
+              <Button
+                type="button"
+                className="mt-4 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
+                onClick={onConnectDemo}
+              >
+                Try demo again
+              </Button>
+              <Button
+                type="button"
+                variant="link"
+                className="mx-auto mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+                onClick={() => setStep("choose")}
+              >
+                Connect my own server
+              </Button>
             </div>
           ) : (
             <form onSubmit={submitServerDetails}>
@@ -487,4 +605,62 @@ function deriveServerName(urlOrCommand: string): string {
   const hostname = firstToken.split("/")[0].replace(/^mcp\./i, "");
   const name = hostname.split(".")[0].replace(/[-_]+/g, " ");
   return name ? name.charAt(0).toUpperCase() + name.slice(1) : "Server";
+}
+
+const CONNECTION_PROGRESS_STEPS = [
+  "Reach server",
+  "Negotiate MCP compatibility",
+  "Load tools",
+] as const;
+
+function ConnectionProgress({
+  status,
+  prefersReducedMotion,
+}: {
+  status: "preparing" | "connecting" | "loading-tools";
+  prefersReducedMotion: boolean | null;
+}) {
+  const activeIndex = status === "loading-tools" ? 2 : 0;
+  const completedThrough = status === "loading-tools" ? 1 : -1;
+
+  return (
+    <ol className="mt-5 grid gap-2.5" aria-label="Connection progress">
+      {CONNECTION_PROGRESS_STEPS.map((label, index) => {
+        const isComplete = index <= completedThrough;
+        const isActive = index === activeIndex;
+        return (
+          <li
+            key={label}
+            className="flex items-center gap-3 rounded-md border border-border bg-muted/25 px-3 py-2.5 text-left"
+          >
+            <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
+              {isComplete ? (
+                <Check className="size-4 text-success" aria-hidden />
+              ) : isActive ? (
+                <Loader2
+                  className={cn(
+                    "size-4 text-primary",
+                    !prefersReducedMotion && "animate-spin",
+                  )}
+                  aria-hidden
+                />
+              ) : (
+                <Circle className="size-3" aria-hidden />
+              )}
+            </span>
+            <span
+              className={cn(
+                "text-[12px] leading-5",
+                isComplete || isActive
+                  ? "font-medium text-card-foreground"
+                  : "text-muted-foreground",
+              )}
+            >
+              {label}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
 }
