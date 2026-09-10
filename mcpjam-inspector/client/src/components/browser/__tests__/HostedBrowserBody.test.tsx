@@ -1,3 +1,4 @@
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 /**
  * The hosted pane.
  *
@@ -20,6 +21,10 @@ import userEvent from "@testing-library/user-event";
 
 const api = vi.hoisted(() => ({
   workspaceEnabled: true,
+  exportProfile: vi.fn(async () => ({
+    archive: new Blob(),
+    savedFrom: "profile-chat",
+  })),
   /** What `/session` answers, or an error to throw. */
   session: null as unknown,
   sessionError: null as { status: number } | null,
@@ -54,6 +59,7 @@ vi.mock("@/lib/hosted-browser/client", async () => {
   >("@/lib/hosted-browser/client");
   return {
     ...actual,
+    fetchHostedBrowserProfileArchive: api.exportProfile,
     createBrowserTokenCache: () => ({
       get: async () => {
         api.mints += 1;
@@ -255,8 +261,8 @@ describe("the hosted pane — who has control", () => {
       yours: true,
     };
     renderBody();
-    expect(await screen.findByText("You have it (paused)")).toBeTruthy();
-    expect(screen.getByText(/resume agent/i)).toBeTruthy();
+    expect(await screen.findByText("You’re in control (paused)")).toBeTruthy();
+    expect(screen.queryByText(/let agent browse/i)).toBeNull();
   });
 
   it("does not offer to take a browser somebody else holds", async () => {
@@ -269,7 +275,7 @@ describe("the hosted pane — who has control", () => {
     expect(await screen.findByText("Someone else is driving")).toBeTruthy();
     // There is no button to withhold any more: using the browser is what
     // takes it, and the server refuses a click into somebody else's hold.
-    expect(screen.queryByText(/resume agent/i)).toBeNull();
+    expect(screen.queryByText(/let agent browse/i)).toBeNull();
   });
 
   it("takes control and reopens the stream the take just revoked", async () => {
@@ -291,7 +297,8 @@ describe("the hosted pane — who has control", () => {
     api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
     api.lease = { took: true, lease: { state: "free" }, yours: false };
     renderBody();
-    await userEvent.click(await screen.findByText(/resume agent/i));
+    await screen.findByText("You’re in control");
+    await act(async () => releaseBrowserForChat("proj-1"));
     await waitFor(() => expect(api.leaseCalls).toEqual(["resume"]));
     await screen.findByText("The agent is driving");
   });
@@ -503,7 +510,7 @@ describe("the hosted pane — a lease that changes underneath it", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10);
       });
-      expect(screen.getByText("You have it")).toBeTruthy();
+      expect(screen.getByText("You’re in control")).toBeTruthy();
 
       api.lease = {
         took: false,
@@ -554,7 +561,7 @@ describe("the hosted pane — a lease that changes underneath it", () => {
     // one back.
     api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
     const view = renderBody();
-    expect(await screen.findByText("You have it")).toBeTruthy();
+    expect(await screen.findByText("You’re in control")).toBeTruthy();
     api.leaseCalls = [];
     view.unmount();
     expect(api.leaseCalls).toEqual([]);
@@ -987,4 +994,68 @@ it("keeps hosted navigation when the workspace flag is off", async () => {
   await deliverFrame();
   expect(await screen.findByTestId("browser-new-tab")).toBeInTheDocument();
   expect(screen.getByTestId("browser-address")).toBeInTheDocument();
+});
+
+it("keeps profile saving in settings rather than the browser toolbar", async () => {
+  renderBody({ sessionId: "profile-chat" });
+  await waitFor(() =>
+    expect(screen.getByTestId("browser-new-tab")).not.toBeDisabled(),
+  );
+  expect(screen.queryByRole("button", { name: "Save profile" })).toBeNull();
+  expect(screen.queryByText("Save profile for other chats…")).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Browser view settings" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Save profile for other chats…",
+    }),
+  ).toBeVisible();
+});
+
+vi.mock("@/lib/browser-profiles/client", () => ({
+  saveBrowserProfile: vi.fn(),
+}));
+
+it("returns control before exporting a profile after the user signs in", async () => {
+  api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+  api.lease = { took: true, lease: { state: "free" }, yours: false };
+  api.exportProfile.mockClear();
+  const prompt = vi.spyOn(window, "prompt").mockReturnValue("Signed in");
+  try {
+    renderBody({ sessionId: "profile-chat" });
+    await screen.findByText("You’re in control");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Browser view settings" }),
+    );
+    const item = await screen.findByRole("menuitem", {
+      name: "Save profile for other chats…",
+    });
+    expect(item).not.toHaveAttribute("data-disabled");
+    await userEvent.click(item);
+    await waitFor(() => expect(api.exportProfile).toHaveBeenCalledOnce());
+    expect(api.leaseCalls).toEqual(["resume"]);
+  } finally {
+    prompt.mockRestore();
+  }
+});
+
+it("clears automatic handoff when a previously held browser disappears", async () => {
+  api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+  const view = renderBody();
+  await screen.findByText("You’re in control");
+  api.sessionError = { status: 409 };
+  view.rerender(
+    <HostedBrowserBody
+      projectId="proj-1"
+      mintToken={mintToken}
+      active={false}
+    />,
+  );
+  view.rerender(
+    <HostedBrowserBody projectId="proj-1" mintToken={mintToken} active />,
+  );
+  await screen.findByTestId("hosted-browser-idle");
+  await act(async () => releaseBrowserForChat("proj-1"));
+  expect(api.leaseCalls).toEqual([]);
 });

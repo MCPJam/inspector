@@ -1,3 +1,4 @@
+import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
 import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -186,10 +187,30 @@ function RightRailTabbed({
     [activeTab],
   );
 
+  const browserActivity =
+    projectId && isLocalBrowser && browserEngine.consent.granted ? (
+      <BrowserActivityList
+        key={projectId}
+        title="Browser activity"
+        collapsible
+        projectId={projectId}
+        consentToken={browserEngine.consent.token}
+        active={activeTab === "logs"}
+        className="max-h-[40%] shrink-0 border-t"
+      />
+    ) : null;
+
   // Browser-only hosts must reach the tabbed rail (and its consent gate)
   // without mounting a shell or requiring a Computer attachment.
   if (!shellAvailable && !hasBrowser) {
-    return <LoggerView onClose={onClose} />;
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="min-h-0 flex-1">
+          <LoggerView onClose={onClose} />
+        </div>
+        {browserActivity}
+      </div>
+    );
   }
 
   return (
@@ -217,24 +238,33 @@ function RightRailTabbed({
             onClick={() => handleTabClick("browser")}
           />
         ) : null}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Collapse panel"
-          className="ml-auto rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-        >
-          <PanelRightClose className="h-3.5 w-3.5" />
-        </button>
+        <div className="ml-auto flex items-center gap-1">
+          {hasBrowser && activeTab === "browser" ? (
+            <BrowserRuntimeControls projectId={projectId} compact />
+          ) : null}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Collapse panel"
+            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+          >
+            <PanelRightClose className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
       {/* Keep BOTH bodies mounted — toggling tabs must not drop the live
           terminal WebSocket or the log stream. */}
       <div
+        hidden={activeTab !== "logs"}
         className={cn(
           "min-h-0 flex-1",
           activeTab === "logs" ? "flex flex-col" : "hidden",
         )}
       >
-        <LoggerView isCollapsable={false} />
+        <div className="min-h-0 flex-1">
+          <LoggerView isCollapsable={false} />
+        </div>
+        {browserActivity}
       </div>
       {hasBrowser ? (
         <div
@@ -249,7 +279,6 @@ function RightRailTabbed({
               is what makes that safe — a pane behind the Logs tab must stop
               claiming somebody is watching, and on the hosted engine that claim
               keeps a METERED box awake. */}
-          <BrowserRuntimeControls projectId={projectId} />
           {!browserSessionId ? (
             <p role="status" className="p-4 text-sm text-muted-foreground">
               Loading conversation…
