@@ -233,6 +233,9 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(screen.getByText("Load tools").parentElement).toHaveClass(
       "text-left",
     );
+    expect(
+      screen.getByText("Reach server").parentElement?.querySelector("svg"),
+    ).toHaveClass("text-success");
 
     rerenderWithConnectionState({
       status: "connected",
@@ -243,6 +246,13 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("heading", { name: "Connected to My server" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("My server")).toHaveClass("text-success");
+    expect(screen.getByTestId("first-run-success-indicator")).toHaveClass(
+      "border-success",
+      "bg-success",
+      "text-success-foreground",
+      "animate-in",
+    );
     expect(screen.getByText("3 tools ready to use.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
     expect(onOpenPlayground).toHaveBeenCalledOnce();

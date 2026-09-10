@@ -397,18 +397,31 @@ export function FirstRunOnboardingOverlay({
             <div className="py-2 text-center">
               <div
                 className={cn(
-                  "mx-auto flex size-12 items-center justify-center rounded-full border border-primary bg-primary/10 text-primary",
-                  !prefersReducedMotion && "animate-in zoom-in-75 duration-300",
+                  "mx-auto flex size-12 items-center justify-center rounded-full border border-success bg-success text-success-foreground",
+                  !prefersReducedMotion &&
+                    "animate-in fade-in zoom-in-50 duration-500",
                 )}
+                data-testid="first-run-success-indicator"
                 aria-hidden
               >
-                <Check className="size-6" strokeWidth={2.25} />
+                <span
+                  className={cn(
+                    "flex",
+                    !prefersReducedMotion &&
+                      "animate-in fade-in zoom-in-50 delay-150 duration-300",
+                  )}
+                >
+                  <Check className="size-6" strokeWidth={2.25} />
+                </span>
               </div>
-              <DialogHeader className="mt-5 gap-0 text-center">
-                <DialogTitle className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  Connected to {connectionState.serverName}
+              <DialogHeader className="mt-5 gap-0 !text-center">
+                <DialogTitle className="text-center text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
+                  Connected to{" "}
+                  <span className="text-success">
+                    {connectionState.serverName}
+                  </span>
                 </DialogTitle>
-                <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
+                <DialogDescription className="mt-1 text-center text-[12.5px] leading-[1.55] text-muted-foreground">
                   {connectionState.toolCount}{" "}
                   {connectionState.toolCount === 1 ? "tool" : "tools"} ready to
                   use.
@@ -622,7 +635,7 @@ function ConnectionProgress({
           >
             <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
               {isComplete ? (
-                <Check className="size-4 text-primary" aria-hidden />
+                <Check className="size-4 text-success" aria-hidden />
               ) : isActive ? (
                 <Loader2
                   className={cn(
