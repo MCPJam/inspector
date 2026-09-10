@@ -53,3 +53,8 @@
 - Refresh after that success reproduced the already-listed stale first-run persistence bug on `localhost`; keep that repair in its own follow-up branch.
 - Verification: 96 focused component/App tests passed, including both connection paths and cancellation; client type-check and design-token drift checks passed.
 - Review polish: completed progress checks now use the success color; the final success indicator is green with a reduced-motion-safe entry animation; the centered server name is highlighted for easier scanning.
+
+## Deferred follow-ups
+
+- Guest sign-up bar: a dismissible Playground strip inviting anonymous users to create an account so they can keep their server, history, and evals.
+- Demo-only Home banner: a persistent, dismissible confirmation and client-exploration prompt while Excalidraw is the user's only connected server.
