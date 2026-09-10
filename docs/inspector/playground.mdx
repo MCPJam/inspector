@@ -353,7 +353,7 @@ Some actions pause whether it is on or off:
 - local shell commands (`bash`);
 - destructive UI actions.
 
-Local Browser (`browser_*`) and WebMCP page tools follow the chat’s Tool Approval setting. With it off, calls run without per-call approval. Browser device permission remains a separate prerequisite.
+Local Browser (`browser_*`) and WebMCP page tools follow the chat's Tool Approval setting. With it off, calls run without per-call approval. Browser device permission remains a separate prerequisite.
 
 Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, read-only UI actions, and tools an MCP App provided. Everything in between follows the switch, including web search — its query is your text leaving for a third party, and the call spends credits.
 
@@ -457,7 +457,7 @@ When a multi-model or multi-host compare session is running and at least one cli
 
 ### Local Browser and WebMCP security
 
-Local Browser and WebMCP inspection require **Allow Browser** on the current device. Shell permission is separate. Tool Approval keeps its existing chat setting: when off, the model can act without asking before each browser or page-tool call. Enabling page tools gives you and the chat shared control of the inspection page. Ordinary websites, local development servers and other local-network apps remain accessible; MCPJam’s own controller endpoints and local-file navigation are blocked.
+Local Browser and WebMCP inspection require device consent — click **Allow** in the **Enable local Browser for all clients** prompt in Browser settings. Consent is device-scoped: granting it on one machine does not affect other machines, and teammates must allow browser access on their own devices. Tool Approval keeps its existing chat setting: when off, the model can act without asking before each browser or page-tool call. Ordinary websites, local development servers and other local-network apps remain accessible; MCPJam's own controller endpoints and local-file navigation are blocked.
 
 Page text, screenshots and tool results used in chat may be sent to your selected model provider. Signed-in websites and local-network services can contain sensitive information. Exports may include page contents, tool inputs/results and screenshots; review them before sharing.
 
