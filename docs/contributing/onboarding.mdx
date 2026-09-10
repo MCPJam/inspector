@@ -140,9 +140,11 @@ MCPJam supports multiple LLM providers:
 <Step title="Install Dependencies">```bash npm install ```</Step>
 
 <Step title="Set Environment Variables">
-  Create a `.env` file in the root directory with your API keys: ```bash
-  OPENAI_API_KEY=your_key_here ANTHROPIC_API_KEY=your_key_here # Optional: Add
-  other provider keys ```
+  Copy the sample env file into the inspector workspace, then add your provider
+  keys to it. The path matters: the dev server and the Electron app both read
+  `mcpjam-inspector/.env.development`, not a `.env` at the repo root. ```bash cp
+  mcpjam-inspector/.env.local mcpjam-inspector/.env.development #
+  OPENAI_API_KEY=your_key_here # ANTHROPIC_API_KEY=your_key_here ```
 </Step>
 
   <Step title="Start Development Server">
@@ -202,14 +204,15 @@ npm run build:server  # Backend only
 ### Electron Distribution
 
 ```bash
-# Create distributable
-npm run electron:make
-
-# Platform-specific builds
-npm run electron:make:mac
-npm run electron:make:win
-npm run electron:make:linux
+# Create a distributable for the CURRENT platform
+npm run electron:make -w @mcpjam/inspector
 ```
+
+Forge builds for the host platform; there are no per-platform scripts. The macOS
+and Windows installers come from the `mac-release` and `windows-release`
+workflows. Packaging needs the Node version in `mcpjam-inspector/.nvmrc` — on
+Node 25+ forge exits 0 without writing anything, so `electron:make` checks the
+version first and prints the fix.
 
 ### Docker
 
