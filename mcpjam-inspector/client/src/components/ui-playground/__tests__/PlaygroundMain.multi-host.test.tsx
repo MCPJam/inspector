@@ -1,3 +1,4 @@
+import { PlaygroundBrowserOverrideContext } from "@/components/playground/playground-browser-override";
 /**
  * PlaygroundMain — Phase 4 multi-host render path.
  *
@@ -1623,6 +1624,28 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
   });
 
+  it("applies an explicit Browser override to every comparison column", () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", {}),
+      "h-B": makeHost("h-B", "Host B", {}),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+    render(
+      <PlaygroundBrowserOverrideContext.Provider value={true}>
+        <PlaygroundMain {...defaultProps} />
+      </PlaygroundBrowserOverrideContext.Provider>,
+    );
+    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      expect(props.executionConfig.builtInToolIds).toEqual(["browser"]);
+    }
+  });
+
   it("slot 1 unresolved with slot 0 + slot 2 resolved → 2 columns, lead preserved (Blocker 3)", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
@@ -2139,7 +2162,20 @@ describe("PlaygroundMain — environment mode", () => {
     render(<PlaygroundMain {...defaultProps} />);
 
     expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
-      undefined
+      undefined,
+    );
+  });
+
+  it("ignores a stale Playground Browser override in environment mode", () => {
+    selectEnvironment();
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+    render(
+      <PlaygroundBrowserOverrideContext.Provider value={true}>
+        <PlaygroundMain {...defaultProps} />
+      </PlaygroundBrowserOverrideContext.Provider>,
+    );
+    expect(capturedChatSessionOptions?.builtInToolIds ?? []).not.toContain(
+      "browser",
     );
   });
 
