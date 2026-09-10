@@ -303,9 +303,7 @@ export async function parkForHandoff<Token>(
           ok: false,
           error:
             `${resumedMessage(outcome.waitedMs)} The page could not be read ` +
-            `just now (${
-              fresh.error ?? "no detail"
-            }); observe again before acting.`,
+            `just now (${fresh.error ?? "no detail"}); observe again before acting.`,
         };
       }
       return {

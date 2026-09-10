@@ -8747,7 +8747,7 @@ export const sendChatMessageOperation: PlatformOperation<
             id: result.sessionId,
             projectId: result.projectId,
           },
-          ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, projectId: result.projectId }] : []),
+          ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: !!result.browser?.attached, projectId: result.projectId }] : []),
         ]
       : []
   ),
@@ -8843,6 +8843,7 @@ export const driveChatSessionBrowserOperation: PlatformOperation<
           {
             type: "playground_conversation",
             id: row.chatSessionId,
+            browser: true,
             projectId: row.projectId,
           },
         ]
@@ -8919,7 +8920,9 @@ export const observeChatSessionBrowserOperation: PlatformOperation<
   title: "Observe a Playground session browser",
   description:
     "Observe, read command history, or obtain a screenshot URL for an API session browser. Observation wakes a sleeping desktop and uses metered desktop time. Trace and artifact reads do not wake it. No image blocks are returned.",
-  readOnly: true,
+  // Observation can provision a metered desktop, so this tool is not a pure read.
+  readOnly: false,
+  risk: "spend",
   permalink: derivePermalinks((result) => {
     const row = result as { chatSessionId?: string; projectId?: string };
     return row.chatSessionId
@@ -8927,6 +8930,7 @@ export const observeChatSessionBrowserOperation: PlatformOperation<
           {
             type: "playground_conversation",
             id: row.chatSessionId,
+            browser: true,
             projectId: row.projectId,
           },
         ]
@@ -8990,7 +8994,7 @@ export const getChatSessionOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) => [
     { type: "chat_session", id: result.sessionId, ...projectIdOf(result) },
-    ...(result.chatSessionId && result.origin === "api" ? [{ type: "playground_conversation" as const, id: result.chatSessionId, ...projectIdOf(result) }] : []),
+    ...(result.chatSessionId && result.origin === "api" ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: !!result.browser, ...projectIdOf(result) }] : []),
   ]),
   inputSchema: getChatSessionInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -9064,7 +9068,7 @@ export const getChatSessionTraceOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) => [
     { type: "chat_session", id: result.sessionId, ...projectIdOf(result) },
-    ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, ...projectIdOf(result) }] : []),
+    ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: result.turns.some(turn => !!turn.browser), ...projectIdOf(result) }] : []),
   ]),
   inputSchema: getChatSessionTraceInput,
   async execute(input, { client, signal, onScopeResolved }) {

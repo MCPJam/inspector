@@ -14,6 +14,7 @@ import { ALL_OPERATIONS } from "../operations.js";
 import {
   PLATFORM_PERMALINK_ROUTES,
   derivePermalinksFor,
+  buildAppPermalink,
   type PlatformNoPermalinkReason,
 } from "../permalinks.js";
 
@@ -210,6 +211,12 @@ describe("every catalog operation declares a permalink policy", () => {
     expect(permalinks.map((permalink) => permalink.url)).toEqual([
       "https://app.mcpjam.com/sessions?session=cs_1&project=p1",
     ]);
+  });
+
+  it("opens the browser pane only when the session has a browser", () => {
+    const ref = { type: "playground_conversation" as const, id: "wire-id", projectId: "p1" };
+    expect(buildAppPermalink(ref, { appOrigin: "https://app.mcpjam.com" }).url).not.toContain("browser=open");
+    expect(buildAppPermalink({ ...ref, browser: true }, { appOrigin: "https://app.mcpjam.com" }).url).toContain("browser=open");
   });
 
   it("names no route that the registry does not have", () => {

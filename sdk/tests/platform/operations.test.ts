@@ -2620,6 +2620,7 @@ describe("operation catalog consistency", () => {
       // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
       "send_chat_message",
       "drive_chat_session_browser",
+      "observe_chat_session_browser",
       // Gate waivers. Both are writes because both persist an audited record
       // and both move a published GitHub Check Run. `get_eval_gate_waiver` is
       // deliberately NOT here — reading whether a gate is waived is available

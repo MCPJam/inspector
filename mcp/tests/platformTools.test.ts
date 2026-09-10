@@ -613,6 +613,7 @@ describe("platform tool registration", () => {
     const IDEMPOTENT_WRITES = new Set(["cancel_project_server_connection"]);
 
     const NON_DESTRUCTIVE_WRITES = new Set([
+      "observe_chat_session_browser",
       // Starting dials a third party's server and can spend; cancelling stops
       // one. Neither destroys a record, so both annotate as plain writes.
       "start_claude_readiness_run",

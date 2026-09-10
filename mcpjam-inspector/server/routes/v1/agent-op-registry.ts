@@ -1697,7 +1697,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // The reads are therefore direct; widening them into enumeration would
   // reopen the exclusion by another door.
   { operation: driveChatSessionBrowserOperation, tier: "gated", proposal: { describe: () => "Drive this session's metered browser under its stored policy.", buttonLabel: "Continue", kind: "start", confirmSeverity: "spend" } },
-  { operation: observeChatSessionBrowserOperation, tier: "direct" },
+  { operation: observeChatSessionBrowserOperation, tier: "gated", proposal: { describe: () => "Observe this session browser; waking it uses metered desktop time.", buttonLabel: "Continue", kind: "start", confirmSeverity: "spend" } },
   {
     operation: sendChatMessageOperation,
     tier: "gated",

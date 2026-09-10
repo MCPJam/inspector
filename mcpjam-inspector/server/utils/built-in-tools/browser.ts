@@ -1489,10 +1489,10 @@ export function buildBrowserTools(
                 ...(newTab ? { newTab: true } : {}),
               }
             : verb === "back"
-              ? { kind: "back" }
-              : verb === "forward"
-                ? { kind: "forward" }
-                : { kind: "reload" };
+            ? { kind: "back" }
+            : verb === "forward"
+            ? { kind: "forward" }
+            : { kind: "reload" };
         return presented(
           await send(
             // BOTH, matching `browser_act` and matching what the description
@@ -1613,10 +1613,10 @@ export function buildBrowserTools(
         const target: BrowserActTarget | undefined = ref
           ? { a11yRef: ref }
           : x !== undefined && y !== undefined
-            ? { coordinates: [x, y] }
-            : selector
-              ? { selector }
-              : undefined;
+          ? { coordinates: [x, y] }
+          : selector
+          ? { selector }
+          : undefined;
         return presented(
           await send(
             {
@@ -2560,6 +2560,7 @@ export async function ensureHostedConversationSession(args: {
     sandboxRowId: string;
     sandboxId: string;
     watched?: boolean;
+    record?: boolean;
   };
   signal?: AbortSignal;
   onNotice?: (notice: string) => void;
@@ -2662,6 +2663,7 @@ export async function ensureHostedConversationSession(args: {
       kind: "sandbox",
       sandboxRowId,
       sandboxId,
+      ...(!watched && args.target?.record === true ? { record: true } : {}),
       ...(watched ? { watched: true as const } : {}),
     },
     ...(profileArchive ? { profileArchive } : {}),
@@ -3089,24 +3091,24 @@ function pageToolsNote(
         "call one by name rather than clicking." +
         (options.dynamic ? " They change when you navigate." : "")
       : options.arriving
-        ? "This page's tools will appear as `webmcp_*` tools on your next " +
-          "step." +
-          (options.invokeVerb
-            ? " Until then, call one with `browser_webmcp_invoke`" +
-              (options.listVerb
-                ? " — `browser_webmcp_tools` lists their names."
-                : ".")
-            : "")
-        : options.listVerb
-          ? "This page offers WebMCP tools. List them with `browser_webmcp_tools`, " +
-            "then call one with `browser_webmcp_invoke`."
-          : options.invokeVerb && names.length > 0
-            ? "This page offers WebMCP tools. Call one with " +
-              "`browser_webmcp_invoke`, using a name listed above."
-            : // Nothing this toolset can reach them with. Said plainly rather
-              // than pointing at a verb that is not here.
-              "This page offers WebMCP tools, but none of this browser's tools " +
-              "can reach them; interact with the page itself instead.",
+      ? "This page's tools will appear as `webmcp_*` tools on your next " +
+        "step." +
+        (options.invokeVerb
+          ? " Until then, call one with `browser_webmcp_invoke`" +
+            (options.listVerb
+              ? " — `browser_webmcp_tools` lists their names."
+              : ".")
+          : "")
+      : options.listVerb
+      ? "This page offers WebMCP tools. List them with `browser_webmcp_tools`, " +
+        "then call one with `browser_webmcp_invoke`."
+      : options.invokeVerb && names.length > 0
+      ? "This page offers WebMCP tools. Call one with " +
+        "`browser_webmcp_invoke`, using a name listed above."
+      : // Nothing this toolset can reach them with. Said plainly rather
+        // than pointing at a verb that is not here.
+        "This page offers WebMCP tools, but none of this browser's tools " +
+        "can reach them; interact with the page itself instead.",
   };
 }
 

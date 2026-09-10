@@ -428,7 +428,7 @@ describe("POST /v1/chat-sessions/messages", () => {
     const body = await response.json();
     expect(response.status).toBe(409);
     expect(body.details.reason).toBe("TURN_IN_PROGRESS");
-    expect(body.details.retryAfterMs).toBe(4_200);
+    expect(body.details.retryAfterMs).toBe(2_000);
   });
 
   it("rejects a bare model id instead of resolving it to Ollama", async () => {

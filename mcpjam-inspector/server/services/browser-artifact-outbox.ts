@@ -119,13 +119,8 @@ export function createBrowserArtifactOutbox(args: {
   /** Log prefix so each surface stays greppable. */
   logScope: string;
 }): BrowserArtifactOutbox {
-  const {
-    chatSessionId,
-    convexAuthToken,
-    scenarioId,
-    accessVersion,
-    logScope,
-  } = args;
+  const { chatSessionId, convexAuthToken, scenarioId, accessVersion, logScope } =
+    args;
 
   // Both keyed by promptIndex so repeat takes for the same turn merge instead of
   // producing two writes that would each restamp the same rows.
@@ -287,9 +282,9 @@ export function createBrowserArtifactOutbox(args: {
     take(browser, fallbackPromptIndex) {
       const { observations, steps } = browser.drainNewArtifacts();
       for (const obs of observations) {
-        rawBucket(
-          bucketOf(obs.promptIndex, fallbackPromptIndex),
-        ).observations.push(obs);
+        rawBucket(bucketOf(obs.promptIndex, fallbackPromptIndex)).observations.push(
+          obs,
+        );
       }
       for (const step of steps) {
         rawBucket(bucketOf(step.promptIndex, fallbackPromptIndex)).steps.push(
@@ -396,10 +391,7 @@ export function createBrowserArtifactOutbox(args: {
             // legitimate `null`, not a failure, and the write is idempotent so
             // the next flush retries it.
             return result == null
-              ? {
-                  status: "retryable" as const,
-                  reason: "session row not ready",
-                }
+              ? { status: "retryable" as const, reason: "session row not ready" }
               : { status: "acknowledged" as const, value: result };
           },
           { maxAttempts: 1 },

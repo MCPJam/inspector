@@ -25,6 +25,7 @@ import { resolveHostTools } from "../../utils/built-in-tools/registry";
 import {
   toDaemonAction,
   refusedResult,
+  executedResult,
   unknownResult,
 } from "../../services/browserd/agent-contract-mapper";
 import { toContractResult } from "../../services/browserd/local/agent-door";
@@ -564,30 +565,25 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
               )) as {
                 response: Parameters<typeof toContractResult>[0]["response"];
               };
-              const resultUrl =
-                value.response.status === "ok"
-                  ? (
-                      value.response.result?.output as
-                        { url?: string } | undefined
-                    )?.url
-                  : undefined;
+              // Preserve the mapper's executed-but-failed result after a redirect.
+              // Missing origins are also withheld, without claiming the action never ran.
+              const response = value.response;
               result =
+                response.status === "ok" &&
                 resolved.effectivePolicy.origins !== null &&
-                value.response.status === "ok" &&
-                (!resultUrl ||
-                  !browserPolicyAllowsOrigin(
-                    resolved.effectivePolicy,
-                    resultUrl,
-                  ))
-                  ? refusedResult({
+                !(response.result.output as { url?: string } | undefined)?.url
+                  ? executedResult({
                       commandId,
+                      result: response.result,
                       ledger,
-                      code: "origin_not_allowed",
-                      message:
-                        "The result origin is unavailable or outside the session policy",
+                      overrideError: {
+                        code: "origin_not_allowed",
+                        message:
+                          "The action ran but its result origin could not be verified; page content withheld.",
+                      },
                     })
                   : toContractResult({
-                      response: value.response,
+                      response,
                       commandId,
                       policy: {
                         mode: "allow_all",
@@ -610,7 +606,11 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
                 : refusedResult({
                     commandId,
                     ledger,
-                    code: "browser_unavailable",
+                    code:
+                      error instanceof Error &&
+                      error.message.startsWith("origin_not_allowed:")
+                        ? "origin_not_allowed"
+                        : "browser_unavailable",
                     message:
                       error instanceof Error ? error.message : String(error),
                   });

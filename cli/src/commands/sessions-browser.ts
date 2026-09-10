@@ -117,13 +117,19 @@ export function registerSessionsBrowserCommands(sessions: Command): void {
       "Stable key when creating a new session"
     ),
     driveChatSessionBrowserOperation,
-    (o: BrowserOptions): DriveChatSessionBrowserInput => ({
-      op: "open",
-      sessionId: o.session,
-      project: o.project,
-      ...browserInput({ ...o, browser: true }),
-      idempotencyKey: o.idempotencyKey ?? randomUUID(),
-    }),
+    (o: BrowserOptions): DriveChatSessionBrowserInput => {
+      if (!o.session && !o.idempotencyKey)
+        throw usageError(
+          "--idempotency-key is required when creating a session; reuse it after a timeout"
+        );
+      return {
+        op: "open",
+        sessionId: o.session,
+        project: o.project,
+        ...browserInput({ ...o, browser: true }),
+        idempotencyKey: o.idempotencyKey,
+      };
+    },
     { defaultTimeoutMs: 360_000 }
   );
   bindOperation(
@@ -206,13 +212,13 @@ export function registerSessionsBrowserCommands(sessions: Command): void {
           context
         ) => {
           const { download, ...wire } = input;
+          if (op === "trace" && download)
+            throw usageError("Use observe or artifact with --download");
           const result = await observeChatSessionBrowserOperation.execute(
             wire,
             context
           );
           if (!download) return result;
-          if (op === "trace")
-            throw usageError("Use observe or artifact with --download");
           const artifact =
             op === "artifact"
               ? result

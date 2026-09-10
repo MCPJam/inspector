@@ -215,8 +215,8 @@ export function buildDirectHostConfig(input: {
       typeof resolvedTemperature === "number"
         ? resolvedTemperature
         : typeof requestedTemperature === "number"
-          ? requestedTemperature
-          : 0.7,
+        ? requestedTemperature
+        : 0.7,
     requireToolApproval: requireToolApproval === true,
     // Pass through verbatim so undefined-vs-set semantics survive into
     // the backend canonicalizer (drops undefined; keeps explicit false).

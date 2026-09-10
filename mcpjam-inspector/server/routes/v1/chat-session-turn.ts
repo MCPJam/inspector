@@ -588,8 +588,8 @@ async function fetchExplicitHostTarget(
       runtime.status >= 500
         ? ([502, ErrorCode.SERVER_UNREACHABLE] as const)
         : runtime.status === 401
-          ? ([401, ErrorCode.UNAUTHORIZED] as const)
-          : ([404, ErrorCode.NOT_FOUND] as const);
+        ? ([401, ErrorCode.UNAUTHORIZED] as const)
+        : ([404, ErrorCode.NOT_FOUND] as const);
     throw new WebRouteError(
       status,
       code,
@@ -788,6 +788,18 @@ async function listToolsWithinBudget(
     // The loser of the race is abandoned, not cancelled — leaving the timer
     // live would hold the event loop open for the rest of the budget on every
     // healthy turn.
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** Evidence failures must not prevent lease or desktop cleanup. */
+async function flushBrowserEvidence(outbox: ReturnType<typeof createBrowserArtifactOutbox>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([outbox.flush(), new Promise<void>(resolve => { timer = setTimeout(resolve, 10_000); timer.unref?.(); })]);
+  } catch (error) {
+    logger.warn("[v1/chat-sessions] Browser evidence remains pending", { error: error instanceof Error ? error.message : String(error) });
+  } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
 }
@@ -1176,7 +1188,10 @@ async function handleTurn(c: Context): Promise<Response> {
   let executionOwnerToken: string | undefined;
   let browser: ConversationBrowser | undefined;
   let browserAttached = false;
-  let executionWallClock: ReturnType<typeof setTimeout> | undefined;
+  let effectiveBrowserPolicy:
+    ReturnType<typeof resolveTurnBrowserPolicy>["effectivePolicy"] | undefined;
+  let wallClock: ReturnType<typeof setTimeout> | undefined;
+  let browserOutbox: ReturnType<typeof createBrowserArtifactOutbox> | undefined;
   let browserReason: string | undefined;
   const browserEvidence: BrowserScreenshotEvidence[] = [];
   const browserNotices: string[] = [];
@@ -1185,6 +1200,7 @@ async function handleTurn(c: Context): Promise<Response> {
   let handoffWaited = false;
   let handoffResumed = false;
   let leaseSettled = false;
+  let turnSucceeded = false;
   /**
    * Set the instant before the engine is invoked, and never cleared.
    *
@@ -1204,10 +1220,6 @@ async function handleTurn(c: Context): Promise<Response> {
    */
   let modelCallStarted = false;
   const abortController = new AbortController();
-  const wallClock = setTimeout(
-    () => abortController.abort(),
-    body.browser ? 300_000 : TURN_WALL_CLOCK_MS,
-  );
   const requestSignal = c.req.raw.signal;
   const onRequestAbort = () => abortController.abort();
   if (requestSignal.aborted) abortController.abort();
@@ -1245,7 +1257,7 @@ async function handleTurn(c: Context): Promise<Response> {
         "Another turn is already running on this session. Wait for it to finish, then retry.",
         {
           reason: "TURN_IN_PROGRESS",
-          retryAfterMs: lease.retryAfterMs,
+          retryAfterMs: Math.min(lease.retryAfterMs, 2_000),
         },
       );
     }
@@ -1428,6 +1440,7 @@ async function handleTurn(c: Context): Promise<Response> {
         hostRuntimeConfig: target.host?.runtimeConfig,
         toolMode: pins.toolMode,
       });
+      effectiveBrowserPolicy = resolved.effectivePolicy;
       const context: BuiltInToolContext = {
         authHeader,
         projectId,
@@ -1477,11 +1490,11 @@ async function handleTurn(c: Context): Promise<Response> {
           signal: abortController.signal,
           onNotice: context.onBrowserNotice,
         });
-        const outbox = createBrowserArtifactOutbox({
+        const outbox = (browserOutbox = createBrowserArtifactOutbox({
           chatSessionId: runtimeChatSessionId,
           convexAuthToken: authHeader.replace(/^Bearer /, ""),
           logScope: "v1-session-browser",
-        });
+        }));
         const browserTools =
           resolveHostTools(
             { builtInToolIds: ["browser"] },
@@ -1495,7 +1508,7 @@ async function handleTurn(c: Context): Promise<Response> {
           evidence: browserEvidence,
           persist: async (step) => {
             outbox.enqueueSteps([step], step.promptIndex ?? 0);
-            await Promise.race([outbox.flush(), new Promise<void>(resolve => { const timer = setTimeout(resolve, 10_000); timer.unref?.(); })]);
+            await flushBrowserEvidence(outbox);
             return undefined;
           },
         });
@@ -1505,7 +1518,10 @@ async function handleTurn(c: Context): Promise<Response> {
           "The browser capability is unavailable on this deployment.";
     }
 
-    if (body.browser) executionWallClock = setTimeout(() => abortController.abort(), 150_000);
+    wallClock = setTimeout(
+      () => abortController.abort(),
+      body.browser ? 150_000 : TURN_WALL_CLOCK_MS,
+    );
 
     // --- Connect ----------------------------------------------------------
     const connection = await createManualHostedConnection(
@@ -1656,8 +1672,8 @@ async function handleTurn(c: Context): Promise<Response> {
     const tools = noTools
       ? ({} as ToolSet)
       : body.maxToolCalls !== undefined && body.maxToolCalls > 0
-        ? capToolCalls(prepared.allTools, body.maxToolCalls)
-        : prepared.allTools;
+      ? capToolCalls(prepared.allTools, body.maxToolCalls)
+      : prepared.allTools;
 
     const runtime = await resolveTurnRuntime({
       modelDefinition,
@@ -1775,33 +1791,6 @@ async function handleTurn(c: Context): Promise<Response> {
           result.turnTrace,
           browserEvidence,
         ) as typeof result.turnTrace;
-      try {
-        const artifacts = (await client.query(
-          "chatSessions:getBrowserArtifacts" as never,
-          { sessionId: existing!._id } as never,
-        )) as {
-          browserInteractionSteps?: Array<{
-            turnId?: string;
-            toolCallId: string;
-            stepIndex: number;
-            screenshotUrl?: string;
-          }>;
-        };
-        for (const item of browserEvidence) {
-          const step = artifacts.browserInteractionSteps?.find(
-            (step) =>
-              step.turnId === item.turnId &&
-              step.toolCallId === item.toolCallId &&
-              step.stepIndex === item.stepIndex,
-          );
-          if (step?.screenshotUrl) {
-            item.url = step.screenshotUrl;
-            item.status = "ready";
-          }
-        }
-      } catch {
-        /* Evidence is explicitly unavailable when the read fails. */
-      }
     }
 
     if (
@@ -1863,7 +1852,7 @@ async function handleTurn(c: Context): Promise<Response> {
       return v1Error(
         c,
         "TIMEOUT",
-        `The turn exceeded the ${TURN_WALL_CLOCK_MS / 1000}s limit.`,
+        `The turn exceeded the ${body.browser ? 150 : TURN_WALL_CLOCK_MS / 1000}s limit.`,
         { reason: "TURN_TIMEOUT" },
       );
     }
@@ -1970,6 +1959,36 @@ async function handleTurn(c: Context): Promise<Response> {
         },
       );
     }
+    if (browserOutbox) {
+      await flushBrowserEvidence(browserOutbox);
+      try {
+        const artifacts = (await client.query(
+          "chatSessions:getBrowserArtifacts" as never,
+          { sessionId: existing!._id } as never,
+        )) as {
+          browserInteractionSteps?: Array<{
+            turnId?: string;
+            toolCallId: string;
+            stepIndex: number;
+            screenshotUrl?: string;
+          }>;
+        };
+        for (const item of browserEvidence) {
+          const step = artifacts.browserInteractionSteps?.find(
+            (step) =>
+              step.turnId === item.turnId &&
+              step.toolCallId === item.toolCallId &&
+              step.stepIndex === item.stepIndex,
+          );
+          if (step?.screenshotUrl) {
+            item.url = step.screenshotUrl;
+            item.status = "ready";
+          }
+        }
+      } catch {
+        /* Evidence is explicitly unavailable when the read fails. */
+      }
+    }
     // The ingest either applied the turn or recognized it as already applied;
     // either way the lease's completion rides inside that mutation, so the
     // `finally` below must not release it.
@@ -2010,33 +2029,41 @@ async function handleTurn(c: Context): Promise<Response> {
     // it then is one assignment here.
     const secretScrubber = undefined;
 
+    turnSucceeded =
+      persisted.outcome === "saved" || persisted.outcome === "duplicate";
     return v1Resource(c, {
       // May be null ONLY when the persist did not land — the caller then knows
       // from `persisted.outcome` that there is nothing to read back yet, which
       // is better than an id that resolves to nothing.
       sessionId: sessionDocId ?? null,
       chatSessionId: runtimeChatSessionId,
-      browser: {
-        attached: browserAttached,
-        ...(browser
-          ? {
-              browserSessionId: browser.browserSessionId,
-              state: browser.state,
-              policy: browser.policy,
-              profileId: browser.profileId,
-              bootId: browserHandle?.bootId,
-            }
-          : {}),
-        ...(!browserAttached
-          ? {
-              reason:
-                browserReason ?? "Browser was not requested for this turn.",
-            }
-          : {}),
-        handoff: { waited: handoffWaited, resumed: handoffResumed },
-        notices: browserNotices,
-        screenshots: browserEvidence,
-      },
+      ...(body.browser
+        ? {
+            browser: {
+              attached: browserAttached,
+              ...(browser
+                ? {
+                    browserSessionId: browser.browserSessionId,
+                    state: browser.state,
+                    policy: browser.policy,
+                    effectivePolicy: effectiveBrowserPolicy,
+                    profileId: browser.profileId,
+                    bootId: browserHandle?.bootId,
+                  }
+                : {}),
+              ...(!browserAttached
+                ? {
+                    reason:
+                      browserReason ??
+                      "Browser was not requested for this turn.",
+                  }
+                : {}),
+              handoff: { waited: handoffWaited, resumed: handoffResumed },
+              notices: browserNotices,
+              screenshots: browserEvidence,
+            },
+          }
+        : {}),
       turnId: leaseTurnId,
       // The project this turn ran in, which on a CONTINUATION the caller never
       // sent: it comes off the session row. Without it a caller holding only
@@ -2115,12 +2142,37 @@ async function handleTurn(c: Context): Promise<Response> {
     throw error;
   } finally {
     clearTimeout(wallClock);
-    if (executionWallClock) clearTimeout(executionWallClock);
+    if (browserOutbox)
+      await flushBrowserEvidence(browserOutbox);
+
     requestSignal.removeEventListener("abort", onRequestAbort);
-    // Detached rather than awaited: the response is already computed, and a
-    // slow Convex round-trip must not delay it.
+    // Release admission before attempting desktop cleanup.
     if (shouldReleaseLease({ leaseTurnId, leaseSettled, modelCallStarted })) {
       await releaseTurnLease(client, leaseTurnId!, executionOwnerToken);
+    }
+    if (!body.sessionId && browser && !turnSucceeded) {
+      try {
+        if (modelCallStarted && !leaseSettled && executionOwnerToken) {
+          await client.mutation(
+            "chatSessions:transitionTurnLease" as never,
+            { turnId: leaseTurnId, executionOwnerToken, op: "fail" } as never,
+          );
+        }
+        await new BrowserSessionService().agentRequest("close", {
+          bearer: authHeader,
+          projectId,
+          body: {
+            sessionId: browser.browserSessionId,
+            expectedBootId: browserHandle?.bootId,
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch (error) {
+        logger.warn("[v1/chat-sessions] Failed to release first-turn browser", {
+          error: error instanceof Error ? error.message : String(error),
+          sessionId: runtimeChatSessionId,
+        });
+      }
     }
     releaseTurnSlot(orgKey);
     try {

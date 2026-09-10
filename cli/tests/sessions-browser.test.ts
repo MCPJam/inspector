@@ -27,3 +27,18 @@ test("cloud session browser exposes its commands", async () => {
   for (const verb of ["open", "navigate", "observe", "artifact", "close"])
     assert.match(result.stdout, new RegExp(verb));
 });
+
+test("new browser sessions require a caller-owned retry key", async () => {
+  const result = await runCli([
+    "cloud",
+    "sessions",
+    "browser",
+    "open",
+    "--project",
+    "p",
+    "--browser-mode",
+    "read_only",
+  ]);
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.stderr + result.stdout, /--idempotency-key is required/);
+});

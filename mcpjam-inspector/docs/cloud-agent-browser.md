@@ -19,13 +19,13 @@ mcpjam cloud sessions send --session SESSION_ID --browser --message "Read the pa
 mcpjam cloud sessions browser close --session SESSION_ID
 ```
 
-The initial policy and profile are fixed. `--browser-profile` selects a saved profile at creation. Current host restrictions and a pinned `read_only` tool mode can further narrow permissions. Continuations opt in with `--browser`; omitted attachment does not wake a metered desktop.
+The initial policy and profile are fixed. `--browser-profile` selects a saved profile at creation. Current host restrictions and a pinned `read_only` tool mode can further narrow permissions. The turn response reports the stored grant in `policy` and the actual tool/origin intersection in `effectivePolicy`; an empty list means no permissions. Continuations opt in with `--browser`; omitted attachment does not wake a metered desktop.
 
-`cloud sessions browser open --project PROJECT_ID --browser-mode read_only --idempotency-key empty-session` creates a durable API shell without a model call. Supply its model and server configuration on the first send. Only the public `sessionId` is accepted by commands; returned wire UUIDs are for minted links.
+`cloud sessions browser open --project PROJECT_ID --browser-mode read_only --idempotency-key empty-session` (the idempotency key is required) creates a durable API shell without a model call. Supply its model and server configuration on the first send. Only the public `sessionId` is accepted by commands; returned wire UUIDs are for minted links.
 
 ## Retry, takeover, and evidence
 
-Keep a stable idempotency key for each model-turn intent and a stable command ID for each direct action. Active duplicate requests do not re-run; interrupted commands return an unknown outcome to inspect. A pre-model capacity refusal can be retried with the same key after closing a desktop. The default per-user cap is two conversation desktops across projects. Eval and swarm admission remains separate.
+Keep a stable idempotency key for each model-turn intent and a stable command ID for each direct action. The CLI waits the returned retry delay for an active model turn and retries with the same key. Active duplicate requests do not re-run; interrupted commands return an unknown outcome to inspect. A pre-model capacity refusal can be retried with the same key after closing a desktop. The default per-user cap is two active conversation desktops across projects; terminal leaked reservation records do not permanently consume that cap. Eval and swarm admission remains separate.
 
 Human takeover parks browser model calls for at most 15 seconds across the turn. A timeout returns `browser_in_use`. On release, the tool returns a fresh observation; the stale blocked action is never replayed. Observe before deciding what to do next.
 
@@ -36,3 +36,7 @@ Evidence is stored per tool call or direct command, keyed by turn, tool-call ID,
 Deploy the backend additions before Inspector, then SDK/CLI/MCP consumers. Ship the Playground restoration changes before advertising the new links broadly. The legacy `/browser-sessions/*`, SDK `browserSession`, and `browser --cloud` entry points remain temporarily for rolling compatibility. Their deletion is a separate drain-confirmed change; new conversation browsers cannot be driven through that legacy identity lookup.
 
 Validate against a preview backend before release: desktop boot/sleep/wake, same-user takeover, saved profiles, cap refusal and lease reuse, screenshot downloads, and eval/swarm recording require real infrastructure. Local unit tests do not establish these runtime checks.
+
+Browser provisioning has a separate 120-second budget. The model execution budget is 150 seconds for browser turns and 90 seconds for plain turns. Screenshot uploads receive a bounded retry after transcript persistence and at terminal cleanup; failed uploads are reported as unavailable.
+
+The temporary legacy cloud door retains its original command vocabulary. Use session commands and `browser_*` / `webmcp:<name>` allowlists for new automation; policies are not interchangeable between the two doors.

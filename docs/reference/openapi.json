@@ -25982,6 +25982,34 @@
           "browser": {
             "type": "object",
             "properties": {
+            "effectivePolicy": {
+              "type": "object",
+              "description": "Permissions after intersecting the stored grant, current host ceiling, and read-only tool mode. Null is unrestricted; an empty list denies all.",
+              "properties": {
+                "tools": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "origins": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "tools",
+                "origins"
+              ]
+            },
               "browserSessionId": {
                 "type": "string"
               },

@@ -1115,6 +1115,19 @@ describe("browser turn integration", () => {
     expect(persistChatSessionToConvexMock.mock.calls[0][0].turnLeaseOwnerToken).toBe("owner");
     expect(prepareChatV2Mock.mock.calls[0][0].builtInTools).toBeDefined();
   });
+  it("closes the first-turn desktop when the engine throws after provisioning", async () => {
+    const input = browserFixture();
+    runUnifiedAssistantTurnMock.mockRejectedValueOnce(new Error("engine failed"));
+    await turn(input);
+    expect(BrowserSessionService.prototype.agentRequest).toHaveBeenCalledWith("close", expect.objectContaining({ body: { sessionId: "logical", expectedBootId: "boot" } }));
+    expect(mutationMock).toHaveBeenCalledWith("chatSessions:transitionTurnLease", expect.objectContaining({ op: "fail", executionOwnerToken: "owner" }));
+  });
+  it("flushes screenshot writes again at turn settlement", async () => {
+    const input = browserFixture();
+    await turn(input);
+    const outbox = vi.mocked(browserOutbox.createBrowserArtifactOutbox).mock.results[0].value;
+    expect(outbox.flush).toHaveBeenCalled();
+  });
   it("releases ownership on capacity refusal without calling the engine", async () => {
     const input = browserFixture();
     vi.mocked(sessionBrowser.provisionConversationBrowser).mockRejectedValue(new sessionBrowser.SessionBrowserError("BROWSER_CAP_EXCEEDED", 409, "Desktop cap reached", 60_000));

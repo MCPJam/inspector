@@ -1,4 +1,10 @@
-import { addBrowserFlags, browserInput, registerSessionsBrowserCommands, type BrowserOptions } from "./sessions-browser.js";
+import { waitForSessionTurn } from "../lib/session-turn-retry.js";
+import {
+  addBrowserFlags,
+  browserInput,
+  registerSessionsBrowserCommands,
+  type BrowserOptions,
+} from "./sessions-browser.js";
 /**
  * `mcpjam cloud sessions` — find a conversation, or list Playground chat
  * sessions.
@@ -226,50 +232,62 @@ export function registerSessionsCommands(program: Command): void {
   // ── Agent Playground ──────────────────────────────────────────────────────
 
   bindOperation(
-    addBrowserFlags(addProjectOption(
-      sessions
-        .command("send")
-        .description(
-          "Send one message to a project's MCP servers and print the reply plus the raw tool calls, latency and token usage. SPENDS model credits. Omit --session to start a conversation; pass the sessionId it returns to continue one."
-        )
-        .requiredOption("--message <text>", "The message to send, as the user")
-        .requiredOption(
-          "--idempotency-key <key>",
-          "Stable key for THIS turn's intent. Reuse it when retrying: a retry with the same key replays the completed turn instead of running and billing it again. Do NOT generate a fresh key per attempt."
-        )
-        .option(
-          "--session <sessionId>",
-          "Continue this session instead of starting one. Configuration is fixed at the first turn, so the config flags below are refused with a session. The per-turn flags are not: --client, --max-steps and --max-tool-calls apply to whichever turn sends them, and --client in particular must be RE-SENT on every turn of a host-bound conversation — a session started with --client alone refuses a continuation that omits it."
-        )
-        .option(
-          "--model <modelId>",
-          'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required to start a session; a bare id is rejected rather than guessed.'
-        )
-        .option(
-          "--client <hostId>",
-          "Client ID (from `mcpjam cloud clients list`) to run the turn AS. A client that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the REAL runtime; without one the turn runs MCPJam's emulated engine. Per-turn, NOT pinned to the session — pass it on every turn, and check the printed `engine` to see what ran. Continuing a session you started with --client alone REQUIRES it: without it the turn is refused rather than answered by the emulated engine. Alongside --environment it only asserts which host you expect (a mismatch is refused). It cannot be combined with --server: --client cannot be pinned beside a pinned server set, so a later turn that omitted it would run the emulated engine on a session established on the harness. Use --environment, or --client alone (which connects the client's own servers). A harness turn needs --tool-mode auto with no --max-tool-calls."
-        )
-        .option(
-          "--environment <environmentId>",
-          "Run against this environment's servers (mutually exclusive with --server). An environment pins its own host, so a harness environment runs its harness on every turn, continuations included."
-        )
-        .option(
-          "--server <serverId...>",
-          "Run against these project servers (mutually exclusive with --environment)"
-        )
-        .option("--system-prompt <text>", "System prompt for the session")
-        .option(
-          "--tool-mode <mode>",
-          "read_only (default) advertises only tools annotated readOnlyHint:true. auto advertises everything and MAY CAUSE REAL SIDE EFFECTS."
-        )
-        .option("--max-steps <n>", "Maximum engine steps this turn (1-16)")
-        .option(
-          "--max-tool-calls <n>",
-          "Cap the tool calls this turn may make. 0 answers without tools."
-        )
-        .option("--temperature <n>", "Sampling temperature (0-2)")
-    )),
-    sendChatMessageOperation,
+    addBrowserFlags(
+      addProjectOption(
+        sessions
+          .command("send")
+          .description(
+            "Send one message to a project's MCP servers and print the reply plus the raw tool calls, latency and token usage. SPENDS model credits. Omit --session to start a conversation; pass the sessionId it returns to continue one."
+          )
+          .requiredOption(
+            "--message <text>",
+            "The message to send, as the user"
+          )
+          .requiredOption(
+            "--idempotency-key <key>",
+            "Stable key for THIS turn's intent. Reuse it when retrying: a retry with the same key replays the completed turn instead of running and billing it again. Do NOT generate a fresh key per attempt."
+          )
+          .option(
+            "--session <sessionId>",
+            "Continue this session instead of starting one. Configuration is fixed at the first turn, so the config flags below are refused with a session. The per-turn flags are not: --client, --max-steps and --max-tool-calls apply to whichever turn sends them, and --client in particular must be RE-SENT on every turn of a host-bound conversation — a session started with --client alone refuses a continuation that omits it."
+          )
+          .option(
+            "--model <modelId>",
+            'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required to start a session; a bare id is rejected rather than guessed.'
+          )
+          .option(
+            "--client <hostId>",
+            "Client ID (from `mcpjam cloud clients list`) to run the turn AS. A client that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the REAL runtime; without one the turn runs MCPJam's emulated engine. Per-turn, NOT pinned to the session — pass it on every turn, and check the printed `engine` to see what ran. Continuing a session you started with --client alone REQUIRES it: without it the turn is refused rather than answered by the emulated engine. Alongside --environment it only asserts which host you expect (a mismatch is refused). It cannot be combined with --server: --client cannot be pinned beside a pinned server set, so a later turn that omitted it would run the emulated engine on a session established on the harness. Use --environment, or --client alone (which connects the client's own servers). A harness turn needs --tool-mode auto with no --max-tool-calls."
+          )
+          .option(
+            "--environment <environmentId>",
+            "Run against this environment's servers (mutually exclusive with --server). An environment pins its own host, so a harness environment runs its harness on every turn, continuations included."
+          )
+          .option(
+            "--server <serverId...>",
+            "Run against these project servers (mutually exclusive with --environment)"
+          )
+          .option("--system-prompt <text>", "System prompt for the session")
+          .option(
+            "--tool-mode <mode>",
+            "read_only (default) advertises only tools annotated readOnlyHint:true. auto advertises everything and MAY CAUSE REAL SIDE EFFECTS."
+          )
+          .option("--max-steps <n>", "Maximum engine steps this turn (1-16)")
+          .option(
+            "--max-tool-calls <n>",
+            "Cap the tool calls this turn may make. 0 answers without tools."
+          )
+          .option("--temperature <n>", "Sampling temperature (0-2)")
+      )
+    ),
+    {
+      ...sendChatMessageOperation,
+      execute: (input, context) =>
+        waitForSessionTurn(
+          () => sendChatMessageOperation.execute(input, context),
+          context.signal
+        ),
+    },
     (options: SendOptions) => ({
       idempotencyKey: options.idempotencyKey ?? "",
       message: options.message ?? "",
@@ -406,4 +424,3 @@ function parseFloatOption(value: string | undefined): number | undefined {
   }
   return parsed;
 }
-

@@ -157,7 +157,7 @@ describe("conversation browser commands", () => {
       command: { op: "navigate", url: "https://example.com" },
     });
     const value = await response.json();
-    expect(value.status).toBe("refused");
+    expect(value).toMatchObject({ status: "executed", ok: false, error: { code: "origin_not_allowed" } });
     expect(JSON.stringify(value)).not.toContain("private-pixels");
     expect(JSON.stringify(mocks.enqueue.mock.calls)).not.toContain(
       "private-pixels",

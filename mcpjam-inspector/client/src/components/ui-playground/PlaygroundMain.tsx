@@ -3147,8 +3147,8 @@ export function PlaygroundMain({
               modelId: detail.session.modelId,
             }
           : null;
-        if (detail.session.browser && new URLSearchParams(window.location.search).get("browser") === "open") {
-          useBrowserWorkspaceStore.getState().openBrowser(detail.session.chatSessionId);
+        if (new URLSearchParams(window.location.search).get("browser") === "open") {
+          if (detail.session.browser) useBrowserWorkspaceStore.getState().openBrowser(detail.session.chatSessionId);
           const url = new URL(window.location.href); url.searchParams.delete("browser"); window.history.replaceState(window.history.state, "", url);
         }
         restored = true;

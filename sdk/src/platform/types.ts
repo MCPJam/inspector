@@ -471,7 +471,7 @@ export interface PlatformTurnUsage {
  */
 export interface PlatformChatTurn {
   chatSessionId?: string;
-  browser?: Partial<PlatformSessionBrowser> & { attached: boolean; reason?: string; screenshots?: PlatformBrowserScreenshot[]; notices?: string[]; handoff?: { waited: boolean; resumed: boolean } };
+  browser?: Partial<PlatformSessionBrowser> & { attached: boolean; effectivePolicy?: { tools: readonly string[] | null; origins: readonly string[] | null }; reason?: string; screenshots?: PlatformBrowserScreenshot[]; notices?: string[]; handoff?: { waited: boolean; resumed: boolean } };
   sessionId: string | null;
   turnId: string;
   /**
