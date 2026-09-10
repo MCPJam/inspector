@@ -1,3 +1,7 @@
+import {
+  applyBrowserOverride,
+  usePlaygroundBrowserOverride,
+} from "./playground-browser-override";
 import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -121,6 +125,11 @@ function RightRailTabbed({
   // harmless (the engine hooks no-op without a shared project) and deliberate.
   const engine = useComputerEngine(projectId);
   const browserEngine = useBrowserEngine(projectId);
+  const override = usePlaygroundBrowserOverride();
+  const browserToolIds = applyBrowserOverride(
+    hostConfig?.builtInToolIds,
+    browserEngine.environmentMode ? null : override,
+  );
   // The BODY follows `selectedEngine` (consent-blind), mirroring the Computer
   // tab's face choice: someone who picked "This machine" but hasn't authorized
   // it yet must see the local body's pointer, not a cloud terminal they didn't
@@ -138,7 +147,7 @@ function RightRailTabbed({
     browsersEnabled === true &&
     !workspaceEnabled &&
     browserPanelAvailable({
-      hostHasBrowser: !!hostConfig?.builtInToolIds?.includes("browser"),
+      hostHasBrowser: !!browserToolIds?.includes("browser"),
       selectedEngine: browserEngine.selectedEngine,
       isAuthenticated,
       localBrowserRunning,

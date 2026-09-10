@@ -1,3 +1,7 @@
+import {
+  applyBrowserOverride,
+  usePlaygroundBrowserOverride,
+} from "@/components/playground/playground-browser-override";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 /**
  * PlaygroundMain
@@ -932,9 +936,13 @@ export function PlaygroundMain({
   // Match the Tools and Browser rails: no explicit selection means the
   // project default. An explicit host still loading must not inherit another
   // host's capabilities, and an explicit empty list must stay empty.
-  const effectiveBuiltInToolIds = previewedHostId
-    ? previewedHost?.config?.builtInToolIds
-    : projectDefaultHostConfig?.builtInToolIds;
+  const browserOverride = usePlaygroundBrowserOverride();
+  const effectiveBuiltInToolIds = applyBrowserOverride(
+    previewedHostId
+      ? previewedHost?.config?.builtInToolIds
+      : projectDefaultHostConfig?.builtInToolIds,
+    isEnvironmentMode ? null : browserOverride,
+  );
   // A newly selected host is unknown for one render while its config loads.
   // Fail closed in that gap: it may resolve to Codex or Claude Code, whose
   // opaque harness sessions cannot be safely rewound. Ordinary model hosts get
@@ -5620,7 +5628,13 @@ export function PlaygroundMain({
                             deterministicExecutionRequest
                           }
                           stopRequestId={stopBroadcastRequestId}
-                          executionConfig={column.executionConfig}
+                          executionConfig={{
+                            ...column.executionConfig,
+                            builtInToolIds: applyBrowserOverride(
+                              column.executionConfig.builtInToolIds,
+                              browserOverride,
+                            ),
+                          }}
                           hostedContext={{
                             projectId: convexProjectId,
                             selectedServerIds: hostedSelectedServerIds,

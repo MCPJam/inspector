@@ -3219,11 +3219,8 @@ export function useChatSession(
             ? { expectedVersion: resumedVersionRef.current }
             : {}),
           ...(rewind ? { rewind } : {}),
-          // Host-managed built-in tools (e.g. ["web_search"]). Forwarded only
-          // when non-empty so pre-feature traces stay byte-identical. The
-          // scenario path overrides this with the persisted host config server-
-          // side; playground trusts this value (same as systemPrompt etc.).
-          ...(builtInToolIdsRef.current && builtInToolIdsRef.current.length > 0
+          // Preserve []: it explicitly disables the client's built-in tools.
+          ...(builtInToolIdsRef.current !== undefined
             ? { builtInToolIds: builtInToolIdsRef.current }
             : {}),
           // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
