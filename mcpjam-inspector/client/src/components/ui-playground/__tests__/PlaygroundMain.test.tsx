@@ -1,5 +1,4 @@
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
-import { PlaygroundBrowserOverrideContext } from "@/components/playground/playground-browser-override";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
@@ -818,23 +817,6 @@ describe("PlaygroundMain", () => {
   });
 
   describe("rendering", () => {
-    it("temporarily enables and disables Browser without changing the default host", () => {
-      mockDefaultHostConfig.result = { builtInToolIds: [] };
-      const { rerender } = render(
-        <PlaygroundBrowserOverrideContext.Provider value={true}>
-          <PlaygroundMain {...defaultProps} />
-        </PlaygroundBrowserOverrideContext.Provider>,
-      );
-      expect(capturedChatSessionOptions.builtInToolIds).toEqual(["browser"]);
-      expect(mockDefaultHostConfig.result.builtInToolIds).toEqual([]);
-      rerender(
-        <PlaygroundBrowserOverrideContext.Provider value={false}>
-          <PlaygroundMain {...defaultProps} />
-        </PlaygroundBrowserOverrideContext.Provider>,
-      );
-      expect(capturedChatSessionOptions.builtInToolIds).toEqual([]);
-    });
-
     it("sends the project default's browser capability when no host is selected", () => {
       mockConvexAuthState.isAuthenticated = true;
       mockDefaultHostConfig.result = { builtInToolIds: ["browser"] };

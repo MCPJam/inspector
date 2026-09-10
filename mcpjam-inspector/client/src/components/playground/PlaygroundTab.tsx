@@ -1,9 +1,3 @@
-import {
-  applyBrowserOverride,
-  PlaygroundBrowserOverrideContext,
-  PlaygroundBrowserOverrideControl,
-  useScopedBrowserOverride,
-} from "./playground-browser-override";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -285,20 +279,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
   const browsersEnabled = useBrowserEnabledState();
   const browserEngine = useBrowserEngine(projectScope);
-  const browserOverride = useScopedBrowserOverride(
-    JSON.stringify([
-      projectScope,
-      previewedHostId ?? effectiveHostConfig?.id ?? null,
-      browserEngine.environmentMode,
-    ]),
-  );
-  const override = browserEngine.environmentMode
-    ? null
-    : browserOverride.override;
-  const browserToolIds = applyBrowserOverride(
-    effectiveHostConfig?.builtInToolIds,
-    override,
-  );
+  const browserToolIds = effectiveHostConfig?.builtInToolIds;
   // Polled only on the local engine, where the question means something: on
   // hosted this route describes a machine that is not the one running the
   // browser.
@@ -384,8 +365,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   }
 
   return (
-    <PlaygroundBrowserOverrideContext.Provider value={override}>
-      <PlaygroundStateProvider value={playgroundState}>
+    <PlaygroundStateProvider value={playgroundState}>
         <ActiveMcpProfileProvider value={activeMcpProfile}>
           <ActiveHostCapsResolverScope
             // Preview-mode (explicit picker selection) wins; otherwise fall
@@ -421,18 +401,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           props.sharedProjectId ?? props.activeProjectId ?? null
                         }
                       />
-                      {browsersEnabled === true ? (
-                        <PlaygroundBrowserOverrideControl
-                          override={override}
-                          onChange={browserOverride.setOverride}
-                          clientEnabled={
-                            !!effectiveHostConfig?.builtInToolIds?.includes(
-                              "browser",
-                            )
-                          }
-                          environmentMode={browserEngine.environmentMode}
-                        />
-                      ) : null}
                       <ResizablePanelGroup
                         direction="horizontal"
                         className="min-h-0 flex-1"
@@ -612,6 +580,5 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           </ActiveHostCapsResolverScope>
         </ActiveMcpProfileProvider>
       </PlaygroundStateProvider>
-    </PlaygroundBrowserOverrideContext.Provider>
   );
 }

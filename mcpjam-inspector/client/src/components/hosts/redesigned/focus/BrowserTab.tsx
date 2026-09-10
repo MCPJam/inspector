@@ -3,6 +3,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { routePaths, useAppNavigate } from "@/lib/app-navigation";
 import { Switch } from "@mcpjam/design-system/switch";
 import { useBrowserEnabled } from "@/hooks/useComputersEnabled";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { BrowserProfilesSettings } from "@/components/browser/BrowserProfilesSettings";
 import { BrowserProfilePicker } from "./BrowserProfilePicker";
@@ -23,6 +24,10 @@ export function BrowserTab({
 }) {
   const navigate = useAppNavigate();
   const available = useBrowserEnabled();
+  const locationOffered = useBrowserEngine(
+    projectId ?? null,
+    "preference",
+  ).toggleVisible;
   const enabled = draft.builtInToolIds.includes("browser");
   return (
     <div className="flex flex-col gap-4">
@@ -69,7 +74,11 @@ export function BrowserTab({
       {!readOnly && projectId && (
         <FocusBlock
           title="Your browser"
-          subtitle="Your browser location, device permission and saved profiles. These do not change the client configuration."
+          subtitle={
+            locationOffered
+              ? "Your browser location, device permission and saved profiles. These do not change the client configuration."
+              : "Your device permission and saved profiles. These do not change the client configuration."
+          }
         >
           <BrowserRuntimeControls projectId={projectId} settings />
           <BrowserProfilesSettings projectId={projectId} />
