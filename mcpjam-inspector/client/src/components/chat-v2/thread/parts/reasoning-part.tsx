@@ -7,6 +7,24 @@ export type ReasoningDisplayMode =
   | "collapsed"
   | "hidden";
 
+/**
+ * The mode every LIVE chat surface uses (BB-111).
+ *
+ * There is more than one live-chat render path — the single-host Playground
+ * thread, the multi-model / multi-host compare cards, and the MCPJam agent
+ * thread — and each one reaches `Thread` separately. Setting `"collapsed"` on
+ * only some of them is what produced the reported inconsistency: reasoning
+ * appeared as a tidy collapsed block when comparing models, but as a raw wall
+ * of inline text with a single client selected.
+ *
+ * Import this instead of writing the literal, so a new live surface inherits
+ * the same behavior and the paths cannot drift apart again. Read-only
+ * transcript surfaces (evals traces, share-usage, the public chatbox) are
+ * deliberately NOT covered — they set their own mode.
+ */
+export const LIVE_CHAT_REASONING_DISPLAY_MODE: ReasoningDisplayMode =
+  "collapsed";
+
 export function ReasoningPart({
   text,
   state,
@@ -23,9 +41,14 @@ export function ReasoningPart({
   const [isExpanded, setIsExpanded] = useState(displayMode !== "collapsed");
   const contentId = useId();
 
+  // Resync only when the display mode itself changes. `text` must NOT be a
+  // dependency: it grows with every streamed reasoning delta, so including it
+  // slammed the panel shut on each token the moment a reader expanded it
+  // mid-stream — which made "collapsed" unusable exactly while reasoning is
+  // most interesting to watch.
   useEffect(() => {
     setIsExpanded(displayMode !== "collapsed");
-  }, [displayMode, text]);
+  }, [displayMode]);
 
   if (isRedacted || isHidden) return null;
 
@@ -46,13 +69,16 @@ export function ReasoningPart({
         aria-expanded={isExpanded}
         aria-controls={contentId}
       >
-        <span>Reasoning</span>
+        {/* The whole point of the collapsed default: a turn that would
+            otherwise look frozen shows live motion while the model reasons.
+            The shimmer sweeps the label itself, so it carries that signal
+            without adding a second element competing with the chevron. */}
+        <span
+          className={state === "streaming" ? "reasoning-shimmer-text" : undefined}
+        >
+          {state === "streaming" ? "Thinking…" : "Reasoning"}
+        </span>
         <span className="flex items-center gap-2">
-          {state === "streaming" ? (
-            <span className="text-[10px] normal-case tracking-normal text-muted-foreground/70">
-              Streaming
-            </span>
-          ) : null}
           <ChevronDown
             className={`h-3.5 w-3.5 transition-transform duration-150 ${
               isExpanded ? "rotate-180" : ""
