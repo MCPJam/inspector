@@ -212,6 +212,18 @@ export interface PlanCatalog {
   };
 }
 
+// One envelope for the five stable billing reads. Bundled server-side because
+// every open page used to hold five separate subscriptions for them, which is
+// what pushed prod into its concurrent-query limit. `projectPremiumness` is
+// null when the caller sent no projectId.
+export interface OrganizationBillingBundle {
+  billingStatus: OrganizationBillingStatus;
+  entitlements: OrganizationEntitlements;
+  organizationPremiumness: PremiumnessState;
+  projectPremiumness: PremiumnessState | null;
+  planCatalog: PlanCatalog;
+}
+
 export interface OrganizationPlanChangeSnapshot {
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
@@ -294,29 +306,30 @@ export function useOrganizationBilling(
   const shouldQuerySeatPaymentIntent =
     shouldQueryOrganization && options?.includeSeatPaymentIntent === true;
 
-  const billingStatus = useOrganizationBillingStatus(organizationId, {
-    enabled,
-  });
+  // One subscription instead of five. `useOrganizationBillingStatus` stays a
+  // separate export for callers that only want the status, so it is not reused
+  // here.
+  const bundle = useQuery(
+    "billing:getOrganizationBillingBundle" as any,
+    shouldQueryOrganization
+      ? ({
+          organizationId,
+          ...(shouldQueryProject ? { projectId } : {}),
+        } as any)
+      : "skip",
+  ) as OrganizationBillingBundle | undefined;
 
-  const entitlements = useQuery(
-    "billing:getOrganizationEntitlements" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
-  ) as OrganizationEntitlements | undefined;
-
-  const organizationPremiumness = useQuery(
-    "billing:getOrganizationPremiumness" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
-  ) as PremiumnessState | undefined;
-
-  const projectPremiumness = useQuery(
-    "billing:getProjectPremiumness" as any,
-    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip",
-  ) as PremiumnessState | undefined;
-
-  const planCatalog = useQuery(
-    "billing:getPlanCatalog" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
-  ) as PlanCatalog | undefined;
+  const billingStatus = bundle?.billingStatus;
+  const entitlements = bundle?.entitlements;
+  const organizationPremiumness = bundle?.organizationPremiumness;
+  // The bundle says null for "no projectId sent"; callers expect undefined,
+  // which is what the old "skip" subscription gave them. Gate it on
+  // shouldQueryProject too, so a bundle fetched without a project can never
+  // read as a settled project answer.
+  const projectPremiumness = shouldQueryProject
+    ? (bundle?.projectPremiumness ?? undefined)
+    : undefined;
+  const planCatalog = bundle?.planCatalog;
 
   const activeSeatPaymentIntent = useQuery(
     "billing:getActiveOrganizationSeatPaymentIntent" as any,
