@@ -1,3 +1,6 @@
+vi.mock("@/components/browser/BrowserRuntimeControls", () => ({
+  BrowserRuntimeControls: () => null,
+}));
 /**
  * The browser panel, in its new home beside chat.
  *
@@ -15,11 +18,12 @@ const engineState = {
   granted: true,
 };
 
-vi.mock("@/hooks/useComputerEngine", () => ({
-  useComputerEngine: () => ({
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
     engine: engineState.engine,
     selectedEngine: engineState.selectedEngine,
     toggleVisible: true,
+    localAvailable: true,
     localTerminalAvailable: true,
     consent: { granted: engineState.granted, token: "consent-token" },
   }),

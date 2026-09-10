@@ -1,3 +1,4 @@
+import { verifyLocalBrowserConsent } from "../computers/browser-consent.js";
 /**
  * The six `browser_*` built-in tools — a real Chromium on the member's cloud
  * computer, driven through the sandbox-local browserd daemon.
@@ -146,6 +147,7 @@ export interface BrowserSessionScope {
 }
 
 export interface BrowserToolsOptions {
+  localConsentToken?: string;
   /**
    * Told while a turn is parked behind a person holding the browser.
    *
@@ -706,7 +708,19 @@ class BrowserTurnState {
   }
 
   /** Ensure lazily: a turn that never calls a browser tool boots nothing. */
-  handle(signal?: AbortSignal): Promise<BrowserSessionHandle> {
+  async verifyConsent(): Promise<void> {
+    if (
+      this.opts.engine === "local" &&
+      !(await verifyLocalBrowserConsent(this.opts.localConsentToken))
+    ) {
+      throw new Error(
+        "browser_consent_required: Allow Browser in the Browser panel.",
+      );
+    }
+  }
+
+  async handle(signal?: AbortSignal): Promise<BrowserSessionHandle> {
+    await this.verifyConsent();
     this.session ??= this.ensure({
       bearer: this.opts.authHeader,
       projectId: this.opts.projectId,
@@ -1198,6 +1212,9 @@ export function buildBrowserTools(
           : undefined;
       let response;
       try {
+        // Approval, handoff and queue waits may outlive the grant checked at
+        // handle resolution. Re-check immediately before sending control.
+        await state.verifyConsent();
         response = await client.sendCommand(
           { ...command, responsiveViewport: true },
           handle.bootId,
@@ -2307,6 +2324,11 @@ function defaultEnsureSession(
       logicalSessionId,
       signal,
     }) => {
+      if (!(await verifyLocalBrowserConsent(opts.localConsentToken))) {
+        throw new Error(
+          "browser_consent_required: Allow Browser in the Browser panel.",
+        );
+      }
       const service = new BrowserSessionService();
       const logical =
         service.enabled && opts.sessionScope && logicalSessionId

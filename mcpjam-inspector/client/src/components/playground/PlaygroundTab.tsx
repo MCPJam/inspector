@@ -35,7 +35,7 @@ import {
   PlaygroundBrowserPanel,
 } from "@/components/playground/PlaygroundBrowserPanel";
 import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
-import { useComputerEngine } from "@/hooks/useComputerEngine";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import {
   useBrowserWorkspaceEnabledState,
   useComputersEnabledState,
@@ -271,7 +271,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
 
   const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
   const computersEnabled = useComputersEnabledState();
-  const browserEngine = useComputerEngine(projectScope);
+  const browserEngine = useBrowserEngine(projectScope);
   // Polled only on the local engine, where the question means something: on
   // hosted this route describes a machine that is not the one running the
   // browser.

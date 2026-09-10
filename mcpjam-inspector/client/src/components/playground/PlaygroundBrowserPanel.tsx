@@ -1,9 +1,10 @@
+import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { useCallback, useEffect } from "react";
 import { Maximize2, Minimize2, PanelRightClose } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
 import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
-import { useComputerEngine } from "@/hooks/useComputerEngine";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useMintConversationBrowserToken } from "@/hooks/useProjectComputer";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
@@ -47,7 +48,7 @@ export function PlaygroundBrowserPanel({
   visible,
   onClose,
 }: PlaygroundBrowserPanelProps) {
-  const engine = useComputerEngine(projectId);
+  const engine = useBrowserEngine(projectId);
   // THE DURABLE SESSION, in the panel as well as in the rail tab it replaces.
   // The browser a chat owns keeps its logins and its saved profile across
   // turns, and that identity travels on the token: minting the project-scoped
@@ -146,8 +147,14 @@ export function PlaygroundBrowserPanel({
           <PanelRightClose className="size-3.5" aria-hidden />
         </button>
       </div>
+      <BrowserRuntimeControls projectId={projectId} />
       <div className="flex min-h-0 flex-1 flex-col">
-        {isLocal ? (
+        {isLocal && !engine.localAvailable ? (
+          <p className="p-4 text-sm text-muted-foreground">
+            Browser is unavailable on this machine. Check Browser settings or
+            choose Cloud for a new chat.
+          </p>
+        ) : isLocal ? (
           <LocalBrowserBody
             key={`${projectId}:${browserSessionId}:local`}
             projectId={projectId}

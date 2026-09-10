@@ -1,3 +1,7 @@
+import { verifyLocalBrowserConsent } from "../../computers/browser-consent.js";
+vi.mock("../../computers/browser-consent.js", () => ({
+  verifyLocalBrowserConsent: vi.fn(async () => true),
+}));
 /**
  * `buildBrowserTools` — the two structural guarantees, plus the policy matrix.
  *
@@ -64,7 +68,7 @@ function fakeSession(
         streamPassword: "pw",
         contextMode: "persistent",
         reused: true,
-      }) as BrowserSessionHandle,
+      } as BrowserSessionHandle),
   );
   return { ensureSession, sendCommand };
 }
@@ -563,7 +567,7 @@ describe("a token pin survives an approval resume", () => {
           streamPassword: "pw",
           contextMode: "persistent",
           reused: true,
-        }) as BrowserSessionHandle,
+        } as BrowserSessionHandle),
     );
     const built = buildBrowserTools({
       authHeader: "Bearer user",
@@ -1020,7 +1024,10 @@ describe("the screenshot reaches the model as an IMAGE, not as text", () => {
       status: "stale_observation",
       result: {
         ok: false,
-        output: { url: "https://moved.test", a11y: "- button \"Delete\" [ref=e1]" },
+        output: {
+          url: "https://moved.test",
+          a11y: '- button "Delete" [ref=e1]',
+        },
       },
     }));
     const tools = result!.tools as any;
@@ -1938,7 +1945,6 @@ describe("buildBrowserTools — an unattended run must name itself", () => {
     expect(built).toBeDefined();
   });
 });
-
 
 describe("the toolset's context footprint is pinned", () => {
   /**
@@ -3728,4 +3734,14 @@ describe("buildBrowserTools — the page-tool hint names what is actually there"
       }
     }
   });
+});
+
+
+it("revoked Browser consent blocks a previously cached local session", async () => {
+  const { result, sendCommand } = build({ engine: "local", localConsentToken: "browser-token" });
+  await run(result!.tools, "browser_observe", {});
+  const count = sendCommand.mock.calls.length;
+  vi.mocked(verifyLocalBrowserConsent).mockResolvedValueOnce(false);
+  await expect(run(result!.tools, "browser_observe", {})).rejects.toThrow("browser_consent_required");
+  expect(sendCommand).toHaveBeenCalledTimes(count);
 });

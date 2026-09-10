@@ -246,7 +246,7 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
 }));
 
 import computers from "../computers.js";
-import { LOCAL_CONSENT_HEADER } from "../../../utils/computers/local-consent.js";
+import { BROWSER_CONSENT_HEADER } from "../../../utils/computers/browser-consent.js";
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -258,7 +258,7 @@ function createApp() {
 
 async function grantConsent(): Promise<string> {
   const response = await createApp().request(
-    "/api/mcp/computers/local-consent/grant",
+    "/api/mcp/computers/local-browser/consent/grant",
     { method: "POST" },
   );
   return ((await response.json()) as { token: string }).token;
@@ -288,7 +288,7 @@ describe("POST /local-browser/lookup", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(token ? { [LOCAL_CONSENT_HEADER]: token } : {}),
+        ...(token ? { [BROWSER_CONSENT_HEADER]: token } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -356,7 +356,7 @@ describe("POST /local-browser/watch", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(token ? { [LOCAL_CONSENT_HEADER]: token } : {}),
+        ...(token ? { [BROWSER_CONSENT_HEADER]: token } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -373,7 +373,7 @@ describe("POST /local-browser/watch", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({ projectId: "proj" }),
       },
@@ -405,7 +405,7 @@ describe("POST /local-browser/watch", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({ projectId: "proj" }),
       },
@@ -510,7 +510,7 @@ describe("driving the browser from the pane", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({ projectId: "proj-1" }),
       },
@@ -523,7 +523,7 @@ describe("driving the browser from the pane", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [LOCAL_CONSENT_HEADER]: token,
+        [BROWSER_CONSENT_HEADER]: token,
       },
       body: JSON.stringify(body),
     });
@@ -688,7 +688,7 @@ describe("POST /local-browser/install", () => {
 
   it("starts the install for a consenting user", async () => {
     const token = await grantConsent();
-    const res = await install({ [LOCAL_CONSENT_HEADER]: token });
+    const res = await install({ [BROWSER_CONSENT_HEADER]: token });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       install: { status: "installing" },
@@ -704,7 +704,7 @@ describe("POST /local-browser/install", () => {
     browserState.runtime = "electron";
     const token = await grantConsent();
 
-    const res = await install({ [LOCAL_CONSENT_HEADER]: token });
+    const res = await install({ [BROWSER_CONSENT_HEADER]: token });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ install: { status: "ready" } });
@@ -713,7 +713,9 @@ describe("POST /local-browser/install", () => {
 
   it("refuses a consent token that is not this machine's", async () => {
     await grantConsent();
-    const res = await install({ [LOCAL_CONSENT_HEADER]: "not-the-capability" });
+    const res = await install({
+      [BROWSER_CONSENT_HEADER]: "not-the-capability",
+    });
     expect(res.status).toBe(403);
     expect(chromiumState.installs).toBe(0);
   });
@@ -733,7 +735,7 @@ describe("POST /local-browser/page-tools", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(token ? { [LOCAL_CONSENT_HEADER]: token } : {}),
+        ...(token ? { [BROWSER_CONSENT_HEADER]: token } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -743,7 +745,7 @@ describe("POST /local-browser/page-tools", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [LOCAL_CONSENT_HEADER]: token,
+        [BROWSER_CONSENT_HEADER]: token,
       },
       body: JSON.stringify({ projectId: "proj" }),
     });
@@ -854,7 +856,7 @@ describe("the agent door's session routes", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [LOCAL_CONSENT_HEADER]: token,
+        [BROWSER_CONSENT_HEADER]: token,
       },
       body: JSON.stringify(body),
     });
@@ -864,7 +866,7 @@ describe("the agent door's session routes", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [LOCAL_CONSENT_HEADER]: token,
+        [BROWSER_CONSENT_HEADER]: token,
       },
       body: JSON.stringify(body),
     });
@@ -985,7 +987,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -1029,7 +1031,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -1061,7 +1063,7 @@ describe("the agent door's session routes", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [LOCAL_CONSENT_HEADER]: token,
+        [BROWSER_CONSENT_HEADER]: token,
       },
       body: JSON.stringify({
         projectId: "proj",
@@ -1095,7 +1097,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -1123,7 +1125,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -1210,7 +1212,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -1305,7 +1307,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -1320,4 +1322,22 @@ describe("the agent door's session routes", () => {
     // The run's own browser is untouched by the person's session ending.
     expect(browserState.byKey.has("proj:ephemeral:redacted:run-9")).toBe(true);
   });
+});
+
+it("a real shell grant never authorizes Browser, even under the Browser header", async () => {
+  const { grantLocalComputerConsent } = await import(
+    "../../../utils/computers/local-consent.js"
+  );
+  const shell = await grantLocalComputerConsent();
+  for (const header of ["X-MCPJam-Local-Consent", BROWSER_CONSENT_HEADER]) {
+    const response = await createApp().request(
+      "/api/mcp/computers/local-browser/install",
+      { method: "POST", headers: { [header]: shell.token } },
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "browser_consent_required",
+    });
+  }
+  expect(chromiumState.installs).toBe(0);
 });

@@ -1,7 +1,14 @@
 import { create } from "zustand";
 
+interface BrowserLocation {
+  projectId: string;
+  sessionId: string;
+  engine: "local" | "cloud";
+}
 interface ActiveChatSessionState {
   sessionId: string | null;
+  browserLocation: BrowserLocation | null;
+  setBrowserLocation: (location: BrowserLocation) => void;
   /** The current conversation has successfully opened a browser session. */
   browserSessionId: string | null;
   setSessionId: (sessionId: string | null) => void;
@@ -17,6 +24,8 @@ interface ActiveChatSessionState {
 export const useActiveChatSessionStore = create<ActiveChatSessionState>(
   (set) => ({
     sessionId: null,
+    browserLocation: null,
+    setBrowserLocation: (browserLocation) => set({ browserLocation }),
     browserSessionId: null,
     setSessionId: (sessionId) => set({ sessionId }),
     markBrowserSessionActive: (sessionId) =>

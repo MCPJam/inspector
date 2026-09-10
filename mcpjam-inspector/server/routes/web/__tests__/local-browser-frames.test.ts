@@ -25,8 +25,8 @@ import { createNodeWebSocket } from "@hono/node-ws";
 const consentState = vi.hoisted(() => ({
   fingerprint: "a".repeat(64) as string | null,
 }));
-vi.mock("../../../utils/computers/local-consent.js", () => ({
-  getLocalConsentFingerprint: async () => consentState.fingerprint,
+vi.mock("../../../utils/computers/browser-consent.js", () => ({
+  getBrowserConsentFingerprint: async () => consentState.fingerprint,
 }));
 
 const sessionState = vi.hoisted(() => ({

@@ -44,7 +44,7 @@ import {
   writeBrowserState,
 } from "../lib/browser-session-store.js";
 
-const LOCAL_CONSENT_HEADER = "x-mcpjam-local-consent";
+const BROWSER_CONSENT_HEADER = "x-mcpjam-browser-consent";
 const BROWSER_ROUTE = "/api/mcp/computers/local-browser";
 
 /** How this CLI names itself in the ledger. See the door's actor rules. */
@@ -80,7 +80,7 @@ function addCommonOptions(command: Command): Command {
     )
     .option(
       "--consent <token>",
-      "Local computer consent capability (defaults to the stored one)",
+      "Local browser consent capability (defaults to the stored one)"
     )
     .option(
       "--client-id <id>",
@@ -108,16 +108,16 @@ function consentOf(options: CommonOptions): string {
   if (typeof options.consent === "string" && options.consent.trim()) {
     return options.consent.trim();
   }
-  const fromEnv = process.env.MCPJAM_LOCAL_CONSENT;
+  const fromEnv = process.env.MCPJAM_BROWSER_CONSENT;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-  const stored = readBrowserState(getBrowserStateFilePath()).consent;
+  const stored = readBrowserState(getBrowserStateFilePath()).browserConsent;
   if (stored) return stored;
   throw operationalError(
     "This machine's browser has not been authorized for the CLI.",
-    "Open the Inspector, allow the local computer, then run " +
+    "Open the Inspector, allow the local browser, then run " +
       "`mcpjam browser consent --token <capability>` (or set " +
-      "MCPJAM_LOCAL_CONSENT). The CLI never grants this itself — the consent " +
-      "screen is where a person authorizes the agent browser.",
+      "MCPJAM_BROWSER_CONSENT). The CLI never grants this itself — the consent " +
+      "screen is where a person authorizes the agent browser."
   );
 }
 
@@ -151,7 +151,7 @@ function sessionOf(options: CommonOptions, projectId: string): string {
 /**
  * The Inspector base URL these commands may use.
  *
- * Every request here carries the local computer CONSENT capability — a
+ * Every request here carries the local browser CONSENT capability — a
  * credential that authorizes driving a browser signed into the user's accounts.
  * Sending it in cleartext to a host that is not this machine puts it on the
  * wire for anyone on the path, so http:// is admitted for loopback only.
@@ -184,11 +184,26 @@ function browserBaseUrl(options: CommonOptions): string {
     !(parsed.protocol === "http:" && loopback)
   ) {
     throw usageError(
-      `Refusing to send the local computer consent capability to ${baseUrl} in cleartext.`,
-      "Use https:// for a remote Inspector; http:// is allowed for localhost only.",
+      `Refusing to send the local browser consent capability to ${baseUrl} in cleartext.`,
+      "Use https:// for a remote Inspector; http:// is allowed for localhost only."
     );
   }
   return baseUrl;
+}
+
+async function requireBrowserConsentCapability(
+  client: InspectorApiClient
+): Promise<void> {
+  const result = await client.request("/api/web/computers/config", {
+    method: "GET",
+  });
+  const config = result as { capabilities?: { browserConsent?: boolean } };
+  if (config.capabilities?.browserConsent !== true) {
+    throw operationalError(
+      "Update Inspector to use Browser-scoped consent.",
+      "Then grant Browser permission in the Browser panel and run mcpjam browser consent again."
+    );
+  }
 }
 
 async function post(
@@ -214,10 +229,12 @@ async function post(
     );
   }
   const client = new InspectorApiClient({ baseUrl: browserBaseUrl(options) });
+  const consentToken = consentOf(options);
+  await requireBrowserConsentCapability(client);
   const result = await client.request(`${BROWSER_ROUTE}${path}`, {
     method: "POST",
     body,
-    headers: { [LOCAL_CONSENT_HEADER]: consentOf(options) },
+    headers: { [BROWSER_CONSENT_HEADER]: consentToken },
     ...(timeoutMs ? { timeoutMs } : {}),
     // The door answers a REFUSAL with 403 and an UNKNOWN outcome with 502, and
     // those bodies carry the distinction the whole contract turns on: `refused`
@@ -323,13 +340,14 @@ async function fetchScreenshot(
   // `response.text()`, which decodes as UTF-8 and replaces every invalid
   // sequence with U+FFFD. A JPEG read that way is not a slightly damaged JPEG,
   // it is a file that will not open — and nothing would say so.
+  await requireBrowserConsentCapability(new InspectorApiClient({ baseUrl }));
   const token = await fetchInspectorSessionToken(baseUrl);
   const response = await fetch(`${baseUrl}${BROWSER_ROUTE}/artifact`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-MCP-Session-Auth": `Bearer ${token}`,
-      [LOCAL_CONSENT_HEADER]: consentOf(options),
+      [BROWSER_CONSENT_HEADER]: consentOf(options),
     },
     body: JSON.stringify({ projectId, sessionId, artifactId: artifact.id }),
     // The SAME budget the command itself got. Without a signal a route that
@@ -374,7 +392,10 @@ export function registerBrowserCommands(program: Command): void {
   // ---- consent ----------------------------------------------------------
   browser
     .command("consent")
-    .description("Store the local computer capability granted in the Inspector")
+    .description(
+      "Validate and store the Browser capability granted in the Inspector"
+    )
+    .option("--inspector-url <url>", "Local Inspector base URL")
     .requiredOption(
       "--token <token>",
       "The capability the Inspector showed once",
@@ -384,11 +405,24 @@ export function registerBrowserCommands(program: Command): void {
         command,
         options.cloud ? 120_000 : 30_000,
       );
+      const client = new InspectorApiClient({
+        baseUrl: browserBaseUrl(options),
+      });
+      await requireBrowserConsentCapability(client);
+      const verified = (await client.request(
+        `${BROWSER_ROUTE}/consent/verify`,
+        { method: "POST", body: { token: String(options.token) } }
+      )) as { valid?: boolean };
+      if (verified.valid !== true)
+        throw operationalError(
+          "Browser capability was rejected.",
+          "Grant Browser permission in Inspector and supply its Browser token."
+        );
       const file = getBrowserStateFilePath();
       const state = readBrowserState(file);
       await writeBrowserState(file, {
         ...state,
-        consent: String(options.token),
+        browserConsent: String(options.token),
       });
       writeResult({ success: true, stored: file }, globalOptions.format);
     });

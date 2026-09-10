@@ -22,7 +22,7 @@ calls.
 model ──► browser_* tools ──► SessionClient ──► browserd stack ──► ChromiumDriver
                  ▲ engine chosen        HTTP (hosted)      queue · lease · budgets
                  │ in the registry      or a function
-                 │ exactly like bash    call (local)
+                 │ independently of bash    call (local)
           hostConfig.builtInToolIds
 ```
 
@@ -43,8 +43,8 @@ model ──► browser_* tools ──► SessionClient ──► browserd stack
 
 ## Trust model
 
-Read this before changing anything here. It extends the shell's, and differs
-from it in one direction that matters: a browser holds **logins**.
+Browser and shell have independent consent scopes. Browser permission covers
+control of Chromium and its **signed-in websites**; it never authorizes Bash.
 
 - **This is not a sandbox.** Chromium runs as the OS user, in a profile that
   persists their sessions. The boundaries are device _consent_, _per-action
@@ -61,6 +61,48 @@ from it in one direction that matters: a browser holds **logins**.
 - **The lease is the privacy boundary**, and it is enforced at the daemon: a
   person holding the browser blocks every model-driven command _and every
   observation_, including one already queued or mid-flight.
+
+## Location and Browser permission
+
+The Browser panel owns **This machine / Cloud**, grant/revoke, and Chromium
+installation in both layouts. Node-local and Electron default to This machine within the local Browser
+cohort, otherwise Cloud. Hosted and environment mode select Cloud. Browser selection is stored separately from Computer
+selection. Local candidacy uses `local-browser-enabled` and
+`engines.local.browserAvailable`; neither Bash availability nor
+`local-computer-enabled` enables or disables Browser.
+
+A new explicit Browser grant is required after upgrading from the shared-grant
+implementation. The server stores only its hash in
+`~/.mcpjam/browser/consent.json`. The client sends the capability in
+`X-MCPJam-Browser-Consent`. Shell grants retain their existing file and header;
+shell, Browser, and harness capabilities are not interchangeable. Revoking
+Browser invalidates frame nonces, active streams and Electron input without
+revoking shell permission or deleting profiles.
+
+Enable Browser alone, Bash alone, or both. Each retains its own authorization
+and destination. Local Browser and local Bash share this machine. Two Cloud
+selections do not by themselves guarantee the same box: conversation Browser
+uses its watched desktop, while personal Bash uses its configured computer.
+A run with an explicit shared desktop binding uses that box for both and
+must use a blank profile. A saved-profile pin with both tools is rejected
+before unattended launch and at the runtime boundary. Unattended sessions
+never inherit the interactive default profile. Never
+assume `localhost` or files are shared across different boxes.
+
+A conversation's existing logical-session `box` determines Browser location;
+changing it requires **Start new chat**. Resume keeps the binding in
+conversation UI state without rewriting the project preference. That binding
+never grants execution access. Explicit local requests that cannot run suppress
+Browser with a readiness data part and panel remedy; unrelated chat remains usable.
+Runtime diagnostics never become assistant text. The pre-turn location check is
+read-only; the first Browser use opens and binds the logical session.
+Open/control requests instead return `browser_consent_required` (403),
+`browser_runtime_unavailable` (503), or `browser_location_mismatch` (409).
+A disabled deployment can return 404 with a structured reason.
+
+Org-managed models requesting local Browser use Inspector's local tool loop
+with `/stream/org` as the model broker; the org key remains in Convex. Hosted
+web chat rejects local Browser selection and Browser consent headers.
 
 ## Profiles
 
@@ -89,8 +131,9 @@ use the same logical identity when the hosted control plane is configured, and
 degrade to the existing local ledger when it is not.
 
 The backend also persists project-scoped browser-profile archives with a
-256 MB cap and default-profile selection. The runtime honors an explicit host
-or suite profile pin before the user's default. From the browser pane, a
+256 MB cap and default-profile selection. Interactive chats honor an explicit
+host pin before the user's default; unattended targets use only an explicit
+pin, and reject that pin when Bash is also attached. From the browser pane, a
 person can save a drained persistent profile; the archive is filtered to omit
 Chromium caches and singleton locks, uploaded to Convex storage, and imported
 only on the next fresh boot. Computer settings lists the saved profiles and
@@ -162,7 +205,7 @@ A live owner is a typed `profile_in_use`; only a dead lock is cleared.
   Closing the context is also what releases the profile lock, so a skipped
   teardown is a browser the next run cannot start.
 
-## Chromium is installed at consent time
+## Install Chromium from the Browser panel
 
 Never inside a chat turn: the download is hundreds of megabytes and a model
 sitting in a tool call for minutes has no way to say why.
@@ -175,7 +218,7 @@ points at it.
 | Entry point                                                                | Gates                                                                                                                                                          |
 | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Chat `browser_*` (playground)                                              | non-hosted + kill switch + signed-in non-guest + server-verified consent + per-action approval                                                                 |
-| Chat `browser_*` (guest / scenario / journey)                              | **never local** — coerced to the cloud family at the registry chokepoint                                                                                       |
+| Chat `browser_*` (guest / scenario / journey)                              | **never local** — an explicit local request is refused, never moved to Cloud                                                                                   |
 | `GET /local-browser/status`                                                | session + verified sign-in + non-guest + kill switch. No consent: the consent screen needs it to describe itself.                                              |
 | `POST /local-browser/install`                                              | the above **+ consent**                                                                                                                                        |
 | `POST /local-browser/{ensure,token,lease,input}`                           | the above **+ consent**                                                                                                                                        |
@@ -251,13 +294,19 @@ the same unclaimed command and the daemon holds one copy of its screenshot;
 what a session may fetch is still decided by its own ledger.
 
 ```bash
-mcpjam browser consent --token <capability>   # granted once, in the UI
+mcpjam browser consent --token <browser-capability>  # granted in Browser panel
 mcpjam browser open --mode allow_all --profile persistent
 mcpjam browser navigate https://example.test  # returns the a11y tree
 mcpjam browser act --verb click --ref e7      # …and the tree after the click
 mcpjam browser trace                          # who did what, in order
 mcpjam browser close                          # detaches; --terminate closes it
 ```
+
+The CLI requires `capabilities.browserConsent: true` from Inspector; an older
+server produces an update-required error. Token precedence is `--consent`,
+`MCPJAM_BROWSER_CONSENT`, then Browser-scoped CLI state. `MCPJAM_LOCAL_CONSENT`
+and the legacy unscoped state field are ignored. `browser consent` verifies the
+supplied token before storing it; cloud commands use cloud credentials only.
 
 The CLI never grants its own consent: the Inspector's consent screen is where
 a person authorizes the agent browser, and a CLI able to mint the capability
@@ -539,3 +588,12 @@ Profile export reserves an exclusive lease, closes Chromium to flush its
 persistent storage, and holds the reservation until archiving finishes. Local
 export also holds the session's creation lock, so reopening cannot race the
 archive. Export closes the live browser; the next ensure call relaunches it.
+
+### Ensure refusal compatibility
+
+The Browser cutover changes runtime refusals from HTTP 409 with a specific
+runtime `code` to HTTP 503 with `code: "browser_runtime_unavailable"` and the
+specific value (for example `chromium_not_installed` or `profile_in_use`) in
+`reason`. Location mismatches remain 409 and consent refusals remain 403.
+No first-party consumer of the old runtime codes was found. CLI/script clients
+that branch on those fields must update their status/code checks.

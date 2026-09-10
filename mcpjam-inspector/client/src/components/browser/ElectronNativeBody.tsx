@@ -52,6 +52,7 @@ export function ElectronNativeBody({
   control,
   holding,
   consentGranted,
+  consentToken,
   onTakeControl,
   onHandBack,
   placeholder,
@@ -70,6 +71,7 @@ export function ElectronNativeBody({
   /** Does this pane hold the browser? Only used for what the bar says. */
   holding: boolean;
   consentGranted: boolean;
+  consentToken?: string | null;
   onTakeControl?: (() => void) | undefined;
   onHandBack?: (() => void) | undefined;
   /** The engine's empty and blocked states — no browser yet, no consent. */
@@ -91,7 +93,7 @@ export function ElectronNativeBody({
   /** What the main process last said actually happened. */
   const [placed, setPlaced] = useState<{
     shown: boolean;
-    reason?: "unknown" | "no_window" | "bad_bounds" | "lease";
+    reason?: "unknown" | "no_window" | "bad_bounds" | "lease" | "consent";
   }>({ shown: false });
 
   /**
@@ -129,6 +131,8 @@ export function ElectronNativeBody({
   takeoverRef.current = chrome === "none";
   const holderRef = useRef(holder);
   holderRef.current = holder;
+  const consentTokenRef = useRef(consentToken);
+  consentTokenRef.current = consentToken;
   const wantVisibleRef = useRef(wantVisible);
   wantVisibleRef.current = wantVisible;
 
@@ -143,7 +147,11 @@ export function ElectronNativeBody({
       shownRef.current = null;
       setPlaced({ shown: false });
       void api
-        .setViewport({ bootId: previous, visible: false })
+        .setViewport({
+          consentToken: consentTokenRef.current,
+          bootId: previous,
+          visible: false,
+        })
         .catch(() => {});
     }
     if (!bootId) return;
@@ -157,6 +165,7 @@ export function ElectronNativeBody({
     const rect = element?.getBoundingClientRect();
     void api
       .setViewport({
+        consentToken: consentTokenRef.current,
         bootId,
         holder: holderRef.current,
         takeover: takeoverRef.current,
@@ -252,7 +261,13 @@ export function ElectronNativeBody({
       const last = shownRef.current ?? bootIdRef.current;
       shownRef.current = null;
       if (!api || !last) return;
-      void api.setViewport({ bootId: last, visible: false }).catch(() => {});
+      void api
+        .setViewport({
+          consentToken: consentTokenRef.current,
+          bootId: last,
+          visible: false,
+        })
+        .catch(() => {});
     };
   }, []);
 
