@@ -90,19 +90,19 @@ it("hosted always selects Cloud and never offers local", () => {
   expect(result.current.engine).toBe("cloud");
   expect(result.current.localAvailable).toBe(false);
 });
-it("Browser candidacy uses its own flag", () => {
+it("the rollout flag does not misreport server availability", () => {
   state.flag = false;
   const { result } = renderHook(() => useBrowserEngine("p"));
-  expect(result.current.localAvailable).toBe(false);
+  expect(result.current.localAvailable).toBe(true);
 });
 
-it("defaults to Cloud outside the local cohort, but preserves explicit local refusal", () => {
+it("defaults to Cloud outside the cohort but allows explicit local onboarding", () => {
   state.flag = false;
   const { result } = renderHook(() => useBrowserEngine("p"));
   expect(result.current.engine).toBe("cloud");
   act(() => result.current.setEngine("local"));
   expect(result.current.engine).toBe("local");
-  expect(result.current.localAvailable).toBe(false);
+  expect(result.current.localAvailable).toBe(true);
 });
 it("environment mode shows Cloud and does not overwrite the device preference", () => {
   saveBrowserEngine("p", "local");

@@ -46,17 +46,20 @@ export function useBrowserEngine(projectId: string | null) {
     },
     [projectId, environmentMode],
   );
+  // Rollout chooses the default; explicit/bound local selection still needs
+  // truthful server readiness so users can grant Browser permission.
   const localAvailable =
     !HOSTED_MODE &&
     !environmentMode &&
-    enabled &&
     config?.engines.local.browserAvailable === true;
   // Only an explicit preference or a bound conversation survives loss of
   // candidacy. An unseeded rollout continues using the existing Cloud path.
   const selectedEngine: BrowserEngineChoice =
     HOSTED_MODE || environmentMode
       ? "cloud"
-      : boundLocation ?? preference ?? (localAvailable ? "local" : "cloud");
+      : boundLocation ??
+        preference ??
+        (enabled && localAvailable ? "local" : "cloud");
   const cloudAvailable = config?.engines.cloud.available ?? false;
   return {
     engine: selectedEngine,
