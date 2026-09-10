@@ -34,6 +34,11 @@ vi.mock("../hooks/useComputersEnabled", () => ({
   // rather than falling through to the real hook.
   LOCAL_COMPUTER_FEATURE_FLAG: "local-computer-enabled",
   useLocalComputerEnabled: () => false,
+  // Same story for the Browser rollout flags: `WebmcpPageToolsSection`, which
+  // this route reaches through `ComputerTabView`, reads both of these at module
+  // scope via `useWebmcpInspectorEnabled`.
+  LOCAL_BROWSER_FEATURE_FLAG: "local-browser-enabled",
+  HOSTED_BROWSER_FEATURE_FLAG: "hosted-browser-enabled",
 }));
 
 vi.mock("react-router", async (importOriginal) => {
