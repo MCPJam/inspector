@@ -52,3 +52,4 @@
 - Interactive preview against the live Excalidraw demo returned 5 tools and opened the populated Playground correctly.
 - Refresh after that success reproduced the already-listed stale first-run persistence bug on `localhost`; keep that repair in its own follow-up branch.
 - Verification: 96 focused component/App tests passed, including both connection paths and cancellation; client type-check and design-token drift checks passed.
+- Review polish: completed progress checks now use the success color; the final success indicator is green with a reduced-motion-safe entry animation; the centered server name is highlighted for easier scanning.
