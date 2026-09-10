@@ -172,6 +172,10 @@ export function FirstRunOnboardingOverlay({
                 <DialogTitle className="max-w-[12ch] pb-0 text-[2rem] leading-[1.12] font-semibold tracking-[-0.038em] text-primary-foreground">
                   Welcome to MCPJam
                 </DialogTitle>
+                <span
+                  className="mt-4 block h-px w-[72px] bg-primary"
+                  aria-hidden
+                />
                 <DialogDescription className="mt-4 max-w-[42ch] text-[14.5px] leading-[1.5] text-primary-foreground/80">
                   From your first prompt to a continuous gate on every release,
                   MCPJam shows what breaks across every AI client, and how to
