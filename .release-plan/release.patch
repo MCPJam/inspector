@@ -1,628 +1,2071 @@
-diff --git a/.changeset/bb-133-guest-credit-wall.md b/.changeset/bb-133-guest-credit-wall.md
+diff --git a/.changeset/advisory-exclusion.md b/.changeset/advisory-exclusion.md
 deleted file mode 100644
-index 9d75eee35..000000000
---- a/.changeset/bb-133-guest-credit-wall.md
+index ea323588d..000000000
+--- a/.changeset/advisory-exclusion.md
++++ /dev/null
+@@ -1,12 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+----
+-
+-Warn/Report (advisory) checks never halt or fail a trial
+-
+-A check marked `role: "advisory"` (and `severity: "warn"`) is still evaluated
+-and still written as a score row, but it is excluded from every verdict
+-reduction — SDK, hosted iteration, step fail-fast, stage derivation, and
+-synthetic-monitor paging. Criterion identity is unchanged: adding policy
+-fields does not rename a scorer.
+diff --git a/.changeset/audio-transcription-bearer-auth.md b/.changeset/audio-transcription-bearer-auth.md
+deleted file mode 100644
+index b4ec457de..000000000
+--- a/.changeset/audio-transcription-bearer-auth.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Add a benefit-led A/B variant of the guest credit-limit modal (BB-133). Behind the PostHog flag `guest-credit-wall-copy`, the treatment replaces the single "Sign in" wall with a headline, value copy, a hero illustration, and two CTAs — "Create free account" (sign-up) and "See paid plans" (pricing page). The `plan_limit_*` events now carry a `variant` tag so sign-in vs create-account conversion can be compared across control and treatment. Defaults to the existing control modal when the flag is off.
-diff --git a/.changeset/connection-error-toast-copy.md b/.changeset/connection-error-toast-copy.md
+-Require a bearer token on `POST /api/web/audio/transcriptions`. The route was the only MCP-operation family mounted without `bearerAuthMiddleware`, and its handler answered a credential-less request by fetching a server-side guest session and spending MCPJam's own credential on OpenAI Whisper. It now carries the same bearer + guest-rate-limit mount as its siblings, forwards only the caller's own bearer, and refuses anonymous callers with the same `401` `/tools/list` returns. The per-request body cap drops from 25MB to 10MB — sized to 180s of uncompressed WAV, the largest payload the recorder can produce — because on a per-audio-minute billed API the request size is the request's cost.
+diff --git a/.changeset/bb-118-self-hosted-network-access.md b/.changeset/bb-118-self-hosted-network-access.md
 deleted file mode 100644
-index 04df2ffc0..000000000
---- a/.changeset/connection-error-toast-copy.md
+index bc1b8ab4c..000000000
+--- a/.changeset/bb-118-self-hosted-network-access.md
 +++ /dev/null
-@@ -1,35 +0,0 @@
+@@ -1,33 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--A failed connection reads as a title and a failure, and copies as both
+-Self-hosted network access: a real fix for the 403 dead-end, and `MCPJAM_ALLOWED_HOSTS` that works off localhost
 -
--The toast said `Excalidraw (App): Request failed (500)` — the server and the
--failure spliced into one run-on line by a colon, with sonner's error icon
--aligned against the middle of it rather than a title. It now uses the two
--fields sonner renders: the server name as the title, the failure as the muted
--description below it. The single-line form is kept for the message that already
--names the server, where a title would print the name twice.
+-Reaching the inspector over the network (a non-localhost host — e.g. a Docker
+-container at `http://192.168.x.x:6274`) landed on an "Authentication Error"
+-screen telling the user to "use localhost", which they can't. The screen now
+-shows the exact host they're on and the one environment variable that unblocks
+-it, and the expected 403 is no longer reported as an error.
 -
--One failure also produced two differently-worded toasts. `ServerDetailModal`,
--`ServerConnectionCard` and `RecommendedServers` each caught the throw and built
--their own sentence around it ("Failed to connect to X: …") while the connection
--layer was already reporting the same failure in its own words. All three now
--raise it through one helper, so the wording matches wherever it comes from. The
--duplicate report itself is untouched and still open.
+-`MCPJAM_ALLOWED_HOSTS` now actually opens that path. It was previously inert
+-unless hosted mode was on; it is now honored in self-hosted mode too, for both
+-the session-token gate and the request-origin gate, so one variable makes the
+-inspector reachable off localhost. Tunnel/relay hosts are still vetoed before
+-the allowlist in both gates, and wildcard entries are honored for origin
+-validation only under `MCPJAM_ALLOW_WILDCARD_ORIGINS`.
 -
--The error toast's copy button copied only the line it sits on, which after the
--split is a server name and nothing else. It now takes the description with it.
+-The browser now sends the session token on same-origin `/api/*` calls, not
+-only loopback ones, so a page served from an allowlisted host can actually use
+-the token the server issued it. The token still never leaves for a foreign
+-origin, and `addTokenToUrl` (the SSE/EventSource path) now applies the same
+-rule instead of appending the token to any absolute URL.
 -
--Error-toast action buttons no longer claim a full centered row of their own.
--The Toaster forced that because a sentence-long CTA squeezed the message beside
--it, but it also stranded short labels — "Retry", "Reconnect" — under a one-line
--error at four times their width. The toast content grows instead, so the label
--decides: a short button rides the title row at the trailing edge, and one that
--no longer fits wraps to its own line.
--
--Two layout fixes come with it. The toast aligns its icon and action to the
--first line rather than the middle of a paragraph, and a paragraph no longer
--forces its own row and strands the icon alone above it. And the copy button no
--longer overflows the message box it sits in: at 20px against a 19.5px line it
--raised a native scrollbar — arrows and all — over a one-line error.
-diff --git a/.changeset/error-cards-copy-and-select.md b/.changeset/error-cards-copy-and-select.md
+-BEHAVIOR CHANGE ON UPGRADE: if you already set `MCPJAM_ALLOWED_HOSTS` in a
+-self-hosted deployment (e.g. inherited from a shared `.env`), it was doing
+-nothing before and now takes effect — those hosts will receive the session
+-token and be accepted as request Origins. Because an allowlisted host is also
+-accepted as an Origin, it can reach the local shell and agent-browser tools,
+-which are on by default in self-hosted mode; set
+-`MCPJAM_LOCAL_COMPUTER_ENABLED=false` / `MCPJAM_LOCAL_BROWSER_ENABLED=false` to
+-disable them. Audit any inherited value before upgrading.
+diff --git a/.changeset/bb-49-server-connection-status.md b/.changeset/bb-49-server-connection-status.md
 deleted file mode 100644
-index 3a6432ee4..000000000
---- a/.changeset/error-cards-copy-and-select.md
+index 44b0e157f..000000000
+--- a/.changeset/bb-49-server-connection-status.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Mark a server's connection status where servers are picked, and stop preselecting one that failed (BB-49). The server-group create form drew its pool from Convex, which knows a server's config but not whether it answers, so a server that had failed to connect was offered exactly like a working one — and, in a small project, arrived already ticked and giving the group its name. The form now joins the live status in, draws it on each row (colour plus the status in the row's accessible name), and leaves a failed server unticked. `disconnected` still preselects: that is what every server reads on a fresh load.
+diff --git a/.changeset/browser-workspace-integration-fixes.md b/.changeset/browser-workspace-integration-fixes.md
+deleted file mode 100644
+index f5d8e0bb0..000000000
+--- a/.changeset/browser-workspace-integration-fixes.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Fix browser workspace navigation leases, responsive resizing, native shell integration, rollout fallback, takeover input validation, and persistent profile export ordering.
+diff --git a/.changeset/case-policy-fields-need-policy-v2.md b/.changeset/case-policy-fields-need-policy-v2.md
+deleted file mode 100644
+index 2000f02d2..000000000
+--- a/.changeset/case-policy-fields-need-policy-v2.md
++++ /dev/null
+@@ -1,22 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Per-case `repetitions` / `passThreshold` are refused on a legacy suite, not stored inert
+-
+-Both are verdict-policy-2 fields: the backend reads them only when the suite
+-carries `verdictPolicyVersion: 2`. On a legacy suite the trial count comes from
+-`runs` and `minimumIterations`, so both sat inert — accepted, forwarded,
+-stored, and echoed back by a `GET`, which is exactly the evidence a caller uses
+-to conclude the value landed.
+-
+-The case write paths now reject them with a 400 that names the policy and the
+-upgrade. The two create paths already read the suite for their scope guard; the
+-PATCH path did not, and was the one door an inert value could still get
+-through, so it now reads the suite — but only when the body actually carries
+-one of these fields, so an ordinary title edit costs no extra round trip.
+-
+-`repetitions` also allowed up to 100 — the suite-file contract's
+-`MAX_REPETITIONS` — while `iterations` allowed 10 and the CLI refuses anything
+-above 10 against this same API. Both are capped at 10 now, so the ceiling no
+-longer depends on which client is asking.
+diff --git a/.changeset/case-scorecard-left-pane.md b/.changeset/case-scorecard-left-pane.md
+deleted file mode 100644
+index 61bc6752f..000000000
+--- a/.changeset/case-scorecard-left-pane.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The Evaluate case page now says Scorers and Judge, in the suite's vocabulary: one chain-ordered list where every row carries its provenance and its role, one Add menu, and a judge card that says what it will actually grade against.
+diff --git a/.changeset/case-scorecard-live-run.md b/.changeset/case-scorecard-live-run.md
+deleted file mode 100644
+index c5c055289..000000000
+--- a/.changeset/case-scorecard-live-run.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A quick run now opens on its Scorecard too, with rows pending while it streams and joined once the trial lands.
+diff --git a/.changeset/case-scorecard-model.md b/.changeset/case-scorecard-model.md
+deleted file mode 100644
+index 25e3fd3bc..000000000
+--- a/.changeset/case-scorecard-model.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Internal: the pure model behind the Evaluate case scorecard — one case's scorers in chain order, with provenance and join keys, plus the trial joiner that fills them from server facts. Scorer identity moves to `shared/` so the client mints the same criterion ids the server persisted.
+diff --git a/.changeset/case-scorecard-tab.md b/.changeset/case-scorecard-tab.md
+deleted file mode 100644
+index bdc6b7a83..000000000
+--- a/.changeset/case-scorecard-tab.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The Evaluate trial now opens on a Scorecard: the case's own scorers with this trial's result beside each, counting gates only and saying "not measured" where nothing was.
+diff --git a/.changeset/case-workspace-evaluate.md b/.changeset/case-workspace-evaluate.md
+deleted file mode 100644
+index 31d26d785..000000000
+--- a/.changeset/case-workspace-evaluate.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-Evaluate case workspace: write the case on the left, inspect one selected trial on the right
+-
+-The Evaluate simple form now authors prompt → in-app steps → checks in the order they run (the write-back preserves executor order), recording starts only from an explicit click, the right column is resolved by one pure precedence function, a History pick freezes the form on that trial's snapshot until Edit case, and a "Next run" sheet separates what is saved with the case from what applies to one run. `/evals` is unchanged.
+diff --git a/.changeset/claude-desktop-host.md b/.changeset/claude-desktop-host.md
+deleted file mode 100644
+index cdf198eb3..000000000
+--- a/.changeset/claude-desktop-host.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-Add Claude Desktop as its own host. The existing `claude` host is claude.ai in a browser; the Electron app differs in ways a widget can feel — it offers no fullscreen display mode, sends no `toolInfo`, and gives the widget iframe zero safe-area inset instead of 12px. Probed 2026-09-03 on Claude/1.40609.1. Style variables, fonts and CSP behaviour are identical to the web app and are shared rather than copied.
+diff --git a/.changeset/cli-documents-repetitions.md b/.changeset/cli-documents-repetitions.md
+deleted file mode 100644
+index d69e9cb49..000000000
+--- a/.changeset/cli-documents-repetitions.md
 +++ /dev/null
 @@ -1,20 +0,0 @@
 ----
--"@mcpjam/inspector": patch
+-"@mcpjam/cli": minor
 ----
 -
--Error cards can be copied, and their text selected
+-`--repetitions` is documented, and `description-experiment start` accepts it
 -
--Highlighting the text on an error card was impossible wherever the card sits in
--a surface that owns the drag gesture. On the servers grid, dnd-kit spreads its
--sortable listeners over the whole card, and once the 8px activation distance is
--crossed the sensor wipes the selection on every `selectionchange` — dragging
--across the message reordered the card instead of selecting a word of it. In the
--OAuth flow the card renders inside a ReactFlow node, and `.react-flow__node`
--sets `user-select: none`, so there was nothing to drag for in the first place.
+-**The CLI reference taught the deprecated spelling.** `--repetitions` is the
+-canonical flag on `cloud eval run` and `cloud eval cases run` and
+-`--iterations` is its deprecated alias — that is what `--help` prints — but the
+-reference documented only `--iterations`, and `--repetitions` did not appear in
+-it as a flag at all.
 -
--The card now stops the pointerdown from reaching those surfaces and carries
--`select-text nodrag nopan`. A Copy button beside "Show details" puts the whole
--failure on the clipboard as plain text — title, one-liner, likely causes, next
--steps, raw error and cause — including the details while they are still
--collapsed, since expanding them first to copy them defeats the point. A
--clipboard that refuses the write says "Copy failed" instead of claiming success.
-diff --git a/.changeset/grader-stage-contract-map.md b/.changeset/grader-stage-contract-map.md
+-`cloud eval description-experiment start` had the same word pointing the other
+-way: `--iterations` was its CANONICAL flag, with help text that read
+-"Repetitions", one command over from where `--iterations` means "please stop".
+-It now takes `--repetitions`, keeps `--iterations` working as a deprecated
+-alias, and passing both is a usage error rather than a silent precedence rule.
+-
+-`--max-trials` beside it is unchanged: it caps the product of cases and
+-repetitions, which genuinely is trials.
+diff --git a/.changeset/cloud-agent-browser.md b/.changeset/cloud-agent-browser.md
 deleted file mode 100644
-index 2ac4aa73f..000000000
---- a/.changeset/grader-stage-contract-map.md
+index 97eb42277..000000000
+--- a/.changeset/cloud-agent-browser.md
 +++ /dev/null
-@@ -1,16 +0,0 @@
+@@ -1,7 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+-"@mcpjam/inspector": minor
 ----
 -
--The contract now says which stage of the chain each grader measures
--
--The six-stage user-value chain has always been able to answer "where did this run stop being good?" for a single trial. What nothing could answer was the same question about a suite's SETTINGS: given this configuration, which stages does it actually measure, and which does it leave unchecked? The routing existed, but it lived inside the stage analyzer, reachable only by running a trial through it.
--
--`PREDICATE_STAGE`, `GRADER_STAGE` and `PREDICATE_KINDS` export that routing directly, so a settings surface can group graders by what they measure instead of by how they happen to be implemented.
--
--- **The analyzer's own routing is now derived from the map, not restated beside it.** That is the point of the change rather than a tidy-up. Two hand-kept copies of the same fact are one edit away from a suite that renders a grader under "selection" while the analyzer files its failures under "user value" — a disagreement neither copy is wrong enough to fail a test for. A new test asserts the analyzer routes exactly the three predicate kinds it routed before, so the derivation cannot quietly widen or narrow.
--- **`PREDICATE_KINDS` is derived from the authoring schema.** A hand-written list is a list that misses the next predicate someone adds, and a predicate missing from the map is a grader a settings page cannot place — which renders as a stage that looks unmeasured when it is not. Totality is tested in both directions.
--- **`toolCalledWith` is mapped to `selection` and is still matcher-graded.** The map records what an author was measuring; the analyzer still routes the kind through `expectedToolCalls`, because re-reading its point-in-time predicate row would let a raw residual contradict the adjudicated verdict. `isSelectionStagePredicateKind` (the map's question) and `isSelectionPredicateKind` (the analyzer's) deliberately disagree on this one kind, and a test pins that.
--- **`GRADER_PRESENTATION_GROUP` carries no analytical weight.** Token and turn ceilings read better beside each other than beside "did the answer contain the right thing", but they are still filed where the analyzer files them. A test pins that the grouping never redefines a stage.
--
--`STAGE_ANALYZER_VERSION` stays at 8. Nothing about where a failure is attributed has changed, so this is a refactor rather than a re-derivation. The docblock names the kinds that are future bump candidates — `noToolErrors` toward `call` or `response`, the three `widget*` kinds toward `response` — so that moving one is a deliberate versioned change rather than a fix someone applies to the table in isolation.
-diff --git a/.changeset/local-harness-pack-signing-key.md b/.changeset/local-harness-pack-signing-key.md
+-Allow coding agents to open and drive isolated cloud browsers using `mcpjam browser --cloud`, with cloud authentication, durable command admission/history, screenshots, and the shared browser lifecycle.
+diff --git a/.changeset/cloud-eval-github-subcommand.md b/.changeset/cloud-eval-github-subcommand.md
 deleted file mode 100644
-index 22b85c066..000000000
---- a/.changeset/local-harness-pack-signing-key.md
+index 13344e82c..000000000
+--- a/.changeset/cloud-eval-github-subcommand.md
 +++ /dev/null
-@@ -1,8 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Trust the local-harness runtime pack release key. `PACK_SIGNING_KEYS` shipped
--empty, which refused every network-sourced pack — the correct default before a
--key existed, and a hard blocker on publishing packs at all. The public half of
--the Ed25519 release key is now committed; the private half lives only in CI.
-diff --git a/.changeset/local-inspector-reaches-private-networks.md b/.changeset/local-inspector-reaches-private-networks.md
-deleted file mode 100644
-index e67c9434a..000000000
---- a/.changeset/local-inspector-reaches-private-networks.md
-+++ /dev/null
-@@ -1,46 +0,0 @@
+@@ -1,26 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
 -"@mcpjam/cli": minor
 -"@mcpjam/inspector": patch
 ----
 -
--The local inspector reaches OAuth servers on your own network
+-`cloud eval github` — GitHub checks, under the name of what they are
 -
--Testing a fully local OAuth setup failed with `OAuth proxy target resolves to
--a private/reserved IP address (127.0.0.1)` whenever the authorization server
--had a hostname of its own — `auth.local`, or anything else answering
--loopback. The address guard could not tell a developer's laptop from our
--hosted infrastructure, so it applied the policy written for the second to
--both, and the official MCP Inspector, which has no guard at all, worked where
--we did not.
+-**`mcpjam cloud eval checks list|connect` manages GitHub check repositories**,
+-and sat as a sibling to `checks` meaning a case's grading rules under the same
+-`eval` noun — the suite's checks, the app's Checks section,
+-`create_eval_case`'s `checks`. One word covering two resources. The app already
+-calls its own section "GitHub checks", which is the disambiguated form.
 -
--**What changed.** The guard now distinguishes two questions instead of
--answering one. "Is this private?" still governs the hosted app, which fetches
--from our nodes where a private address means our own network. "Is this ever
--dialable?" governs the local inspector and the CLI, and refuses only what is
--never a real OAuth endpoint: link-local and every cloud metadata service,
--including the two that hide inside ranges corporate networks legitimately use
--(Alibaba's inside CGNAT, AWS's inside the unique-local range), plus the
--unspecified address, multicast and reserved space.
+-Additive on every surface. Nothing is removed:
 -
--So `npx @mcpjam/inspector` and `mcpjam oauth …` now reach loopback, LAN,
--CGNAT and unique-local targets, and hostnames that resolve to them, with no
--flag to set. The hosted app is unchanged. The CLI's three OAuth proxy
--commands, which hardcoded the hosted policy and could not be talked out of
--it, gain `--https-only` for reproducing what the hosted app would do.
--
--**For SDK consumers.** `allowPrivateNetwork` (and `allowPrivateMetadataFetch`
--on the state-machine surfaces) is additive and defaults to false, so existing
--callers keep today's behaviour without changing a line, and `httpsOnly` still
--overrides it. The one visible difference for an unchanged caller is wording:
--a link-local or metadata destination now says so, instead of being reported
--as "private/reserved".
--
--**What is still refused locally.** The allowance belongs to the chain, and
--the chain's character is decided by where its first hop actually landed
--rather than by how the hostname looked — a name that looks public and answers
--`127.0.0.1` is the case this exists to serve, so a name-based test would
--refuse the thing it permits. A public server that answers `302 Location:
--http://192.168.1.1/…` therefore cannot make your inspector fetch it. DNS is
--still resolved once and pinned into the socket, so rebinding is closed, and
--cross-origin redirects still drop credentials.
-diff --git a/.changeset/modern-cancellation-aborts-the-stream.md b/.changeset/modern-cancellation-aborts-the-stream.md
+-- `mcpjam cloud eval github list|connect` is canonical; `cloud eval checks
+-  list|connect` stays registered as a deprecated alias, because it is a command
+-  customers have in their scripts.
+-- `list_eval_github_repos` / `connect_eval_github_repo` are the canonical
+-  operations. `list_eval_check_repos` / `connect_eval_check_repo` stay in
+-  `ALL_OPERATIONS` — so an agent already calling one keeps its tool — and each
+-  new operation spreads its old sibling, so the two names share one
+-  implementation and cannot diverge.
+-- The MCP README table, the CLI reference and the agent prompt notes name the
+-  canonical spelling; the deprecated rows say what they are aliases of.
+diff --git a/.changeset/eval-description-experiment-api.md b/.changeset/eval-description-experiment-api.md
 deleted file mode 100644
-index 6ded1ba2f..000000000
---- a/.changeset/modern-cancellation-aborts-the-stream.md
+index 349f4b848..000000000
+--- a/.changeset/eval-description-experiment-api.md
 +++ /dev/null
-@@ -1,43 +0,0 @@
+@@ -1,8 +0,0 @@
 ----
--"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+-"@mcpjam/cli": patch
 ----
 -
--Modern-era cancellation aborts the per-request stream instead of POSTing `notifications/cancelled`
+-Agents and the CLI can propose, start, and read a two-arm description experiment
 -
--MCP `2026-07-28` moved cancellation onto the transport for Streamable HTTP:
--
--> Closing the SSE response stream is the cancellation signal. The server MUST treat a client disconnect as cancellation of that request. No `notifications/cancelled` message is required or expected.
--
--The client package already forks on exactly this. Its protocol layer aborts the
--per-request stream when the negotiated era is modern **and** the transport
--reports `hasPerRequestStream === true`, and only falls back to POSTing
--`notifications/cancelled` — the 2025-era and stdio signal — when it does not.
--`StreamableHTTPClientTransport` sets the flag; the fork was never reaching it.
--
--Every transport we hand to a client is wrapped first, and the wrappers forwarded
--`sessionId` and `setProtocolVersion` but not `hasPerRequestStream`. The flag read
--`undefined`, so the fork took the legacy branch on *every* connection. This was
--not limited to debug configurations: `wrapTransportForTaskResults` is applied
--unconditionally at every HTTP transport site, so a plain 2026-07-28 connection
--with no logger and no simulated-client options was already downgraded.
--
--Both halves of the resulting behavior were wrong. We sent a `notifications/cancelled`
--a modern server neither requires nor expects, and — because that notification is
--its own POST while the cancelled call is a *different* in-flight request — the
--server holding the tool call never learned anything. It kept running the tool
--until it finished, on a stateless transport where the abandoned response stream
--was the only signal that would have reached it.
--
--All five wrappers now forward the flag: the four in `transport-utils`
--(`LoggingTransport`, `DroppedListChangedTransport`, `TaskResultTransport`,
--`FirstPageOnlyTransport`) and the widget runtime's `LoggingTransport`. It is
--forwarded, never defaulted — a wrapper around a stdio transport must keep
--reporting no per-request stream, because there the notification IS the spec
--signal.
--
--The suite already had a test asserting no `notifications/cancelled` on a modern
--abort, and it passed throughout. The legacy branch POSTs fire-and-forget, so
--asserting the instant the call rejects reads `exchanges` before the notification
--lands. The test now waits for that window to settle and additionally asserts the
--positive half — that the aborted `tools/call` exchange actually terminates, which
--a client that only rejects locally never does.
-diff --git a/.changeset/pass-criteria-enter-commits-once.md b/.changeset/pass-criteria-enter-commits-once.md
+-**A rewrite had a contract and no way to launch it.** `POST /projects/:p/eval-runs/:r/description-experiments`, `POST /projects/:p/eval-description-experiments/:e/start`, and `GET /projects/:p/eval-description-experiments/:e` land the inspector half: propose a rewrite, launch original + rewrite as one grouped intent, and read the document (502 if a present report fails the published schema). The emulated runner applies `{ experimentId }` only — never caller-supplied description text — and stamps `metadata.descriptionExperiment.applied` as a nested object. CLI (`cloud eval description-experiment`) and MCP catalog pick up the three operations.
+diff --git a/.changeset/eval-description-experiment-contract.md b/.changeset/eval-description-experiment-contract.md
 deleted file mode 100644
-index 3fc882bbd..000000000
---- a/.changeset/pass-criteria-enter-commits-once.md
+index e84f632d3..000000000
+--- a/.changeset/eval-description-experiment-contract.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Eval description-rewrite experiments get a report-only contract and a converter seam
+-
+-**A description change had no document.** Rewriting a tool's description is the lever the run view wants to pull, but nothing assembled two replayed arms into one comparison a dashboard, an MCP tool, or a later backend materializer could read the same way. `@mcpjam/sdk/contract` now ships `descriptionExperimentReportSchema` and `buildDescriptionExperimentReport`: Newcombe interval in points, rewrite-arm eligibility that requires the override was applied, regression as `noDeterministicRegressions` over other cases, and a Controlled vs Reproducible label.
+-
+-**Description only, at the converter.** `applyToolDescriptionOverrides` and `MCPClientManager.getToolsForAiSdk({ toolDescriptionOverrides })` rewrite `description` and leave name, schema, and `_meta` byte-identical. `HostRunner` applies the same map after visibility drop and re-applies it through `withOptions`. The platform client can propose, start, and read an experiment; HTTP routes land next.
+diff --git a/.changeset/eval-launch-client-selector.md b/.changeset/eval-launch-client-selector.md
+deleted file mode 100644
+index feb01a2fa..000000000
+--- a/.changeset/eval-launch-client-selector.md
++++ /dev/null
+@@ -1,38 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+----
+-
+-`client` selects an eval target, everywhere `host` did
+-
+-**One object, two names, from a rename that stopped half way.** `Client` is the
+-product noun — the v1 API registers `/clients` canonically with `/hosts` as a
+-deprecated alias, and `list_clients` already ships. The eval LAUNCH surfaces
+-kept `host`, so an agent reads `client` on every CRUD call and then has to type
+-`host` to run the thing it just made.
+-
+-Both spellings are now accepted and folded to one field:
+-
+-- `run_eval_suite` takes `client` / `clients` beside `host` / `hosts`
+-- `run_eval_case` takes `client` beside `host`
+-- `update_eval_suite` takes `clients: [{ client, servers }]` beside `hosts`
+-- `compose` takes `compose.client` beside `compose.host`
+-- the CLI takes `--client` and `--compose-client` on `cloud eval run`,
+-  `cases run`, `update` and `create`
+-
+-Passing both spellings of one selector is a **usage error**, not a precedence
+-rule — the call `mcpjam cloud clients` already makes for its own pair, and the
+-one `--repetitions` / `--iterations` makes. A precedence rule is invisible: a
+-half-migrated script naming two different clients would keep running, and pay
+-for whichever one won.
+-
+-`--host` also disambiguates. It means a host-compat **catalog** id under
+-`mcpjam tools|resources|prompts|probe|compat` and a **saved project row** under
+-`cloud eval`, and neither was deprecated. The catalog sense keeps `--host`;
+-under `cloud eval` `--client` is canonical, and passing a catalog id
+-(`--host claude`) to a client selector now gets an error that says which
+-`--host` you reached for and names `--client`.
+-
+-`hostStyle`, `/host-catalog` and `clientCapabilities`/`clientInfo` inside a
+-config are NOT renamed: the last two are the MCP protocol's client, whose name
+-is the spec's.
+diff --git a/.changeset/eval-my-server-first-run.md b/.changeset/eval-my-server-first-run.md
+deleted file mode 100644
+index d4d9859ae..000000000
+--- a/.changeset/eval-my-server-first-run.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Evaluate (New) empty state now starts a first-run preview from a connected server: review generated suites, confirm clients and iterations, then run. Suites and findings are frontend fixtures until generation is wired.
+diff --git a/.changeset/eval-run-route-facts-api.md b/.changeset/eval-run-route-facts-api.md
+deleted file mode 100644
+index e498833f2..000000000
+--- a/.changeset/eval-run-route-facts-api.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+-"@mcpjam/cli": patch
+----
+-
+-Agents and the CLI can read a run's tool routes from the persisted row
+-
+-**The page already computed routes locally; a foreign-project 404 and the MCP tool need the same document the materializer writes.** `GET /projects/:p/eval-runs/:r/route-facts` serves the materialized `EvalRunRouteFacts` document. The platform client, MCP operation, and `cloud eval route-facts --run` all read that row. A 404 after the run itself was retrieved is unmeasured, never reconstructed in the SDK client. The evaluate run page prefers the persisted document and falls back to the existing client producer when the row is absent.
+diff --git a/.changeset/eval-run-route-facts.md b/.changeset/eval-run-route-facts.md
+deleted file mode 100644
+index 9f165ad58..000000000
+--- a/.changeset/eval-run-route-facts.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Eval runs report tool routes and name-level mismatches, without deciding a verdict
+-
+-**A run page that could only say pass/fail.** Selection failures have no dominant shape — some trials call nothing, some a subset, some an out-of-catalog tool, a few a one-to-one swap — and the matcher already knew that. Nothing assembled it into a document a dashboard, an MCP tool, or a later experiment could read the same way. `@mcpjam/sdk/contract` now ships `evalRunRouteFactsSchema` and `buildEvalRunRouteFacts`: per-case routes with an opportunity denominator, substitution only for the one-to-one in-catalog shape, negative tests in the routes and out of the mismatch block.
+-
+-**Report-only, trial-population, no defaults.** Every rate is an `EvalRateMeasurement` so `0/0` cannot render as a number. Counting rules live in the charter: included means completed and graded, names only, `endedWithQuestion` stays `notMeasured` until a producer exists. The golden fixture is the conformance target the backend materializer must match byte for byte.
+diff --git a/.changeset/eval-runs-connect-as-run-host.md b/.changeset/eval-runs-connect-as-run-host.md
+deleted file mode 100644
+index 5ceccef80..000000000
+--- a/.changeset/eval-runs-connect-as-run-host.md
++++ /dev/null
+@@ -1,42 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Eval runs now connect as the host they execute under
+-
+-An eval run's MCP connection took its `initialize` pins from whichever client
+-was ACTIVE in the browser at launch — protocol version, client identity,
+-advertised capabilities, pagination traversal and the other conformance knobs
+-all rode the request body, and the body was built from the playground's current
+-selection. Tool visibility, meanwhile, already resolved server-side from the
+-run's own host. So a suite fanned out across environments could take its tool
+-visibility from one client and its protocol version from another, and switching
+-the playground client changed how an unrelated suite connected.
+-
+-Every eval launch path now resolves the host the run executes under and
+-connects as that host: `/api/web/evals/run`, `/run-test-case`,
+-`/stream-test-case`, and the v1 `POST /projects/{id}/eval-runs` and
+-`/eval-run-groups` routes. The v1 paths sent no pins at all before, so a suite
+-pinned to a protocol version or to first-page-only pagination ran as a default
+-client that matched nothing its settings page claimed.
+-
+-The host is authoritative: its pins REPLACE the body's rather than merging with
+-them, because every field the browser sends is derived from the active client —
+-a per-key merge would leave the drift wherever the run's host happened to be
+-silent. The conformance knobs keep their existing overlay semantics (they are
+-suppression switches, so a host that wants the full behavior removes a body pin
+-rather than not setting one). A request that names no host is unchanged.
+-
+-Also: the run's host request timeout and its per-server timeout overrides now
+-apply where they previously did not, and the v1 launch reads its
+-enterprise-managed authorization policy from the run's host instead of never
+-enforcing one.
+-
+-`buildPinnedConnectionSettings`, which the swarm launcher already used to
+-reconnect with a pinned snapshot's settings, moved to
+-`services/host-connection-pins.ts` and is now shared. Swarm behavior is
+-unchanged.
+-
+-NOTE: an environment whose client has been deleted now fails the launch with a
+-404 naming that client, instead of silently running as the default MCPJam host.
+-The run-group route already behaved this way for its harness gate.
+diff --git a/.changeset/eval-settings-connection-discovery-facts.md b/.changeset/eval-settings-connection-discovery-facts.md
+deleted file mode 100644
+index 5e532ad4e..000000000
+--- a/.changeset/eval-settings-connection-discovery-facts.md
++++ /dev/null
+@@ -1,31 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Eval suite settings: show what actually decides Connection and Discovery
+-
+-The Connection and Discovery cards on a suite's Grading tab said "Measured by
+-the runner — nothing to configure". Nothing GRADES those two stages — no
+-predicate kind files there — but a great deal configures them, and all of it
+-lives on the client and server rows rather than the suite. Somebody debugging a
+-failed connection was told to look nowhere.
+-
+-Both cards now list the effective configuration for every run target the suite
+-fans out to: which client and server, over what transport, with which auth,
+-header names, protocol version and request timeout; and for discovery, tool
+-visibility, progressive discovery, pagination traversal and which servers get
+-their `tools/list` taken. Values are READ-ONLY here — they are shared with
+-every other suite pointing at the same client or server — so each line links to
+-the Hosts, Servers or Environments page that owns it.
+-
+-Where a stored value is not what an eval run uses, the card says so rather than
+-implying either one. A hosted run builds its connection from the client, so a
+-timeout or capabilities override stored on the SERVER row is shown with a note
+-saying the run uses the client's value instead. Header NAMES are listed, never
+-header values.
+-
+-Connection, Discovery and Call also stop being tinted like unconfigured
+-stages. The tint marks a gap somebody should close, and those three have no
+-grader to author at all — it grouped the stages that need nothing with the ones
+-still waiting on the reader. The tinted stages (Selection, Response, User
+-value) also lose the block of empty space under their content.
+diff --git a/.changeset/eval-settings-review-follow-ups.md b/.changeset/eval-settings-review-follow-ups.md
+deleted file mode 100644
+index 743b95cf1..000000000
+--- a/.changeset/eval-settings-review-follow-ups.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Eval settings: the review follow-ups
+-
+-**A reviewer label could land on the wrong trial.** The trial review panel kept the previous trial's label on screen while the next one loaded, and a label clicked before the first read finished counted as a fresh blind label. The panel is now scoped to the trial it shows, renders a neutral placeholder until its read lands, and never mounts on a quick-run trial that has no run to review. On a run judged with trial keys, a trial with no verdict of its own no longer borrows a sibling repetition's.
+-
+-**Backtest and "Compare with run" picked the oldest run.** Both now take the newest, and a run whose judge never stored a verdict is not offered for backtest.
+-
+-**The gate switch could not be lowered once stale.** A judge already set to gate whose calibration lapsed left the switch disabled while on. It can always be turned off; only turning it on waits for calibration.
+-
+-**The pass threshold field saved 0 when blanked, committed on Escape, and drifted on a no-edit blur.** A blank reverts, Escape reverts, and a stored 85.5% shown as 86 stays 85.5% until somebody types.
+-
+-**Revision history labels come from the settings manifest**, so a rename propagates, and an edit by someone who has left the organization reads "A former member" rather than "System".
+-
+-**A held run's rail and mini-bar are amber**, matching its badge, in the runs list and run overview. The judge's agreement line shows the chance-corrected figure when the backend reports one.
+diff --git a/.changeset/eval-spend-budget-and-cost-gates.md b/.changeset/eval-spend-budget-and-cost-gates.md
+deleted file mode 100644
+index 25d3da507..000000000
+--- a/.changeset/eval-spend-budget-and-cost-gates.md
++++ /dev/null
+@@ -1,22 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+----
+-
+-Eval spend: an organization budget, cost as a result, and cost gates.
+-
+-`PlatformApiClient` gains `getSpendBudget`, `setSpendBudget` and
+-`clearSpendBudget`, backed by the new `PlatformSpendBudget` type. A budget is
+-opt-in: with no cap set, spending is unchanged and uncapped.
+-
+-Cost now travels with a run. `PlatformEvalIteration.usage` is a typed object
+-rather than a bare record (it keeps an index signature, so an unknown key still
+-round-trips), `PlatformRunCompare` gains `costCoverage`, and
+-`buildRunCompareReport()` returns a `metrics` block.
+-
+-Two new gates: `GatePolicy.maximumCostUsd` and
+-`GatePolicy.maximumCostIncreasePercent`, with `maximumCostIncreasePercent`
+-added to `COMPARATIVE_GATE_FIELDS`, plus the matching `mcpjam cloud eval gate`
+-and `eval compare` flags. Cost coverage is reported honestly: a run whose cost
+-is only partly known is `non_gateable` rather than silently passing, and a
+-missing cost is `null`, never `0`.
+diff --git a/.changeset/eval-suite-api-verdict-policy-v2.md b/.changeset/eval-suite-api-verdict-policy-v2.md
+deleted file mode 100644
+index f60cea14e..000000000
+--- a/.changeset/eval-suite-api-verdict-policy-v2.md
++++ /dev/null
+@@ -1,51 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+-"@mcpjam/sdk": minor
+----
+-
+-The suite API learns the v2 verdict policy, the revision, and the schedule's state
+-
+-**A settings row nothing could drive.** The suite settings sheet is about to
+-grow controls for verdict policy v2 — repetitions, a pass threshold, and the
+-three validity ceilings — but the public PATCH accepted none of them. An agent
+-or the CLI would have been looking at a settings page with fields they had no
+-way to write, which is the exact gap the settings manifest exists to catch.
+-`PATCH /v1/projects/{p}/eval-suites/{id}` now takes `settings.repetitions`,
+-`settings.passThreshold` and `settings.validity`, in the same shapes a suite
+-file declares them.
+-
+-**Upgrading is explicit; editing merges.** On a legacy suite the two halves
+-travel together or not at all — a v2 policy with a repetition count and no
+-threshold is not a partial answer to "what is my case graded against", it is an
+-unanswerable one, and the platform refuses it — so sending one alone is a 400
+-that names the other rather than a rejected mutation. On a suite already on v2,
+-a partial edit merges over what is stored, `validity` field by field, because
+-someone raising one ceiling did not ask to clear the other two.
+-
+-**The two thresholds are alternatives, never layers.** `minimumAccuracy` is a
+-PERCENT against a legacy trial resolver; `passThreshold` is a FRACTION against
+-each case's own repetitions. Sending both is refused, sending the percent to a
+-v2 suite is refused with a message pointing at the fraction, and nothing on this
+-path divides by 100 — a silent conversion would move every bar by a factor of a
+-hundred while reporting success.
+-
+-**One PATCH was several edits in the history.** This handler applies up to four
+-mutations, and each records its own suite revision, so one request that renamed
+-a suite and re-attached its environments read back as unrelated edits a
+-millisecond apart. Every write in a request now shares one revision group.
+-
+-**A stale precondition read as a platform failure.** `expectedRevisionNumber`
+-turns a PATCH into a compare-and-set, and the platform refuses a stale one
+-having written nothing — but it spells that refusal `EVAL_SUITE_REVISION_CONFLICT`,
+-which fell through to the generic 500 fallback. A caller who supplied a correct
+-precondition was told the platform had broken. It is now a 409 `CONFLICT`
+-carrying the current revision number, because "reload and retry" is only
+-actionable if you learn what to retry against.
+-
+-**A paused schedule looked healthy.** The suite DTO reported `schedule.enabled`
+-and nothing else, and a schedule that pauses itself — on exhausted quota, on its
+-owner losing access, after repeated failures — keeps `enabled: true`. A caller
+-reading only that field reported a working automation that had not run in a
+-week. The DTO now carries `state`, `createdBy`, `nextDueAt` and
+-`consecutiveFailures`, plus the suite's `revisionNumber` and a one-word
+-`settings.policy` so nobody has to infer the policy from a field's absence.
+diff --git a/.changeset/eval-suite-client-and-server-attribution.md b/.changeset/eval-suite-client-and-server-attribution.md
+deleted file mode 100644
+index a4dabaef8..000000000
+--- a/.changeset/eval-suite-client-and-server-attribution.md
++++ /dev/null
+@@ -1,11 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+-"@mcpjam/cli": patch
+----
+-
+-An API-authored eval suite can name its client, and a server override persists as a name
+-
+-**A suite created outside the app reported no client and an opaque server id.** The create route had no host input at all, so every CLI-, MCP-, and SDK-authored suite stored an empty client list — leaving the suites list showing a dash, and `run_eval_suite`'s host selector, which only runs hosts ATTACHED to a suite, with nothing to select. `POST /eval-suites` now accepts the same `hosts` array PATCH does, resolving the names before anything is authored and attaching them after, so a bad client name is a clean refusal with no half-created suite. `create_eval_suite` takes `hosts` — the same field name `update_eval_suite` already uses — and `mcpjam cloud eval create` takes `--host`.
+-
+-The second half is the server column. A suite's environment stores names only when the caller sends `serverNames` beside `serverIds`; the run path sent ids alone, so a suite authored by a run kept displaying a Convex id where a server name belongs. `run_eval_suite` and `run_eval_case` now send the display names paired with the ids, and `computeRunTargets` carries the pair through — dropping the names when they do not line up with the ids, because mislabelling a server is worse than showing its id.
+diff --git a/.changeset/eval-suite-client-labels.md b/.changeset/eval-suite-client-labels.md
+deleted file mode 100644
+index 72bada46d..000000000
+--- a/.changeset/eval-suite-client-labels.md
++++ /dev/null
+@@ -1,16 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Suite surfaces say Client where they meant the product noun
+-
+-The Client rename reached the CRUD surfaces and stopped. Three leftovers, no
+-logic touched: the suite revision history labelled its two attachment fields
+-Host and Hosts, the create-suite dialog said a server group is what "all hosts"
+-run against, and the router comment explaining the `/clients` → `/hosts`
+-redirect claimed the tab was renamed "Client → Host" — the opposite of what
+-happened, which is the one thing a comment about a rename must not get wrong.
+-
+-`hostStyle`, `/host-catalog`, `clientCapabilities`/`clientInfo` and the secrets
+-broker's `Hosts` field (which is a list of DNS hostnames) are all different
+-concepts and are untouched.
+diff --git a/.changeset/eval-suite-revisions-for-agents.md b/.changeset/eval-suite-revisions-for-agents.md
+deleted file mode 100644
+index 4741d347e..000000000
+--- a/.changeset/eval-suite-revisions-for-agents.md
++++ /dev/null
+@@ -1,31 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": patch
+----
+-
+-Agents can read a suite's settings history
+-
+-**The history had one reader, and it was a browser.** The settings sheet's new
+-history panel reads a suite's committed edits through Convex; the SDK, the CLI
+-and MCP could not read them at all. A `GET
+-/v1/projects/{p}/eval-suites/{id}/revisions` now returns the same entries —
+-who committed each edit, which stored fields moved, the note they left, how
+-many runs were launched against it, and the revision group that ties one
+-request's writes together.
+-
+-Reachable as `list_eval_suite_revisions` from the SDK, as `mcpjam cloud eval
+-revisions` from the CLI, and from the MCP catalog and the in-product workspace
+-tools. It sits beside `update_eval_suite` on purpose: "who changed this, and
+-when" is the first question after an unexplained change in results, and a
+-revision's number is what makes the next edit a compare-and-set rather than a
+-last-write-wins.
+-
+-**No snapshots on the list.** A page of whole suite configurations is a large
+-payload for a list nobody reads that way; this answers what changed and when.
+-
+-**Project scope is checked on the suite first.** The revision list is addressed
+-by suite id alone, so without that guard a caller could read another project's
+-history by guessing an id. An out-of-range `limit` is a 400 rather than a silent
+-clamp — a caller who asked for 500 and got 100 cannot otherwise tell a capped
+-page from the end of the history.
+diff --git a/.changeset/evals-close-the-fail-open-gaps.md b/.changeset/evals-close-the-fail-open-gaps.md
+deleted file mode 100644
+index 74d3be7bb..000000000
+--- a/.changeset/evals-close-the-fail-open-gaps.md
++++ /dev/null
+@@ -1,25 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Evals: close the gaps where a gate could pass on absent evidence.
+-
+-Four changes, three of which alter identifiers you may have stored. None of
+-them changes what a rule MEANS — but a comparison against a baseline recorded
+-before this release will report the scorer as CHANGED rather than matching.
+-
+-- **Anonymous predicate scorer ids lengthen.** A predicate scorer created
+-  without an explicit id now derives its id from the full content digest
+-  instead of an 8-character prefix. Ids of the form `predicate:<type>#<8 hex>`
+-  become `predicate:<type>#<64 hex>`.
+-- **The judge template version moves from 2 to 3**, so every judge's
+-  `implementationHash` and `definitionHash` changes. The rubric now rides the
+-  system channel and `promptHash` digests both channels.
+-- **Gate rows join on `definitionHash` rather than `scorerId`.** A scorer id
+-  that resolves to more than one definition in a run is now a loud
+-  `usage_error` instead of an arbitrary pick.
+-- **`maximumTotalTokens` becomes `non_gateable` on a run with no usable
+-  iterations**, where it previously read an absent total as `0` and passed.
+-
+-If you pin baselines by scorer id or compare `definitionHash` across releases,
+-re-record them after upgrading.
+diff --git a/.changeset/evaluate-description-experiment-card.md b/.changeset/evaluate-description-experiment-card.md
+deleted file mode 100644
+index 7d11d6d2d..000000000
+--- a/.changeset/evaluate-description-experiment-card.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The evaluate run page can propose a description rewrite and read the experiment
+-
+-**A missing tool is a description problem, not only a matcher one.** Behind `description-experiments-enabled` a failing case can propose a rewrite for a catalog tool, and the run page grows a collapsed card that states the two-arm result in points — or says there are not enough trials — without feeding a verdict. Harness engines stay disabled. Flag off is no request and no DOM.
+diff --git a/.changeset/evaluate-failure-groups-card.md b/.changeset/evaluate-failure-groups-card.md
+deleted file mode 100644
+index 583ffa8f2..000000000
+--- a/.changeset/evaluate-failure-groups-card.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The evaluate run page can group judged failures into a Case → Route → Reason flow
+-
+-**A pile of failed trials is a flow, not a scatter.** Behind `evaluate-failure-groups-enabled` a completed run grows a collapsed card that asks the suite for failure groups and draws one ribbon per failed trial — or shows the flat list when clustering did not split. Flag off is no query and no DOM.
+diff --git a/.changeset/evaluate-owns-simple-case-editor.md b/.changeset/evaluate-owns-simple-case-editor.md
+deleted file mode 100644
+index 4739ee3d7..000000000
+--- a/.changeset/evaluate-owns-simple-case-editor.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The simple case editor is now owned by the Evaluate surface: it lives in `components/evaluate/simple-case/` and is switched on by an `evaluateCaseEditor` prop that only `EvaluateTab` passes, replacing the `eval-simple-case-editor` PostHog flag.
+diff --git a/.changeset/evaluate-route-facts-on-the-run-page.md b/.changeset/evaluate-route-facts-on-the-run-page.md
+deleted file mode 100644
+index 459a7a62d..000000000
+--- a/.changeset/evaluate-route-facts-on-the-run-page.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The evaluate run page can show which tool routes a case took
+-
+-**A failing case that only said pass/fail.** The matcher already knew which expected tools were missing and which extras showed up, but the redesigned run page still asked the reader to open every iteration. A case row now carries a one-line route summary and two collapsed expanders — Routes, and Expected vs observed — computed from the iterations the page already has. Substitution is named only for the one-to-one in-catalog shape. No flag of its own: this reads what the page already loaded and spends nothing, so `evaluate-enabled`, which gates the page, is the only gate it needs.
+diff --git a/.changeset/evaluate-run-page-unit-words.md b/.changeset/evaluate-run-page-unit-words.md
+deleted file mode 100644
+index ce9254aa6..000000000
+--- a/.changeset/evaluate-run-page-unit-words.md
++++ /dev/null
+@@ -1,22 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The run page counts case variants and trials, and says so
+-
+-**"6 of 6 cases" beside a Cases list showing 3 is the number contradicting the
+-page it sits on.** A 3-case suite fanned out over 2 models has 6 CASE VARIANTS,
+-and a legacy run's counts are TRIALS — the one thing a run page must never call
+-cases. The verdict hero, the case rows and the failure groups each rendered
+-`"cases"` and `"iterations"` as literals.
+-
+-`measurementUnitLabel` from `@mcpjam/sdk/contract` already owns both spellings;
+-the CLI, the HTML reporter and the decision-summary presentation all use it.
+-These four Evaluate modules now do too, so a unit word cannot drift from the
+-contract that decided it:
+-
+-- the verdict hero's case stat and its caveats
+-- the case rows' pass strip, stage titles, legacy-run note and open button
+-- the failure-group headings
+-- the case workspace's inspect strip, which said `Iter #n` in the same pane
+-  whose control is labelled Trials
+diff --git a/.changeset/evaluate-settings-real-controls.md b/.changeset/evaluate-settings-real-controls.md
+deleted file mode 100644
+index 42ed425d5..000000000
+--- a/.changeset/evaluate-settings-real-controls.md
++++ /dev/null
+@@ -1,36 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Suite settings can configure the suite again
+-
+-The Grading tab listed 21 checkboxes under "Checks by stage" and said "All
+-checks are on by default". Their ids named checks the product does not
+-implement, nothing in the server, the SDK or the backend read any of them, and
+-the field the toggles wrote is not one `applySuiteSettings` declares — so
+-saving raised a Convex argument error that took **every other setting edited in
+-the same session down with it**. That section is gone.
+-
+-In its place, the controls that were unmounted: the scorer table in
+-user-value-chain order with Gate/Warn/Report and the Add-scorer library, the
+-judge card with its model, threshold, auto-run, gating role, rubric and
+-backtest, verdict validity, the one-way v1→v2 upgrade, and the computer image.
+-Every one of them still reached the backend and still decided what a run does;
+-unmounting them did not remove the settings, only the way to see and change
+-them. A suite authored through the CLI could also block its own Save with "A
+-check is incomplete" and offer a Fix button that led to an editor no longer on
+-the page.
+-
+-A deployment without the model matrix now keeps an editor for the legacy
+-clients and server group, instead of a disabled matrix and no fallback.
+-A quality gate configured through CI shows its p95, deterministic-regression
+-and gating-error conditions read-only, rather than being invisible until the
+-baseline warning offers to clear them.
+-
+-The reason all of this shipped green is that every settings ratchet rendered a
+-_component_ and none asserted what the _page_ mounts, and a
+-`settingsPage: "hidden"` marker let twelve rows opt out of the render-parity
+-check in the same commit that removed them. There is now a mount-level test,
+-the marker is a closed three-key list pinned by its own test, and an
+-`excluded:` reason can no longer claim a backend save path this repo cannot
+-verify — which is how the false one shipped.
+diff --git a/.changeset/format-eval-json-results.md b/.changeset/format-eval-json-results.md
+deleted file mode 100644
+index be54511fb..000000000
+--- a/.changeset/format-eval-json-results.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/chat-ui": patch
+-"@mcpjam/inspector": patch
+----
+-
+-Render eval tool calls with the shared playground card, including Input, Result, and truthful recorded widget diagnostics, without duplicate result rows or live-only controls on frozen screenshots.
+diff --git a/.changeset/friction-signals-and-suspected-conditions.md b/.changeset/friction-signals-and-suspected-conditions.md
+deleted file mode 100644
+index 9849f5709..000000000
+--- a/.changeset/friction-signals-and-suspected-conditions.md
++++ /dev/null
+@@ -1,40 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+----
+-
+-Friction signals per trial, and the suspected condition behind them
+-
+-Two report-only additions to the eval contract, neither of which touches a
+-verdict, the user-value chain, `failureCategory`, or analytics.
+-
+-**Friction signals** (`@mcpjam/sdk/contract`, `friction-signals.ts`) are
+-observable patterns in one trial's tool calls: an identifier a result surfaced
+-that no later call carried, the same search repeated after it, a retry with
+-identical arguments, a retry with changed ones, a pagination continuation.
+-They are SIGNALS, not verdicts — every one has a benign reading, and the
+-labels say what was seen and stop. Identifier claims are only made where
+-availability can be PROVEN: message order for the emulated engine, wire timing
+-for a harness run whose graded call array appends wire-only calls. A trial
+-that cannot answer that question reports `identifierSignals.notMeasured` and
+-keeps its retry signals. Persisted signals carry key paths and counts, never
+-identifier values.
+-
+-Route facts gain an OPTIONAL `frictionSignals` block per case, with two
+-denominators: the three adjacency rates over trials whose document is
+-`measured`, the two identifier rates over the smaller set that also measured
+-its identifier half. The block is omitted entirely when no trial supplied a
+-document, so a run whose producer predates the measurement is byte-unchanged.
+-
+-**The suspected condition** is an advisory per-trial verdict from a backend
+-judge, rendered here: which server-controlled condition is SUSPECTED of
+-contributing, plus one remediation naming a server lever. "Suspected" is
+-load-bearing — only a controlled rewrite could establish cause — and the copy
+-never says "caused". `unclear` renders as "could not attribute" with no next
+-step; an unverified verdict renders as "not available"; a trial the judge
+-never reached renders nothing.
+-
+-`EvalIteration` gains `frictionSignals`, `frictionSignalsUnverified`,
+-`suspectedConditionVerdict` and `suspectedConditionUnverified`, all optional
+-and all absent for every iteration that predates the measurement. An absent
+-block means UNMEASURED and must never be rendered as zero.
+diff --git a/.changeset/hide-judge-scores-until-label.md b/.changeset/hide-judge-scores-until-label.md
+deleted file mode 100644
+index cfeca6730..000000000
+--- a/.changeset/hide-judge-scores-until-label.md
 +++ /dev/null
 @@ -1,10 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Pressing Enter in the accuracy field reports one edit, not two
+-Hide judge scores on a trial until the reviewer labels it
 -
--Enter leaves the field by blurring it, and blurring is what commits — so
--committing before the blur as well filed the same edit twice. The test that
--covered Enter only checked the value it reported, which is why the duplicate
--went unnoticed; it now pins the call count too.
-diff --git a/.changeset/retire-client-verdict-rederivation.md b/.changeset/retire-client-verdict-rederivation.md
+-The Scores list on the same page as the calibration panel printed the
+-judge's number, threshold, and reason — so a "blind" label was not blind.
+-Those rows are now a placeholder until the trial is labelled or the
+-reviewer reveals the verdict. Labels saved here remain legacy evidence.
+diff --git a/.changeset/host-safe-area-insets.md b/.changeset/host-safe-area-insets.md
 deleted file mode 100644
-index ed37123af..000000000
---- a/.changeset/retire-client-verdict-rederivation.md
+index aba578796..000000000
+--- a/.changeset/host-safe-area-insets.md
 +++ /dev/null
-@@ -1,31 +0,0 @@
+@@ -1,14 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Host configs can declare `safeAreaInsets` support.
+-
+-`McpAppsCapabilities` and `mcpAppsCapabilitiesSchema` gain the optional field,
+-the nine bundled `MCP_APPS_*` capability presets declare it, and the host-config
+-canonicalizer accepts the key so it survives hashing.
+-
+-Stored host-config hashes are unaffected: the previous canonicalizer THREW on
+-this key, so no stored configuration can contain one. Six bundled host templates
+-that now set it are content-addressed afresh. An SDK at 8.6.0 or earlier still
+-rejects a host config carrying the field, so upgrade readers before writers.
+diff --git a/.changeset/hosted-catalog-model-ids-parse.md b/.changeset/hosted-catalog-model-ids-parse.md
+deleted file mode 100644
+index 064f6789f..000000000
+--- a/.changeset/hosted-catalog-model-ids-parse.md
++++ /dev/null
+@@ -1,26 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-`parseLLMString` accepts every MCPJam-hosted catalog id
+-
+-**A model id copied out of MCPJam threw at `new HostRunner(...)`.** The hosted
+-catalog `list_models` and the model picker hand out is majority canonical
+-OpenRouter-style ids whose first segment is a VENDOR — `qwen/qwen3-max`,
+-`z-ai/glm-4.6`, `moonshotai/kimi-k2`. `parseLLMString` read that segment as an
+-MCPJam provider key and threw `Unknown LLM provider` for anything outside its
+-ten built-ins, so the documented copy-an-id workflow failed at construction for
+-most of the catalog.
+-
+-Three widening changes, all in `src/model-factory.ts`:
+-
+-- The picker's `HOSTED_PROVIDER_ALIASES` table is now honoured here too, so
+-  `x-ai/grok-4-fast` resolves to the `xai` provider. Registered custom
+-  providers are still matched first, so an alias can never shadow one.
+-- A vendor path whose leading segment is not a provider resolves to
+-  `openrouter` with the whole id as the model, which is how MCPJam serves it.
+-- The remaining bare-id error names the supported providers and says that a
+-  catalog id already carries its vendor.
+-
+-Nothing that parsed before parses differently. A test walks the committed
+-hosted-catalog snapshot and asserts every id in it parses.
+diff --git a/.changeset/hosted-mcp-egress-guard.md b/.changeset/hosted-mcp-egress-guard.md
+deleted file mode 100644
+index 11b807549..000000000
+--- a/.changeset/hosted-mcp-egress-guard.md
++++ /dev/null
+@@ -1,49 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Stop re-grading eval iterations in the browser.
+-Put every hosted MCP connection behind the DNS-pinning egress guard.
 -
--The run-detail view used to re-run the tool-call matcher over an iteration's
--`actualToolCalls` and compute its own pass/fail — a second grader, in a second
--implementation, over evidence the server had already graded. It only deferred
--to the stored verdict when `resultSource` was exactly `"reported"`; a `derived`
--row was re-derived client-side every time.
+-`MCPClientManager` falls back to `globalThis.fetch` when neither the manager
+-options nor the server config carries a `baseFetch`. Six hosted construction
+-sites each decided that independently and five decided nothing, including
+-`createAuthorizedManager` — the factory behind every `/api/web/*` MCP
+-operation. So a caller could store a server URL, ask the hosted backend to
+-connect, and have it dial with no address classification and follow redirects
+-with nothing checking where they landed. `/servers/validate` had no egress
+-check of any kind, and `/servers/doctor` judged only the URL it started from.
 -
--A stored terminal `result` is now the only source for a row that has one.
+-All six now pass `hostedMcpBaseFetch()` — one place that decides what a hosted
+-MCP connection dials, built on the same pinned transport the conformance and
+-readiness lanes have used since the seam existed: resolve once, refuse the
+-disallowed answers, pin the surviving address into the socket, re-run on every
+-redirect hop. The doctor's probe moves onto it too, retiring the last
+-double-resolve caller in the tree.
 -
--This matters more than it used to. Under the versioned score contract at
--grading mode `enforce`, an iteration's verdict comes from its gating score rows
--— predicates, gates, tool errors, the whole set — and the browser can see none
--of that. It sees the tool calls. Re-deriving from them is not a check on the
--server; it is a different answer to the same question, reached with less
--information, and the two silently disagreeing is exactly the failure this
--removes.
+-Two things beside the wiring. A hosted doctor failure that never received an
+-HTTP response now reports one uniform message instead of the socket's own text,
+-so `ECONNREFUSED` on a closed port and a TLS record error on an open one are no
+-longer distinguishable — that differential was the port scanner, not the
+-response bodies. And `/servers/doctor` and `/servers/validate` carry a
+-per-credential ceiling with a per-address backstop on both `/api/web` and their
+-`/v1` twins; the only limiter on those routes returned early for anyone who was
+-not a guest.
 -
--The matcher itself is untouched and still runs where there is nothing stored to
--defer to: legacy rows that never persisted a result (falling back to "failed"
--would silently re-grade years of history), and the live-grading preview, whose
--synthetic per-turn rows were never persisted at all. What retires is the
--unverified re-derivation of an iteration that has already been graded — not the
--matcher, and not the evaluation.
+-Local and desktop behaviour is unchanged. The guard, the redaction and the
+-limiter are all no-ops outside hosted mode, because `routes/web/**` is mounted
+-on the desktop app too and reaching `http://localhost:3000/mcp` there is the
+-product.
 -
--This one is not behind a flag. Restoring the old behaviour means reverting this
--change.
-diff --git a/.changeset/suite-settings-draft-and-commit.md b/.changeset/suite-settings-draft-and-commit.md
+-Also: `ENVIRONMENT=production` now resolves to the `prod` environment. It was
+-being discarded by the allowlist and the answer was coming from the `NODE_ENV`
+-fallback — correct by accident, logged as "ENVIRONMENT not set", and it left
+-`ENV NODE_ENV=production` in the Dockerfile deciding which platform MCP worker
+-production dials.
+-
+-A deployed hosted process now refuses to START when its own first-party MCP
+-URLs (the platform worker, plus the docs/spec overrides) resolve to an address
+-the egress guard will not dial — one named error at boot instead of a
+-connection refused mid-turn, every turn. Scoped to DEPLOYED processes, which
+-the built image marks with `NODE_ENV=production`: `HOSTED_MODE` alone also
+-covers `npm run dev:hosted`, whose `ENVIRONMENT=dev` points the platform worker
+-at `http://localhost:8787/mcp` on purpose, and that must keep starting.
+diff --git a/.changeset/inconclusive-is-not-a-failure.md b/.changeset/inconclusive-is-not-a-failure.md
 deleted file mode 100644
-index 11699729e..000000000
---- a/.changeset/suite-settings-draft-and-commit.md
+index de064a8fc..000000000
+--- a/.changeset/inconclusive-is-not-a-failure.md
++++ /dev/null
+@@ -1,16 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-An inconclusive run no longer reads as "Suite Failed"
+-
+-`PassCriteriaBadge` had no `inconclusive` branch, so a run the platform
+-declined to decide fell through `passed === false` and rendered a red
+-"Suite Failed" — on the run header, the run insight rail, and the commit
+-detail view. That is a defect claim about a customer's server that the run
+-never observed, and collapsing `inconclusive` into `failed` is the one thing
+-the verdict policy exists to prevent.
+-
+-It now renders amber "Inconclusive" (compact) / "Suite Inconclusive"
+-(detailed), with an aria-label that says the same thing, and without quoting
+-a pass-criteria threshold that was never applied to the run.
+diff --git a/.changeset/inline-tests-stop-dropping-fields.md b/.changeset/inline-tests-stop-dropping-fields.md
+deleted file mode 100644
+index 932fd2f03..000000000
+--- a/.changeset/inline-tests-stop-dropping-fields.md
++++ /dev/null
+@@ -1,27 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Inline eval tests no longer drop the public case fields — including `isNegative`
+-
+-Both inline-test items on the v1 eval surface (`POST /eval-suites` `tests[]`
+-and `POST /eval-runs` `tests[]`) were bare `z.object`s inside strict parents,
+-and a bare object strips unknown keys silently. The keys they did not name are
+-exactly the public case-authoring names the API returns on a read
+-(`isNegative`, `iterations`, `checks`), so a caller who wrote down what a GET
+-gave back got a 201 with all of it dropped.
+-
+-`isNegative` is the one that hurts. It is what makes a case pass when a tool is
+-NOT called, so dropping it stored the case with the OPPOSITE meaning — a 201
+-for a suite that asserts the reverse of what was sent.
+-
+-Both items are `.strict()` now, and they accept the public names as aliases:
+-`isNegative` → `isNegativeTest`, `iterations` → `runs`, `checks` →
+-`predicates`. Legacy spellings keep working; sending both spellings of one
+-field is a 400 rather than a silent precedence rule. `repetitions`,
+-`passThreshold` and `kind` have no home on this path at all, so they are
+-rejected with a message naming the case route that does persist them.
+-
+-`docs/reference/openapi.json` said `additionalProperties: true` on both items —
+-"extras pass through", the opposite of what the code did. It now says
+-`additionalProperties: false` and documents every field these items accept.
+diff --git a/.changeset/judge-cards.md b/.changeset/judge-cards.md
+deleted file mode 100644
+index e03298ef5..000000000
+--- a/.changeset/judge-cards.md
++++ /dev/null
+@@ -1,14 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": patch
+----
+-
+-Show goal-completion and groundedness as shared suite judge cards
+-
+-C1 now advertises a reserved groundedness slot. Settings keeps one card
+-layout for both judges: goal completion still authors model, threshold,
+-rubric, agreement, and the gate, and offers Warn only when that capability
+-is present. Groundedness shows stored run evidence or an honest not-yet-run
+-state, with no configuration controls. PATCH accepts goal-completion
+-severity, preserves a stored groundedness slot, and refuses a groundedness
+-write while execution is unwired.
+diff --git a/.changeset/judge-gate-inspector-half.md b/.changeset/judge-gate-inspector-half.md
+deleted file mode 100644
+index 927cf9b9b..000000000
+--- a/.changeset/judge-gate-inspector-half.md
++++ /dev/null
+@@ -1,50 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+-"@mcpjam/sdk": patch
+-"@mcpjam/cli": patch
+----
+-
+-A gating judge can hold a run, and every surface knows what holding looks like
+-
+-**The judge's role was hard-coded advisory in the projection.** A suite could
+-earn the gate and the backend could hold its run, and this repo would still
+-write a score row the gate arithmetic never reads — structurally powerless, with
+-nothing to notice it. The role now travels on `metadata.judgeVerdict.role`,
+-stamped by the backend from the run's frozen config snapshot rather than from
+-the suite's settings as they stand today, so a run decides by the rules it
+-started under. The read is closed and fails closed: only the literal `"gating"`
+-gates, and absent, `"advisory"`, a future spelling or the wrong case are all
+-advisory, because the default here decides whether a judge may fail somebody's
+-build. `implementationHash` does not move — same judge, same template, same
+-arithmetic — and the advisory `definitionHash` stays byte-identical, which is
+-what keeps every hosted iteration ever recorded joined to its stored definition.
+-
+-**A held run is not a finished run, and `grading` is the word for it.** A run
+-whose gating judge has not answered yet is neither running nor done: its
+-execution is over, its verdict is not. The run status vocabulary gains exactly
+-one member. It is deliberately absent from every terminal set — a caller that
+-polls for terminality keeps waiting, which is the correct behavior — so the
+-places that had conflated "past execution" with "terminal" now ask
+-`isRunPastExecution`, and the ones that mean "finished" are unchanged.
+-
+-**Every surface that reports a run had to learn the word, or lie.** A status it
+-does not know renders as a fallback, and the fallbacks were wrong in different
+-ways on each surface: the runs list showed a held run as still running, the CLI
+-gave up at its wait deadline and exited non-zero, the GitHub check went red, and
+-Slack posted an outcome for a run that had none. So: the run badges gain a
+-`grading` state that reads as held rather than passed or failed; `mcpjam cloud
+-eval run` and `eval gate` extend their own wait by the backend's 30-minute hold
+-when the caller did not pin `--wait-timeout` (an explicit budget is still
+-honoured exactly); the GitHub check worker waits out the hold while it still
+-holds its lease, and stops waiting the moment it does not; and the Slack watcher
+-extends its own deadline through the hold instead of posting an outcome for a
+-run that has none (it posts nothing until the verdict lands).
+-
+-**Nothing about the exit-code contract changed.** A run that finishes grading
+-exits on its real result, and a run still grading when an explicit deadline
+-expires still times out. `sdk/src/gates.ts`, `runReachedAVerdict`,
+-`effectiveRunResult` and `toRunDto` are untouched.
+-
+-Requires the backend change that stamps the resolved role and lets the finalizer
+-own a held run's judge disagreement. Until that deploys, every judge is advisory
+-and nothing here does anything.
+diff --git a/.changeset/judge-rubric-backtest-calibration.md b/.changeset/judge-rubric-backtest-calibration.md
+deleted file mode 100644
+index 0dc80db37..000000000
+--- a/.changeset/judge-rubric-backtest-calibration.md
++++ /dev/null
+@@ -1,54 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+-"@mcpjam/sdk": minor
+----
+-
+-The judge gets a structured rubric, a backtest before you save it, and reviewer calibration
+-
+-**The last link of the chain was measured by a judge nobody could instruct.**
+-`userValue` — "was the user's actual request satisfied" — was graded by a judge
+-whose only knobs were a model and a threshold, so two suites in different
+-domains asked the same question and got scores that were never comparable. The
+-Judge criteria row lets a suite say what it wants graded, as prose with stable
+-ids the judge cites in its reasons. Ids are validated for shape and uniqueness
+-before the save, because a duplicate makes `rubricHits` collapse into an
+-arbitrary winner, and because one batched save means a rubric the platform
+-refuses takes the settings beside it down with it. An id is minted from the
+-first label and then left alone: an id that followed its label would retire the
+-suite's calibration on every typo fix.
+-
+-**Nobody could tell what a rubric edit would do until it was live.** A rubric
+-that flips half a suite's verdicts and one that flips none look identical in a
+-form. The review dialog now offers a backtest against the newest judged run and
+-reports how many verdicts would change, per case. It persists nothing and it
+-spends credits, so it is behind an explicit button and never fires on mount or
+-on save; a billing refusal renders as a notice rather than taking the dialog
+-down, and a run that was never judged, or judged by an older template, says it
+-is not comparable instead of inventing a comparison.
+-
+-**A judge that can fail a build is a judge somebody has to trust.** The gate
+-switch now shows the evidence for that trust: how many blind reviewer labels
+-agree with the judge on its current rubric and template version. Every number
+-comes from the server — at zero reviews it says "No reviewer labels yet", never
+-"0%", because 0/0 is no evidence rather than total disagreement. The switch is
+-never hidden: a deployment that cannot gate renders it disabled saying so,
+-which is a different sentence from a suite that is not calibrated, and only the
+-second one names something a reader can do about it. An organization owner can
+-acknowledge past calibration with a reason, stored under their name.
+-
+-**A reviewer can now label a trial, blind.** The label control renders before
+-the judge's verdict, which is hidden behind a Reveal button, and a label chosen
+-after revealing is submitted as not-blind and says it will not count — a label
+-chosen while looking at the judge's answer measures anchoring, not judgement.
+-A label never changes a run's result, an iteration's result, or any score row;
+-a test pins that the gating/advisory split renders identically either way.
+-
+-**A repeated case's verdict was attributed to the wrong trial.** The judge
+-verdict shown on a trial was joined by `caseKey`, which names the case rather
+-than the trial — so under verdict policy v2, where every case runs several
+-times, the panel showed whichever verdict happened to be first in the array. It
+-now joins on the trial's own iteration id, then on its grading key, and falls
+-back to `caseKey` only for runs judged before either existed.
+-
+-Gating stays refused on every deployment until the wiring step and its operator
+-switch.
+diff --git a/.changeset/mcp-widget-reads-the-verdict.md b/.changeset/mcp-widget-reads-the-verdict.md
+deleted file mode 100644
+index cd535cd54..000000000
+--- a/.changeset/mcp-widget-reads-the-verdict.md
++++ /dev/null
+@@ -1,18 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-`PlatformEvalRunSummary` carries the run's `result`
+-
+-The API has been returning a verdict on every latest-run summary
+-(`GET /v1/eval-suites` → `latestRun.result`); the SDK type did not declare it,
+-so every consumer of that summary was left re-deriving a verdict from
+-`passed`/`failed`. No derivation over counts can produce `inconclusive`, so
+-that re-derivation turned "the platform could not measure this run" into a
+-pass or a failure it explicitly declined to declare.
+-
+-Additive and optional — absent on API deployments that predate the field.
+-
+-This also fixes the MCP eval widget (`@mcpjam/mcp`, unpublished), where an
+-inconclusive run rendered as a green "Completed" dot behind
+-`list_eval_suites`, `list_eval_suite_runs` and `get_eval_run`.
+diff --git a/.changeset/one-word-for-a-grading-rule.md b/.changeset/one-word-for-a-grading-rule.md
+deleted file mode 100644
+index 447a1f7e8..000000000
+--- a/.changeset/one-word-for-a-grading-rule.md
++++ /dev/null
+@@ -1,35 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+----
+-
+-A grading rule is a `check`, on every surface that accepts one
+-
+-**One `Predicate[]` travelled under three names a customer types.** The suite
+-file called it `assertions`, `create_eval_suite`'s inline cases called it
+-`predicates`, and the API, the UI and `create_eval_case` called it `checks` — so
+-an agent authored a suite in one word and then edited one of its own cases in
+-another. `check` is the survivor: it is already the API field name, the UI
+-section's word by explicit decision, and this SDK's own `CheckPolicy` /
+-`checkRole` / `checkSeverity` prefix.
+-
+-Additive everywhere. Old names keep working, and both spellings of one field is
+-a validation error rather than a silent merge:
+-
+-- suite file: `cases[].checks`, with `assertions` deprecated and still loading
+-- `create_eval_suite`: `cases[].checks`, folded onto the wire's `predicates`
+-- `POST /eval-runs` and `POST /eval-suites`: `tests[].checks`
+-
+-`predicates` was an accepted public request field that OpenAPI never documented
+-— it passed only because those items allow unknown properties. It is now
+-written down and marked deprecated rather than left as a third silent spelling,
+-alongside `checks` and `matchOptions`.
+-
+-**`steps[].assertion` is deliberately NOT renamed.** Its type is
+-`WidgetAssertion | Predicate`, genuinely broader than a check: a `Predicate` is
+-evaluated against a persisted transcript and can be re-derived months later, a
+-`WidgetAssertion` against a live DOM and never replayed. The spec now says so
+-instead.
+-
+-`decision-labels.ts`, the canonical label file, said "check" in one string and
+-"assertion" in two. It says check in all three.
+diff --git a/.changeset/pass-criteria-is-a-bounded-percent.md b/.changeset/pass-criteria-is-a-bounded-percent.md
+deleted file mode 100644
+index f4e3ab316..000000000
+--- a/.changeset/pass-criteria-is-a-bounded-percent.md
++++ /dev/null
+@@ -1,28 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+-"@mcpjam/sdk": patch
+----
+-
+-`passCriteria.minimumPassRate` is a bounded percent, and a v2 suite stops reporting a dead one
+-
+-`passCriteria: { minimumPassRate: z.number() }` had no bounds at four write
+-sites, and `github-checks-worker.ts` compares it as a percent
+-(`Math.round(passed / total * 100) >= minimumPassRate`). So
+-`minimumPassRate: 0.8` — the natural thing to send for a developer who wrote
+-`passThreshold: 0.8` as a fraction two fields earlier — was accepted, meant
+-0.8%, and produced a CI gate that could never fail. `8000` was accepted too,
+-and could never pass.
+-
+-All four sites now bound it to [0, 100], and a fraction-looking value below 1
+-is rejected with a message naming both units rather than silently
+-reinterpreted — reinterpreting would move the bar on every policy already
+-stored. `minimumPassRatePercent` is accepted as the canonical spelling,
+-following the SDK's own `*Percent` convention; `minimumPassRate` remains as
+-the deprecated alias and is still what gets stored.
+-
+-Separately: upgrading a suite to verdict policy 2 adds `verdictPolicyDefaults`
+-and cannot clear the legacy `defaultPassCriteria` column, so a v2 suite carried
+-a dead percent beside its live fraction and the API reported both.
+-`settings.minimumAccuracy` is now `null` on a v2 suite, and
+-`mcpjam cloud eval export` reads the v2 `passThreshold` directly instead of
+-converting the dead percent into a suite file.
+diff --git a/.changeset/pass-or-fail-by-chain-stage.md b/.changeset/pass-or-fail-by-chain-stage.md
+deleted file mode 100644
+index 04159476d..000000000
+--- a/.changeset/pass-or-fail-by-chain-stage.md
++++ /dev/null
+@@ -1,41 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Pass or fail is organized by the stage each grader measures
+-
+-**The settings page described its storage, not its measurement.** Tool calls,
+-Default checks, Minimum accuracy and LLM as Judge sat as four unrelated rows in
+-the order the fields happen to be stored. A person could read the page top to
+-bottom and still not answer the question they came with: which parts of my
+-server does this suite actually check? Those graders now sit under the six
+-links of the user-value chain — connection, discovery, selection, tool call,
+-response, user value — each group naming the question it answers and listing
+-what will grade it. The controls are the same controls, wired to the same
+-draft; only where a reader finds them changed.
+-
+-**An unmeasured stage now says which kind of nothing it is.** Connection,
+-discovery and the tool call have no authorable grader on this page — the runner
+-measures them on every trial — so "no grader" there would read as a gap
+-somebody should close. Those three say "Measured by the runner"; selection,
+-response and user value say "No grader". Neither borrows `notMeasured`, which
+-is a run-state word for a stage nobody observed, and settings has observed
+-nothing at all.
+-
+-**The tool-call matcher was filed under one stage while measuring two.** Order
+-and extra calls are about which tool the model reached for; argument matching is
+-about whether the call it made was usable. They now appear under Selection and
+-Tool call respectively, with the one editor saying where its third field lands.
+-
+-**Verdict policy v2 had no controls at all.** A v2 suite showed the legacy
+-percent, which decides none of its runs. The Policy row now renders whichever
+-policy the suite is actually on — never both, because a page showing a percent
+-beside a fraction asks a reader to work out which one counts — and a v2 suite
+-gains a Validity row for the three ceilings that separate "inconclusive" from
+-"failed". Thresholds are stored and sent as fractions throughout; typing 80
+-drafts 0.8, and the percent exists only in front of the reader.
+-
+-**Budgets read as two unrelated checks.** A token ceiling and a turn ceiling
+-both file at user value analytically, but sitting beside "did the answer contain
+-the right thing" made none of the three legible. They have their own row now,
+-still authored in the one Checks editor with everything else.
+diff --git a/.changeset/per-run-hosted-browsers.md b/.changeset/per-run-hosted-browsers.md
+deleted file mode 100644
+index a34458c2b..000000000
+--- a/.changeset/per-run-hosted-browsers.md
++++ /dev/null
+@@ -1,15 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Host configs can carry a `browserToolPolicy` for per-run hosted browsers.
+-
+-Adds the field to the host-config types and teaches the canonicalizer to
+-normalize it, so an unattended eval or swarm run can be granted browser tools
+-scoped to that run. The policy never widens on its own: an allowlist with empty
+-lists normalizes to `undefined` rather than to "allow everything".
+-
+-Additive for hashing — a host config that omits the field canonicalizes and
+-hashes exactly as before. The backend re-runs this canonicalizer to verify the
+-host-config hash it is sent, so deploy a backend built against this SDK version
+-before any surface writes the new field.
+diff --git a/.changeset/production-checks-advisory-wire.md b/.changeset/production-checks-advisory-wire.md
+deleted file mode 100644
+index 5574c1a42..000000000
+--- a/.changeset/production-checks-advisory-wire.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Pin the synthetic-monitor completion payload to the shape the backend accepts. The advisory-failure test asserted a `role` field that `criterionResultValidator` — a closed Convex object — refuses, so a rubric carrying a Warn criterion would have 500'd on every completion and re-entered the lease/retry loop. The test now proves the wire contract instead of a field that could never travel.
+diff --git a/.changeset/provider-429-describer.md b/.changeset/provider-429-describer.md
+deleted file mode 100644
+index da3b14cad..000000000
+--- a/.changeset/provider-429-describer.md
++++ /dev/null
+@@ -1,15 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-A provider rate limit is described as one, and a server's is not mistaken for it.
+-
+-An HTTP 429 now resolves to `provider/quota` instead of falling through to a
+-generic failure, so a rate-limited run explains itself rather than reporting
+-"No output generated".
+-
+-Because the same status arrives in the same shape from an LLM provider and from
+-the MCP server under test, `describeError` gains an optional
+-`context.surface`. A caller that passes `"mcpServer"` gets the new
+-`server/rate_limited` slug, attributed to the server rather than to the user's
+-provider settings. Callers that pass nothing are unchanged.
+diff --git a/.changeset/quality-gate-api.md b/.changeset/quality-gate-api.md
+deleted file mode 100644
+index 095e86ed8..000000000
+--- a/.changeset/quality-gate-api.md
++++ /dev/null
+@@ -1,14 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+-"@mcpjam/inspector": minor
+----
+-
+-Expose the stored suite quality gate on PATCH and GET
+-
+-**A stored policy had no public writer or reader.** `settings.qualityGate` now
+-rounds through the protected apply-settings core (reason + revision
+-required), and `GET …/eval-runs/:runId/gate` plus `get_eval_run_gate`
+-return the backend's `SuiteGateReportV1`. The CLI composes that unwaived
+-suite section after the existing flag waiver; `--no-suite-policy` skips
+-only the new call. A missing route is not proof the suite has no policy.
+diff --git a/.changeset/quality-gate-grading-vocabulary.md b/.changeset/quality-gate-grading-vocabulary.md
+deleted file mode 100644
+index 900879633..000000000
+--- a/.changeset/quality-gate-grading-vocabulary.md
 +++ /dev/null
 @@ -1,24 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Eval suite settings are a draft you save, not a form that saves as you read it
+-The Grading tab now says Quality gate, Scorers, and Judges
 -
--Every control in the settings sheet used to write the moment you touched it. A dropdown, a toggle, a text field: each fired its own mutation and its own toast. Three things followed, and all three were reported rather than predicted.
+-**"Pass policy" was not a term anyone recognizes.** The suite settings Grading
+-tab called the verdict block Policy, the authored predicates Checks, and the
+-grouping Pass or fail. Operators already talk about `mcpjam cloud eval gate`
+-and gate waivers; the page now uses that vocabulary. The rail is Quality gate /
+-Scorers / Judges. The case-threshold hint is the exported
+-`QUALITY_GATE_THRESHOLD_HINT`, so later quality-gate rows cannot drift from it.
 -
--- **There was no way to not save.** No Cancel, because there was nothing uncommitted to cancel. Opening the sheet to check a setting meant risking changing it, and the only way to find out whether you had was to close it and look again.
--- **There was no unit of change.** Adjusting four related settings produced four writes and four toasts, none of which was the change you made. Anyone reading the suite later saw four unrelated events.
--- **Two people editing one suite silently overwrote each other.** Each write succeeded, last one won, and neither person was told.
+-**The rail still listed every user-value stage, including three with nothing
+-to configure.** Connection, discovery, and tool call said "nothing to
+-configure" while the real editors sat under Checks. Those stage jump links are
+-gone. The `[data-stage-group]` anchors stay so the scorer table can still
+-group rows under the chain. Stages the runner observes now say so in those
+-words, never "not measured".
 -
--The sheet now holds a draft. Edits accumulate, a bar appears with a count, and Review and save shows what will change — before and after, per setting — with an optional note that lands on the suite's revision so the next reader gets a reason instead of a diff to interpret. ⌘S opens the review rather than saving, because in a sheet with a review step the honest response to "commit what I did" is to show you what that is.
--
--- **One write, carrying only what changed.** A save that resent every field would clobber a colleague's edit to a row you never opened. The clearing semantics each control had are preserved exactly — the backend distinguishes an omitted field from a cleared one, and getting that wrong means a setting you cleared is still there on reload.
--- **A concurrent save is refused, and your draft survives.** The save carries the revision you loaded. If someone saved first, the sheet keeps your edits, marks the settings you both changed, and asks you to look — rather than discarding your work, which is the outcome the check exists to prevent.
--- **Renaming moved into the sheet.** It was an inline header edit that committed on blur, so a stray click saved a half-typed name to a suite other people watch.
--- **Leaving with unsaved changes now asks.** In-app navigation and closing the tab are separately handled, because either alone leaves a whole class of exits silent.
--
--The debounced default-checks committer is gone, along with the pass-criteria localStorage mirror. Both were machinery for saving on every keystroke — a debounce that had to serialize its own writes so an out-of-order response could not persist stale text, and a local mirror so a value the server had not accepted yet survived a reload. Neither has anything to do now.
--
--Environments, the schedule and client attachments still save immediately and say so in their hint. Each has cross-field validation a batched save would have to re-implement, and re-implementing a validation is how the two copies come to disagree.
--
--On a deployment whose backend predates the composite save, the sheet detects the missing function once and falls back to the previous mutation. Everything still batches into one write; only the revision history is absent.
-diff --git a/.changeset/suite-settings-draft-follow-ups.md b/.changeset/suite-settings-draft-follow-ups.md
+-**Dead collapsed-row helpers were still shipping next to the tabbed page.**
+-`SuiteGradingChain` and `SettingSummaryCell` had no mounts. The summary module
+-keeps the sentences the draft and GitHub Checks row still speak and drops the
+-rest, including `describeGradingDefaults`.
+diff --git a/.changeset/quality-gate-inspector.md b/.changeset/quality-gate-inspector.md
 deleted file mode 100644
-index 105a294e7..000000000
---- a/.changeset/suite-settings-draft-follow-ups.md
+index a3d6b8aba..000000000
+--- a/.changeset/quality-gate-inspector.md
 +++ /dev/null
-@@ -1,47 +0,0 @@
+@@ -1,13 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": patch
+----
+-
+-Add Quality gate rows and a reachable review/save reason
+-
+-The Grading tab could describe a verdict policy but not the stored suite
+-quality gate B2 now writes. Baseline, allowed drop, deterministic
+-regressions, p95 growth, and the independent gating-scorer-error switch
+-draft through the existing commit bar. A quality-gate change asks for a
+-reason in the review dialog without locking Review and save. Older
+-backends keep an unsaved policy instead of claiming it saved.
+diff --git a/.changeset/quick-run-chain.md b/.changeset/quick-run-chain.md
+deleted file mode 100644
+index 1be0bdd97..000000000
+--- a/.changeset/quick-run-chain.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": minor
+----
+-
+-Quick-run trials now show the same per-trial chain as suite runs. The stage projection lives in the SDK so the client and server share one whitelist.
+diff --git a/.changeset/releases-2026-09-09.md b/.changeset/releases-2026-09-09.md
+deleted file mode 100644
+index 754daed2a..000000000
+--- a/.changeset/releases-2026-09-09.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+-"@mcpjam/cli": patch
+-"@mcpjam/sdk": patch
+----
+-
+-Release @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+-
+-Cuts a version for the work that landed since the last release without a changeset of its own:
+-
+-- **Agent Browser** — durable sessions with saved profiles, a Tools-shaped three-panel WebMCP Inspector, first-class page tools, recordings and motion, viewport fidelity, and an observation that names what the model can actually click.
+-- **User Testing** — a Findings tab that leads the run, a study that analyzes itself instead of asking to be asked, first-land consent with a two-step create, and a blocked run that names the allowance that ran out instead of "Unknown error".
+-- **Evaluate** — a redesigned run and suite surface, scoped authoring with client matrices, one case workspace with an explicit negative-test flag, an org spend budget, and GitHub checks that work for environment suites.
+-- **GitHub Checks** — one way to connect an account, per-repository approved-fork credential controls, fork checkout and eval execution that stay credential-free, controls offered only to an org admin, and pickers that require installation identity.
+-- **Sign-in and sessions** — fixes for the cached project sign-in race, team checkout handoff routing, sign-out landing on the login page, the Electron logout wait, and false "unavailable" project routes.
+-- **Tool approval** — one mechanism and one setting, `web_search` following that same switch, and a resumed tool call answered only after it is re-introduced.
+-- **Clients** — Claude Desktop as its own client, Claude Code and Codex in Compare, disambiguated saved client names, and a verification date that reads as a verdict.
+diff --git a/.changeset/run-provenance-launcher.md b/.changeset/run-provenance-launcher.md
+deleted file mode 100644
+index 442c27e71..000000000
+--- a/.changeset/run-provenance-launcher.md
++++ /dev/null
+@@ -1,42 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+-"@mcpjam/inspector": patch
+----
+-
+-Declare a run's launcher and CI job, and name a suite file's own writes
+-
+-`PlatformApiClient` takes two new options, `launcher` and `ci`, and emits them
+-as `x-mcpjam-launcher` / `x-mcpjam-ci` on eval-run launches only. The platform
+-stamps `source` itself and everything over the public API is `api`, so a CLI
+-run, a GitHub Actions job and an MCP agent were one indistinguishable badge;
+-these say which, as a declared label beside the stamp rather than inside it.
+-Headers rather than body fields because both launch bodies reject unknown
+-properties, so a body field would 400 against every older deployment.
+-
+-They are set on the CLIENT, not per call: the host process knows what it is,
+-and putting it on a run's arguments would expose it as a settable field of the
+-MCP `run_eval_suite` tool.
+-
+-`detectConformanceCiMetadata` is now `detectCiMetadata` (the old name is an
+-alias — nothing to change), and `detectLauncherKind(env, fallback)` mirrors its
+-`GITHUB_ACTIONS` test so a conformance upload and an eval run from the same job
+-never disagree about where they came from.
+-
+-The suite write operations (`update_eval_suite`, `set_eval_suite_environments`,
+-`create_eval_cases`, `update_eval_case`, `delete_eval_case`) accept an optional
+-`declaredSuiteId`. A suite whose configuration lives in a repository is now
+-read-only on the platform; naming the suite's own declared id is how the file's
+-own sync is allowed through. Omit it for ordinary edits.
+-
+-`PlatformEvalRun` gains `launcher` and `attribution`, and
+-`PlatformEvalSuiteDetail` gains `managedBy: "ci" | "app"` — the answer an API
+-caller previously could not get until a write came back 409.
+-
+-The CLI is released WITH the SDK, deliberately. It declares `cli` (or
+-`github_action` inside Actions) and names its declared suite id on every
+-`--file` sync. `@mcpjam/cli` depends on `@mcpjam/sdk` at `^8.6.0`, so a minor
+-bump stays inside that range and would NOT schedule a CLI release on its own —
+-and a user left on the old CLI after the lock deploys gets a 409 on every
+-file-owned case write, because the old CLI names no declared id. The two ship
+-together or the feature is a regression for exactly the people it is for.
+diff --git a/.changeset/schedule-reads-as-an-automation.md b/.changeset/schedule-reads-as-an-automation.md
+deleted file mode 100644
+index 577d401ca..000000000
+--- a/.changeset/schedule-reads-as-an-automation.md
++++ /dev/null
+@@ -1,28 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--A settings draft belongs to one suite, and its concurrency check now runs
+-The schedule row reads as an automation with a state, an owner, and a history
 -
--Five follow-ups from review of the draft-and-commit sheet. The first two are
--the ones that mattered.
+-**"Scheduled runs on" hid the three things that go wrong with a schedule.** It
+-runs as a person, and pauses itself when that person loses access to the suite
+-— nothing on the page said whose access was being spent, so nobody knew a
+-colleague leaving would stop their monitoring. It pauses itself for two other
+-reasons too, and keeps `enabled: true` when it does, so a reader who saw the
+-switch in the on position had no way to learn the suite had not run in a week.
+-And it has a history the settings row could not show at all.
 -
--**Unsaved edits followed you to another suite.** The draft lived in a
--component that is not remounted between suites, and the effect that used to
--reset it per suite went away with the per-control writers. Rebasing keeps
--every key the person edited — that is the whole point of it — so opening
--suite A, typing a name, confirming "leave without saving" and clicking suite
--B left A's name proposed as an unsaved change on B, and saving wrote it
--there. A draft now carries the suite it belongs to, and a rebase across
--identities starts a new one instead of reconciling.
+-The row now leads with the state — Active, or Paused with the reason the editor
+-already had — names the person it runs as, says when the next run is due, and
+-shows the last five scheduled runs as result dots. An inconclusive, cancelled or
+-timed-out run is neutral, never red: those are runs the suite could not measure
+-well enough to decide, and painting one as a failure blames the server for the
+-grader.
 -
--**Confirming the prompt now actually discards.** The guard only paused the
--navigation; nothing threw the draft away, so the edits survived, every later
--navigation re-prompted, and ⌘S opened the review dialog from pages that have
--no settings sheet.
+-**A schedule stranded by its owner's departure can be taken over.** Pause and
+-Resume are one click; "Take over" appears only for a lost-authorization pause,
+-because that is the only state the backend will re-mint a delegation from.
 -
--**A conflict marker survived only until the next unrelated change.**
--Conflicts were recomputed from the new base each time, so a colleague
--renaming the suite cleared the warning about the threshold you had both
--changed, and the next save overwrote theirs silently. A conflict is now
--resolved by the person, by editing the key or discarding.
--
--**Renaming had two writers.** The header's inline editor still committed on
--blur — no review, no note, no precondition — while the sheet drafted the
--same field. Using it marked the sheet as "changed elsewhere" for the
--person's own action, and the next save overwrote the rename. The header
--title is read-only in the sheet; the overview keeps its own editor.
--
--**The accuracy input kept showing a discarded number.** It held its own text
--state and never followed the prop, so Discard reverted the draft while the
--field still displayed the old value — a settings control saying one thing
--while a different thing gets saved.
--
--Also: pass criteria is omitted rather than sent as `null` (the mutation's
--validator has no null member, so a clear would have failed the whole batched
--save), an absent judge config reads as "Not configured" rather than "Off"
--(absent resolves to an enabled advisory judge), and on a deployment without
--the composite mutation the fallback drops fields that backend does not
--declare and names them in the toast, rather than failing every save in the
--draft.
-diff --git a/.changeset/suite-settings-draft-review-fixes.md b/.changeset/suite-settings-draft-review-fixes.md
+-**The editor is unchanged and still saves immediately**, now behind Manage. The
+-old row's copy claimed it ran "render checks and prompt tests"; it runs the
+-whole suite, which is what the new copy says.
+diff --git a/.changeset/scheduled-evals-client-flag.md b/.changeset/scheduled-evals-client-flag.md
 deleted file mode 100644
-index 46a114879..000000000
---- a/.changeset/suite-settings-draft-review-fixes.md
+index 4bd8a7cc5..000000000
+--- a/.changeset/scheduled-evals-client-flag.md
 +++ /dev/null
-@@ -1,31 +0,0 @@
+@@ -1,7 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--A save reports what it actually wrote, and typing survives an edit landing elsewhere
+-Schedule gets its own feature flag, so it can stay dark while it is tested
 -
--Three follow-ups from review of the draft-and-commit settings sheet. The
--first two lose an edit.
--
--**A field the save could not carry was marked saved anyway.** On a
--deployment that predates the composite mutation, the fallback drops settings
--the older mutation does not declare — a judge rubric today — and its toast
--says so. But the commit still reported a clean save, so the draft rebased
--every dirty key, including the one that never travelled. The rubric stopped
--being an unsaved change and there was nothing left to retry. The commit now
--names the keys it dropped and the draft keeps them dirty, which is what the
--toast was already promising.
--
--**An in-flight save landed on the suite you switched to.** Rebasing a live
--suite already ignores a result that belongs to a different suite; the
--matching commit path did not check, so a mutation started on suite A and
--resolved after the person opened suite B wrote A's values into B's draft.
--Both paths now carry the suite the save was started for.
--
--**The accuracy field was pulled out from under someone typing.** Following
--the prop is what stops the input from displaying a number the draft no
--longer holds, but the guard could not tell a live edit from a settled one,
--so a colleague's save or a discard elsewhere replaced half-typed text.
--Typing now wins until it is committed or abandoned — and Escape genuinely
--abandons it, where before the blur it triggered committed the value it was
--meant to throw away.
-diff --git a/.changeset/tool-cancellation-host-knob.md b/.changeset/tool-cancellation-host-knob.md
+-**It was sharing `synthetic-monitors` with the monitor scorer kinds, so hiding one meant hiding the other.** The Triggers tab's "Scheduled runs" row and the Monitoring rail item a scheduled suite earns now answer to `scheduled-evals-enabled`, which starts off for everyone. `synthetic-monitors` keeps gating the scorer kinds, their menus, and the widget-probe half of the Monitoring rail — the two halves ship on different clocks. With Schedule hidden the Triggers tab shows GitHub Checks alone and drops its right rail, since a one-entry subsection nav renders nothing.
+diff --git a/.changeset/scheduled-evals-write-switch.md b/.changeset/scheduled-evals-write-switch.md
 deleted file mode 100644
-index fbd2ae707..000000000
---- a/.changeset/tool-cancellation-host-knob.md
+index 13b211264..000000000
+--- a/.changeset/scheduled-evals-write-switch.md
 +++ /dev/null
-@@ -1,90 +0,0 @@
+@@ -1,9 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Enabling a suite schedule needs a deployment switch, on every agent-facing writer
+-
+-**Hiding the row stopped the screen, not the API: the schedule PATCH was reachable by any key holder.** `MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED` (default off) gates `PATCH /v1/projects/:p/eval-suites/:id/schedule` when the body enables a schedule — answering 404, so a deployment with the feature off does not advertise it. One guard covers the SDK client, the `set_eval_suite_schedule` MCP tool, `mcpjam cloud eval schedule` and proposal execution, since all four self-dispatch through `/api/v1`. The same op is withheld from the agent's tool set and its approved-action execute path while the switch is off.
+-
+-Disabling a schedule stays ungated **on the route**: a gate that strands a schedule already firing, with no way to switch it off, is the worse failure. The agent surface is stricter — the policy set gates by operation name and cannot read an argument, so while the switch is off the agent loses disable as well as enable. A person can still disable one through the API or the CLI.
+diff --git a/.changeset/scorecard-left-rail.md b/.changeset/scorecard-left-rail.md
+deleted file mode 100644
+index fa39fa7af..000000000
+--- a/.changeset/scorecard-left-rail.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Scorer rows gain a left rail: a step's real number where one exists, an icon and a "when it runs" tooltip where it doesn't, provenance moved to the left edge, and Warn in amber.
+diff --git a/.changeset/scorer-rollup-contract.md b/.changeset/scorer-rollup-contract.md
+deleted file mode 100644
+index 2e6ff5090..000000000
+--- a/.changeset/scorer-rollup-contract.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add the per-run scorer-rollup comparability contract
+-
+-**A trend is a claim that two runs measured the same scorer over the
+-same population.** That claim needs a canonical identity before the
+-backend materializer exists, so later mirrors cannot invent a digest
+-over an undocumented subset. `@mcpjam/sdk/contract` now exports
+-`EvalScorerRollupV1`, `scorerRollupParityBlockers`, and
+-`scorerRollupsComparable`. Entries are keyed by `(scorerId, definitionHash)`
+-and carry explicit `countable` denominators — there is no `measured`
+-field. Rates stay fractions in [0, 1] or `null`; `null` means
+-unmeasured, never `0`. A truncated or provisionally materialized
+-document is not comparable. An environment id is never substituted for
+-frozen host, model, or server facts.
+diff --git a/.changeset/scorer-table.md b/.changeset/scorer-table.md
+deleted file mode 100644
+index 3c156601d..000000000
+--- a/.changeset/scorer-table.md
++++ /dev/null
+@@ -1,15 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Scorers settings is a chain-ordered table with Gate/Warn/Report roles
+-
+-The Grading tab listed matchers, checks, and the judge as three unrelated
+-blocks, so a reader could finish the page and still not know which links of
+-the request-delivery path the suite actually grades. Those same fields now
+-sit in one table in user-value-chain order. A check can be a gate, a warn,
+-or a report — the same policy the runner already honours — without inventing
+-a parallel `scorerRoles` setting. Last-run and trend columns stay out: this
+-page is configuration, and those numbers would be a later slice that needs
+-run data this sheet does not have. On a deployment that has not shipped
+-check-policy capabilities, Role stays the read-only Gate chip it is today.
+diff --git a/.changeset/sdk-forwards-expected-revision.md b/.changeset/sdk-forwards-expected-revision.md
+deleted file mode 100644
+index 701325cfa..000000000
+--- a/.changeset/sdk-forwards-expected-revision.md
++++ /dev/null
+@@ -1,15 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/cli": patch
+----
+-
+-`update_eval_suite` forwards `expectedRevisionNumber`
+-
+-**The compare-and-set was accepted and then dropped.** `update_eval_suite`
+-took an `expectedRevisionNumber`, and the SDK, the CLI and MCP all documented it
+-as the way to refuse an edit against a suite that had moved on. The PATCH body
+-was built from a fixed list of settings keys that did not include it, so the
+-number never left the process and every edit was last-write-wins — with no
+-error to say so. The body now carries `expectedRevisionNumber` whenever it is
+-given, so a stale revision is refused with a 409 having written nothing, as the
+-description always said.
+diff --git a/.changeset/settings-rows-say-why.md b/.changeset/settings-rows-say-why.md
+deleted file mode 100644
+index 315ca8df9..000000000
+--- a/.changeset/settings-rows-say-why.md
++++ /dev/null
+@@ -1,35 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Settings you cannot use now say why instead of vanishing
+-
+-**Three different problems looked identical: an empty space.** The suite
+-settings sheet gated Computer environment on a PostHog flag, the Schedule on
+-another, and GitHub Checks on a backend availability read — and every refusal
+-produced the same result, a row that simply was not on the page. A missing
+-permission, a feature the organization does not have, and a flag service that
+-could not be reached need three different next steps, and a person told to
+-configure a setting they cannot find has no way to tell which one they are
+-looking at.
+-
+-Those rows now render disabled with the reason underneath, read from the
+-backend's per-suite capabilities: "Not enabled for this organization", "Not
+-available for this account", "Not available on this deployment", "You don't
+-have permission to change this". A flag service that could not answer says
+-"Could not check availability right now", deliberately not the same sentence as
+-a flag that said no — collapsing the two is how a temporary outage teaches
+-somebody their organization lacks a feature it has.
+-
+-**The GitHub Checks row used to disappear when its own read failed.** That read
+-refuses rather than answers for a caller the backend will not confirm an
+-organization to, and the error boundary around it rendered nothing. It now
+-renders the row, disabled, saying it could not be loaded — and still reports
+-the caught error, because silence was always the UI choice and never the
+-telemetry one.
+-
+-**Nothing gets worse on an older backend.** The capabilities query fails soft:
+-a deployment that predates it, or a suite this person cannot see, produces
+-`unavailable`, and every row falls back to exactly the gate it had before.
+-Capabilities make the page more honest; they never make it less usable than the
+-page that had none.
+diff --git a/.changeset/shared-browser-viewer.md b/.changeset/shared-browser-viewer.md
+deleted file mode 100644
+index de92e1837..000000000
+--- a/.changeset/shared-browser-viewer.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Share browser viewing and input between Node WebMCP inspection and Playground. Local inspection now follows pane size at DPR 1 and JPEG quality 75, matching Playground; this reduces raster work but trades Retina sharpness compared with the previous supersampled sharp-at-rest view. Preserve double/triple clicks, release physical keys correctly across modifier changes, capture drags beyond the pane, consume wheel input, and release held input on blur. Share viewport reporting and bounded image presentation; retry oversized captures once at lower quality.
+diff --git a/.changeset/simple-case-form.md b/.changeset/simple-case-form.md
+deleted file mode 100644
+index 08403432c..000000000
+--- a/.changeset/simple-case-form.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-Flag-gated simple case editor: three questions, capability/regression over matchOptions, and an authored rubric. Multi-turn and app cases still open the deep step list.
+diff --git a/.changeset/simple-case-kind.md b/.changeset/simple-case-kind.md
+deleted file mode 100644
+index 84e1d55bf..000000000
+--- a/.changeset/simple-case-kind.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": minor
+----
+-
+-Persist authored case kind through the suite file and save payload. Deploy the backend `testCase.kind` argument first — Convex rejects unknown args until that ships.
+diff --git a/.changeset/simple-case-model-rubric.md b/.changeset/simple-case-model-rubric.md
+deleted file mode 100644
+index 5a43b4b0d..000000000
+--- a/.changeset/simple-case-model-rubric.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The case editor now keeps an authored `expectedOutput` rubric on save instead of dropping it. The simple-case model (kind derivation, shape detection, read/write) lands behind a flag constant with no UI yet.
+diff --git a/.changeset/simple-case-new-entry.md b/.changeset/simple-case-new-entry.md
+deleted file mode 100644
+index eea923626..000000000
+--- a/.changeset/simple-case-new-entry.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Flag-gated new-case entry is Generate, Record, then Write. Record opens a run-once-then-adopt draft; the sidebar plus stays Write.
+diff --git a/.changeset/simple-case-route-rollup.md b/.changeset/simple-case-route-rollup.md
+deleted file mode 100644
+index 9745fcb1f..000000000
+--- a/.changeset/simple-case-route-rollup.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": minor
+----
+-
+-Observational route rollup across a case's latest trial batch, plus "Use this trial's route" to adopt observed tools as the expected path.
+diff --git a/.changeset/steps-tab-honesty.md b/.changeset/steps-tab-honesty.md
+deleted file mode 100644
+index ef6f03539..000000000
+--- a/.changeset/steps-tab-honesty.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The Evaluate Steps tab can now name a check the way the rest of the product names it, say why a step failed, and stop counting an advisory miss as a failure. Opt-in, so every existing Steps tab is unchanged.
+diff --git a/.changeset/suite-gate-contract.md b/.changeset/suite-gate-contract.md
+deleted file mode 100644
+index 5063d03bd..000000000
+--- a/.changeset/suite-gate-contract.md
++++ /dev/null
+@@ -1,14 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add the suite quality-gate contract
+-
+-**A stored suite policy had no canonical evaluator.** The flag gate and
+-`evaluateCompareGates` still answer one-run and statistical-regression
+-questions; they do not evaluate a per-scorer observed-rate drop or compose
+-that answer beside a waived flag report. `@mcpjam/sdk/contract` now exports
+-`SuiteGatePolicyV1`, `evaluateSuiteGateEvidence`, and
+-`composeSuiteGateWithBaseReport`. Absolute and comparative conditions are
+-independent, `previous_completed` is typed but refused on writes, and a run
+-waiver never covers the suite policy.
+diff --git a/.changeset/suite-settings-revision-history.md b/.changeset/suite-settings-revision-history.md
+deleted file mode 100644
+index cfee6dda5..000000000
+--- a/.changeset/suite-settings-revision-history.md
++++ /dev/null
+@@ -1,30 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Every saved settings change is a numbered suite revision, with a history
+-
+-**The record existed and nothing showed it.** Since the draft-and-commit sheet
+-shipped, every save has written a numbered revision carrying who made it, which
+-fields it touched, the note they left and how many runs are pinned to it. "Who
+-turned the judge off, and when?" was a question the product had already answered
+-and never displayed. The settings header now carries an "On r7 · History" pill
+-that opens a slide-over with those entries, newest first, and clicking one shows
+-the before/after of the fields that actually moved.
+-
+-**Storage keys are translated, and unknown ones are still shown.** A row that
+-read `defaultPredicates` would ask a reader to know the schema to connect it back
+-to the Checks control they edited, so the list names the settings row instead. A
+-key with no label renders raw rather than being dropped — an unnamed change is
+-still a change, and hiding it makes a revision look emptier than it was.
+-
+-**The Done button is gone.** It told a reader the settings sheet was a form to
+-fill in and submit, which it has not been since the commit bar shipped: Done
+-only navigated, and the save has lived in the bar. The breadcrumb is the way
+-back, and the corner it occupied now answers the question a reader of a shared
+-suite actually has.
+-
+-**The pill hides rather than guessing.** On a deployment that does not record
+-revisions there is no number, and "r—" is one a reader cannot tell from a suite
+-nobody has ever edited. The history query subscribes only while the panel is
+-open.
+diff --git a/.changeset/tidy-egress-diagnostics.md b/.changeset/tidy-egress-diagnostics.md
+deleted file mode 100644
+index b51590e00..000000000
+--- a/.changeset/tidy-egress-diagnostics.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Apply shared sandbox egress overrides consistently and collect bounded network diagnostics for GitHub checks.
+diff --git a/.changeset/uvc-acceptance-corpus.md b/.changeset/uvc-acceptance-corpus.md
+deleted file mode 100644
+index a45acc5c4..000000000
+--- a/.changeset/uvc-acceptance-corpus.md
++++ /dev/null
+@@ -1,11 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Add the UVC acceptance corpus
+-
+-25 manually reviewed trajectories with two labels per expectation — did the
+-detector fire correctly, and is that firing a finding a server developer should
+-see. The harness reports detector errors and misleading firings per check kind;
+-zero on both is the bar a kind must clear before it can be recommended by
+-default.
+diff --git a/.changeset/uvc-no-ending-question.md b/.changeset/uvc-no-ending-question.md
+deleted file mode 100644
+index 849e64fd9..000000000
+--- a/.changeset/uvc-no-ending-question.md
++++ /dev/null
+@@ -1,19 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+----
+-
+-Add the `noEndingQuestion` observation, and produce `endedWithQuestion` for every trial
+-
+-`noEndingQuestion` reports when the final assistant message's last non-empty
+-line ends with a question mark. It is an **observation** — a heuristic that
+-cannot tell an offer from a request for missing input — so it is Warn/Report
+-only: the schema refuses a gating one and the role control does not offer Gate.
+-
+-The same helper now writes `metadata.endedWithQuestion` on every trial, whether
+-or not the check is authored, which closes the run-level route fact that has
+-reported `notMeasured` since it shipped.
+-
+-The v1 check-writing routes now reject an unknown check `type` with a 400
+-instead of persisting one that fails closed as "unknown predicate type" on
+-every trial of every later run.
+diff --git a/.changeset/uvc-response-call-selection-checks.md b/.changeset/uvc-response-call-selection-checks.md
+deleted file mode 100644
+index 10ac8084a..000000000
+--- a/.changeset/uvc-response-call-selection-checks.md
++++ /dev/null
+@@ -1,21 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+----
+-
+-Response, Tool-call and Selection checks, over evidence the runner already had
+-
+-The transcript now carries tool results (with a measured size and a capture
+-completeness flag), per-call durations and the advertised tool inventory, so
+-twelve new check kinds can answer questions that were previously unanswerable
+-over data we were already holding: payload size, call latency, result shape,
+-argument validity against the declared schema, call ordering, and four
+-narrowly-named observations.
+-
+-A check that cannot measure now reports `status: "error"` — no value, scorer
+-unresolved, stage `notMeasured` — instead of a 0 that would attribute a defect
+-to the server for a measurement we failed to take.
+-
+-Stage analyzer 11: response- and call-filed check rows are consumed by those
+-stages instead of falling to user value, and `noToolErrors` moves to Response,
+-where it stops double-counting a tool error against two stages.
+diff --git a/.changeset/uvc-review-round-fixes.md b/.changeset/uvc-review-round-fixes.md
+deleted file mode 100644
+index 7df7aa924..000000000
+--- a/.changeset/uvc-review-round-fixes.md
++++ /dev/null
+@@ -1,29 +0,0 @@
 ----
 -"@mcpjam/sdk": patch
 -"@mcpjam/inspector": patch
 ----
 -
--Model tool cancellation per era: two Protocol-tab switches and two caniuse rows
+-Scrub credentials from check reasons, and stop clearing a tool nobody declared
 -
--A server author has no way to answer the question that decides whether a stopped
--turn costs them anything: **when the user hits stop, does the host tell me?** If
--it does not, the tool runs to completion server-side — side effects, tokens and
--all — while the host has already moved on.
+-A reason string is persisted to `testIteration.metadata.predicates` and read
+-back by the UI, the API and the agent surfaces. `redact()` walks object KEYS,
+-so it cannot see a secret sitting in the middle of a sentence — and a tool
+-error message is exactly that shape (`401: invalid api_key sk-live-abc123`).
+-Free text captured from a live run now goes through a narrow `scrubText()`
+-first, on all four interpolations that carry it: `noToolErrors`,
+-`widgetNoConsoleErrors`, `toolErrorNamesInput` and `noEndingQuestion`. It is
+-deliberately conservative — an unrecognised secret still reaches the row and
+-the length cap is what bounds it — because over-matching would eat the half of
+-the message a reader acts on.
 -
--`mcpProfile.toolCallCancellation` now answers it, as
--`{ legacy?: boolean; modern?: boolean }` — one leaf per era.
+-`noDeprecatedToolCalled` and `noDestructiveToolCalled` treated a called tool
+-that the captured inventory does not describe as clean, so a widget-initiated
+-or out-of-band call passed both safety checks silently while
+-`argumentsMatchToolSchema` reported an evidence error for the same call. Both
+-now report the error, keeping the one-sided rule: a violation already seen is
+-still proof and is not downgraded.
 -
--**Two leaves, not one boolean.** A host can be right on one era and wrong on the
--other, and the proof is this package's own history: MCPJam sent
--`notifications/cancelled` correctly on 2025 while never aborting the stream on
--2026. Through the 2026 migration that split is common, and collapsing it hides
--exactly the defect the prober exists to find. `legacy` covers every 2025 revision
--(they are identical here; `2025-11-25` differs only in routing task-augmented
--requests through `tasks/cancel`); `modern` covers `2026-07-28`.
--
--The era selects the leaf, not the transport: a 2026 stdio connection reads
--`modern` even though its mechanism is `notifications/cancelled`. What is modeled
--is whether the host cancels on that era's connections, not which message carries
--it. Users never see `legacy`/`modern` — the UI and caniuse say "Tool cancellation
--(2025)" and "(2026)".
--
--Absent per leaf is the conforming answer, so a fully cancelling client writes
--nothing and keeps its canonical hash; only an explicit `false` is stored. The
--field is validated by the same `canonicalBooleanCapabilityRecord` its sibling
--`toolListChanged` already uses, on both sides of the wire.
--
--Both leaves travel to the connection, and the leaf that governs is resolved
--AFTER the handshake from `getNegotiatedProtocolVersion()` — the same value the
--UI reports — falling back to the configured pin before the handshake lands.
--Resolving at config-build time cannot work for an unpinned (`"auto"`) host: the
--era does not exist yet, so picking one there makes the other era's toggle
--unreachable.
--
--A `false` leaf is enforced by withholding the caller's abort signal from the
--request and racing the caller against it locally instead. The signal is the only
--thing that reaches the wire, so withholding it withholds whichever mechanism that
--era would have used, while the turn still ends promptly for the user. It is
--deliberately not implemented by hiding the transport's `hasPerRequestStream`:
--that would make a modern connection fall back to POSTing
--`notifications/cancelled`, a message no conforming client sends on `2026-07-28`.
--The simulated host must be silent, not wrong.
--
--Two fixes fall out of wiring it up:
--
--- `toolCallCancellation` was missing from `CONFORMANCE_PROFILE_KEYS`, so the
--  public `HostMcp` ⇄ `mcpProfile` round-trip silently dropped it in both
--  directions.
--- `isMcpProfileEmpty` did not know the field, so turning an era off on a host
--  with nothing else configured collapsed the profile and wrote nothing at all.
--
--**Public rows appear with their data.** caniuse.dev hides any field no published
--host has been measured for, rather than showing a column of "Not yet tested" — a
--question dressed as an answer. The two eras gate independently, so a 2025-only
--measurement never publishes a 2026 row nobody has probed. No host values ship
--here, so neither row is visible yet.
--
--The saved value has to reach a connection that is already up, and it does so
--twice over:
--
--- **Per turn.** The chat routes (local and hosted) resolve the host config
--  server-side on every turn and pass its cancellation record to
--  `getToolsForAiSdk` as a per-turn override that takes precedence over the
--  connection's connect-time copy. It is authoritative whenever a host config
--  resolved: a host that cancels normally sends an *empty* record, not nothing,
--  because `undefined` would fall through to the stale connection copy and a
--  toggle switched back on would keep suppressing.
--- **On save.** The host's connected servers are reconnected so the connection's
--  own copy is refreshed too — the same reason the per-server protocol pin
--  reconnects after its save. The reconnect is deferred until the app's view of
--  the host shows the just-saved config: it builds its connection defaults from
--  the active host's profile, and right after the mutation resolves that
--  subscription still holds the previous config, so an immediate reconnect
--  applied the value the user had just replaced — one save behind, every time.
--  Narrow by construction: only when the setting actually changed, only for
--  servers already connected, never interactive, and a failed reconnect warns
--  rather than failing the save.
--
--A suppressed call also outlives the default request timeout. The protocol layer
--runs the same cancellation on a timeout as on an abort — closing the stream on a
--modern connection — so with the 60s timer left in place a host configured never
--to cancel still cancelled, a minute later, which read as the knob being flaky
--rather than off. Suppressed requests now carry a long bounded timeout instead.
-diff --git a/.changeset/tool-list-changed-reaches-hosted-connections.md b/.changeset/tool-list-changed-reaches-hosted-connections.md
+-The inventory those checks read is now narrowed to what progressive discovery
+-actually advertised, so a check can no longer read a declaration for a tool the
+-model never saw. With progressive discovery off it is the complete set, as
+-before.
+diff --git a/.changeset/uvc-server-facts-agent-surface.md b/.changeset/uvc-server-facts-agent-surface.md
 deleted file mode 100644
-index 3d02dd916..000000000
---- a/.changeset/tool-list-changed-reaches-hosted-connections.md
+index d4811b83b..000000000
+--- a/.changeset/uvc-server-facts-agent-surface.md
 +++ /dev/null
-@@ -1,79 +0,0 @@
+@@ -1,14 +0,0 @@
 ----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
 -"@mcpjam/inspector": patch
 ----
 -
--The two "Tool list changed" switches now reach the connection, hosted and local
+-`get_eval_run_server_facts` for agents and the CLI
 -
--`mcpProfile.toolListChanged` models a host that never opens the listen channel
--(`listens: false`) or that ignores `notifications/tools/list_changed` when it
--arrives (`refetches: false`) — the two ways a real client can leave a server's
--tool list stale. **Neither switch reached a connection.** Every connection
--listened and refetched no matter how the host was configured, so the debugger
--reported conforming behavior the host does not have.
+-One run's server facts through the SDK operation registry, the MCP tool
+-catalog, the inspector's built-in tools and `mcpjam cloud eval server-facts
+---run`. The prompt notes carry the reading rules the numbers need: which
+-payload basis a byte count used, that tokens are an estimate against a
+-reference window, that only a `spec_required` precheck names a violation, and
+-that related conformance and readiness runs are joined by server id alone.
+diff --git a/.changeset/uvc-server-facts.md b/.changeset/uvc-server-facts.md
+deleted file mode 100644
+index 0c5afbd53..000000000
+--- a/.changeset/uvc-server-facts.md
++++ /dev/null
+@@ -1,21 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+----
 -
--The values were computed correctly and then never handed over — at four
--separate hand-offs, all of them silent.
+-Server facts: what the run was taken against, beside the run
 -
--**Hosted.** `App.tsx` resolved both leaves into `hostedMcpProfilePins` and
--stopped there, without passing them to `useApiContext`. Even had it passed
--them, `projectServerSchema` declared neither field, so Zod would have stripped
--them off the request body; two hops further,
--`extractMcpInitializeOptions` did not read them and `toHttpConfig` had nowhere
--to put them. The sibling knobs (`firstPageOnly`, `supportsMrtr`,
--`toolCallCancellation`) travel every one of those hops; these two never did.
+-A versioned contract, a computed-on-read backend query, a v1 route and a card
+-under the run's stage strip. Connection and Discovery stop saying "observed by
+-the runner" and start saying what was observed: connect outcome and time, the
+-tool surface, its size, its annotations, and the deterministic metadata signals
+-per tool.
 -
--Hosted **chat** turns were right by accident: a turn with a backing host config
--re-derives every conformance knob server-side (`applyHostConformanceKnobs`),
--overwriting whatever the body carried. Every other hosted surface — Tools,
--Resources, Prompts, tasks, evals, bench, apps, export, MRTR continuation, and
--ad-hoc chat turns with no host config — builds its connection straight from the
--request body, and so ran as a fully conforming client.
+-Three payload sizes exist for a server and this keeps them apart: the catalog
+-as the client assembled it (measured at capture, before the snapshot
+-transform), the bytes we retained, and what the model saw — which is a host
+-fact and is not in this document. Every byte count carries its basis; every
+-token number is labelled an estimate against a reference window.
 -
--**Local.** The same pair died one hop earlier and for the same reason. The
--client put both leaves on `connectionDefaults` and `/api/mcp/connect` received
--them, but `parseConnectionDefaults` — the shape gate that must name every field
--it keeps — did not read them, and `toMCPServerConfig` had no field to set. A
--local connect was as conforming as a hosted one, whatever the host asked for.
--
--Both switches now travel the same path their siblings do on both surfaces: only
--the non-conforming value reaches the wire, the boundary declares it, the
--extractor or parser reads it, and it lands on the SDK config. An absent field
--still means the conforming behavior, so a host with no `toolListChanged`
--opinion sends nothing and behaves exactly as before.
--
--**The wire declaration is now written once.** Chasing this bug turned up two
--more instances of it, both the same shape and neither about `toolListChanged`:
--`projectServerSchema` had never declared `toolCallCancellation`, so that knob
--was stripped on every hosted surface except chat (which extracts from the
--pre-parse raw body) since the day it shipped; and `hostedBatchSchema` — the
--schema every hosted **eval** body is parsed through — declared none of the
--conformance knobs at all. Three knobs, three schemas, one failure mode: Zod
--strips what a schema does not name, and the result is not an error but a
--silently conforming session. The six fields now live in one exported
--`conformanceKnobWireShape` that both schemas spread, so a new knob reaches
--every body-built surface by being added in one place.
--
--The hosted local-runtime **stdio** divert was dropping `toolCallCancellation`
--for the same reason at a different hop: it forwarded the sibling knobs to
--`resolveLocalStdioServerConfig`, which has always accepted cancellation and
--writes it onto the child config, but the hand-off never passed it. Cancellation
--is era-scoped, not transport-scoped, so a stdio connection has to honor it too.
--
--`/api/web/evals/stream-test-case` needed one more fix of the same family. It is
--the only eval route that builds its own manager instead of going through the
--wrappers that extract the body's `mcpProfile` pins, so it accepted every pin its
--schema declares — `clientInfo`, `supportedProtocolVersions`, the per-server
--version map, and now the conformance knobs — and connected as though none had
--been sent. It extracts them now, from the pre-parse raw body for the same reason
--`xaaPolicy` there does.
--
--One thing this does **not** change: on the body-built surfaces a server-side
--host config is not re-derived over the request body. Only chat turns do that
--(`applyHostConformanceKnobs`); everywhere else the body is the source, exactly
--as it already was for the sibling knobs.
--
--One asymmetry is deliberate. `dropToolListChanged` edits an inbound JSON-RPC
--frame, so it is forwarded on stdio as well as HTTP; `suppressListenChannel`
--refuses a server→client GET stream that only Streamable HTTP has, so — like
--`mirrorToolParamHeaders` — it is not written onto a stdio config, where it
--could never act.
+-Conformance and readiness runs are linked, never graded: the join is by server
+-id alone, and each row carries its own timestamp and says so.
+diff --git a/chat-ui/package.json b/chat-ui/package.json
+index 06fca0acc..2aa46b5d3 100644
+--- a/chat-ui/package.json
++++ b/chat-ui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/chat-ui",
+-  "version": "0.3.0",
++  "version": "0.3.1",
+   "description": "Reusable, read-only transcript renderer for AI SDK chat messages (MCPJam).",
+   "license": "MIT",
+   "type": "module",
 diff --git a/cli/package.json b/cli/package.json
-index d1b3ea28f..f5f08ad10 100644
+index c0a68fc1b..0c904bd8a 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "5.5.2",
-+  "version": "5.6.0",
+-  "version": "5.6.0",
++  "version": "5.7.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
-@@ -19,7 +19,7 @@
+@@ -20,7 +20,7 @@
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^8.5.2",
-+    "@mcpjam/sdk": "^8.6.0",
+-    "@mcpjam/sdk": "^8.6.0",
++    "@mcpjam/sdk": "^8.7.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index bbdd10137..daaaf0c8c 100644
+index acb70da57..c809d2ff3 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.3.5",
-+  "version": "3.3.6",
+-  "version": "3.3.6",
++  "version": "3.4.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -137,7 +137,7 @@
+@@ -139,7 +139,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.5.2",
-+    "@mcpjam/sdk": "^8.6.0",
+-    "@mcpjam/sdk": "^8.6.0",
++    "@mcpjam/sdk": "^8.7.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
-     "@openrouter/ai-sdk-provider": "^2.0.2",
+     "@novnc/novnc": "^1.7.0",
 diff --git a/package-lock.json b/package-lock.json
-index fccd59c0f..f82bfc78d 100644
+index 6775ae1d1..d1d880568 100644
 --- a/package-lock.json
 +++ b/package-lock.json
+@@ -31,7 +31,7 @@
+     },
+     "chat-ui": {
+       "name": "@mcpjam/chat-ui",
+-      "version": "0.3.0",
++      "version": "0.3.1",
+       "license": "MIT",
+       "dependencies": {
+         "clsx": "^2.1.1",
 @@ -62,9 +62,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "5.5.2",
-+      "version": "5.6.0",
+-      "version": "5.6.0",
++      "version": "5.7.0",
        "dependencies": {
--        "@mcpjam/sdk": "^8.5.2",
-+        "@mcpjam/sdk": "^8.6.0",
+-        "@mcpjam/sdk": "^8.6.0",
++        "@mcpjam/sdk": "^8.7.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
@@ -630,8 +2073,8 @@ index fccd59c0f..f82bfc78d 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.3.5",
-+      "version": "3.3.6",
+-      "version": "3.3.6",
++      "version": "3.4.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -639,29 +2082,844 @@ index fccd59c0f..f82bfc78d 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.5.2",
-+        "@mcpjam/sdk": "^8.6.0",
+-        "@mcpjam/sdk": "^8.6.0",
++        "@mcpjam/sdk": "^8.7.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
-         "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -39236,7 +39236,7 @@
+         "@novnc/novnc": "^1.7.0",
+@@ -1033,7 +1033,7 @@
+       "version": "0.9.31",
+       "resolved": "https://registry.npmjs.org/@acemir/cssom/-/cssom-0.9.31.tgz",
+       "integrity": "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@adobe/css-tools": {
+@@ -2074,7 +2074,7 @@
+       "version": "4.1.2",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-4.1.2.tgz",
+       "integrity": "sha512-NfBUvBaYgKIuq6E/RBLY1m0IohzNHAYyaJGuTK79Z23uNwmz2jl1mPsC5ZxCCxylinKhT1Amn5oNTlx1wN8cQg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@csstools/css-calc": "^3.0.0",
+@@ -2088,7 +2088,7 @@
+       "version": "11.3.5",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
+       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": "20 || >=22"
+@@ -2098,7 +2098,7 @@
+       "version": "6.8.1",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/dom-selector/-/dom-selector-6.8.1.tgz",
+       "integrity": "sha512-MvRz1nCqW0fsy8Qz4dnLIvhOlMzqDVBabZx6lH+YywFDdjXhMY37SmpV1XFX3JzG5GWHn63j6HX6QPr3lZXHvQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@asamuzakjp/nwsapi": "^2.3.9",
+@@ -2112,7 +2112,7 @@
+       "version": "11.3.5",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
+       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": "20 || >=22"
+@@ -2122,7 +2122,7 @@
+       "version": "2.3.9",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/nwsapi/-/nwsapi-2.3.9.tgz",
+       "integrity": "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@aws-crypto/crc32": {
+@@ -3463,7 +3463,7 @@
+       "version": "6.0.2",
+       "resolved": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-6.0.2.tgz",
+       "integrity": "sha512-LMGQLS9EuADloEFkcTBR3BwV/CGHV7zyDxVRtVDTwdI2Ca4it0CCVTT9wCkxSgokjE5Ho41hEPgb8OEUwoXr6Q==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3483,7 +3483,7 @@
+       "version": "3.2.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-3.2.0.tgz",
+       "integrity": "sha512-bR9e6o2BDB12jzN/gIbjHa5wLJ4UjD1CB9pM7ehlc0ddk6EBz+yYS1EV2MF55/HUxrHcB/hehAyt5vhsA3hx7w==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3507,7 +3507,7 @@
+       "version": "4.1.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-4.1.0.tgz",
+       "integrity": "sha512-U0KhLYmy2GVj6q4T3WaAe6NPuFYCPQoE3b0dRGxejWDgcPp8TP7S5rVdM5ZrFaqu4N67X8YaPBw14dQSYx3IyQ==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3535,7 +3535,7 @@
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-4.0.0.tgz",
+       "integrity": "sha512-+B87qS7fIG3L5h3qwJ/IFbjoVoOe/bpOdh9hAjXbvx0o8ImEmUsGXN0inFOnk2ChCFgqkkGFQ+TpM5rbhkKe4w==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3558,7 +3558,7 @@
+       "version": "1.1.3",
+       "resolved": "https://registry.npmjs.org/@csstools/css-syntax-patches-for-csstree/-/css-syntax-patches-for-csstree-1.1.3.tgz",
+       "integrity": "sha512-SH60bMfrRCJF3morcdk57WklujF4Jr/EsQUzqkarfHXEFcAR1gg7fS/chAE922Sehgzc1/+Tz5H3Ypa1HiEKrg==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3583,7 +3583,7 @@
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-4.0.0.tgz",
+       "integrity": "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -5984,7 +5984,7 @@
+       "version": "1.15.0",
+       "resolved": "https://registry.npmjs.org/@exodus/bytes/-/bytes-1.15.0.tgz",
+       "integrity": "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
+@@ -7638,7 +7638,7 @@
+       "version": "0.3.11",
+       "resolved": "https://registry.npmjs.org/@jridgewell/source-map/-/source-map-0.3.11.tgz",
+       "integrity": "sha512-ZMp1V8ZFcPG5dIWnQLr3NSI1MiCU7UETdS/A0G8V/XWHvJv3ZsFqutJn1Y5RPmAPX6F3BiE397OqveU/9NCuIA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@jridgewell/gen-mapping": "^0.3.5",
+@@ -15470,6 +15470,7 @@
+       "version": "19.2.14",
+       "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
+       "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "csstype": "^3.2.2"
+@@ -15479,7 +15480,7 @@
+       "version": "19.2.3",
+       "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
+       "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "peerDependencies": {
+         "@types/react": "^19.2.0"
+@@ -18168,7 +18169,7 @@
+       "version": "1.0.3",
+       "resolved": "https://registry.npmjs.org/bidi-js/-/bidi-js-1.0.3.tgz",
+       "integrity": "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "require-from-string": "^2.0.2"
+@@ -18396,7 +18397,7 @@
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
+       "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/bundle-name": {
+@@ -19489,7 +19490,7 @@
+       "version": "3.2.1",
+       "resolved": "https://registry.npmjs.org/css-tree/-/css-tree-3.2.1.tgz",
+       "integrity": "sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "mdn-data": "2.27.1",
+@@ -19510,7 +19511,7 @@
+       "version": "5.3.7",
+       "resolved": "https://registry.npmjs.org/cssstyle/-/cssstyle-5.3.7.tgz",
+       "integrity": "sha512-7D2EPVltRrsTkhpQmksIu+LxeWAIEk6wRDMJ1qljlv+CKHJM+cJLlfhWIzNA44eAsHXSNe3+vO6DW1yCYx8SuQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@asamuzakjp/css-color": "^4.1.1",
+@@ -19526,7 +19527,7 @@
+       "version": "11.3.5",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
+       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": "20 || >=22"
+@@ -20097,7 +20098,7 @@
+       "version": "6.0.1",
+       "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-6.0.1.tgz",
+       "integrity": "sha512-euIQENZg6x8mj3fO6o9+fOW8MimUI4PpD/fZBhJfeioZVy9TUpM4UY7KjQNVZFlqwJ0UdzRDzkycB997HEq1BQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "whatwg-mimetype": "^5.0.0",
+@@ -20111,7 +20112,7 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-5.0.0.tgz",
+       "integrity": "sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=20"
+@@ -20208,7 +20209,7 @@
+       "version": "10.6.0",
+       "resolved": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
+       "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/decimal.js-light": {
+@@ -21589,6 +21590,7 @@
+       "version": "0.1.13",
+       "resolved": "https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz",
+       "integrity": "sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -21599,6 +21601,7 @@
+       "version": "0.6.3",
+       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
+       "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -24370,7 +24373,7 @@
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-6.0.0.tgz",
+       "integrity": "sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@exodus/bytes": "^1.6.0"
+@@ -24437,7 +24440,7 @@
+       "version": "7.0.2",
+       "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
+       "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "agent-base": "^7.1.0",
+@@ -24451,7 +24454,7 @@
+       "version": "7.1.4",
+       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">= 14"
+@@ -25263,7 +25266,7 @@
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
+       "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/is-promise": {
+@@ -26677,7 +26680,7 @@
+       "version": "27.4.0",
+       "resolved": "https://registry.npmjs.org/jsdom/-/jsdom-27.4.0.tgz",
+       "integrity": "sha512-mjzqwWRD9Y1J1KUi7W97Gja1bwOOM5Ug0EZ6UDK3xS7j7mndrkwozHtSblfomlzyB4NepioNt+B2sOSzczVgtQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@acemir/cssom": "^0.9.28",
+@@ -26717,7 +26720,7 @@
+       "version": "7.1.4",
+       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">= 14"
+@@ -26727,7 +26730,7 @@
+       "version": "7.0.6",
+       "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
+       "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "agent-base": "^7.1.2",
+@@ -26741,7 +26744,7 @@
+       "version": "8.20.0",
+       "resolved": "https://registry.npmjs.org/ws/-/ws-8.20.0.tgz",
+       "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=10.0.0"
+@@ -27135,7 +27138,7 @@
+       "version": "1.32.0",
+       "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
+       "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MPL-2.0",
+       "dependencies": {
+         "detect-libc": "^2.0.3"
+@@ -27168,6 +27171,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27188,6 +27192,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27208,6 +27213,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27228,6 +27234,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27248,6 +27255,7 @@
+       "cpu": [
+         "arm"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27268,6 +27276,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27288,6 +27297,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27308,6 +27318,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27328,6 +27339,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27348,6 +27360,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27368,6 +27381,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -28390,7 +28404,7 @@
+       "version": "2.27.1",
+       "resolved": "https://registry.npmjs.org/mdn-data/-/mdn-data-2.27.1.tgz",
+       "integrity": "sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "CC0-1.0"
+     },
+     "node_modules/media-typer": {
+@@ -31480,7 +31494,7 @@
+       "version": "8.0.0",
+       "resolved": "https://registry.npmjs.org/parse5/-/parse5-8.0.0.tgz",
+       "integrity": "sha512-9m4m5GSgXjL4AjumKzq1Fgfp3Z8rsvjRNbnkVwfu2ImRqE5D0LnY2QfDen18FSY9C573YU5XxSapdHZTZ2WolA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "entities": "^6.0.0"
+@@ -32311,7 +32325,7 @@
+       "version": "2.3.1",
+       "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
+       "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=6"
+@@ -33766,7 +33780,7 @@
+       "version": "7.8.2",
+       "resolved": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz",
+       "integrity": "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "dependencies": {
+         "tslib": "^2.1.0"
+@@ -33857,7 +33871,7 @@
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
+       "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "ISC",
+       "dependencies": {
+         "xmlchars": "^2.2.0"
+@@ -34530,7 +34544,7 @@
+       "version": "0.6.1",
+       "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
+       "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-3-Clause",
+       "engines": {
+         "node": ">=0.10.0"
+@@ -34549,7 +34563,7 @@
+       "version": "0.5.21",
+       "resolved": "https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz",
+       "integrity": "sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "buffer-from": "^1.0.0",
+@@ -35246,7 +35260,7 @@
+       "version": "3.2.4",
+       "resolved": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
+       "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/synckit": {
+@@ -35412,7 +35426,7 @@
+       "version": "5.46.1",
+       "resolved": "https://registry.npmjs.org/terser/-/terser-5.46.1.tgz",
+       "integrity": "sha512-vzCjQO/rgUuK9sf8VJZvjqiqiHFaZLnOiimmUuOKODxWL8mm/xua7viT7aqX7dgPY60otQjUotzFMmCB4VdmqQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-2-Clause",
+       "dependencies": {
+         "@jridgewell/source-map": "^0.3.3",
+@@ -35496,7 +35510,7 @@
+       "version": "2.20.3",
+       "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
+       "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/test-exclude": {
+@@ -35754,7 +35768,7 @@
+       "version": "7.0.28",
+       "resolved": "https://registry.npmjs.org/tldts/-/tldts-7.0.28.tgz",
+       "integrity": "sha512-+Zg3vWhRUv8B1maGSTFdev9mjoo8Etn2Ayfs4cnjlD3CsGkxXX4QyW3j2WJ0wdjYcYmy7Lx2RDsZMhgCWafKIw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "tldts-core": "^7.0.28"
+@@ -35767,7 +35781,7 @@
+       "version": "7.0.28",
+       "resolved": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.0.28.tgz",
+       "integrity": "sha512-7W5Efjhsc3chVdFhqtaU0KtK32J37Zcr9RKtID54nG+tIpcY79CQK/veYPODxtD/LJ4Lue66jvrQzIX2Z2/pUQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/tmp": {
+@@ -35871,7 +35885,7 @@
+       "version": "6.0.1",
+       "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
+       "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-3-Clause",
+       "dependencies": {
+         "tldts": "^7.0.5"
+@@ -35884,7 +35898,7 @@
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz",
+       "integrity": "sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "punycode": "^2.3.1"
+@@ -36247,7 +36261,7 @@
+       "version": "4.23.12",
+       "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.23.12.tgz",
+       "integrity": "sha512-FDf4L4sYzKtzWYhU/Xm0AQFdTjdIxNo9ElTf2mxXM6k8YMHXzYUe4yODVaXP4V9uMFbVg8c0qyBccK2OOxb45Q==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "esbuild": "~0.28.0"
+@@ -36269,6 +36283,7 @@
+       "cpu": [
+         "ppc64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36285,6 +36300,7 @@
+       "cpu": [
+         "arm"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36301,6 +36317,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36317,6 +36334,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36333,6 +36351,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36349,6 +36368,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36365,6 +36385,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36381,6 +36402,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36397,6 +36419,7 @@
+       "cpu": [
+         "arm"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36413,6 +36436,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36429,6 +36453,7 @@
+       "cpu": [
+         "ia32"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36445,6 +36470,7 @@
+       "cpu": [
+         "loong64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36461,6 +36487,7 @@
+       "cpu": [
+         "mips64el"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36477,6 +36504,7 @@
+       "cpu": [
+         "ppc64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36493,6 +36521,7 @@
+       "cpu": [
+         "riscv64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36509,6 +36538,7 @@
+       "cpu": [
+         "s390x"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36525,6 +36555,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36541,6 +36572,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36557,6 +36589,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36573,6 +36606,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36589,6 +36623,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36605,6 +36640,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36621,6 +36657,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36637,6 +36674,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36653,6 +36691,7 @@
+       "cpu": [
+         "ia32"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36669,6 +36708,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -36682,7 +36722,7 @@
+       "version": "0.28.2",
+       "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.2.tgz",
+       "integrity": "sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==",
+-      "devOptional": true,
++      "dev": true,
+       "hasInstallScript": true,
+       "license": "MIT",
+       "bin": {
+@@ -36887,7 +36927,7 @@
+       "version": "5.9.3",
+       "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "bin": {
+         "tsc": "bin/tsc",
+@@ -37923,7 +37963,7 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
+       "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "xml-name-validator": "^5.0.0"
+@@ -37999,7 +38039,7 @@
+       "version": "8.0.1",
+       "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
+       "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-2-Clause",
+       "engines": {
+         "node": ">=20"
+@@ -38104,7 +38144,7 @@
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
+       "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=18"
+@@ -38114,7 +38154,7 @@
+       "version": "15.1.0",
+       "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-15.1.0.tgz",
+       "integrity": "sha512-2ytDk0kiEj/yu90JOAp44PVPUkO9+jVhyf+SybKlRHSDlvOOZhdPIrr7xTH64l4WixO2cP+wQIcgujkGBPPz6g==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "tr46": "^6.0.0",
+@@ -38986,7 +39026,7 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
+       "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "engines": {
+         "node": ">=18"
+@@ -39006,7 +39046,7 @@
+       "version": "2.2.0",
+       "resolved": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
+       "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/xpath": {
+@@ -39239,7 +39279,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "8.5.2",
-+      "version": "8.6.0",
+-      "version": "8.6.0",
++      "version": "8.7.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 57f8709b6..7a84b33bf 100644
+index 7c9fb7490..33bbd0ae1 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "8.5.2",
-+  "version": "8.6.0",
+-  "version": "8.6.0",
++  "version": "8.7.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
