@@ -35,7 +35,7 @@ Every gate resolves `undefined` → **hidden/off**. Two shapes:
 | `registry-enabled`                                | `mcp-sidebar.tsx`                                                        | Registry nav hidden                                                                                                                               | ✅           |
 | `mcpjam-conformance` / `mcpjam-compatibility`     | `mcp-sidebar.tsx`                                                        | Nav hidden                                                                                                                                        | ✅           |
 | `xaa` / `xaa-registration`                        | `mcp-sidebar.tsx`, XAA components                                        | XAA surfaces hidden                                                                                                                               | ✅           |
-| `sandboxes-enabled` / `learn-more-enabled`        | `mcp-sidebar.tsx`                                                        | Nav hidden                                                                                                                                        | ✅           |
+| `learn-more-enabled`                              | `mcp-sidebar.tsx`                                                        | Nav hidden                                                                                                                                        | ✅           |
 | `skills-enabled`                                  | `useSkillsEnabled(State)`                                                | Skills hidden; route guard waits on tri-state                                                                                                     | ✅           |
 | `computers-enabled`                               | `useComputersEnabled(State)`                                             | Computers hidden; route guard waits on tri-state                                                                                                  | ✅           |
 | `webmcp-inspector-enabled`                        | `useWebmcpInspectorEnabled(State)`                                       | WebMCP tab and Playground page-tools section hidden; route guard waits on tri-state. Local-only surface — hosted drops it before the flag is read | ✅           |
@@ -44,6 +44,19 @@ Every gate resolves `undefined` → **hidden/off**. Two shapes:
 | `synthetic-monitors`                              | evals suite views                                                        | Monitors hidden                                                                                                                                   | ✅           |
 | `stateless-mcp-enabled`                           | per-server protocol toggle                                               | Opt-in stays off                                                                                                                                  | ✅           |
 | `mcp-inspector-multi-host/model-enabled`          | playground                                                               | Feature off                                                                                                                                       | ✅           |
+
+### Retired: `sandboxes-enabled`
+
+Gone from the client entirely (REEV-6). It gated the Swarms and User Testing
+nav items and both route guards, which meant the fail-closed default hid the
+tabs — including from the signed-out visitors the feature is meant to convert,
+and including for a frame on every cold load while PostHog answered.
+
+Both surfaces are now unconditional in the nav, and access is decided on
+arrival from WorkOS identity and billing entitlement — neither of which is a
+PostHog flag, so neither has a blocked state. The server-side gate of the same
+name still exists in `mcpjam-backend/convex/lib/sandboxesGate.ts` and is
+unaffected by this row.
 
 For every beta/nav/opt-in feature, fail-closed is **correct**: a not-yet-GA
 surface briefly not showing is strictly better than flickering it on for a

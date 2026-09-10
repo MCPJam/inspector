@@ -9,17 +9,12 @@ const {
   mockViewerRole,
   mockUseAuth,
   mockUseViewerProjectRole,
-  mockFlags,
 } = vi.hoisted(() => {
   const mockViewerRole = {
     role: undefined as ProjectMembershipRole | undefined,
     isLoading: false,
   };
   return {
-    // Tri-state, like PostHog: `undefined` while flags hydrate. These tests
-    // are about the member-only gate, so the feature flag is ON by default and
-    // the flag gate itself is covered separately below.
-    mockFlags: { sandboxesEnabled: true as boolean | undefined },
     mockSwarmsTab: vi.fn(() => <div>Swarms Tab</div>),
     mockViewerRole,
     mockUseAuth: vi.fn(() => ({
@@ -51,16 +46,6 @@ vi.mock("react-router", async (importOriginal) => {
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => mockUseAuth(),
 }));
-
-vi.mock("../hooks/useSandboxesEnabled", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../hooks/useSandboxesEnabled")>();
-  return {
-    ...actual,
-    useSandboxesEnabledState: () => mockFlags.sandboxesEnabled,
-    useSandboxesEnabled: () => mockFlags.sandboxesEnabled === true,
-  };
-});
 
 // Keep the real `canViewSwarms` decision + `EmptyState`; only the viewer-role
 // signal is controlled per test.
@@ -136,35 +121,10 @@ describe("SwarmsRoute member-only gate", () => {
     mockRouteContext.isAuthenticated = true;
     mockViewerRole.role = undefined;
     mockViewerRole.isLoading = false;
-    mockFlags.sandboxesEnabled = true;
     mockUseAuth.mockReturnValue({
       user: { email: "guest@example.com" },
       isLoading: false,
     });
-  });
-
-  // The sidebar filters the Swarms nav item on `sandboxes-enabled`, but the
-  // route itself was unguarded — a direct URL or stale bookmark mounted the
-  // whole surface (and fired its member-only queries) for flagged-out users.
-  it("redirects to servers when the sandboxes flag is off", () => {
-    mockFlags.sandboxesEnabled = false;
-
-    renderRoute(<SwarmsRoute />);
-
-    expect(screen.getByText("redirected:/servers")).toBeInTheDocument();
-    expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
-    expect(mockSwarmsTab).not.toHaveBeenCalled();
-  });
-
-  it("renders nothing — and does not bounce — while the flag is still hydrating", () => {
-    // Redirecting on `undefined` would strand a flagged-in user who cold-loads
-    // /swarms directly, before PostHog has answered.
-    mockFlags.sandboxesEnabled = undefined;
-
-    renderRoute(<SwarmsRoute />);
-
-    expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
-    expect(mockSwarmsTab).not.toHaveBeenCalled();
   });
 
   it("bounds role loading to WorkOS identity hydrate, not Convex auth alone", () => {

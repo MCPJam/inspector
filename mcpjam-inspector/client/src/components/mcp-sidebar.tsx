@@ -116,7 +116,6 @@ interface NavSection {
  */
 export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "mcpjam-learning",
-  "sandboxes-enabled",
   "registry-enabled",
   "mcpjam-conformance",
   "mcpjam-compatibility",
@@ -250,8 +249,14 @@ export const navigationSections: NavSection[] = [
     id: "measure",
     label: "Measure",
     items: [
-      // Swarms before User Testing (Vig): less set-up is required to get
-      // value out of it, so it is the better first stop.
+      // No `featureFlag` (REEV-6): both are in the nav for EVERY visitor.
+      // Whether you can run them is decided when you arrive, by the route. A
+      // signed-out visitor gets a preview, a plan-locked one gets the upsell,
+      // and either is a better answer than an item that silently does not
+      // exist.
+      //
+      // Swarms before User Testing (Vig): less set-up is required to get value
+      // out of it, so it is the better first stop.
       {
         title: "Swarms",
         url: "/swarms",
@@ -259,8 +264,11 @@ export const navigationSections: NavSection[] = [
         // Same pill XAA Debugger carries. It marks a NEW feature, not an
         // access state: the earlier LOG IN / UPGRADE markers described who the
         // reader was, and there is no longer a plan to report on.
+        //
+        // No `featureFlag`: REEV-6 took `sandboxes-enabled` out, so both items
+        // are in the nav for every visitor and what they get is decided on
+        // arrival.
         badge: "New",
-        featureFlag: "sandboxes-enabled",
         billingFeature: "scenarios",
       },
       {
@@ -268,7 +276,6 @@ export const navigationSections: NavSection[] = [
         url: "/user-testing",
         icon: Users,
         badge: "New",
-        featureFlag: "sandboxes-enabled",
         billingFeature: "scenarios",
       },
       {
@@ -516,7 +523,6 @@ export function MCPSidebar({
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
-  const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
@@ -623,7 +629,6 @@ export function MCPSidebar({
   const featureFlags = useMemo(
     () => ({
       "mcpjam-learning": !!learningEnabled,
-      "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
@@ -647,7 +652,6 @@ export function MCPSidebar({
     }),
     [
       learningEnabled,
-      sandboxesEnabled,
       registryEnabled,
       conformanceEnabled,
       compatibilityEnabled,

@@ -57,13 +57,6 @@ vi.mock("react-router", async (importOriginal) => {
 
 vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => mockUseAuth() }));
 
-// Flag ON throughout: this suite is about the identity gate that sits behind
-// it. The flag's own redirect is covered in the two existing route suites.
-vi.mock("@/hooks/useSandboxesEnabled", () => ({
-  useSandboxesEnabled: () => true,
-  useSandboxesEnabledState: () => true,
-}));
-
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 // SwarmsRoute resolves the viewer's project role for its *invitee guest*

@@ -548,3 +548,54 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
     expect(serversTitles(signedOut)).toEqual(["Servers"]);
   });
 });
+
+/**
+ * REEV-6 removed `sandboxes-enabled` from the sidebar entirely. The two items
+ * are now in the nav for every visitor, and what they can DO is decided when
+ * they arrive — a guest gets the preview, a plan-locked member the upsell.
+ *
+ * The regression this guards against is a quiet one: re-adding a `featureFlag`
+ * to either item would make them vanish for everyone the flag excludes, and
+ * the preview built for those exact people would never be reached.
+ */
+describe("Swarms and User Testing are unflagged (REEV-6)", () => {
+  const MEASURE_ITEMS = ["User Testing", "Swarms"];
+
+  it("declares no featureFlag on either item", () => {
+    const items = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => MEASURE_ITEMS.includes(item.title));
+
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(item.featureFlag).toBeUndefined();
+      expect(item.hiddenByFlag).toBeUndefined();
+    }
+  });
+
+  it("survives an empty flag map — every flag off, both still shown", () => {
+    const titles = filterByFeatureFlags(navigationSections, {})
+      .flatMap((section) => section.items)
+      .map((item) => item.title);
+
+    for (const title of MEASURE_ITEMS) {
+      expect(titles).toContain(title);
+    }
+  });
+
+  it("no longer resolves the retired flag key", () => {
+    expect(SIDEBAR_RESOLVED_FLAG_KEYS).not.toContain("sandboxes-enabled");
+  });
+
+  // They stay CLICKABLE for a plan-locked org rather than disabled: the tab
+  // shows the upsell, which is a better answer than a greyed-out row.
+  it("keeps its billingFeature, so the upsell still knows what to sell", () => {
+    const items = navigationSections
+      .flatMap((section) => section.items)
+      .filter((item) => MEASURE_ITEMS.includes(item.title));
+
+    for (const item of items) {
+      expect(item.billingFeature).toBe("scenarios");
+    }
+  });
+});

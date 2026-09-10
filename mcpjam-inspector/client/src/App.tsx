@@ -280,7 +280,6 @@ import {
   useHostList,
   useHostMutations,
 } from "@/hooks/useClients";
-import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import { useIsHostedGuest } from "@/hooks/use-hosted-guest";
 import { GuestFeaturePreview } from "@/components/guest-preview/GatedFeaturePreview";
 import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
@@ -1641,30 +1640,15 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
 // visitor gets is decided on arrival from identity and entitlement.
 export function ScenariosRoute() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
-  // The sidebar filters this item on the flag, but a filtered nav item is not
-  // a gate — `/user-testing` is a plain route, so without this a direct URL
-  // mounts the whole surface for users the flag excludes.
-  const sandboxesEnabled = useSandboxesEnabledState();
   // Hooks first: every gate below early-returns, and a hook after one of them
   // would crash React the moment a gate settles between renders.
   const gate = useGatedFeatureGate("user-testing");
   const params = useParams<{ scenarioId?: string }>();
 
-  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
-  // `undefined`, and bouncing then would strand a flagged-in user who cold-
-  // loads the URL. (Same tradeoff SwarmsRoute makes.)
-  //
-  // Still FIRST, ahead of the preview: until the flag comes out (REEV-6
-  // Block E) an unflagged visitor keeps today's redirect exactly, so the
-  // preview ships dark rather than quietly going live with this commit.
-  if (sandboxesEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
-  if (sandboxesEnabled === undefined) {
-    return null;
-  }
-
-  // Guests and plan-locked users stop here. `null` means neither applies.
+  // No `sandboxes-enabled` check any more (REEV-6). The route used to bounce
+  // an unflagged visitor to Connect, and hold on `undefined` while PostHog
+  // hydrated — a blank frame on every cold load. Both are gone: the surface
+  // is reachable by everyone and the gate below decides what they get.
   if (gate) {
     return gate;
   }
@@ -1754,11 +1738,6 @@ export function SwarmsRoute() {
   // via userId. Do NOT treat "no WorkOS email" as "not a member".
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const isWorkOsSignedIn = !!user;
-  // The sidebar filters the Swarms nav item on this flag, but a filtered nav
-  // item is not a gate — `/swarms` is a plain route, so a direct URL mounted
-  // the whole surface for users the flag excludes.
-  const sandboxesEnabled = useSandboxesEnabledState();
-
   // The backend made Swarm member-only vs project *invitee guests* (role
   // `guest`): personas/journeys/runs reject that tier. Mirror that for
   // WorkOS-signed-in viewers by resolving role from the members list.
@@ -1791,21 +1770,8 @@ export function SwarmsRoute() {
   const gate = useGatedFeatureGate("swarms");
   const params = useParams<{ swarmId?: string }>();
 
-  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
-  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
-  // /swarms directly. Render nothing until it settles. (Same tradeoff the
-  // Environments route already makes.)
+  // No `sandboxes-enabled` check any more (REEV-6) — see ScenariosRoute.
   //
-  // Still FIRST, ahead of the preview: until the flag comes out (REEV-6
-  // Block E) an unflagged visitor keeps today's redirect exactly, so the
-  // preview ships dark rather than quietly going live with this commit.
-  if (sandboxesEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
-  if (sandboxesEnabled === undefined) {
-    return null;
-  }
-
   // Guests and plan-locked users stop here. `null` means neither applies.
   //
   // This is ABOVE the invitee-guest notice below on purpose: the two "guests"
