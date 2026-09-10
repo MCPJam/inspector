@@ -160,7 +160,9 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     expect(sub!.fromSubframe).toBe(true);
     expect(sub!.origin).toBe(new URL(fixture.subOriginUrl).origin);
     expect(sub!.origin).not.toBe(echo!.origin);
-    expect(sub!.toolKey).toBe(`${new URL(fixture.subOriginUrl).origin}::sub_tool`);
+    expect(sub!.toolKey).toBe(
+      `${new URL(fixture.subOriginUrl).origin}::sub_tool`,
+    );
     await registry.disposeAll();
   }, 60_000);
 
@@ -168,9 +170,9 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     const { runtime } = await open();
     const subKey = `${new URL(fixture.subOriginUrl).origin}::${FIXTURE_TOOLS.sub}`;
     await vi.waitFor(() =>
-      expect(
-        runtime.currentTools().map((tool) => tool.toolKey),
-      ).toContain(subKey),
+      expect(runtime.currentTools().map((tool) => tool.toolKey)).toContain(
+        subKey,
+      ),
     );
 
     // The frame id belongs to another target, so this call can only succeed by

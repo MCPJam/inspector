@@ -287,7 +287,9 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
 
     await expect(pending).rejects.toMatchObject({
       name: "WebMcpOutcomeUnknownError",
-      message: expect.stringMatching(/cancellation requested.*execution may continue/i),
+      message: expect.stringMatching(
+        /cancellation requested.*execution may continue/i,
+      ),
     });
   });
 

@@ -91,9 +91,18 @@ describe("score run resume", () => {
       throw new Error("storage disabled");
     };
     // Spy on the actual storage instance, not Node's other Storage realm.
-    vi.spyOn(Object.getPrototypeOf(sessionStorage), "getItem").mockImplementation(unavailable);
-    vi.spyOn(Object.getPrototypeOf(sessionStorage), "setItem").mockImplementation(unavailable);
-    vi.spyOn(Object.getPrototypeOf(sessionStorage), "removeItem").mockImplementation(unavailable);
+    vi.spyOn(
+      Object.getPrototypeOf(sessionStorage),
+      "getItem",
+    ).mockImplementation(unavailable);
+    vi.spyOn(
+      Object.getPrototypeOf(sessionStorage),
+      "setItem",
+    ).mockImplementation(unavailable);
+    vi.spyOn(
+      Object.getPrototypeOf(sessionStorage),
+      "removeItem",
+    ).mockImplementation(unavailable);
 
     expect(() =>
       writeScoreRunResume({
