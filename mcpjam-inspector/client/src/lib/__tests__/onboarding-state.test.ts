@@ -8,6 +8,8 @@ import {
   markOnboardingStarted,
   markOnboardingShown,
   isFirstRunServerChoiceEligible,
+  markFirstRunPlaygroundPromptConsumed,
+  markFirstRunPlaygroundPromptPending,
   markFirstRunServerChoiceDismissed,
   markFirstRunServerChoiceStarted,
   markFirstRunServerChoiceWelcomeAcknowledged,
@@ -222,6 +224,30 @@ describe("onboarding-state", () => {
         expect.objectContaining({
           status: "started",
           attemptedServerName: "Personal server",
+        }),
+      );
+    });
+
+    it("keeps the attempted server and starter prompt across completion", () => {
+      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceStarted("Excalidraw (App)");
+      markFirstRunServerChoiceCompleted();
+      markFirstRunPlaygroundPromptPending();
+
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "completed",
+          attemptedServerName: "Excalidraw (App)",
+          playgroundPromptPending: true,
+        }),
+      );
+
+      markFirstRunPlaygroundPromptConsumed();
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "completed",
+          attemptedServerName: "Excalidraw (App)",
+          playgroundPromptPending: false,
         }),
       );
     });

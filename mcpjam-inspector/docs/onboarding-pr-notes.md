@@ -23,19 +23,22 @@
 - Welcome now records `shownAt` on render. A refresh before interaction resumes at `Point MCPJam at a server` instead of replaying the splash and timer.
 - Successful tool discovery now persists completion immediately, so refreshing before or after `Open Playground` cannot restart onboarding.
 - Interrupted connection records now remember the attempted server and auto-repair only when that same server is connected. Legacy records auto-repair only after a conservative stale interval with exactly one connected server, preventing an unrelated hydrated server from closing a fresh choice screen.
+- Refreshing at server choice now renders that same inert choice card during app hydration instead of flashing the global MCPJam spinner first.
+- The Welcome backdrop now masks the underlying route and tab transition so first-time setup reads as one stable surface.
+- Refreshing after successful onboarding restores the chosen server selection, reconnects that saved server, and retains the prefilled Playground prompt until the user sends it.
 - Personal failure still opens the editable form and demo failure still opens the demo-unavailable screen. Home becomes the background only after both paths have failed.
 - Added App, state, overlay, refresh, stale-record, route-stability, dual-failure, and blur regression coverage.
 
 ## Verification completed
 
-- 145 focused App, onboarding-state, overlay, and Playground tests pass.
+- 149 focused App, onboarding-state, overlay, and Playground tests pass, covering refresh hydration, server reconnection, and durable prompt restoration in addition to the original paths.
 - Client type-check passes.
 - Design drift and design lint pass with no errors; only the repository's existing unused-token warnings remain.
 - Clean Codex-browser preview confirms Welcome advances once, refresh resumes at `Point MCPJam at a server`, and the choice screen stays open over Playground.
 
 ## Remaining before integration
 
-- User-check the personal-server success and failure paths, demo success and failure paths, and refresh after success in the normal local browser session.
+- User-check the personal-server success and failure paths, demo success and failure paths, refresh-before-choice, and refresh-after-success in the normal local browser session.
 - After user approval, merge the combined bug-fix branch into `feature/onboarding-main` and finalize these notes for the eventual PR. Do not open a PR or change `main` yet.
 
 ## Connection progress and success

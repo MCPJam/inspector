@@ -69,6 +69,8 @@ import {
 } from "./lib/excalidraw-quick-connect";
 import {
   isFirstRunServerChoiceEligible,
+  markFirstRunPlaygroundPromptConsumed,
+  markFirstRunPlaygroundPromptPending,
   markFirstRunServerChoiceCompleted,
   markFirstRunServerChoiceDismissed,
   markFirstRunServerChoiceStarted,
@@ -374,6 +376,33 @@ import {
   readAllSurfaceSnapshots,
   readSurfaceSnapshot,
 } from "@/lib/webmcp/surface-snapshot-registry";
+
+const ignoreFirstRunServerDraft = (_draft: FirstRunServerDraft) => {};
+const ignoreFirstRunAction = () => {};
+
+/**
+ * A refresh at server choice can render that known local step immediately,
+ * while the app hydrates behind it, instead of flashing the global spinner.
+ */
+function FirstRunChoiceHydrationScreen() {
+  return (
+    <div className="min-h-screen bg-background">
+      <FirstRunOnboardingOverlay
+        open
+        skipWelcome
+        isHydrating
+        connectionState={{ status: "idle" }}
+        onConnectOwnServer={ignoreFirstRunServerDraft}
+        onConnectDemo={ignoreFirstRunAction}
+        onCancelConnection={ignoreFirstRunAction}
+        onOpenPlayground={ignoreFirstRunAction}
+        onWelcomeShown={ignoreFirstRunAction}
+        onWelcomeAcknowledged={ignoreFirstRunAction}
+        onSkip={ignoreFirstRunAction}
+      />
+    </div>
+  );
+}
 
 const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 // Accounts created on/after this ship date are treated as "new" for the
@@ -2333,7 +2362,10 @@ export function PlaygroundRoute() {
       onOnboardingChange={setPlaygroundOnboarding}
       playgroundServerSelectorProps={playgroundServerSelectorProps}
       firstRunPrompt={firstRunPlaygroundPrompt}
-      onFirstRunPromptConsumed={() => setFirstRunPlaygroundPrompt(null)}
+      onFirstRunPromptConsumed={() => {
+        setFirstRunPlaygroundPrompt(null);
+        markFirstRunPlaygroundPromptConsumed();
+      }}
       activeHost={activeHost}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
@@ -2556,10 +2588,15 @@ export default function App() {
     useState<FirstRunConnectionState>({ status: "idle" });
   const [firstRunPlaygroundPrompt, setFirstRunPlaygroundPrompt] = useState<
     string | null
-  >(null);
+  >(() =>
+    initialFirstRunServerChoiceState?.playgroundPromptPending
+      ? PLAYGROUND_FIRST_RUN_PROMPT
+      : null,
+  );
   const [pendingFirstRunConnection, setPendingFirstRunConnection] =
     useState<ServerFormData | null>(null);
   const firstRunConnectionAttemptRef = useRef(0);
+  const restoredFirstRunServerRef = useRef<string | null>(null);
   const failedFirstRunServerKindsRef = useRef<Set<FirstRunServerKind>>(
     new Set(),
   );
@@ -3608,7 +3645,7 @@ export default function App() {
     setFirstRunConnectionState({ status: "idle" });
     setFirstRunOverlayDismissed(true);
     setFirstRunPlaygroundPrompt(PLAYGROUND_FIRST_RUN_PROMPT);
-    markFirstRunServerChoiceCompleted();
+    markFirstRunPlaygroundPromptPending();
     navigateApp(routePaths.playground);
   }, [navigateApp]);
 
@@ -3697,6 +3734,50 @@ export default function App() {
     setSelectedServer,
     setSelectedMCPConfigs,
     appState.selectedMultipleServers,
+  ]);
+
+  // The first successful onboarding server is also the first Playground
+  // context. Restore both its selection and live connection after a reload so
+  // the tools pane and the durable starter prompt do not come back empty.
+  useEffect(() => {
+    if (activeTab !== "playground" || !areServersHydrated) return;
+    if (initialFirstRunServerChoiceState?.status !== "completed") return;
+
+    const serverName = initialFirstRunServerChoiceState.attemptedServerName;
+    if (!serverName || !projectServers[serverName]) return;
+
+    if (appState.selectedServer !== serverName) {
+      setSelectedServer(serverName);
+    }
+    if (!appState.selectedMultipleServers.includes(serverName)) {
+      setSelectedMCPConfigs([
+        ...appState.selectedMultipleServers,
+        serverName,
+      ]);
+    }
+
+    if (
+      projectServers[serverName].connectionStatus === "connected" ||
+      restoredFirstRunServerRef.current === serverName
+    ) {
+      return;
+    }
+
+    restoredFirstRunServerRef.current = serverName;
+    void ensureServersReady([serverName]).catch(() => {
+      // A later render may retry after a transient startup failure.
+      restoredFirstRunServerRef.current = null;
+    });
+  }, [
+    activeTab,
+    appState.selectedMultipleServers,
+    appState.selectedServer,
+    areServersHydrated,
+    ensureServersReady,
+    initialFirstRunServerChoiceState,
+    projectServers,
+    setSelectedMCPConfigs,
+    setSelectedServer,
   ]);
 
   // Create effective app state that uses the correct projects (Convex when authenticated)
@@ -5112,6 +5193,24 @@ export default function App() {
     }
 
     return <LoadingScreen />;
+  }
+
+  const shouldResumeFirstRunChoiceDuringStartup =
+    initialFirstRunServerChoiceState?.status === "started" &&
+    Boolean(initialFirstRunServerChoiceState.shownAt) &&
+    !initialFirstRunServerChoiceState.attemptedServerName;
+  const isFirstRunChoiceHydrating =
+    shouldResumeFirstRunChoiceDuringStartup &&
+    (isLoading ||
+      isAuthLoading ||
+      isWorkOsLoading ||
+      effectiveHostedShellGateState !== "ready" ||
+      isLoadingRemoteProjects ||
+      !areServersHydrated ||
+      (isAuthenticated && currentUser === undefined));
+
+  if (isFirstRunChoiceHydrating) {
+    return <FirstRunChoiceHydrationScreen />;
   }
 
   if (isLoading && !isHostedChatRoute) {

@@ -22,6 +22,7 @@ import {
 function renderOverlay(
   connectionState: FirstRunConnectionState = { status: "idle" },
   skipWelcome = false,
+  isHydrating = false,
 ) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
@@ -34,6 +35,7 @@ function renderOverlay(
     <FirstRunOnboardingOverlay
       open
       skipWelcome={skipWelcome}
+      isHydrating={isHydrating}
       connectionState={connectionState}
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
@@ -98,6 +100,7 @@ describe("FirstRunOnboardingOverlay", () => {
 
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
       "backdrop-blur-[32px]",
+      "bg-background/70",
     );
     const continueButton = screen.getByRole("button", { name: "Continue" });
     expect(continueButton).toHaveClass(
@@ -114,6 +117,17 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
       "backdrop-blur-sm",
     );
+  });
+
+  it("keeps the resumed choice inert while the app hydrates", () => {
+    renderOverlay({ status: "idle" }, true, true);
+
+    expect(
+      screen.getByRole("dialog", { name: "Point MCPJam at a server" }),
+    ).toHaveAttribute("aria-busy", "true");
+    expect(
+      screen.getByRole("dialog", { name: "Point MCPJam at a server" }),
+    ).toHaveAttribute("inert");
   });
 
   it("advances from the welcome card with Enter", () => {
