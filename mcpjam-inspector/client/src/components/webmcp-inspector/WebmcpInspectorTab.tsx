@@ -77,6 +77,7 @@ const SCREENSHOT_POLL_MS = 1_000;
  */
 export function WebmcpInspectorTab() {
   const consent = useLocalBrowserConsent();
+  const [showBrowserSetup, setShowBrowserSetup] = useState(false);
   const {
     session,
     tools,
@@ -361,6 +362,17 @@ export function WebmcpInspectorTab() {
     await startSession(url, startOptions());
   };
 
+  const allowAndOpenBrowser = async () => {
+    if (!(await consent.grant())) return false;
+    setShowBrowserSetup(false);
+    // The grant is already in shared storage, but this render still has
+    // consent.granted=false. Start directly so Allow needs no second click.
+    // Startup errors belong to the workspace's error banner, not the grant.
+    if (useWebmcpInspectorStore.getState().pageToolsLive()) reconnect();
+    else await startSession(url, startOptions());
+    return true;
+  };
+
   const pendingForSelected = pending.find(
     (item) => item.toolKey === selectedToolKey,
   );
@@ -425,6 +437,10 @@ export function WebmcpInspectorTab() {
     } else toast.error("Could not clear inspection site data");
   };
   const overflowActions = [
+    ...(!HOSTED_MODE && !hosted && consent.granted ? [{
+      label: "Enable for all clients",
+      onSelect: () => setShowBrowserSetup(true),
+    }] : []),
     ...(!HOSTED_MODE && !hosted && isPackaged && consent.granted
       ? [
           {
@@ -566,10 +582,10 @@ export function WebmcpInspectorTab() {
     </div>
   );
 
-  if (!HOSTED_MODE && !hosted && !consent.granted) {
+  if (!HOSTED_MODE && !hosted && (!consent.granted || showBrowserSetup)) {
     return (
       <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center overflow-auto p-6">
-        <LocalBrowserConsentGate onAllow={consent.grant} />
+        <LocalBrowserConsentGate onAllow={allowAndOpenBrowser} />
       </div>
     );
   }

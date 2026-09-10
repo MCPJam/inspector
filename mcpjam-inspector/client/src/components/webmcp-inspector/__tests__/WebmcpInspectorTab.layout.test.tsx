@@ -1,9 +1,12 @@
-const consentState = vi.hoisted(() => ({ granted: true }));
+const consentState = vi.hoisted(() => ({
+  granted: true,
+  grant: vi.fn(async () => true),
+}));
 vi.mock("@/hooks/useLocalBrowserConsent", () => ({
   useLocalBrowserConsent: () => ({
     granted: consentState.granted,
     token: consentState.granted ? "test-consent" : null,
-    grant: vi.fn(async () => true),
+    grant: consentState.grant,
   }),
 }));
 /**
@@ -85,6 +88,7 @@ describe("WebmcpInspectorTab — three-panel workspace", () => {
     vi.restoreAllMocks();
     window.localStorage.removeItem("webmcp:last-url");
     consentState.granted = true;
+    consentState.grant.mockReset().mockResolvedValue(true);
     useWebmcpInspectorStore.setState({
       session: SESSION,
       tools: [TOOL],
@@ -252,5 +256,51 @@ describe("WebmcpInspectorTab — three-panel workspace", () => {
       "items-center",
       "justify-center",
     );
+  });
+
+  it("opens the remembered page immediately after Allow without waiting for a render", async () => {
+    consentState.granted = false;
+    useWebmcpInspectorStore.setState({ session: undefined });
+    window.localStorage.setItem("webmcp:last-url", "https://pizza.test/");
+    const start = vi
+      .spyOn(useWebmcpInspectorStore.getState(), "startSession")
+      .mockResolvedValue("new-session");
+    render(<WebmcpInspectorTab />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    expect(consentState.grant).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledWith("https://pizza.test/", {
+      projectId: undefined,
+      display: "in-app",
+    });
+  });
+
+  it("does not start a browser when permission could not be saved", async () => {
+    consentState.granted = false;
+    consentState.grant.mockResolvedValue(false);
+    useWebmcpInspectorStore.setState({ session: undefined });
+    const start = vi.spyOn(useWebmcpInspectorStore.getState(), "startSession");
+    render(<WebmcpInspectorTab />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    expect(start).not.toHaveBeenCalled();
+    expect(screen.getByTestId("consent-error")).toBeInTheDocument();
+  });
+
+  it("reattaches to an existing session after Allow instead of replacing its page", async () => {
+    consentState.granted = false;
+    const start = vi.spyOn(useWebmcpInspectorStore.getState(), "startSession");
+    const reconnect = vi
+      .spyOn(useWebmcpInspectorStore.getState(), "reconnect")
+      .mockImplementation(() => {});
+    render(<WebmcpInspectorTab />);
+    reconnect.mockClear();
+
+    await userEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    expect(reconnect).toHaveBeenCalledOnce();
+    expect(start).not.toHaveBeenCalled();
   });
 });

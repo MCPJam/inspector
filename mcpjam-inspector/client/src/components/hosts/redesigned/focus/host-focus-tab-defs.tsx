@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { HOSTED_MODE } from "@/lib/config";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import {
@@ -93,7 +94,7 @@ export function useVisibleHostFocusTabs(
   const hasBuiltInTools =
     visible?.some((tool) => tool.id !== "browser") ?? false;
   const browserConfigured =
-    draft.builtInToolIds.includes("browser") || Boolean(draft.browserProfileId);
+    (!HOSTED_MODE && draft.localBrowserEnabled === true) || draft.builtInToolIds.includes("browser") || Boolean(draft.browserProfileId);
   const computerAttached = draft.computer !== undefined;
   return useMemo(
     () =>

@@ -81,19 +81,17 @@ function register(
   order: number,
   patch: Partial<BrowserComparisonClient> = {},
 ) {
-  store
-    .getState()
-    .register({
-      workspaceId: "workspace",
-      projectId: "project",
-      sessionId: id,
-      clientId: id,
-      name: id === "a" ? "Cursor" : "MCPJam",
-      order,
-      clientCount: 2,
-      engine: "local",
-      ...patch,
-    });
+  store.getState().register({
+    workspaceId: "workspace",
+    projectId: "project",
+    sessionId: id,
+    clientId: id,
+    name: id === "a" ? "Cursor" : "MCPJam",
+    order,
+    clientCount: 2,
+    engine: "local",
+    ...patch,
+  });
   store.getState().noteBrowsing(id);
 }
 const mount = (active = true) =>
@@ -113,6 +111,46 @@ beforeEach(() => {
 });
 
 describe("one combined browser strip", () => {
+  it("keeps following the selected client when a background read hangs, and stops when hidden", async () => {
+    vi.useFakeTimers();
+    register("a", 0);
+    register("b", 1);
+    let activePage = "nike";
+    mocks.read.mockImplementation((id: string) =>
+      id === "b"
+        ? new Promise(() => {})
+        : Promise.resolve(snapshot(activePage)),
+    );
+    const view = mount();
+    try {
+      await act(async () => {});
+      activePage = "cart";
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(screen.getByTitle("Cursor · Cart")).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(store.getState().selected.workspace).toBe("a");
+      view.rerender(
+        <ComparisonBrowser
+          projectId="project"
+          workspaceId="workspace"
+          active={false}
+        />,
+      );
+      const calls = mocks.read.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+      expect(mocks.read).toHaveBeenCalledTimes(calls);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps duplicate page IDs separate and watches another client's current page without a command", async () => {
     register("a", 0);
     register("b", 1, { engine: "cloud" });

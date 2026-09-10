@@ -152,7 +152,8 @@ export function LocalBrowserBody({
    * reload, gone when the tab is — the returning pane is recognised as the
    * same hands it was before.
    */
-  const holder = usePaneHolderId();
+  const paneHolder = usePaneHolderId();
+  const holder = comparisonWorkspace?.holderId ?? paneHolder;
   /**
    * The live socket and what it said it could do — see the hosted pane's twin.
    *

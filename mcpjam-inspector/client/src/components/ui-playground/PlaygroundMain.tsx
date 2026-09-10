@@ -1,5 +1,7 @@
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
+import { resolveLocalBrowserTools } from "@/shared/local-browser-settings";
 /**
  * PlaygroundMain
  *
@@ -935,9 +937,10 @@ export function PlaygroundMain({
   // Match the Tools and Browser rails: no explicit selection means the
   // project default. An explicit host still loading must not inherit another
   // host's capabilities, and an explicit empty list must stay empty.
-  const effectiveBuiltInToolIds = previewedHostId
-    ? previewedHost?.config?.builtInToolIds
-    : projectDefaultHostConfig?.builtInToolIds;
+  const effectiveBuiltInToolIds = useBrowserToolIds(
+    previewedHostId ? previewedHost?.config : projectDefaultHostConfig,
+    playgroundBrowserEngine.engine,
+  );
   // A newly selected host is unknown for one render while its config loads.
   // Fail closed in that gap: it may resolve to Codex or Claude Code, whose
   // opaque harness sessions cannot be safely rewound. Ordinary model hosts get
@@ -5635,7 +5638,11 @@ export function PlaygroundMain({
                     >
                       {multiHostColumns.map((column, columnIndex) => (
                         <MultiModelPlaygroundCard
-                          browserWorkspace={{ id: chatSessionId, order: columnIndex, clientCount: multiHostColumns.length }}
+                          browserWorkspace={{
+                            id: chatSessionId,
+                            order: columnIndex,
+                            clientCount: multiHostColumns.length,
+                          }}
                           usePageTools={webmcpPageToolsEnabled}
                           // Include `compareKind` in the key so a mode
                           // swap between multi-model and multi-host can't
@@ -5656,7 +5663,11 @@ export function PlaygroundMain({
                           stopRequestId={stopBroadcastRequestId}
                           executionConfig={{
                             ...column.executionConfig,
-                            builtInToolIds: column.hostConfig.builtInToolIds,
+                            builtInToolIds: resolveLocalBrowserTools(
+                              column.hostConfig.builtInToolIds,
+                              column.hostConfig.localBrowserEnabled,
+                              !HOSTED_MODE && playgroundBrowserEngine.engine === "local",
+                            ),
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
@@ -5727,10 +5738,15 @@ export function PlaygroundMain({
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
-                      {resolvedSelectedModels.map((model) => {
+                      {resolvedSelectedModels.map((model, modelIndex) => {
                         const compareId = String(model.id);
                         return (
                           <MultiModelPlaygroundCard
+                            browserWorkspace={{
+                              id: chatSessionId,
+                              order: modelIndex,
+                              clientCount: resolvedSelectedModels.length,
+                            }}
                             usePageTools={webmcpPageToolsEnabled}
                             // Phase 3: include `compareKind` in the key so
                             // model-mode and host-mode keys never collide

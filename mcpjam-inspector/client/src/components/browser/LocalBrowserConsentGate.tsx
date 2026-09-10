@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Globe } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
+import { HOSTED_MODE } from "@/lib/config";
 
 /** Browser-only device consent; shell permission is independent. */
 export function LocalBrowserConsentGate({
@@ -14,7 +15,7 @@ export function LocalBrowserConsentGate({
   location?: "computer_tab_local" | "playground_browser" | "browser_settings";
 }) {
   const [granting, setGranting] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Content-free funnel: shown → granted | denied. `cloud_offered` records
   // whether the decline affordance existed at all, since a pure-local
@@ -22,6 +23,7 @@ export function LocalBrowserConsentGate({
   // by construction.
   const cloudOffered = !!onUseCloud;
   useEffect(() => {
+    if (HOSTED_MODE) return;
     track("local_browser_consent_gate_shown", {
       location,
       cloud_offered: cloudOffered,
@@ -30,16 +32,16 @@ export function LocalBrowserConsentGate({
 
   const handleAllow = async () => {
     setGranting(true);
-    setError(false);
+    setError(null);
     try {
       const ok = await onAllow();
-      if (!ok) setError(true);
+      if (!ok) setError("Couldn't finish Browser setup. Try again.");
       track("local_browser_consent_granted", {
         location,
         outcome: ok ? "stored" : "failed",
       });
-    } catch {
-      setError(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't finish Browser setup. Try again.");
       track("local_browser_consent_granted", {
         location,
         outcome: "failed",
@@ -54,6 +56,7 @@ export function LocalBrowserConsentGate({
     onUseCloud?.();
   };
 
+  if (HOSTED_MODE) return null;
   return (
     <div
       data-testid="local-browser-consent-gate"
@@ -61,11 +64,13 @@ export function LocalBrowserConsentGate({
     >
       <Globe className="size-6 text-muted-foreground" aria-hidden />
       <h2 className="text-base font-semibold text-foreground">
-        MCPJam supports Browser Use and WebMCP
+        Enable local Browser for all clients
       </h2>
       <p className="text-sm leading-relaxed text-muted-foreground">
-        Allow a browser on this machine. Agents can navigate, click, and type.
-        Chat may send page content to your model.
+        Allow agents to navigate, click, type, and read pages on this machine.
+        Page content may be sent to your model. This enables local Browser for
+        all clients in projects you manage, including shared clients. You can
+        remove it in each client's Connect settings.
       </p>
       <div className="mt-1 flex items-center gap-2">
         <Button
@@ -88,8 +93,7 @@ export function LocalBrowserConsentGate({
       </div>
       {error ? (
         <p className="text-xs text-destructive" data-testid="consent-error">
-          Couldn't authorize this machine. Check that you're signed in and try
-          again.
+          {error}
         </p>
       ) : null}
     </div>

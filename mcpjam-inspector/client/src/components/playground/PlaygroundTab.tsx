@@ -38,6 +38,7 @@ import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
 import { railShouldOpenForBrowse } from "@/hooks/useOpenBrowserOnBrowsing";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 import {
   useBrowserWorkspaceEnabledState,
   useBrowserEnabledState,
@@ -290,7 +291,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
   const browsersEnabled = useBrowserEnabledState();
   const browserEngine = useBrowserEngine(projectScope);
-  const browserToolIds = effectiveHostConfig?.builtInToolIds;
+  const browserToolIds = useBrowserToolIds(effectiveHostConfig, browserEngine.selectedEngine);
   // Polled only on the local engine, where the question means something: on
   // hosted this route describes a machine that is not the one running the
   // browser.

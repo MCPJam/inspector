@@ -218,6 +218,9 @@ export function browserPanelAvailable(args: {
 }): boolean {
   if (args.sessionHasBrowser && args.isAuthenticated) return true;
   if (args.localBrowserRunning) return true;
+  // Local users must be able to open the explicit setup prompt before any
+  // client has Browser attached. Callers already enforce the rollout gate.
+  if (args.selectedEngine === "local") return true;
   if (!args.hostHasBrowser) return false;
   return args.selectedEngine === "local" || args.isAuthenticated;
 }

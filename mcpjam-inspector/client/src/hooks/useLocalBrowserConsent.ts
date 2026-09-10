@@ -24,8 +24,8 @@ import { HOSTED_MODE } from "@/lib/config";
 import {
   clearStoredLocalBrowserConsent,
   loadStoredLocalBrowserConsent,
-  mintLocalBrowserConsent,
-  persistLocalBrowserConsent,
+  enableLocalBrowserForAllClients,
+  localBrowserSetupPending,
   revokeLocalBrowserConsentOnServer,
   subscribeLocalBrowserConsent,
 } from "@/lib/local-browser-consent";
@@ -58,24 +58,11 @@ export function useLocalBrowserConsent(): LocalBrowserConsent {
   // A primitive string snapshot — value-compared by React, so writes from any
   // tab re-render and stale reads are impossible.
   const token = useSyncExternalStore(subscribe, getStoredToken, () => null);
+  const setupPending = useSyncExternalStore(subscribe, localBrowserSetupPending, () => false);
 
   const grant = useCallback(async (): Promise<boolean> => {
     if (HOSTED_MODE) return false;
-    const minted = await mintLocalBrowserConsent();
-    if (!minted) return false;
-    // persist returns false when storage is blocked/full — then consent is NOT
-    // stored, so we must report failure rather than a token nothing can read.
-    // The successful persist fires a storage event → useSyncExternalStore
-    // re-reads → status flips to granted; no optimistic write needed.
-    const stored = persistLocalBrowserConsent(minted);
-    if (!stored) {
-      // The mint already rotated the server capability to this token, and
-      // nothing can ever present it now — release it (best-effort) rather
-      // than leave an orphaned capability. Scoped to the minted token, so if
-      // an even newer grant rotated again this is a no-op.
-      void revokeLocalBrowserConsentOnServer(minted.token);
-    }
-    return stored;
+    return enableLocalBrowserForAllClients();
   }, []);
 
   const revoke = useCallback(async (): Promise<void> => {
@@ -92,8 +79,8 @@ export function useLocalBrowserConsent(): LocalBrowserConsent {
   }, []);
 
   return {
-    status: token ? "granted" : "absent",
-    granted: token != null,
+    status: token && !setupPending ? "granted" : "absent",
+    granted: token != null && !setupPending,
     token,
     grant,
     revoke,

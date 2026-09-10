@@ -80,29 +80,35 @@ export function ComparisonBrowser({
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const tick = async () => {
-      if (document.visibilityState === "visible") {
-        await Promise.all(
-          [...transports].map(async ([id, transport]) => {
-            const snapshot = await transport.readState().catch(() => null);
-            if (cancelled) return;
-            setViews((previous) => ({
-              ...previous,
-              [id]: {
-                snapshot: snapshot ?? previous[id]?.snapshot ?? null,
-                stale: !snapshot,
-              },
-            }));
-          }),
-        );
-      }
-      if (!cancelled) timer = setTimeout(() => void tick(), 2_000);
-    };
-    void tick();
+    // Each session schedules its own next read: one unreachable browser must
+    // not stall metadata updates for all the other clients.
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    for (const [id, transport] of transports) {
+      const tick = async () => {
+        if (document.visibilityState === "visible") {
+          const snapshot = await transport.readState().catch(() => null);
+          if (cancelled) return;
+          setViews((previous) => ({
+            ...previous,
+            [id]: {
+              snapshot: snapshot ?? previous[id]?.snapshot ?? null,
+              stale: !snapshot,
+            },
+          }));
+        }
+        if (!cancelled) {
+          const timer = setTimeout(() => {
+            timers.delete(timer);
+            void tick();
+          }, 2_000);
+          timers.add(timer);
+        }
+      };
+      void tick();
+    }
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      timers.forEach(clearTimeout);
     };
   }, [transports, active]);
   useEffect(() => {
@@ -195,8 +201,11 @@ export function ComparisonBrowser({
     [selectedId],
   );
   const chrome = useMemo(
-    () => ({ clientName: showNames ? selected?.name : undefined }),
-    [showNames, selected?.name],
+    () => ({
+      clientName: showNames ? selected?.name : undefined,
+      holderId: holder,
+    }),
+    [showNames, selected?.name, holder],
   );
 
   return (
