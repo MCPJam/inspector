@@ -82,6 +82,8 @@ const ERROR_BACKOFF_MS = 60_000;
  * gets its check taken away mid-build.
  */
 const HEARTBEAT_INTERVAL_MS = 60_000;
+/** A stuck control-plane cleanup must not keep the other cleanup from running. */
+export const GITHUB_CHECK_CLEANUP_TIMEOUT_MS = 15_000;
 
 /**
  * How long to wait out a run held for its gating judge.
@@ -682,7 +684,35 @@ export type CheckExecutionDeps = {
   report: (report: PlanlessCheckReport) => Promise<void>;
   heartbeat: (triggerId: string, claimedBy: string) => Promise<void>;
   heartbeatIntervalMs: number;
+  cleanupTimeoutMs: number;
 };
+
+async function runCleanupStep(
+  operation: () => Promise<void>,
+  timeoutMs: number,
+  onFailure: (error: unknown) => void,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const operationResult = Promise.resolve()
+    .then(operation)
+    .then(
+      () => ({ ok: true as const }),
+      (error) => ({ ok: false as const, error }),
+    );
+  const deadline = new Promise<{ ok: false; error: Error }>((resolve) => {
+    timer = setTimeout(
+      () =>
+        resolve({
+          ok: false,
+          error: new Error(`cleanup timed out after ${timeoutMs}ms`),
+        }),
+      timeoutMs,
+    );
+  });
+  const result = await Promise.race([operationResult, deadline]);
+  if (timer) clearTimeout(timer);
+  if (!result.ok) onFailure(result.error);
+}
 
 /**
  * How long the post-failure liveness check gets. Short on purpose: it runs only
@@ -1376,6 +1406,7 @@ function defaultDeps(): CheckExecutionDeps {
     report: reportPlanlessOutcome,
     heartbeat: sendHeartbeat,
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+    cleanupTimeoutMs: GITHUB_CHECK_CLEANUP_TIMEOUT_MS,
   };
 }
 
@@ -1923,17 +1954,37 @@ export async function executeClaimedCheck(
     // Each step best-effort and independent: a failure to delete the server row
     // must not skip killing the box (which costs money), and vice versa. The
     // backend's recovery sweep and E2B's TTL are the backstops for both.
+    const cleanupSteps: Promise<void>[] = [];
     if (serverId && cleanupBearer) {
-      await deps
-        .deleteEphemeralServer({ bearer: cleanupBearer, serverId })
-        .catch((error) =>
-          logger.warn("[github-checks] ephemeral server cleanup failed", {
+      cleanupSteps.push(
+        runCleanupStep(
+          () =>
+            deps.deleteEphemeralServer({
+              bearer: cleanupBearer,
+              serverId,
+            }),
+          deps.cleanupTimeoutMs,
+          (error) =>
+            logger.warn("[github-checks] ephemeral server cleanup failed", {
+              ...logContext,
+              error: error instanceof Error ? error.message : String(error),
+            }),
+        ),
+      );
+    }
+    cleanupSteps.push(
+      runCleanupStep(
+        () => deps.killSandbox(sandbox),
+        deps.cleanupTimeoutMs,
+        (error) =>
+          logger.warn("[github-checks] sandbox cleanup failed", {
             ...logContext,
+            sandboxId: sandbox?.sandboxId,
             error: error instanceof Error ? error.message : String(error),
           }),
-        );
-    }
-    await deps.killSandbox(sandbox);
+      ),
+    );
+    await Promise.all(cleanupSteps);
   }
 }
 
