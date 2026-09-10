@@ -367,6 +367,39 @@ describe("PlaygroundRightRail — the gated-off fallback", () => {
     workspaceFlag.enabled = true;
   });
 
+  it.each(["local", "cloud"] as const)(
+    "offers a %s Browser without Computer and never mounts a shell",
+    (engine) => {
+      workspaceFlag.enabled = false;
+      engineState.selectedEngine = engine;
+      // In particular, the local pane must be reachable BEFORE consent.
+      engineState.granted = false;
+      render(
+        <PlaygroundRightRail
+          onClose={() => {}}
+          hostConfig={{ builtInToolIds: ["browser"] } as any}
+          hostId="host-1"
+          projectId="proj-1"
+          isAuthenticated
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+      expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+        "data-engine",
+        engine === "local" ? "local" : "hosted",
+      );
+      expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+        "data-active",
+        "true",
+      );
+      expect(
+        screen.queryByRole("button", { name: /shell/i }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId("local-terminal")).not.toBeInTheDocument();
+      expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
+    },
+  );
+
   function renderRail() {
     return render(
       <PlaygroundRightRail
@@ -402,4 +435,3 @@ describe("PlaygroundRightRail — the gated-off fallback", () => {
     ).toBeInTheDocument();
   });
 });
-

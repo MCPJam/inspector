@@ -32,6 +32,32 @@ vi.mock("@/components/ui/resizable", () => ({
   ResizableHandle: () => <div data-testid="resizable-handle" />,
 }));
 
+const panelRenders = vi.hoisted(() => ({ activity: 0, tools: 0 }));
+vi.mock("../ActivityTimeline", async (original) => {
+  const actual = await original<typeof import("../ActivityTimeline")>();
+  return {
+    ...actual,
+    ActivityTimeline: (
+      props: Parameters<typeof actual.ActivityTimeline>[0],
+    ) => {
+      panelRenders.activity += 1;
+      return <actual.ActivityTimeline {...props} />;
+    },
+  };
+});
+vi.mock("../WebmcpToolsSidebar", async (original) => {
+  const actual = await original<typeof import("../WebmcpToolsSidebar")>();
+  return {
+    ...actual,
+    WebmcpToolsSidebar: (
+      props: Parameters<typeof actual.WebmcpToolsSidebar>[0],
+    ) => {
+      panelRenders.tools += 1;
+      return <actual.WebmcpToolsSidebar {...props} />;
+    },
+  };
+});
+
 class FakeEventSource {
   onmessage: ((event: { data: string }) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
@@ -100,6 +126,39 @@ describe("WebmcpInspectorTab — viewport", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+
+  it.each([0, 500])(
+    "isolates 30 viewport frames from a workspace with %i activity rows",
+    async (rows) => {
+      stubViewportActions({ screencastAccepted: true });
+      useWebmcpInspectorStore.setState({
+        session: session({
+          viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+        }),
+        activity: Array.from({ length: rows }, (_, i) => ({
+          id: `row-${i}`,
+          ts: i,
+          kind: "session_started" as const,
+          url: "https://shop.test/",
+        })),
+      });
+      render(<WebmcpInspectorTab />);
+      await act(async () => {});
+      const before = { ...panelRenders };
+      for (let seq = 1; seq <= 30; seq++) {
+        await act(async () => {
+          useWebmcpInspectorStore.setState({
+            liveFrame: liveFrame(`frame-${seq}`, seq),
+          });
+        });
+      }
+      expect(panelRenders.activity - before.activity).toBe(0);
+      expect(panelRenders.tools - before.tools).toBe(0);
+      expect(
+        screen.getByAltText("Live view of the inspected page"),
+      ).toHaveAttribute("src", "frame-30");
+    },
+  );
 
   it("asks for the stream while the pane is up, and withdraws on unmount", async () => {
     const { setScreencast, captureScreenshot } = stubViewportActions({
@@ -328,7 +387,7 @@ describe("WebmcpInspectorTab — viewport", () => {
     // zero-sized; give it a real one so the wheel maps into the frame.
     const image = screen.getByAltText("Live view of the inspected page");
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
 
     await act(async () => {
       pane.dispatchEvent(
@@ -472,7 +531,7 @@ describe("WebmcpInspectorTab — viewport", () => {
     );
     const image = screen.getByAltText("Live view of the inspected page");
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
 
     await act(async () => {
       fireEvent.pointerDown(pane, { clientX: 640, clientY: 400, button: 0 });
@@ -635,14 +694,20 @@ describe("WebmcpInspectorTab — viewport", () => {
     useWebmcpInspectorStore.setState({
       setScreencast,
       captureScreenshot,
-      session: session({ sessionId: "session-a", viewportTransport: streamKind }),
+      session: session({
+        sessionId: "session-a",
+        viewportTransport: streamKind,
+      }),
     });
     render(<WebmcpInspectorTab />);
     await act(async () => {});
     expect(setScreencast.mock.calls).toEqual([[true]]);
 
     useWebmcpInspectorStore.setState({
-      session: session({ sessionId: "session-b", viewportTransport: streamKind }),
+      session: session({
+        sessionId: "session-b",
+        viewportTransport: streamKind,
+      }),
     });
     await act(async () => {});
 

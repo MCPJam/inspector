@@ -13,6 +13,7 @@
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { buildPageToolSnapshot } from "./page-tool-aliases";
 import type { PageToolSnapshotEntry } from "@/shared/chat-v2";
+import { sameWebMcpRegistration } from "@/shared/webmcp-inspector-protocol";
 import { isPageToolAlias } from "@/shared/client-fulfilled-tools";
 
 /** The turn's snapshot, so an alias can be resolved when its call arrives. */
@@ -27,12 +28,15 @@ let advertised: PageToolSnapshotEntry[] = [];
  */
 const deferredPageToolCalls = new Map<
   string,
-  { alias: string; input: unknown }
+  { alias: string; input: unknown; entry: PageToolSnapshotEntry | null }
 >();
 const settledPageToolCallIds = new Set<string>();
 const shippedPageToolAliases = new Set<string>();
 const MAX_SHIPPED_PAGE_ALIASES = 128;
 const MAX_SETTLED_PAGE_CALL_IDS = 256;
+// Bound hot-reload recovery when a page continuously replaces its tools.
+const staleRecoveries = new Map<string, number>();
+const MAX_STALE_RECOVERIES = 3;
 
 function markPageToolCallSettled(toolCallId: string): void {
   settledPageToolCallIds.add(toolCallId);
@@ -58,6 +62,7 @@ export function setAdvertisedPageTools(entries: PageToolSnapshotEntry[]): void {
 /** Test seam and session cleanup for client-fulfilled page calls. */
 export function __resetPageToolDispatchForTests(): void {
   advertised = [];
+  staleRecoveries.clear();
   deferredPageToolCalls.clear();
   settledPageToolCallIds.clear();
   shippedPageToolAliases.clear();
@@ -93,6 +98,7 @@ export function deferPageToolCallForApproval(options: {
   deferredPageToolCalls.set(options.toolCallId, {
     alias: options.toolName,
     input: options.input,
+    entry: structuredClone(resolvePageToolAlias(options.toolName) ?? null),
   });
   return true;
 }
@@ -141,11 +147,51 @@ function textResult(text: string, isError = false): McpToolResult {
   };
 }
 
+/** Settle the old call so the SDK automatically continues with a fresh snapshot.
+ * The model chooses new arguments and the normal approval gate applies again.
+ * Never use this path for an invocation whose execution is uncertain.
+ */
+async function recoverStalePageTool(
+  entry: PageToolSnapshotEntry,
+): Promise<McpToolResult> {
+  const count = (staleRecoveries.get(entry.sessionId) ?? 0) + 1;
+  staleRecoveries.set(entry.sessionId, count);
+  if (staleRecoveries.size > 128)
+    staleRecoveries.delete(staleRecoveries.keys().next().value!);
+  if (count > MAX_STALE_RECOVERIES) {
+    return textResult(
+      "The page keeps replacing its tools. Nothing ran for this call. Stop retrying automatically and tell the user the page needs to settle before continuing.",
+      true,
+    );
+  }
+  const refreshed = await useWebmcpInspectorStore
+    .getState()
+    .refreshToolsForChat(entry.sessionId)
+    .catch(() => false);
+  if (!refreshed) {
+    return textResult(
+      "The page tool changed before execution; nothing ran. Its current tools could not be loaded. Do not retry this call automatically.",
+      true,
+    );
+  }
+  return textResult(
+    "The page tool registration changed before execution; nothing ran for this call. " +
+      "The tool list has been refreshed automatically. Continue the user's task using the current page tools supplied with this request. " +
+      "Read the current tool schema and issue a new call with appropriate arguments; do not reuse the old alias or approval. " +
+      "If the needed tool is no longer offered, explain that instead. The user does not need to refresh MCPJam.",
+    true,
+  );
+}
+
 export async function invokePageToolForChat(
   alias: string,
   input: Record<string, unknown>,
+  advertisedEntry?: PageToolSnapshotEntry | null,
 ): Promise<McpToolResult> {
-  const entry = resolvePageToolAlias(alias);
+  const entry =
+    advertisedEntry === undefined
+      ? resolvePageToolAlias(alias)
+      : advertisedEntry;
   if (!entry) {
     return textResult(
       "That page tool is no longer available — the WebMCP browser session was closed after this tool was offered.",
@@ -164,9 +210,21 @@ export async function invokePageToolForChat(
     );
   }
 
-  const result = await store.invokeToolForResult(entry.toolKey, input);
+  const live = store.tools.find((tool) => tool.toolKey === entry.toolKey);
+  if (!sameWebMcpRegistration(entry.binding, live?.binding)) {
+    return recoverStalePageTool(entry);
+  }
+  const result = await store.invokeToolForResult(
+    entry.toolKey,
+    input,
+    entry.binding,
+  );
 
+  if (result.state === "failed" && result.errorCode === "tool-gone") {
+    return recoverStalePageTool(entry);
+  }
   if (result.state === "succeeded") {
+    staleRecoveries.delete(entry.sessionId);
     const text =
       typeof result.output === "string"
         ? result.output
@@ -179,8 +237,7 @@ export async function invokePageToolForChat(
   }
   if (result.state === "unknown") {
     return textResult(
-      result.errorMessage ??
-        `The outcome of "${entry.rawName}" is unknown. Page execution may continue; verify the page state before retrying.`,
+      `${result.errorMessage ?? `The outcome of "${entry.rawName}" is unknown. Page execution may continue; verify the page state before retrying.`}${result.invokeId ? `\nInvocation ID: ${result.invokeId}` : ""}`,
       true,
     );
   }
@@ -212,7 +269,7 @@ export async function fulfillApprovedPageToolCall(options: {
 }): Promise<void> {
   if (settledPageToolCallIds.has(options.toolCallId)) return;
   const deferred = deferredPageToolCalls.get(options.toolCallId);
-  const alias = options.alias ?? deferred?.alias;
+  const alias = deferred?.alias ?? options.alias;
   if (!alias) return;
   const input = options.input !== undefined ? options.input : deferred?.input;
   markPageToolCallSettled(options.toolCallId);
@@ -225,6 +282,7 @@ export async function fulfillApprovedPageToolCall(options: {
       input && typeof input === "object" && !Array.isArray(input)
         ? (input as Record<string, unknown>)
         : {},
+      deferred?.entry,
     );
   } catch (error) {
     output = textResult(

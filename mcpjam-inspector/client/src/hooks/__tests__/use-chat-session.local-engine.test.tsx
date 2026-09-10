@@ -303,7 +303,7 @@ describe("useChatSession — local computer engine transmission", () => {
 
   it("defers page calls until approval, then returns the browser result", async () => {
     const pageTool = {
-      alias: pageToolAlias("session-1", "https://shop.test::add_to_cart"),
+      alias: pageToolAlias("session-1", `https://shop.test::add_to_cart\u0000${JSON.stringify({ frameId: "main", registrationSeq: 1 })}`),
       sessionId: "session-1",
       toolKey: "https://shop.test::add_to_cart",
       rawName: "add_to_cart",
@@ -330,6 +330,7 @@ describe("useChatSession — local computer engine transmission", () => {
       tools: [
         {
           toolKey: pageTool.toolKey,
+          binding: { frameId: "main", registrationSeq: 1 },
           name: pageTool.rawName,
           origin: pageTool.origin,
           fromSubframe: false,
@@ -376,7 +377,11 @@ describe("useChatSession — local computer engine transmission", () => {
     });
     await waitFor(() => expect(mockState.addToolOutput).toHaveBeenCalled());
 
-    expect(invoke).toHaveBeenCalledWith(pageTool.toolKey, { sku: "ABC-123" });
+    expect(invoke).toHaveBeenCalledWith(
+      pageTool.toolKey,
+      { sku: "ABC-123" },
+      { frameId: "main", registrationSeq: 1 },
+    );
     expect(mockState.addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({
         tool: advertised[0]!.alias,
@@ -395,7 +400,7 @@ describe("useChatSession — local computer engine transmission", () => {
     // model's call never resolves and the turn stops with no error and no
     // result. It has to run the call itself.
     const pageTool = {
-      alias: pageToolAlias("session-1", "https://shop.test::add_to_cart"),
+      alias: pageToolAlias("session-1", `https://shop.test::add_to_cart\u0000${JSON.stringify({ frameId: "main", registrationSeq: 1 })}`),
       sessionId: "session-1",
       toolKey: "https://shop.test::add_to_cart",
       rawName: "add_to_cart",
@@ -406,6 +411,7 @@ describe("useChatSession — local computer engine transmission", () => {
       tools: [
         {
           toolKey: pageTool.toolKey,
+          binding: { frameId: "main", registrationSeq: 1 },
           name: pageTool.rawName,
           origin: pageTool.origin,
           fromSubframe: false,
@@ -442,7 +448,11 @@ describe("useChatSession — local computer engine transmission", () => {
     // No pill was requested and none is coming, so the result has to arrive
     // from here.
     await waitFor(() => expect(mockState.addToolOutput).toHaveBeenCalled());
-    expect(invoke).toHaveBeenCalledWith(pageTool.toolKey, { sku: "ABC-123" });
+    expect(invoke).toHaveBeenCalledWith(
+      pageTool.toolKey,
+      { sku: "ABC-123" },
+      { frameId: "main", registrationSeq: 1 },
+    );
     expect(mockState.addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({
         tool: advertised[0]!.alias,
@@ -478,7 +488,7 @@ describe("useChatSession — local computer engine transmission", () => {
   ])("approval flipped mid-turn — $name", ({ sentWith, flippedTo, expectRun }) => {
     it("honours the value the turn was sent with", async () => {
       const pageTool = {
-        alias: pageToolAlias("session-1", "https://shop.test::add_to_cart"),
+        alias: pageToolAlias("session-1", `https://shop.test::add_to_cart\u0000${JSON.stringify({ frameId: "main", registrationSeq: 1 })}`),
         sessionId: "session-1",
         toolKey: "https://shop.test::add_to_cart",
         rawName: "add_to_cart",
@@ -489,6 +499,7 @@ describe("useChatSession — local computer engine transmission", () => {
         tools: [
           {
             toolKey: pageTool.toolKey,
+            binding: { frameId: "main", registrationSeq: 1 },
             name: pageTool.rawName,
             origin: pageTool.origin,
             fromSubframe: false,

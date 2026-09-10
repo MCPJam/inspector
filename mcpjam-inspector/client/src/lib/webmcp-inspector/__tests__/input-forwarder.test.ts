@@ -137,6 +137,7 @@ function harness(
   options: {
     geometry?: ViewportGeometry | undefined;
     deferSends?: boolean;
+    preserveGestureBoundaries?: boolean;
   } = {},
 ) {
   const sent: WebMcpInputEvent[][] = [];
@@ -155,6 +156,7 @@ function harness(
     geometry: () =>
       "geometry" in options ? options.geometry : geometry({}, {}),
     flushMs: 50,
+    preserveGestureBoundaries: options.preserveGestureBoundaries,
     setTimer: (fn) => {
       const handle = nextHandle++;
       timers.set(handle, fn);
@@ -204,6 +206,31 @@ function wheel(overrides: Record<string, unknown> = {}) {
  * seconds after the person stopped.
  */
 describe("createInputForwarder — wheel", () => {
+  it("coalesces vertical trackpad wheels with alternating horizontal jitter", async () => {
+    const h = harness({ deferSends: true, preserveGestureBoundaries: true });
+    h.forwarder.wheel(wheel({ deltaY: 10 }));
+    h.forwarder.wheel(wheel({ deltaX: 0.2, deltaY: 20 }));
+    h.forwarder.wheel(wheel({ deltaX: -0.1, deltaY: 30 }));
+    await h.settleOldest();
+    expect(h.sent[1]).toEqual([
+      { kind: "wheel", x: 0, y: 0, deltaX: 0.1, deltaY: 50 },
+    ]);
+  });
+
+  it("preserves direction and nested-scroll target changes for Node-local input", async () => {
+    const h = harness({ deferSends: true, preserveGestureBoundaries: true });
+    h.forwarder.wheel(wheel({ deltaY: 10 }));
+    h.forwarder.wheel(wheel({ deltaY: 20 }));
+    h.forwarder.wheel(wheel({ deltaY: -20 }));
+    h.forwarder.wheel(wheel({ clientX: 100, deltaY: -30 }));
+    await h.settleOldest();
+    expect(h.sent[1]).toEqual([
+      { kind: "wheel", x: 0, y: 0, deltaX: 0, deltaY: 20 },
+      { kind: "wheel", x: 0, y: 0, deltaX: 0, deltaY: -20 },
+      { kind: "wheel", x: 100, y: 0, deltaX: 0, deltaY: -30 },
+    ]);
+  });
+
   it("sends the first wheel of a gesture straight away", () => {
     const h = harness({ deferSends: true });
     h.forwarder.wheel(wheel({ clientX: 10, clientY: 20, deltaY: -120 }));

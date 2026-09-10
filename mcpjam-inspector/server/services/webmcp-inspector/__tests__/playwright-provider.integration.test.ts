@@ -116,9 +116,25 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     } = {},
   ) {
     registry = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
+    // Observe from provider creation: an embedded browser can paint before
+    // startWebMcpSession returns. A replay=0 subscription misses that frame
+    // and mistakes the later sharp still for the first streamed frame.
+    const frames: WebMcpFrame[] = [];
     const session = await startWebMcpSession({
       url: options.url ?? fixture.url,
-      provider,
+      provider: {
+        createSession: (args) =>
+          provider.createSession({
+            ...args,
+            callbacks: {
+              ...args.callbacks,
+              onFrame: (frame) => {
+                frames.push(frame);
+                args.callbacks.onFrame(frame);
+              },
+            },
+          }),
+      },
       registry,
       headless: true,
       ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
@@ -128,10 +144,8 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     });
     const runtime = registry.get(session.sessionId);
     const activity: WebMcpActivityEntry[] = [];
-    const frames: WebMcpFrame[] = [];
     runtime.hub.subscribe((event) => {
       if (event.type === "activity") activity.push(event.entry);
-      if (event.type === "frame") frames.push(event.frame);
     }, 0);
     return { session, runtime, activity, frames };
   }

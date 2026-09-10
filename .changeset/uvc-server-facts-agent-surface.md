@@ -1,7 +1,6 @@
 ---
 "@mcpjam/sdk": minor
 "@mcpjam/cli": minor
-"@mcpjam/mcp": minor
 "@mcpjam/inspector": patch
 ---
 

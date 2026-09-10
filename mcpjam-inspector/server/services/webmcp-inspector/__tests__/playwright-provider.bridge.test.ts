@@ -392,3 +392,38 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
     );
   });
 });
+
+it("refuses a re-registration at the final CDP boundary", async () => {
+  const h = await started({ onSend: () => ({ invocationId: "inv-1" }) });
+  h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+  const registrationSeq = h.toolSnapshots.at(-1)![0].registrationSeq!;
+  h.emit("WebMCP.toolsRemoved", { tools: [TOOL] });
+  h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+  await expect(
+    h.session.invokeTool({
+      ...invokeArgs,
+      expectedBinding: { frameId: TOOL.frameId, registrationSeq },
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toBeInstanceOf(WebMcpToolGoneError);
+  expect(h.sent.some((command) => command.method === "WebMCP.invokeTool")).toBe(
+    false,
+  );
+  await h.session.dispose();
+});
+
+it("does not substitute the main frame for a selected frame that vanished", async () => {
+  const h = await started({ onSend: () => ({ invocationId: "inv-1" }) });
+  h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+  await expect(
+    h.session.invokeTool({
+      ...invokeArgs,
+      frameId: "gone-subframe",
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toBeInstanceOf(WebMcpToolGoneError);
+  expect(h.sent.some((command) => command.method === "WebMCP.invokeTool")).toBe(
+    false,
+  );
+  await h.session.dispose();
+});

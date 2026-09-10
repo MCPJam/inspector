@@ -9,7 +9,11 @@
  * coordinate space.
  */
 import { authFetch } from "@/lib/session-token";
-import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
+import {
+  LOCAL_CONSENT_HEADER,
+  clearStoredLocalComputerConsent,
+  loadStoredLocalComputerConsent,
+} from "@/lib/local-computer-consent";
 import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
 
 /**
@@ -129,6 +133,17 @@ async function post<T>(
     | (T & { error?: string })
     | null;
   if (!response.ok) {
+    // A stored grant is only a UI projection; the server can reject it after
+    // revocation or a runtime change. Reopen the consent gate, but never let
+    // a late failure erase a newer grant minted while this request was flying.
+    if (
+      response.status === 403 &&
+      json?.error === "Local computer consent is required" &&
+      consentToken &&
+      loadStoredLocalComputerConsent()?.token === consentToken
+    ) {
+      clearStoredLocalComputerConsent();
+    }
     throw new LocalBrowserRequestError(
       typeof json?.error === "string"
         ? json.error
@@ -194,6 +209,20 @@ export function ensureLocalBrowser(
     { projectId, ...(sessionId ? { sessionId } : {}) },
     consentToken,
   );
+}
+
+/** Read a conversation's live browser without creating a new one. */
+export async function fetchLocalBrowserSession(
+  projectId: string,
+  consentToken: string | null,
+  sessionId: string,
+): Promise<LocalBrowserSession | null> {
+  const result = await post<{ session: LocalBrowserSession | null }>(
+    "session",
+    { projectId, sessionId },
+    consentToken,
+  );
+  return result.session;
 }
 
 export function mintLocalBrowserFrameNonce(
