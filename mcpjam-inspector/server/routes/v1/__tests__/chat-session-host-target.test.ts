@@ -1126,7 +1126,23 @@ describe("browser turn integration", () => {
     const input = browserFixture();
     await turn(input);
     const outbox = vi.mocked(browserOutbox.createBrowserArtifactOutbox).mock.results[0].value;
-    expect(outbox.flush).toHaveBeenCalled();
+    expect(outbox.flush).toHaveBeenCalledTimes(2);
+    expect(persistChatSessionToConvexMock.mock.invocationCallOrder[0]).toBeLessThan(outbox.flush.mock.invocationCallOrder[0]);
+  });
+  it("reports narrowed permissions separately from the stored grant", async () => {
+    const input = browserFixture();
+    const response = await turn({ ...input, toolMode: "read_only" });
+    const body = await response.json();
+    expect(body.browser.policy.mode).toBe("allow_all");
+    expect(body.browser.effectivePolicy.tools).toContain("browser_observe");
+    expect(body.browser.effectivePolicy.tools).not.toContain("browser_navigate");
+  });
+  it("retries failed evidence at terminal cleanup without failing the turn", async () => {
+    const input = browserFixture();
+    const flush = vi.fn().mockRejectedValueOnce(new Error("storage unavailable")).mockResolvedValue({ written: 1, pending: 0, videoAttached: false });
+    vi.mocked(browserOutbox.createBrowserArtifactOutbox).mockReturnValue({ enqueueSteps: vi.fn(), flush } as never);
+    expect((await turn(input)).status).toBe(200);
+    expect(flush).toHaveBeenCalledTimes(2);
   });
   it("releases ownership on capacity refusal without calling the engine", async () => {
     const input = browserFixture();
