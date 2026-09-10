@@ -1,3 +1,4 @@
+import { STREAM_CONGESTION_POLICY } from "@/shared/browser-viewport-policy";
 /**
  * Picking a quality tier from what the stream is actually doing.
  *
@@ -29,18 +30,9 @@ export interface TierSignals {
   encoderIdle?: boolean;
 }
 
-/**
- * Above this round trip, sharp is not worth its bitrate.
- *
- * Generous: a transatlantic hop is ~150ms and perfectly watchable, and the
- * thing that actually makes a pane unusable is loss rather than latency.
- */
-const RTT_DEGRADE_MS = 400;
-const RTT_RECOVER_MS = 250;
-
 /** Loss above this, while frames are flowing, is a link that cannot keep up. */
-const LOSS_DEGRADE = 0.1;
-const LOSS_RECOVER = 0.02;
+const LOSS_DEGRADE = STREAM_CONGESTION_POLICY.badLoss;
+const LOSS_RECOVER = STREAM_CONGESTION_POLICY.goodLoss;
 
 /**
  * How many consecutive readings must agree before the tier moves.
@@ -49,7 +41,8 @@ const LOSS_RECOVER = 0.02;
  * in BOTH directions, so recovering is as deliberate as degrading — a tier that
  * oscillated would be worse than either end of it.
  */
-const CONSECUTIVE = 3;
+const CONSECUTIVE = STREAM_CONGESTION_POLICY.badSamples;
+const RECOVERY_SAMPLES = STREAM_CONGESTION_POLICY.goodSamples;
 
 export interface TierController {
   /**
@@ -112,7 +105,8 @@ export function createTierController(
       // nothing to send: there is no evidence either way, so nothing moves.
       // Without this a static page — somebody READING — would step itself down
       // to the saver tier within seconds, which is precisely backwards.
-      const flowing = deltaFrames > 0 && signals.encoderIdle !== true;
+      const flowing =
+        deltaFrames > 0 && deltaDropped >= 0 && signals.encoderIdle !== true;
       if (!flowing) {
         degradeRun = 0;
         recoverRun = 0;
@@ -124,11 +118,8 @@ export function createTierController(
       // already in the denominator, and adding them again understated loss on
       // exactly the congested links this exists to notice.
       const loss = deltaDropped / deltaFrames;
-      const rtt = signals.rtt;
-      const bad =
-        loss >= LOSS_DEGRADE || (rtt !== undefined && rtt >= RTT_DEGRADE_MS);
-      const good =
-        loss <= LOSS_RECOVER && (rtt === undefined || rtt <= RTT_RECOVER_MS);
+      const bad = loss >= LOSS_DEGRADE;
+      const good = loss <= LOSS_RECOVER;
 
       if (bad) {
         recoverRun = 0;
@@ -146,7 +137,7 @@ export function createTierController(
       if (degradeRun >= CONSECUTIVE && auto !== "saver") {
         auto = "saver";
         degradeRun = 0;
-      } else if (recoverRun >= CONSECUTIVE && auto !== "auto") {
+      } else if (recoverRun >= RECOVERY_SAMPLES && auto !== "auto") {
         auto = "auto";
         recoverRun = 0;
       }

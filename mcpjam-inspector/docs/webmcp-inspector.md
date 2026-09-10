@@ -3,7 +3,8 @@
 A managed browser pointed at a page, so the WebMCP tools that page registers can
 be listed, invoked, watched across navigations, and handed to a model.
 
-Local only, behind `webmcp-inspector-enabled`.
+Visibility follows `local-browser-enabled` in Node/Electron and
+`hosted-browser-enabled` in hosted deployments.
 
 ## What it is for
 
@@ -342,7 +343,7 @@ a window opened.
 | Server kill switch | `MCPJAM_WEBMCP_INSPECTOR_ENABLED` (default on)        | same                                                                     |
 | Reachability       | —                                                     | `MCPJAM_WEBMCP_INSPECTOR_HOSTED_ENABLED=1`                               |
 | Backend verdict    | —                                                     | `desktopProvisionable` from the runtime-config bootstrap                 |
-| Client visibility  | `webmcp-inspector-enabled` (PostHog)                  | same                                                                     |
+| Client visibility  | `local-browser-enabled` (PostHog)                   | `hosted-browser-enabled` (PostHog)                                       |
 
 Off means **404, not 403**: a disabled capability should not be discoverable.
 The nav item's flag key must stay in `SIDEBAR_RESOLVED_FLAG_KEYS` or the item is

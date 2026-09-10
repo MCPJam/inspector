@@ -329,6 +329,7 @@ export class BrowserdRequestHandler {
     // them reads to the server as "fall back to the old path" on an engine
     // that supports the new one.
     this.features = [
+      "sharp-stream-v1",
       ...new Set([...(deps.features ?? []), ...BROWSERD_WEBMCP_FEATURES]),
     ];
     this.bundleHash = deps.bundleHash;
@@ -348,7 +349,8 @@ export class BrowserdRequestHandler {
    * reads as "this engine cannot tell you" rather than as "no tabs".
    */
   tabsSnapshot():
-    { active?: string; list?: Array<{ id: string; url: string }> } | undefined {
+    | { active?: string; list?: Array<{ id: string; url: string }> }
+    | undefined {
     return this.driver.tabsSnapshot?.();
   }
 
@@ -1296,8 +1298,8 @@ export class BrowserdRequestHandler {
         outcome.error === "page_changed"
           ? 409
           : outcome.error === "unknown_tab"
-            ? 404
-            : 423,
+          ? 404
+          : 423,
       body: { error: outcome.error, bootId: this.bootId },
     };
   }
@@ -1665,6 +1667,7 @@ export class BrowserdRequestHandler {
    * hands are on the page.
    */
   async subscribeFrames(args: {
+    maxFrameBytes?: number;
     tabId?: string;
     holder?: string;
     listener: (frame: ViewportFrame) => void;
@@ -1738,7 +1741,7 @@ export class BrowserdRequestHandler {
         return;
       }
       args.listener(frame);
-    });
+    }, args.maxFrameBytes);
     if (!live) unsubscribe();
     return {
       ok: true,

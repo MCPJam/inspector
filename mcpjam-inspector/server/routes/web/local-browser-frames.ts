@@ -1,3 +1,7 @@
+import {
+  jpegFrameLimit,
+  SHARP_STREAM_FEATURE,
+} from "@/shared/browser-viewport-policy";
 /**
  * The live picture of the local agent browser — `/api/web/computers/local-browser/frames`.
  *
@@ -121,6 +125,7 @@ export function createLocalBrowserFramesWsHandler(
      * rather than only on staging.
      */
     const binaryWire = c.req.query("wire") === "binary";
+    const sharp = c.req.query("sharp") === "1";
     const origin = c.req.header("Origin");
 
     // Everything resolvable before the socket opens is resolved here; a
@@ -233,6 +238,7 @@ export function createLocalBrowserFramesWsHandler(
         }
 
         const subscription = await session.handler.subscribeFrames({
+          maxFrameBytes: jpegFrameLimit(sharp),
           tabId,
           ...(holder ? { holder } : {}),
           onRevoked: (reason) => {
@@ -272,7 +278,7 @@ export function createLocalBrowserFramesWsHandler(
                   jpeg: new Uint8Array(Buffer.from(frame.data, "base64")),
                 }),
               );
-              stats?.offer(bytes.byteLength, () => ws.send(bytes));
+              stats?.offerJpeg(bytes.byteLength, () => ws.send(bytes));
               return;
             }
             // `relayTs` even on loopback, where it equals `ts` to within a
@@ -280,7 +286,7 @@ export function createLocalBrowserFramesWsHandler(
             // frame to know which field it may subtract from its own clock.
             const stamped = { ...frame, relayTs: Date.now() };
             const payload = JSON.stringify({ type: "frame", frame: stamped });
-            stats?.offer(payload.length, () => ws.send(payload));
+            stats?.offerJpeg(payload.length, () => ws.send(payload));
           },
         });
 
@@ -333,6 +339,7 @@ export function createLocalBrowserFramesWsHandler(
             // and permanently stale on the one a developer debugs against.
             const webmcp = session.handler.webmcpSnapshot?.();
             stats?.mergeDaemon({
+              jpeg: counters.jpeg,
               framesIn: counters.framesIn,
               framesOut: counters.framesOut,
               bytesOut: counters.bytesOut,
@@ -399,7 +406,7 @@ export function createLocalBrowserFramesWsHandler(
           ws.send(
             JSON.stringify({
               type: "hello",
-              features: ["input"],
+              features: ["input", ...(sharp ? [SHARP_STREAM_FEATURE] : [])],
               codecs: ["jpeg"],
               wire: binaryWire ? "binary" : "json",
             }),
