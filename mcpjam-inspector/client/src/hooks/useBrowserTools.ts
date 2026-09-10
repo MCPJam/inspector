@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useHost } from "@/hooks/useClients";
 import { resolveEffectiveHost } from "@/lib/effective-client";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -114,9 +115,16 @@ export function useBrowserTools(args: {
   // that stopped at the explicit pick reported "no browser" for a project
   // whose DEFAULT host has one, which is the common case: the pane offered a
   // live browser while the Tools panel beside it said no server was connected.
+  // `shouldQueryProjectId`, not a bare truthiness check. This hook's
+  // `projectId` is the PLAYGROUND'S project scope, which falls back to the
+  // local `activeProjectId` when there is no cloud project (PlaygroundTab
+  // passes `sharedProjectId ?? activeProjectId`). That fallback is the string
+  // sentinel `"none"` for a guest, which is truthy and reached
+  // `v.id("projects")` — a validator that throws BEFORE the handler runs, so
+  // nothing downstream could catch it. Sentry CONVEX-HQ: 636 users.
   const projectDefaultHostConfig = useQuery(
     "hostConfigsV2:getProjectDefault" as never,
-    isAuthenticated && args.projectId
+    isAuthenticated && shouldQueryProjectId(args.projectId)
       ? ({ projectId: args.projectId } as never)
       : "skip",
   ) as HostConfigDtoV2 | null | undefined;
