@@ -68,7 +68,8 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
     events: readonly unknown[];
   }> = [];
   let inputOutcome:
-    { ok: true } | { ok: false; status: number; error: string } = { ok: true };
+    | { ok: true }
+    | { ok: false; status: number; error: string } = { ok: true };
   /** Held open so a test can drive "a second batch while the first is out". */
   let releaseInput: (() => void) | null = null;
   const touchSession = vi.fn(async () => ({ counted }));
@@ -762,7 +763,8 @@ describe("browser frames socket — the binary wire", () => {
     f.upstreamCalls[0].onFrame(FRAME);
 
     const binary = ws.sent.find((entry) => entry instanceof Uint8Array) as
-      Uint8Array | undefined;
+      | Uint8Array
+      | undefined;
     expect(binary).toBeDefined();
     const decoded = createFrameStreamDecoder().push(binary!);
     expect(decoded.ok).toBe(true);
@@ -873,7 +875,8 @@ describe("browser frames socket — negotiating h264", () => {
       seq: 2,
     });
     const binary = ws.sent.find((entry) => entry instanceof Uint8Array) as
-      Uint8Array | undefined;
+      | Uint8Array
+      | undefined;
     expect(binary).toBeDefined();
     const decoded = createFrameStreamDecoder({ video: true }).push(binary!);
     expect(decoded.ok && decoded.records[0]).toMatchObject({
@@ -944,5 +947,39 @@ describe("browser frames socket — quality", () => {
     const { ws, events } = await f.connect();
     say(events, ws, { type: "quality", tier: "sharp" });
     await vi.waitFor(() => expect(f.qualityCalls).toEqual(["sharp"]));
+  });
+});
+
+describe("sharp stream negotiation", () => {
+  it.each([false, true])(
+    "requires both viewer and daemon capability (daemon=%s)",
+    async (capable) => {
+      const h = build();
+      if (capable) h.setDaemonFeatures(["sharp-stream-v1"]);
+      const { ws, events } = await h.connect("tok", "wire=binary&sharp=1");
+      expect(h.upstreamCalls[0]?.sharp === true).toBe(capable);
+      const hello = ws.sent
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => JSON.parse(x))
+        .find((x) => x.type === "hello");
+      expect(hello.features.includes("sharp-stream-v1")).toBe(capable);
+      h.upstreamCalls[0]!.onFrame({
+        jpeg: new Uint8Array(300_000),
+        deviceWidth: 620,
+        deviceHeight: 1160,
+        scale: 1,
+        ts: 1,
+        seq: 1,
+      });
+      expect(ws.sent.some((x) => x instanceof Uint8Array)).toBe(capable);
+      events.onClose!({} as never, ws as never);
+    },
+  );
+  it("keeps old clients within their limit even against a capable daemon", async () => {
+    const h = build();
+    h.setDaemonFeatures(["sharp-stream-v1"]);
+    const { ws, events } = await h.connect("tok", "wire=binary");
+    expect(h.upstreamCalls[0]?.sharp).toBeUndefined();
+    events.onClose!({} as never, ws as never);
   });
 });

@@ -1,3 +1,4 @@
+import type { JpegDeliveryStats } from "@/shared/browser-viewport-policy";
 /**
  * Glass-to-glass measurement for a viewport stream. DARK BY DEFAULT.
  *
@@ -98,6 +99,7 @@ export interface FrameStatsReport {
 
 /** What the overlay draws: instantaneous, not cumulative. */
 export interface FrameStatsLive {
+  displayed?: { width: number; height: number };
   transport: FrameTransportRung;
   tier: string;
   engine: string;
@@ -112,12 +114,19 @@ export interface FrameStatsLive {
   framesPainted: number;
   /** What the RELAY said about its own side of the stream. */
   relay?: {
+    jpegDelivery?: JpegDeliveryStats;
     framesIn: number;
     framesOut?: number;
     bytes: number;
     dropped: number;
     subscribers: number;
     daemon?: {
+      jpeg?: {
+        requestedQuality: number;
+        quality: number;
+        maxFrameBytes: number;
+        reason: string;
+      };
       framesIn?: number;
       dropped?: { dedupe?: number; oversize?: number; pacer?: number };
       subscribers?: number;
@@ -151,6 +160,7 @@ export interface FrameStats {
   noteTransport(rung: FrameTransportRung): void;
   noteTier(tier: string): void;
   noteEngine(engine: string): void;
+  noteDisplayed(size: { width: number; height: number }): void;
   noteRtt(ms: number): void;
   /** A frame arrived on the wire. Feeds fps and kbps; not a paint. */
   noteFrameArrived(args: { bytes: number }): void;
@@ -206,6 +216,7 @@ export function createFrameStats(options: FrameStatsOptions): FrameStats {
   let height = 0;
   let framesPainted = 0;
   let relay: FrameStatsLive["relay"];
+  let displayed: FrameStatsLive["displayed"];
 
   const captureToPaint: Sample[] = [];
   const inputToPaint: Sample[] = [];
@@ -269,6 +280,12 @@ export function createFrameStats(options: FrameStatsOptions): FrameStats {
   }
 
   const api: FrameStats = {
+    noteDisplayed(size) {
+      displayed = {
+        width: Math.round(size.width),
+        height: Math.round(size.height),
+      };
+    },
     enabled: isEnabled,
     setEnabled(next) {
       try {
@@ -311,7 +328,8 @@ export function createFrameStats(options: FrameStatsOptions): FrameStats {
       framesPainted += 1;
       if (frame.width) width = frame.width;
       if (frame.height) height = frame.height;
-      if (frame.decodeMs !== undefined) push(decode, frame.decodeMs, frame.rung);
+      if (frame.decodeMs !== undefined)
+        push(decode, frame.decodeMs, frame.rung);
       const stamp = frame.relayTs ?? frame.ts;
       if (stamp !== undefined) push(captureToPaint, at - stamp, frame.rung);
       // Expired HERE as well as on send. `noteInputSent` is not a reliable
@@ -341,7 +359,9 @@ export function createFrameStats(options: FrameStatsOptions): FrameStats {
       if (awaitingAck.size > 256) {
         // A relay that stopped acking must not grow this without bound.
         awaitingAck = new Map(
-          [...awaitingAck].filter(([, sentAt]) => at - sentAt < INPUT_TIMEOUT_MS),
+          [...awaitingAck].filter(
+            ([, sentAt]) => at - sentAt < INPUT_TIMEOUT_MS,
+          ),
         );
       }
     },
@@ -391,6 +411,7 @@ export function createFrameStats(options: FrameStatsOptions): FrameStats {
       const span = arrivals.length > 0 ? RATE_WINDOW_MS / 1_000 : 0;
       const bytes = arrivals.reduce((total, entry) => total + entry.bytes, 0);
       return {
+        displayed,
         transport: currentRung,
         tier,
         engine,
@@ -398,7 +419,9 @@ export function createFrameStats(options: FrameStatsOptions): FrameStats {
         height,
         fps: span > 0 ? round1(arrivals.length / span) : 0,
         kbps: span > 0 ? Math.round((bytes * 8) / span / 1_000) : 0,
-        ...(percentile(rtt, 50) !== undefined ? { rtt: percentile(rtt, 50)! } : {}),
+        ...(percentile(rtt, 50) !== undefined
+          ? { rtt: percentile(rtt, 50)! }
+          : {}),
         ...(percentile(captureToPaint, 50) !== undefined
           ? { captureToPaintP50: percentile(captureToPaint, 50)! }
           : {}),
@@ -434,6 +457,7 @@ export function createFrameStats(options: FrameStatsOptions): FrameStats {
       api.reset();
       currentRung = "none";
       tier = "auto";
+      displayed = undefined;
       engine = "";
       width = 0;
       height = 0;

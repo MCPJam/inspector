@@ -1,3 +1,4 @@
+import type { JpegDeliveryStats } from "@/shared/browser-viewport-policy";
 import { useBrowserWorkspaceEnabled } from "@/hooks/useComputersEnabled";
 import {
   browserPageToolsKey,
@@ -534,10 +535,10 @@ export function HostedBrowserBody({
   const control: PaneControl = holding
     ? "you"
     : lease.state === "free" || lease.state === "unknown"
-      ? "agent"
-      : lease.holderKind === "script"
-        ? "script"
-        : "other";
+    ? "agent"
+    : lease.holderKind === "script"
+    ? "script"
+    : "other";
 
   /**
    * The shell's transport, for this engine.
@@ -645,6 +646,7 @@ export function HostedBrowserBody({
     let lastBitmap: ImageBitmap | undefined;
     /** Built on the first access unit; null on a stream that stays JPEG. */
     let video: ReturnType<typeof createPaneVideoDecoder> | null = null;
+    let videoAgreed = false;
     /**
      * Record what the box says is on screen, and say so when it moves.
      *
@@ -694,6 +696,7 @@ export function HostedBrowserBody({
         token,
         tabId: shell.state.activeTabId ?? undefined,
         wire: "binary",
+        sharp: true,
         ...(wantsVideo ? { codec: "h264" as const } : {}),
       });
       stream = opened;
@@ -905,7 +908,7 @@ export function HostedBrowserBody({
             opened.close();
           },
         },
-        { video: wantsVideo },
+        { video: wantsVideo, sharp: true },
       );
       openedSocket = opened.socket;
       socketRef.current = opened.socket;
@@ -928,6 +931,7 @@ export function HostedBrowserBody({
             type?: string;
             frame?: PaneFrame;
             t?: number;
+            jpegDelivery?: JpegDeliveryStats;
             framesIn?: number;
             framesOut?: number;
             bytes?: number;
@@ -942,6 +946,8 @@ export function HostedBrowserBody({
               ? ((parsed as { features: unknown[] }).features as unknown[])
               : [];
             socketInputRef.current = features.includes("input");
+            videoAgreed =
+              wantsVideo && (parsed as { codec?: string }).codec === "h264";
             return;
           }
           if (parsed.type === "input_ack") {
@@ -976,10 +982,7 @@ export function HostedBrowserBody({
             if (typeof parsed.t === "number") {
               const rtt = Date.now() - parsed.t;
               paneFrameStats.noteRtt(rtt);
-              // Kept for the tier controller, which reads loss AND latency: a
-              // link that drops nothing but answers in half a second is still
-              // a link somebody is waiting on, and without this the whole
-              // latency half of the auto rule never fired.
+              // Retain round-trip diagnostics without treating latency alone as loss.
               rttRef.current = rtt;
             }
             return;
@@ -998,22 +1001,26 @@ export function HostedBrowserBody({
             // this pane painted: a pane that dropped a frame because a tab was
             // hidden is not a link that cannot carry the stream.
             const before = tierController.current.current();
-            const next = tierController.current.observe({
-              ...(parsed.framesIn !== undefined
-                ? { framesIn: parsed.framesIn }
-                : {}),
-              ...(parsed.dropped !== undefined
-                ? { dropped: parsed.dropped }
-                : {}),
-              ...(rttRef.current !== undefined ? { rtt: rttRef.current } : {}),
-              ...(typeof (parsed.daemon as { encoderIdle?: boolean })
-                ?.encoderIdle === "boolean"
-                ? {
-                    encoderIdle: (parsed.daemon as { encoderIdle: boolean })
-                      .encoderIdle,
-                  }
-                : {}),
-            });
+            const next = videoAgreed
+              ? tierController.current.observe({
+                  ...(parsed.framesIn !== undefined
+                    ? { framesIn: parsed.framesIn }
+                    : {}),
+                  ...(parsed.dropped !== undefined
+                    ? { dropped: parsed.dropped }
+                    : {}),
+                  ...(rttRef.current !== undefined
+                    ? { rtt: rttRef.current }
+                    : {}),
+                  ...(typeof (parsed.daemon as { encoderIdle?: boolean })
+                    ?.encoderIdle === "boolean"
+                    ? {
+                        encoderIdle: (parsed.daemon as { encoderIdle: boolean })
+                          .encoderIdle,
+                      }
+                    : {}),
+                })
+              : before;
             setTier(next);
             paneFrameStats.noteTier(next);
             // TELL THE DAEMON. Auto used to move only the pane's own state,
@@ -1040,6 +1047,7 @@ export function HostedBrowserBody({
                 ?.tabs,
             );
             paneFrameStats.noteRelayStats({
+              jpegDelivery: parsed.jpegDelivery,
               framesIn: parsed.framesIn ?? 0,
               ...(parsed.framesOut !== undefined
                 ? { framesOut: parsed.framesOut }
@@ -1293,10 +1301,10 @@ export function HostedBrowserBody({
           control === "you"
             ? "human"
             : control === "script"
-              ? "script"
-              : control === "other"
-                ? "human"
-                : "agent",
+            ? "script"
+            : control === "other"
+            ? "human"
+            : "agent",
         ...(lease.state === "parked" ? { parked: true } : {}),
       }}
       onCommand={shell.run}
