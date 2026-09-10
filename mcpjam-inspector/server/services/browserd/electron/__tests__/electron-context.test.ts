@@ -61,6 +61,15 @@ describe("electron context — the windows it opens", () => {
     });
   });
 
+  it("resizes the hidden window's content when the driver resizes its page", async () => {
+    const electron = fakeElectron();
+    const context = await launchElectronContext({ electron });
+    const page = await context.newPage();
+    await page.setViewportSize!({ width: 480, height: 600 });
+    expect(electron.windows[0]?.contentSize).toEqual({ width: 480, height: 600 });
+    await context.close();
+  });
+
   it("refuses every permission a page asks for", async () => {
     const electron = fakeElectron();
     await launchElectronContext({ electron });
@@ -182,6 +191,18 @@ describe("electron context — lifecycle", () => {
 });
 
 describe("electron context — the page it hands back", () => {
+  it("closes a window whose initial document fails to load", async () => {
+    const contents = new FakeBrowserWebContents({
+      loadError: new Error("load failed"),
+    });
+    const electron = fakeElectron([contents]);
+    const context = await launchElectronContext({ electron });
+    await expect(context.newPage()).rejects.toThrow("load failed");
+    expect(electron.windows[0]?.isDestroyed()).toBe(true);
+    expect(agentBrowserWindowCount()).toBe(0);
+    await context.close();
+  });
+
   it("drives the webContents the window was built with", async () => {
     const contents = new FakeBrowserWebContents();
     const electron = fakeElectron([contents]);
@@ -190,7 +211,10 @@ describe("electron context — the page it hands back", () => {
     const page = await context.newPage();
     await page.goto("https://example.test/");
 
-    expect(contents.navigations).toEqual(["https://example.test/"]);
+    expect(contents.navigations).toEqual([
+      "about:blank",
+      "https://example.test/",
+    ]);
     expect(page.url()).toBe("https://example.test/");
   });
 
@@ -254,7 +278,6 @@ describe("electron context — outside Electron", () => {
   });
 });
 
-
 /**
  * V-3. Tabs as VIEWS on one hidden holder, which is what makes the browser
  * showable: the pane reparents the active view into the app's own window and
@@ -277,6 +300,7 @@ describe("the native surface", () => {
         setViewport: () => {},
         setShieldFactory: () => {},
         isShown: () => false,
+        visibilityAllowed: () => true,
         isShielded: () => false,
         inputAllowed: () => false,
         dispose: () => calls.push({ kind: "dispose", view: undefined }),

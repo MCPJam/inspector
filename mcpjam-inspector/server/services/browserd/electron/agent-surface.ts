@@ -186,6 +186,8 @@ export interface ContextSurface {
   paneHolder(): string | undefined;
   /** Is the active view currently parented into a visible window? */
   isShown(): boolean;
+  /** Does the lease permit this pane to see the page, even before a tab exists? */
+  visibilityAllowed(): boolean;
   /** May the person's clicks reach the page right now? */
   inputAllowed(): boolean;
   dispose(): void;
@@ -520,6 +522,7 @@ export function createContextSurface(
       apply();
     },
     isShown: () => !!parented,
+    visibilityAllowed: visible,
     paneHolder: () => paneHolder,
     isShielded: () => shielded,
     setShieldFactory(factory) {
