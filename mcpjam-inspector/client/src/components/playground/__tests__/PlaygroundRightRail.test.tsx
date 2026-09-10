@@ -60,6 +60,7 @@ vi.mock("@/components/computer/useComputerTerminal", () => ({
 
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabledState: () => true,
+  useBrowserEnabledState: () => true,
   // ON, so the rail is the two-tab one the tests below describe. The Browser
   // tab is the FALLBACK for a workspace that is gated off, and it has its own
   // suite at the bottom of this file.

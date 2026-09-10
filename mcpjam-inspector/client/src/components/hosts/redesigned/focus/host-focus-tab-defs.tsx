@@ -1,7 +1,10 @@
 import { useMemo } from "react";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import {
+  useComputersEnabled,
+  useBrowserEnabled,
+} from "@/hooks/useComputersEnabled";
 import { visibleBuiltInToolCatalog } from "@/lib/host-config-computer";
 import type { HostFocusTabId } from "../types";
 
@@ -76,8 +79,10 @@ export function useVisibleHostFocusTabs(
 ): HostFocusTabDef[] {
   const catalog = useBuiltInToolCatalog();
   const computersEnabled = useComputersEnabled();
+  const browsersEnabled = useBrowserEnabled();
   const visible = visibleBuiltInToolCatalog(catalog, {
     computersEnabled,
+    browsersEnabled,
     selectedIds: draft.builtInToolIds,
   });
   const hasBuiltInTools = (visible?.length ?? 0) > 0;

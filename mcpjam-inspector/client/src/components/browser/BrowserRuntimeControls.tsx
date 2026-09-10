@@ -46,8 +46,12 @@ export function BrowserRuntimeControls({
             value={engine.selectedEngine}
             onChange={(e) => choose(e.target.value as "local" | "cloud")}
           >
-            <option value="local">This machine</option>
-            <option value="cloud">Cloud</option>
+            <option value="local" disabled={!engine.localAvailable}>
+              This machine
+            </option>
+            <option value="cloud" disabled={!engine.cloudAvailable}>
+              Cloud
+            </option>
           </select>
         ) : (
           <span>Cloud</span>

@@ -161,6 +161,23 @@ export function captureServerEventForActor(
  * Flush and close the client. Wire into graceful shutdown (bounded — the
  * caller's force-exit timer is the backstop).
  */
+/** Rollout evaluation does not emit exposure events or trust client flags. */
+export async function evaluateBrowserRollout(
+  key: "local-browser-enabled" | "hosted-browser-enabled",
+  distinctId: string,
+): Promise<boolean> {
+  if (!distinctId) return false;
+  try {
+    return (
+      (await getClient()?.isFeatureEnabled(key, distinctId, {
+        sendFeatureFlagEvents: false,
+      })) === true
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function shutdownAnalytics(): Promise<void> {
   if (!client) return;
   try {

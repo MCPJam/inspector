@@ -2,6 +2,7 @@ import {
   resolveBrowserEngine,
   coerceBrowserEngineForActor,
 } from "../computers/browser-engine.js";
+import { guestBrowserProject } from "../computers/browser-rollout.js";
 import { requireGithubToolSelection } from "../../services/github-checks/credential-policy.js";
 /**
  * Host tool resolver: resolved host config → AI SDK ToolSet.
@@ -194,6 +195,8 @@ export interface BuiltInToolContext {
    */
   computerEngine?: ComputerEngine;
   browserEngine?: ComputerEngine;
+  /** Verified local guest, supplied by the request boundary, never the body. */
+  localBrowserGuestId?: string;
   browserConsentToken?: string;
   localBrowserRequested?: boolean;
   browserUnavailableReason?: string;
@@ -562,6 +565,7 @@ export function resolveHostTools(
         ctx.browserEngine ?? resolveBrowserEngine({ localConsentValid: false });
       const resolvedEngine = coerceBrowserEngineForActor(requestedEngine, {
         isGuest: Boolean(ctx.isGuest),
+        localGuestAuthorized: Boolean(ctx.localBrowserGuestId),
         isScenarioSession: Boolean(ctx.isScenarioSession),
         isJourneySession: Boolean(ctx.isJourneySession),
         executionScopeKind: ctx.executionScope?.kind,
@@ -724,7 +728,7 @@ export function resolveHostTools(
         );
         continue;
       }
-      if (ctx.isGuest) {
+      if (ctx.isGuest && !(isLocalBrowser && ctx.localBrowserGuestId)) {
         logger.debug(
           "[built-in-tools] browser not advertised to guest actors; skipping",
           { projectId: ctx.projectId },
@@ -745,7 +749,10 @@ export function resolveHostTools(
       }
       const browser = buildBrowserTools({
         authHeader,
-        projectId: ctx.projectId,
+        projectId: ctx.localBrowserGuestId
+          ? guestBrowserProject(ctx.projectId, ctx.localBrowserGuestId)
+          : ctx.projectId,
+        localGuest: Boolean(ctx.localBrowserGuestId),
         engine: isLocalBrowser ? "local" : "hosted",
         localConsentToken: ctx.browserConsentToken,
         // The host's switch, exactly as bash gets it. This family follows it

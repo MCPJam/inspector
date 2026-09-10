@@ -9,8 +9,13 @@ const state = vi.hoisted(() => ({
   environment: false,
   hosted: false,
   flag: true,
+  hostedFlag: false,
+  member: true,
   granted: false,
   browserAvailable: true,
+}));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: state.member ? { id: "member" } : null }),
 }));
 vi.mock("@/hooks/use-previewed-environment-id", () => ({
   usePreviewedEnvironmentId: () => [state.environment ? "env-1" : null],
@@ -25,6 +30,7 @@ vi.mock("@/lib/config", () => ({
 }));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useLocalBrowserEnabled: () => state.flag,
+  useHostedBrowserEnabled: () => state.hostedFlag,
 }));
 vi.mock("@/hooks/useProjectComputer", () => ({
   useComputersDataPlaneConfig: () => ({
@@ -55,6 +61,8 @@ beforeEach(() => {
   });
   state.hosted = false;
   state.flag = true;
+  state.hostedFlag = false;
+  state.member = true;
   state.granted = false;
   state.browserAvailable = true;
 });
@@ -63,6 +71,14 @@ it("defaults to This machine without shell availability or Browser consent", () 
   expect(result.current.selectedEngine).toBe("local");
   expect(result.current.engine).toBe("local");
   expect(result.current.localAvailable).toBe(true);
+  expect(result.current.cloudAvailable).toBe(false);
+});
+it("keeps local Browser available to guests but never offers cloud", () => {
+  state.member = false;
+  state.hostedFlag = true;
+  const { result } = renderHook(() => useBrowserEngine("p"));
+  expect(result.current.localAvailable).toBe(true);
+  expect(result.current.cloudAvailable).toBe(false);
 });
 it("stores Browser selection independently of shell selection and per project", () => {
   saveComputerEngine("p", "cloud");

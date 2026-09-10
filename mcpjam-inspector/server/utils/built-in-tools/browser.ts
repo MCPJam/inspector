@@ -162,6 +162,8 @@ export interface BrowserToolsOptions {
   }) => void;
   /** Bearer authorization forwarded to the control plane. */
   authHeader: string;
+  /** Local guest sessions have no member-owned cloud metadata or profiles. */
+  localGuest?: boolean;
   /** Project whose computer this turn drives. */
   projectId: string;
   executionScope?: ExecutionScope;
@@ -2331,7 +2333,10 @@ function defaultEnsureSession(
       }
       const service = new BrowserSessionService();
       const logical =
-        service.enabled && opts.sessionScope && logicalSessionId
+        service.enabled &&
+        !opts.localGuest &&
+        opts.sessionScope &&
+        logicalSessionId
           ? await service.resolveSession({
               owner: {
                 kind: opts.sessionScope.kind,
@@ -2349,6 +2354,7 @@ function defaultEnsureSession(
           : null;
       if (
         service.enabled &&
+        !opts.localGuest &&
         opts.sessionScope &&
         logicalSessionId &&
         !logical

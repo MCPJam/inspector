@@ -2817,8 +2817,9 @@ export function useChatSession(
               body: patchBodyAccessVersion(init.body, recovery.accessVersion),
             });
             if (!response.ok) {
-              const replayError =
-                await classifyScenarioAccessResponse(response);
+              const replayError = await classifyScenarioAccessResponse(
+                response,
+              );
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
               }
@@ -2954,10 +2955,7 @@ export function useChatSession(
       Boolean(localConsentToken) &&
       authIsMemberRef.current;
     const sendLocalBrowser =
-      !shouldUseOrgAwareChatApi &&
-      localBrowserRequested &&
-      !hostedScenarioId &&
-      authIsMemberRef.current;
+      !shouldUseOrgAwareChatApi && localBrowserRequested && !hostedScenarioId;
     if (sendLocalBrowser && browserConsentToken)
       mergedHeaders[BROWSER_CONSENT_HEADER] = browserConsentToken;
     if (sendLocalEngine && localConsentToken) {
@@ -3055,13 +3053,13 @@ export function useChatSession(
                 : {}),
             }
           : // Host-bound direct preview: forward the saved host id so the server
-            // re-resolves the host's authoritative runtime config (harness /
-            // computer included). Only on the direct path — scenario sessions own
-            // their host via scenarioId and the server ignores hostId when
-            // scenarioId is set.
-            isHostedDirectChat && hostedHostId
-            ? { hostId: hostedHostId }
-            : {}),
+          // re-resolves the host's authoritative runtime config (harness /
+          // computer included). Only on the direct path — scenario sessions own
+          // their host via scenarioId and the server ignores hostId when
+          // scenarioId is set.
+          isHostedDirectChat && hostedHostId
+          ? { hostId: hostedHostId }
+          : {}),
         ...(hostedScenarioId && hostedScenarioSurface
           ? { surface: hostedScenarioSurface }
           : {}),
