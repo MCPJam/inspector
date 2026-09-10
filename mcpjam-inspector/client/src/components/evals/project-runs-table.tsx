@@ -72,6 +72,7 @@ import {
   originsForFilters,
   runAgentName,
   RUN_ORIGIN_FILTERS,
+  resolveRunOrigin,
 } from "@/lib/evals/run-origin";
 import type { EvalSuiteRun } from "./types";
 import {
@@ -275,10 +276,10 @@ export function ProjectRunsTable({
           (suiteFilter === ALL_SUITES || row.suiteId === suiteFilter) &&
           (!historyMetricsEnabled ||
             origins.length === 0 ||
+            // Resolve the DISPLAYED origin (verified attribution, then the
+            // declared launcher, then the stamp) so a chip matches the badge.
             origins.includes(
-              (row.source ??
-                row.suiteSource ??
-                "ui") as (typeof origins)[number],
+              (resolveRunOrigin(row) ?? "ui") as (typeof origins)[number],
             )),
       ),
     [rows, suiteFilter, historyMetricsEnabled, origins],
@@ -683,8 +684,8 @@ export function ProjectRunsTable({
                 <span className="min-w-0 flex-1 truncate text-left">
                   {suiteFilter === ALL_SUITES
                     ? "Suite"
-                    : (suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
-                      "Suite")}
+                    : suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
+                      "Suite"}
                 </span>
               </SelectTrigger>
               <SelectContent className="max-w-[min(24rem,calc(100vw-2rem))]">
@@ -1120,14 +1121,14 @@ function ProjectRunTableRow({
           <span className="block truncate font-medium">
             {grouped
               ? `#${row.runNumber}`
-              : (row.suiteName ?? (
+              : row.suiteName ?? (
                   <span
                     className="text-muted-foreground"
                     title="This run's suite no longer exists, so its detail view can't be opened."
                   >
                     Deleted suite
                   </span>
-                ))}
+                )}
           </span>
           <span className="text-[10px] text-muted-foreground" title={row._id}>
             {grouped
@@ -1199,16 +1200,16 @@ function ProjectRunTableRow({
                 passRateChange.points > 0
                   ? "text-success"
                   : passRateChange.points < 0
-                    ? "text-destructive"
-                    : "text-muted-foreground",
+                  ? "text-destructive"
+                  : "text-muted-foreground",
               )}
               title={`Compared with run #${passRateChange.previousRunNumber} in this suite (loaded history)`}
               aria-label={`${
                 passRateChange.points > 0
                   ? "Up"
                   : passRateChange.points < 0
-                    ? "Down"
-                    : "Unchanged"
+                  ? "Down"
+                  : "Unchanged"
               } ${Math.abs(
                 passRateChange.points,
               )} percentage points versus run #${
@@ -1218,8 +1219,8 @@ function ProjectRunTableRow({
               {passRateChange.points > 0
                 ? "↑"
                 : passRateChange.points < 0
-                  ? "↓"
-                  : "→"}
+                ? "↓"
+                : "→"}
               {Math.abs(passRateChange.points)} pp
             </span>
           )}
