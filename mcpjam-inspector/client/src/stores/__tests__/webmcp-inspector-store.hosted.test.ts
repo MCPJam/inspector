@@ -273,7 +273,8 @@ describe("hosted store — replacing a session settles what was waiting on it", 
       .startSession("https://other.test/");
 
     const result = await parked;
-    expect(result.state).toBe("failed");
+    expect(result.state).toBe("unknown");
+    expect(result.invokeId).toEqual(expect.any(String));
     expect(result.errorMessage).toMatch(/replaced/i);
   });
 });

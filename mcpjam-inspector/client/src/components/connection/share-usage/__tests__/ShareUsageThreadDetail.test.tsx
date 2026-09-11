@@ -12,6 +12,11 @@ const {
   mockUseQuery,
   mockThreadState,
   mockBrowserArtifactsState,
+  mockHydrateTurnTraceSpans,
+  mockTraceViewer,
+  mockTurnTracesState,
+  mockHostConfigState,
+  mockCopyToClipboard,
 } = vi.hoisted(() => ({
   mockMessageView: vi.fn(),
   mockReadOnlyTranscript: vi.fn(),
@@ -27,6 +32,20 @@ const {
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
+  },
+  mockHydrateTurnTraceSpans: vi.fn(
+    async (..._args: unknown[]) => [] as unknown[],
+  ),
+  mockTraceViewer: vi.fn(),
+  mockTurnTracesState: {
+    traces: [] as unknown[],
+  },
+  // The session's pinned historical host config — what the header's
+  // client/model chip reads the CLIENT from. `null` is the ordinary answer for
+  // a session written before the pin existed.
+  mockCopyToClipboard: vi.fn().mockResolvedValue(true),
+  mockHostConfigState: {
+    config: null as { hostStyle?: string; currentHostName?: string | null; modelId?: string } | null,
   },
 }));
 
@@ -47,6 +66,8 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       // The chatSessions doc id the checks panel keys on. Distinct field from
       // the `threadId` prop on purpose — the component must read this one.
       _id: "session-doc-1",
+      chatSessionId: "wire-uuid",
+      projectId: "project-1",
       sourceType: mockThreadState.sourceType,
       synthetic: mockThreadState.synthetic,
       readiness: mockThreadState.readiness,
@@ -63,15 +84,62 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
     snapshots: [],
   }),
   useSharedChatTurnTraces: () => ({
-    traces: [],
+    traces: mockTurnTracesState.traces,
   }),
   useSessionBrowserArtifacts: () => ({
     artifacts: mockBrowserArtifactsState.artifacts,
+  }),
+  useSessionHistoricalHostConfig: () => ({
+    config: mockHostConfigState.config,
+  }),
+}));
+
+// The header chip resolves model NAMES through the hosted catalog. Pinned to
+// the static fallback here so the label under test is the component's
+// resolution order and not a live fetch.
+vi.mock("@/lib/clipboard", () => ({
+  copyToClipboard: (...args: unknown[]) => mockCopyToClipboard(...args),
+}));
+
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({
+    hostedCatalog: [
+      {
+        id: "openai/gpt-oss-120b",
+        name: "GPT-OSS 120B",
+        provider: "openai",
+        hosted: true,
+      },
+    ],
+    status: "live",
   }),
 }));
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
+}));
+
+// The `sessionAnchored` decision is made HERE, not in the utility, so the
+// utility's own suite cannot catch this component passing the wrong flag.
+// Only the fetching helper is replaced — `expectedTurnTraceSpanCount` and
+// `turnTraceWallClockRange` are pure and stay real, so the span-load-failure
+// and anchor assertions below exercise the wiring rather than a stub of it.
+vi.mock("@/components/evals/turn-trace-spans", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/components/evals/turn-trace-spans")
+  >()),
+  hydrateTurnTraceSpans: (...args: unknown[]) =>
+    mockHydrateTurnTraceSpans(...args),
+}));
+
+// Stubbed so the Trace tab is cheap to render AND so the wall-clock anchor it
+// is handed can be asserted — the offsets alone do not tell the reader when
+// anything happened.
+vi.mock("@/components/evals/trace-viewer", () => ({
+  TraceViewer: (props: Record<string, unknown>) => {
+    mockTraceViewer(props);
+    return <div data-testid="trace-viewer" />;
+  },
 }));
 
 vi.mock("@/components/evals/trace-viewer-adapter", () => ({
@@ -137,10 +205,13 @@ describe("ShareUsageThreadDetail", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockThreadState.sourceType = "scenario";
+    mockTurnTracesState.traces = [];
+    mockHydrateTurnTraceSpans.mockResolvedValue([]);
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
+    mockHostConfigState.config = null;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ role: "assistant", content: [] }],
@@ -165,6 +236,12 @@ describe("ShareUsageThreadDetail", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+  });
+
+  it("links a direct session to its Playground conversation", async () => {
+    mockThreadState.sourceType = "direct";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    expect(await screen.findByRole("link", { name: "Open in Playground" })).toHaveAttribute("href", "/playground?conversation=wire-uuid&project=project-1");
   });
 
   it("renders formatted share traces with collapsed reasoning", async () => {
@@ -466,6 +543,270 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       expect(
         screen.getByTestId("promote-dialog").getAttribute("data-open"),
       ).toBe("false"),
+    );
+  });
+});
+
+/**
+ * BB-153 span anchoring, at the level where the DECISION is made.
+ *
+ * `hydrateTurnTraceSpans` has its own suite, but it is handed `sessionAnchored`
+ * — it cannot notice this component computing the flag from the wrong field, or
+ * inverting it. These two cases are the whole routing contract.
+ */
+describe("ShareUsageThreadDetail — span anchoring by sourceType", () => {
+  const TRACES = [{ turnIndex: 0, spanCount: 2, blobUrl: "https://b/0.json" }];
+
+  const anchoredArg = () =>
+    (
+      mockHydrateTurnTraceSpans.mock.calls[0] as unknown as [
+        unknown,
+        { sessionAnchored?: boolean } | undefined,
+      ]
+    )[1]?.sessionAnchored;
+
+  beforeEach(() => {
+    mockTurnTracesState.traces = TRACES;
+  });
+
+  it("keeps an eval session's own offsets", async () => {
+    // Eval blobs are already anchored at the run start; rebasing them would
+    // displace every span by the persist round-trip.
+    mockThreadState.sourceType = "eval";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => expect(mockHydrateTurnTraceSpans).toHaveBeenCalled());
+    expect(anchoredArg()).toBe(true);
+  });
+
+  // `"scenario"` IS the User Testing tab: `/user-testing/:id` → Sessions →
+  // `ScenarioUsagePanel` → this component. Prathmesh reported the 0.0s
+  // collapse on Swarm AND User Testing; both reach the fix through this one
+  // call, and this is the case that says so.
+  it("rebases a User Testing session", async () => {
+    mockThreadState.sourceType = "scenario";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => expect(mockHydrateTurnTraceSpans).toHaveBeenCalled());
+    expect(anchoredArg()).toBe(false);
+  });
+
+  it("rebases a swarm session — the sourceType this component was built for", async () => {
+    mockThreadState.sourceType = "swarm";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => expect(mockHydrateTurnTraceSpans).toHaveBeenCalled());
+    expect(anchoredArg()).toBe(false);
+  });
+});
+
+/**
+ * The other half of BB-153, on the surface that used to stay quiet about it.
+ *
+ * With no recorded spans the viewer does not draw a blank timeline — it
+ * synthesizes one from `estimatedDurationMs`. The swarm pane says so; this
+ * detail did not, so two views of the same session disagreed about whether
+ * anything was wrong.
+ */
+describe("ShareUsageThreadDetail — span load failure", () => {
+  const openTrace = async () => {
+    // The tab bar only mounts once the transcript blob has resolved.
+    await userEvent.click(await screen.findByRole("button", { name: "Trace" }));
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockThreadState.sourceType = "scenario";
+    mockThreadState.synthetic = false;
+    mockThreadState.readiness = undefined;
+    mockThreadState.goalScore = undefined;
+    mockBrowserArtifactsState.artifacts = undefined;
+    // The transcript must load: the Trace tab only exists once the detail is
+    // past its loader.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ role: "assistant", content: [] }],
+    } as Response);
+    mockAdaptTraceToUiMessages.mockReturnValue({
+      messages: [{ id: "assistant-1", role: "assistant", parts: [] }],
+      toolRenderOverrides: {},
+    });
+    mockTurnTracesState.traces = [
+      {
+        turnIndex: 0,
+        startedAt: 1_000_000,
+        endedAt: 1_005_000,
+        spanCount: 2,
+        spansBlobUrl: "https://b/0.json",
+      },
+    ];
+  });
+
+  it("says the durations are estimated when rows claim spans and none load", async () => {
+    mockHydrateTurnTraceSpans.mockResolvedValue([]);
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
+    const warning = await screen.findByTestId("share-usage-span-error");
+    // The wording has to correct the timeline, not agree with it: with no
+    // spans and no `estimatedDurationMs` the viewer prints "No timing data
+    // recorded", which is a claim about the session (cubic).
+    expect(warning).toHaveTextContent("not because none was recorded");
+    // The transcript is unaffected — that is why this cannot share `error`,
+    // whose branch replaces the whole viewer.
+    expect(screen.getByTestId("trace-viewer")).toBeInTheDocument();
+  });
+
+  it("stays quiet when the spans loaded", async () => {
+    mockHydrateTurnTraceSpans.mockResolvedValue([
+      { id: "s1", name: "step", category: "step", startMs: 0, endMs: 10 },
+    ]);
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("trace-viewer")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByTestId("share-usage-span-error"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("stays quiet for a session that recorded no spans at all", async () => {
+    // Nothing to load is not a failure, and calling it one would put a warning
+    // on every session traced before spans were captured.
+    mockTurnTracesState.traces = [
+      { turnIndex: 0, startedAt: 1_000_000, endedAt: 1_005_000, spanCount: 0 },
+    ];
+    mockHydrateTurnTraceSpans.mockResolvedValue([]);
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("trace-viewer")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByTestId("share-usage-span-error"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("gives an eval session no absolute anchor rather than a wrong one", async () => {
+    // Eval spans are anchored at the RUN start (that is why they are not
+    // rebased), while these rows carry each turn's PERSIST time — the earliest
+    // of which lands after turn 1 finished. Handing that to the timeline would
+    // label span offset 0 with a clock time minutes off (coderabbit).
+    mockThreadState.sourceType = "eval";
+    mockTurnTracesState.traces = [
+      { turnIndex: 0, startedAt: 1_000_000, endedAt: 1_005_000, spanCount: 0 },
+      { turnIndex: 1, startedAt: 1_008_000, endedAt: 1_012_000, spanCount: 0 },
+    ];
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
+    await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+    expect(mockTraceViewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        traceStartedAtMs: null,
+        traceEndedAtMs: null,
+      }),
+    );
+  });
+
+  it("anchors the timeline on the earliest turn start", async () => {
+    mockTurnTracesState.traces = [
+      { turnIndex: 1, startedAt: 1_008_000, endedAt: 1_012_000, spanCount: 0 },
+      { turnIndex: 0, startedAt: 1_000_000, endedAt: 1_005_000, spanCount: 0 },
+    ];
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
+    await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+    expect(mockTraceViewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        traceStartedAtMs: 1_000_000,
+        traceEndedAtMs: 1_012_000,
+      }),
+    );
+  });
+});
+
+/**
+ * BB-197 — session identity in the header.
+ *
+ * Research (Sep 4): a reader with the transcript open forgot which model
+ * produced it, and share was an icon they did not read as "send this to
+ * someone". Both answers now live in the header of the ONE detail component
+ * Swarm and User Testing share.
+ */
+describe("ShareUsageThreadDetail — session identity header", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockThreadState.sourceType = "scenario";
+    mockThreadState.synthetic = false;
+    mockThreadState.readiness = undefined;
+    mockThreadState.goalScore = undefined;
+    mockBrowserArtifactsState.artifacts = undefined;
+    mockHostConfigState.config = null;
+    mockCopyToClipboard.mockResolvedValue(true);
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ role: "assistant", content: [] }],
+    } as Response);
+    mockAdaptTraceToUiMessages.mockReturnValue({
+      messages: [{ id: "assistant-1", role: "assistant", parts: [] }],
+      toolRenderOverrides: {},
+    });
+  });
+
+  it("names the client and the model in the session header", async () => {
+    // The whole point of the chip: the reader learns which model produced the
+    // transcript without opening Raw or the trace tabs.
+    mockHostConfigState.config = {
+      hostStyle: "chatgpt",
+      currentHostName: "Emmanuel's staging bot",
+      modelId: "openai/gpt-oss-120b",
+    };
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-client-model")).toHaveTextContent(
+        "ChatGPT · GPT-OSS 120B",
+      ),
+    );
+  });
+
+  it("still names the model when the session pinned no client", async () => {
+    // No pinned host config is the ordinary state for older sessions. The
+    // model is still known, and half an answer beats none.
+    mockHostConfigState.config = null;
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-client-model")).toHaveTextContent(
+        "GPT-OSS 120B",
+      ),
+    );
+  });
+
+  it("copies the session link from a labeled share control", async () => {
+    // Labeled, not an icon: readers did not recognize the copy icon as the way
+    // to send a session to a teammate.
+    render(
+      <ShareUsageThreadDetail
+        threadId="thread-1"
+        sessionLink="https://app.test/swarms/session-doc-1"
+      />,
+    );
+
+    const share = await screen.findByRole("button", {
+      name: /share this session/i,
+    });
+    await userEvent.click(share);
+
+    await waitFor(() =>
+      expect(mockCopyToClipboard).toHaveBeenCalledWith(
+        "https://app.test/swarms/session-doc-1",
+      ),
     );
   });
 });

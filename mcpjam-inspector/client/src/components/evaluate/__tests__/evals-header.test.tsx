@@ -1,17 +1,96 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { EvalsHeader } from "../evals-header";
 
 describe("EvalsHeader", () => {
+  it("offers run setup and creation actions on Runs", async () => {
+    const user = userEvent.setup();
+    const setup = vi.fn(),
+      create = vi.fn(),
+      add = vi.fn();
+    render(
+      <EvalsHeader
+        landingView="runs"
+        onSetupRun={setup}
+        onCreateSuite={create}
+        onAddCase={add}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    expect(setup).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "More evaluate actions" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Create suite" }));
+    expect(create).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "More evaluate actions" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Add test case" }));
+    expect(add).toHaveBeenCalledOnce();
+  });
+
+  it("defaults to Create suite on Suites with secondary run and case actions", async () => {
+    const user = userEvent.setup();
+    const create = vi.fn(),
+      setup = vi.fn(),
+      add = vi.fn();
+    render(
+      <EvalsHeader
+        landingView="suites"
+        onCreateSuite={create}
+        onSetupRun={setup}
+        onAddCase={add}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Create suite" }));
+    expect(create).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "More evaluate actions" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Setup run" }));
+    expect(setup).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "More evaluate actions" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Add test case" }));
+    expect(add).toHaveBeenCalledOnce();
+  });
+
+  it("links back to the case from the UVC checks breadcrumb", () => {
+    const back = vi.fn();
+    render(
+      <EvalsHeader
+        parentCrumb={{ label: "Suite", onClick: vi.fn() }}
+        detailCrumb={{ label: "UVC checks" }}
+        onCurrentCrumbClick={back}
+      >
+        Case title
+      </EvalsHeader>,
+    );
+    const caseLink = screen.getByRole("button", { name: "Case title" });
+    expect(caseLink).toBeEnabled();
+    fireEvent.click(caseLink);
+    expect(back).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("link", { name: "UVC checks", current: "page" }),
+    ).toBeInTheDocument();
+  });
+
   it("renders the Evaluate landing chrome and wires Create suite", () => {
     const onCreateSuite = vi.fn();
     render(<EvalsHeader onCreateSuite={onCreateSuite} />);
 
-    expect(screen.getByTestId("evals-header")).toBeTruthy();
+    const header = screen.getByTestId("evals-header");
+    expect(header).toBeTruthy();
+    // Same chrome as Swarm / User Testing: page surface, faint header rule.
+    expect(header.className).not.toMatch(/bg-muted/);
+    expect(header.className).toMatch(/border-b/);
     expect(screen.getByRole("heading", { name: "Evaluate" })).toBeTruthy();
     expect(
       screen.getByText(
-        "We generate cases from live discovery, or describe behaviors in chat, or import your existing tests.",
+        "Build a durable test suite from the prompts you already run by hand and automatically measure performance over time.",
       ),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^suites$/i })).toBeNull();
@@ -31,10 +110,25 @@ describe("EvalsHeader", () => {
       />,
     );
 
+    const row = screen.getByTestId("evals-header-title-row");
     const suites = screen.getByRole("button", { name: /^suites$/i });
     const runs = screen.getByRole("button", { name: /^runs$/i });
+    expect(row).toContainElement(
+      screen.getByRole("heading", { name: "Evaluate" }),
+    );
+    expect(row).toContainElement(screen.getByTestId("evals-header-title-rule"));
+    expect(row).toContainElement(suites);
+    expect(row).toContainElement(runs);
+    expect(
+      screen.getByRole("navigation", { name: "Evaluate view" }).className,
+    ).toMatch(/min-h-8/);
     expect(suites).toHaveAttribute("aria-current", "page");
     expect(runs).not.toHaveAttribute("aria-current");
+    expect(
+      screen.getByText(
+        "Build a durable test suite from the prompts you already run by hand and automatically measure performance over time.",
+      ),
+    ).toBeTruthy();
 
     fireEvent.click(runs);
     expect(onLandingViewChange).toHaveBeenCalledWith("runs");
@@ -50,7 +144,7 @@ describe("EvalsHeader", () => {
 
     expect(screen.queryByRole("heading", { name: "Evaluate" })).toBeNull();
     expect(
-      screen.queryByText(/We generate cases from live discovery/i),
+      screen.queryByText(/durable test suite from the prompts/i),
     ).toBeNull();
     expect(screen.queryByRole("button", { name: /^suites$/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /^runs$/i })).toBeNull();

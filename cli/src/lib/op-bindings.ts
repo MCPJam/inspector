@@ -196,6 +196,11 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   run_eval_suite: { command: "cloud eval run" },
   cancel_eval_run: { command: "cloud eval cancel" },
   request_eval_run_judge: { command: "cloud eval judge" },
+  list_eval_github_repos: { command: "cloud eval github list" },
+  connect_eval_github_repo: { command: "cloud eval github connect" },
+  // The pre-rename spellings, still advertised and still bound — to the
+  // `checks` subgroup they shipped under, which stays registered as a
+  // deprecated alias of `github`.
   list_eval_check_repos: { command: "cloud eval checks list" },
   connect_eval_check_repo: { command: "cloud eval checks connect" },
   get_eval_run: { command: "cloud eval status" },
@@ -211,7 +216,11 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_eval_run_stage_analytics: {
     command: "cloud eval stage-analytics --run",
   },
+  get_eval_run_gate: {
+    command: "cloud eval gate --run",
+  },
   get_eval_run_route_facts: { command: "cloud eval route-facts --run" },
+  get_eval_run_server_facts: { command: "cloud eval server-facts --run" },
   propose_eval_description_rewrite: {
     command: "cloud eval description-experiment propose --run --tool",
   },
@@ -296,6 +305,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_chat_sessions: { command: "cloud sessions list" },
   search_sessions: { command: "cloud sessions search" },
   send_chat_message: { command: "cloud sessions send" },
+  drive_chat_session_browser: { command: "cloud sessions browser open" },
+  observe_chat_session_browser: { command: "cloud sessions browser observe" },
   get_chat_session: { command: "cloud sessions show" },
   get_chat_session_trace: { command: "cloud sessions trace" },
 

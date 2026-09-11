@@ -162,3 +162,37 @@ Use a local or explicitly approved non-production environment for verification;
 temporary test values must not be persisted into deployment configuration.
 Before expanding beyond debugger use, track KMS-backed signing or stored
 per-organization keys with dual-key rotation.
+
+## WorkOS API base URL (tests and local development only)
+
+`WORKOS_API_BASE_URL` redirects every server-side WorkOS call — the AuthKit
+session proxy, `sk_` API-key validation, and the key-management routes — at a
+local [`@workos/emulate`](https://github.com/workos/emulate) instance instead of
+`api.workos.com`. The `*.emulator.test.ts` suites set it themselves; you would
+only set it by hand to run the inspector against an emulator locally.
+
+**Never set it on a deployment.** It accepts loopback origins only —
+`localhost`, `127.0.0.1`, `[::1]` — and any other value makes the server throw
+at boot rather than at a user's first sign-in:
+
+```
+WORKOS_API_BASE_URL must be a loopback http(s) origin such as
+http://127.0.0.1:4820 (got "https://example.com")
+```
+
+The restriction is a mechanism, not a convention. `WORKOS_API_KEY` — the admin
+key that mints and revokes API keys — travels in an `Authorization` header on
+every one of those requests, so a base URL naming another host would send it
+there. Railway makes that worse than it sounds: preview environments are
+duplicated from staging wholesale (`pr-preview.yml`), and
+`.github/scripts/railway-set-vars.sh` can only set a variable, never unset one.
+A value written once to staging would therefore reach every future preview with
+no way to withdraw it. Refusing the value in code is the only durable defence.
+
+Unset — which is every deployment — the resolver returns `https://api.workos.com`
+and the SDK client is constructed with no options at all, exactly as it was
+before this variable existed.
+
+Not to be confused with `WORKOS_API_HOSTNAME`, which is a _browser_-facing
+hostname served in `window.__MCP_RUNTIME_CONFIG__` for `@workos-inc/authkit-js`.
+That one is unrelated and is documented by its use in `server/env.ts`.

@@ -20,6 +20,9 @@ export function HostIdentityRow({
   className,
 }: HostIdentityRowProps) {
   return (
+    // Wrapping, not shrinking: the name field keeps a readable width and the
+    // action group drops to its own line once the header gets narrow, rather
+    // than squeezing the name down to a couple of letters.
     <div className={cn("flex flex-wrap items-center gap-3", className)}>
       {logoSrc ? (
         <img
@@ -34,11 +37,18 @@ export function HostIdentityRow({
         placeholder="Client name"
         aria-label="Client name"
         className={cn(
-          "h-8 min-w-0 flex-1 text-[13px]",
+          "h-8 min-w-40 flex-1 basis-40 text-[13px]",
           hasNameIssue && "border-amber-500"
         )}
       />
-      {action ? <div className="shrink-0">{action}</div> : null}
+      {action ? (
+        // `ml-auto` keeps the group on the right edge of whichever line it
+        // lands on, so a wrapped action still ends under the name field rather
+        // than restarting at the left margin.
+        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }

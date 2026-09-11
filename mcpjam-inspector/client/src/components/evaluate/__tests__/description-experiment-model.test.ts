@@ -37,7 +37,7 @@ describe("intervalBoundPhrase", () => {
       verdict: "insufficient_data",
       interval: null,
     });
-    expect(phrase).toBe("not enough trials to say");
+    expect(phrase).toBe("not enough iterations to say");
     expect(phrase).not.toMatch(/\d/);
   });
 

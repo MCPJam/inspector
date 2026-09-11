@@ -6,6 +6,8 @@
  * raw violations/policy already in the store.
  */
 
+import type { CspDirectiveMap } from "./csp-header";
+
 import type { CspViolation } from "@/stores/widget-debug-store";
 
 /**
@@ -23,6 +25,9 @@ import type { CspViolation } from "@/stores/widget-debug-store";
  *                       (post-host) allows. Cause unknown from policy alone —
  *                       could be runtime restriction, browser/extension layer,
  *                       or evidence-collection lag. No CSP patch will help.
+ * `policy-unavailable`– the violation cannot be paired with an Effective policy
+ *                       from the same iframe mount. No policy conclusion is
+ *                       safe until that evidence exists.
  * `cors`              – CSP allowed it, network refused (Access-Control-*).
  *                       Server-side fix only. **Not classified yet** — we
  *                       have no signal source. Reserved for future use.
@@ -34,6 +39,7 @@ export type DiagnosisClass =
   | "csp"
   | "host-stripped"
   | "runtime-mismatch"
+  | "policy-unavailable"
   | "cors"
   | "network"
   | "sandbox";
@@ -116,13 +122,34 @@ export interface Diagnosis {
  * passes to the existing debug panel via `sandboxInfo`.
  */
 export interface ClassifierInput {
-  /** Effective CSP after the host resolved/intersected the widget's request. */
+  /**
+   * The allowlists the workbench treats as effective.
+   *
+   * `source` says whether that is a fact or a guess, and the UI must not blur
+   * the two: `"applied"` means these were parsed out of the CSP string the
+   * proxy reported injecting for this mount; `"declared"` (also the meaning of
+   * an absent value) means no such report arrived and these are merely what the
+   * widget asked for, echoed back.
+   */
   effective: {
     connectDomains: string[];
     resourceDomains: string[];
     frameDomains?: string[];
     baseUriDomains?: string[];
+    /**
+     * The applied policy in full, present only when `source` is `"applied"`.
+     * Carries what the four arrays cannot: per-directive granularity and the
+     * `default-src` fallback.
+     */
+    directives?: CspDirectiveMap;
+    source?: "applied" | "declared";
   };
+  /** Applied policies indexed by sandbox mount. When present, violations are
+   * compared only with the policy carrying the same mount ID. */
+  appliedPoliciesByMount?: Record<
+    string,
+    { headerString: string; mode: "permissive" | "widget-declared" }
+  >;
   /** What the server originally declared in `_meta.ui.csp`. */
   widgetDeclared?: {
     connect_domains?: string[];

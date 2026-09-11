@@ -203,6 +203,16 @@ describe("EnvironmentCanvasPanel — preview → canvas wiring", () => {
     ).toBeNull();
   });
 
+  it("opens the referenced client's Browser tab from the read-only island", () => {
+    mockPreview.value = { preview: previewWith([]), isLoading: false, error: null };
+    mockHost.value = { host: { ...HOST, config: { ...HOST_CONFIG, builtInToolIds: ["browser"] } }, isLoading: false };
+    const { container } = renderPanel();
+    const island = container.querySelector('[data-id="browser"]') as HTMLElement;
+    expect(island).not.toBeNull();
+    fireEvent.click(island);
+    expect(mockNavigate).toHaveBeenCalledWith("/hosts/host-1?hostTab=browser");
+  });
+
   it("routes any canvas click to the host's Connect view", () => {
     mockPreview.value = {
       preview: previewWith([]),

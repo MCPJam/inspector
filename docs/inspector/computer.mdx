@@ -175,6 +175,24 @@ that image — not on your personal computer.
 - **Environments with no pinned image** also continue to use your personal
   computer as before.
 
+## Browser panel in the Playground
+
+When a host configuration includes a browser tool, the Playground shows a browser panel alongside the chat. Each conversation owns its own browser — switching between chats reattaches the existing browser for that conversation rather than opening a new one or navigating away.
+
+### Switching conversations
+
+When you switch from one conversation to another, the Playground reconnects to that conversation's existing browser. The live tabs, page content, unsaved form text, and scroll position are preserved exactly as you left them. No navigation happens on reattach.
+
+If the conversation's browser is not yet running when you open it, the panel shows an **Open a browser for this conversation** button. The panel also polls in the background so it can attach automatically if the agent starts a browser after the pane is already open.
+
+### Closing the browser pane
+
+Closing the browser panel stops the viewer — it does not hand control back to the agent. If you held the browser (took manual control), that hold stays parked after you close the pane. The agent remains blocked until you explicitly click **Hand back** to release control. A parked hold does not keep a metered cloud browser running indefinitely, but it does keep the agent waiting.
+
+### Browser panel layout
+
+The open and expanded state of the browser panel is tracked per conversation. Opening or closing the panel in one chat does not affect any other chat's panel state.
+
 ## Data & persistence
 
 Your computer is **scratch space, not durable storage.** Treat it like a fresh
