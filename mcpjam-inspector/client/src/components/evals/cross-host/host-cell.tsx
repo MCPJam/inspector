@@ -73,8 +73,8 @@ const STATUS_META: Record<
   },
   part: {
     label: "Partial",
-    dot: "bg-amber-500",
-    text: "text-amber-600 dark:text-amber-400",
+    dot: "bg-warning",
+    text: "text-warning",
   },
   running: {
     label: "Running",

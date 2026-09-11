@@ -139,7 +139,8 @@
   .trace-waterfall-bar-tool,
   .trace-waterfall-bar-step,
   .trace-waterfall-bar-error {
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.28),
+    box-shadow:
+      inset 0 0 0 1px rgb(255 255 255 / 0.28),
       0 1px 3px rgb(15 23 42 / 0.08);
   }
   .dark .trace-waterfall-bar-prompt,
@@ -152,7 +153,8 @@
   .app-theme-scope.dark .trace-waterfall-bar-tool,
   .app-theme-scope.dark .trace-waterfall-bar-step,
   .app-theme-scope.dark .trace-waterfall-bar-error {
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12),
+    box-shadow:
+      inset 0 0 0 1px rgb(255 255 255 / 0.12),
       0 1px 4px rgb(0 0 0 / 0.26);
   }
   .trace-waterfall-row-selected {
@@ -777,12 +779,14 @@
 }
 
 .claude-loading-indicator__strip--900 {
-  animation: claude-strip-900-position 1.7s linear infinite,
+  animation:
+    claude-strip-900-position 1.7s linear infinite,
     claude-strip-900-visibility 1.7s step-end infinite;
 }
 
 .claude-loading-indicator__strip--800 {
-  animation: claude-strip-800-position 1.7s linear infinite,
+  animation:
+    claude-strip-800-position 1.7s linear infinite,
     claude-strip-800-visibility 1.7s step-end infinite;
 }
 
@@ -1466,8 +1470,9 @@
  * utility. Falls back to the system mono stack offline.
  */
 @theme {
-  --font-metric: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
-    Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-metric:
+    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
 }
 
 /* Goose Desktop thinking indicator (`indicators/goose-icon.tsx`).
@@ -1497,5 +1502,31 @@
   .cline-mark-indicator {
     animation: none;
     opacity: 0.8;
+  }
+}
+
+/* Server tab strip: picking a tab washes the panel fill up the sheet, from
+   its foot to its head. The colour that climbs is the one the tab is about to
+   settle on, so the animation is the state change rather than a flourish laid
+   over it. clip-path rather than scaleY so the rounded top corners don't
+   squash on the way up. */
+@keyframes server-tab-fill-rise {
+  from {
+    clip-path: inset(100% 0 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.animate-server-tab-fill-rise {
+  animation: server-tab-fill-rise 340ms cubic-bezier(0.45, 0.05, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The fill is the resting state, not decoration — it must still be there,
+     it just arrives all at once. */
+  .animate-server-tab-fill-rise {
+    animation: none;
   }
 }

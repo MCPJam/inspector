@@ -28,13 +28,36 @@ interface ThreePanelLayoutProps {
 
   /** Server name for the LoggerView */
   serverName?: string;
+
+  /**
+   * Optional right-rail content. When set, this replaces the JSON-RPC
+   * LoggerView and uses `rightVisible` / `onRightVisibilityChange` instead of
+   * the global JSON-RPC panel preference.
+   */
+  right?: React.ReactNode;
+
+  /** Whether a custom right rail is visible. Ignored when `right` is omitted. */
+  rightVisible?: boolean;
+
+  /** Callback when a custom right rail is collapsed or reopened. */
+  onRightVisibilityChange?: (visible: boolean) => void;
+
+  /** Tooltip for the collapsed custom right-rail strip */
+  rightTooltip?: string;
+
+  /** Override default panel sizes (percentages). */
+  defaultSizes?: {
+    left?: number;
+    center?: number;
+    right?: number;
+  };
 }
 
 /**
  * A reusable three-panel layout with:
  * - Left: Collapsible sidebar
  * - Center: Main content area
- * - Right: Collapsible JSON-RPC logger panel
+ * - Right: Collapsible logger (JSON-RPC by default, or a custom rail)
  */
 export function ThreePanelLayout({
   id,
@@ -44,9 +67,45 @@ export function ThreePanelLayout({
   onSidebarVisibilityChange,
   sidebarTooltip,
   serverName,
+  right,
+  rightVisible,
+  onRightVisibilityChange,
+  rightTooltip,
+  defaultSizes,
 }: ThreePanelLayoutProps) {
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
+
+  const hasCustomRight = right !== undefined;
+  const isRightVisible = hasCustomRight
+    ? (rightVisible ?? true)
+    : isJsonRpcPanelVisible;
+  const collapseRight = () => {
+    if (hasCustomRight) {
+      onRightVisibilityChange?.(false);
+      return;
+    }
+    toggleJsonRpcPanel();
+  };
+  const openRight = () => {
+    if (hasCustomRight) {
+      onRightVisibilityChange?.(true);
+      return;
+    }
+    toggleJsonRpcPanel();
+  };
+
+  const leftSize = defaultSizes?.left ?? (hasCustomRight ? 28 : 35);
+  const rightSize = defaultSizes?.right ?? (hasCustomRight ? 25 : 30);
+  const centerSize =
+    defaultSizes?.center ??
+    (isRightVisible
+      ? hasCustomRight
+        ? 47
+        : 40
+      : hasCustomRight
+        ? 72
+        : 65);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -60,7 +119,7 @@ export function ThreePanelLayout({
             <ResizablePanel
               id={`${id}-left`}
               order={1}
-              defaultSize={35}
+              defaultSize={leftSize}
               minSize={1}
               maxSize={55}
               collapsible={true}
@@ -84,7 +143,7 @@ export function ThreePanelLayout({
         <ResizablePanel
           id={`${id}-center`}
           order={2}
-          defaultSize={isJsonRpcPanelVisible ? 40 : 65}
+          defaultSize={centerSize}
           minSize={30}
           className="min-h-0 overflow-hidden"
         >
@@ -92,30 +151,37 @@ export function ThreePanelLayout({
         </ResizablePanel>
 
         {/* Right Panel - Logger */}
-        {isJsonRpcPanelVisible ? (
+        {isRightVisible ? (
           <>
             <ResizableHandle withHandle />
             <ResizablePanel
               id={`${id}-right`}
               order={3}
-              defaultSize={30}
+              defaultSize={rightSize}
               minSize={2}
               maxSize={50}
               collapsible={true}
               collapsedSize={0}
-              onCollapse={toggleJsonRpcPanel}
+              onCollapse={collapseRight}
               className="min-h-0 overflow-hidden"
             >
               <div className="h-full min-h-0 overflow-hidden">
-                <LoggerView
-                  serverIds={serverName ? [serverName] : undefined}
-                  onClose={toggleJsonRpcPanel}
-                />
+                {hasCustomRight ? (
+                  right
+                ) : (
+                  <LoggerView
+                    serverIds={serverName ? [serverName] : undefined}
+                    onClose={toggleJsonRpcPanel}
+                  />
+                )}
               </div>
             </ResizablePanel>
           </>
         ) : (
-          <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+          <CollapsedPanelStrip
+            onOpen={openRight}
+            tooltipText={rightTooltip}
+          />
         )}
       </ResizablePanelGroup>
     </div>

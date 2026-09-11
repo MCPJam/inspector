@@ -165,11 +165,46 @@ describe("buildReplayManager", () => {
       {
         defaultTimeout: expect.any(Number),
         lazyConnect: true,
+        // Replay dials server URLs a caller stored, so the manager must carry
+        // the hosted egress guard (MJ-001). Asserted as a function here and
+        // for its actual REFUSAL below — a fetch that guards nothing would
+        // satisfy this line.
+        baseFetch: expect.any(Function),
         // The shared inspector policy — asserts the replay manager uses it
         // rather than pinning its literal values here.
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       },
     );
+  });
+
+  it("gives that manager a fetch that refuses a private target", async () => {
+    // The half `expect.any(Function)` cannot check. Hosted mode is what the
+    // guard keys on, so it is set for this case only; the local-mode
+    // passthrough is covered in `routes/web/__tests__/hosted-manager-base-fetch`.
+    const previous = process.env.VITE_MCPJAM_HOSTED_MODE;
+    process.env.VITE_MCPJAM_HOSTED_MODE = "true";
+    vi.resetModules();
+    try {
+      const { buildReplayManager: build } = await import("../route-helpers.js");
+      const { BlockedEgressTargetError } = await import(
+        "../../../utils/hosted-egress-guard.js"
+      );
+      build({
+        runId: "run_123",
+        suiteId: "suite_123",
+        servers: [{ serverId: "s1", url: "https://mcp.example.test/mcp" }],
+      });
+      const options = mcpClientManagerConstructorMock.mock.calls.at(-1)?.[1] as {
+        baseFetch: typeof fetch;
+      };
+      await expect(
+        options.baseFetch("http://169.254.169.254/latest/meta-data/"),
+      ).rejects.toBeInstanceOf(BlockedEgressTargetError);
+    } finally {
+      if (previous === undefined) delete process.env.VITE_MCPJAM_HOSTED_MODE;
+      else process.env.VITE_MCPJAM_HOSTED_MODE = previous;
+      vi.resetModules();
+    }
   });
 });
 
@@ -241,6 +276,32 @@ describe("captureToolSnapshotForEvalAuthoring", () => {
       promptSectionMaxChars: 2048,
       fallbackReason: "tool_snapshot_partial_capture",
       fullSnapshot: toolSnapshot,
+      // ONLY the server that answered. A server we could not list has no
+      // catalog to measure, and a `bytes: 0` row would read as "this server
+      // advertises nothing" rather than "we never got an answer" — which is
+      // the difference between a measurement and a blind spot.
+      catalogBytes: [
+        {
+          serverId: "alpha",
+          bytes: expect.any(Number),
+          chars: expect.any(Number),
+          basis: "aggregated_catalog_json",
+          complete: true,
+        },
+      ],
     });
+    // Measured on what the server SENT, before the snapshot transform drops
+    // and rewrites fields — so it is larger than what we retained.
+    const row = (
+      toolSnapshotDebug as {
+        catalogBytes: Array<{ bytes: number; chars: number }>;
+      }
+    ).catalogBytes[0]!;
+    expect(row.bytes).toBeGreaterThan(0);
+    // Both units come from ONE serialization, so on an ASCII catalog they
+    // agree exactly. The point is not the equality — it is that a reader
+    // dividing `chars` for a token estimate and quoting `bytes` for a payload
+    // size is describing the same string.
+    expect(row.chars).toBe(row.bytes);
   });
 });

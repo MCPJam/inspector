@@ -102,10 +102,11 @@ describe("handleUiToolCall", () => {
     ]);
   });
 
-  it("defers a DESTRUCTIVE tool even when requireToolApproval is off", async () => {
-    // The default mode. The client decides "defer" before the server's
-    // approval-request chunk arrives, so this must match the server's
-    // classification exactly or the turn strands.
+  it("defers a DESTRUCTIVE tool when the switch is ON", async () => {
+    // The client decides "defer" before the server's approval-request chunk
+    // arrives, so this must match the server's classification exactly or the
+    // turn strands. Both sides call the same `uiToolCallNeedsApproval`, which
+    // is what keeps them from drifting.
     const def = makeTool({
       name: "ui_execute_tool",
       readOnly: false,
@@ -119,7 +120,7 @@ describe("handleUiToolCall", () => {
       toolCallId: "tc-destructive",
       input: {},
       addToolOutput,
-      requireToolApproval: false,
+      requireToolApproval: true,
     });
 
     expect(handled).toBe(true);
@@ -128,6 +129,31 @@ describe("handleUiToolCall", () => {
     expect(listDeferredUiToolCalls()).toEqual([
       { toolCallId: "tc-destructive", toolName: "ui_execute_tool", input: {} },
     ]);
+  });
+
+  it("runs a DESTRUCTIVE tool without asking when the switch is OFF", async () => {
+    // The switch governs every family now. A client that kept deferring here
+    // would wait for an approval the server never requests, which strands the
+    // turn — the mirror image of the drift the test above guards.
+    const def = makeTool({
+      name: "ui_execute_tool",
+      readOnly: false,
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    });
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
+
+    const handled = await handleUiToolCall({
+      toolName: "ui_execute_tool",
+      toolCallId: "tc-destructive-off",
+      input: {},
+      addToolOutput,
+      requireToolApproval: false,
+    });
+
+    expect(handled).toBe(true);
+    expect(def.execute).toHaveBeenCalled();
+    expect(listDeferredUiToolCalls()).toEqual([]);
   });
 
   it("executes an ADDITIVE tool immediately when requireToolApproval is off", async () => {
