@@ -79,6 +79,7 @@ vi.mock("@/lib/app-navigation", () => ({
 }));
 
 import { toast } from "@/lib/toast";
+import { createDeferred } from "@/test/utils";
 import { ServerPicker } from "../server-picker";
 import { isServerStandIn } from "../server-picker-model";
 
@@ -2068,16 +2069,6 @@ describe("ServerPicker — a write the user walked away from", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
 
-  /** A promise settled by the test, not by the mock. */
-  function deferred<T>() {
-    let resolve!: (v: T) => void;
-    let reject!: (e: unknown) => void;
-    const promise = new Promise<T>((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
-    return { promise, resolve, reject };
-  }
   const STAND_IN = {
     _id: "att_alpha",
     name: "alpha",
@@ -2114,7 +2105,7 @@ describe("ServerPicker — a write the user walked away from", () => {
   it("does not let the old write's cleanup release a write in flight here", async () => {
     // The old write still settles, and its `finally` used to lower `creating`
     // for whatever was running by then.
-    const first = deferred<{ _id: string }>();
+    const first = createDeferred<{ _id: string }>();
     mockState.createSpy = vi
       .fn()
       .mockImplementationOnce(() => first.promise)
@@ -2163,7 +2154,7 @@ describe("ServerPicker — a write the user walked away from", () => {
   });
 
   it("does not show an error that belongs to the project the user left (mint)", async () => {
-    const write = deferred<never>();
+    const write = createDeferred<never>();
     mockState.createSpy = vi.fn(() => write.promise);
     const { rerender } = render(
       <ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />,
@@ -2180,7 +2171,7 @@ describe("ServerPicker — a write the user walked away from", () => {
 
   it("does not show an error that belongs to the project the user left (existing row)", async () => {
     mockState.attachments = [STAND_IN];
-    const commit = deferred<never>();
+    const commit = createDeferred<never>();
     const onChange = vi.fn(() => commit.promise);
     const { rerender } = render(
       <ServerPicker projectId="p_1" value={null} onChange={onChange} />,
@@ -2197,7 +2188,7 @@ describe("ServerPicker — a write the user walked away from", () => {
 
   it("does not show an error that belongs to the project the user left (delete)", async () => {
     mockState.attachments = [PAIR];
-    const del = deferred<never>();
+    const del = createDeferred<never>();
     mockState.deleteSpy = vi.fn(() => del.promise);
     const { rerender } = render(
       <ServerPicker
@@ -2227,5 +2218,59 @@ describe("ServerPicker — a write the user walked away from", () => {
     await settle(() => del.reject(new Error("A failed")));
 
     expect(toast.error).not.toHaveBeenCalled();
+  });
+  it("does not let a stale CREATE's cleanup release a write in flight here", async () => {
+    const first = createDeferred<{ _id: string }>();
+    mockState.createSpy = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementation(() => new Promise(() => {}));
+    const { rerender } = render(
+      <ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(screen.getByText("Create new group…"));
+    await userEvent.click(screen.getByLabelText("alpha"));
+    await userEvent.click(screen.getByLabelText("beta"));
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(mockState.createSpy).toHaveBeenCalledTimes(1));
+
+    rerender(<ServerPicker projectId="p_2" value={null} onChange={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Servers" }));
+    fireEvent.click(await serverRow("srv_1"));
+    await waitFor(async () => expect(await serverRow("srv_2")).toBeDisabled());
+
+    await settle(() => first.resolve({ _id: "att_stale" }));
+
+    expect(await serverRow("srv_2")).toBeDisabled();
+  });
+
+  it("does not let a stale DELETE's cleanup release a write in flight here", async () => {
+    mockState.attachments = [PAIR];
+    const del = createDeferred<undefined>();
+    mockState.deleteSpy = vi.fn(() => del.promise);
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
+    const props = { value: null, onChange: vi.fn(), onClearSelection: vi.fn() };
+    const { rerender } = render(<ServerPicker projectId="p_1" {...props} />);
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Delete prod pair" }),
+    );
+    await waitFor(() => expect(mockState.deleteSpy).toHaveBeenCalledTimes(1));
+
+    rerender(<ServerPicker projectId="p_2" {...props} />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Servers" }));
+    fireEvent.click(await serverRow("srv_1"));
+    await waitFor(async () => expect(await serverRow("srv_2")).toBeDisabled());
+
+    await settle(() => del.resolve(undefined));
+
+    expect(await serverRow("srv_2")).toBeDisabled();
   });
 });

@@ -73,6 +73,7 @@ vi.mock("@mcpjam/design-system/server-picker-panel", () => ({
   },
 }));
 
+import { createDeferred } from "@/test/utils";
 import { ServerPicker } from "../server-picker";
 
 const GROUP = {
@@ -161,5 +162,41 @@ describe("ServerPicker — a panel that does not freeze its own controls", () =>
     });
 
     expect(mockState.createSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("ServerPicker — a stale write does not let go of a newer one's latch", () => {
+  it("keeps refusing a create while the write started here is in flight", async () => {
+    // Only `handleCreateGroup` reads the latch without `busy` in front of it,
+    // so it is the one place a dropped latch shows.
+    mockState.attachments = [GROUP];
+    const commit = createDeferred<undefined>();
+    const onChange = vi.fn(() => commit.promise);
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
+    const props = {
+      value: null,
+      onChange: onChange as any,
+      onClearSelection: vi.fn(),
+    };
+    const { rerender } = render(<ServerPicker projectId="p_1" {...props} />);
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await act(async () => {
+      mockState.panel!.onSelectGroup("att_1");
+    });
+
+    rerender(<ServerPicker projectId="p_2" {...props} />);
+    await act(async () => {
+      mockState.panel!.onSelectServer("srv_1");
+    });
+    expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      commit.resolve(undefined);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const attempt = mockState.panel!.onCreateGroup("x", ["srv_1"]);
+    expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+    await expect(attempt).rejects.toThrow();
   });
 });
