@@ -38,13 +38,11 @@ describe("LocalBrowserConsentGate", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Page content may be sent to your model/),
-    ).toHaveTextContent(
-      "all clients in projects you manage, including shared clients",
-    );
-    expect(
-      screen.getByText(/each client's Connect settings/),
+      screen.getByText(
+        /Allow agents to navigate, click, type, and read pages on this machine\. Page content may be sent to your model\. You can remove it in each client's Connect settings\./,
+      ),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/projects you manage/)).toBeNull();
     expect(onAllow).not.toHaveBeenCalled();
   });
 

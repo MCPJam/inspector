@@ -176,7 +176,12 @@ export function ToolList({
     ).length;
   }, [browserTools, searchQuery]);
 
+  // Local Browser permission is a row of its own: until it is granted the
+  // browser's tools are withheld, and the section is where Allow lives.
+  const browserConsentShown =
+    browserTools?.localConsent && !searchQuery.trim() ? 1 : 0;
   const totalShown =
+    browserConsentShown +
     filteredToolNames.length +
     filteredAppEntries.length +
     filteredBuiltinCount +
@@ -192,7 +197,8 @@ export function ToolList({
     toolNames.length === 0 &&
     appEntries.length === 0 &&
     builtinTools.length === 0 &&
-    (browserTools?.tools.length ?? 0) === 0;
+    (browserTools?.tools.length ?? 0) === 0 &&
+    !browserTools?.localConsent;
 
   return (
     <div className="h-full flex flex-col">
@@ -247,6 +253,7 @@ export function ToolList({
                 searchQuery={searchQuery}
                 selectedKey={selectedBrowserKey}
                 onSelect={onSelectBrowser}
+                localConsent={browserTools.localConsent}
               />
             ) : null}
             {filteredToolNames.length > 0 || filteredAppEntries.length > 0 ? (

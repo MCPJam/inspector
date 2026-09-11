@@ -1,4 +1,6 @@
-vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { id: "member" } }),
+}));
 /**
  * `useBrowserTools` — which host the Tools panel's Browser section believes it
  * is describing, and when it asks the server anything at all.
@@ -13,8 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
 const state = vi.hoisted(() => ({
-  explicitHost: null as { config?: { builtInToolIds?: string[]; localBrowserEnabled?: boolean } } | null,
-  projectDefault: null as { builtInToolIds?: string[]; localBrowserEnabled?: boolean } | null,
+  setting: undefined as { enabled: boolean | null } | undefined,
+  explicitHost: null as {
+    config?: { builtInToolIds?: string[]; localBrowserEnabled?: boolean };
+  } | null,
+  projectDefault: null as {
+    builtInToolIds?: string[];
+    localBrowserEnabled?: boolean;
+  } | null,
   selectedEngine: "cloud" as "cloud" | "local",
   consentToken: null as string | null,
   definitions: [{ name: "browser_navigate", description: "Open a URL." }],
@@ -34,6 +42,15 @@ vi.mock("convex/react", () => ({
   // argument object is the whole difference between a quiet render and a
   // server-side throw.
   useQuery: (_name: unknown, args: unknown) => {
+    if (_name === "hosts:getLocalBrowserSettings")
+      return (
+        state.setting ?? {
+          enabled:
+            state.explicitHost?.config?.localBrowserEnabled ??
+            state.projectDefault?.localBrowserEnabled ??
+            null,
+        }
+      );
     state.projectDefaultQueryArgs.push(args);
     return state.projectDefault ?? undefined;
   },
@@ -79,32 +96,32 @@ vi.mock("@/lib/browser-page-tools/client", () => ({
     state.definitionCalls.push(engine);
     return state.definitions;
   }),
-  fetchHostedPageTools: vi.fn(async (_tokens: unknown, _signal: unknown, tabId?: string) => {
-    state.pageCalls.push("hosted");
-    state.pageTabIds.push(tabId);
-    return {
-      ok: true,
-      url: "https://webmcp.dev/",
-      webmcpSupported: true,
-      tools: [],
-    };
-  }),
-  fetchLocalPageTools: vi.fn(async (args: {
-    tabId?: string;
-    sessionId?: string;
-    holder?: string;
-  }) => {
-    state.pageCalls.push("local");
-    state.pageTabIds.push(args?.tabId);
-    state.pageSessionIds.push(args?.sessionId);
-    state.pageHolders.push(args?.holder);
-    return {
-      ok: true,
-      url: "http://localhost/",
-      webmcpSupported: false,
-      tools: [],
-    };
-  }),
+  fetchHostedPageTools: vi.fn(
+    async (_tokens: unknown, _signal: unknown, tabId?: string) => {
+      state.pageCalls.push("hosted");
+      state.pageTabIds.push(tabId);
+      return {
+        ok: true,
+        url: "https://webmcp.dev/",
+        webmcpSupported: true,
+        tools: [],
+      };
+    },
+  ),
+  fetchLocalPageTools: vi.fn(
+    async (args: { tabId?: string; sessionId?: string; holder?: string }) => {
+      state.pageCalls.push("local");
+      state.pageTabIds.push(args?.tabId);
+      state.pageSessionIds.push(args?.sessionId);
+      state.pageHolders.push(args?.holder);
+      return {
+        ok: true,
+        url: "http://localhost/",
+        webmcpSupported: false,
+        tools: [],
+      };
+    },
+  ),
   fetchHostedPageToolInvoke: vi.fn(async () => ({
     ok: true,
     output: {},
@@ -132,6 +149,7 @@ beforeEach(() => {
   state.selectedEngine = "cloud";
   state.consentToken = null;
   state.definitionCalls = [];
+  state.setting = undefined;
   state.pageCalls = [];
   state.pageTabIds = [];
   state.pageSessionIds = [];
@@ -153,7 +171,9 @@ describe("useBrowserTools — which host it describes", () => {
     state.selectedEngine = "local";
     state.consentToken = "saved-device-consent";
     state.projectDefault = { ...WITHOUT_BROWSER, localBrowserEnabled: true };
-    const { result } = renderHook(() => useBrowserTools({ projectId: "proj_1", hostId: null }));
+    const { result } = renderHook(() =>
+      useBrowserTools({ projectId: "proj_1", hostId: null }),
+    );
     await waitFor(() => expect(result.current.tools).toHaveLength(1));
     expect(result.current.attached).toBe(true);
     expect(state.definitionCalls).toEqual(["local"]);
@@ -162,8 +182,12 @@ describe("useBrowserTools — which host it describes", () => {
   it("stops exposing tools when this client's local override is disabled", async () => {
     state.selectedEngine = "local";
     state.consentToken = "saved-device-consent";
-    state.explicitHost = { config: { ...WITH_BROWSER, localBrowserEnabled: false } };
-    const { result } = renderHook(() => useBrowserTools({ projectId: "proj_1", hostId: "host_1" }));
+    state.explicitHost = {
+      config: { ...WITH_BROWSER, localBrowserEnabled: false },
+    };
+    const { result } = renderHook(() =>
+      useBrowserTools({ projectId: "proj_1", hostId: "host_1" }),
+    );
     expect(result.current.attached).toBe(false);
     expect(state.definitionCalls).toEqual([]);
     expect(state.pageCalls).toEqual([]);
@@ -315,9 +339,7 @@ describe("useBrowserTools — the read follows the tab the signal came from", ()
       { webmcp: { revision: 7, hash: "h7", count: 1 }, tabs: { active: "t2" } },
       "boot-1",
     );
-    await waitFor(() =>
-      expect(state.pageCalls.length).toBeGreaterThan(before),
-    );
+    await waitFor(() => expect(state.pageCalls.length).toBeGreaterThan(before));
     expect(state.pageTabIds.at(-1)).toBe("t2");
     expect(result.current.attached).toBe(true);
   });
@@ -356,4 +378,17 @@ describe("useBrowserTools — what it sends to Convex", () => {
       }),
     );
   });
+});
+
+it("lists tools after Allow in a project with no saved client configuration", async () => {
+  state.selectedEngine = "local";
+  state.consentToken = "saved-device-consent";
+  state.projectDefault = null;
+  state.explicitHost = null;
+  state.setting = { enabled: true };
+  const { result } = renderHook(() =>
+    useBrowserTools({ projectId: "proj_1", hostId: null }),
+  );
+  await waitFor(() => expect(result.current.tools).toHaveLength(1));
+  expect(result.current.attached).toBe(true);
 });

@@ -1,3 +1,4 @@
+import { LocalBrowserOnboarding } from "@/components/browser/LocalBrowserOnboarding";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -159,8 +160,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     hostId: previewedHostId,
   });
   const effectiveHostConfig = previewedHostId
-    ? (previewedHost?.config ?? null)
-    : (props.activeHost ?? null);
+    ? previewedHost?.config ?? null
+    : props.activeHost ?? null;
   const activeMcpProfile = effectiveHostConfig?.mcpProfile;
 
   // Host-derived widget runtime values. The preferences store is the
@@ -291,7 +292,11 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
   const browsersEnabled = useBrowserEnabledState();
   const browserEngine = useBrowserEngine(projectScope);
-  const browserToolIds = useBrowserToolIds(effectiveHostConfig, browserEngine.selectedEngine);
+  const browserToolIds = useBrowserToolIds(
+    effectiveHostConfig,
+    browserEngine.selectedEngine,
+    { projectId: projectScope, hostId: previewedHostId },
+  );
   // Polled only on the local engine, where the question means something: on
   // hosted this route describes a machine that is not the one running the
   // browser.
@@ -415,6 +420,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                     dropdown in the global header) and re-snapshots its
                     persisted config into the chip stores when it changes.
                     Renders nothing. */}
+                    <LocalBrowserOnboarding
+                      projectId={projectScope}
+                      authReady={
+                        !props.isWorkOsAuthLoading &&
+                        (!props.isSignedInWithWorkOs || isConvexAuthenticated)
+                      }
+                    />
                     <PlaygroundPreviewedClientSync
                       projectId={
                         props.sharedProjectId ?? props.activeProjectId ?? null

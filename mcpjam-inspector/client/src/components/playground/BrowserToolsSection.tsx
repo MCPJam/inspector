@@ -20,6 +20,10 @@ import { Badge } from "@mcpjam/design-system/badge";
 import type { BrowserPageToolsResponse } from "@/shared/browser-page-tools";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { cn } from "@/lib/utils";
+import { useAppNavigate } from "@/lib/app-navigation";
+import type { BrowserLocalConsentPrompt } from "@/hooks/useBrowserTools";
+import { Button } from "@mcpjam/design-system/button";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { ToolSourceHeader } from "./ToolSourceHeader";
 import {
   catalogBrowserPaneTools,
@@ -32,6 +36,11 @@ interface BrowserToolsSectionProps {
   searchQuery: string;
   selectedKey?: string | null;
   onSelect?: (key: string) => void;
+  /**
+   * Set while this device hasn't allowed local Browser. The browser verbs
+   * aren't offered until it has, so WebMCP asks for it in their place.
+   */
+  localConsent?: BrowserLocalConsentPrompt | null;
 }
 
 function pageNotice(response: BrowserPageToolsResponse): string {
@@ -73,7 +82,11 @@ function ToolRow({
     return <div className={className}>{children}</div>;
   }
   return (
-    <button type="button" onClick={() => onSelect(tool.key)} className={className}>
+    <button
+      type="button"
+      onClick={() => onSelect(tool.key)}
+      className={className}
+    >
       {children}
     </button>
   );
@@ -85,7 +98,9 @@ export function BrowserToolsSection({
   searchQuery,
   selectedKey = null,
   onSelect,
+  localConsent = null,
 }: BrowserToolsSectionProps) {
+  const navigate = useAppNavigate();
   const query = searchQuery.trim().toLowerCase();
   const catalog = useMemo(
     () => catalogBrowserPaneTools({ tools, page }),
@@ -97,7 +112,9 @@ export function BrowserToolsSection({
   const filteredPageTools = useMemo(() => {
     if (!query) return pageItems;
     return pageItems.filter((tool) =>
-      `${tool.title} ${tool.callName} ${tool.description ?? ""} ${tool.originHost ?? ""}`
+      `${tool.title} ${tool.callName} ${tool.description ?? ""} ${
+        tool.originHost ?? ""
+      }`
         .toLowerCase()
         .includes(query),
     );
@@ -109,19 +126,46 @@ export function BrowserToolsSection({
     );
   }, [browserItems, query]);
 
-  if (tools.length === 0) return null;
+  if (tools.length === 0 && !localConsent) return null;
   if (query && filteredTools.length === 0 && filteredPageTools.length === 0) {
     return null;
   }
 
   const showPage = !query || filteredPageTools.length > 0;
-  const showBrowser = !query || filteredTools.length > 0;
+  const showBrowser =
+    browserItems.length > 0 && (!query || filteredTools.length > 0);
 
   return (
     <div data-testid="browser-tools-section">
       {showPage ? (
-        <ToolSourceHeader title="WebMCP">
-          {page === null ? (
+        <ToolSourceHeader title={localConsent ? "Browser" : "WebMCP"}>
+          {localConsent ? (
+            <p className="px-3 text-xs leading-snug text-muted-foreground">
+              {localConsent.disabledForClient ? (
+                "Browser tools are disabled for this client."
+              ) : (
+                <>
+                  Enable browser access from the Browser tab on the right pane
+                  or{" "}
+                  <Button
+                    variant="link"
+                    className="h-auto p-0 text-xs"
+                    onClick={() =>
+                      navigate(
+                        buildHostFocusTabPath(
+                          localConsent.settingsHostId,
+                          "browser",
+                        ),
+                      )
+                    }
+                  >
+                    Browser settings
+                  </Button>
+                  .
+                </>
+              )}
+            </p>
+          ) : page === null ? (
             <p className="px-3 text-xs text-muted-foreground">
               Reading the page…
             </p>
@@ -134,10 +178,10 @@ export function BrowserToolsSection({
               {query
                 ? "No page tools match your search."
                 : page.webmcpSupported
-                  ? `This page offers no WebMCP tools${
-                      page.url ? ` (${page.url})` : ""
-                    }.`
-                  : "This page doesn't use WebMCP."}
+                ? `This page offers no WebMCP tools${
+                    page.url ? ` (${page.url})` : ""
+                  }.`
+                : "This page doesn't use WebMCP."}
             </p>
           ) : (
             <div className="space-y-0.5">
