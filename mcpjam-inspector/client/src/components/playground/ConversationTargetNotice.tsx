@@ -51,7 +51,7 @@ export function ConversationTargetNotice({
   return (
     <div
       className={cn(
-        "mx-2 mb-2 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400",
+        "mx-2 mb-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-[11px] leading-relaxed text-foreground",
         className,
       )}
       role="status"
@@ -82,6 +82,8 @@ export function ConversationTargetNotice({
                   {disclosure.recorded.environmentId}
                 </code>
               </>
+            ) : disclosure.recorded.kind === "adhoc" ? (
+              <>no named host or environment</>
             ) : (
               <>
                 host{" "}

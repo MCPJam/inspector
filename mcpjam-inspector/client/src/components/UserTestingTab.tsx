@@ -145,15 +145,16 @@ export function UserTestingTab({
   // scenario the list chooses not to advertise must still open.
   const allRows = scenarios ?? [];
   const scenarioRow = scenarioId
-    ? allRows.find((c) => c.scenarioId === scenarioId) ?? null
+    ? (allRows.find((c) => c.scenarioId === scenarioId) ?? null)
     : null;
   // `!environmentId` mirrors the backend's `getHostPublishScenario`: an
   // environment-backed row displays a host it does not belong to, and must
   // never absorb that host's legacy links.
   const legacyHostRow =
     scenarioId && !scenarioRow
-      ? allRows.find((c) => c.namedHostId === scenarioId && !c.environmentId) ??
-        null
+      ? (allRows.find(
+          (c) => c.namedHostId === scenarioId && !c.environmentId,
+        ) ?? null)
       : null;
   // A Journeys-owned host is standalone — it has no scenario at all, so an old
   // link to one lands here with nothing to resolve. Worth naming precisely
@@ -383,7 +384,10 @@ export function UserTestingTab({
             // published from a saved environment still leaves that
             // environment alone. Asserting either outcome unconditionally
             // would have the model report the wrong amount of damage.
-            note: describeScenarioDeletion(target.environmentId, result?.retirement),
+            note: describeScenarioDeletion(
+              target.environmentId,
+              result?.retirement,
+            ),
           };
         } catch (e) {
           throw createInspectorCommandClientError(
@@ -518,14 +522,20 @@ export function UserTestingTab({
           });
           return { scenarioId: result.scenarioId, created: result.created };
         }}
-        onSetPerTurnFeedback={async (scenarioId, settings) => {
-          // A second write, because `publishEnvironmentScenario` takes no
-          // `chatUi`. Both fields go together: this is the study's first and
-          // only statement about its rating widget, so there is no stored
-          // value for a partial patch to preserve.
+        onApplyStudySurfaces={async (scenarioId, surfaces) => {
+          // ONE second write, because `publishEnvironmentScenario` takes no
+          // `chatUi`. Ratings and tasks travel together: this is the study's
+          // first and only statement about either, so there is no stored value
+          // for a partial patch to preserve — and one mutation means one
+          // failure mode instead of a study whose two halves failed apart.
           await updateScenario({
             scenarioId,
-            chatUi: { surfaces: { perTurnFeedback: settings } },
+            chatUi: {
+              surfaces: {
+                perTurnFeedback: surfaces.perTurnFeedback,
+                tasks: surfaces.tasks,
+              },
+            },
           } as any);
         }}
       />
@@ -605,7 +615,6 @@ export function UserTestingTab({
     return (
       <UserTestingScenarioDetail
         scenario={scenario}
-        isAuthenticated={effectiveAuth}
         editMode={editOpen}
         onBack={goOverview}
         onDeleted={goOverview}

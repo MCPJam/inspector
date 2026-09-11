@@ -33,6 +33,11 @@ import {
 
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import { iterationLatencyP50, iterationLatencyP95 } from "../evals/helpers";
+import {
+  buildHeroStatDeltas,
+  type HeroPairingPass,
+  type HeroStatDeltas,
+} from "./run-verdict-hero-deltas";
 
 /**
  * The word at the top, and how loudly to say it.
@@ -104,6 +109,10 @@ export type RunVerdictHeroView = {
   focus: HeroFocus | null;
   sentence: HeroSentence;
   stats: HeroStats;
+  /** One row per client/model on this page. Empty only before the page has targets. */
+  pairings: HeroPairingPass[];
+  /** Null when there is no previous consecutive run on the page to compare. */
+  deltas: HeroStatDeltas | null;
   /** True when the decision read is still in flight; the view stays honest meanwhile. */
   pending: boolean;
 };
@@ -116,6 +125,8 @@ export type RunVerdictHeroInput = {
     summary: EvalRunDecisionSummary | null;
     diagnostics: readonly EvalRunDecisionDiagnostic[];
   };
+  /** Same-suite previous run, already resolved by the page. */
+  previous?: { iterations: readonly EvalIteration[] } | null;
 };
 
 /** Lifecycle statuses that are not a verdict and must not be painted as one. */
@@ -317,7 +328,7 @@ function sentenceFor(
   };
 }
 
-function statsFor(input: RunVerdictHeroInput): HeroStats {
+export function heroStatsFor(input: RunVerdictHeroInput): HeroStats {
   const iterations = input.iterations;
   const passed = iterations.filter(
     (iteration) => iteration.result === "passed",
@@ -376,11 +387,23 @@ export function buildRunVerdictHero(
     input.decision.status === "ready"
       ? selectHeroFocus(input.decision.diagnostics)
       : null;
+  const stats = heroStatsFor(input);
+  const previousIterations = input.previous?.iterations;
+  const previousStats =
+    previousIterations && previousIterations.length > 0
+      ? heroStatsFor({
+          run: input.run,
+          iterations: previousIterations,
+          decision: { status: "disabled", summary: null, diagnostics: [] },
+        })
+      : null;
   return {
     verdict,
     focus,
     sentence: sentenceFor(input, verdict, focus),
-    stats: statsFor(input),
+    stats,
+    pairings: [],
+    deltas: previousStats ? buildHeroStatDeltas(stats, previousStats) : null,
     pending: input.decision.status === "loading",
   };
 }

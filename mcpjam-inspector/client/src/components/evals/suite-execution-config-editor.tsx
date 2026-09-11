@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RotateCcw, Save, Settings2 } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { ClientConfigEditor } from "@/components/client-config/ClientConfigEditor";
@@ -66,7 +67,12 @@ export function SuiteExecutionConfigEditor({
   // (e.g. unscoped guest suites).
   const projectDefaultDto = useQuery(
     "hostConfigsV2:getProjectDefault" as any,
-    canQuery && projectId ? ({ projectId } as any) : "skip"
+    // `shouldQueryProjectId`, not a bare truthiness check — an unscoped guest
+    // suite carries a sentinel or local id, and `v.id("projects")` throws on
+    // it before the handler runs.
+    canQuery && shouldQueryProjectId(projectId)
+      ? ({ projectId } as any)
+      : "skip"
   ) as HostConfigDtoV2 | null | undefined;
 
   const setSuiteConfig = useMutation(
