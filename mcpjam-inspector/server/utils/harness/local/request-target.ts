@@ -57,12 +57,19 @@ export function parseHarnessExecutionTarget(args: {
   body: { harnessTarget?: RawHarnessTargetInput } | null | undefined;
   grantTokenHeader: string | undefined;
   /**
-   * The acting user, as the ROUTE resolved it from the verified bearer.
+   * The acting user, as the ROUTE resolved it from the verified bearer —
+   * `resolveLocalHarnessActor` in `acting-user.ts` is the only thing that
+   * produces one, so both routes bind and verify the same identity.
    *
    * Never from the request body. Consent binds to a user, so a user the caller
    * names is a user the caller chose — and the grant would then verify against
    * whatever identity the request asserted rather than the one that
    * authenticated.
+   *
+   * Typed `string | null` and CHECKED anyway: a call site that forgets the
+   * argument entirely passes `undefined`, which is not `null`, and dereferencing
+   * it threw a TypeError out of this parser rather than refusing the turn. The
+   * check below is written against `unknown` shape for that reason.
    */
   actingUserId: string | null;
   /** `LOCAL_HARNESS_ENABLED && !HOSTED_MODE`, resolved by the route. */
@@ -92,6 +99,19 @@ export function parseHarnessExecutionTarget(args: {
     };
   }
 
+  // BEFORE the field checks, because a missing acting user is a fact about the
+  // REQUEST, not about the target's completeness: answering "this target is
+  // incomplete" to a caller whose ids are all present would send them to
+  // re-authorize a workspace when what they actually need is to sign in.
+  if (typeof args.actingUserId !== "string" || args.actingUserId.length === 0) {
+    return {
+      kind: "refused",
+      reason:
+        "Running on this machine requires a signed-in member; this request " +
+        "carries no resolved user.",
+    };
+  }
+
   const workspaceGrantId = asId(raw.workspaceGrantId);
   const runtimeId = asId(raw.runtimeId);
   const machineId = asId(raw.machineId);
@@ -113,15 +133,6 @@ export function parseHarnessExecutionTarget(args: {
       reason:
         "This local execution target is incomplete. Re-authorize local " +
         "execution on this machine.",
-    };
-  }
-
-  if (args.actingUserId === null || args.actingUserId.length === 0) {
-    return {
-      kind: "refused",
-      reason:
-        "Running on this machine requires a signed-in member; this request " +
-        "carries no resolved user.",
     };
   }
 

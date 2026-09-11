@@ -14,6 +14,7 @@ import { ALL_OPERATIONS } from "../operations.js";
 import {
   PLATFORM_PERMALINK_ROUTES,
   derivePermalinksFor,
+  buildAppPermalink,
   type PlatformNoPermalinkReason,
 } from "../permalinks.js";
 
@@ -184,6 +185,12 @@ describe("every catalog operation declares a permalink policy", () => {
     expect(byName.get("search_sessions")!.permalink.kind).toBe("response");
   });
 
+  it("omits trace links when an older response has no project scope", () => {
+    const operation = ALL_OPERATIONS.find(op => op.name === "get_chat_session_trace")!;
+    const errors: unknown[] = [];
+    expect(derivePermalinksFor(operation as never, { sessionId: "s", chatSessionId: "wire", turns: [] } as never, {} as never, { appOrigin: "https://app.mcpjam.com" }, error => errors.push(error))).toEqual([]);
+    expect(errors).toEqual([]);
+  });
   it("links a CONTINUED chat session, which resolves no scope of its own", () => {
     // `send_chat_message` deliberately skips `resolveProjectOrThrow` when
     // continuing an existing session, so there is no scope receipt and the
@@ -210,6 +217,12 @@ describe("every catalog operation declares a permalink policy", () => {
     expect(permalinks.map((permalink) => permalink.url)).toEqual([
       "https://app.mcpjam.com/sessions?session=cs_1&project=p1",
     ]);
+  });
+
+  it("opens the browser pane only when the session has a browser", () => {
+    const ref = { type: "playground_conversation" as const, id: "wire-id", projectId: "p1" };
+    expect(buildAppPermalink(ref, { appOrigin: "https://app.mcpjam.com" }).url).not.toContain("browser=open");
+    expect(buildAppPermalink({ ...ref, browser: true }, { appOrigin: "https://app.mcpjam.com" }).url).toContain("browser=open");
   });
 
   it("names no route that the registry does not have", () => {

@@ -12,11 +12,12 @@
  * every observation, classifies thrown prose, and pins a state token to a DOM
  * signal. Nothing here mocks the driver.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ChromiumDriver } from "../../daemon/chromium-driver";
 import { HandoffLease } from "../../daemon/lease";
 import type { BrowserCommand } from "../../protocol";
 import { launchElectronContext } from "../electron-context";
+import { createContextSurface } from "../agent-surface";
 import {
   elementAt,
   fakeElectron,
@@ -54,6 +55,96 @@ async function electronDriver(
 }
 
 describe("the driver over Electron — it does not notice the engine", () => {
+  it.each([true, false])(
+    "resizes native views only when the session allows pane resizing (%s)",
+    async (allowPaneResize) => {
+      const electron = fakeElectron([pageContents()]);
+      const surface = createContextSurface();
+      const context = await launchElectronContext({
+        electron,
+        nativeSurface: true,
+        surface,
+      });
+      const driver = new ChromiumDriver(context, {
+        viewport: {
+          policy: "fixed",
+          allowPaneResize,
+          debounceMs: 0,
+          onChange: (size) => surface.setViewport(size),
+        },
+      });
+      try {
+        const result = await driver.execute(
+          cmd({ kind: "navigate", url: "https://example.test/" }),
+        );
+        expect(result.ok).toBe(true);
+        const view = electron.views[0]!;
+        view.setBounds({ x: 40, y: 90, width: 1024, height: 768 });
+        const viewport = await driver.requestViewport({
+          width: 480,
+          height: 550,
+          policy: "followPane",
+        });
+        const expected = allowPaneResize
+          ? { width: 480, height: 550, revision: 1 }
+          : { width: 1024, height: 768, revision: 0 };
+        expect(viewport).toEqual(expected);
+        expect(view.getBounds()).toEqual({
+          x: 40,
+          y: 90,
+          width: expected.width,
+          height: expected.height,
+        });
+      } finally {
+        await driver.close();
+      }
+    },
+  );
+
+  it("loads the initial document before attaching the debugger and navigating", async () => {
+    const contents = pageContents();
+    const evaluate = contents.executeJavaScript.bind(contents);
+    let releaseLoad!: () => void;
+    const loaded = new Promise<void>((resolve) => {
+      releaseLoad = resolve;
+    });
+    const send = contents.debugger.sendCommand.bind(contents.debugger);
+    vi.spyOn(contents.debugger, "sendCommand").mockImplementation(
+      async (...args) => {
+        // A real, never-loaded WebContents also stalls DOM.enable.
+        if (contents.navigations.length === 0) await loaded;
+        return send(...args);
+      },
+    );
+    vi.spyOn(contents, "executeJavaScript").mockImplementation(async (code) => {
+      // Electron defers executeJavaScript until a page has loaded. Waiting
+      // for it before goto creates a cycle that never reaches loadURL.
+      if (contents.navigations.length === 0) await loaded;
+      return evaluate(code);
+    });
+    const load = contents.loadURL.bind(contents);
+    vi.spyOn(contents, "loadURL").mockImplementation(async (url) => {
+      await load(url);
+      releaseLoad();
+    });
+    const { driver } = await electronDriver([contents]);
+    try {
+      const navigation = driver.execute(
+        cmd({ kind: "navigate", url: "https://example.test/" }),
+      );
+      await vi.waitFor(() =>
+        expect(contents.navigations).toEqual([
+          "about:blank",
+          "https://example.test/",
+        ]),
+      );
+      expect((await navigation).ok).toBe(true);
+    } finally {
+      releaseLoad();
+      await driver.close();
+    }
+  });
+
   it("navigates and folds the observation in", async () => {
     const contents = pageContents();
     const { driver } = await electronDriver([contents]);

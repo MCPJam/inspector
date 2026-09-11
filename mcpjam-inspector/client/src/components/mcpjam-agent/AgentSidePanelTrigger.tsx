@@ -1,3 +1,8 @@
+import {
+  openEvalChat,
+  useEvalAgentScopes,
+} from "@/lib/mcpjam-agent/eval-scope";
+import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
 /**
  * Header sparkle button that toggles the MCPJam Agent side panel.
  */
@@ -14,7 +19,8 @@ import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { track } from "@/lib/analytics";
 
 const SHORTCUT_LABEL =
-  typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/.test(navigator.platform)
+  typeof navigator !== "undefined" &&
+  /Mac|iP(hone|od|ad)/.test(navigator.platform)
     ? "⌘\\"
     : "Ctrl+\\";
 
@@ -22,9 +28,12 @@ export function AgentSidePanelTrigger() {
   const isOpen = useAgentPanelStore((s) => s.isOpen);
   const toggle = useAgentPanelStore((s) => s.toggle);
   const activeTab = useActiveTab();
+  const describeScope = useDescribeSurface((s) => s.scope);
 
   const onClick = useCallback(() => {
     const next = !isOpen;
+    const context =
+      next && activeTab === "evaluate" ? describeScope : undefined;
     if (next) {
       track("mcpjam_agent_panel_opened", {
         location: "agent_side_panel",
@@ -32,8 +41,22 @@ export function AgentSidePanelTrigger() {
         tab: activeTab,
       });
     }
-    toggle();
-  }, [activeTab, isOpen, toggle]);
+    if (context) openEvalChat(context);
+    else {
+      const sessionId = useAgentPanelStore.getState().activeSessionId;
+      if (
+        next &&
+        sessionId &&
+        (sessionId.startsWith("eval-") ||
+          useEvalAgentScopes.getState().scopes[sessionId])
+      ) {
+        useAgentPanelStore.getState().setActiveSession(null, null);
+      }
+      toggle();
+    }
+  }, [activeTab, describeScope, isOpen, toggle]);
+
+  if (activeTab === "evaluate" && !describeScope) return null;
 
   return (
     <Tooltip>

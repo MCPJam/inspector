@@ -12,8 +12,19 @@
  *   2. THAT A SLOW BACKEND COSTS ONE TURN, NOT EVERY TURN. The backend client
  *      waits 10s before it errors, so the failure backoff alone leaves a
  *      window in which each turn pays the 2s deadline again.
+ *
+ * Both readers also union in what the DEPLOYMENT disables. The cases above
+ * are about the ORG's answer, so the deployment switch is ON for them (empty
+ * union) and the union has its own describe block at the bottom.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const configState = vi.hoisted(() => ({ scheduledEvalsWrite: true }));
+vi.mock("../../config.js", () => ({
+  get SCHEDULED_EVALS_WRITE_ENABLED() {
+    return configState.scheduledEvalsWrite;
+  },
+}));
 
 const getOrgAgentPolicyMock = vi.fn();
 
@@ -187,5 +198,102 @@ describe("org agent policy cache", () => {
     );
     await expect(getOrgAgentPolicyStrict(null)).resolves.toEqual(new Set());
     expect(getOrgAgentPolicyMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The deployment union — what `MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED` off adds
+ * on top of the org's own answer.
+ *
+ * It rides the org policy because that is already the tighten-only channel
+ * both enforcement seams read: tool assembly (so the op is never offered) and
+ * the execute route (so a proposal minted before the flip is refused with the
+ * existing message rather than reaching the route and 404-ing). These cases
+ * pin that it survives every path the org's own answer can take — cached,
+ * stale-served, no-org, and the strict reader's throw.
+ */
+describe("org agent policy — deployment-disabled operations", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    clearOrgAgentPolicyCache();
+    getOrgAgentPolicyMock.mockReset();
+    configState.scheduledEvalsWrite = false;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    configState.scheduledEvalsWrite = true;
+  });
+
+  it("disables set_eval_suite_schedule for an org that disabled nothing", async () => {
+    getOrgAgentPolicyMock.mockResolvedValue({ disabledOperations: [] });
+
+    await expect(getOrgAgentPolicyCached("org_1")).resolves.toEqual(
+      new Set(["set_eval_suite_schedule"])
+    );
+  });
+
+  it("unions with the org's own set rather than replacing it", async () => {
+    getOrgAgentPolicyMock.mockResolvedValue({
+      disabledOperations: ["run_eval_suite"],
+    });
+
+    await expect(getOrgAgentPolicyStrict("org_1")).resolves.toEqual(
+      new Set(["run_eval_suite", "set_eval_suite_schedule"])
+    );
+  });
+
+  // An `sk_` caller whose request never carried an org still gets it: the
+  // switch is the DEPLOYMENT's, and there is no org for it to depend on.
+  it("disables it for a caller with no org, still without a round trip", async () => {
+    await expect(getOrgAgentPolicyCached(undefined)).resolves.toEqual(
+      new Set(["set_eval_suite_schedule"])
+    );
+    await expect(getOrgAgentPolicyStrict(null)).resolves.toEqual(
+      new Set(["set_eval_suite_schedule"])
+    );
+    expect(getOrgAgentPolicyMock).not.toHaveBeenCalled();
+  });
+
+  // The union sits OUTSIDE the cache, so a flip takes effect on the next call
+  // instead of waiting out the 60s TTL — and what is cached stays the org's
+  // own answer.
+  it("takes effect on a cache hit, without waiting out the TTL", async () => {
+    configState.scheduledEvalsWrite = true;
+    getOrgAgentPolicyMock.mockResolvedValue({ disabledOperations: [] });
+    await expect(getOrgAgentPolicyCached("org_1")).resolves.toEqual(new Set());
+
+    configState.scheduledEvalsWrite = false;
+    await expect(getOrgAgentPolicyCached("org_1")).resolves.toEqual(
+      new Set(["set_eval_suite_schedule"])
+    );
+    expect(getOrgAgentPolicyMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Applied to the STALE entry too. A backend outage must not re-offer an
+  // operation this deployment has switched off.
+  it("holds when a stale policy is served during an outage", async () => {
+    getOrgAgentPolicyMock.mockResolvedValueOnce({
+      disabledOperations: ["run_eval_suite"],
+    });
+    await getOrgAgentPolicyCached("org_1");
+
+    vi.advanceTimersByTime(TTL_MS + 1_000);
+    getOrgAgentPolicyMock.mockRejectedValueOnce(
+      new SlackBackendUnavailable("down")
+    );
+    await expect(getOrgAgentPolicyCached("org_1")).resolves.toEqual(
+      new Set(["run_eval_suite", "set_eval_suite_schedule"])
+    );
+  });
+
+  // The strict reader still THROWS on an unreadable policy — the union is
+  // applied past the throw, and must not launder a failed read into an answer.
+  it("does not turn the strict reader's failure into an answer", async () => {
+    getOrgAgentPolicyMock.mockRejectedValue(new SlackBackendUnavailable("down"));
+
+    await expect(getOrgAgentPolicyStrict("org_1")).rejects.toBeInstanceOf(
+      SlackBackendUnavailable
+    );
   });
 });

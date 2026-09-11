@@ -10,9 +10,18 @@
  *    out one run per environment and the backend resolves each at launch. Every
  *    slot is live here, and an edit resolves the composition into rows before
  *    writing `setSuiteEnvironments`.
- *  - LEGACY mode (`hostAttachments` + `serverAttachmentId`) — the only option
- *    for a suite with no project, since environments are project-scoped. Two
- *    slots, writing the fields they have always written.
+ *  - LEGACY mode (`hostAttachments` + `serverAttachmentId`) — the fallback for
+ *    a suite with no project (environments are project-scoped) or a backend
+ *    that cannot accept a model on a cell. Two slots, writing the fields they
+ *    have always written.
+ *
+ * WHICH MODE IS NOT A FEATURE FLAG. Composing cells is what the backend calls
+ * launch-path substrate: `ensureAdhocEnvironments`, `setSuiteEnvironments` and
+ * `startTestSuiteRun` are all ungated, and the CLI has always been able to do
+ * this. So the question here is `useEvalComposeCapable` — does this deployment
+ * accept a model on a cell — not `project-environments-enabled`, which gates
+ * NAMED environments and the identity they carry. The composer hides its own
+ * environments picker on that flag; nothing in this file reads it.
  *
  * A legacy suite in an environment-capable project shows the full strip seeded
  * from what it already runs, and the FIRST edit converts it. That conversion is
@@ -47,7 +56,7 @@ import {
   useModelMatrixCapability,
   useProjectEnvironments,
 } from "@/hooks/useProjectEnvironments";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { convexErrMessage } from "@/lib/convex-error";
 import { toast } from "@/lib/toast";
@@ -83,23 +92,27 @@ export function SuiteEnvironmentComposerBar({
   omitComputers = false,
 }: SuiteEnvironmentComposerBarProps) {
   const projectId = suite.projectId ?? null;
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
-  // Environments are project-scoped, so a suite without a project can only ever
-  // run the legacy axes — no flag makes that untrue.
-  const envCapable = Boolean(projectId) && environmentsEnabled;
+  const { capable: composeCapable, pending: composePending } =
+    useEvalComposeCapable(projectId);
 
   /**
    * A suite that already ATTACHES environments is never legacy-editable, even
-   * when this deployment can't offer the composer (project environments off).
-   * `buildSuiteRunPlans` prefers `environmentIds`, so writing `hostAttachments`
-   * would report success and change nothing about what runs — the exact trap
-   * this bar exists to remove. Show the legacy axes read-only instead.
+   * when this deployment can't offer the composer (a backend without the model
+   * matrix). `buildSuiteRunPlans` prefers `environmentIds`, so writing
+   * `hostAttachments` would report success and change nothing about what runs —
+   * the exact trap this bar exists to remove. Show the legacy axes read-only
+   * instead.
    */
   const attachesEnvironments = (suite.environmentIds?.length ?? 0) > 0;
   const editable =
-    !readOnly && Boolean(onUpdate) && !(attachesEnvironments && !envCapable);
+    !readOnly &&
+    Boolean(onUpdate) &&
+    !(attachesEnvironments && !composeCapable && !composePending);
 
-  return envCapable && projectId ? (
+  // While the probe is in flight the compose strip renders DISABLED rather than
+  // the legacy one: swapping the whole strip a frame later reads as the page
+  // changing its mind about what this suite runs.
+  return (composeCapable || composePending) && projectId ? (
     <BarShell className={className} containerVariant={containerVariant}>
       <EnvironmentModeBar
         suite={suite}
@@ -282,6 +295,18 @@ function EnvironmentModeBar({
    */
   const modelCapabilityPending = Boolean(projectId) && modelMatrix === undefined;
 
+  /**
+   * A legacy suite showing the compose strip: nothing is attached yet, so the
+   * next edit is the conversion. Only worth saying while the strip is usable —
+   * a disabled or collapsed strip cannot convert anything.
+   */
+  const willConvert =
+    attachedIds.length === 0 &&
+    !disabled &&
+    !environmentsLoading &&
+    !modelCapabilityPending &&
+    !collapsesByHost;
+
   const [state, setState] = useState<EnvironmentComposerState>(seeded);
   const [saving, setSaving] = useState(false);
   // Re-seed when the suite's own data changes (another tab, the settings sheet,
@@ -351,6 +376,7 @@ function EnvironmentModeBar({
           value={state}
           onChange={(next) => void commit(next)}
           maxTargets={MAX_SUITE_ENVIRONMENTS}
+          environmentsVocabulary="client"
           slots={
             omitComputers
               ? EVALS_COMPOSER_SLOTS.filter((slot) => slot !== "computers")
@@ -376,20 +402,36 @@ function EnvironmentModeBar({
           data-testid="suite-env-unresolved-hint"
         >
           {unresolvedCount === 1
-            ? "One attached environment is archived or unavailable."
-            : `${unresolvedCount} attached environments are archived or unavailable.`}{" "}
-          Detach it from the Environments pill before changing other slots.
+            ? "One attached client is archived or unavailable."
+            : `${unresolvedCount} attached clients are archived or unavailable.`}{" "}
+          Detach it from the Clients pill before changing other slots.
         </p>
       ) : collapsesByHost ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid="suite-env-attachments-collapse-hint"
         >
-          This suite&apos;s environments don&apos;t fit one editable setup —
+          This suite&apos;s clients don&apos;t fit one editable setup —
           they differ by client, server group, skills, model or image, or pin
           plugin versions — so this strip can&apos;t change them without changing
           what some of them run. Edit them individually on the Environments
           page.
+        </p>
+      ) : willConvert ? (
+        /**
+         * The suite still runs its legacy axes, and the first edit here writes
+         * `environmentIds` instead — which `buildSuiteRunPlans` then prefers,
+         * and which makes each run execute ONE model per case rather than the
+         * case's own list. That is a change to what runs, so it is said before
+         * it happens rather than discovered afterwards.
+         */
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid="suite-env-convert-hint"
+        >
+          Editing this strip converts the suite: Run all then fires one run per
+          setup, and each case runs on that setup&apos;s model instead of its
+          own list.
         </p>
       ) : null}
     </div>

@@ -443,7 +443,7 @@ function SuiteOverviewRow({
           <span className="min-w-0 truncate text-sm font-medium text-foreground">
             {suiteTitle}
           </span>
-          <SuiteSourceBadge source={suite.source} />
+          <SuiteSourceBadge suite={suite} />
         </button>
 
         <button

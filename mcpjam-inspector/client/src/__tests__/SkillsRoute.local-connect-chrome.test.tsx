@@ -25,7 +25,8 @@ vi.mock("../hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => skillsFlag.value === true,
 }));
 
-vi.mock("../hooks/useComputersEnabled", () => ({
+vi.mock("../hooks/useComputersEnabled", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useComputersEnabled")>()),
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => true,
   useComputersEnabled: () => true,

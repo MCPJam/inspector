@@ -49,7 +49,13 @@ const flagState = vi.hoisted(() => ({ localComputerEnabled: true }));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useLocalComputerEnabled: () => flagState.localComputerEnabled,
 }));
-vi.mock("../../thread-helpers", () => ({
+// `importOriginal` rather than a bare factory: this module re-exports the
+// package's graph-free `@mcpjam/chat-ui/thread-helpers` subpath, and the parts
+// this file does not care about (notably `readTraceDisplayText`, which decides
+// whether a readable tool result is shown at all) have to behave like the real
+// thing rather than be re-stubbed in every test file that shadows one helper.
+vi.mock("../../thread-helpers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../thread-helpers")>()),
   getToolNameFromType: () => toolNameState.name,
   getToolStateMeta: () => ({
     Icon: (props: any) => <div data-testid="status-icon" {...props} />,
