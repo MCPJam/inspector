@@ -329,8 +329,8 @@ describe("useGithubChecksSettings writes", () => {
         >
           unbind
         </button>
-        <button type="button" onClick={() => void settings.startInstallation()}>
-          install
+        <button type="button" onClick={() => void settings.startDirectClaim()}>
+          start-connect
         </button>
         <div data-testid="exposed">
           {Object.keys(settings).sort().join(",")}
@@ -365,18 +365,24 @@ describe("useGithubChecksSettings writes", () => {
       [
         "action:github/checkRepoConfigsNode:connectVerifiedRepo",
         "action:github/checkRepoConfigsNode:listInstallationRepos",
-        // The org ↔ installation binding surface. Note what is NOT here: the
-        // two GitHub CALLBACK actions live in `useGithubInstallCallbacks`,
-        // because the callback page has no organization to hand them — it
-        // arrives back from GitHub with query parameters and nothing else.
-        "action:github/appInstallLinkNode:startInstallation",
+        // The org ↔ installation binding surface. ONE way in: `startDirectClaim`
+        // signs the user in to GitHub and the callback's picker answers "which
+        // account". `startInstallation` is deliberately absent — this surface
+        // no longer sends anyone to GitHub's install URL, because GitHub
+        // redirects it into an existing installation and it dead-ends. The
+        // install URL now arrives WITH the pick, from the callback actions,
+        // which live in `useGithubInstallCallbacks` — the callback page has no
+        // organization to hand them, arriving back from GitHub with query
+        // parameters and nothing else.
         "action:github/appInstallLinkNode:startDirectClaim",
         "mutation:github/appInstallLink:unbindInstallation",
         "mutation:github/checkRepoConfigs:disconnectRepo",
         "mutation:github/checkRepoConfigs:setRepoConformance",
         "mutation:github/checkRepoConfigs:setRepoEnabled",
         "mutation:github/checkRepoConfigs:setRepoFeedbackComments",
+        "mutation:github/checkRepoConfigs:setRepoForkCredentials",
         "mutation:github/checkRepoConfigs:setRepoOutagePolicy",
+        "mutation:github/checkRepoConfigs:setRepoPrServerOAuth",
         "mutation:github/checkRepoConfigs:setRepoSuite",
       ].sort()
     );
@@ -435,17 +441,17 @@ describe("useGithubChecksSettings writes", () => {
     ]);
   });
 
-  it("starts an installation with nothing but the org", () => {
+  it("starts the connect flow with nothing but the org", () => {
     render(<SettingsProbe />);
 
-    screen.getByText("install").click();
+    screen.getByText("start-connect").click();
 
     // The one-time state is minted and hashed SERVER-side; there is nothing for
     // the client to contribute and nothing for it to get wrong.
     expect(mocks.requests).toEqual([
       {
         kind: "action",
-        name: "github/appInstallLinkNode:startInstallation",
+        name: "github/appInstallLinkNode:startDirectClaim",
         args: { organizationId: "org-1" },
       },
     ]);

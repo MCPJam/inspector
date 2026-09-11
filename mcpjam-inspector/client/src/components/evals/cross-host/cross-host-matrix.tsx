@@ -108,7 +108,7 @@ export type HostVerdictMap = Map<string, HostVerdict>;
 
 const HOST_VERDICT_TONE: Record<HostVerdict["verdict"], string> = {
   strong: "text-success",
-  mixed: "text-amber-600 dark:text-amber-400",
+  mixed: "text-warning",
   weak: "text-destructive",
   incomplete: "text-muted-foreground",
 };
@@ -306,14 +306,14 @@ export function CrossHostMatrix({
                 data-divergence={rowTone ?? undefined}
                 className={cn(
                   "group",
-                  rowTone === "diverge" && "bg-amber-500/[0.05]",
+                  rowTone === "diverge" && "bg-warning/[0.05]",
                 )}
               >
                 <td
                   className={cn(
                     "z-10 w-[300px] max-w-[300px] align-top px-4 py-2.5",
                     stickyCaseColumnClass,
-                    rowTone === "diverge" && "border-l-2 border-l-amber-500",
+                    rowTone === "diverge" && "border-l-2 border-l-warning",
                     rowTone === "allfail" &&
                       "border-l-2 border-l-destructive",
                     onTestCaseClick && "cursor-pointer hover:bg-muted/40",

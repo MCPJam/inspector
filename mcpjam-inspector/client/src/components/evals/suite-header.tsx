@@ -35,7 +35,6 @@ import {
   getEffectiveSuiteServers,
   getRunMetricSource,
 } from "./helpers";
-import { SuiteRevisionPill } from "./suite-revision-pill";
 import {
   EvalSuite,
   EvalSuiteRun,
@@ -90,6 +89,17 @@ interface SuiteHeaderProps {
   aggregate?: SuiteAggregate | null;
   testCases?: EvalCase[];
   readOnlyConfig?: boolean;
+  /**
+   * The suite's configuration lives in a repository, so it cannot be edited
+   * here — see `isCiOwnedSuite`.
+   *
+   * DISTINCT FROM `readOnlyConfig`, which also hides Run: that prop means "this
+   * surface does not offer suite controls at all" (desktop CI), while this one
+   * means "this suite refuses edits, and running it is the point". Merging them
+   * would take Run away from every CI-owned suite — exactly the thing the lock
+   * is supposed to keep working.
+   */
+  configLocked?: boolean;
   hideRunActions?: boolean;
   onSetupCi?: () => void;
   onOpenExportSuite?: () => void;
@@ -130,15 +140,12 @@ interface SuiteHeaderProps {
    */
   iterationOverride?: number;
   onIterationOverrideChange?: (value: number | undefined) => void;
-  /**
-   * Open the settings-history slide-over.
-   *
-   * Optional, and the revision pill still RENDERS without it: the number is
-   * the useful half — which version of these settings am I looking at — and
-   * withholding it because the drill-down is unavailable takes the answer away
-   * along with the panel.
-   */
-  onOpenRevisionHistory?: () => void;
+  /** Settings sheet: name edits flow into the draft instead of saving on blur. */
+  settingsDraftName?: {
+    value: string;
+    onChange: (value: string) => void;
+    error?: string;
+  };
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -160,6 +167,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runs = [],
     testCases = [],
     readOnlyConfig = false,
+    configLocked = false,
     hideRunActions = false,
     onSetupCi,
     onOpenExportSuite,
@@ -180,12 +188,28 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runsViewMode = "runs",
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
-    onOpenRevisionHistory,
+    settingsDraftName,
   } = props;
 
   const showTestCaseCtas =
     runsViewMode === "test-cases" ||
     (unifiedSuiteDashboard && viewMode === "overview");
+
+  /**
+   * The AUTHORING half of the case toolbar — Generate and New case.
+   *
+   * Split from `showTestCaseCtas` rather than folded into it, because that flag
+   * also gates **Run all**, which is a run control and must survive the lock:
+   * running a CI-owned suite from the app is the point. Both buttons here start
+   * flows that end in a `case.create` the platform refuses with
+   * `CI_OWNED_SUITE_READ_ONLY`, so offering them is offering work that cannot
+   * land.
+   *
+   * This is the Evals path specifically. Evaluate hides Add case through
+   * `SuiteDetailOverview`; the unified dashboard renders its case tools from
+   * this header instead, so the same rule has to be stated twice.
+   */
+  const showCaseAuthoringCtas = showTestCaseCtas && !configLocked;
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
@@ -207,8 +231,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     latestRunForMetadata?.status === "pending";
 
   useEffect(() => {
-    setEditedName(suite.name);
-  }, [suite.name]);
+    setEditedName(settingsDraftName?.value ?? suite.name);
+  }, [settingsDraftName?.value, suite.name]);
 
   const handleNameClick = useCallback(() => {
     setIsEditingName(true);
@@ -268,38 +292,72 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
 
   if (isEditMode) {
-    // Settings sheet header — matches the body's max-w-2xl column so the
-    // title sits flush over the form. Title is light-weight (semibold,
-    // not text-xl bold) so the eyebrow-labelled sections below carry the
-    // visual rhythm.
+    const nameValue = settingsDraftName?.value ?? suite.name;
+    const nameError = settingsDraftName?.error;
+
+    const handleDraftNameChange = (value: string) => {
+      setEditedName(value);
+      settingsDraftName?.onChange(value);
+    };
+
+    const handleDraftNameBlur = () => {
+      setIsEditingName(false);
+      setEditedName(nameValue);
+    };
+
+    const handleDraftNameKeyDown = (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        handleDraftNameBlur();
+      } else if (e.key === "Escape") {
+        setIsEditingName(false);
+        setEditedName(nameValue);
+      }
+    };
+
     return (
-      <div className="mb-1 flex w-full max-w-2xl items-center justify-between gap-4 px-6 pt-8 mx-auto min-w-0">
-        {/* READ-ONLY in the settings sheet. Renaming lives in the sheet's own
-            Name row now, and leaving the inline editor here too gave one field
-            two writers: this one commits on blur, immediately, with no review,
-            no note and no revision precondition. Using it while a draft held an
-            unsaved name marked the sheet as "changed elsewhere" for the
-            person's own action, and the next save overwrote the rename with the
-            stale draft. */}
-        <div className="min-w-0 flex-1 pr-2">
-          <h1
-            className="truncate text-lg font-semibold tracking-tight"
-            title={suite.name}
-          >
-            {suite.name}
-          </h1>
+      <div className="mb-1 w-full max-w-5xl px-6 pt-8 mx-auto min-w-0">
+        <div className="min-w-0" data-setting-key="name">
+          {/*
+            The name is the ONE setting that lives outside the sheet's
+            `fieldset[disabled]`, so it needs its own lock. It became reachable
+            when the sheet started rendering for a CI-owned suite — the settings
+            are that suite's documentation and a reader has to be able to open
+            them — and an editable name there would feed `settingsDraftName`,
+            put the suite in the commit flow, and end in the 409 the rest of
+            the sheet exists to avoid offering.
+          */}
+          {configLocked ? (
+            <h2
+              className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold leading-8 tracking-tight"
+              title={nameValue}
+            >
+              {nameValue}
+            </h2>
+          ) : isEditingName ? (
+            <input
+              type="text"
+              value={editedName}
+              onChange={(e) => handleDraftNameChange(e.target.value)}
+              onBlur={handleDraftNameBlur}
+              onKeyDown={handleDraftNameKeyDown}
+              autoFocus
+              aria-label="Suite name"
+              className="h-8 min-w-0 w-full max-w-full rounded-md border border-input bg-background px-2 text-lg font-semibold tracking-tight focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={handleNameClick}
+              className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold tracking-tight hover:text-foreground/80"
+              title={nameValue}
+            >
+              {nameValue}
+            </button>
+          )}
+          {nameError ? (
+            <p className="mt-1 text-xs text-destructive">{nameError}</p>
+          ) : null}
         </div>
-        {/* WHAT VERSION AM I LOOKING AT, not "am I finished".
-            The Done button told a reader this sheet was a form to fill in and
-            submit, which it has not been since the draft-and-commit bar
-            shipped: Done only navigated, and the save lives in the bar. The
-            breadcrumb is the way back. What belongs in this corner is the
-            thing a reader of a shared suite actually needs — which revision
-            these settings are, and who moved them last. */}
-        <SuiteRevisionPill
-          revisionNumber={suite.revisionNumber}
-          onOpenHistory={() => onOpenRevisionHistory?.()}
-        />
       </div>
     );
   }
@@ -633,12 +691,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     (casesSidebarHidden &&
       Boolean(onShowCasesSidebar) &&
       runsViewMode === "runs") ||
-    Boolean(onSetupCi && !readOnlyConfig);
+    Boolean(onSetupCi && !readOnlyConfig && !configLocked);
 
   const overviewHasCaseTools =
     overviewRunAllCta != null ||
-    (showTestCaseCtas && Boolean(onGenerateTestCases)) ||
-    (showTestCaseCtas && Boolean(onCreateTestCase));
+    (showCaseAuthoringCtas && Boolean(onGenerateTestCases)) ||
+    (showCaseAuthoringCtas && Boolean(onCreateTestCase));
 
   const overviewSuiteNavButtons =
     overviewHasSuiteNav ? (
@@ -655,7 +713,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             Cases
           </Button>
         ) : null}
-        {onSetupCi && !readOnlyConfig ? (
+        {onSetupCi && !readOnlyConfig && !configLocked ? (
           <Button
             size="sm"
             variant="outline"
@@ -704,7 +762,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     ) : null;
 
   const overviewGenerateButton =
-    showTestCaseCtas && onGenerateTestCases ? (
+    showCaseAuthoringCtas && onGenerateTestCases ? (
       <div className="inline-flex items-center">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -756,7 +814,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     ) : null;
 
   const overviewNewCaseButton =
-    showTestCaseCtas && onCreateTestCase ? (
+    showCaseAuthoringCtas && onCreateTestCase ? (
       <Button
         type="button"
         size="sm"
@@ -784,7 +842,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const overviewLegacyRunActions =
     !hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
       <>
-        {!readOnlyConfig && hasServersConfigured ? (
+        {!readOnlyConfig && !configLocked && hasServersConfigured ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -903,7 +961,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 autoFocus
                 className="h-8 min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 py-0 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg"
               />
-            ) : readOnlyConfig ? (
+            ) : readOnlyConfig || configLocked ? (
               <h2
                 className="flex h-8 min-w-0 flex-1 items-center truncate px-2 text-base font-semibold leading-none md:text-lg"
                 title={suite.name}

@@ -19,9 +19,31 @@ export interface CallbackSocket {
   send(data: Uint8Array, cb: (error?: Error) => void): void;
 }
 
+/** What one record is worth, when the slot has to choose between two. */
+export interface PacedRecord {
+  /**
+   * Never give this slot up to an ordinary record.
+   *
+   * For an H.264 KEYFRAME, which is the one record a decoder cannot proceed
+   * without: replaced by the delta behind it, the pane sits on a frozen
+   * picture until the next GOP — four seconds later — while the deltas it is
+   * being sent are undecodable. Two essential records still replace each
+   * other, newest wins, because a newer keyframe makes an older one useless.
+   */
+  essential?: boolean;
+  /**
+   * Does dropping this record mean the link could not carry a PICTURE?
+   *
+   * False for a heartbeat: it is liveness and counters, another arrives in ten
+   * seconds, and counting its overwrite made `dropped.pacer` describe a link
+   * that had dropped nothing at all.
+   */
+  counts?: boolean;
+}
+
 export interface FramePacer {
   /** Offer an encoded frame. Sent now, or held as the one pending frame. */
-  push(bytes: Uint8Array): void;
+  push(bytes: Uint8Array, record?: PacedRecord): void;
   /** Stop sending and drop anything held. */
   close(): void;
 }
@@ -33,9 +55,10 @@ export interface FramePacer {
  * rather than a simplification. A threshold branch can wedge: the send
  * callback fires while `bufferedAmount` is still above the line, nothing is
  * shipped, and no later event ever wakes the held frame — the pane freezes
- * with the stream healthy. Waiting on the callback bounds kernel-side
- * buffering to a single frame (≤256 KiB by `WEBMCP_FRAME_MAX_BYTES`) with no
- * such branch to get wrong.
+ * with the stream healthy. Waiting on the callback bounds this pacer's work
+ * to one outstanding write and one pending frame. It does not bound frames
+ * already accepted into kernel/browser buffers or prove the viewer painted
+ * them. A slow renderer needs client coalescing or explicit viewer feedback.
  *
  * One pending slot, newest wins — the same philosophy as the SSE route's held
  * frame and the hub's coalesced slot. A queue would make a slow consumer
@@ -54,7 +77,7 @@ export function createFramePacer(
   onDrop?: () => void,
 ): FramePacer {
   let inFlight = false;
-  let pending: Uint8Array | undefined;
+  let pending: { bytes: Uint8Array; record: PacedRecord } | undefined;
   let closed = false;
 
   const ship = (bytes: Uint8Array) => {
@@ -64,17 +87,26 @@ export function createFramePacer(
       if (closed) return;
       const next = pending;
       pending = undefined;
-      if (next) ship(next);
+      if (next) ship(next.bytes);
     });
   };
 
   return {
-    push(bytes) {
+    push(bytes, record = {}) {
       if (closed) return;
       if (inFlight) {
-        // Newest wins: an older frame nobody has seen yet is worth nothing.
-        if (pending !== undefined) onDrop?.();
-        pending = bytes;
+        if (pending !== undefined) {
+          // An essential record is not given up for an ordinary one: the
+          // INCOMING record goes instead, and the one the consumer cannot
+          // proceed without keeps the slot.
+          if (pending.record.essential && !record.essential) {
+            if (record.counts !== false) onDrop?.();
+            return;
+          }
+          // Newest wins: an older frame nobody has seen yet is worth nothing.
+          if (pending.record.counts !== false) onDrop?.();
+        }
+        pending = { bytes, record };
         return;
       }
       ship(bytes);
@@ -85,4 +117,3 @@ export function createFramePacer(
     },
   };
 }
-

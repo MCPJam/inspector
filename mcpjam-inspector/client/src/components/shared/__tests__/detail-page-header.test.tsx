@@ -33,6 +33,46 @@ describe("DetailPageHeader", () => {
     expect(onChange).toHaveBeenCalledWith("insights");
   });
 
+  it("makes the title, not the tab strip, absorb a long name", () => {
+    // BB-202: a 200-char run name rendered "Sessions" as "Sess". jsdom has no
+    // layout, so this pins the flex contract that decides which child gives.
+    render(
+      <DetailPageHeader
+        backLabel="Swarms"
+        onBack={() => {}}
+        title={<h1 className="truncate">{"S".repeat(200)}</h1>}
+        tabs={{
+          value: "findings",
+          options: [
+            { value: "findings", label: "Findings" },
+            { value: "insights", label: "Insights" },
+            { value: "sessions", label: "Sessions" },
+          ],
+          onChange: vi.fn(),
+          ariaLabel: "Swarm run view",
+          indicatorId: "test-detail",
+        }}
+        actions={<button type="button">Run again</button>}
+      />,
+    );
+
+    // These two classes ARE the fix. jsdom has no layout, so nothing here can
+    // observe the clipping itself — asserting the contract is the only guard.
+    const strip = screen.getByRole("navigation", { name: "Swarm run view" });
+    expect(strip.className.split(/\s+/)).toContain("lg:shrink-0");
+
+    const titleSlot = screen.getByRole("heading").parentElement;
+    expect(titleSlot?.className.split(/\s+/)).toContain("min-w-0");
+    // The cap is the other half: without it a long name still pushes the strip
+    // right on a wide viewport, where nothing is shrinking yet.
+    expect(titleSlot?.className.split(/\s+/)).toContain("md:max-w-[52ch]");
+
+    // Below lg the strip must stay shrinkable and scrollable, or a narrow
+    // viewport loses the tabs the strip is meant to scroll to.
+    expect(strip.className.split(/\s+/)).toContain("shrink");
+    expect(strip.className.split(/\s+/)).toContain("overflow-x-auto");
+  });
+
   it("scrolls the newly active tab into view when the strip overflows", () => {
     const scrollIntoView = vi.fn();
     // jsdom has no layout, so scrollIntoView is undefined on elements.
