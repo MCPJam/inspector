@@ -2359,5 +2359,53 @@ describe("ScenarioChatPage", () => {
       expect(readScenarioSession()?.scenarioId).toBe("sbx_1");
       expect(window.location.pathname).toBe("/");
     });
+
+    it("never clears the host tab's stored session when exiting from inside the embed", async () => {
+      mockIsEmbeddedPreview.mockReturnValue(true);
+      const outerSession = {
+        scenarioId: "sbx_outer",
+        accessVersion: 7,
+        payload: {
+          projectId: "ws_outer",
+          scenarioId: "sbx_outer",
+          name: "Outer Dashboard Scenario",
+          description: "Hosted scenario",
+          hostStyle: "chatgpt" as const,
+          mode: "invited_only" as const,
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
+      };
+      writeScenarioSession(outerSession);
+      consentAlreadyGiven();
+      window.history.replaceState(
+        {},
+        "",
+        "/user-testing/demo/scenario-token?surface=preview",
+      );
+      const onExit = vi.fn();
+
+      render(
+        <ScenarioChatPage
+          pathToken="scenario-token"
+          onExitScenarioChat={onExit}
+        />,
+      );
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Back to study" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toMatchObject({
+        scenarioId: "sbx_outer",
+        accessVersion: 7,
+      });
+    });
   });
 });

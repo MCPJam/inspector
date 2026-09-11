@@ -925,7 +925,9 @@ export function ScenarioChatPage({
 
   const leaveScenario = useCallback(
     (to: string) => {
-      clearScenarioSession();
+      if (!isEmbeddedPreview()) {
+        clearScenarioSession();
+      }
       navigateApp(to, { replace: true });
       onExitScenarioChat?.();
     },
