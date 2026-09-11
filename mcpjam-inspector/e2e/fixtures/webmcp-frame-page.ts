@@ -22,7 +22,7 @@ import type { AddressInfo } from "node:net";
  * incompressible, so frames are LARGE but still under the cap, and a slow
  * consumer feels the bytes rather than the drops.
  */
-export type FixtureVariant = "animated" | "static" | "busy";
+export type FixtureVariant = "animated" | "static" | "busy" | "interaction";
 
 const BODY: Record<FixtureVariant, string> = {
   animated: `
@@ -34,6 +34,30 @@ const BODY: Record<FixtureVariant, string> = {
         requestAnimationFrame(paint);
       }
       requestAnimationFrame(paint);`,
+  interaction: `
+      // The top-right 8-bit marker changes only after a wheel caused a scroll.
+      // An unrelated animated frame must not count as an input's visible echo.
+      const marker = document.createElement("canvas");
+      marker.width = 128; marker.height = 16;
+      Object.assign(marker.style, { position: "fixed", right: "0", top: "0", zIndex: "20" });
+      document.body.appendChild(marker);
+      const ctx = marker.getContext("2d");
+      let wheels = 0;
+      function mark(value) {
+        for (let bit = 0; bit < 8; bit++) {
+          ctx.fillStyle = value & (1 << bit) ? "white" : "black";
+          ctx.fillRect(bit * 16, 0, 16, 16);
+        }
+      }
+      mark(0);
+      window.addEventListener("wheel", () => { wheels++; }, { passive: true });
+      window.addEventListener("scroll", () => mark(wheels), { passive: true });
+      let tick = 0;
+      function animate() {
+        document.getElementById("clock").textContent = String(++tick);
+        requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);`,
   static: `
       // Painted exactly once. A page that never repaints is what the settle
       // still is for, and it is also the only way to tell a still apart from

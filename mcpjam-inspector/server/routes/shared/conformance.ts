@@ -162,13 +162,13 @@ export async function runProtocolConformance(
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
     // mode, where reaching localhost is the point.
     //
-    // SCOPE, precisely: `fetchFn` is what the raw HTTP and SSE probes use. The
-    // one real MCP connection this suite opens goes through MCPClientManager's
-    // own transport fetch, which this does not reach — so a redirect returned by
-    // the MCP endpoint itself is still followed unchecked. Closing that means
-    // threading a base fetch through the client manager, which is a shared
-    // connection path for every protocol version and every surface, and does not
-    // belong in this change.
+    // SCOPE, precisely: `fetchFn` is what the raw HTTP and SSE probes use, and
+    // `mcp-conformance/runner.ts` also threads it into the client manager as
+    // `baseFetch` — so the one real MCP connection a run opens is under the
+    // same guard as the probes beside it. The deferral this comment used to
+    // record ("threading a base fetch through the client manager … does not
+    // belong in this change") was taken up by the runner, and then by every
+    // hosted connection factory when the gap it left became MJ-001.
     fetchFn: createConformanceFetch("MCP server"),
   };
   const test = new MCPConformanceTest(config);

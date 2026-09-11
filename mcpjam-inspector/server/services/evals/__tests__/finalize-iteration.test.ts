@@ -186,6 +186,55 @@ describe("finalizeEvalIteration", () => {
     expect(update!.args.messages).toBeDefined();
   });
 
+  test("sends the structured usage field alongside tokensUsed", async () => {
+    // Hosted finalize historically sent only `tokensUsed` + metadata, so
+    // `testIteration.usage` stayed undefined on every hosted iteration and
+    // the run-vs-run diff fell back to trace tokens with no cost at all.
+    const { client, calls } = makeClient();
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 },
+      messages,
+    });
+    const update = calls.find(
+      (c) => c.ref === "testSuites:updateTestIteration",
+    );
+    expect(update).toBeDefined();
+    expect(update!.args.usage).toEqual({
+      inputTokens: 120,
+      outputTokens: 80,
+      totalTokens: 200,
+    });
+    // Beside, never instead of — old readers keep working unchanged.
+    expect(update!.args.tokensUsed).toBe(200);
+    expect(update!.args.metadata).toMatchObject({
+      inputTokens: 120,
+      outputTokens: 80,
+    });
+  });
+
+  test("omits usage entirely when the iteration reported no tokens", async () => {
+    // An empty object would claim the iteration reported usage when it
+    // reported nothing, and would be stored verbatim by the backend.
+    const { client, calls } = makeClient();
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: {},
+      messages,
+    });
+    const update = calls.find(
+      (c) => c.ref === "testSuites:updateTestIteration",
+    );
+    expect(update).toBeDefined();
+    expect("usage" in update!.args).toBe(false);
+  });
+
   test("W1 fallback omits systemPrompt when unset", async () => {
     const { client, calls } = makeClient({
       appendThrows: new Error("fanout pre-turn failure"),

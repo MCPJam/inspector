@@ -86,6 +86,19 @@ const runFixture = {
   createdAt: 1,
 } as unknown as JourneyRun;
 
+/** The counts a test can reshape — one terminal run's worth. */
+const mutableRun = runFixture as unknown as {
+  summary: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    rateLimited: number;
+  };
+  hostSummaries: Array<Record<string, unknown>>;
+  snapshot: { sessionsPerTarget: number };
+  attempts: unknown[];
+};
+
 vi.mock("convex/react", () => ({
   useQuery: (name: string) => {
     switch (name) {
@@ -146,6 +159,22 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
   beforeEach(() => {
     streamState.sessions = {};
     streamState.cellStatus = { "environment:env-1:0": "failed" };
+    attempt.status = "failed";
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    mutableRun.summary = { total: 1, succeeded: 0, failed: 1, rateLimited: 0 };
+    mutableRun.hostSummaries = [
+      {
+        hostId: "host-1",
+        targetId: "environment:env-1",
+        total: 1,
+        succeeded: 0,
+        failed: 1,
+        rateLimited: 0,
+      },
+    ];
+    mutableRun.snapshot.sessionsPerTarget = 1;
+    mutableRun.attempts = [attempt];
   });
 
   it("renders a re-runnable auth failure calmly, naming the server and the fix", async () => {
@@ -176,5 +205,42 @@ describe("NewSwarmRunningStep — XAA failure banner", () => {
     expect(banner).toHaveTextContent("No sessions ran.");
     expect(banner).toHaveTextContent("Billing MCP");
     expect(banner.className).toContain("destructive");
+  });
+
+  it("stays quiet on a mixed run, where sessions did run", async () => {
+    // Every line of this banner asserts that nothing ran. With one session
+    // throttled and one clean it contradicted the title right above it, which
+    // reads "Swarm finished 2 of 2 sessions".
+    mutableRun.summary = { total: 2, succeeded: 1, failed: 0, rateLimited: 1 };
+    mutableRun.hostSummaries = [
+      {
+        hostId: "host-1",
+        targetId: "environment:env-1",
+        total: 2,
+        succeeded: 1,
+        failed: 0,
+        rateLimited: 1,
+      },
+    ];
+    mutableRun.snapshot.sessionsPerTarget = 2;
+    mutableRun.attempts = [
+      {
+        ...attempt,
+        status: "rate_limited",
+        errorMessage: "Failed after 3 attempts. Last error: Too Many Requests",
+      },
+      { ...attempt, sessionIdx: 1, status: "succeeded" },
+    ];
+    streamState.cellStatus = {
+      "environment:env-1:0": "rate_limited",
+      "environment:env-1:1": "succeeded",
+    };
+
+    renderStep();
+
+    expect(await screen.findByTestId("new-swarm-running-title")).toHaveTextContent(
+      "Swarm finished 2 of 2 sessions",
+    );
+    expect(screen.queryByTestId("new-swarm-running-failure")).toBeNull();
   });
 });

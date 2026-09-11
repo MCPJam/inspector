@@ -628,7 +628,12 @@ export function PromptsTab({
             description={selectedPromptData?.description}
             onExpand={() => setSelectedPrompt("")}
             toolSwitchList={{
-              names: prompts.map((p) => p.name),
+              items: prompts.map((p) => ({
+                id: p.name,
+                label: p.name,
+                description: p.description,
+              })),
+              selectedId: selectedPrompt,
               onSelect: (name) => {
                 setSelectedPrompt(name);
                 setError("");

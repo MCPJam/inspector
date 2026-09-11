@@ -22,7 +22,7 @@ import {
   VerdictValidityControls,
 } from "../suite-policy-controls";
 
-const THRESHOLD = /fraction of a case's trials that must pass/i;
+const THRESHOLD = /fraction of a case's iterations that must pass/i;
 
 function renderThreshold(passThreshold: number) {
   const onChange = vi.fn();
@@ -101,7 +101,7 @@ describe("VerdictValidityControls", () => {
       />,
     );
     const input = screen.getByLabelText(
-      /minimum share of trials that must have completed/i,
+      /minimum share of iterations that must have completed/i,
     );
     await user.clear(input);
     await user.tab();

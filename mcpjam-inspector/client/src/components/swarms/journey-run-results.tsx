@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Info, Loader2 } from "lucide-react";
+import { AlertTriangle, Info, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   swarmAttemptChatSessionId,
@@ -15,6 +15,7 @@ import {
 } from "@/components/evals/trace-view-mode-tabs";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
+import { SPAN_LOAD_FAILURE_CONSEQUENCE } from "@/components/evals/turn-trace-spans";
 import {
   swarmCellKey,
   type JourneyRunStreamState,
@@ -23,6 +24,15 @@ import {
 import { summaryTargetKey, type SwarmTargetColumn } from "./swarm-targets";
 import { usePersistedSessionTrace } from "./use-persisted-session-trace";
 import { shortBundleHash } from "@/components/plugins/plugin-presentation";
+import { ErrorCard } from "@/components/ui/error-card";
+import {
+  humanizeSwarmAttemptError,
+  isAccountLimit,
+} from "@/shared/swarm-attempt-error";
+import {
+  describeProviderRateLimit,
+  providerLabelForModelId,
+} from "./session-rate-limit";
 
 export type SwarmMatrixCellOutcome =
   | "pending"
@@ -359,6 +369,7 @@ export function SwarmLiveStreamPane({
   selection,
   stream,
   convexSession,
+  attempt,
   fallbackTrace,
   runStatus,
   onOpenCompleted,
@@ -368,6 +379,12 @@ export function SwarmLiveStreamPane({
   selection: SwarmMatrixSelection | null;
   stream: JourneyRunStreamState;
   convexSession: JourneySessionRow | null;
+  /**
+   * The selected session's attempt row, where the caller has it. It outranks
+   * the session lifecycle, which can read `completed` on a session the
+   * provider refused — see `resolveSwarmCellOutcome`.
+   */
+  attempt?: SwarmAttemptOutcome | null;
   fallbackTrace: TraceEnvelope | null;
   runStatus: string;
   /** Open the full ShareUsageThreadDetail for a completed Convex session. */
@@ -419,6 +436,25 @@ export function SwarmLiveStreamPane({
         ? { browserInteractionSteps: finalized.browserInteractionSteps }
         : {}),
       ...(finalized.videoUrl ? { videoUrl: finalized.videoUrl } : {}),
+      // Spans and their clock, on the same terms as the artifacts above: the
+      // live swarm stream emits no `trace_snapshot`, so `fallbackTrace` never
+      // carries spans and the Trace tab stayed EMPTY for any session still held
+      // in the stream buffer — the BB-153 re-anchoring simply never reached
+      // this pane in that window. Overlaid, not merged, and only when the
+      // persisted side actually has them, so a live turn that hasn't persisted
+      // yet keeps whatever the stream is showing rather than flickering to
+      // nothing (cubic).
+      ...(finalized.spans?.length
+        ? {
+            spans: finalized.spans,
+            ...(typeof finalized.traceStartedAtMs === "number"
+              ? { traceStartedAtMs: finalized.traceStartedAtMs }
+              : {}),
+            ...(typeof finalized.traceEndedAtMs === "number"
+              ? { traceEndedAtMs: finalized.traceEndedAtMs }
+              : {}),
+          }
+        : {}),
     };
   }, [fallbackTrace, persisted.trace]);
 
@@ -450,6 +486,7 @@ export function SwarmLiveStreamPane({
         swarmCellKey(selection.targetKey, selection.sessionIndex)
       ],
     session: convexSession,
+    attempt,
     runStatus,
   });
   const isTerminal =
@@ -458,6 +495,28 @@ export function SwarmLiveStreamPane({
     outcome === "rate_limited";
   const meta = CELL_META[outcome];
   const isStreaming = outcome === "running" || outcome === "pending";
+  // A rate-limited session is either MCPJam's account limit or the user's own
+  // provider throttling their key. Only the second gets the card — the first is
+  // lifted by credit or BYOK, and this copy would point at the wrong fix. The
+  // attempt row decides it: a whole-run spend-cap finalize stamps its code with
+  // no message, so the stream's text alone cannot tell the two apart.
+  const rateLimitInfo =
+    outcome === "rate_limited"
+      ? humanizeSwarmAttemptError(
+          attempt?.errorMessage ?? live?.errorMessage ?? null,
+          attempt?.errorCode,
+        )
+      : null;
+  const providerRateLimit =
+    rateLimitInfo &&
+    !isAccountLimit(
+      rateLimitInfo.message,
+      attempt?.errorCode ?? rateLimitInfo.code,
+    )
+      ? describeProviderRateLimit(
+          providerLabelForModelId(convexSession?.modelId),
+        )
+      : null;
   const showLoading = !displayTrace && (isStreaming || persisted.loading);
 
   return (
@@ -495,7 +554,11 @@ export function SwarmLiveStreamPane({
         </span>
       </div>
 
-      {live?.errorMessage ? (
+      {providerRateLimit ? (
+        <div data-testid="swarm-live-pane-rate-limit">
+          <ErrorCard error={providerRateLimit} variant="inline" />
+        </div>
+      ) : live?.errorMessage ? (
         <p className="text-[11px] text-muted-foreground">{live.errorMessage}</p>
       ) : null}
 
@@ -564,6 +627,28 @@ export function SwarmLiveStreamPane({
         />
       </div>
 
+      {/* The timeline says "No timing data recorded" whenever it has no spans,
+          which is a claim about the SESSION — and it is false when the spans
+          were recorded and the fetch is what failed. Saying nothing next to it
+          is BB-153 over again. The no-trace branch below cannot carry this:
+          the transcript loading fine while its span blobs fail is exactly the
+          case, and it renders the viewer.
+
+          Gated on the DISPLAYED trace having no spans, not merely on the span
+          fetch having failed (cubic). `persisted.spanError` describes the
+          persisted read alone; if what the viewer ends up showing has real
+          spans from anywhere, this warning would be contradicting the timeline
+          it sits above. */}
+      {displayTrace && persisted.spanError && !displayTrace.spans?.length ? (
+        <div
+          className="flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] text-warning-foreground"
+          data-testid="swarm-live-pane-span-error"
+        >
+          <AlertTriangle className="size-3 shrink-0" aria-hidden />
+          {persisted.spanError} — {SPAN_LOAD_FAILURE_CONSEQUENCE}.
+        </div>
+      ) : null}
+
       {/* TraceViewer (fillContent) must be a flex child; otherwise nested
           flex-1 / min-h-0 inside TraceTimeline collapse and paint empty. */}
       <div
@@ -583,6 +668,14 @@ export function SwarmLiveStreamPane({
             forcedViewMode={showReplay ? "browser" : viewMode}
             isLoading={isStreaming && !fallbackTrace}
             fillContent
+            // Read off the trace being DISPLAYED, not off `persisted`, so the
+            // clock always describes the spans actually on screen. The merge
+            // above carries the persisted anchor in with the persisted spans,
+            // as one unit — which is the only way the two can't disagree. A
+            // stream showing its own spans (none today) would get `null` and
+            // relative offsets, not the persisted session's clock.
+            traceStartedAtMs={displayTrace.traceStartedAtMs ?? null}
+            traceEndedAtMs={displayTrace.traceEndedAtMs ?? null}
           />
         ) : (
           <div className="flex h-full min-h-[14rem] items-center justify-center px-4 text-center text-[12px] text-muted-foreground">
@@ -593,8 +686,8 @@ export function SwarmLiveStreamPane({
                   ? "Stream will appear as the agent runs…"
                   : "Loading transcript…"}
               </span>
-            ) : persisted.error ? (
-              persisted.error
+            ) : (persisted.error ?? persisted.spanError) ? (
+              (persisted.error ?? persisted.spanError)
             ) : !convexSession ? (
               "No session transcript for this attempt."
             ) : (

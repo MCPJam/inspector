@@ -3,6 +3,7 @@ import type { ModelMessage } from "ai";
 import type {
   BrowserInteractionStepPayload,
   EvalTraceSpan,
+  EvalTraceVideoMeta,
   EvalTraceWidgetSnapshot,
   PromptTraceSummary,
   SerializedBrowserInteractionStep,
@@ -228,6 +229,8 @@ export async function persistEvalTraceFanout(args: {
    * to resolve into a `videoUrl`.
    */
   videoBlobId?: string;
+  /** What that recording says about itself. Rides the same last-turn call. */
+  videoMeta?: EvalTraceVideoMeta;
 }): Promise<FanoutResult> {
   const turns = sliceTraceIntoTurns({
     messages: args.messages,
@@ -306,7 +309,13 @@ export async function persistEvalTraceFanout(args: {
           // Iteration-level replay video: attach to the last turn only (like
           // widgetSnapshots). Backend stores it on the iteration trace.
           ...(isLastTurn && args.videoBlobId
-            ? { videoBlobId: args.videoBlobId }
+            ? {
+                videoBlobId: args.videoBlobId,
+                // Only WITH the blob: metadata describing a video nothing
+                // uploaded would render a duration and an fps under an empty
+                // player, asserting a recording that is not there.
+                ...(args.videoMeta ? { videoMeta: args.videoMeta } : {}),
+              }
             : {}),
           turn: {
             promptIndex: turn.promptIndex,
