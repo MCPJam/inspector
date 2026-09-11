@@ -54,22 +54,6 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
-vi.mock("@/components/sidebar/sidebar-credit-usage", () => ({
-  SidebarCreditUsage: ({
-    className,
-    variant,
-  }: {
-    className?: string;
-    variant?: string;
-  }) => (
-    <div
-      data-testid="sidebar-credit-usage"
-      data-variant={variant}
-      className={className}
-    />
-  ),
-}));
-
 vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
@@ -126,7 +110,7 @@ describe("SidebarUser", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("no longer renders credit usage in the account dropdown (moved to the org switcher)", () => {
+  it("no longer renders credit usage in the account dropdown (it is its own footer row)", () => {
     authState.user = {
       email: "owner@example.com",
       firstName: "Owner",
@@ -135,9 +119,7 @@ describe("SidebarUser", () => {
 
     render(<SidebarUser />);
 
-    expect(
-      screen.queryByTestId("sidebar-credit-usage")
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("sidebar-see-credits")).not.toBeInTheDocument();
   });
 
   it("account menu offers Notifications and Support alongside Profile and Settings", () => {

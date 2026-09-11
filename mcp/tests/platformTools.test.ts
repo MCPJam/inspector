@@ -5,6 +5,7 @@ import {
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
+  runEvalSuiteOperation,
 } from "@mcpjam/sdk/platform";
 import {
   EXCLUDED_FROM_CATALOG,
@@ -87,6 +88,7 @@ function fakeToolContext(
     bearerToken?: string;
     platformApiUrl?: string;
     appOrigin?: string;
+    callerUserAgent?: string;
   } = {}
 ): PlatformToolContext {
   return {
@@ -98,6 +100,9 @@ function fakeToolContext(
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
       MCPJAM_APP_ORIGIN: overrides.appOrigin ?? "https://staging.example.com",
     },
+    ...(overrides.callerUserAgent
+      ? { callerUserAgent: overrides.callerUserAgent }
+      : {}),
   };
 }
 
@@ -178,7 +183,11 @@ const PLAIN_TOOLS = [
   // Stage analytics: a measured description with slice arrays and exclusion
   // tallies. The app renders it as a funnel; a tool result is the numbers.
   "get_eval_run_stage_analytics",
+  "get_eval_run_gate",
   "get_eval_run_route_facts",
+  // Server facts: what the run was taken against — a snapshot description, no
+  // widget view, so it belongs with the plain tools.
+  "get_eval_run_server_facts",
   "list_eval_suite_stage_analytics",
   "set_eval_suite_environments",
   // Project environments: agent-oriented payloads, no widget view.
@@ -206,7 +215,10 @@ const PLAIN_TOOLS = [
   "propose_eval_description_rewrite",
   "start_eval_description_experiment",
   "get_eval_description_experiment",
-  // GitHub Checks: agent-oriented payloads, no widget view.
+  // GitHub checks: agent-oriented payloads, no widget view. Both spellings —
+  // the `*_check_repo*` pair is the pre-rename one, still advertised.
+  "list_eval_github_repos",
+  "connect_eval_github_repo",
   "list_eval_check_repos",
   "connect_eval_check_repo",
   "list_chat_sessions",
@@ -214,6 +226,8 @@ const PLAIN_TOOLS = [
   // Agent Playground: the turn plus its two reads. Agent-oriented payloads —
   // a trace panel would be a second, drifting copy of the eval trace viewer.
   "send_chat_message",
+  "drive_chat_session_browser",
+  "observe_chat_session_browser",
   "get_chat_session",
   "get_chat_session_trace",
   // Swarms + user testing. No widget views yet: these are agent-oriented
@@ -448,7 +462,9 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       "get_eval_run",
       "get_eval_run_stage_analytics",
+      "get_eval_run_gate",
       "get_eval_run_route_facts",
+      "get_eval_run_server_facts",
       "list_eval_suite_stage_analytics",
       "compare_eval_run",
       "get_eval_gate_waiver",
@@ -460,6 +476,8 @@ describe("platform tool registration", () => {
       "propose_eval_description_rewrite",
       "start_eval_description_experiment",
       "get_eval_description_experiment",
+      "list_eval_github_repos",
+      "connect_eval_github_repo",
       "list_eval_check_repos",
       "connect_eval_check_repo",
       "list_project_environments",
@@ -477,6 +495,8 @@ describe("platform tool registration", () => {
       "list_chat_sessions",
       "search_sessions",
       "send_chat_message",
+  "drive_chat_session_browser",
+  "observe_chat_session_browser",
       "get_chat_session",
       "get_chat_session_trace",
       "get_capabilities",
@@ -593,6 +613,7 @@ describe("platform tool registration", () => {
     const IDEMPOTENT_WRITES = new Set(["cancel_project_server_connection"]);
 
     const NON_DESTRUCTIVE_WRITES = new Set([
+      "observe_chat_session_browser",
       // Starting dials a third party's server and can spend; cancelling stops
       // one. Neither destroys a record, so both annotate as plain writes.
       "start_claude_readiness_run",
@@ -620,6 +641,7 @@ describe("platform tool registration", () => {
       // Additive: it creates a repository connection. Its hazard is REACH (a
       // shared repository, everyone's pull requests), not destruction — the
       // annotation says write, and the gated tier is what warns.
+      "connect_eval_github_repo",
       "connect_eval_check_repo",
       // Content-addressed mint: repeating the same stack reuses one row.
       // Nothing is destroyed and nothing is named.
@@ -766,7 +788,8 @@ describe("platform tool registration", () => {
         // A turn under `toolMode: "auto"` executes arbitrary third-party
         // tools with the MODEL choosing the arguments, so its effects are no
         // more knowable than a direct call's. Same absent hints, same reason.
-        registration.name === "send_chat_message"
+        registration.name === "send_chat_message" ||
+        registration.name === "drive_chat_session_browser"
       ) {
         // Arbitrary third-party tool execution: destructive/idempotent hints
         // are deliberately absent so clients assume destructive (spec
@@ -1112,5 +1135,98 @@ describe("the permalink envelope", () => {
     expect(permalinks[0]!.url).toBe(
       "http://localhost:6274/servers/srv_1?project=proj_demo"
     );
+  });
+});
+
+/**
+ * What a run launched through this worker calls itself.
+ *
+ * The platform stamps `source: "api"` on everything that arrives over the
+ * public API, so an agent's eval run was indistinguishable from a script's in
+ * the Runs table. The worker declares `mcp` — a display label beside the stamp,
+ * never an authorization input — and names the calling agent when the request
+ * did.
+ */
+describe("the worker's declared launcher", () => {
+  const RUN_LAUNCH_HEADER = "x-mcpjam-launcher";
+
+  /**
+   * A launch makes three requests — resolve the project, resolve the suite,
+   * then POST the run — so the stub answers by path. Returning one shape for
+   * all three would abort at the first resolution and never reach the call
+   * whose headers these tests are about.
+   */
+  function captureHeaders(): {
+    launchHeaders: () => Record<string, string> | undefined;
+    fetchMock: ReturnType<typeof vi.fn>;
+  } {
+    let launch: Record<string, string> | undefined;
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      const headers = { ...((init?.headers ?? {}) as Record<string, string>) };
+      if (path.endsWith("/eval-runs") && init?.method === "POST") {
+        launch = headers;
+        return Response.json({ runId: "run_1", suiteId: "suite_1" });
+      }
+      if (path.endsWith("/eval-suites")) {
+        return Response.json({
+          items: [{ id: "suite_1", name: "s1", projectId: "proj_1" }],
+        });
+      }
+      return Response.json({
+        items: [{ id: "proj_1", name: "p1", updatedAt: 1 }],
+      });
+    });
+    return { launchHeaders: () => launch, fetchMock };
+  }
+
+  it("declares mcp, and names the agent from the request's user-agent", async () => {
+    const { launchHeaders, fetchMock } = captureHeaders();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runPlatformOperation(
+      fakeToolContext({
+        bearerToken: "user-jwt",
+        callerUserAgent: "claude-code/1.2.3",
+      }),
+      runEvalSuiteOperation,
+      { project: "p1", suite: "s1" } as never
+    );
+
+    const launch = launchHeaders();
+    expect(launch).toBeDefined();
+    expect(JSON.parse(launch![RUN_LAUNCH_HEADER]!)).toEqual({
+      kind: "mcp",
+      client: "claude-code/1.2.3",
+    });
+  });
+
+  it("still declares mcp when the request named no agent", async () => {
+    const { launchHeaders, fetchMock } = captureHeaders();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      runEvalSuiteOperation,
+      { project: "p1", suite: "s1" } as never
+    );
+
+    const launch = launchHeaders();
+    // A missing user-agent leaves the launcher UNNAMED, never guessed: the
+    // kind is what the worker knows for itself.
+    expect(JSON.parse(launch![RUN_LAUNCH_HEADER]!)).toEqual({ kind: "mcp" });
+  });
+
+  it("is not a field an agent can set through the tool's own input", async () => {
+    // An operation's `inputSchema` is exposed verbatim as the MCP tool's input.
+    // A launcher field there would let the agent whose run it is pick its own
+    // badge — which is why this is a client option instead.
+    const shape = (
+      runEvalSuiteOperation.inputSchema as unknown as {
+        shape?: Record<string, unknown>;
+      }
+    ).shape;
+    expect(shape).toBeDefined();
+    expect(Object.keys(shape!)).not.toContain("launcher");
   });
 });

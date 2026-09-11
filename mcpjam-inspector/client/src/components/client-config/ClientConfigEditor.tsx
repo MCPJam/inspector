@@ -65,7 +65,10 @@ import {
   shouldShowComputerToggle,
   visibleBuiltInToolCatalog,
 } from "@/lib/host-config-computer";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import {
+  useComputersEnabled,
+  useBrowserEnabled,
+} from "@/hooks/useComputersEnabled";
 
 export type HostConfigEditorOwner =
   | "project-default"
@@ -132,7 +135,7 @@ export function ClientConfigEditor({
     (patch: Partial<HostConfigInputV2>) => {
       onChange({ ...value, ...patch });
     },
-    [value, onChange]
+    [value, onChange],
   );
 
   const updateConnection = useCallback(
@@ -142,7 +145,7 @@ export function ClientConfigEditor({
         connectionDefaults: { ...value.connectionDefaults, ...patch },
       });
     },
-    [value, onChange]
+    [value, onChange],
   );
 
   const showExecutionSection = owner !== "connection-only";
@@ -165,11 +168,13 @@ export function ClientConfigEditor({
   // (loading → undefined → hidden) so empty installs don't show a dead card.
   const builtInToolCatalog = useBuiltInToolCatalog();
   const computersEnabled = useComputersEnabled();
+  const browsersEnabled = useBrowserEnabled();
   // Render only the rows this user may see: with `computers-enabled` off,
   // computer-backed rows (e.g. an enabled `bash`) stay hidden — except an
   // already-selected id, which must remain visible to stay removable.
   const visibleBuiltInTools = visibleBuiltInToolCatalog(builtInToolCatalog, {
     computersEnabled,
+    browsersEnabled,
     selectedIds: value.builtInToolIds,
   });
   const showBuiltInToolsSection =
@@ -355,7 +360,7 @@ export function ClientConfigEditor({
                 update({
                   serverIds,
                   optionalServerIds: value.optionalServerIds.filter((id) =>
-                    requiredSet.has(id)
+                    requiredSet.has(id),
                   ),
                 });
               }}
@@ -364,7 +369,7 @@ export function ClientConfigEditor({
               label="Optional servers"
               selected={value.optionalServerIds}
               available={(availableServers ?? []).filter((srv) =>
-                value.serverIds.includes(srv.id)
+                value.serverIds.includes(srv.id),
               )}
               onChange={(optionalServerIds) => {
                 // Editing the optional list should never add a server
@@ -374,7 +379,7 @@ export function ClientConfigEditor({
                 const requiredSet = new Set(value.serverIds);
                 update({
                   optionalServerIds: optionalServerIds.filter((id) =>
-                    requiredSet.has(id)
+                    requiredSet.has(id),
                   ),
                 });
               }}
@@ -406,7 +411,7 @@ export function ClientConfigEditor({
                     update(
                       checked
                         ? attachComputerPatch()
-                        : detachComputerPatch(value, builtInToolCatalog)
+                        : detachComputerPatch(value, builtInToolCatalog),
                     )
                   }
                 />
@@ -592,7 +597,7 @@ function McpProfileSection({
     profile?.initialize?.supportedProtocolVersions ?? []
   ).join("\n");
   const [protocolVersionsDraft, setProtocolVersionsDraft] = useState<string>(
-    persistedProtocolVersionsText
+    persistedProtocolVersionsText,
   );
   const protocolVersionsDraftRef = useRef(protocolVersionsDraft);
   useEffect(() => {
@@ -715,7 +720,7 @@ function McpProfileSection({
         initialize: hasInitFields ? nextInitialize : undefined,
       });
     },
-    [profile, onChange]
+    [profile, onChange],
   );
 
   const updateClientInfo = useCallback(
@@ -768,7 +773,7 @@ function McpProfileSection({
         updateInitialize({ clientInfo: undefined });
       }
     },
-    [profile, updateInitialize]
+    [profile, updateInitialize],
   );
 
   const updateProtocolVersions = useCallback(
@@ -789,7 +794,7 @@ function McpProfileSection({
         supportedProtocolVersions: versions.length > 0 ? versions : undefined,
       });
     },
-    [updateInitialize]
+    [updateInitialize],
   );
 
   if (!enabled) {
@@ -924,7 +929,7 @@ function McpProfileSandboxEditor({
     (
       patch: Partial<
         NonNullable<NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]>
-      >
+      >,
     ) => {
       const base: HostConfigMcpProfileV1 = profile ?? { profileVersion: 1 };
       const nextSandbox = {
@@ -946,7 +951,7 @@ function McpProfileSandboxEditor({
         apps: Object.keys(nextApps).length > 0 ? nextApps : undefined,
       });
     },
-    [profile, onChange]
+    [profile, onChange],
   );
 
   const csp = profile?.apps?.sandbox?.csp;
@@ -1116,7 +1121,7 @@ function McpProfileCspDirectivesEditor({
       const fromVal = fromValue(value);
       // Preserve any blank/in-progress rows the user is still editing.
       const blanks = prev.filter(
-        (r) => r.name.trim() === "" || r.tokens.trim() === ""
+        (r) => r.name.trim() === "" || r.tokens.trim() === "",
       );
       return [...fromVal, ...blanks];
     });
@@ -1139,12 +1144,12 @@ function McpProfileCspDirectivesEditor({
       lastSyncedKeyRef.current = JSON.stringify(built ?? null);
       onChange(built);
     },
-    [onChange]
+    [onChange],
   );
 
   const updateRow = (
     idx: number,
-    patch: Partial<{ name: string; tokens: string }>
+    patch: Partial<{ name: string; tokens: string }>,
   ) => {
     const next = draftRows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
     setDraftRows(next);
@@ -1317,7 +1322,9 @@ function McpProfileSandboxAttrsEditor({
   // so the user can see it and remove it.
   const unknownTokens = Array.from(active).filter(
     (t) =>
-      !KNOWN_SANDBOX_TOKENS.includes(t as (typeof KNOWN_SANDBOX_TOKENS)[number])
+      !KNOWN_SANDBOX_TOKENS.includes(
+        t as (typeof KNOWN_SANDBOX_TOKENS)[number],
+      ),
   );
 
   return (
@@ -1430,7 +1437,7 @@ function McpProfileAllowFeaturesEditor({
 }) {
   const specFeatures = useMemo(
     () => new Set<string>(SEP_1865_PERMISSION_FEATURES),
-    []
+    [],
   );
 
   const fromValue = useCallback((v: Record<string, string> | undefined) => {
@@ -1463,7 +1470,7 @@ function McpProfileAllowFeaturesEditor({
         (r) =>
           r.key.trim() === "" ||
           r.allowlist.trim() === "" ||
-          specFeatures.has(r.key.trim())
+          specFeatures.has(r.key.trim()),
       );
       return [...fromVal, ...inProgress];
     });
@@ -1497,7 +1504,7 @@ function McpProfileAllowFeaturesEditor({
       lastSyncedKeyRef.current = JSON.stringify(out);
       onChange(out);
     },
-    [onChange, specFeatures]
+    [onChange, specFeatures],
   );
 
   const setEnabled = (enabled: boolean) => {
@@ -1512,7 +1519,7 @@ function McpProfileAllowFeaturesEditor({
 
   const updateRow = (
     idx: number,
-    patch: Partial<{ key: string; allowlist: string }>
+    patch: Partial<{ key: string; allowlist: string }>,
   ) => {
     if (!isEnabled) return;
     const next = draftRows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
@@ -1756,7 +1763,7 @@ function PermissionRow({
  */
 function useNewlineListDraft(
   persistedList: ReadonlyArray<string>,
-  onPersistedChange: (next: string[]) => void
+  onPersistedChange: (next: string[]) => void,
 ) {
   const persistedJoined = persistedList.join("\n");
   const [draft, setDraft] = useState<string>(persistedJoined);
@@ -1788,7 +1795,7 @@ function useNewlineListDraft(
         .filter((line) => line !== "");
       onPersistedChange(next);
     },
-    [onPersistedChange]
+    [onPersistedChange],
   );
 
   return { value: draft, onChange };
@@ -1827,7 +1834,7 @@ function McpProfileCspDomainSetEditor({
           frameDomains?: string[];
           baseUriDomains?: string[];
         }
-      | undefined
+      | undefined,
   ) => void;
 }) {
   const directives: Array<{
@@ -1885,7 +1892,7 @@ function McpProfileCspDomainSetEditor({
     },
     // `directives` is a module-local stable array literal; safe to omit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [value, onChange]
+    [value, onChange],
   );
 
   return (
@@ -1939,7 +1946,7 @@ function McpProfileCspDirectiveTextarea({
 }) {
   const { value, onChange } = useNewlineListDraft(
     persistedList,
-    onPersistedChange
+    onPersistedChange,
   );
   return (
     <div className="grid gap-1">
@@ -1989,11 +1996,11 @@ function HostCapabilitiesOverrideSection({
 }) {
   const profilePreset = useMemo(
     () => getHostCapabilitiesForStyle(hostStyle),
-    [hostStyle]
+    [hostStyle],
   );
   const profilePresetJson = useMemo(
     () => JSON.stringify(profilePreset, null, 2),
-    [profilePreset]
+    [profilePreset],
   );
   const isOverriding = override !== undefined;
   // When the user hasn't set an override, seed the editor with the profile
@@ -2051,7 +2058,7 @@ function HostCapabilitiesOverrideSection({
  *     persist a credential-bearing default.
  */
 function coerceHeadersToStringRecord(
-  raw: Record<string, unknown>
+  raw: Record<string, unknown>,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, val] of Object.entries(raw)) {
@@ -2083,7 +2090,7 @@ function ServerCheckboxList({
       else next.add(id);
       onChange(Array.from(next));
     },
-    [selectedSet, onChange]
+    [selectedSet, onChange],
   );
 
   if (available.length === 0) {
@@ -2162,7 +2169,7 @@ function JsonRecordEditor({
       setErrorState(next);
       onErrorChange?.(next);
     },
-    [onErrorChange]
+    [onErrorChange],
   );
 
   // Re-sync local text whenever:
@@ -2215,14 +2222,14 @@ function JsonRecordEditor({
         lastEmittedRef.current = JSON.stringify(
           parsed as Record<string, unknown>,
           null,
-          2
+          2,
         );
         onChange(parsed as Record<string, unknown>);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Invalid JSON");
       }
     },
-    [onChange, setError]
+    [onChange, setError],
   );
 
   return (

@@ -14,13 +14,64 @@ what it measured.
 
 <Note>
 GitHub Checks is configured in the hosted app, at **Settings → Integrations →
-GitHub**. Connecting a repository needs an organization admin.
+GitHub**. Every write on this page — connecting, installing, disconnecting, and
+changing per-repository settings — requires an organization owner or admin.
+Members can open the page to see the current setup, but all controls are
+disabled and a note explains why.
+
+**Connect a GitHub account** starts it. You sign in to GitHub so we can confirm
+which accounts you administer, then pick one from the list that comes back —
+an organization, or your own account. Installing the app is not on its own
+proof that an installation is yours to connect, which is why the sign-in step
+is there and not skippable.
+
+Accounts that already have the app appear in that list ready to connect.
+
+**Install on another account**, in that same list, is **not generally available
+yet.** During the beta the MCPJam app can only be installed on the MCPJam
+organization, so there is no other account for it to reach — following it sends
+you to the existing installation rather than offering a choice. Even once that
+opens up, GitHub sends an administrator who already has the app somewhere to
+that installation instead of asking which account to use. So for now, connect
+an account that already appears in the list.
+
+A GitHub account connects to **one MCPJam organization at a time**, for the
+whole account rather than per repository. Two organizations cannot split the
+repositories of one GitHub account between them. If the account is already
+connected elsewhere, connecting it again is refused — free it up in the
+organization holding it, or use a different account.
+
+Which organization is holding it is **rolling out**: until it reaches your
+deployment the refusal names nothing, so ask an owner of the GitHub account,
+who can see the installation. After it reaches you the account picker marks
+the account before you click, and names the holding organization when you are
+a member of it — when you are not, it still cannot name it, because that is a
+fact about an organization you cannot see.
 
 The **pull-request comment** described below is rolling out: it is enabled per
 deployment by an operator, and until it is on for yours a connected repository
 gets the check run and no comment. The per-repository toggle is visible before
 then and records your choice; nothing is posted until the rollout reaches you.
 </Note>
+
+## Suite credentials in approved forks
+
+Each connected repository has **Allow suite credentials in approved forks** in
+Settings and in its suite's connected-repository section. It is off by default;
+only organization admins can change it.
+
+- **Off:** approved fork runs require a credential-free suite. Checks needing
+  saved credentials report **Action required**.
+- **On:** approved fork runs can use that suite's existing credentials and
+  connected services. Only approve code you trust. This does not inject saved
+  secrets into the PR server.
+
+Every new commit needs maintainer approval. Enabling the setting does not upgrade
+old approvals or running jobs: approve again. Changes to selected credentials
+also require fresh approval. Disabling blocks further credential access and
+stops affected runs; credentials already delivered cannot be taken back.
+Changing the connected suite resets the setting off. Environments with plugin
+credential grants that cannot be verified remain blocked.
 
 ## `mcpjam.yaml`
 
@@ -181,6 +232,37 @@ writes there is deliberately bounded.
 If a case title or a tool name is itself sensitive, treat it as published: those
 are the two fields that carry your own words into a public comment.
 
+## Server authentication
+
+Some MCP servers require OAuth login before they will answer the MCP initialize
+request. When MCPJam detects a Bearer challenge during the health probe, it
+marks the server as requiring authorization and looks for a project-shared OAuth
+connection to use.
+
+MCPJam derives the OAuth connection from the repository's selected suite. When
+that suite has one authorized project-shared OAuth connection, there is nothing
+else connected-repository settings need you to choose.
+
+Settings shows a small action only when attention is needed: **Authorize** for
+a suite connection with no saved project authorization, **Reconnect** after a
+check reports that authorization no longer works, or a picker when the suite
+contains more than one eligible OAuth connection. These actions open the
+project's existing Servers page and OAuth flow.
+
+When the required authorization is missing or rejected, the GitHub check
+reports **Action required** and skips execution. Personal and unrelated project
+connections are never selected automatically.
+
+## Per-repository switches
+
+Each connected repository has three labeled switches:
+
+| Switch | What it controls |
+|--------|-----------------|
+| **Checks** | Whether the eval suite runs on pull requests to this repository. |
+| **Conformance** | Whether a conformance check runs alongside the eval suite. Disabled and dimmed while **Checks** is off, because it is a sub-setting of checks. |
+| **Comments** | Whether MCPJam posts a pull-request comment with the result. Independent of **Checks** — you can pause checks while still allowing MCPJam to comment, or turn comments off while checks keep running. |
+
 ## Turning comments off
 
 Comments are **on for every connected repository by default**, including
@@ -188,7 +270,7 @@ repositories connected before the feature existed. An admin opts a repository
 out; there is nothing to opt in to.
 
 Go to **Settings → Integrations → GitHub**, find the repository in **Connected
-repositories**, and turn off **Post feedback comments on pull requests**.
+repositories**, and turn off the **Comments** switch.
 
 This setting changes nothing about the check itself — whether it runs, what it
 measures, and how it reports are all decided elsewhere. Only the comment stops.

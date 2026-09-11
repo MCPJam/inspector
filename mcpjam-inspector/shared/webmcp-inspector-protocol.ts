@@ -1,3 +1,16 @@
+import { BROWSER_VIEWPORT_POLICY } from "./browser-viewport-policy";
+import {
+  BROWSER_INPUT_BATCH_LIMIT,
+  BROWSER_INPUT_TEXT_MAX_CHARS,
+  type BrowserPaneInputEvent,
+} from "./browser-pane-input";
+import {
+  encodeFrameStreamRecord,
+  createFrameStreamDecoder,
+  FRAME_STREAM_HEADER_BYTES,
+  FRAME_STREAM_KIND,
+} from "./browserd-frame-stream";
+
 /**
  * Wire contract between the WebMCP Inspector's client surface and its server
  * session service.
@@ -20,21 +33,39 @@
  * Tool annotations, mirroring the CDP `WebMCP.Annotation` type exactly.
  *
  * TRUST BOUNDARY: these are claims made by the inspected page, which is
- * third-party content. They are safe to DISPLAY and must never decide whether
- * a model-triggered invocation needs approval. Beyond the usual "annotations
- * are hints" caveat, Chromium 151 does not even plumb the values through for
- * imperative registrations — a tool registered with `readOnly: true` is
- * reported here as `false` (asserted in `webmcp-cdp.spike.test.ts`). So an
- * absent or false `readOnly` says nothing at all about the tool.
+ * third-party content. They are safe to DISPLAY and must never decide whether a
+ * model-triggered invocation needs approval. A page that wants its tool run
+ * without a prompt has every incentive to say `readOnly: true`, and nothing
+ * checks it — so the rule is about WHO is speaking, not about how reliably we
+ * hear them.
+ *
+ * WHAT IS ACTUALLY REPORTED, per field, measured against Chromium 151.0.7922.34
+ * and asserted field by field in `webmcp-cdp.spike.test.ts`:
+ *
+ *   - `readOnly` and `untrustedContent` are carried through with the page's
+ *     values, from the `readOnlyHint` / `untrustedContentHint` keys the page API
+ *     reads. A tool that declared the BARE names instead is reported `false`,
+ *     because those are not the keys Blink looks at.
+ *   - `consequential` is not written at all by that build, even when the page
+ *     declares `consequentialHint`. Current Chromium does copy it, so this is a
+ *     fact about a version, and the spike fails when it changes.
+ *   - `autosubmit` can only come from markup (`<form toolautosubmit>`); an
+ *     imperative registration never carries it.
  */
 export interface WebMcpToolAnnotations {
-  /** "The tool does not modify any state." Advisory only — see above. */
+  /** "The tool does not modify any state." A page's claim — see above. */
   readOnly?: boolean;
   /** "Output may contain untrusted content, ex: UGC, 3rd party data." */
   untrustedContent?: boolean;
-  /** The page claims this tool may cause a consequential side effect. */
+  /**
+   * The page claims this tool may cause a consequential side effect.
+   *
+   * Never populated by the pinned Chromium, which does not copy
+   * `consequentialHint` — so absence here is "this build does not report it",
+   * not "the page said no".
+   */
   consequential?: boolean;
-  /** Set when a DECLARATIVE tool carried the autosubmit attribute. */
+  /** Set when a DECLARATIVE tool carried the `toolautosubmit` attribute. */
   autosubmit?: boolean;
 }
 
@@ -51,11 +82,45 @@ export interface WebMcpToolRef {
   name: string;
   /** Origin of the frame that registered it, at registration time. */
   origin: string;
-  /** True when the registering frame is not the main frame. */
+  /**
+   * True when the registering frame is not the main frame.
+   *
+   * Means what it says. It used to be able to describe only a SAME-ORIGIN
+   * subframe, because a cross-origin frame is a separate Chromium target whose
+   * tools never reach the page's CDP session — so a page whose tools lived in a
+   * third-party widget inspected as having none. The provider now attaches a
+   * session per such frame, so both kinds of subframe are listed, each under
+   * its own `origin`.
+   */
   fromSubframe: boolean;
 }
 
+/** Identity of one observed registration, independent of its display key. */
+export interface WebMcpRegistrationBinding {
+  frameId: string;
+  registrationSeq: number;
+  /** Hosted bindings remain valid across inspector replicas, but not browser boots. */
+  browser?: { bootId: string; tabId: string; navCounter: number };
+}
+
+export function sameWebMcpRegistration(
+  a: WebMcpRegistrationBinding | undefined,
+  b: WebMcpRegistrationBinding | undefined,
+): boolean {
+  return (
+    !!a &&
+    !!b &&
+    a.frameId === b.frameId &&
+    a.registrationSeq === b.registrationSeq &&
+    a.browser?.bootId === b.browser?.bootId &&
+    a.browser?.tabId === b.browser?.tabId &&
+    a.browser?.navCounter === b.browser?.navCounter
+  );
+}
+
 export interface WebMcpToolDescriptor extends WebMcpToolRef {
+  /** Missing on older providers; such tools cannot be offered to chat. */
+  binding?: WebMcpRegistrationBinding;
   description: string;
   /** JSON Schema for the tool's input, as published by the page. */
   inputSchema?: Record<string, unknown>;
@@ -114,35 +179,11 @@ export type WebMcpViewportTransport =
    * box.
    */
   | { kind: "frame-stream"; width: number; height: number }
-  /**
-   * A REAL Chromium surface, embedded in the desktop app, that the CLIENT owns.
-   *
-   * The inversion is the whole point. Every other kind describes a browser the
-   * server started and the client observes; this one describes a browser the
-   * client mounted and the server merely ATTACHED to. So it carries no
-   * dimensions (the element is laid out by CSS and resizes with the window), it
-   * is never screencast (there is nothing to encode — the pixels are already
-   * on the viewer's screen), and it is never driven by forwarded input (the
-   * surface receives the viewer's real mouse and keyboard natively). A client
-   * that treated it like `frame-stream` would ask for an encoder nobody reads
-   * and deliver every click twice.
-   */
-  | { kind: "electron-webview" };
+  /** Main-owned WebContentsView, placed through the existing native surface IPC. */
+  | { kind: "electron-native"; bootId: string };
 
-/**
- * The Electron session partition every embedded WebMCP surface runs in.
- *
- * Named here, in the file both halves already import, because it is enforced
- * at THREE points that must agree exactly: the client's `<webview partition>`
- * attribute, the main process's `will-attach-webview` guard, and the server
- * provider's check that the `webContents` it was handed is really one of ours.
- * Three string literals would drift; one constant cannot.
- *
- * `persist:` on purpose — the local inspector's stance everywhere else is a
- * persistent profile, because a developer inspecting their own site should not
- * have to sign in again on every session.
- */
-export const WEBMCP_WEBVIEW_PARTITION = "persist:webmcp-inspector";
+/** Retain WebMCP's existing persistent Electron profile across the ownership migration. */
+export const WEBMCP_BROWSER_PARTITION = "persist:webmcp-inspector";
 
 export interface WebMcpSessionPublic {
   sessionId: string;
@@ -202,57 +243,29 @@ export interface WebMcpInputModifiers {
  * frames arrive at more than one scale from dispatching half its clicks at
  * double coordinates.
  */
-export type WebMcpInputEvent =
-  | {
-      kind: "mouse_move";
-      x: number;
-      y: number;
+/** The inspection API vocabulary is an edge adapter over the canonical event. */
+type InspectionInput<E extends BrowserPaneInputEvent> = E extends unknown
+  ? Omit<E, "type" | "modifiers"> & {
+      kind: E["type"];
       modifiers?: WebMcpInputModifiers;
     }
-  | {
-      kind: "mouse_down";
-      x: number;
-      y: number;
-      button: WebMcpMouseButton;
-      clickCount?: number;
-      modifiers?: WebMcpInputModifiers;
-    }
-  | {
-      kind: "mouse_up";
-      x: number;
-      y: number;
-      button: WebMcpMouseButton;
-      clickCount?: number;
-      modifiers?: WebMcpInputModifiers;
-    }
-  | {
-      kind: "wheel";
-      x: number;
-      y: number;
-      deltaX: number;
-      deltaY: number;
-      modifiers?: WebMcpInputModifiers;
-    }
-  | { kind: "key_down"; key: string; modifiers?: WebMcpInputModifiers }
-  | { kind: "key_up"; key: string; modifiers?: WebMcpInputModifiers }
-  /**
-   * Text as the person actually produced it, not a key sequence.
-   *
-   * Its own event because paste and IME composition have no keystrokes to
-   * replay: reconstructing "日本語" or a pasted paragraph as key events would
-   * be wrong in a different way on every keyboard layout.
-   */
-  | { kind: "text"; text: string };
+  : never;
+export type WebMcpInputEvent = InspectionInput<BrowserPaneInputEvent>;
 
 export type WebMcpMouseButton = "left" | "middle" | "right";
 
 /** Most events a single `input` command may carry. */
-export const WEBMCP_INPUT_BATCH_LIMIT = 64;
+export const WEBMCP_INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
 
 /** Longest run of text one `text` event may carry. */
-export const WEBMCP_INPUT_TEXT_MAX_CHARS = 4 * 1024;
+export const WEBMCP_INPUT_TEXT_MAX_CHARS = BROWSER_INPUT_TEXT_MAX_CHARS;
 
 export type WebMcpCommand =
+  | { type: "browser_state" }
+  | {
+      type: "browser_command";
+      command: import("./browser-pane-command").BrowserPaneCommand;
+    }
   | { type: "navigate"; url: string }
   | { type: "reload" }
   | { type: "go_back" }
@@ -269,6 +282,7 @@ export type WebMcpCommand =
        * twice.
        */
       invokeId?: string;
+      expectedBinding?: WebMcpRegistrationBinding;
       toolKey: string;
       input: Record<string, unknown>;
       source: WebMcpInvocationSource;
@@ -281,6 +295,7 @@ export type WebMcpCommand =
    * frames when its pane is visible and stops asking when it is not.
    */
   | { type: "set_screencast"; enabled: boolean }
+  | { type: "set_viewport"; width: number; height: number }
   /**
    * Drive the page from the pane.
    *
@@ -290,7 +305,7 @@ export type WebMcpCommand =
    * rate-limit. The route bounds the array, so one request can never carry an
    * unbounded amount of work.
    */
-  | { type: "input"; events: WebMcpInputEvent[] };
+  | { type: "input"; events: WebMcpInputEvent[]; tabId?: string };
 
 export type WebMcpCommandResult =
   | { ok: true }
@@ -309,8 +324,10 @@ export type WebMcpInvocationState =
   /**
    * It ran, and what it did cannot be established.
    *
-   * Reachable only for a REMOTE browser, and it is the honest answer rather
-   * than a hedge. A hosted invocation is sent to a daemon that executes it
+   * Also used for a running local call after cancellation or timeout: the
+   * browser acknowledging cancellation does not prove that the page callback
+   * stopped or that its side effects were undone. Verify state before retrying.
+   * A hosted invocation is sent to a daemon that executes it
    * synchronously; if our wait for the answer ends first — the request was
    * aborted, the replica went away — the tool keeps running and its outcome
    * lands in the daemon's result cache, addressed by the invocation's id.
@@ -369,6 +386,8 @@ export interface WebMcpInvocationOutcome {
   outputTruncated?: boolean;
   /** Total bytes before truncation, so the UI can say what was dropped. */
   outputBytes?: number;
+  /** Only a definite refusal before execution may request a fresh tool snapshot. */
+  errorCode?: "tool-gone";
   errorMessage?: string;
 }
 
@@ -421,6 +440,8 @@ export type WebMcpActivityEntry =
       outputTruncated?: boolean;
       /** Total bytes before truncation, so the UI can say what was dropped. */
       outputBytes?: number;
+      /** Only a definite refusal before execution may request a fresh tool snapshot. */
+      errorCode?: "tool-gone";
       errorMessage?: string;
       screenshotBase64?: string;
     }
@@ -520,128 +541,12 @@ export const WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 8 * 1024;
 
 export const WEBMCP_VIEWPORT = { width: 1280, height: 800 } as const;
 
-/**
- * JPEG quality rungs for the streamed frames themselves, best first.
- *
- * Index 0 is the BASELINE every stream starts at. 75 rather than the 50 this
- * ladder replaces because the artefact people actually notice is mosquito
- * noise around text: at q50 a paragraph of 14px body copy is legible but
- * visibly dirty, and the whole picture is being resampled by the pane on top
- * of that. The lower rungs exist for a link that cannot carry the baseline,
- * and the governor — not this file — decides when to walk down them.
- */
-export const WEBMCP_STREAM_QUALITY_LADDER = [75, 60, 45, 30] as const;
-
-/**
- * Qualities tried for the still that replaces an OVERSIZE frame.
- *
- * Deliberately below the stream's baseline: this still exists because the
- * page's own paint did not fit the cap, so trying to publish it at the same
- * quality would mostly reproduce the same failure a round trip later.
- *
- * The bottom rung is ugly on purpose. It is only ever reached by a page whose
- * paint will not fit at 25 — near-maximum-entropy content, a noise canvas or a
- * grain-heavy photo filling the viewport — and for THAT page the choice is not
- * between a good picture and a poor one. It is between a poor picture of the
- * page it is looking at and a sharp picture of a page it has left, because the
- * frame itself was refused for its size and a page that has stopped painting
- * sends nothing else. Frames are transient; the next paint replaces this.
- *
- * It narrows the gap rather than closing it: a paint that will not fit at 10
- * still publishes nothing. Closing it needs a proportional resize, which CDP
- * offers only through `clip` — measured to clobber the context's
- * `deviceScaleFactor` and push an off-content frame into the stream.
- */
-export const WEBMCP_SUBSTITUTE_QUALITY_LADDER = [50, 25, 10] as const;
-
-/**
- * Qualities tried for the SETTLE still — the sharp picture published once a
- * page has stopped painting.
- *
- * ABOVE the stream's baseline, which is the entire point. Motion hides
- * compression artefacts and a still page does not: the frame a person actually
- * reads is the one that is still on screen a second after they stopped
- * scrolling, and that one can afford bytes the 10fps stream cannot.
- */
-export const WEBMCP_SETTLE_STILL_QUALITIES = [
-  85,
-  // The floor is the STREAM's own baseline, never below it: this still exists
-  // to improve on the picture already on screen, and publishing a worse one
-  // because the good one did not fit would be a downgrade dressed up as a
-  // feature. When neither rung fits, nothing is published and the pane keeps
-  // what it has.
-  75,
-] as const;
-
-/**
- * How long a page must go without painting (or being driven) before the sharp
- * still is taken.
- *
- * Long enough that a scroll's momentum, a hover transition or a page reflow
- * does not spend a capture; short enough that "stopped scrolling" and "the
- * text sharpened" feel like the same moment.
- */
-export const WEBMCP_SETTLE_QUIET_MS = 800;
-
-/**
- * Cadence of the provider's housekeeping timer, which is what notices the
- * quiet window has passed.
- *
- * A timer rather than a per-frame `setTimeout`, because the interesting case is
- * the ABSENCE of frames — there is no event to hang a deadline off. 250ms puts
- * at most a quarter-second of slop on {@link WEBMCP_SETTLE_QUIET_MS} while
- * costing four wakeups a second on an idle session.
- */
-export const WEBMCP_HOUSEKEEPING_INTERVAL_MS = 250;
-
-/**
- * How far back the governor looks for evidence that the link cannot carry the
- * stream.
- *
- * One dropped frame is not evidence: the pacer holds the newest frame while a
- * send is outstanding, and a single overwrite happens on any link the moment
- * two paints land inside one round trip. A RUN of them inside a couple of
- * seconds is a consumer that is not keeping up.
- */
-export const WEBMCP_QUALITY_PRESSURE_WINDOW_MS = 2_000;
-
-/** Drops inside that window before the stream steps down a rung. */
-export const WEBMCP_QUALITY_PRESSURE_DROPS = 3;
-
-/**
- * How long a rung is held before the governor may move again.
- *
- * A step costs a stop/start of the encoder, and the frames already in flight
- * when it lands are still the old size — so a governor without a hold would
- * read its own transition as more pressure and walk to the bottom of the
- * ladder in one burst.
- */
-export const WEBMCP_QUALITY_STEP_HOLD_MS = 3_000;
-
-/**
- * How long the link must be free of drops before quality climbs back.
- *
- * Deliberately much longer than the step-down window. Stepping down is a
- * response to something a person is watching happen; stepping up is an
- * experiment, and an experiment that fails costs them another stall.
- */
-export const WEBMCP_QUALITY_RECOVER_QUIET_MS = 10_000;
-
-/**
- * Hard cap on one streamed frame.
- *
- * Four times the 64 KiB budget the timeline's screenshots live under, and
- * deliberately so: a frame is TRANSIENT — it is replaced by the next paint and
- * never persisted — so the cost of a big one is one SSE write, not a permanent
- * entry in an export. An oversized frame is DROPPED rather than re-encoded in
- * the hot path; the provider converges the pane by publishing one budgeted
- * STILL instead (see {@link WEBMCP_SUBSTITUTE_QUALITY_LADDER}), so a page whose
- * final paint never fits still stops being stale.
- */
-export const WEBMCP_FRAME_MAX_BYTES = 256 * 1024;
+/** The same bound as the daemon's interactive JPEG stream. */
+export const WEBMCP_FRAME_MAX_BYTES = BROWSER_VIEWPORT_POLICY.maxFrameBytes;
 
 /** Floor on the gap between published frames: 10fps. */
-export const WEBMCP_FRAME_MIN_INTERVAL_MS = 100;
+export const WEBMCP_FRAME_MIN_INTERVAL_MS =
+  BROWSER_VIEWPORT_POLICY.minIntervalMs;
 
 /**
  * Floor while someone is actively driving the pane: ~30fps.
@@ -653,7 +558,8 @@ export const WEBMCP_FRAME_MIN_INTERVAL_MS = 100;
  * between the two on its own. So the rate is raised by INPUT rather than
  * configured: the cost is paid exactly while it buys something.
  */
-export const WEBMCP_FRAME_BOOST_INTERVAL_MS = 33;
+export const WEBMCP_FRAME_BOOST_INTERVAL_MS =
+  BROWSER_VIEWPORT_POLICY.inputIntervalMs;
 
 /**
  * How long a boost lasts after the input that caused it.
@@ -662,18 +568,14 @@ export const WEBMCP_FRAME_BOOST_INTERVAL_MS = 33;
  * reflowing after a keystroke — and short enough that an idle pane is back to
  * the resting floor about a second after the person stops.
  */
-export const WEBMCP_FRAME_BOOST_WINDOW_MS = 1_500;
+export const WEBMCP_FRAME_BOOST_WINDOW_MS =
+  BROWSER_VIEWPORT_POLICY.inputBoostWindowMs;
 
 /**
  * Size of the fixed header on a binary frame message. See
  * {@link encodeWebMcpBinaryFrame}.
  */
-export const WEBMCP_FRAME_WS_HEADER_BYTES = 24;
-
-/** Current version byte of the binary frame wire format. */
-const WEBMCP_FRAME_WIRE_VERSION = 1;
-/** Message kind: a painted JPEG frame. The only kind V1 defines. */
-const WEBMCP_FRAME_WIRE_KIND_JPEG = 1;
+export const WEBMCP_FRAME_WS_HEADER_BYTES = FRAME_STREAM_HEADER_BYTES;
 
 /** A frame as it travels on the binary wire, and as `decode` hands it back. */
 export interface WebMcpBinaryFrame {
@@ -715,81 +617,30 @@ export interface WebMcpBinaryFrame {
  * cannot drift.
  */
 export function encodeWebMcpBinaryFrame(frame: WebMcpBinaryFrame): Uint8Array {
-  const out = new Uint8Array(WEBMCP_FRAME_WS_HEADER_BYTES + frame.jpeg.length);
-  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
-  view.setUint8(0, WEBMCP_FRAME_WIRE_VERSION);
-  view.setUint8(1, WEBMCP_FRAME_WIRE_KIND_JPEG);
-  // Clamped rather than trusted: a surface reported larger than a u16 would
-  // wrap to a small number and letterbox every later click against a box the
-  // page never had.
-  view.setUint16(2, clampU16(frame.deviceWidth), true);
-  view.setUint16(4, clampU16(frame.deviceHeight), true);
-  // Fixed point in the byte pair V1 reserved, so this is an ADDITIVE change:
-  // an old decoder reads the two bytes it always ignored, and a new decoder
-  // reads an old server's 0 as the 1.0 it means.
-  view.setUint16(6, clampU16(Math.round((frame.scale ?? 1) * 1_000)), true);
-  view.setFloat64(8, frame.ts, true);
-  view.setUint32(16, frame.seq >>> 0, true);
-  view.setUint32(20, frame.jpeg.length, true);
-  out.set(frame.jpeg, WEBMCP_FRAME_WS_HEADER_BYTES);
-  return out;
+  return encodeFrameStreamRecord({
+    ...frame,
+    kind: FRAME_STREAM_KIND.frame,
+    scale: frame.scale ?? 1,
+  });
 }
 
-function clampU16(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(0xffff, Math.round(value)));
-}
-
-/**
- * Unpack a binary frame message, or `undefined` if it is not one.
- *
- * NEVER THROWS on wire data. This decodes bytes that arrived over a socket,
- * and the one thing worse than a dropped frame is a throw inside a `message`
- * handler taking the whole stream down with it. An unknown version or kind
- * reads as "not a frame I understand" rather than an error — which is what
- * makes adding a second kind later a non-breaking change for THIS client.
- */
+/** Message adapter for the same codec used by daemon byte streams. */
 export function decodeWebMcpBinaryFrame(
   buffer: ArrayBuffer | Uint8Array,
 ): WebMcpBinaryFrame | undefined {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  if (bytes.byteLength < WEBMCP_FRAME_WS_HEADER_BYTES) return undefined;
+  if (bytes.byteLength < FRAME_STREAM_HEADER_BYTES) return undefined;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (view.getUint8(0) !== WEBMCP_FRAME_WIRE_VERSION) return undefined;
-  if (view.getUint8(1) !== WEBMCP_FRAME_WIRE_KIND_JPEG) return undefined;
-  const jpegLength = view.getUint32(20, true);
-  // The declared length must match what actually arrived. A truncated message
-  // would otherwise hand an `<img>` half a JPEG, which decodes to nothing and
-  // leaves the pane blank with no way to tell why.
-  if (jpegLength !== bytes.byteLength - WEBMCP_FRAME_WS_HEADER_BYTES) {
+  // This endpoint carries one complete frame per message, never a partial record.
+  if (view.getUint32(20, true) !== bytes.byteLength - FRAME_STREAM_HEADER_BYTES)
     return undefined;
-  }
-  // Zero pixels is not a frame. A bare header passes the check above — its
-  // declared length of nothing does match the nothing that arrived — and the
-  // presenter would then hand an `<img>` a 0-byte blob URL, which fails to
-  // decode and blanks the pane with exactly the silence the check above
-  // exists to prevent. Rejected HERE, at the one boundary where wire data is
-  // validated, rather than guarded again at every consumer.
-  if (jpegLength === 0) return undefined;
-  const scaleMilli = view.getUint16(6, true);
-  return {
-    deviceWidth: view.getUint16(2, true),
-    deviceHeight: view.getUint16(4, true),
-    // Zero is what every server older than this field writes, and what
-    // `encodeWebMcpBinaryFrame` wrote as "reserved" — it means 1, not a frame
-    // of zero size.
-    scale: scaleMilli === 0 ? 1 : scaleMilli / 1_000,
-    ts: view.getFloat64(8, true),
-    seq: view.getUint32(16, true),
-    // A copy, not a view onto the socket's buffer: the caller holds this while
-    // it decodes, and some transports reuse the underlying allocation.
-    //
-    // `new Uint8Array(subarray)` rather than `.slice()`, because a Node
-    // `Buffer` IS a `Uint8Array` and overrides `slice` to return a VIEW — so
-    // the one input where aliasing actually bites (a `ws` receive buffer) is
-    // exactly the one `.slice()` fails to copy.
-    jpeg: new Uint8Array(bytes.subarray(WEBMCP_FRAME_WS_HEADER_BYTES)),
-  };
+  const result = createFrameStreamDecoder().push(bytes);
+  if (!result.ok || result.records.length !== 1) return undefined;
+  const record = result.records[0];
+  if (record.kind !== FRAME_STREAM_KIND.frame || record.jpeg.length === 0)
+    return undefined;
+  const { kind: _kind, ...frame } = record;
+  return frame;
 }
 
 /** Marker appended to a truncated string result. */

@@ -383,6 +383,14 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "organizations",
     scope: "global",
   },
+  // Spend budget — the org-wide ceiling on MCPJam-billed spend per billing
+  // window. An `organizations` section on the same terms as the three above.
+  {
+    path: "organizations/:orgId/budget",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
   {
     path: "evals/shared/:token",
     kind: "special",
@@ -477,6 +485,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "evaluate", kind: "screen", surfaceId: "evaluate", scope: "project" },
   {
     path: "evaluate/create",
+    kind: "screen",
+    surfaceId: "evaluate",
+    scope: "project",
+  },
+  {
+    path: "evaluate/eval-server/:serverId",
     kind: "screen",
     surfaceId: "evaluate",
     scope: "project",

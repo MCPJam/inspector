@@ -176,12 +176,26 @@ export const getInvalidAnthropicToolNames = (toolNames: string[]): string[] => {
 export const scrubUnavailableToolHistoryForBackend = (
   messages: ModelMessage[],
   availableToolNames: Iterable<string>,
+  /**
+   * Names whose history stays even though the tool is not advertised now.
+   *
+   * For tools that are EXPECTED to come and go within a conversation — a
+   * page's WebMCP tools exist only while that page is open. The model called
+   * `webmcp_add_topping` on the pizza page; the record of having done so is
+   * how it knows the topping is there, and scrubbing it because the browser
+   * has since moved on would make the model repeat the call or deny it ever
+   * happened. An absent tool of any name is refused as "Tool not found" if
+   * called again, so keeping the history admits no ungated execution.
+   */
+  keepHistoryFor?: (toolName: string) => boolean,
 ): ModelMessage[] => {
   const available = new Set(
     Array.from(availableToolNames).filter(
       (name): name is string => typeof name === "string" && name.length > 0,
     ),
   );
+  const isAvailable = (name: string) =>
+    available.has(name) || keepHistoryFor?.(name) === true;
 
   if (messages.length === 0) {
     return messages;
@@ -211,7 +225,7 @@ export const scrubUnavailableToolHistoryForBackend = (
         (partType === "tool-call" || partType === "tool-result") &&
         toolCallId &&
         toolName &&
-        !available.has(toolName)
+        !isAvailable(toolName)
       ) {
         staleToolCallIds.add(toolCallId);
       }
@@ -257,7 +271,7 @@ export const scrubUnavailableToolHistoryForBackend = (
           return false;
         }
 
-        if (toolName && !available.has(toolName)) {
+        if (toolName && !isAvailable(toolName)) {
           return false;
         }
 

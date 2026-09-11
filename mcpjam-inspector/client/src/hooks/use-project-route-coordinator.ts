@@ -34,8 +34,6 @@ export interface ProjectRouteCoordinatorInput {
   activeOrganizationId: string | undefined;
   setActiveOrganizationId: (organizationId: string | undefined) => void;
   switchProject: (projectId: string) => Promise<void>;
-  /** A confirmed stale sign-in return is recovered by App before it paints. */
-  suppressInaccessibleTelemetryFor?: string | null;
 }
 
 /**
@@ -70,7 +68,6 @@ export function useProjectRouteCoordinator(
     activeOrganizationId,
     setActiveOrganizationId,
     switchProject,
-    suppressInaccessibleTelemetryFor,
   } = input;
 
   const pathname = useCurrentPathname();
@@ -244,12 +241,6 @@ export function useProjectRouteCoordinator(
     }
     if (state.status === "inaccessible") {
       if (
-        state.reason === "not-a-member" &&
-        suppressInaccessibleTelemetryFor === state.requestedProjectId
-      ) {
-        return;
-      }
-      if (
         reportedRef.current?.projectId === state.requestedProjectId &&
         reportedRef.current.outcome === "inaccessible"
       ) {
@@ -261,7 +252,7 @@ export function useProjectRouteCoordinator(
       };
       trackProjectRouteInaccessible(state.reason);
     }
-  }, [state, suppressInaccessibleTelemetryFor]);
+  }, [state]);
 
   return state;
 }

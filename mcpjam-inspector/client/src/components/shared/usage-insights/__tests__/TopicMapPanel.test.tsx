@@ -461,6 +461,63 @@ describe("TopicMapPanel", () => {
   // mounts once a snapshot exists. Data almost always arrives after the first
   // render, so an effect that read the wrapper once (before the loading branch
   // resolved) would leave a bare wheel to d3-zoom and re-trap the page scroll.
+  // The rebuild callback must be invoked with NO arguments. Wiring it straight
+  // to `onClick` handed it a React synthetic event, which the scenario rebuild
+  // spread into the Convex payload, throwing "Converting circular structure to
+  // JSON" so the rebuild never ran.
+  //
+  // There are two rebuild buttons and they need a test each: this one renders
+  // with `snapshot: null`, and the map-header button lives inside a branch that
+  // dereferences `snapshot.stats`, so it cannot appear here.
+  it("rebuilds from the empty state with no arguments", async () => {
+    const user = userEvent.setup();
+    const onRebuild = vi.fn();
+    mockUseScenarioTopicMap.mockReturnValue({
+      ...createDefaultScenarioTopicMapHookValue(),
+      latestRun: null,
+      snapshot: null,
+      isLoading: false,
+    });
+
+    render(
+      <TopicMapPanel
+        scenarioId="scenario-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={onRebuild}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
+    expect(onRebuild).toHaveBeenCalledTimes(1);
+    expect(onRebuild.mock.calls[0]).toEqual([]);
+  });
+
+  // The second call site: the rebuild control in the map header, which only
+  // renders once a snapshot exists.
+  it("rebuilds from the map header with no arguments", async () => {
+    const user = userEvent.setup();
+    const onRebuild = vi.fn();
+    mockUseScenarioTopicMap.mockReturnValue(
+      createDefaultScenarioTopicMapHookValue(),
+    );
+
+    render(
+      <TopicMapPanel
+        scenarioId="scenario-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={onRebuild}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
+    expect(onRebuild).toHaveBeenCalledTimes(1);
+    expect(onRebuild.mock.calls[0]).toEqual([]);
+  });
+
   describe("cooperative wheel zoom", () => {
     const panelProps = {
       scenarioId: "scenario-1",

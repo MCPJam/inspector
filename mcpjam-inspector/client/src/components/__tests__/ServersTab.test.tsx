@@ -371,10 +371,6 @@ vi.mock("../connection/JsonImportModal", () => ({
   JsonImportModal: () => null,
 }));
 
-vi.mock("../connection/ProjectSelector", () => ({
-  ProjectSelector: () => <div>Project Selector</div>,
-}));
-
 vi.mock("../project/ProjectShareButton", () => ({
   ProjectShareButton: () => null,
 }));
