@@ -1351,6 +1351,11 @@ export function ChatInput({
             requestAnimationFrame(() => {
               const end = textarea.value.length;
               textarea.setSelectionRange(end, end);
+              // Mirrored into state like every other programmatic caret move
+              // here: `caretIndex` is what the `/`-prompt and skill detection
+              // slice the value on, and leaving it behind would have them read
+              // a recalled message against the caret of the one before it.
+              setCaretIndex(end);
             });
           }
           return;

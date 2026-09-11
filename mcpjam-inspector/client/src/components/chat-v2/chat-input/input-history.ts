@@ -20,6 +20,14 @@ interface HistorySourceMessage {
   parts?: unknown[];
 }
 
+/**
+ * The text of a message, EXACTLY as it was sent.
+ *
+ * Not trimmed: the send path passes the composer's raw value through, so a
+ * prompt with deliberate indentation or a trailing newline is stored that way,
+ * and recall has to hand back what was sent rather than a tidied version of it.
+ * Trimming is only ever a test for emptiness — see `collectInputHistory`.
+ */
 function messageText(message: HistorySourceMessage): string {
   const parts = Array.isArray(message.parts) ? message.parts : [];
   return parts
@@ -30,8 +38,7 @@ function messageText(message: HistorySourceMessage): string {
         ? candidate.text
         : "";
     })
-    .join("")
-    .trim();
+    .join("");
 }
 
 /**
@@ -53,7 +60,7 @@ export function collectInputHistory(
     const message = messages[index] as HistorySourceMessage | null;
     if (!message || message.role !== "user") continue;
     const text = messageText(message);
-    if (!text) continue;
+    if (!text.trim()) continue;
     if (entries[entries.length - 1] === text) continue;
     entries.push(text);
   }
@@ -103,10 +110,19 @@ export function navigateInputHistory(
   args: NavigateInputHistoryArgs,
 ): NavigateInputHistoryResult | null {
   const { direction, entries, value } = args;
-  // A walk the user has typed over is not a walk any more.
+  // A walk is still live only if BOTH ends still agree with it: the field
+  // still holds what the walk put there (the user has not typed over it), and
+  // the entry it points at is still that same message. The second check is
+  // what survives the list being replaced underneath — opening another session
+  // from the history rail swaps every entry while the composer keeps its text,
+  // and continuing to count from the old index would skip the new thread's
+  // most recent message.
+  const previous = args.navigation;
   const active =
-    args.navigation && args.navigation.applied === value
-      ? args.navigation
+    previous &&
+    previous.applied === value &&
+    entries[previous.index] === previous.applied
+      ? previous
       : null;
 
   if (direction === "older") {

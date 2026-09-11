@@ -64,6 +64,13 @@ describe("collectInputHistory", () => {
     ).toEqual(["same", "between", "same"]);
   });
 
+  it("hands back the message exactly as it was sent", () => {
+    // The send path passes the composer's raw value through, so deliberate
+    // indentation is part of the prompt. Recall must not tidy it.
+    const indented = "  def main():\n      return 1\n";
+    expect(collectInputHistory([userMessage(indented)])).toEqual([indented]);
+  });
+
   it("survives a thread that has not loaded", () => {
     expect(collectInputHistory(undefined)).toEqual([]);
     expect(collectInputHistory(null)).toEqual([]);
@@ -184,6 +191,30 @@ describe("navigateInputHistory", () => {
     })!;
     expect(afterEdit.value).toBe("newest");
     expect(afterEdit.navigation?.draft).toBe("newest, but edited");
+  });
+
+  it("restarts the walk when the thread underneath it is replaced", () => {
+    // Opening another session from the history rail swaps every entry while
+    // the composer keeps whatever it was holding. Counting on from the old
+    // index would skip the new thread's most recent message.
+    const walk = navigateInputHistory({
+      direction: "older",
+      entries,
+      value: "",
+      navigation: null,
+    })!;
+    expect(walk.value).toBe("newest");
+
+    const otherThread = ["a different thread", "and its older message"];
+    const afterSwap = navigateInputHistory({
+      direction: "older",
+      entries: otherThread,
+      value: walk.value,
+      navigation: walk.navigation,
+    })!;
+
+    expect(afterSwap.value).toBe("a different thread");
+    expect(afterSwap.navigation?.index).toBe(0);
   });
 
   it("leaves the key alone when there is nothing to recall", () => {
