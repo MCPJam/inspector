@@ -14,6 +14,7 @@ export function SuiteMetricStrip({
   runs,
   allIterations,
   aggregate = false,
+  showCost = true,
 }: {
   runs: EvalSuiteRun[];
   allIterations: EvalIteration[];
@@ -22,6 +23,7 @@ export function SuiteMetricStrip({
    * per-run time series. Used when the header is scoped to one run group.
    */
   aggregate?: boolean;
+  showCost?: boolean;
 }) {
   const data = useMemo(
     () =>
@@ -32,6 +34,11 @@ export function SuiteMetricStrip({
   );
 
   return (
-    <MetricStrip data={data} density="default" testId="suite-metric-strip" />
+    <MetricStrip
+      showCost={showCost}
+      data={data}
+      density="default"
+      testId="suite-metric-strip"
+    />
   );
 }

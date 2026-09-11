@@ -65,7 +65,7 @@ describe("HostVerifiedAtStamp", () => {
   it("prints the verification date while it is fresh", () => {
     renderAt(CATALOG_VERIFIED_AT + 5 * 24 * 60 * 60 * 1000);
     expect(screen.getByTestId("host-verified-at-stamp")).toHaveTextContent(
-      "Last checked 2026-09-02",
+      "Verified 2026-09-02",
     );
   });
 
@@ -98,7 +98,7 @@ describe("HostVerifiedAtStamp", () => {
     };
     renderAt(CATALOG_VERIFIED_AT + 5 * 24 * 60 * 60 * 1000);
     expect(screen.getByTestId("host-verified-at-stamp")).toHaveTextContent(
-      "Last checked 2026-09-02",
+      "Verified 2026-09-02",
     );
   });
 

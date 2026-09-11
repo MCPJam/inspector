@@ -268,6 +268,9 @@ export function createEffectiveSkillTools(args: {
           }
         },
       }),
+      // floor: always for a SERVER-origin ref (a third party's instructions
+      // entering the turn), never for the rest. A function rather than a
+      // constant because the answer depends on which skill the model named.
       needsApproval: ({ name }: { name: string }) => {
         const resolved = resolveRef(lookup, name);
         return resolved.ok && args.serverRefs.has(resolved.skill.ref);
@@ -370,6 +373,9 @@ export function createEffectiveSkillTools(args: {
           }
         },
       }),
+      // floor: always for a SERVER-origin ref (a third party's instructions
+      // entering the turn), never for the rest. A function rather than a
+      // constant because the answer depends on which skill the model named.
       needsApproval: ({ name }: { name: string }) => {
         const resolved = resolveRef(lookup, name);
         return resolved.ok && args.serverRefs.has(resolved.skill.ref);
