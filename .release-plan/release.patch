@@ -1,77 +1,48 @@
-diff --git a/.changeset/friendly-browsers-recover.md b/.changeset/friendly-browsers-recover.md
+diff --git a/.changeset/browser-panel-token-reuse.md b/.changeset/browser-panel-token-reuse.md
 deleted file mode 100644
-index 9755a4070..000000000
---- a/.changeset/friendly-browsers-recover.md
+index 0fe07db34..000000000
+--- a/.changeset/browser-panel-token-reuse.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Fix comparison browser controls leaving browser access blocked before the next chat turn. Make Chromium installation and recovery available before a comparison browser starts, and notify consent subscribers once when clearing browser permission.
+-Stop the Browser Panel from minting a browser token on every request, and stop its keepalive and lease heartbeat from silently retrying forever once the browser is gone. A computer released or auto-paused under an open panel now says so instead of logging one uncaught server error per minute for as long as the tab stays open.
+diff --git a/.changeset/local-browser-playground-onboarding.md b/.changeset/local-browser-playground-onboarding.md
+deleted file mode 100644
+index 1ab5b82ab..000000000
+--- a/.changeset/local-browser-playground-onboarding.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Offer local browser setup on first Playground visit and resolve browser tools without requiring a saved default client.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index ea2df04d2..7731fc822 100644
+index 7731fc822..4153102a2 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.5.1",
-+  "version": "3.5.2",
+-  "version": "3.5.2",
++  "version": "3.5.3",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index bc625c390..4515c9cb1 100644
+index 4515c9cb1..f9687ff91 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -400,7 +400,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.5.1",
-+      "version": "3.5.2",
+-      "version": "3.5.2",
++      "version": "3.5.3",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -8198,9 +8198,6 @@
-       "cpu": [
-         "arm64"
-       ],
--      "libc": [
--        "glibc"
--      ],
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -8217,9 +8214,6 @@
-       "cpu": [
-         "arm64"
-       ],
--      "libc": [
--        "musl"
--      ],
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -8236,9 +8230,6 @@
-       "cpu": [
-         "x64"
-       ],
--      "libc": [
--        "glibc"
--      ],
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -8255,9 +8246,6 @@
-       "cpu": [
-         "x64"
-       ],
--      "libc": [
--        "musl"
--      ],
-       "license": "MIT",
-       "optional": true,
-       "os": [

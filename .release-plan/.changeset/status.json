@@ -7,19 +7,30 @@
           "type": "patch"
         }
       ],
-      "summary": "Fix comparison browser controls leaving browser access blocked before the next chat turn. Make Chromium installation and recovery available before a comparison browser starts, and notify consent subscribers once when clearing browser permission.",
-      "id": "friendly-browsers-recover"
+      "summary": "Stop the Browser Panel from minting a browser token on every request, and stop its keepalive and lease heartbeat from silently retrying forever once the browser is gone. A computer released or auto-paused under an open panel now says so instead of logging one uncaught server error per minute for as long as the tab stays open.",
+      "id": "browser-panel-token-reuse"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Offer local browser setup on first Playground visit and resolve browser tools without requiring a saved default client.",
+      "id": "local-browser-playground-onboarding"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "3.5.1",
+      "oldVersion": "3.5.2",
       "changesets": [
-        "friendly-browsers-recover"
+        "browser-panel-token-reuse",
+        "local-browser-playground-onboarding"
       ],
-      "newVersion": "3.5.2"
+      "newVersion": "3.5.3"
     }
   ]
 }
