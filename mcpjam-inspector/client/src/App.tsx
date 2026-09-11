@@ -221,6 +221,7 @@ import {
   stripProjectFromPath,
 } from "./lib/project-route";
 import { useProjectRouteCoordinator } from "./hooks/use-project-route-coordinator";
+import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import {
   createProjectSignInReturnRecoveryIntent,
   resolveProjectSignInReturnRecovery,
@@ -351,7 +352,6 @@ import {
   UNSAFE_LocationContext,
   useParams,
 } from "react-router";
-import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
 import { resetTokenCache } from "./lib/apis/web/context";
@@ -3109,6 +3109,7 @@ export default function App() {
     reconnectServerForClientSwitch,
     ensureServersReady,
     ensureHostedServerIdsForNames,
+    isConnectionPreflightPending,
     syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
@@ -3462,9 +3463,10 @@ export default function App() {
   // normal save, handshake, compatibility, and tool-discovery path as soon as
   // that project is available instead of surfacing an unusable connection UI.
   const isFirstRunProjectReady =
-    !HOSTED_MODE ||
-    !isAuthenticated ||
-    Boolean(projects[activeProjectId]?.sharedProjectId);
+    !isConnectionPreflightPending &&
+    (!HOSTED_MODE ||
+      !isAuthenticated ||
+      Boolean(projects[activeProjectId]?.sharedProjectId));
   useEffect(() => {
     if (
       !pendingFirstRunConnection ||

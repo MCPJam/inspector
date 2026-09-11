@@ -104,6 +104,7 @@ const {
       missing: [],
       reauth: [],
     }),
+    isConnectionPreflightPending: false,
     handleUpdate: vi.fn().mockResolvedValue({
       ok: true,
       serverName: "test-server",
@@ -3923,6 +3924,51 @@ describe("App hosted OAuth callback handling", () => {
           name: "Connecting to Excalidraw (App)",
         }),
       ).toBeInTheDocument();
+    });
+  });
+
+  it("waits for client configuration sync before starting the first-run handshake", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    appState.isConnectionPreflightPending = true;
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      ).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: "Preparing your MCPJam workspace",
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(appState.handleConnect).not.toHaveBeenCalled();
+
+    appState.isConnectionPreflightPending = false;
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(appState.handleConnect).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Excalidraw (App)" }),
+        { suppressErrorToast: true },
+      );
     });
   });
 

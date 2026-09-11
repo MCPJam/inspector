@@ -54,6 +54,8 @@
 - Removed the redundant Welcome-acknowledgement alias and its duplicate persistence write.
 - Added state and overlay regressions for these recovery paths; 145 directly affected tests and client type-check pass.
 - Removed completed findings from `onboarding-review-followups.md`. The unrelated developer onboarding and repository-flow guides remain isolated on `small-doc-fixes`.
+- Checkpointed a shared connection-preflight readiness signal so first-run onboarding does not launch while the connection hook still reports project or client-config setup work.
+- Added a focused preflight regression; 205 App and state tests plus the 3 local-Chrome connection tests pass. Live mixed-worktree testing still reproduced a later local `Finishing setup.` failure, so the finding remains open for a clean single-checkout/single-browser retest.
 
 ## Remaining before integration
 
