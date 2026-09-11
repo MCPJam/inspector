@@ -94,7 +94,7 @@ export function RateCell({ rate }: { rate: StageRateView }) {
       >
         {rate.fraction === null ? null : (
           <div
-            className="h-full rounded-full bg-emerald-500"
+            className="h-full rounded-full bg-success"
             style={{ width: `${rate.fraction * 100}%` }}
           />
         )}
@@ -148,7 +148,7 @@ function StageRow({ stage }: { stage: StageRowView }) {
               data-reason={entry.reason}
               className="text-[10px] text-muted-foreground/80"
             >
-              {entry.count} — {entry.label}
+              {entry.count}. {entry.label}
             </li>
           ))}
         </ul>
@@ -176,7 +176,9 @@ function SliceBlock({ slice }: { slice: SliceView }) {
         </div>
         {/* Every count names its population. */}
         <span className="text-[10px] text-muted-foreground">
-          {slice.includedTrials} trials in this slice
+          {slice.includedTrials}{" "}
+          {slice.includedTrials === 1 ? "iteration" : "iterations"} in this
+          slice
         </span>
       </div>
       {slice.exclusions.length > 0 ? (
@@ -330,7 +332,7 @@ export function RunDocument({
         </span>
         {header.provisional ? (
           <span
-            className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-400"
+            className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] text-warning"
             data-testid="stage-analytics-provisional"
           >
             {header.materializationLabel}
@@ -379,7 +381,7 @@ export function RunDocument({
                 data-exclusion={entry.key}
                 className="text-[10px] text-muted-foreground/80"
               >
-                {entry.count} — {entry.label}
+                {entry.count}. {entry.label}
               </li>
             ))}
           </ul>
@@ -389,7 +391,7 @@ export function RunDocument({
       {overallView ? (
         <section className="mt-3">
           <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Overall — where the chain stopped
+            Overall. Where the chain stopped
           </h4>
           {/* The D9/D5c boundary, said in the UI's own words rather than left
               as an internal rule. A reader looking at six health chips has to
@@ -446,7 +448,7 @@ export function RunDocument({
           asking it. */}
       <SliceGroup title="By intent" slices={intents} />
       <SliceGroup title="By model" slices={models} />
-      <SliceGroup title="By host" slices={hosts} />
+      <SliceGroup title="By client" slices={hosts} />
 
       {setup.length > 0 ? (
         <details className="mt-3" data-testid="stage-analytics-setup">
@@ -474,7 +476,9 @@ export function RunDocument({
                       counted distinctly and MAY exceed them. */}
                   {phase.uniqueAttempts} attempts, {phase.failedAttempts} failed
                   ({phase.serverAttributedFailures} attributed to the server),
-                  blocking {phase.impactedTrials} trials in this run
+                  blocking {phase.impactedTrials}{" "}
+                  {phase.impactedTrials === 1 ? "iteration" : "iterations"} in
+                  this run
                 </p>
               </div>
             ))}

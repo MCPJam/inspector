@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-09
+
+#### Added
+
+- **Findings tab on User Testing scenario detail** — opening a User Testing scenario now lands on a **Findings** tab instead of Insights. The tab groups sessions by how users came across — Gave up, Frustrated, Neutral, Satisfied, or Uncategorized — and lists the goal clusters each group engaged with, ordered worst-first. Expanding a goal shows the per-goal user-value chain (Connection → Discovery → Selection → Call → Response → Value) once stage data is available. Click any goal's session count to jump to Sessions with the matching transcript pre-selected. Insights and Sessions remain reachable from the tab strip.
+
+#### Changed
+
+- **User Testing scenarios analyze themselves** — opening a User Testing scenario's Findings or Insights tab when sessions exist but no analysis has run now starts the analysis automatically. The "Analyze sessions" button and the "These sessions haven't been analyzed yet" state are gone; the tab shows an analyzing banner instead and fills in once the run completes. The cluster tuning control and the freshness chip still require an explicit action. Swarm and Benchmark scopes are unchanged — Swarm already queues analysis when a run settles, and Benchmark flow analysis remains explicitly requested.
+
 ### 2026-09-02
 
 #### Added
@@ -170,7 +180,6 @@ We're working on:
 - More LLM provider integrations
 - Advanced debugging tools
 - Performance analytics dashboard
-- CI/CD integration support
 
 ## Stay Updated
 

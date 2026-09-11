@@ -6,7 +6,7 @@ First off, thank you for considering contributing to MCPJam Inspector! It's peop
 
 1. You can find things to work on in our [issues tab](https://github.com/MCPJam/inspector/issues).
 2. Look for issues labelled `good first issue` and `very easy`. These are great starter tasks that are low commitment.
-3. Once you find an issue you like to work on, comment on the issue and tag @matteo8p. Then assign yourself the issue. This helps avoid multiple contributors working on the same issue.
+3. Once you find an issue you like to work on, comment on the issue and tag @chelojimenez. Then assign yourself the issue. This helps avoid multiple contributors working on the same issue.
 
 ## Getting Started
 
@@ -36,14 +36,14 @@ Also join our [Discord channel](https://discord.com/invite/JEnDtz8X6z). That's w
 
 This is an **npm workspaces monorepo**. The main packages are:
 
-| Workspace | Package | Description |
-|-----------|---------|-------------|
-| `mcpjam-inspector/` | `@mcpjam/inspector` | Inspector app (client, server, Electron) |
-| `sdk/` | `@mcpjam/sdk` | MCP SDK for testing and evals |
-| `cli/` | `@mcpjam/cli` | CLI tool |
-| `design-system/` | `@mcpjam/design-system` | Shared UI components |
-| `soundcheck/` | `@mcpjam/soundcheck` | Soundcheck app |
-| `mcp/` | `@mcpjam/mcp` | MCP worker |
+| Workspace           | Package                 | Description                              |
+| ------------------- | ----------------------- | ---------------------------------------- |
+| `mcpjam-inspector/` | `@mcpjam/inspector`     | Inspector app (client, server, Electron) |
+| `sdk/`              | `@mcpjam/sdk`           | MCP SDK for testing and evals            |
+| `cli/`              | `@mcpjam/cli`           | CLI tool                                 |
+| `design-system/`    | `@mcpjam/design-system` | Shared UI components                     |
+| `soundcheck/`       | `@mcpjam/soundcheck`    | Soundcheck app                           |
+| `mcp/`              | `@mcpjam/mcp`           | MCP worker                               |
 
 Most contributions target the `mcpjam-inspector/` workspace.
 
@@ -146,6 +146,34 @@ npm run test -w @mcpjam/inspector
 npm run test -w @mcpjam/sdk
 npm run test -w @mcpjam/cli
 ```
+
+#### WorkOS contract tests
+
+The suites named `server/**/*.emulator.test.ts` boot
+[`@workos/emulate`](https://github.com/workos/emulate) — WorkOS's own in-memory
+API server — in-process and drive the real code paths against it, rather than
+stubbing `fetch` and mocking token verification. That is what lets them assert
+things only WorkOS can settle: that a spent refresh token is refused, that a
+revoked API key stops validating immediately, that a forged JWT fails against
+the issuer's real JWKS.
+
+```bash
+npm run test -w @mcpjam/inspector -- server/routes/web/__tests__/api-keys.emulator.test.ts
+```
+
+Each file starts its own emulator on port 0 in `beforeAll`, so nothing special
+is needed in CI and the six shards cannot collide. The helper
+(`server/test/support/workos-emulator.ts`) sets `WORKOS_API_BASE_URL` and the
+other env itself — do not export that variable from your shell, and see
+`mcpjam-inspector/HOSTED_DEPLOYMENT.md` for why it is loopback-only.
+
+Requires **Node >= 22.11** (the emulator's floor; CI runs 24.x). The helper says
+so explicitly rather than failing with a stack trace on an older runtime.
+
+The pre-existing mocked suites (`api-keys.test.ts`, `bearer-auth.test.ts`,
+`workos-authkit.test.ts`) are still the right place for logic that does not need
+a server — they are faster, and they are also the regression guard proving the
+default path still points at `api.workos.com`.
 
 ## Code Style
 

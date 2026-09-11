@@ -575,7 +575,7 @@ export async function handleJsonRpc(
             // Observation-only: never turn a side-channel failure into an MCP
             // tool failure different from the upstream error.
           }
-          const normalized = describeError(e);
+          const normalized = describeError(e, { surface: "mcpServer" });
           // In the SHARED catch, before the mode branch, deliberately:
           // manager mode answers with a SUCCESS envelope carrying
           // `isError: true` — a failure invisible to HTTP status AND to
@@ -667,7 +667,7 @@ export async function handleJsonRpc(
           // adapter mode returns raw content
           return respond({ result: resource });
         } catch (e: any) {
-          const normalized = describeError(e);
+          const normalized = describeError(e, { surface: "mcpServer" });
           reportOperationFailure(e, "resources/read", normalized);
           return respond({
             error: {
@@ -712,7 +712,7 @@ export async function handleJsonRpc(
           // adapter mode returns raw content
           return respond({ result: prompt });
         } catch (e: any) {
-          const normalized = describeError(e);
+          const normalized = describeError(e, { surface: "mcpServer" });
           reportOperationFailure(e, "prompts/get", normalized);
           return respond({
             error: {
@@ -740,7 +740,7 @@ export async function handleJsonRpc(
             const result = await managed.request({ method, params } as any);
             return respond({ result: result ?? {} });
           } catch (e: any) {
-            const normalized = describeError(e);
+            const normalized = describeError(e, { surface: "mcpServer" });
             reportOperationFailure(e, method, normalized);
             return respond({
               error: {
@@ -756,13 +756,15 @@ export async function handleJsonRpc(
           error: {
             code: -32601,
             message: notImpl.message,
-            data: { normalized: describeError(notImpl) },
+            data: {
+              normalized: describeError(notImpl, { surface: "mcpServer" }),
+            },
           },
         });
       }
     }
   } catch (e: any) {
-    const normalized = describeError(e);
+    const normalized = describeError(e, { surface: "mcpServer" });
     reportOperationFailure(e, method, normalized);
     return respond({
       error: {
