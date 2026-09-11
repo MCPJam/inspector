@@ -27,6 +27,29 @@ const MAX_PAGES = 50;
 const PAGE_SIZE = 25;
 /** A spilled payload's fetch, bounded so one huge blob cannot hang a turn. */
 const PAYLOAD_FETCH_TIMEOUT_MS = 15_000;
+/**
+ * The whole resolution pass, across every row and both payloads.
+ *
+ * The per-fetch timeout does not bound this: resolution is sequential (see
+ * {@link resolveSpilledPayloads}), so a turn with pathological fan-out and an
+ * unavailable store multiplies it — 50 pages x 25 rows x 2 payloads x 15 s is
+ * on the order of ten hours, against an iteration watchdog measured in
+ * minutes. This is the bound that actually holds, and hitting it degrades the
+ * turn to narration grading rather than hanging the iteration that is waiting
+ * on it.
+ */
+const PAYLOAD_RESOLUTION_BUDGET_MS = 60_000;
+/**
+ * Largest spilled payload accepted into memory.
+ *
+ * `response.text()` buffers whatever arrives, and the timeout bounds duration,
+ * not size — a large or chunked object can exhaust the inspector before it
+ * ever completes. Comfortably above the backend's own inline threshold, so a
+ * payload that legitimately spilled still fits; a payload beyond it is
+ * reported unreadable, which is the honest answer and the same one a failed
+ * fetch gives.
+ */
+const MAX_SPILLED_PAYLOAD_BYTES = 24 * 1024 * 1024;
 
 export type EvidenceReadResult = {
   rows: EvidenceRow[];
@@ -142,27 +165,100 @@ function readRows(payload: Record<string, unknown> | null): {
   return { rows, dropped };
 }
 
+/** Whether a spill URL points at the deployment this inspector serves. */
+function isTrustedPayloadUrl(url: string): boolean {
+  const base = process.env.CONVEX_HTTP_URL?.trim();
+  if (!base) return false;
+  try {
+    const target = new URL(url);
+    // HTTPS only, and only the deployment this inspector is configured
+    // against. The URL arrives in a service-token-authenticated response from
+    // our own backend, so this is not the primary control — but it is a
+    // server-side fetch of a URL that came over the wire, and pinning the
+    // origin costs nothing. Compared on origin, not prefix: a `startsWith`
+    // check treats `https://convex.example.evil.test` as a match.
+    if (target.protocol !== "https:") return false;
+    return target.origin === new URL(base).origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read a body with a hard ceiling, without buffering past it.
+ *
+ * `response.text()` would decode whatever arrives before this function could
+ * object, so the stream is consumed chunk by chunk and abandoned the moment it
+ * exceeds the cap.
+ */
+async function readCappedText(response: Response): Promise<string | null> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_SPILLED_PAYLOAD_BYTES) {
+    return null;
+  }
+  const body = response.body;
+  if (!body) return null;
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_SPILLED_PAYLOAD_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(joined);
+}
+
 /**
  * Fetch a payload the backend spilled to storage.
  *
  * Large payloads travel as URLs rather than inline because a page is bounded
  * by row count: inlining them made a turn with a few multi-megabyte tool
  * results exceed the response ceiling and become unreadable at ANY page size.
- * Fetching here is the cost of that, and it is bounded — a stalled blob must
- * degrade the turn to narration grading, not hang it.
+ * Fetching here is the cost of that, and it is bounded three ways — origin,
+ * size and the pass's shared deadline — because a stalled or oversized blob
+ * must degrade the turn to narration grading, not hang or exhaust the process
+ * that is waiting on it.
  *
- * A failed fetch returns null, which the caller turns into
+ * Every refusal returns null, which the caller turns into
  * `payloadsReadable: false`: a payload that cannot be read back is not
  * complete evidence, and reading it as empty would be the silent version of
  * exactly the loss this protocol makes visible.
  */
-async function fetchSpilledPayload(url: string): Promise<string | null> {
+async function fetchSpilledPayload(
+  url: string,
+  deadlineAtMs: number,
+): Promise<string | null> {
+  if (!isTrustedPayloadUrl(url)) return null;
+  const remaining = deadlineAtMs - Date.now();
+  if (remaining <= 0) return null;
   try {
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(PAYLOAD_FETCH_TIMEOUT_MS),
+      // Never follow a redirect: the origin was checked on THIS url, and a
+      // 302 would move the fetch somewhere that check never saw.
+      redirect: "error",
+      signal: AbortSignal.timeout(
+        Math.min(PAYLOAD_FETCH_TIMEOUT_MS, remaining),
+      ),
     });
     if (!response.ok) return null;
-    return await response.text();
+    return await readCappedText(response);
   } catch {
     return null;
   }
@@ -178,17 +274,29 @@ async function fetchSpilledPayload(url: string): Promise<string | null> {
  */
 async function resolveSpilledPayloads(
   rows: EvidenceRow[],
+  deadlineAtMs: number,
 ): Promise<EvidenceRow[]> {
   const resolved: EvidenceRow[] = [];
   for (const row of rows) {
     let { argumentsJson, responseJson, payloadsReadable } = row;
     if (argumentsJson === null && row.argumentsUrl) {
-      argumentsJson = await fetchSpilledPayload(row.argumentsUrl);
+      argumentsJson = await fetchSpilledPayload(row.argumentsUrl, deadlineAtMs);
       if (argumentsJson === null) payloadsReadable = false;
     }
     if (responseJson === null && row.responseUrl) {
-      responseJson = await fetchSpilledPayload(row.responseUrl);
+      responseJson = await fetchSpilledPayload(row.responseUrl, deadlineAtMs);
       if (responseJson === null) payloadsReadable = false;
+    }
+    // A SETTLED row with no payload and no URL to fetch one from. Both are
+    // written by the same backend in the same mutation, so this is version
+    // skew or a truncated write — and reading it as a successful call with an
+    // empty response is precisely the silent loss this protocol exists to
+    // make visible. Unreadable is the honest answer.
+    //
+    // Only `responseJson`: a settled call always produced one, whereas
+    // `argumentsJson` is legitimately absent for a no-argument tool.
+    if (row.status === "settled" && responseJson === null && !row.responseUrl) {
+      payloadsReadable = false;
     }
     resolved.push({ ...row, argumentsJson, responseJson, payloadsReadable });
   }
@@ -211,6 +319,9 @@ export async function readTurnEvidence(args: {
   const rows: EvidenceRow[] = [];
   let unparseableRows = 0;
   let cursor: string | null = null;
+  // One deadline for the whole pass, set before the first request: payload
+  // resolution is sequential, so only a shared budget bounds it.
+  const deadlineAtMs = Date.now() + PAYLOAD_RESOLUTION_BUDGET_MS;
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
     let response: Awaited<ReturnType<EvidenceReadTransport>>;
@@ -251,7 +362,7 @@ export async function readTurnEvidence(args: {
         },
       );
     }
-    rows.push(...(await resolveSpilledPayloads(page.rows)));
+    rows.push(...(await resolveSpilledPayloads(page.rows, deadlineAtMs)));
 
     if (response.body?.isDone === true) {
       return { rows, exhausted: true, unparseableRows };
