@@ -3266,7 +3266,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("routes a Convex-authenticated hosted guest to Playground and shows first-run onboarding once startup is ready", async () => {
+  it("routes a Convex-authenticated hosted guest to Home and shows first-run onboarding once startup is ready", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3280,15 +3280,15 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
         screen.getByRole("heading", { name: "Welcome to MCPJam" }),
       ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("leaves an IdP-initiated visitor on /login instead of auto-routing to Playground", async () => {
@@ -3325,7 +3325,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("shows first-run onboarding over Playground from the default route", async () => {
+  it("shows first-run onboarding on Home from the default route", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3339,14 +3339,14 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
         screen.getByRole("heading", { name: "Welcome to MCPJam" }),
       ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
-    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("shows Welcome once and resumes at server choice after a refresh", async () => {
@@ -3403,36 +3403,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
     ).not.toBeInTheDocument();
-    expect(window.location.pathname).toBe("/playground");
-  });
-
-  it("renders server choice instead of the global spinner while a refresh hydrates", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    localStorage.setItem(
-      "mcp-first-run-server-choice-state",
-      JSON.stringify({
-        status: "started",
-        startedAt: Date.now(),
-        shownAt: Date.now(),
-      }),
-    );
-    window.history.replaceState({}, "", "/playground");
-    mockConvexAuthState.isAuthenticated = true;
-    mockWorkOsAuthState.user = null;
-    mockFreshGuestUser();
-    mockUseAppState.mockImplementation(() => ({
-      ...createAppStateMock(),
-      isLoading: true,
-      areServersHydrated: false,
-    }));
-
-    render(<App />);
-
-    expect(
-      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByTestId("hosted-oauth-loading")).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
   });
 
   it("restores the onboarding server and pending prompt after a refresh", async () => {
@@ -3522,10 +3493,10 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       screen.getByRole("heading", { name: "Welcome to MCPJam" }),
     ).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/");
   });
 
-  it("routes a project-scoped Home visit to a stable Playground backdrop", async () => {
+  it("shows first-run onboarding from a project-scoped Home route", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3539,18 +3510,18 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
         screen.getByRole("heading", { name: "Welcome to MCPJam" }),
       ).toBeInTheDocument();
     });
 
     expect(window.location.pathname).toBe(
-      "/p/k5700000000000000000000000a/playground",
+      "/p/k5700000000000000000000000a/home",
     );
   });
 
-  it("routes a project-scoped Servers visit to a stable Playground backdrop", async () => {
+  it("shows first-run onboarding over a project-scoped Servers route", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3568,14 +3539,14 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
       expect(
         screen.getByRole("heading", { name: "Welcome to MCPJam" }),
       ).toBeInTheDocument();
     });
 
     expect(window.location.pathname).toBe(
-      "/p/k5700000000000000000000000a/playground",
+      "/p/k5700000000000000000000000a/servers",
     );
   });
 
@@ -3593,14 +3564,14 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
         screen.getByRole("heading", { name: "Welcome to MCPJam" }),
       ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
-    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/home");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("keeps a first-run guest in onboarding while their server connects", async () => {
@@ -3636,7 +3607,7 @@ describe("App hosted OAuth callback handling", () => {
       ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(appState.handleConnect).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Example",
@@ -3667,64 +3638,6 @@ describe("App hosted OAuth callback handling", () => {
       ).toBeInTheDocument();
       expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
     });
-  });
-
-  it("uses Home as the recovery backdrop only after both server paths fail", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    mockUnseenOnboardingState();
-    window.history.replaceState({}, "", "/servers");
-    mockConvexAuthState.isAuthenticated = true;
-    mockWorkOsAuthState.user = null;
-    mockHostedShellGateState.value = "ready";
-    mockFreshGuestUser();
-    const appState = createAppStateMock();
-    mockUseAppState.mockReturnValue(appState);
-
-    const view = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
-      target: { value: "https://personal.example/mcp" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-
-    appState.appState.servers = {
-      Personal: {
-        name: "Personal",
-        config: {
-          transportType: "http",
-          url: "https://personal.example/mcp",
-        },
-        connectionStatus: "failed",
-        lastError: "Personal server unavailable",
-      },
-    };
-    view.rerender(<App />);
-    await screen.findByRole("heading", { name: "Set up your server" });
-    expect(window.location.pathname).toBe("/playground");
-
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
-    );
-    appState.appState.servers = {
-      ...appState.appState.servers,
-      "Excalidraw (App)": {
-        name: "Excalidraw (App)",
-        config: {
-          transportType: "http",
-          url: "https://mcp.excalidraw.com/mcp",
-        },
-        connectionStatus: "failed",
-        lastError: "Demo server unavailable",
-      },
-    };
-    view.rerender(<App />);
-
-    await screen.findByRole("heading", { name: "Demo server unavailable" });
-    await waitFor(() => expect(window.location.pathname).toBe("/home"));
-    expect(screen.getByTestId("home-tab")).toBeInTheDocument();
   });
 
   it("keeps the Excalidraw demo in onboarding while it connects", async () => {
@@ -3766,7 +3679,7 @@ describe("App hosted OAuth callback handling", () => {
       ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(appState.handleConnect).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Excalidraw (App)",
@@ -3799,7 +3712,7 @@ describe("App hosted OAuth callback handling", () => {
       refresh: true,
     });
     expect(screen.getByText("6 tools ready to use.")).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
@@ -3870,7 +3783,7 @@ describe("App hosted OAuth callback handling", () => {
       refresh: true,
     });
     expect(screen.getByText("2 tools ready to use.")).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
   });
 
   it("cancels first-run connection progress without completing onboarding", async () => {
@@ -3993,7 +3906,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/");
     expect(
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
@@ -4015,14 +3928,14 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
         screen.getByRole("heading", { name: "Welcome to MCPJam" }),
       ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
-    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/home");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("shows onboarding when the only saved server is the incomplete first-run Excalidraw row", async () => {
@@ -4055,13 +3968,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
         screen.getByRole("heading", { name: "Welcome to MCPJam" }),
       ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
   });
 
   it("repairs a stale started record when its server is already connected", async () => {
@@ -4108,7 +4021,7 @@ describe("App hosted OAuth callback handling", () => {
         ),
       ).toEqual(expect.objectContaining({ status: "completed" }));
     });
-    expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+    expect(screen.getByTestId("home-tab")).toBeInTheDocument();
   });
 
   it("does not auto-route to Playground when any saved server already exists", async () => {
@@ -4314,13 +4227,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
         screen.getByRole("heading", { name: "Welcome to MCPJam" }),
       ).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/playground");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
