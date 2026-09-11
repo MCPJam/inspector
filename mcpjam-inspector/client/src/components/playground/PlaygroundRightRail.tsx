@@ -130,7 +130,7 @@ function RightRailTabbed({
   // harmless (the engine hooks no-op without a shared project) and deliberate.
   const engine = useComputerEngine(projectId);
   const browserEngine = useBrowserEngine(projectId);
-  const browserToolIds = useBrowserToolIds(hostConfig, browserEngine.selectedEngine);
+  const browserToolIds = useBrowserToolIds(hostConfig, browserEngine.selectedEngine, { projectId, hostId });
   // The BODY follows `selectedEngine` (consent-blind), mirroring the Computer
   // tab's face choice: someone who picked "This machine" but hasn't authorized
   // it yet must see the local body's pointer, not a cloud terminal they didn't

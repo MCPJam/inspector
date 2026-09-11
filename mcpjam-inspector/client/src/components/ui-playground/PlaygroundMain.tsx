@@ -940,6 +940,7 @@ export function PlaygroundMain({
   const effectiveBuiltInToolIds = useBrowserToolIds(
     previewedHostId ? previewedHost?.config : projectDefaultHostConfig,
     playgroundBrowserEngine.engine,
+    { projectId: convexProjectId, hostId: previewedHostId },
   );
   // A newly selected host is unknown for one render while its config loads.
   // Fail closed in that gap: it may resolve to Codex or Claude Code, whose

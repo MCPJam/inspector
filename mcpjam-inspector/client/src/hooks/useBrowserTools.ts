@@ -63,6 +63,17 @@ const LEASE_HELD_RETRIES = 3;
  */
 const DEFINITIONS_CACHE = new Map<string, SerializedModelRequestTool[]>();
 
+/**
+ * Explains missing local access in the tool list and links to client settings.
+ * Initial permission discovery belongs to the Playground onboarding dialog.
+ */
+export interface BrowserLocalConsentPrompt {
+  onAllow: () => Promise<boolean>;
+  disabledForClient?: boolean;
+  /** The saved client whose Browser tab turns it back off; null → clients list. */
+  settingsHostId: string | null;
+}
+
 export interface BrowserToolsState {
   /** True when the previewed host actually attaches the browser capability. */
   attached: boolean;
@@ -92,6 +103,8 @@ export interface BrowserToolsState {
     frameId?: string;
     input: Record<string, unknown>;
   }) => Promise<BrowserPageToolInvokeResponse>;
+  /** Local permission or client enablement is missing; show a settings link. */
+  localConsent?: BrowserLocalConsentPrompt | null;
 }
 
 export function useBrowserTools(args: {
@@ -146,10 +159,12 @@ export function useBrowserTools(args: {
   // this list say someone else has the browser, while the model can still
   // call the tools after the next hand-back.
   const paneHolder = usePaneHolderId();
-  const toolIds = useBrowserToolIds(hostConfig, engineState.selectedEngine);
-  const attached = (toolIds ?? []).includes(
-    BROWSER_BUILT_IN_TOOL_ID,
+  const toolIds = useBrowserToolIds(
+    hostConfig,
+    engineState.selectedEngine,
+    args,
   );
+  const attached = (toolIds ?? []).includes(BROWSER_BUILT_IN_TOOL_ID);
   // The BODY-side engine choice, exactly as the Browser pane resolves it, so
   // the pane and the tool list cannot describe two different browsers.
   const engine: "hosted" | "local" =
@@ -395,9 +410,20 @@ export function useBrowserTools(args: {
   const available =
     engine !== "local" ||
     (engineState.localAvailable && engineState.consent.granted);
+  const localConsent: BrowserLocalConsentPrompt | null =
+    engine === "local" &&
+    engineState.localAvailable &&
+    (!engineState.consent.granted || !attached)
+      ? {
+          disabledForClient: engineState.consent.granted && !attached,
+          onAllow: engineState.consent.grant,
+          settingsHostId: host?.hostId ?? null,
+        }
+      : null;
   return {
     attached,
     engine,
+    localConsent,
     tools: available ? tools : [],
     page: available
       ? page

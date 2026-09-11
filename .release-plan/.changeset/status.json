@@ -7,8 +7,8 @@
           "type": "patch"
         }
       ],
-      "summary": "Restore bearer-authenticated and OAuth MCP server connections when the backend does not provide credential-origin bindings by temporarily reverting enforcement until backend support and the required backfill are deployed.",
-      "id": "restore-credentialed-mcp-connections"
+      "summary": "Stop the Browser Panel from minting a browser token on every request, and stop its keepalive and lease heartbeat from silently retrying forever once the browser is gone. A computer released or auto-paused under an open panel now says so instead of logging one uncaught server error per minute for as long as the tab stays open.",
+      "id": "browser-panel-token-reuse"
     },
     {
       "releases": [
@@ -17,20 +17,20 @@
           "type": "patch"
         }
       ],
-      "summary": "Stop asking the backend for a project default host config under a project id\nthat is not a Convex row. The Playground passes `sharedProjectId ??\nactiveProjectId`, so a guest with no cloud project reached\n`hostConfigsV2:getProjectDefault` with the string sentinel `\"none\"` — truthy,\nand rejected by `v.id(\"projects\")` before the handler runs, where nothing\nclient-side could catch it. All four call sites now gate on\n`shouldQueryProjectId`, the guard the rest of the Convex-reading hooks already\nuse.",
-      "id": "skip-project-default-for-sentinel-project-id"
+      "summary": "Offer local browser setup on first Playground visit and resolve browser tools without requiring a saved default client.",
+      "id": "local-browser-playground-onboarding"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "3.5.0",
+      "oldVersion": "3.5.2",
       "changesets": [
-        "restore-credentialed-mcp-connections",
-        "skip-project-default-for-sentinel-project-id"
+        "browser-panel-token-reuse",
+        "local-browser-playground-onboarding"
       ],
-      "newVersion": "3.5.1"
+      "newVersion": "3.5.3"
     }
   ]
 }
