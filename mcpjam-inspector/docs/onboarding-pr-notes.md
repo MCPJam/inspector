@@ -100,6 +100,7 @@
 
 ## Deferred follow-ups
 
+- Early boot splash: render a lightweight Welcome layer from the initial HTML before React's loading gate, then let React remove it using the same one-time completion marker. Preserve theme and accessibility behavior and test slow startup, refresh, and duplicate-timer prevention.
 - Guest sign-up bar: a dismissible Playground strip inviting anonymous users to create an account so they can keep their server, history, and evals.
 - Excalidraw-only connection banner on Home and Playground moved into the separate `BB-217 Onboarding Next Phase` task and sub-feature branch.
 - Guided product tour: a later, dismissible spotlight sequence covering (1) the full left navigation rail, (2) the Playground configuration controls such as fill, locale, strictness, Client Context, and Host Capabilities, and (3) the sign-in/create-account area.
