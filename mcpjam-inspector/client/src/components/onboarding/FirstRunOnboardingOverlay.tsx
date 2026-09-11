@@ -59,7 +59,6 @@ export interface FirstRunServerDraft {
 interface FirstRunOnboardingOverlayProps {
   open: boolean;
   skipWelcome?: boolean;
-  isHydrating?: boolean;
   connectionState: FirstRunConnectionState;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
@@ -80,7 +79,6 @@ interface FirstRunOnboardingOverlayProps {
 export function FirstRunOnboardingOverlay({
   open,
   skipWelcome = false,
-  isHydrating = false,
   connectionState,
   onConnectOwnServer,
   onConnectDemo,
@@ -228,7 +226,7 @@ export function FirstRunOnboardingOverlay({
         <DialogOverlay
           className={
             step === "welcome"
-              ? "bg-background/70 backdrop-blur-[32px] backdrop-brightness-50"
+              ? "backdrop-blur-[32px] backdrop-brightness-50"
               : "backdrop-blur-sm"
           }
         />
@@ -239,8 +237,6 @@ export function FirstRunOnboardingOverlay({
               ? "max-w-[420px] gap-0 border-0 bg-transparent p-1 text-left shadow-none"
               : "max-h-[calc(100vh-2rem)] max-w-[408px] gap-0 overflow-y-auto rounded-xl border-border bg-card p-6 shadow-none",
           )}
-          aria-busy={isHydrating || undefined}
-          inert={isHydrating || undefined}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => {
             event.preventDefault();

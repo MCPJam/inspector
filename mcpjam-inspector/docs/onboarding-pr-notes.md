@@ -14,27 +14,25 @@
 - Treat `localhost` and `127.0.0.1` as separate browser origins during local testing.
 - Record the one-time welcome as soon as it is rendered, then resume unfinished sessions at server choice.
 - Persist completion from the successful connection and tool-discovery outcome; the final button remains an explicit navigation handoff.
-- Keep Playground mounted beneath normal onboarding. Use Home as the recovery backdrop only after both the personal and demo paths have failed.
+- Keep the original Home-first onboarding backdrop until a later shell-loading pass can move it safely.
 
 ## Completed bug fixes
 
-- Replaced the first-run Home redirect with a stable, project-scoped Playground backdrop, removing the visible Home-to-Playground swap during Welcome, connection, and success.
 - Added a mild backdrop blur to server choice and later steps while retaining the stronger Welcome depth effect.
 - Welcome now records `shownAt` on render. A refresh before interaction resumes at `Point MCPJam at a server` instead of replaying the splash and timer.
 - Successful tool discovery now persists completion immediately, so refreshing before or after `Open Playground` cannot restart onboarding.
 - Interrupted connection records now remember the attempted server and auto-repair only when that same server is connected. Legacy records auto-repair only after a conservative stale interval with exactly one connected server, preventing an unrelated hydrated server from closing a fresh choice screen.
-- Refreshing at server choice now renders that same inert choice card during app hydration instead of flashing the global MCPJam spinner first.
-- The Welcome backdrop now masks the underlying route and tab transition so first-time setup reads as one stable surface.
 - Refreshing after successful onboarding restores the chosen server selection, reconnects that saved server, and retains the prefilled Playground prompt until the user sends it.
-- Personal failure still opens the editable form and demo failure still opens the demo-unavailable screen. Home becomes the background only after both paths have failed.
-- Added App, state, overlay, refresh, stale-record, route-stability, dual-failure, and blur regression coverage.
+- Personal failure still opens the editable form and demo failure still opens the demo-unavailable screen.
+- Rolled back the experimental Playground-first backdrop and startup-choice hydration screen after they exposed an invalid temporary project ID during guest provisioning. The Welcome styling is restored to its prior implementation.
+- Added App, state, overlay, refresh, stale-record, and blur regression coverage.
 
 ## Verification completed
 
-- 149 focused App, onboarding-state, overlay, and Playground tests pass, covering refresh hydration, server reconnection, and durable prompt restoration in addition to the original paths.
+- 146 focused App, onboarding-state, overlay, and Playground tests pass, covering server reconnection and durable prompt restoration in addition to the original paths.
 - Client type-check passes.
 - Design drift and design lint pass with no errors; only the repository's existing unused-token warnings remain.
-- Clean Codex-browser preview confirms Welcome advances once, refresh resumes at `Point MCPJam at a server`, and the choice screen stays open over Playground.
+- A clean IPv6-loopback preview confirms the prior Welcome styling over Home, refresh resumes at `Point MCPJam at a server`, and no invalid-project error occurs.
 
 ## Remaining before integration
 
