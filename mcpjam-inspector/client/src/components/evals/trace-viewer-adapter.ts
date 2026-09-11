@@ -23,6 +23,7 @@ import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type {
   EvalTraceBrowserInteractionStepView,
+  EvalTraceVideoMeta,
   EvalTraceSpan,
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
@@ -55,6 +56,14 @@ export interface TraceEnvelope {
    * absent when no browser ran or the upload failed → no replay player.
    */
   videoUrl?: string | null;
+  /**
+   * What that recording says about itself — duration, the rate it was asked
+   * for, how many distinct frames it holds, and whether it stopped at its size
+   * cap before the run ended. Absent for every trace written before recordings
+   * reported anything, and for the local widget harness, which knows none of
+   * it: the player shows what is there rather than guessing.
+   */
+  videoMeta?: EvalTraceVideoMeta | null;
   traceStartedAtMs?: number;
   traceEndedAtMs?: number;
   [key: string]: unknown;

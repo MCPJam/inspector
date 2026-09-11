@@ -65,7 +65,7 @@ export type StageChipKind =
  */
 export const STAGE_CHIP_TONE_CLASS: Record<StageChipKind, string> = {
   passed: "text-success",
-  mixed: "text-amber-700 dark:text-amber-400",
+  mixed: "text-warning",
   failed: "text-destructive",
   // NEUTRAL, and that is the whole point. An unmeasured stage is not a warning
   // about the server — it is an absence of evidence about it, and an amber
@@ -110,7 +110,7 @@ type UnmeasuredState = (typeof UNMEASURED_PRECEDENCE)[number];
 const UNMEASURED_LABELS: Record<UnmeasuredState, string> = {
   notReached: STAGE_STATE_LABELS.notReached,
   notMeasured: STAGE_STATE_LABELS.notMeasured,
-  reachUnknown: "nothing captured — reach undecidable",
+  reachUnknown: "nothing captured. Reach undecidable",
   notApplicable: STAGE_STATE_LABELS.notApplicable,
 };
 
@@ -140,7 +140,7 @@ export function deriveStageChip(tally: EvalStageTally): StageChip {
       kind: "mixed",
       // The population, then the split. A bare "mixed" tells a reader that
       // something is wrong and nothing about how much of the run it touched.
-      label: `mixed — ${passed} passed, ${failed} failed of ${measured} measured`,
+      label: `mixed. ${passed} passed, ${failed} failed of ${measured} measured`,
       toneClass: STAGE_CHIP_TONE_CLASS.mixed,
     };
   }
@@ -169,7 +169,7 @@ export function deriveStageChip(tally: EvalStageTally): StageChip {
   if (dominant === null) {
     return {
       kind: "noTrials",
-      label: "no trials",
+      label: "no iterations",
       toneClass: STAGE_CHIP_TONE_CLASS.noTrials,
     };
   }
@@ -214,6 +214,11 @@ export interface StageCardView {
   ordinal: string;
   label: string;
   chip: StageChip;
+  /**
+   * Optional fourth line. Settings cards pass a config count
+   * (`2 gates · 1 warn`); run mounts omit it and stay unchanged.
+   */
+  detail?: { label: string; toneClass: string };
 }
 
 export function toStageCardViews(

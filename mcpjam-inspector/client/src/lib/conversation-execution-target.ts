@@ -1,46 +1,12 @@
-/**
- * What a persisted conversation says about the target it ACTUALLY ran on, and
- * whether the composer currently describes that target or something else.
- *
- * ## Why this exists
- *
- * Opening `/playground?conversation=<id>` restores the transcript but not the
- * configuration: the previewed host and the previewed environment are ambient,
- * per-project browser state (`use-previewed-client-id`,
- * `use-previewed-environment-id`), so a reopened conversation renders under
- * whatever the viewer last had selected. The chips read as a statement about
- * the conversation — "this ran on cli-box-host, Claude Sonnet 5, no
- * environment" — when they are only a statement about the viewer. A reply typed
- * there then runs on that ambient target, which is how a Cursor-harness
- * transcript ends up answering a follow-up as Claude.
- *
- * ## What is actually recoverable
- *
- * The direct-chat detail read returns the whole `chatSessions` document, so
- * anything on the row reaches the browser. Of the execution facts:
- *
- *   - `modelId` — recorded, and already restored by `loadHistorySession`.
- *   - `resumeConfig.selectedServers` — recorded, already restored.
- *   - `resumeConfig.environmentId` — recorded ONLY for `origin: "api"`
- *     sessions (the Agent Playground turn route pins it; see
- *     `server/routes/v1/chat-session-turn.ts`). Browser Playground turns write
- *     a `resumeConfig` that has no target field at all
- *     (`server/utils/web-chat-turn.ts`).
- *   - `hostId` — stamped at ingest only for scenario- and swarm-sourced
- *     sessions, and those are never served by the direct-chat read. Declared
- *     here anyway so the moment the backend starts stamping it for direct
- *     chats this module reports it instead of "unrecorded".
- *
- * So for the overwhelming majority of Playground conversations the as-run
- * target is genuinely NOT PERSISTED. This module's job is to keep that fact
- * distinguishable from "ran on the thing you see", never to invent a value.
- */
+import {
+  parseResumeExecutionTarget,
+  type ResumeExecutionTarget,
+} from "@/shared/execution-target";
 
+/** Saved resume destination. Legacy rows remain explicitly unknown. */
 /** The execution target a conversation recorded, if it recorded one. */
 export type ConversationExecutionTarget =
-  | { kind: "environment"; environmentId: string }
-  | { kind: "host"; hostId: string }
-  /** Nothing on the row identifies where this conversation ran. */
+  | ResumeExecutionTarget
   | { kind: "unrecorded" };
 
 /** The target the composer is currently pointed at. */
@@ -55,7 +21,10 @@ export type ComposerExecutionTarget =
  */
 export interface ConversationExecutionTargetSource {
   hostId?: string;
-  resumeConfig?: { environmentId?: string };
+  resumeConfig?: {
+    environmentId?: string;
+    executionTarget?: ResumeExecutionTarget;
+  };
 }
 
 function nonEmpty(value: string | undefined): string | null {
@@ -75,6 +44,10 @@ function nonEmpty(value: string | undefined): string | null {
 export function readConversationExecutionTarget(
   session: ConversationExecutionTargetSource | null | undefined,
 ): ConversationExecutionTarget {
+  const target = parseResumeExecutionTarget(
+    session?.resumeConfig?.executionTarget,
+  );
+  if (target) return target;
   const environmentId = nonEmpty(session?.resumeConfig?.environmentId);
   if (environmentId) return { kind: "environment", environmentId };
   const hostId = nonEmpty(session?.hostId);
@@ -99,7 +72,7 @@ export type ConversationTargetDisclosure =
       kind: "mismatch";
       recorded: Extract<
         ConversationExecutionTarget,
-        { kind: "environment" } | { kind: "host" }
+        { kind: "environment" } | { kind: "host" } | { kind: "adhoc" }
       >;
     };
 
@@ -116,6 +89,11 @@ export function describeConversationTargetDisclosure(input: {
   const { recorded, composer } = input;
   if (!recorded) return { kind: "none" };
   if (recorded.kind === "unrecorded") return { kind: "unrecorded" };
+  if (recorded.kind === "adhoc") {
+    return composer.kind === "host" && composer.hostId === null
+      ? { kind: "none" }
+      : { kind: "mismatch", recorded };
+  }
   if (recorded.kind === "environment") {
     return composer.kind === "environment" &&
       composer.environmentId === recorded.environmentId

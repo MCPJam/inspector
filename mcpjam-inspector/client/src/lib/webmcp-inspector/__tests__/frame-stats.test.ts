@@ -13,6 +13,8 @@ import {
   noteFrameTransportRung,
   notePainted,
   noteInputSent,
+  noteInputDispatched,
+  noteInputAck,
   resetFrameStats,
   resetFrameStatsFlagForTests,
 } from "../frame-stats";
@@ -45,10 +47,37 @@ describe("frame stats", () => {
     expect(frameStatsReport()).toEqual({
       captureToPaint: { n: 0, p50: undefined, p95: undefined },
       inputToPaint: { n: 0, p50: undefined, p95: undefined },
+      inputToAck: { n: 0 },
+      dispatchToPaint: { n: 0 },
       // No samples, so no buckets — rather than four empty ones for rungs this
       // session never used.
       byTransport: {},
     });
+  });
+
+  it("keeps queue wait in the headline and separates post-queue latency", () => {
+    enable();
+    noteInputSent(1);
+    vi.advanceTimersByTime(80);
+    noteInputDispatched(1, 7);
+    vi.advanceTimersByTime(20);
+    noteInputAck(7);
+    vi.advanceTimersByTime(10);
+    notePainted({ ts: Date.now(), seq: 2 });
+    expect(frameStatsReport().inputToPaint.p50).toBe(110);
+    expect(frameStatsReport().dispatchToPaint.p50).toBe(30);
+    expect(frameStatsReport().inputToAck.p50).toBe(20);
+  });
+
+  it("measures socket acknowledgement separately from the next frame", () => {
+    localStorage.setItem("webmcp:frame-stats", "1");
+    resetFrameStatsFlagForTests();
+    noteInputSent(1);
+    noteInputDispatched(1, 7);
+    vi.advanceTimersByTime(20);
+    noteInputAck(7);
+    expect(frameStatsReport().inputToAck).toMatchObject({ n: 1, p50: 20 });
+    expect(frameStatsReport().inputToPaint.n).toBe(0);
   });
 
   it("splits the percentiles by the transport that carried them", () => {
