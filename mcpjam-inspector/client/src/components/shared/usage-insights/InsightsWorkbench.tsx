@@ -3,7 +3,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   type ReactNode,
 } from "react";
 import {
@@ -16,6 +15,7 @@ import {
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
 import {
+  useEnsureFirstAnalysis,
   useInsightsFlowController,
   useInsightsRebuild,
   type InsightsView,
@@ -30,12 +30,8 @@ import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel"
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import {
-  Collapsible,
-  CollapsibleTrigger,
-} from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
-import { ChevronDown, X } from "lucide-react";
+import { X } from "lucide-react";
 
 interface InsightsWorkbenchProps {
   /** Which surface's insights to read. Null ⇒ nothing to scope to. */
@@ -103,14 +99,16 @@ interface InsightsWorkbenchProps {
 }
 
 /**
- * Collapsible parent for recommendations and supporting findings. Hidden when
- * both subsections render nothing, so a provided-but-empty slot does not
- * leave a Findings shell. Expanded by default; the trigger is a real button
- * (aria-expanded, focus ring) rather than hover-only.
+ * Parent container for the Insights rail's self-titled sections ("Fix in your
+ * MCP server", "Recommendations"). It carries no heading of its own — the
+ * sections name themselves — so the rail is never labelled "Findings" (a word
+ * that now belongs to the Findings tab, not this rail). Hidden when every
+ * section renders nothing, so a provided-but-empty slot does not leave an
+ * empty shell.
  *
- * The body is one scrollable card. Subsections sit inside it and are separated
- * by a divider — they must not bring their own card chrome, or Findings reads
- * as two stacked modules on the page.
+ * The body is one scrollable card. Sections sit inside it separated by a
+ * divider — they must not bring their own card chrome, or the rail reads as
+ * two stacked modules on the page.
  */
 function InsightsFindings({
   testId,
@@ -128,40 +126,23 @@ function InsightsFindings({
   children: ReactNode;
 }) {
   const maxHeightClass = fillBody ? "max-h-[42%]" : "max-h-[26rem]";
-  const [open, setOpen] = useState(true);
 
   return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
+    <div
       className={cn(
-        "group/findings flex min-h-0 shrink-0 flex-col gap-1 overflow-hidden",
+        "flex min-h-0 shrink-0 flex-col overflow-hidden",
         maxHeightClass,
         "[&:not(:has([data-slot=findings-body]>*))]:hidden",
       )}
       data-testid={testId}
     >
-      <CollapsibleTrigger
-        className={cn(
-          "flex min-h-11 w-full shrink-0 cursor-pointer items-center justify-between gap-2 rounded-md px-0.5 py-1.5 text-left",
-          "outline-none transition-colors hover:bg-muted/50",
-          "focus-visible:ring-2 focus-visible:ring-ring/40",
-        )}
-      >
-        <h2 className="text-sm font-semibold tracking-tight">Findings</h2>
-        <ChevronDown
-          aria-hidden
-          className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out motion-reduce:transition-none group-data-[state=closed]/findings:-rotate-90"
-        />
-      </CollapsibleTrigger>
       <div
         data-slot="findings-body"
-        hidden={!open}
         className="flex min-h-0 flex-1 flex-col divide-y divide-border/60 overflow-y-auto rounded-lg border border-border/60 bg-card/60"
       >
         {children}
       </div>
-    </Collapsible>
+    </div>
   );
 }
 
@@ -169,11 +150,11 @@ function InsightsFindings({
  * The Insights workbench: one body for Swarms and User Testing.
  *
  * Exclusive toggle between Session flow (Sankey) and Clusters (topic map),
- * a Findings rail (recommendations + supporting findings) above both, a chip
- * row for dismissible filters, and a session drill-down beside the flow chart.
- * Everything surface-specific arrives as a prop — the scope the queries
- * read, the slots Findings renders, the filter policy, the empty state,
- * and the testid prefix.
+ * a recommendations rail (the "Fix in your MCP server" and "Recommendations"
+ * sections) above both, a chip row for dismissible filters, and a session
+ * drill-down beside the flow chart. Everything surface-specific arrives as a
+ * prop — the scope the queries read, the slots the rail renders, the filter
+ * policy, the empty state, and the testid prefix.
  *
  * This replaces two panels that had drifted into ~250 lines of duplicated
  * shell against the same hooks. Where the two disagreed, the reconciliations
@@ -231,6 +212,28 @@ export function InsightsWorkbench({
     rebuild,
     cohortKey,
   );
+
+  /**
+   * User Testing analyzes itself (BB-196).
+   *
+   * Keyed on the scope, not a prop: this mirrors a backend rule keyed on the
+   * same fact (`scenarioWindowFreshness`'s first-analysis fast path), and two
+   * ways to say it would let a caller turn off half of a guarantee. Swarms are
+   * excluded because a settling run already queues theirs (journeyRuns.ts);
+   * the benchmark flow because it is the one paid analysis and waits to be
+   * asked.
+   */
+  const scopeAnalyzesItself = scope?.kind === "scenario";
+  const { failed: firstAnalysisRefused } = useEnsureFirstAnalysis({
+    enabled: scopeAnalyzesItself,
+    cohortKey,
+    breakdown,
+    rebuild,
+  });
+  // A refused start withdraws the promise: with no run ever coming, keeping it
+  // would leave the viewer watching a spinner with the only control that could
+  // fix it hidden behind it.
+  const analysisIsAutomatic = scopeAnalyzesItself && !firstAnalysisRefused;
 
   const { setView } = flow;
   const handleViewChange = useCallback(
@@ -429,6 +432,7 @@ export function InsightsWorkbench({
           onRebuild={handleRebuild}
           rebuildBusy={rebuildBusy}
           onApplyTuning={handleApplyTuning}
+          analysisIsAutomatic={analysisIsAutomatic}
           showLinkThreshold
           fillHeight={fillBody}
           scrollLayout={!fillBody}

@@ -84,7 +84,7 @@ describe("RouteFactsSection", () => {
     expect(section).toHaveTextContent("expected `tool_a` not called in 1 of 3");
     expect(section).toHaveTextContent("ended with a question: not measured");
     expect(section).toHaveTextContent(
-      "counted by tool name — a call with the wrong arguments counts as called",
+      "counted by tool name. A call with the wrong arguments counts as called",
     );
     expect(screen.queryByTestId("route-facts-variant")).toBeNull();
   });
@@ -152,10 +152,10 @@ describe("RouteFactsSection", () => {
     expect(screen.queryByText(/counted by tool name/)).toBeNull();
     const note = screen.getByTestId("route-facts-mismatch-note");
     expect(note).toHaveTextContent(
-      "Negative test — mismatch facts are not measured.",
+      "Negative test. Mismatch facts are not measured.",
     );
     expect(note).toHaveTextContent("ended with a question: not measured");
-    expect(screen.queryByText(/No gradeable trials/)).toBeNull();
+    expect(screen.queryByText(/No gradeable iterations/)).toBeNull();
   });
 
   it("says not measured, with no expander and no counting note, when there were no gradeable trials", () => {
@@ -169,7 +169,7 @@ describe("RouteFactsSection", () => {
     expect(screen.queryByText(/counted by tool name/)).toBeNull();
     expect(screen.queryByText(/Negative test/)).toBeNull();
     const note = screen.getByTestId("route-facts-mismatch-note");
-    expect(note).toHaveTextContent("No gradeable trials — not measured.");
+    expect(note).toHaveTextContent("No gradeable iterations. Not measured.");
     expect(note).toHaveTextContent("ended with a question: not measured");
   });
 });

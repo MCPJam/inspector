@@ -8,12 +8,6 @@
  */
 
 import { useState, useEffect, useMemo } from "react";
-import {
-  Accordion,
-  AccordionItem,
-  AccordionTrigger,
-  AccordionContent,
-} from "@mcpjam/design-system/accordion";
 import type { Tool } from "@modelcontextprotocol/client";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -22,8 +16,8 @@ import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
+import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 import { LoggerView } from "../logger-view";
-import { SchemaViewer } from "@/components/ui/schema-viewer";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -34,7 +28,9 @@ import { TabHeader } from "./TabHeader";
 import { ToolList } from "./ToolList";
 import { SelectedToolHeader } from "./SelectedToolHeader";
 import { ParametersForm } from "./ParametersForm";
+import { ToolDetailsAccordion } from "@/components/ui/tool-details-accordion";
 import { useBuiltinToolRun } from "@/components/playground/use-builtin-tool-run";
+import { useBrowserToolRun } from "@/components/playground/use-browser-tool-run";
 import { BuiltinToolDetailView } from "@/components/playground/BuiltinToolDetailView";
 
 interface PlaygroundLeftProps {
@@ -66,6 +62,14 @@ interface PlaygroundLeftProps {
   showLogger?: boolean;
   /** Harness native built-in tools (display-only). Present for harness hosts. */
   builtinTools?: HarnessBuiltinToolInfo[];
+  /** True when the previewed host runs its harness on THIS machine. */
+  builtinToolsRunLocally?: boolean;
+  /**
+   * The agent browser's tools, when the previewed host attaches one. This is
+   * the pane a browser-only host lands in — no MCP servers, so without it the
+   * panel says "No server connected yet" about a host driving a real Chromium.
+   */
+  browserTools?: BrowserToolsState;
   /** Whether any MCP server is connected — drives the tool list's empty state. */
   hasConnectedServer?: boolean;
   /** Connect a server from the empty state without leaving the surface. */
@@ -93,6 +97,8 @@ export function PlaygroundLeft({
   onClose,
   showLogger = true,
   builtinTools = [],
+  builtinToolsRunLocally = false,
+  browserTools,
   hasConnectedServer = true,
   onAddServerRequested,
 }: PlaygroundLeftProps) {
@@ -104,7 +110,13 @@ export function PlaygroundLeft({
   // server tools, but "Run" asks the agent (see useBuiltinToolRun). Only one of
   // {server tool, built-in} is selected at a time.
   const builtin = useBuiltinToolRun(builtinTools);
-  const hasSelection = !!selectedToolName || !!builtin.selected;
+  const browser = useBrowserToolRun(
+    browserTools?.tools ?? [],
+    browserTools?.page ?? null,
+    browserTools?.invokePage,
+  );
+  const hasSelection =
+    !!selectedToolName || !!builtin.selected || !!browser.selected;
   const builtinNames = useMemo(
     () => builtinTools.map((t) => t.name),
     [builtinTools],
@@ -140,14 +152,17 @@ export function PlaygroundLeft({
   // Sync list expansion when the selection (server OR built-in) changes. A
   // manual expand (back) doesn't change the selection, so it persists.
   useEffect(() => {
-    setIsListExpanded(!selectedToolName && !builtin.selectedKey);
-  }, [selectedToolName, builtin.selectedKey]);
+    setIsListExpanded(
+      !selectedToolName && !builtin.selectedKey && !browser.selectedKey,
+    );
+  }, [selectedToolName, builtin.selectedKey, browser.selectedKey]);
 
   const handleTabChange = (tab: "tools" | "saved") => {
     setActiveTab(tab);
     if (tab === "tools" && hasSelection) {
       onSelectTool(null);
       builtin.clear();
+      browser.clear();
     }
   };
 
@@ -157,20 +172,30 @@ export function PlaygroundLeft({
 
   const handleToolListSelect = (name: string) => {
     builtin.clear();
+    browser.clear();
     onSelectTool(name);
     setIsListExpanded(false);
   };
 
   const handleSelectBuiltin = (key: string) => {
     onSelectTool(null);
+    browser.clear();
     builtin.select(key);
     setIsListExpanded(false);
   };
 
-  // Top "Run": execute the selected server tool, OR ask the agent to run the
-  // selected built-in tool (no API can fire a built-in tool call directly).
+  const handleSelectBrowser = (key: string) => {
+    onSelectTool(null);
+    builtin.clear();
+    browser.select(key);
+    setIsListExpanded(false);
+  };
+
+  // Top "Run": execute the selected server tool, invoke a page tool directly,
+  // or ask the agent to run a built-in / browser verb.
   const handleRun = () => {
-    if (builtin.selected) builtin.askAgentToRun();
+    if (browser.selected) void browser.run();
+    else if (builtin.selected) builtin.askAgentToRun();
     else onExecute();
   };
 
@@ -181,7 +206,7 @@ export function PlaygroundLeft({
     const tag = target.tagName;
     // Avoid firing while typing in multiline fields
     if (tag === "TEXTAREA") return;
-    if (!hasSelection || isExecuting) return;
+    if (!hasSelection || isExecuting || browser.invoking) return;
     e.preventDefault();
     handleRun();
   };
@@ -212,10 +237,50 @@ export function PlaygroundLeft({
           onSelectTool={handleToolListSelect}
           onCollapseList={() => setIsListExpanded(false)}
           builtinTools={builtinTools}
+          builtinToolsRunLocally={builtinToolsRunLocally}
+          {...(browserTools ? { browserTools } : {})}
           selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
           onSelectBuiltin={handleSelectBuiltin}
+          selectedBrowserKey={isListExpanded ? null : browser.selectedKey}
+          onSelectBrowser={handleSelectBrowser}
           hasConnectedServer={hasConnectedServer}
           onAddServerRequested={onAddServerRequested}
+        />
+      ) : browser.selected ? (
+        <BuiltinToolDetailView
+          tool={{
+            key: browser.selected.key,
+            name: browser.selected.title,
+            description: browser.selected.description,
+            inputSchema: browser.selected.inputSchema,
+          }}
+          fields={browser.fields}
+          onExpand={() => setIsListExpanded(true)}
+          onFieldChange={browser.onFieldChange}
+          onToggleField={browser.onToggleField}
+          switchItems={browser.catalog.map((tool) => ({
+            id: tool.key,
+            label: tool.title,
+          }))}
+          selectedSwitchId={browser.selected.key}
+          onSwitch={handleSelectBrowser}
+          headerDescription={
+            browser.selected.kind === "page"
+              ? `${browser.selected.callName}${
+                  browser.selected.originHost
+                    ? ` · ${browser.selected.originHost}`
+                    : ""
+                }`
+              : undefined
+          }
+          runHint={
+            browser.selected.blocking
+              ? "is disabled — this tool was not offered to the model."
+              : browser.selected.kind === "page"
+                ? "calls this page tool now, the same way the WebMCP tab does."
+                : "asks the agent to call this browser tool. It drives the open browser — every call still asks first."
+          }
+          result={browser.result}
         />
       ) : builtin.selected ? (
         <BuiltinToolDetailView
@@ -256,8 +321,8 @@ export function PlaygroundLeft({
         onTabChange={handleTabChange}
         toolCount={toolNames.length}
         savedCount={savedRequests.length}
-        isExecuting={isExecuting}
-        canExecute={hasSelection}
+        isExecuting={isExecuting || browser.invoking}
+        canExecute={browser.selected ? browser.canRun : hasSelection}
         canSave={!!selectedToolName}
         fetchingTools={fetchingTools}
         onExecute={handleRun}
@@ -405,64 +470,28 @@ function ToolParametersView({
         toolName={headerToolName}
         onExpand={onExpand}
         toolSwitchList={{
-          names: toolNames,
+          items: toolNames.map((name) => ({ id: name, label: name })),
+          selectedId: selectedToolName,
           onSelect: (name) => onSelectTool(name),
         }}
       />
       <ScrollArea className="flex-1 min-h-0">
-        <Accordion
-          type="multiple"
-          value={openSections}
-          onValueChange={setOpenSections}
-          className="px-3"
-        >
-          {effectiveTool?.description && (
-            <AccordionItem value="description">
-              <AccordionTrigger className="text-xs">
-                Description
-              </AccordionTrigger>
-              <AccordionContent>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {effectiveTool.description}
-                </p>
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {effectiveTool?.inputSchema && (
-            <AccordionItem value="input-schema">
-              <AccordionTrigger className="text-xs">
-                Input Schema
-              </AccordionTrigger>
-              <AccordionContent>
-                <SchemaViewer schema={effectiveTool.inputSchema} />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {effectiveTool?.outputSchema && (
-            <AccordionItem value="output-schema">
-              <AccordionTrigger className="text-xs">
-                Output Schema
-              </AccordionTrigger>
-              <AccordionContent>
-                <SchemaViewer schema={effectiveTool.outputSchema} />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {hasParameters && (
-            <AccordionItem value="parameters">
-              <AccordionTrigger className="text-xs">
-                Parameters
-              </AccordionTrigger>
-              <AccordionContent>
-                <ParametersForm
-                  fields={formFields}
-                  onFieldChange={onFieldChange}
-                  onToggleField={onToggleField}
-                />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-        </Accordion>
+        <ToolDetailsAccordion
+          description={effectiveTool?.description}
+          inputSchema={effectiveTool?.inputSchema}
+          outputSchema={effectiveTool?.outputSchema}
+          openSections={openSections}
+          onOpenSectionsChange={setOpenSections}
+          parameters={
+            hasParameters ? (
+              <ParametersForm
+                fields={formFields}
+                onFieldChange={onFieldChange}
+                onToggleField={onToggleField}
+              />
+            ) : undefined
+          }
+        />
       </ScrollArea>
     </div>
   );

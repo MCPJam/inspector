@@ -168,6 +168,24 @@ function billingStatusFixture(
   };
 }
 
+/**
+ * Mimics Chrome's built-in page translation, which moves every text node into
+ * a `<font>` wrapper it inserts in the node's place.
+ */
+function translateTextNodes(root: HTMLElement): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode as Text);
+  }
+
+  for (const textNode of textNodes) {
+    const wrapper = document.createElement("font");
+    textNode.parentNode?.insertBefore(wrapper, textNode);
+    wrapper.appendChild(textNode);
+  }
+}
+
 function createBillingHookState(overrides: Record<string, unknown>) {
   return {
     billingStatus: undefined,
@@ -1583,6 +1601,38 @@ describe("OrganizationsTab billing", () => {
     }
   });
 
+  it("clears the plan CTA spinner after a page translator rewrites its label", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        isStartingPlanChange: true,
+        pendingPlanChangeTarget: "team",
+      })
+    );
+
+    const { rerender } = render(
+      <OrganizationsTab organizationId="org-1" section="billing" />
+    );
+
+    const pendingButton = within(getPlanColumn("Team")).getByRole("button", {
+      name: /Loading/,
+    });
+    translateTextNodes(pendingButton);
+
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({ billingStatus: billingStatusFixture() })
+    );
+
+    // The spinner's label sits next to an icon, so React deletes it as its own
+    // text node. While the translator holds that node inside a `<font>`, the
+    // deletion used to throw NotFoundError from `removeChild`.
+    rerender(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(
+      within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" })
+    ).toBeInTheDocument();
+  });
+
   it("opens the dedicated cancellation flow when downgrading from a paid plan to Free", async () => {
     const startPlanChange = vi.fn();
     const openPortal = vi.fn().mockResolvedValue("https://stripe.test/portal");
@@ -2235,5 +2285,102 @@ describe("OrganizationsTab billing", () => {
 
     expect(window.location.pathname).toBe("/organizations/org-1");
     expect(window.location.hash).toBe("");
+  });
+  /**
+   * `?plans=open` is how the swarm limit dialog's "Explore MCPJam plans" link
+   * gets the reader to the plans, which render below credits and payment
+   * history — landing at the top of the page hides the thing they clicked for.
+   */
+  describe("plans deep link", () => {
+    const withScrollSpy = () => {
+      const scrollIntoView = vi.fn();
+      const had = "scrollIntoView" in Element.prototype;
+      const original = Element.prototype.scrollIntoView;
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        configurable: true,
+        value: scrollIntoView,
+      });
+      const restore = () => {
+        if (had) {
+          Object.defineProperty(Element.prototype, "scrollIntoView", {
+            configurable: true,
+            value: original,
+          });
+        } else {
+          delete (Element.prototype as Partial<Element>).scrollIntoView;
+        }
+      };
+      return { scrollIntoView, restore };
+    };
+
+    it("scrolls to Plans & Billing and consumes the flag", async () => {
+      const { scrollIntoView, restore } = withScrollSpy();
+      try {
+        window.history.replaceState(
+          null,
+          "",
+          "/organizations/org-1/billing?plans=open",
+        );
+
+        render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+        await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+        // One-shot: a reload must not yank the page down again.
+        expect(window.location.search).toBe("");
+      } finally {
+        restore();
+      }
+    });
+
+    it("leaves the page where it is without the flag", async () => {
+      const { scrollIntoView, restore } = withScrollSpy();
+      try {
+        window.history.replaceState(null, "", "/organizations/org-1/billing");
+
+        render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+        await screen.findByText("Plans & Billing");
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      } finally {
+        restore();
+      }
+    });
+
+    it("waits for the billing flag to resolve before scrolling", async () => {
+      const { scrollIntoView, restore } = withScrollSpy();
+      try {
+        // PostHog answers `undefined` until the flag loads, so the section the
+        // link points at is not mounted on the first render. Scrolling then
+        // would target nothing and the deep link would silently do nothing.
+        mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+          flag === "billing-entitlements-ui" ? undefined : true,
+        );
+        window.history.replaceState(
+          null,
+          "",
+          "/organizations/org-1/billing?plans=open",
+        );
+
+        const view = render(
+          <OrganizationsTab organizationId="org-1" section="billing" />,
+        );
+
+        expect(screen.queryByText("Plans & Billing")).not.toBeInTheDocument();
+        expect(scrollIntoView).not.toHaveBeenCalled();
+        // Consumed on mount, not when the scroll finally fires: the section is
+        // still absent here. Reading it later would mean a reload between the
+        // two renders replays the jump.
+        expect(window.location.search).toBe("");
+
+        mockUseFeatureFlagEnabled.mockImplementation(() => true);
+        view.rerender(
+          <OrganizationsTab organizationId="org-1" section="billing" />,
+        );
+
+        await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+      } finally {
+        restore();
+      }
+    });
   });
 });

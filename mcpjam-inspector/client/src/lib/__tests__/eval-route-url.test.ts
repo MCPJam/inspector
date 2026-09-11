@@ -7,6 +7,13 @@ import {
 import { parseEvalRouteFromUrl } from "../eval-route-url";
 
 describe("eval-route-url", () => {
+  it("roundtrips the case UVC checks page", () => {
+    const route = { type: "test-edit" as const, suiteId: "suite-1", testId: "case-1", checks: true };
+    const url = buildEvalsPath(route);
+    const [path, search] = url.split("?");
+    expect(url).toContain("checks=1");
+    expect(parseEvalRouteFromUrl("/evals", path, `?${search}`)).toEqual(route);
+  });
   it("parses eval list and create routes", () => {
     expect(parseEvalRouteFromUrl("/evals", "/evals")).toEqual({
       type: "list",
@@ -190,6 +197,31 @@ describe("eval-route-url", () => {
         iteration: "i_42",
       })
     ).toBe("/evals/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42");
+    expect(
+      buildEvaluatePath({
+        type: "test-edit",
+        suiteId: "preview:asana:create-and-assign",
+        testId: "case-create-task",
+        fromEvalServer: "srv-a",
+      }),
+    ).toBe(
+      "/evaluate/suite/preview%3Aasana%3Acreate-and-assign/test/case-create-task/edit?fromEvalServer=srv-a",
+    );
+  });
+
+  it("parses a first-run return onto today's case editor", () => {
+    expect(
+      parseEvalRouteFromUrl(
+        "/evaluate",
+        "/evaluate/suite/preview%3Aasana%3Acreate-and-assign/test/case-create-task/edit",
+        "?fromEvalServer=srv-a",
+      ),
+    ).toEqual({
+      type: "test-edit",
+      suiteId: "preview:asana:create-and-assign",
+      testId: "case-create-task",
+      fromEvalServer: "srv-a",
+    });
   });
 
   it("parses runs-mode commit detail query state", () => {
@@ -284,6 +316,18 @@ describe("eval-route-url", () => {
       type: "create",
     });
     expect(
+      parseEvalRouteFromUrl(
+        "/evaluate",
+        "/evaluate/eval-server/srv-a",
+      ),
+    ).toEqual({
+      type: "eval-server",
+      serverId: "srv-a",
+    });
+    expect(
+      parseEvalRouteFromUrl("/evals", "/evals/eval-server/srv-a"),
+    ).toEqual({ type: "list" });
+    expect(
       parseEvalRouteFromUrl("/evaluate", "/evaluate/suite/s_123/runs/r_9")
     ).toEqual({
       type: "run-detail",
@@ -297,6 +341,12 @@ describe("eval-route-url", () => {
   it("builds /evaluate paths and degrades its commit route to the list", () => {
     expect(buildEvaluatePath({ type: "list" })).toBe("/evaluate");
     expect(buildEvaluatePath({ type: "create" })).toBe("/evaluate/create");
+    expect(
+      buildEvaluatePath({ type: "eval-server", serverId: "srv-a" }),
+    ).toBe("/evaluate/eval-server/srv-a");
+    expect(buildEvalsPath({ type: "eval-server", serverId: "srv-a" })).toBe(
+      "/evals",
+    );
     expect(
       buildEvaluatePath({ type: "suite-overview", suiteId: "s_123" })
     ).toBe("/evaluate/suite/s_123");
@@ -316,4 +366,11 @@ describe("eval-route-url", () => {
       iteration: undefined,
     });
   });
+});
+
+it("roundtrips a dedicated run comparison page", () => {
+  const route = { type: "run-detail" as const, suiteId: "suite", runId: "run", comparison: true };
+  const path = buildEvaluatePath(route);
+  expect(path).toBe("/evaluate/suite/suite/runs/run/compare");
+  expect(parseEvalRouteFromUrl("/evaluate", path)).toMatchObject(route);
 });

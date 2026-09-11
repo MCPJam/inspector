@@ -17,7 +17,7 @@
  *   Engine consolidation route 3 collapse: this handler used to own its
  *   own inline `streamText({...})` block (~390 LOC) that duplicated the
  *   driver in `runDirectChatTurn`. The collapse keeps the route-specific
- *   pieces here (the `requireToolApproval` guard, the local-runtime
+ *   pieces here (the unsupported-approval-gate guard, the local-runtime
  *   config validation, the `postLocalUsage` writeback) and delegates
  *   streaming + trace + persistence to the shared engine.
  */
@@ -37,10 +37,7 @@ import {
   OrgProviderConfigError,
   type OrgProviderResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
-import {
-  isClientFulfilledToolName,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
+import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import {
   writePersistReceipt,
   type PersistChatOutcome,
@@ -95,8 +92,6 @@ export interface OrgModelHandlerOptions {
   selectedServers?: string[];
   serverIds?: string[];
   requireToolApproval?: boolean;
-  /** Per-tool ui_* approval policy (see `classifyUiToolApprovals`). */
-  uiToolApprovals?: UiToolApprovalClassification;
   /** Host/client policy for eligible MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /**
@@ -333,25 +328,41 @@ export interface OrgLocalModelHandlerOptions {
  * Whether this local-runtime turn hits the approval gap the handler cannot
  * serve, and must fail loudly instead.
  *
- * The gap is SERVER-EXECUTED tools: approving one resumes the turn by running
- * it here, and that resume path has never been supported (or tested) on the
- * local org runtime.
+ * The gap is SERVER-EXECUTED tools THAT WOULD ASK: approving one resumes the
+ * turn by running it here, and that resume path has never been supported (or
+ * tested) on the local org runtime.
  *
- * Client-fulfilled tools (`ui_*`, `app_*`) don't need it. Their approval is
- * emitted natively by `streamText` from the per-tool `needsApproval` that
- * `buildUiTools` set, and an approval is resolved by the BROWSER executing the
- * tool and supplying the result via `addToolOutput` — the engine only has to
- * accept a history that already contains the output. That is the same path
- * route 4 (personal BYOK) drives through this very engine today, so refusing
- * it here would break the UI-only agent surface for local-runtime orgs while
+ * Reads each tool's own `needsApproval` rather than the turn's switch. Those
+ * were the same question while the switch was the only thing that made a
+ * server tool ask; they are not, and the difference is a turn refused for
+ * nothing. A host with the switch ON whose only server-executed tools declare
+ * `never` — workspace reads, exa search — has no resume to support, so there
+ * is nothing for the refusal to protect.
+ *
+ * A FUNCTION-form declaration does NOT trip this guard. It cannot be evaluated
+ * here — this runs before the model has produced an input — and the two
+ * families that use the form (`effective-skill-tools`, `server-skill-tools`)
+ * declare it UNCONDITIONALLY and answer `false` on the common path. Reading
+ * "unevaluable" as "asks" refused every local-runtime turn that carried a
+ * skill tool, switch or no switch, where before it ran. `streamText` evaluates
+ * the function per call, exactly as it did before the declaration was unified;
+ * a call that does answer `true` still reaches the unsupported resume, which is
+ * the pre-existing gap this guard never covered.
+ *
+ * Client-fulfilled tools (`ui_*`, `app_*`, `page_*`) don't need the resume even
+ * when they DO ask. Their approval is emitted natively by `streamText` from the
+ * per-tool declaration, and an approval is resolved by the BROWSER executing
+ * the tool and supplying the result via `addToolOutput` — the engine only has
+ * to accept a history that already contains the output. That is the same path
+ * route 4 (personal BYOK) drives through this very engine today, so refusing it
+ * here would break the UI-only agent surface for local-runtime orgs while
  * protecting nothing.
  */
-function hasUnsupportedLocalApprovalGate(
-  tools: ToolSet,
-  requireToolApproval: boolean | undefined
-): boolean {
-  if (!requireToolApproval) return false;
+function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
   return Object.entries(tools).some(([name, tool]) => {
+    const declared = (tool as { needsApproval?: unknown } | undefined)
+      ?.needsApproval;
+    if (declared !== true) return false;
     if (!isClientFulfilledToolName(name)) return true;
     // Name is necessary but NOT sufficient. A real MCP server tool called
     // `ui_foo` matches the namespace regex while still having an `execute`,
@@ -376,7 +387,6 @@ export function handleLocalOrgChatModel(
     systemPrompt,
     temperature,
     tools,
-    requireToolApproval,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
@@ -392,7 +402,7 @@ export function handleLocalOrgChatModel(
 
   // Deliberately NOT reported as an operation failure: this is a declared
   // product limitation surfaced to the user, not something that broke.
-  if (hasUnsupportedLocalApprovalGate(tools, requireToolApproval)) {
+  if (hasUnsupportedLocalApprovalGate(tools)) {
     const stream = createUIMessageStream({
       onError: (error) => formatLocalStreamError(error),
       onFinish: async () => {
@@ -824,7 +834,6 @@ export async function handleHostedOrgChatModel(
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
-    uiToolApprovals: options.uiToolApprovals,
     modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
     ...(options.approvalMode !== undefined
       ? { approvalMode: options.approvalMode }
