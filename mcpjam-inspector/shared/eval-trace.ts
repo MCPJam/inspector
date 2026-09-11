@@ -5,12 +5,7 @@ import type { PredicateResult } from "@mcpjam/sdk/predicates";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
 export type EvalTraceSpanCategory =
-  | "step"
-  | "llm"
-  | "tool"
-  | "error"
-  | "connection"
-  | "discovery";
+  "step" | "llm" | "tool" | "error" | "connection" | "discovery";
 export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpan = {
@@ -296,9 +291,7 @@ export type EvalTraceBrowserAction =
   | "wait";
 
 export type EvalTraceBrowserStepNote =
-  | "no_rendered_widget"
-  | "step_budget_exceeded"
-  | "screenshot_budget_exceeded";
+  "no_rendered_widget" | "step_budget_exceeded" | "screenshot_budget_exceeded";
 
 const EVAL_TRACE_BROWSER_STEP_NOTES: ReadonlySet<string> = new Set([
   "no_rendered_widget",
@@ -314,7 +307,7 @@ const EVAL_TRACE_BROWSER_STEP_NOTES: ReadonlySet<string> = new Set([
  * unrecognized note.
  */
 export function isEvalTraceBrowserStepNote(
-  value: unknown
+  value: unknown,
 ): value is EvalTraceBrowserStepNote {
   return typeof value === "string" && EVAL_TRACE_BROWSER_STEP_NOTES.has(value);
 }
@@ -404,7 +397,9 @@ export type RunnerBrowserInteractionStep = {
   // a model-driven Computer Use step (back-compat). `action` carries the verb
   // (an `assert` step maps to `"screenshot"`); `assertion` is set only on assert
   // steps; `locatorLabel` is the human-readable target.
-  source?: "computer_use" | "scripted";
+  source?: "computer_use" | "scripted" | "browser_tool";
+  toolName?: string;
+  turnId?: string;
   locatorLabel?: string;
   assertion?: EvalTraceScriptedAssertion;
   // Per-step outcome for a pure action (click/type/key/scroll/wait): `true` when
@@ -501,7 +496,9 @@ export type EvalTraceBrowserInteractionStepView = {
   ts: number;
   // Scripted "Widget interaction checks" replay fields (see
   // RunnerBrowserInteractionStep). Absent ⇒ a Computer Use step.
-  source?: "computer_use" | "scripted";
+  source?: "computer_use" | "scripted" | "browser_tool";
+  toolName?: string;
+  turnId?: string;
   locatorLabel?: string;
   assertion?: EvalTraceScriptedAssertion;
   // Per-step action outcome (see RunnerBrowserInteractionStep.ok). Absent ⇒
@@ -513,6 +510,31 @@ export type EvalTraceBrowserInteractionStepView = {
   /** Offset (ms) into the replay video (see RunnerBrowserInteractionStep).
    *  Lets the Steps view seek the `.webm` to this step. */
   videoOffsetMs?: number;
+};
+
+/**
+ * What a recording says about itself.
+ *
+ * Beside the blob id rather than derived from the bytes: `truncated` is
+ * knowable only to the thing that made the file (the daemon watched ffmpeg
+ * stop at its size cap), and `distinctFrames` is the count AFTER decimation —
+ * a static ten-minute run holds a handful of frames against six hundred
+ * seconds, which is honest and looks broken if you infer it from the duration.
+ *
+ * `source` says which recorder made it, because the two differ in ways a
+ * reader can see: the widget harness records the local Chromium context to a
+ * `.webm`, the hosted daemon grabs the whole X display to an MP4 at a fixed
+ * rate.
+ */
+export type EvalTraceVideoMeta = {
+  source: "hosted" | "widget";
+  /** Frames per second the recorder was asked for (not the written rate). */
+  fps?: number;
+  durationMs?: number;
+  /** Frames actually written, after identical ones were dropped. */
+  distinctFrames?: number;
+  /** The take stopped at its size cap before the run ended. */
+  truncated?: boolean;
 };
 
 /** Versioned blob written by `testSuites:updateTestIteration` when messages are stored. */
@@ -528,6 +550,9 @@ export type EvalTraceBlobV1 = {
    * backend when the trace envelope is read for the replay UI.
    */
   videoBlobId?: string;
+  /** What that recording says about itself. Absent for every trace written
+   *  before recordings reported anything. */
+  videoMeta?: EvalTraceVideoMeta;
 };
 
 /** Zod mirror of Convex `traceSpanValidator` for client/server tests and optional runtime checks. */
@@ -600,7 +625,7 @@ const promptTraceSummaryZ = z.object({
       expected: traceToolCallZ,
       actual: traceToolCallZ,
       mismatchedArguments: z.array(z.string()),
-    })
+    }),
   ),
 });
 
@@ -641,6 +666,14 @@ const evalTraceWidgetSnapshotZ = z.object({
     .optional(),
 });
 
+export const evalTraceVideoMetaZ = z.object({
+  source: z.enum(["hosted", "widget"]),
+  fps: z.number().optional(),
+  durationMs: z.number().optional(),
+  distinctFrames: z.number().optional(),
+  truncated: z.boolean().optional(),
+});
+
 export const evalTraceBlobV1Z = z.object({
   traceVersion: z.literal(1),
   messages: z.array(z.any()),
@@ -648,18 +681,19 @@ export const evalTraceBlobV1Z = z.object({
   spans: z.array(evalTraceSpanZ).optional(),
   prompts: z.array(promptTraceSummaryZ).optional(),
   videoBlobId: z.string().optional(),
+  videoMeta: evalTraceVideoMetaZ.optional(),
 });
 
 export function msOffsetFromRunStart(
   runStartedAt: number,
-  absoluteMs: number
+  absoluteMs: number,
 ): number {
   return absoluteMs - runStartedAt;
 }
 
 export function normalizeSpanInterval(
   startMs: number,
-  endMs: number
+  endMs: number,
 ): { startMs: number; endMs: number } {
   if (endMs <= startMs) return { startMs, endMs: startMs + 1 };
   return { startMs, endMs };
@@ -668,11 +702,11 @@ export function normalizeSpanInterval(
 export function createOffsetInterval(
   runStartedAt: number,
   startAbs: number,
-  endAbs: number
+  endAbs: number,
 ): { startMs: number; endMs: number } {
   return normalizeSpanInterval(
     msOffsetFromRunStart(runStartedAt, startAbs),
-    msOffsetFromRunStart(runStartedAt, endAbs)
+    msOffsetFromRunStart(runStartedAt, endAbs),
   );
 }
 
@@ -689,7 +723,7 @@ function messageDedupeKey(message: ModelMessage): string {
 /** Append `incoming` to `acc`, skipping duplicates (by `id` or JSON identity). */
 export function appendDedupedModelMessages(
   acc: ModelMessage[],
-  incoming: ModelMessage[]
+  incoming: ModelMessage[],
 ): void {
   const seen = new Set(acc.map(messageDedupeKey));
   for (const m of incoming) {

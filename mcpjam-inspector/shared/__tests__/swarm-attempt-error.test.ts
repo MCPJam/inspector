@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   humanizeSwarmAttemptError,
   humanizeSwarmAttemptErrorMessage,
+  isAccountLimit,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../swarm-attempt-error";
 
@@ -191,5 +192,41 @@ describe("humanizeSwarmAttemptError — connect-time XAA failures", () => {
       );
       expect(info.message.length).toBeLessThanOrEqual(MAX_ATTEMPT_ERROR_CHARS);
     }
+  });
+});
+
+describe("isAccountLimit", () => {
+  it("reads the MCPJam denial code out of the real agent envelope", () => {
+    // The humanizer lifts `code` out of the JSON, so the cleaned sentence no
+    // longer carries it — the code has to be passed alongside the message.
+    const info = humanizeSwarmAttemptError(REAL_RATE_LIMIT_ERROR);
+    expect(info.message).not.toContain("user_rate_limit");
+    expect(isAccountLimit(info.message, info.code)).toBe(true);
+  });
+
+  it("recognizes the wire form the swarm runner composes", () => {
+    // `runner.ts` builds "<sentence> (<code>, HTTP <status>)".
+    expect(
+      isAccountLimit("Daily credit limit reached. (user_rate_limit, HTTP 429)")
+    ).toBe(true);
+    expect(
+      isAccountLimit(
+        "Your organization's credit limit was reached. (billing_limit_reached, HTTP 402)"
+      )
+    ).toBe(true);
+  });
+
+  it("treats the whole-run finalize code as an account limit", () => {
+    // `finalizePendingAttempts` stamps this code and stores no message.
+    expect(isAccountLimit(undefined, "spend_cap_exceeded")).toBe(true);
+  });
+
+  it("does NOT claim a 429 on the user's own provider key", () => {
+    // BB-172: the user's own key really was throttled. No MCPJam code appears,
+    // and the advice differs — MCPJam cannot lift someone else's rate limit.
+    expect(isAccountLimit("429 Too Many Requests")).toBe(false);
+    expect(isAccountLimit("Anthropic returned Too Many Requests")).toBe(false);
+    // The per-host sweep stamps this code with no message.
+    expect(isAccountLimit(undefined, "rate_limited")).toBe(false);
   });
 });
