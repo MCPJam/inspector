@@ -51,6 +51,10 @@ import {
   ClientSelector,
   type ClientSelectorData,
 } from "@/components/chat-v2/chat-input/client-selector";
+import {
+  ExecutionTargetChip,
+  type ExecutionTargetChipData,
+} from "@/components/chat-v2/chat-input/execution-target-chip";
 import { ModelDefinition, ServerFormData } from "@/shared/types";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -282,6 +286,16 @@ interface ChatInputProps {
   enableMultiModel?: boolean;
   /** Playground-only: renders a client chip beside the model chip. */
   clientSelector?: ClientSelectorData;
+  /**
+   * Where this turn's Claude Code agent runs, as a chip in the toolbar.
+   *
+   * A DATA prop, mirroring `clientSelector`: one key on
+   * `sharedChatInputProps` reaches all six `<ChatInput>` sites, and the
+   * component itself owns no lifecycle. The dialog it opens lives in
+   * PlaygroundMain, once — six composers each owning their own would be six
+   * dialogs racing one approval.
+   */
+  executionTarget?: ExecutionTargetChipData;
   systemPrompt: string;
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
@@ -416,6 +430,7 @@ export function ChatInput({
   onMultiModelEnabledChange,
   enableMultiModel = false,
   clientSelector,
+  executionTarget,
   systemPrompt,
   onSystemPromptChange,
   temperature,
@@ -1841,17 +1856,39 @@ export function ChatInput({
                       </button>
 
                       {onRequireToolApprovalChange && (
-                        <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
-                          <div className="flex items-center gap-2 text-sm">
-                            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-                            Tool Approval
+                        <div className="rounded-md px-2 py-2 hover:bg-muted/60">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-sm">
+                              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                              Tool Approval
+                            </div>
+                            <Switch
+                              checked={requireToolApproval}
+                              onCheckedChange={(checked) =>
+                                onRequireToolApprovalChange(checked)
+                              }
+                              aria-describedby="tool-approval-floor-note"
+                            />
                           </div>
-                          <Switch
-                            checked={requireToolApproval}
-                            onCheckedChange={(checked) =>
-                              onRequireToolApprovalChange(checked)
-                            }
-                          />
+                          {/* A caption rather than a tooltip: the row contains
+                              the switch itself, so a tooltip trigger wrapped
+                              around it would open over the control the user is
+                              reaching for, and a non-focusable trigger div
+                              would never open for a keyboard user at all.
+                              The switch decides for every tool that acts, so
+                              the only thing left to say is which calls it does
+                              not cover — reads, and an app's own tools, which
+                              belong to the iframe the user opened rather than
+                              to this setting. That belongs in front of someone
+                              rather than behind a hover. */}
+                          <p
+                            id="tool-approval-floor-note"
+                            className="mt-1 pl-6 text-[11px] leading-snug text-muted-foreground"
+                          >
+                            Pause before tool calls: MCP servers, the browser,
+                            a page's own tools, the shell. Read-only lookups
+                            and an open app's own actions never pause.
+                          </p>
                         </div>
                       )}
 
@@ -1883,6 +1920,9 @@ export function ChatInput({
                   themeMode={resolvedThemeMode}
                   modalThemeMode={globalThemeMode}
                 />
+              ) : null}
+              {!minimalMode && executionTarget ? (
+                <ExecutionTargetChip {...executionTarget} />
               ) : null}
               {!minimalMode && (
                 <ModelSelector

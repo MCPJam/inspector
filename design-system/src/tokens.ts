@@ -26,8 +26,9 @@ export const tokensCss: string = `@theme {
   --muted-foreground: oklch(0.6059 0.0075 97.4233);
   --accent: oklch(0.9245 0.0138 92.9892);
   --accent-foreground: oklch(0.2671 0.0196 98.939);
-  /* Solid fills (buttons, badges): use destructive-foreground. Tinted surfaces (bg-destructive/5–/20): prefer text-destructive for body copy. */
-  --destructive: oklch(0.627 0.208 25.331);
+  /* Solid fills (buttons, badges): use destructive-foreground. Tinted surfaces (bg-destructive/5–/20): prefer text-destructive for body copy.
+     Figma fill/danger: #EB4041. */
+  --destructive: oklch(0.6261 0.2077 25.2698);
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.8847 0.0069 97.3627);
   /* Chrome controls. Sampled from the Production Redesign frame: the pieces
@@ -75,6 +76,20 @@ export const tokensCss: string = `@theme {
   --diagram-sandbox-foreground: oklch(0.99 0.01 75);
   --diagram-view: oklch(0.6 0.1 290);
   --diagram-view-foreground: oklch(0.99 0.01 290);
+  /* Run-origin accent tokens — the two launch origins the runs table has to
+     tell apart from the API rows they are stamped as: the mcpjam CLI and an
+     MCP client's agent (Slack and Discord included). Role-based; used only by
+     lib/evals/run-origin.ts.
+     Border and background are separate tokens carrying their own alpha, so the
+     badge reads them as plain border-[var(--...)] / bg-[var(--...)] utilities
+     and the tint tracks the theme without a dark: variant. Both stay behind
+     --foreground text, which is what keeps the contrast ratio.
+     No backticks in this file: tokens.ts embeds it verbatim in a template
+     literal, and the parity test compares the two byte for byte. */
+  --run-origin-cli-border: oklch(0.65 0.11 195 / 0.5);
+  --run-origin-cli-bg: oklch(0.65 0.11 195 / 0.1);
+  --run-origin-agent-border: oklch(0.62 0.21 330 / 0.5);
+  --run-origin-agent-bg: oklch(0.62 0.21 330 / 0.1);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:
@@ -140,6 +155,11 @@ export const tokensCss: string = `@theme {
      blur, not the offset. Like every other shadow here it is one value for
      both themes. */
   --shadow-chrome-panel: 0 3px 10px hsl(0 0% 0% / 0.22);
+  /* The active server tab's cast. Points UP, away from the panel: the tab
+     hangs on the panel's top edge, so the only side with anywhere to throw a
+     shadow is its head. A tenth of the panel's weight — it separates a sheet
+     from the chrome behind it, it does not lift a pane off the app. */
+  --shadow-chrome-tab: 0 -2px 6px hsl(0 0% 0% / 0.07);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 }
@@ -185,6 +205,7 @@ export const tokensCss: string = `@theme {
   --muted-foreground: oklch(0.7713 0.0169 99.0657);
   --accent: oklch(0.213 0.0078 95.4245);
   --accent-foreground: oklch(0.9663 0.008 98.8792);
+  /* Figma fill/danger: #EF4444. */
   --destructive: oklch(0.6368 0.2078 25.3313);
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.3618 0.0101 106.8928);
@@ -226,6 +247,12 @@ export const tokensCss: string = `@theme {
   --diagram-sandbox-foreground: oklch(0.2 0.04 75);
   --diagram-view: oklch(0.8 0.09 290);
   --diagram-view-foreground: oklch(0.2 0.04 290);
+  /* Run-origin accent tokens — lifted, like the diagram hues above, and a
+     little more opaque, so the tints stay legible against the dark canvas. */
+  --run-origin-cli-border: oklch(0.78 0.1 195 / 0.5);
+  --run-origin-cli-bg: oklch(0.78 0.1 195 / 0.15);
+  --run-origin-agent-border: oklch(0.74 0.18 330 / 0.5);
+  --run-origin-agent-bg: oklch(0.74 0.18 330 / 0.15);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:
@@ -260,5 +287,10 @@ export const tokensCss: string = `@theme {
      blur, not the offset. Like every other shadow here it is one value for
      both themes. */
   --shadow-chrome-panel: 0 3px 10px hsl(0 0% 0% / 0.22);
+  /* The active server tab's cast. Points UP, away from the panel: the tab
+     hangs on the panel's top edge, so the only side with anywhere to throw a
+     shadow is its head. A tenth of the panel's weight — it separates a sheet
+     from the chrome behind it, it does not lift a pane off the app. */
+  --shadow-chrome-tab: 0 -2px 6px hsl(0 0% 0% / 0.07);
 }
 `;
