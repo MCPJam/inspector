@@ -2486,6 +2486,35 @@ describe("useServerState OAuth callback failures", () => {
     ).toBe(false);
   });
 
+  it("suppresses an error toast when an inline surface owns the failure", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Detailed transport failure",
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "new-server",
+          type: "http",
+          url: "https://example.com/mcp",
+        },
+        { suppressErrorToast: true }
+      );
+    });
+
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_FAILURE",
+        name: "new-server",
+        error: "Detailed transport failure",
+      })
+    );
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
   it("blocks connect while the active project is still provisioning", async () => {
     const dispatch = vi.fn();
     const { result } = renderUseServerState(dispatch, createAppState(), {

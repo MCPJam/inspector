@@ -226,7 +226,7 @@ export function FirstRunOnboardingOverlay({
         <DialogOverlay
           className={
             step === "welcome"
-              ? "backdrop-blur-[32px] backdrop-brightness-50"
+              ? "bg-background/95 bg-[radial-gradient(ellipse_at_center,var(--background)_0%,var(--background)_42%,transparent_72%),radial-gradient(circle,var(--primary)_1px,transparent_1px)] bg-[size:auto,24px_24px] backdrop-blur-[32px] backdrop-brightness-50 duration-500 dark:bg-none"
               : "backdrop-blur-sm"
           }
         />
@@ -246,14 +246,14 @@ export function FirstRunOnboardingOverlay({
           {step === "welcome" ? (
             <>
               <DialogHeader className="gap-0 text-left">
-                <DialogTitle className="max-w-[12ch] pb-0 text-[2rem] leading-[1.12] font-semibold tracking-[-0.038em] text-primary-foreground">
+                <DialogTitle className="max-w-[12ch] pb-0 text-[2rem] leading-[1.12] font-semibold tracking-[-0.038em] text-card-foreground">
                   Welcome to MCPJam
                 </DialogTitle>
                 <span
                   className="mt-4 block h-px w-[72px] bg-primary"
                   aria-hidden
                 />
-                <DialogDescription className="mt-4 max-w-[42ch] text-[14.5px] leading-[1.5] text-primary-foreground/80">
+                <DialogDescription className="mt-4 max-w-[42ch] text-[14.5px] leading-[1.5] text-muted-foreground">
                   From your first prompt to a continuous gate on every release,
                   MCPJam shows what breaks across every AI client, and how to
                   fix it.
@@ -262,14 +262,14 @@ export function FirstRunOnboardingOverlay({
               <Button
                 type="button"
                 variant="link"
-                className="mt-7 h-auto justify-self-start p-0 text-[12.5px] font-semibold text-primary-foreground underline decoration-primary-foreground/35 underline-offset-4 hover:text-primary-foreground hover:decoration-primary-foreground focus-visible:!border-0 focus-visible:!ring-0"
+                className="mt-7 h-auto justify-self-start p-0 text-[12.5px] font-semibold text-foreground underline decoration-foreground/35 underline-offset-4 hover:text-foreground hover:decoration-foreground focus-visible:!border-0 focus-visible:!ring-0"
                 onClick={continueToChoice}
               >
                 Continue
               </Button>
               {!prefersReducedMotion ? (
                 <div
-                  className="mt-6 h-px w-full overflow-hidden bg-primary-foreground/25"
+                  className="mt-6 h-px w-full overflow-hidden bg-border"
                   data-testid="welcome-countdown"
                   aria-hidden
                 >
@@ -467,14 +467,16 @@ export function FirstRunOnboardingOverlay({
               >
                 Try demo again
               </Button>
-              <Button
-                type="button"
-                variant="link"
-                className="mx-auto mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
-                onClick={() => setStep("choose")}
-              >
-                Connect my own server
-              </Button>
+              <div className="flex justify-center">
+                <Button
+                  type="button"
+                  variant="link"
+                  className="mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+                  onClick={() => setStep("choose")}
+                >
+                  Connect my own server
+                </Button>
+              </div>
             </div>
           ) : (
             <form onSubmit={submitServerDetails}>

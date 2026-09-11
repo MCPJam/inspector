@@ -3613,6 +3613,7 @@ describe("App hosted OAuth callback handling", () => {
         url: "https://mcp.example.com/mcp",
         authMethod: "auto",
       }),
+      { suppressErrorToast: true },
     );
     expect(
       JSON.parse(
@@ -3634,7 +3635,9 @@ describe("App hosted OAuth callback handling", () => {
       expect(
         screen.getByRole("heading", { name: "Set up your server" }),
       ).toBeInTheDocument();
-      expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Failed to connect to MCP server",
+      );
     });
   });
 
@@ -3684,6 +3687,7 @@ describe("App hosted OAuth callback handling", () => {
         type: "http",
         url: "https://mcp.excalidraw.com/mcp",
       }),
+      { suppressErrorToast: true },
     );
 
     appState.appState.servers = {
@@ -3869,6 +3873,7 @@ describe("App hosted OAuth callback handling", () => {
           name: "Excalidraw (App)",
           url: "https://mcp.excalidraw.com/mcp",
         }),
+        { suppressErrorToast: true },
       );
       expect(
         screen.getByRole("heading", {

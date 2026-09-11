@@ -98,6 +98,11 @@ describe("FirstRunOnboardingOverlay", () => {
 
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
       "backdrop-blur-[32px]",
+      "bg-background/95",
+      "bg-[radial-gradient(ellipse_at_center,var(--background)_0%,var(--background)_42%,transparent_72%),radial-gradient(circle,var(--primary)_1px,transparent_1px)]",
+      "bg-[size:auto,24px_24px]",
+      "dark:bg-none",
+      "duration-500",
     );
     const continueButton = screen.getByRole("button", { name: "Continue" });
     expect(continueButton).toHaveClass(
@@ -310,6 +315,13 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.queryByRole("heading", { name: "Set up your server" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Connect my own server" }),
+    ).toHaveTextContent("Connect my own server");
+    expect(
+      screen.getByRole("button", { name: "Connect my own server" })
+        .parentElement,
+    ).toHaveClass("flex", "justify-center");
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Failed to connect to MCP server",
     );

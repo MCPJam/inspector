@@ -25,20 +25,22 @@
 - Refreshing after successful onboarding restores the chosen server selection, reconnects that saved server, and retains the prefilled Playground prompt until the user sends it.
 - Personal failure still opens the editable form and demo failure still opens the demo-unavailable screen.
 - Personal and demo failures now show a compact, plain-language connection notice with the original diagnostic available through an explicit technical-details disclosure.
-- Rolled back the experimental Playground-first backdrop and startup-choice hydration screen after they exposed an invalid temporary project ID during guest provisioning. The Welcome styling is restored to its prior implementation.
+- The demo recovery link is centered, and Welcome now fades over a nearly opaque theme-aware backdrop so route changes are no longer visible through the splash.
+- Light-mode Welcome uses a subtle primary-token dot grid with a borderless clear halo behind the copy; onboarding failures suppress the duplicate toast because the inline disclosure owns the diagnostic.
+- Rolled back the experimental Playground-first backdrop and startup-choice hydration screen after they exposed an invalid temporary project ID during guest provisioning; Home remains the stable first-run backdrop.
 - Added App, state, overlay, refresh, stale-record, and blur regression coverage.
 
 ## Verification completed
 
-- 146 focused App, onboarding-state, overlay, and Playground tests pass, covering server reconnection and durable prompt restoration in addition to the original paths.
+- 254 focused App, onboarding-state, overlay, connection-state, and Playground tests pass, covering both server paths, reconnection, failure recovery, and durable prompt restoration.
 - Client type-check passes.
 - Design drift and design lint pass with no errors; only the repository's existing unused-token warnings remain.
-- A clean IPv6-loopback preview confirms the prior Welcome styling over Home, refresh resumes at `Point MCPJam at a server`, and no invalid-project error occurs.
+- Interactive preview confirms the approved Welcome styling over Home, refresh resumes at `Point MCPJam at a server`, and no invalid-project error occurs.
+- The broader repository suite was also sampled; unrelated socket, subprocess, DNS, and headless-browser tests cannot run in the restricted sandbox and time out there.
 
 ## Remaining before integration
 
-- User-check the personal-server success and failure paths, demo success and failure paths, refresh-before-choice, and refresh-after-success in the normal local browser session.
-- After user approval, merge the combined bug-fix branch into `feature/onboarding-main` and finalize these notes for the eventual PR. Do not open a PR or change `main` yet.
+- None. The user approved the personal and demo paths, failure presentation, refresh behavior, and final Welcome styling.
 
 ## Connection progress and success
 

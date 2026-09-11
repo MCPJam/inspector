@@ -3549,7 +3549,9 @@ export default function App() {
       serverName: pendingFirstRunConnection.name,
       serverKind: firstRunConnectionState.serverKind,
     });
-    void handleConnect(pendingFirstRunConnection);
+    void handleConnect(pendingFirstRunConnection, {
+      suppressErrorToast: true,
+    });
   }, [
     firstRunConnectionState.status,
     handleConnect,
