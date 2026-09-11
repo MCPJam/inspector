@@ -58,6 +58,25 @@ export interface PlatformToolContext {
   /** The bearer to authenticate Platform API calls with (see `getBearerToken`). */
   getBearerToken(): Promise<string | undefined>;
   runtimeEnv: { PLATFORM_API_URL: string; MCPJAM_APP_ORIGIN: string };
+  /**
+   * WHICH AGENT IS CALLING, as its inbound `user-agent` names it.
+   *
+   * A run this worker launches stamps `source: "api"` like every other hosted
+   * launch, so a Runs table could not tell an MCP agent from a script. The
+   * worker declares `launcher: { kind: "mcp" }` to fix that, and this is the
+   * best answer it has for WHICH agent.
+   *
+   * NOT the MCP `initialize` handshake's `clientInfo`, which is where a client
+   * properly identifies itself: `createMcpHandler` builds a fresh `McpServer`
+   * per HTTP request, so by the time a tool call arrives there is no session
+   * that remembers the handshake. The inbound `user-agent` is what this
+   * request actually carries.
+   *
+   * Caller-controlled text, treated as such: it is a display label beside a
+   * server-stamped `source` and a platform-minted attribution, never an
+   * authorization input, and the platform caps it before storing it.
+   */
+  callerUserAgent?: string;
 }
 
 // Re-mint a minted guest token this far before its expiry. A guest token is
@@ -171,12 +190,19 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
   });
 
+  // The calling agent's own name, from the request this server was built for.
+  // `requestInfo` is optional on the context type (stdio serving never sets
+  // one), so an absent header simply leaves the launcher unnamed rather than
+  // guessing.
+  const callerUserAgent = ctx.requestInfo?.headers.get("user-agent") ?? undefined;
+
   const toolContext: PlatformToolContext = {
     getBearerToken: () => getBearerToken(env, verifiedToken, clientIp),
     runtimeEnv: {
       PLATFORM_API_URL: requirePlatformApiUrl(env),
       MCPJAM_APP_ORIGIN: resolveAppOrigin(env),
     },
+    ...(callerUserAgent ? { callerUserAgent } : {}),
   };
 
   const registrar = createSessionToolRegistrar(server);

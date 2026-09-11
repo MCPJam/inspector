@@ -12,6 +12,7 @@ import {
 } from "./errors.js";
 import { handleRoute } from "./auth.js";
 import { resolveUserByExternalId } from "../../services/identity.js";
+import { resolveWorkosApiBaseUrl } from "../../services/workos-api-base.js";
 import {
   createWorkosKeyBinding,
   removeWorkosKeyBinding,
@@ -75,8 +76,6 @@ apiKeys.use("*", async (c, next) => {
 // so this sub-router must explicitly require a bearer.
 apiKeys.use("*", bearerAuthMiddleware);
 
-const WORKOS_BASE_URL = "https://api.workos.com";
-
 function getWorkOSRestKey(): string {
   const key = process.env.WORKOS_API_KEY;
   if (!key) {
@@ -135,7 +134,10 @@ async function callWorkOS(
   body?: unknown,
 ): Promise<{ status: number; body: any }> {
   const key = getWorkOSRestKey();
-  const response = await fetch(`${WORKOS_BASE_URL}${path}`, {
+  // Resolved per call so a test that stubs the env after this module
+  // loaded is still honoured.
+  const baseUrl = resolveWorkosApiBaseUrl(process.env).baseUrl;
+  const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${key}`,

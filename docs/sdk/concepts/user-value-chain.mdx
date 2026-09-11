@@ -1,0 +1,85 @@
+---
+title: "The User-Value Chain"
+description: "Which link of the chain each check you write measures"
+icon: "link"
+---
+
+A run of one eval case walks six links, in order. MCPJam reports where it stopped being good, rather than a single pass or fail, because the six answer different questions and have different owners.
+
+| # | Link | The question it answers | What good looks like |
+|---|------|-------------------------|----------------------|
+| 1 | **Connection** | Could the client reach the server and initialize a session? | Session connected |
+| 2 | **Discovery** | Did the client receive usable primitives and metadata? | Tools and resources discovered |
+| 3 | **Selection** | Did the model choose the right tool for the request? | Right tool selected |
+| 4 | **Tool call** | Was the call made with usable arguments? | Valid call made |
+| 5 | **Response** | Did the server return data the model could use? | Usable response returned |
+| 6 | **User value** | Was the user's actual request satisfied? | Request satisfied |
+
+Most documentation describes the chain as something you read after a run. This page is the other direction: when you write a check, you are choosing a link.
+
+## Which links you can write a check for
+
+Four of the six. Every [predicate](/sdk/reference/eval-reporting#predicate-gate) you author is filed at one link, and the count per link is uneven:
+
+| Link | Checks you can author |
+|------|-----------------------|
+| Connection | none |
+| Discovery | none |
+| Selection | 9 |
+| Tool call | 2 |
+| Response | 7 |
+| User value | 9 |
+
+**Connection and Discovery have no authorable checks, and this is deliberate.** The runner decides both before your case runs, from what it observed setting the run up: whether `initialize` completed, whether `tools/list` answered, and — when a connection failed — whether an egress canary proves the network path out of the runner works at all. That last one is why there is nothing to author. From inside the runner, "their server is down" and "our egress is broken" look identical, and a check you wrote could not tell them apart. Absent positive evidence that our own side worked, the honest answer is that the link was not measured, not that the server failed.
+
+So a suite with checks on every kind still measures Connection and Discovery exactly as much as a suite with none.
+
+## The stage is where the evidence is filed
+
+A check's link says where its evidence is recorded. It does not assert that a failure originated there.
+
+`noToolErrors` is the clearest case. It files at **Response**, because a tool error is the server's answer. Until analyzer version 11 it filed at User value, and the same defect was counted twice: the analyzer already failed Response on an observed tool error, while the predicate row failed User value. Which link a reader saw as the first break depended on which row they looked at first.
+
+Two consequences worth keeping in mind:
+
+- A failure at one link is frequently caused upstream of it. Selection failing because two tools have near-identical descriptions is a Discovery problem wearing a Selection label.
+- Moving a check to a different link changes where historical failures are attributed, so it is a versioned analyzer change rather than an edit anyone can make locally. The three `widget*` kinds are current candidates to move to Response.
+
+## Graders that are not predicates
+
+Three graders file at a link without being checks you write in a list:
+
+| Grader | Link | What it is |
+|--------|------|------------|
+| Tool-call matcher | Selection | The `expectedToolCalls` comparison, configured by [match options](/sdk/reference/validators) rather than authored as a predicate |
+| Goal completion judge | User value | The hosted LLM judge scoring whether the request was satisfied |
+| Groundedness judge | User value | Advisory only, run on demand; it has no score definition and never decides a link |
+
+A **gating** `toolCalledWith` is promoted into the matcher's expectations and graded there. An **advisory** one stays a predicate row, because promoting it would create an expectation that can fail the trial, which an advisory check must never do.
+
+## What a suite is not measuring
+
+Coverage is the question the six links exist to answer, and it is easy to write a plausible-looking suite that leaves most of the chain untouched.
+
+A case with `toolCalledWith`, `noToolErrors` and `responseContains` measures Selection, Response and User value. It says nothing about Tool call — whether the arguments the model sent were valid against the tool's own schema — and nothing about Connection or Discovery, which no check can reach.
+
+To cover Tool call, add `argumentsMatchToolSchema`. To read Connection and Discovery, read the run's chain rather than authoring anything: the stage rows report what the runner observed.
+
+Two habits keep coverage honest:
+
+- Read the chain on a passing run, not only a failing one. Six links reading `notMeasured` is not the same as six links passing, and only one of those is worth shipping on.
+- Treat a link with no check as unmeasured rather than fine. `notMeasured` is an absence, and absence is not a pass.
+
+## Observations never decide a link
+
+Five kinds are marked **Observation** in the reference tables: `noEndingQuestion`, `noRepeatedIdenticalCall`, `noDeprecatedToolCalled`, `toolErrorNamesInput` and `fullPageHasContinuation`.
+
+Each is a heuristic that can be right about what it saw and wrong about what it means. A poll loop and a wasteful retry are the same shape; a full page is not proof that more results exist; "Rate limited. Retry in 30 seconds." names no input key and is a good error message. So they carry one rule everywhere: `role: "advisory"` is required, a gating one is refused when written, and they are recorded beside a verdict without changing it.
+
+They still file at a link, which is what places them in the right group when you are reading what a suite measures. They do not make that link pass or fail.
+
+## Where to go next
+
+- [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) — every kind, its fields, and the link it measures
+- [Running evals](/sdk/concepts/running-evals) — authoring a suite and reading its results
+- [Validators](/sdk/reference/validators) — the tool-call matcher that files at Selection

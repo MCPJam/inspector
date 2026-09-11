@@ -80,11 +80,11 @@ export interface ComputerUsageView {
  * `projectId` is absent.
  */
 export function useComputerStatus(
-  projectId: string | null
+  projectId: string | null,
 ): ComputerView | null | undefined {
   return useQuery(
     "projectComputers:getComputerStatus" as never,
-    projectId ? ({ projectId } as never) : "skip"
+    projectId ? ({ projectId } as never) : "skip",
   ) as ComputerView | null | undefined;
 }
 
@@ -95,11 +95,11 @@ export function useComputerStatus(
  * predates `getComputerUsage` — mount it behind an error boundary.
  */
 export function useComputerUsage(
-  projectId: string | null
+  projectId: string | null,
 ): ComputerUsageView | null | undefined {
   return useQuery(
     "projectComputers:getComputerUsage" as never,
-    projectId ? ({ projectId } as never) : "skip"
+    projectId ? ({ projectId } as never) : "skip",
   ) as ComputerUsageView | null | undefined;
 }
 
@@ -150,6 +150,32 @@ export function useMintBrowserToken(): (args: {
   return useAction("projectComputers:mintBrowserToken" as never) as never;
 }
 
+/** Mint a browser token bound to one durable logical browser session. */
+export interface SessionBrowserTokenResult extends TerminalTokenResult {
+  sessionId: string;
+  target: "computer" | "sandbox";
+  sandboxRowId?: string;
+}
+
+export function useMintSessionBrowserToken(): (args: {
+  projectId: string;
+  sessionId: string;
+}) => Promise<SessionBrowserTokenResult> {
+  return useAction(
+    "projectComputers:mintSessionBrowserToken" as never,
+  ) as never;
+}
+
+/** Mint a browser token for the current conversation's logical session. */
+export function useMintConversationBrowserToken(): (args: {
+  projectId: string;
+  conversationId: string;
+}) => Promise<SessionBrowserTokenResult> {
+  return useAction(
+    "projectComputers:mintSessionBrowserToken" as never,
+  ) as never;
+}
+
 /**
  * Which data plane serves this inspector (GET /api/web/computers/config):
  * itself (`localConfigured` — it holds the vendor key + secrets) or a
@@ -162,6 +188,7 @@ export interface ComputerEnginesConfig {
     available: boolean;
     /** Bash may work while the terminal doesn't (node-pty failed to load). */
     terminalAvailable: boolean;
+    browserAvailable?: boolean;
     /** Tilde display root ("~/.mcpjam/computer") — render `${root}/<projectId>`. */
     workspaceDisplayRoot: string | null;
     reason?: string;
@@ -244,6 +271,7 @@ function parseEngines(value: unknown): ComputerEnginesConfig | null {
     local: {
       available: local.available,
       terminalAvailable: local.terminalAvailable === true,
+      browserAvailable: local.browserAvailable === true,
       workspaceDisplayRoot:
         typeof local.workspaceDisplayRoot === "string"
           ? local.workspaceDisplayRoot
@@ -312,7 +340,7 @@ export function useComputersDataPlaneConfig():
   | ComputersDataPlaneConfig
   | undefined {
   const [config, setConfig] = useState<ComputersDataPlaneConfig | undefined>(
-    cachedDataPlaneConfig ?? undefined
+    cachedDataPlaneConfig ?? undefined,
   );
 
   useEffect(() => {
@@ -345,7 +373,7 @@ export function useComputersDataPlaneConfig():
               localConfigured: true,
               remoteDataPlaneUrl: null,
             }),
-          }
+          },
         );
       }
     });

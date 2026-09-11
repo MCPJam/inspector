@@ -771,6 +771,9 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     // The heading truncates, and authored names run to SWARM_NAME_MAX — a
     // clipped one is unreadable without the tooltip.
     expect(heading.getAttribute("title")).toBe("Swarm run-2b");
+    // BB-202: the tab strip no longer gives way, so the heading is the child
+    // that has to shrink.
+    expect(heading.className.split(/\s+/)).toContain("truncate");
     expect(await screen.findByTestId("swarm-findings-tab")).toBeTruthy();
     expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
