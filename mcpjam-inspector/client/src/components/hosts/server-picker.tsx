@@ -175,6 +175,10 @@ export function ServerPicker({
     // Handshakes are keyed by NAME, so carrying them over would withhold
     // Connect from a same-named server in the next project.
     setConnecting([]);
+    // A hung write from the last project froze every row here until it
+    // settled. Released now; every `finally` below is fenced against it.
+    setCreating(false);
+    writing.current = false;
   }, [project]);
   // Unmount is a project change too. Its own effect: a cleanup on the one
   // above would also fire on every project change, where the body already
@@ -436,10 +440,12 @@ export function ServerPicker({
         await onChange(row._id, row as EvalServerAttachment);
         if (isCurrent()) setOpen(false);
       } catch (err) {
+        // The user left; this error belongs to a screen they are not on.
+        if (!isCurrent()) return;
         const raw = err instanceof Error ? err.message : "";
         toast.error(raw || `Couldn't select ${row.name}`);
       } finally {
-        setCreating(false);
+        if (isCurrent()) setCreating(false);
       }
     },
     [onChange],
@@ -489,6 +495,7 @@ export function ServerPicker({
         setOpen(false);
       } catch (err) {
         if ((err as MintFailure)?.stale) throw err;
+        if (!isCurrent()) throw { stale: true, wrote } as MintFailure;
         const raw = err instanceof Error ? err.message : "";
         // The collision wording belongs to the WRITE: matched against the
         // caller's commit error it told the user to rename a group that had
@@ -517,6 +524,7 @@ export function ServerPicker({
       // while a create is in flight is the same defect from the other side —
       // that create's own `onChange` lands second and overwrites it.
       writing.current = true;
+      const isCurrent = sinceNow();
       try {
         const existing = findSoloGroup(attachments, serverId);
         if (existing) {
@@ -543,10 +551,10 @@ export function ServerPicker({
           // Already reported, or the project moved on. Either way this click
           // has nothing left to do.
         } finally {
-          setCreating(false);
+          if (isCurrent()) setCreating(false);
         }
       } finally {
-        writing.current = false;
+        if (isCurrent()) writing.current = false;
       }
     },
     [
@@ -582,6 +590,7 @@ export function ServerPicker({
       }
       writing.current = true;
       setCreating(true);
+      const isCurrent = sinceNow();
       // Same split as the bare-server path: the collision wording is the
       // WRITE's, not the caller's commit's.
       const byId = new Map(catalog.map((row) => [row._id, row.name]));
@@ -600,8 +609,10 @@ export function ServerPicker({
         // when the row landed: the next Create would mint a duplicate.
         if (fail?.stale || !fail?.wrote) throw err;
       } finally {
-        setCreating(false);
-        writing.current = false;
+        if (isCurrent()) {
+          setCreating(false);
+          writing.current = false;
+        }
       }
     },
     [attachmentsKnown, catalog, createServerAttachment, onChange, project],
@@ -660,11 +671,14 @@ export function ServerPicker({
         });
         if (value === groupId) onClearSelection?.();
       } catch (err) {
+        if (!isCurrent()) return;
         const raw = err instanceof Error ? err.message : "";
         toast.error(raw || "Couldn't delete that server group.");
       } finally {
-        setCreating(false);
-        writing.current = false;
+        if (isCurrent()) {
+          setCreating(false);
+          writing.current = false;
+        }
       }
     },
     [creating, deleteServerAttachment, onClearSelection, project, value],
@@ -682,10 +696,11 @@ export function ServerPicker({
       const group = attachments.find((row) => row._id === groupId);
       if (!group) return;
       writing.current = true;
+      const isCurrent = sinceNow();
       try {
         await selectExisting(group);
       } finally {
-        writing.current = false;
+        if (isCurrent()) writing.current = false;
       }
     },
     [attachments, creating, selectExisting],
@@ -796,6 +811,8 @@ export function ServerPicker({
         }}
       >
         <ServerPickerPanel
+          // Its draft and `submitting` belong to the project it was opened in.
+          key={project}
           tab={tab}
           onTabChange={setTab}
           servers={serverRows}

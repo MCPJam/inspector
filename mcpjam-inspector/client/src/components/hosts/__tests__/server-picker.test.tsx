@@ -2056,3 +2056,176 @@ describe("ServerPicker — when the parent's commit rejects", () => {
     );
   });
 });
+
+describe("ServerPicker — a write the user walked away from", () => {
+  /**
+   * Settle and yield a macrotask inside `act`: the `finally` is two microtask
+   * hops away, and `act` alone returns before the second hop commits.
+   */
+  const settle = (fn: () => void) =>
+    act(async () => {
+      fn();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+  /** A promise settled by the test, not by the mock. */
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+  const STAND_IN = {
+    _id: "att_alpha",
+    name: "alpha",
+    serverIds: ["srv_1"],
+    resolvedServerNames: ["alpha"],
+  };
+  const PAIR = {
+    _id: "att_p",
+    name: "prod pair",
+    serverIds: ["srv_1", "srv_2"],
+    resolvedServerNames: ["alpha", "beta"],
+  };
+
+  it("does not freeze the next project behind a write that never settles", async () => {
+    // Only a `finally` cleared `creating` and the latch: a hung A froze B.
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
+    const { rerender } = render(
+      <ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(await serverRow("srv_1"));
+    await waitFor(async () => expect(await serverRow("srv_2")).toBeDisabled());
+
+    rerender(<ServerPicker projectId="p_2" value={null} onChange={vi.fn()} />);
+
+    await waitFor(async () =>
+      expect(await serverRow("srv_1")).not.toBeDisabled(),
+    );
+    // And the latch let go too: a pick here starts a write of its own.
+    fireEvent.click(await serverRow("srv_1"));
+    expect(mockState.createSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let the old write's cleanup release a write in flight here", async () => {
+    // The old write still settles, and its `finally` used to lower `creating`
+    // for whatever was running by then.
+    const first = deferred<{ _id: string }>();
+    mockState.createSpy = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementation(() => new Promise(() => {}));
+    const { rerender } = render(
+      <ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(await serverRow("srv_1"));
+
+    rerender(<ServerPicker projectId="p_2" value={null} onChange={vi.fn()} />);
+    await waitFor(async () =>
+      expect(await serverRow("srv_1")).not.toBeDisabled(),
+    );
+    fireEvent.click(await serverRow("srv_1"));
+    await waitFor(async () => expect(await serverRow("srv_2")).toBeDisabled());
+
+    await settle(() => first.resolve({ _id: "att_stale" }));
+
+    expect(await serverRow("srv_2")).toBeDisabled();
+  });
+
+  it("does not carry a submitting create form into the next project", async () => {
+    // `submitting` is the panel's own state: a hung Create in A left B's tabs
+    // disabled over A's form.
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
+    const { rerender } = render(
+      <ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(screen.getByText("Create new group…"));
+    await userEvent.click(screen.getByLabelText("alpha"));
+    await userEvent.click(screen.getByLabelText("beta"));
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Servers" })).toBeDisabled(),
+    );
+
+    rerender(<ServerPicker projectId="p_2" value={null} onChange={vi.fn()} />);
+
+    expect(screen.queryByLabelText("Group name")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Servers" })).not.toBeDisabled();
+  });
+
+  it("does not show an error that belongs to the project the user left (mint)", async () => {
+    const write = deferred<never>();
+    mockState.createSpy = vi.fn(() => write.promise);
+    const { rerender } = render(
+      <ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(await serverRow("srv_1"));
+    await waitFor(() => expect(mockState.createSpy).toHaveBeenCalledTimes(1));
+
+    rerender(<ServerPicker projectId="p_2" value={null} onChange={vi.fn()} />);
+    await settle(() => write.reject(new Error("A failed")));
+
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("does not show an error that belongs to the project the user left (existing row)", async () => {
+    mockState.attachments = [STAND_IN];
+    const commit = deferred<never>();
+    const onChange = vi.fn(() => commit.promise);
+    const { rerender } = render(
+      <ServerPicker projectId="p_1" value={null} onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(await serverRow("srv_1"));
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+
+    rerender(<ServerPicker projectId="p_2" value={null} onChange={onChange} />);
+    await settle(() => commit.reject(new Error("A failed")));
+
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("does not show an error that belongs to the project the user left (delete)", async () => {
+    mockState.attachments = [PAIR];
+    const del = deferred<never>();
+    mockState.deleteSpy = vi.fn(() => del.promise);
+    const { rerender } = render(
+      <ServerPicker
+        projectId="p_1"
+        value={null}
+        onChange={vi.fn()}
+        onClearSelection={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Delete prod pair" }),
+    );
+    await waitFor(() => expect(mockState.deleteSpy).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <ServerPicker
+        projectId="p_2"
+        value={null}
+        onChange={vi.fn()}
+        onClearSelection={vi.fn()}
+      />,
+    );
+    await settle(() => del.reject(new Error("A failed")));
+
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+});
