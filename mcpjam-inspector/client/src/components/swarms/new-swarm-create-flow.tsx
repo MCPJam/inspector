@@ -516,7 +516,8 @@ export function NewSwarmCreateFlow({
   const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
   // Sizes GENERATION only — how many personas and goals the Describe step
   // asks for. Confirm no longer picks it: iterations is the control there.
-  const pushIntensity = restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
+  const pushIntensity =
+    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
   // Seeded from the preset that generated the slate, then owned by the user:
   // Confirm sets it directly, so the preset never overwrites it afterwards.
   const [iterations, setIterations] = useState<number>(
@@ -782,8 +783,8 @@ export function NewSwarmCreateFlow({
     generating || materializing || serverBlock !== null || !hasSwarmName
       ? false
       : wantsGenerate
-        ? canGenerate
-        : reusedIds.length > 0;
+      ? canGenerate
+      : reusedIds.length > 0;
 
   /** Why the primary button is disabled, or a short summary when it isn't. */
   const continueHint = (() => {
@@ -1669,7 +1670,10 @@ export function NewSwarmCreateFlow({
 
   const leaveRunning = useCallback(() => {
     clearNewSwarmFlowDraft();
-    onDone(launchedRunLabelsRef.current, persistedRunGroupIdRef.current);
+    onDone(
+      launchedRunLabelsRef.current,
+      persistedRunGroupIdRef.current,
+    );
   }, [onDone]);
 
   // Labels ride along exactly as they do on `leaveRunning`: this is a leave

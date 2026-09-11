@@ -996,11 +996,9 @@ describe("SwarmsTab — New swarm create flow", () => {
       screen.getAllByLabelText(/Watch Refund Chaser/).length,
     ).toBeGreaterThan(0);
     expect(screen.getByText(/Running: Refund a charge/)).toBeInTheDocument();
-    const swarmRunGroupId = (
-      launchJourneyRunMock.mock.calls[0]![0] as {
-        swarmRunGroupId: string;
-      }
-    ).swarmRunGroupId;
+    const swarmRunGroupId = (launchJourneyRunMock.mock.calls[0]![0] as {
+      swarmRunGroupId: string;
+    }).swarmRunGroupId;
     fireEvent.click(screen.getByTestId("new-swarm-running-open-findings"));
     await waitFor(() =>
       expect(navigateMock).toHaveBeenCalledWith(`/swarms/${swarmRunGroupId}`),
@@ -1212,7 +1210,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       () =>
         new Promise((_resolve, reject) => {
           rejectGenerate = reject;
-        }),
+        })
     );
     openDescribe();
     fillDescribe();
@@ -1220,21 +1218,21 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await waitFor(() =>
       expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
-        /generating/i,
-      ),
+        /generating/i
+      )
     );
 
     rejectGenerate(
       // `limitDialogRaised` is what `postGenerate` sets once the dialog has
       // taken the error over.
-      new SwarmGenerateError(429, "Daily MCPJam model limit reached.", true),
+      new SwarmGenerateError(429, "Daily MCPJam model limit reached.", true)
     );
 
     // Back to idle, so the catch has run and had its chance to set a message.
     await waitFor(() =>
       expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
-        "Continue",
-      ),
+        "Continue"
+      )
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -2096,16 +2094,16 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     // fail if a later change skipped resolveTargets or routed to the other
     // bail-out. The ensureAdhoc call confirms the ad-hoc resolve path ran at all
     // rather than the preflight guard short-circuiting it.
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "resolve failed",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("resolve failed");
     expect(ensureAdhocEnvironmentsMock).toHaveBeenCalled();
     expect(
       screen.queryByTestId("new-swarm-running-step"),
     ).not.toBeInTheDocument();
     // The whole point of moving the latch ahead of the await: the finally
     // re-enabled the exit instead of stranding it disabled with no way out.
-    expect(screen.getByTestId("new-swarm-back-to-swarms")).not.toBeDisabled();
+    expect(
+      screen.getByTestId("new-swarm-back-to-swarms"),
+    ).not.toBeDisabled();
   });
 
   it("names the swarm from the date suggestion, not from the description paragraph", async () => {

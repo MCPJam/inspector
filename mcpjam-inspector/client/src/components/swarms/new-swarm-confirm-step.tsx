@@ -97,7 +97,8 @@ export type ConfirmLaunchPayload = {
 };
 
 type SelectedPersona =
-  { kind: "proposed"; key: string } | { kind: "reused"; id: string };
+  | { kind: "proposed"; key: string }
+  | { kind: "reused"; id: string };
 
 type ReusedGoal = {
   journeyId: string;
@@ -129,7 +130,7 @@ export type ReusedPersonaDraft = {
 export function diffReusedDraft(
   draft: ReusedPersonaDraft | undefined,
   persona: ReusedPersona,
-  goals: readonly ReusedGoal[],
+  goals: readonly ReusedGoal[]
 ): {
   patch: { name?: string; role?: string; notes?: string };
   goalEdits: { journeyId: string; goal: string }[];
@@ -222,7 +223,7 @@ function CompactPersonaCard({
         onClick={onSelect}
         className={cn(
           "flex w-full cursor-pointer items-start gap-4 rounded-xl border border-border/50 bg-muted/15 p-4 text-left transition-colors hover:bg-muted/25",
-          muted && "opacity-70",
+          muted && "opacity-70"
         )}
       >
         <PersonaPixelAvatar
@@ -235,7 +236,7 @@ function CompactPersonaCard({
           <p
             className={cn(
               "mb-1 line-clamp-1 text-sm font-semibold leading-5",
-              muted ? "text-muted-foreground" : "text-foreground",
+              muted ? "text-muted-foreground" : "text-foreground"
             )}
           >
             {role ? `${name} | ${role}` : name}
@@ -536,7 +537,7 @@ function ReusedPersonaJourneyLoader({
 }) {
   const journeys = useQuery(
     SWARM_QUERIES.listJourneysByPersona as any,
-    { personaRefId: persona._id } as any,
+    { personaRefId: persona._id } as any
   ) as
     | {
         _id: string;
@@ -576,7 +577,7 @@ function ReusedPersonaJourneyLoader({
       })),
       graded: journeys.some(
         (journey) =>
-          (journey.rubric && journey.rubric.length > 0) || journey.judgeConfig,
+          (journey.rubric && journey.rubric.length > 0) || journey.judgeConfig
       ),
     };
   }, [
@@ -686,7 +687,7 @@ export function NewSwarmConfirmStep({
    */
   onSaveReusedPersona: (
     personaRefId: string,
-    patch: { name?: string; role?: string; notes?: string },
+    patch: { name?: string; role?: string; notes?: string }
   ) => Promise<void>;
   /** Persist an edit to an existing journey's goal text. */
   onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
@@ -715,7 +716,7 @@ export function NewSwarmConfirmStep({
                 // so an id-only comparison would keep quoting a stale number
                 // after someone edits that goal's sessions mid-flow.
                 entry.sessionsPerTarget ===
-                  nextTargets[index]?.sessionsPerTarget,
+                  nextTargets[index]?.sessionsPerTarget
             ));
         const goalsMatch =
           previous != null &&
@@ -723,7 +724,7 @@ export function NewSwarmConfirmStep({
           previous.goals.every(
             (goal, index) =>
               goal.journeyId === data.goals[index]?.journeyId &&
-              goal.label === data.goals[index]?.label,
+              goal.label === data.goals[index]?.label
           );
         if (
           previous &&
@@ -736,7 +737,7 @@ export function NewSwarmConfirmStep({
         return { ...current, [personaId]: data };
       });
     },
-    [],
+    []
   );
 
   const newLocalKey = (prefix: string) =>
@@ -746,19 +747,17 @@ export function NewSwarmConfirmStep({
 
   const patchProposed = (
     key: string,
-    patch: (persona: ProposedPersona) => ProposedPersona,
+    patch: (persona: ProposedPersona) => ProposedPersona
   ) => {
     onProposedChange(
-      proposed.map((persona) =>
-        persona.key === key ? patch(persona) : persona,
-      ),
+      proposed.map((persona) => (persona.key === key ? patch(persona) : persona))
     );
   };
 
   const removePersona = (key: string) => {
     onProposedChange(proposed.filter((persona) => persona.key !== key));
     setSelected((current) =>
-      current?.kind === "proposed" && current.key === key ? null : current,
+      current?.kind === "proposed" && current.key === key ? null : current
     );
   };
   const removeJourney = (personaKey: string, journeyKey: string) => {
@@ -766,9 +765,7 @@ export function NewSwarmConfirmStep({
     // authoring goals. Launch simply skips personas with no journeys.
     patchProposed(personaKey, (persona) => ({
       ...persona,
-      journeys: persona.journeys.filter(
-        (journey) => journey.key !== journeyKey,
-      ),
+      journeys: persona.journeys.filter((journey) => journey.key !== journeyKey),
     }));
   };
   const addPersona = () => {
@@ -800,33 +797,33 @@ export function NewSwarmConfirmStep({
   const removeReused = (personaId: string) => {
     onRemoveReused(personaId);
     setSelected((current) =>
-      current?.kind === "reused" && current.id === personaId ? null : current,
+      current?.kind === "reused" && current.id === personaId ? null : current
     );
   };
 
   const reusedPending = reusedPersonas.some(
-    (persona) => (reusedResolved[persona._id]?.targets ?? null) === null,
+    (persona) => (reusedResolved[persona._id]?.targets ?? null) === null
   );
   const activeReusedTargets = reusedPersonas.flatMap(
-    (persona) => reusedResolved[persona._id]?.targets ?? [],
+    (persona) => reusedResolved[persona._id]?.targets ?? []
   );
   // Empty draft goals stay visible for authoring but don't count toward
   // launch readiness — Create & launch only persists trimmed goals.
   const newJourneyCount = proposed.reduce(
     (sum, persona) =>
       sum + persona.journeys.filter((journey) => journey.goal.trim()).length,
-    0,
+    0
   );
   const journeyCount = newJourneyCount + activeReusedTargets.length;
   // Every journey this launch fans out, not just the newly authored ones —
   // a reuse-heavy swarm was under-reporting its own session count. Reused
   // journeys are counted at THEIR OWN sessions, which is what launch runs
-  // them at; the preset only sizes the journeys this swarm creates.
+  // them at; the counter only sizes the journeys this swarm creates.
   const launchSessionEstimate = estimateLaunchSessions({
     iterations,
     newJourneyCount,
     reusedSessionsPerTarget: activeReusedTargets.map(
-      (target) => target.sessionsPerTarget ?? null,
+      (target) => target.sessionsPerTarget ?? null
     ),
     environmentCount,
   });
@@ -838,11 +835,11 @@ export function NewSwarmConfirmStep({
 
   const selectedProposed =
     selected?.kind === "proposed"
-      ? (proposed.find((persona) => persona.key === selected.key) ?? null)
+      ? proposed.find((persona) => persona.key === selected.key) ?? null
       : null;
   const selectedReused =
     selected?.kind === "reused"
-      ? (reusedPersonas.find((persona) => persona._id === selected.id) ?? null)
+      ? reusedPersonas.find((persona) => persona._id === selected.id) ?? null
       : null;
 
   /**
@@ -865,17 +862,19 @@ export function NewSwarmConfirmStep({
       goals: ReusedGoal[],
       patch: Partial<{ name: string; role: string; notes: string }> & {
         goal?: { journeyId: string; text: string };
-      },
+      }
     ) => {
       setReusedDrafts((drafts) => {
-        const current = drafts[persona._id] ?? {
-          name: persona.name,
-          role: persona.role,
-          notes: persona.notes ?? "",
-          goals: Object.fromEntries(
-            goals.map((goal) => [goal.journeyId, goal.label]),
-          ),
-        };
+        const current =
+          drafts[persona._id] ??
+          {
+            name: persona.name,
+            role: persona.role,
+            notes: persona.notes ?? "",
+            goals: Object.fromEntries(
+              goals.map((goal) => [goal.journeyId, goal.label])
+            ),
+          };
         const next = {
           ...current,
           ...(patch.name === undefined ? {} : { name: patch.name }),
@@ -888,7 +887,7 @@ export function NewSwarmConfirmStep({
         return { ...drafts, [persona._id]: next };
       });
     },
-    [],
+    []
   );
 
   const saveReused = useCallback(
@@ -925,13 +924,13 @@ export function NewSwarmConfirmStep({
         toast.error(
           error instanceof Error
             ? error.message
-            : "Couldn't save this persona. Your changes are still here.",
+            : "Couldn't save this persona. Your changes are still here."
         );
       } finally {
         setSavingReusedId(null);
       }
     },
-    [onSaveReusedGoal, onSaveReusedPersona, reusedDrafts],
+    [onSaveReusedGoal, onSaveReusedPersona, reusedDrafts]
   );
 
   /**
@@ -948,11 +947,7 @@ export function NewSwarmConfirmStep({
    */
   const discardReused = useCallback(
     (persona: ReusedPersona, goals: ReusedGoal[]) => {
-      const { dirty } = diffReusedDraft(
-        reusedDrafts[persona._id],
-        persona,
-        goals,
-      );
+      const { dirty } = diffReusedDraft(reusedDrafts[persona._id], persona, goals);
       if (dirty) {
         setReusedDrafts((drafts) => {
           const { [persona._id]: _discarded, ...rest } = drafts;
@@ -962,16 +957,16 @@ export function NewSwarmConfirmStep({
       }
       setSelected(null);
     },
-    [reusedDrafts],
+    [reusedDrafts]
   );
 
   const personasAvailableToAdd = useMemo(
     () =>
       availablePersonas.filter(
         (persona) =>
-          !reusedPersonas.some((chosen) => chosen._id === persona._id),
+          !reusedPersonas.some((chosen) => chosen._id === persona._id)
       ),
-    [availablePersonas, reusedPersonas],
+    [availablePersonas, reusedPersonas]
   );
 
   // Drop stale selection if the persona was removed elsewhere.
@@ -999,13 +994,10 @@ export function NewSwarmConfirmStep({
             Select a user persona for details, or remove anything that
             doesn&rsquo;t fit.
           </p>
-          <p
-            className="sr-only"
-            data-testid="new-swarm-launch-session-estimate"
-          >
+          <p className="sr-only" data-testid="new-swarm-launch-session-estimate">
             This launch will run {launchSessionEstimate}{" "}
-            {launchSessionEstimate === 1 ? "conversation" : "conversations"}{" "}
-            total across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
+            {launchSessionEstimate === 1 ? "conversation" : "conversations"} total
+            across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
           </p>
           {environmentLabels.length > 0 && proposed.length > 0 ? (
             <p
@@ -1071,7 +1063,7 @@ export function NewSwarmConfirmStep({
                           journeys: current.journeys.map((journey) =>
                             journey.key === goalKey
                               ? { ...journey, goal }
-                              : journey,
+                              : journey
                           ),
                         }))
                       }
@@ -1126,7 +1118,8 @@ export function NewSwarmConfirmStep({
                   return (
                     <li key={persona._id}>
                       {(() => {
-                        const goals = reusedResolved[persona._id]?.goals ?? [];
+                        const goals =
+                          reusedResolved[persona._id]?.goals ?? [];
                         const draft = reusedDrafts[persona._id];
                         const goalText = (goal: ReusedGoal) =>
                           draft?.goals[goal.journeyId] ?? goal.label;
@@ -1142,8 +1135,8 @@ export function NewSwarmConfirmStep({
                             }))}
                             graded={reusedResolved[persona._id]?.graded}
                             loadingGoals={
-                              (reusedResolved[persona._id]?.targets ?? null) ===
-                              null
+                              (reusedResolved[persona._id]?.targets ??
+                                null) === null
                             }
                             avatarShape={persona.avatarShape}
                             avatarPalette={persona.avatarPalette}
@@ -1246,9 +1239,7 @@ export function NewSwarmConfirmStep({
               value={iterations}
               disabled={launching}
               data-testid="new-swarm-iterations"
-              onChange={(event) =>
-                onIterationsChange(Number(event.target.value))
-              }
+              onChange={(event) => onIterationsChange(Number(event.target.value))}
               className="w-20 text-center font-mono"
             />
             <Button
@@ -1277,8 +1268,8 @@ export function NewSwarmConfirmStep({
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   Plus {reusedCount} reused{" "}
                   {reusedCount === 1 ? "goal" : "goals"}, counted at the
-                  iterations already saved on{" "}
-                  {reusedCount === 1 ? "it" : "them"}.
+                  iterations already saved on {reusedCount === 1 ? "it" : "them"}
+                  .
                 </p>
               ) : null}
             </div>

@@ -82,7 +82,7 @@ describe("new swarm flow draft", () => {
         savedAt: Date.now(),
         projectId: "proj-1",
         draft: withoutName,
-      }),
+      })
     );
 
     const restored = readNewSwarmFlowDraft("proj-1");
@@ -99,8 +99,10 @@ describe("new swarm flow draft", () => {
     // way out. An un-normalized stack reaches the composer's budget line and
     // throws while rendering, which loses the slate outright.
     const stale = draft({ step: "confirm" });
-    const { modelSelection: _omitted, ...stackWithoutModels } =
-      stale.targetState.stack;
+    const {
+      modelSelection: _omitted,
+      ...stackWithoutModels
+    } = stale.targetState.stack;
     sessionStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -111,7 +113,7 @@ describe("new swarm flow draft", () => {
           ...stale,
           targetState: { ...stale.targetState, stack: stackWithoutModels },
         },
-      }),
+      })
     );
 
     const restored = readNewSwarmFlowDraft("proj-1");
@@ -126,26 +128,29 @@ describe("new swarm flow draft", () => {
   it.each([
     ["absent", undefined, false],
     ["null", null, false],
-    ['the string "true"', "true", false],
+    ["the string \"true\"", "true", false],
     ["the number 1", 1, false],
     ["a real true", true, true],
-  ])("normalizes nameEdited given %s", (_label, stored, expected) => {
-    // `=== true`, deliberately. Loosening this to `Boolean(...)` or `?? false`
-    // would make a stringified draft claim the name was edited, which is what
-    // keeps an untouched form's draft alive.
-    const { nameEdited: _drop, ...rest } = draft({ step: "confirm" });
-    sessionStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        version: 1,
-        savedAt: Date.now(),
-        projectId: "proj-1",
-        draft: stored === undefined ? rest : { ...rest, nameEdited: stored },
-      }),
-    );
+  ])(
+    "normalizes nameEdited given %s",
+    (_label, stored, expected) => {
+      // `=== true`, deliberately. Loosening this to `Boolean(...)` or `?? false`
+      // would make a stringified draft claim the name was edited, which is what
+      // keeps an untouched form's draft alive.
+      const { nameEdited: _drop, ...rest } = draft({ step: "confirm" });
+      sessionStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          version: 1,
+          savedAt: Date.now(),
+          projectId: "proj-1",
+          draft: stored === undefined ? rest : { ...rest, nameEdited: stored },
+        })
+      );
 
-    expect(readNewSwarmFlowDraft("proj-1")?.nameEdited).toBe(expected);
-  });
+      expect(readNewSwarmFlowDraft("proj-1")?.nameEdited).toBe(expected);
+    }
+  );
 
   it("round-trips the resumable flow for the same project", () => {
     saveNewSwarmFlowDraft("proj-1", draft());
@@ -179,7 +184,7 @@ describe("new swarm flow draft", () => {
           ],
           environmentKey: "castles|env-1",
         },
-      }),
+      })
     );
 
     const restored = readNewSwarmFlowDraft("proj-1");
@@ -222,7 +227,7 @@ describe("new swarm flow draft", () => {
     const stored = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? "{}");
     sessionStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ ...stored, version: 99 }),
+      JSON.stringify({ ...stored, version: 99 })
     );
 
     expect(readNewSwarmFlowDraft("proj-1")).toBeNull();
@@ -241,7 +246,7 @@ describe("new swarm flow draft", () => {
       JSON.stringify({
         ...stored,
         draft: { ...stored.draft, proposed: [{ name: "Nameless" }] },
-      }),
+      })
     );
     expect(readNewSwarmFlowDraft("proj-1")).toBeNull();
   });
@@ -251,10 +256,7 @@ describe("new swarm flow draft", () => {
     const stored = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? "{}");
     sessionStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({
-        ...stored,
-        draft: { ...stored.draft, step: "findings" },
-      }),
+      JSON.stringify({ ...stored, draft: { ...stored.draft, step: "findings" } })
     );
 
     expect(readNewSwarmFlowDraft("proj-1")).toBeNull();
