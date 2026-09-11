@@ -83,6 +83,16 @@ export interface InputHistoryNavigation {
   draft: string;
   /** The exact text this walk last placed in the field. */
   applied: string;
+  /**
+   * Every entry this walk has been through: `path[i]` is `entries[i]` as it
+   * read at the time, so the path IS the list's prefix up to `index`.
+   *
+   * Checking only the current entry was not enough. Two threads routinely
+   * carry the same message ("what tools do you have?"), and one sitting at the
+   * walked index kept a stale walk alive — the next step then jumped past
+   * everything newer in the thread that had just replaced it.
+   */
+  path: readonly string[];
 }
 
 export interface NavigateInputHistoryArgs {
@@ -112,16 +122,14 @@ export function navigateInputHistory(
   const { direction, entries, value } = args;
   // A walk is still live only if BOTH ends still agree with it: the field
   // still holds what the walk put there (the user has not typed over it), and
-  // the entry it points at is still that same message. The second check is
-  // what survives the list being replaced underneath — opening another session
-  // from the history rail swaps every entry while the composer keeps its text,
-  // and continuing to count from the old index would skip the new thread's
-  // most recent message.
+  // the list still reads the way it did for every step already taken. The
+  // second check is what survives the list being replaced underneath —
+  // opening another session from the history rail swaps every entry while the
+  // composer keeps its text, and counting on from the old index would skip
+  // the new thread's most recent message.
   const previous = args.navigation;
   const active =
-    previous &&
-    previous.applied === value &&
-    entries[previous.index] === previous.applied
+    previous && previous.applied === value && walkStillFits(previous, entries)
       ? previous
       : null;
 
@@ -139,6 +147,7 @@ export function navigateInputHistory(
         index: nextIndex,
         draft: active ? active.draft : value,
         applied,
+        path: [...(active?.path ?? []), applied],
       },
       value: applied,
     };
@@ -152,9 +161,31 @@ export function navigateInputHistory(
   const nextIndex = active.index - 1;
   const applied = entries[nextIndex]!;
   return {
-    navigation: { index: nextIndex, draft: active.draft, applied },
+    navigation: {
+      index: nextIndex,
+      draft: active.draft,
+      applied,
+      // Stepping back toward the newest end shortens the path it came by.
+      path: active.path.slice(0, nextIndex + 1),
+    },
     value: applied,
   };
+}
+
+/**
+ * Whether every entry this walk has already been through still reads the same.
+ *
+ * The prefix is a walk's honest identity: same entries walked, same walk. It
+ * costs one comparison per step taken — a walk is a handful of presses, not a
+ * scan of the thread — and it does NOT fire on the list being re-derived with
+ * equal content, which happens on every streamed token.
+ */
+function walkStillFits(
+  navigation: InputHistoryNavigation,
+  entries: readonly string[],
+): boolean {
+  if (navigation.path.length !== navigation.index + 1) return false;
+  return navigation.path.every((entry, index) => entries[index] === entry);
 }
 
 /**
