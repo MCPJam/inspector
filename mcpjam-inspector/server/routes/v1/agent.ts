@@ -81,6 +81,7 @@ import {
 } from "./approval-surface.js";
 import { MCPJAM_HOSTED_ORIGIN, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import { parseWithSchema } from "../web/errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -1243,6 +1244,10 @@ agent.post("/projects/:projectId/agent", async (c) => {
       },
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+        // Uniformity after MJ-001 — see the same note in `web/mcpjam-agent.ts`.
+        // `MCPJAM_DOCS_MCP_URL` is operator-supplied, so it is classified at
+        // boot rather than trusted here.
+        baseFetch: hostedMcpBaseFetch(),
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       }
     );

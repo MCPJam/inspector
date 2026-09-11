@@ -6,9 +6,11 @@ import {
   isUnsafeHostedOutboundUrl,
   resolveHostModelDefinition,
   resolveOrgModelConfig,
+  resolveOrgProviderRuntimeForTarget,
   resolveSyntheticModelSource,
 } from "../org-model-config";
 import type { ModelDefinition } from "@/shared/types";
+import { withGithubCredentialPolicy } from "../../services/github-checks/credential-policy";
 
 const ORIGINAL_ENV = {
   CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
@@ -101,6 +103,54 @@ describe("resolveOrgModelConfig", () => {
     expect(
       new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("authorization"),
     ).toBe("Bearer user-b");
+  });
+
+  it("does not populate shared model caches during GitHub execution", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) =>
+        String(input).includes("/stream/org/resolve")
+          ? Response.json({
+              ok: true,
+              runtimeLocation: "local",
+              provider: { providerKey: "openai", apiKey: "secret" },
+            })
+          : Response.json({
+              ok: true,
+              providers: [
+                { providerKey: "openai", enabled: true, apiKey: "secret" },
+              ],
+            }),
+      );
+    const auth = { bearerToken: "policy-cache-token" };
+    const policy = {
+      policy: "suite_credentials" as const,
+      allowedBuiltInToolIds: [],
+      checkAccess: async () => {},
+    };
+
+    await withGithubCredentialPolicy(policy, () =>
+      resolveOrgModelConfig({ projectId: "policy-cache-config" }, auth),
+    );
+    await resolveOrgModelConfig({ projectId: "policy-cache-config" }, auth);
+    await withGithubCredentialPolicy(policy, () =>
+      resolveOrgProviderRuntimeForTarget(
+        { projectId: "policy-cache-runtime" },
+        "openai",
+        "gpt-5",
+        auth,
+      ),
+    );
+    await resolveOrgProviderRuntimeForTarget(
+      { projectId: "policy-cache-runtime" },
+      "openai",
+      "gpt-5",
+      auth,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
 

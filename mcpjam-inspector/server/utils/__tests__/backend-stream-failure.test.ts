@@ -103,7 +103,12 @@ describe("describeBackendStreamFailure", () => {
 });
 
 describe("isUserOwnedDenialCode", () => {
-  it.each(["user_rate_limit", "wallet_locked", "billing_limit_reached"])(
+  it.each([
+    "user_rate_limit",
+    "wallet_locked",
+    "billing_limit_reached",
+    "spend_budget_reached",
+  ])(
     "exempts the routine 200 denial %s from the internal boundary",
     (code) => {
       // These are the backend working correctly and refusing a request for a

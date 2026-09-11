@@ -24,8 +24,9 @@
     "check:bundled-runtime-paths": "node scripts/check-bundled-runtime-paths.mjs",
     "check:platform-runtime-safety": "! rg -n '[\"\\x27]node:|process\\.env' sdk/src/platform",
     "check:permalink-concatenation": "node scripts/check-permalink-concatenation.mjs",
+    "check:hosted-manager-base-fetch": "node mcpjam-inspector/scripts/check-hosted-manager-base-fetch.mjs",
     "check:platform-runtime-safety:dist": "test -d sdk/dist/platform && ! rg -n '[\"\\x27]node:|process\\.env' sdk/dist/platform -g '!*.map'",
-    "test:checks": "npm run check:mcp-v1-runtime-imports && npm run check:bundled-runtime-paths && npm run check:permalink-concatenation && npm run check:platform-runtime-safety && npm run build -w @mcpjam/sdk && npm run check:platform-runtime-safety:dist",
+    "test:checks": "npm run check:mcp-v1-runtime-imports && npm run check:bundled-runtime-paths && npm run check:permalink-concatenation && npm run check:hosted-manager-base-fetch && npm run check:platform-runtime-safety && npm run build -w @mcpjam/sdk && npm run check:platform-runtime-safety:dist",
     "test": "npm run test:checks && npm run test:parallel && npm run test:packaging -w @mcpjam/sdk",
     "test:ci:rest": "npm run test:checks && npm run test:parallel:rest && npm run test:packaging:assert -w @mcpjam/sdk",
     "test:ci:packaging": "npm run build -w @mcpjam/sdk && npm run test:packaging -w @mcpjam/vitest",
@@ -59,6 +60,8 @@
   },
   "overrides": {
     "shell-quote": "^1.8.4",
-    "tar": "^7.5.22"
+    "tar": "^7.5.22",
+    "ws": "^8.21.3",
+    "ip-address": "^10.7.0"
   }
 }

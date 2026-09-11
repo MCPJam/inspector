@@ -66,6 +66,9 @@ interface MountHarness {
     allowValue: string,
     colorScheme: unknown,
     mountMode?: "write" | "srcdoc",
+    appliedCsp?: string,
+    appliedCspMode?: "permissive" | "widget-declared",
+    cspIntent?: Record<string, unknown>,
   ) => "url" | "srcdoc" | "srcdoc-fallback";
   createInnerFrame: (
     sandboxValue: string,
@@ -82,7 +85,7 @@ interface MountHarness {
  * Rehydrate the proxy's mount helpers against a jsdom document, with the
  * top-level `inner` / `lastMount` bindings they close over.
  */
-function harness(): { dom: JSDOM; h: MountHarness } {
+function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
   const dom = new JSDOM(
     "<!doctype html><html><head></head><body></body></html>",
     {
@@ -101,9 +104,12 @@ function harness(): { dom: JSDOM; h: MountHarness } {
     "document",
     "window",
     "posted",
+    "proxyInstanceId",
     `
     const INNER_STYLE = "width:100%; height:100%; border:none;";
     let inner = null;
+    let mountSequence = 0;
+    let currentMountId = null;
     let lastMount = null;
     // Pinning is off in this harness; the view-mode post falls back to "*".
     let hostOrigin = null;
@@ -112,7 +118,8 @@ function harness(): { dom: JSDOM; h: MountHarness } {
     ${mountInnerSrc}
     ${remountLastSrc}
     return {
-      mountInner,
+      mountInner: (html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp = "default-src 'none'", appliedCspMode = "widget-declared", cspIntent) =>
+        mountInner(html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp, appliedCspMode, cspIntent),
       createInnerFrame,
       getInner: () => inner,
       getLastMount: () => lastMount,
@@ -124,8 +131,12 @@ function harness(): { dom: JSDOM; h: MountHarness } {
     document: Document,
     window: unknown,
     posted: Array<[unknown, string]>,
+    proxyInstanceId: string,
   ) => MountHarness;
-  return { dom, h: factory(dom.window.document, win, posted) };
+  return {
+    dom,
+    h: factory(dom.window.document, win, posted, proxyInstanceId),
+  };
 }
 
 const WIDGET = "<!doctype html><html><body><p id='w'>hi</p></body></html>";
@@ -193,6 +204,8 @@ describe("sandbox-proxy mountInner", () => {
       allowValue: "geolocation *",
       colorScheme: "dark",
       mountMode: undefined,
+      appliedCsp: "default-src 'none'",
+      appliedCspMode: "widget-declared",
     });
   });
 
@@ -205,7 +218,17 @@ describe("sandbox-proxy mountInner", () => {
     expect(h.posted).toEqual([
       [
         {
+          type: "mcpjam:csp-applied",
+          mountId: "proxy-a:1",
+          csp: "default-src 'none'",
+          mode: "widget-declared",
+        },
+        "*",
+      ],
+      [
+        {
           type: "mcpjam:view-mode",
+          mountId: "proxy-a:1",
           mode: "url",
           // jsdom's document.open() does not adopt the entry document's URL
           // (the browser e2e pins that); what matters here is that the proxy
@@ -221,8 +244,51 @@ describe("sandbox-proxy mountInner", () => {
     const { h } = harness();
     h.mountInner(WIDGET, "allow-scripts", "", "light", "srcdoc");
     expect(h.posted).toEqual([
-      [{ type: "mcpjam:view-mode", mode: "srcdoc", url: "about:srcdoc" }, "*"],
+      [
+        {
+          type: "mcpjam:csp-applied",
+          mountId: "proxy-a:1",
+          csp: "default-src 'none'",
+          mode: "widget-declared",
+        },
+        "*",
+      ],
+      [
+        {
+          type: "mcpjam:view-mode",
+          mountId: "proxy-a:1",
+          mode: "srcdoc",
+          url: "about:srcdoc",
+        },
+        "*",
+      ],
     ]);
+  });
+
+  it("reports the pre-injection CSP intent with the same mount id", () => {
+    const { h } = harness();
+    const intent = {
+      csp: { frameDomains: ["https://js.stripe.com"] },
+      permissive: false,
+    };
+    h.mountInner(
+      WIDGET,
+      "allow-same-origin allow-scripts",
+      "",
+      "light",
+      undefined,
+      "frame-src https://js.stripe.com",
+      "widget-declared",
+      intent,
+    );
+
+    expect(h.posted[0][0]).toEqual({
+      type: "mcpjam:csp-applied",
+      mountId: "proxy-a:1",
+      csp: "frame-src https://js.stripe.com",
+      mode: "widget-declared",
+      intent,
+    });
   });
 
   it("removes the previous frame and repoints `inner` on every mount", () => {
@@ -313,6 +379,54 @@ describe("sandbox-proxy blank-reload remount", () => {
     expect(before.isConnected).toBe(false);
     expect(after.getAttribute("allow")).toBe("camera *");
     expect(after.contentDocument!.querySelector("#w")!.textContent).toBe("hi");
+    expect(
+      h.posted.filter(
+        ([data]) => (data as { type?: string }).type === "mcpjam:csp-applied",
+      ),
+    ).toEqual([
+      [
+        {
+          type: "mcpjam:csp-applied",
+          mountId: "proxy-a:1",
+          csp: "default-src 'none'",
+          mode: "widget-declared",
+        },
+        "*",
+      ],
+      [
+        {
+          type: "mcpjam:csp-applied",
+          mountId: "proxy-a:2",
+          csp: "default-src 'none'",
+          mode: "widget-declared",
+        },
+        "*",
+      ],
+    ]);
+  });
+
+  it("does not reuse mount ids when the whole proxy is recreated", () => {
+    const firstProxy = harness("proxy-a").h;
+    const secondProxy = harness("proxy-b").h;
+
+    firstProxy.mountInner(
+      WIDGET,
+      "allow-same-origin allow-scripts",
+      "",
+      "light",
+    );
+    secondProxy.mountInner(
+      WIDGET,
+      "allow-same-origin allow-scripts",
+      "",
+      "light",
+    );
+
+    const firstApplied = firstProxy.posted[0][0] as { mountId: string };
+    const secondApplied = secondProxy.posted[0][0] as { mountId: string };
+    expect(firstApplied.mountId).toBe("proxy-a:1");
+    expect(secondApplied.mountId).toBe("proxy-b:1");
+    expect(firstApplied.mountId).not.toBe(secondApplied.mountId);
   });
 
   it("leaves the frame alone after its own write (href is the proxy URL)", () => {
@@ -360,6 +474,10 @@ describe("sandbox-proxy nested sandbox-proxy-ready guard", () => {
     expect(guard).toContain("remountLast();");
     expect(guard).toContain("return;");
     expect(guard).not.toContain("window.parent.postMessage");
+  });
+
+  it("stamps forwarded violations with the current mount id", () => {
+    expect(html).toContain("? { ...data, mountId: currentMountId }");
   });
 });
 
@@ -447,7 +565,7 @@ describe("sandbox-proxy host-origin pinning (source contract)", () => {
 
   it("relays to the locked origin rather than any window", () => {
     expect(html).toContain(
-      'window.parent.postMessage(data, hostOrigin || "*")',
+      'window.parent.postMessage(outgoing, hostOrigin || "*")',
     );
     // And the boot handshake, which happens before any host message, is the
     // only postMessage that can still be unaddressed.
