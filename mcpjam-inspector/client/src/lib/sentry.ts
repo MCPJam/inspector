@@ -69,9 +69,10 @@ let sentryReplayStoppedByGuard = false;
 export function syncSentryReplayForPath(pathname: string): void {
   try {
     if (!isErrorCaptureSurface()) return;
-    const replay = Sentry.getClient()?.getIntegrationByName?.<
-      ReturnType<typeof Sentry.replayIntegration>
-    >("Replay");
+    const replay =
+      Sentry.getClient()?.getIntegrationByName?.<
+        ReturnType<typeof Sentry.replayIntegration>
+      >("Replay");
     if (!replay) return;
 
     if (isCredentialBearingPath(pathname)) {
@@ -106,7 +107,14 @@ export function syncSentryReplayForPath(pathname: string): void {
  */
 export function captureSentryException(
   error: Error,
-  context?: { tags?: Record<string, string> }
+  context?: { tags?: Record<string, string> },
 ): void {
   Sentry.captureException(error, context);
+}
+
+export function captureSentryMessage(
+  message: string,
+  context: Parameters<typeof Sentry.captureMessage>[1],
+): void {
+  Sentry.captureMessage(message, context);
 }

@@ -151,7 +151,11 @@ function emptyStages(): Record<JourneyStageId, StageEvidence[]> {
 
 const TERMINAL_EXCLUDED = new Set(["running", "pending"]);
 
-function runIsTerminal(run: SwarmOverviewRun): boolean {
+/**
+ * A run is settled unless it is still in flight. Exported because the Findings
+ * summary needs a wave-level answer when no signals carry one.
+ */
+export function runIsTerminal(run: SwarmOverviewRun): boolean {
   return !TERMINAL_EXCLUDED.has(run.status);
 }
 

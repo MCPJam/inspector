@@ -4,7 +4,9 @@ import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import { denyGuests } from "../../middleware/deny-guests.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
+import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
@@ -40,6 +42,7 @@ import serverSkills from "./server-skills.js";
 import caniuse from "./caniuse.js";
 import mrtrContinuation from "./mrtr-continuation.js";
 import registryWeb from "./registry.js";
+import browserProfiles from "./browser-profiles.js";
 import webmcpInspector from "../mcp/webmcp-inspector.js";
 import { HOSTED_MODE } from "../../config.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
@@ -87,6 +90,19 @@ for (const startsWork of [
 ]) {
   web.use(startsWork, conformanceRunRateLimitMiddleware);
 }
+// Same reasoning as the conformance ceiling above, one finding later (MJ-001):
+// these two routes open a connection to a URL the caller stored, and the
+// `guestRateLimitMiddleware` on `/servers/*` returns early for anyone who is
+// not a guest — so a signed-in caller was spending our egress unmetered. Keyed
+// per credential rather than per address, because the differential error a
+// scan reads is per request and the accounts are free to create.
+//
+// Listed path-by-path, not as `/servers/*`: the rest of that router is Convex
+// reads and writes with no outbound MCP connection, and metering them on an
+// egress-shaped budget would be the wrong ceiling on the wrong thing.
+for (const spendsEgress of ["/servers/doctor", "/servers/validate"]) {
+  web.use(spendsEgress, mcpEgressRateLimitMiddleware);
+}
 // Connector Bench. Listed path-by-path rather than as `/bench/*` because
 // `/bench/results/:secret` must stay reachable with no session at all — the
 // secret in the URL is the credential, exactly as on `/score`. The per-IP
@@ -114,6 +130,18 @@ web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // deliberately open: it returns only a boolean and a public URL, and the
 // client needs it before any authed flow to know where the terminal lives.
 web.use("/computers/exec", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Voice transcription is billed per audio-minute against MCPJam's own provider
+// balance, so it is metered on TWO keys. The per-guest limiter above bounds one
+// identity; `audioDailyLimitMiddleware` bounds the IP, because a guest identity
+// is free to mint (10/min per IP) and a per-identity budget alone therefore
+// bounds a polite caller and nothing else.
+web.use(
+  "/audio/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  audioDailyLimitMiddleware,
+);
+
 // The WebMCP Inspector, hosted. The SAME router the local inspector mounts at
 // `/api/mcp/webmcp`, which is unreachable here — `/api/mcp/*` is 410'd in
 // hosted mode — so it moves to the family that hosted actually serves.
@@ -155,6 +183,12 @@ web.use(
   guestRateLimitMiddleware,
   denyGuests("Cloud Skills"),
 );
+web.use(
+  "/browser-profiles/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  denyGuests("Browser profiles"),
+);
 web.use("/server-skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",
@@ -173,8 +207,11 @@ web.route("/swarm", swarmGenerate);
 web.route("/evals", evals);
 web.route("/environments", environments);
 web.route("/export", exporter);
-// Voice transcription handles user-bearer forwarding and guest fallback inside
-// the proxy route so local/npx users can spend MCPJam credits without BYOK.
+// Voice transcription forwards the CALLER's bearer and has no credential of its
+// own to fall back on. Every surface supplies one: the client attaches a guest
+// or WorkOS bearer to `/api/web/*` on hosted and local alike (see
+// `HOSTED_AUTH_PATH_PREFIXES` in client/src/lib/session-token.ts), and local
+// runtimes mint their own guest via POST /api/web/guest-session.
 web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like
@@ -210,6 +247,7 @@ if (HOSTED_MODE) {
   web.route("/webmcp", webmcpInspector);
 }
 web.route("/skills", skills);
+web.route("/browser-profiles", browserProfiles);
 // Skills served BY a connected MCP server (SEP-2640). A DISTINCT path from
 // `/skills` above, which serves the project's durable Convex skills.
 web.route("/server-skills", serverSkills);
