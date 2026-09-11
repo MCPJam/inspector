@@ -175,6 +175,7 @@ type Fakes = {
   deps: Partial<ResolveAndStartDeps> & { plan: CheckPlanSession };
   events: string[];
   boxes: CheckSandbox[];
+  liveSandboxIds: Set<string>;
   attempts: RecordedAttempt[];
   /** What `cloneAndCheckout` was asked for, per box. */
   clones: CloneCall[];
@@ -197,6 +198,7 @@ function fakes(options: {
 }): Fakes {
   const events: string[] = [];
   const boxes: CheckSandbox[] = [];
+  const liveSandboxIds = new Set<string>();
   const clones: CloneCall[] = [];
   let provisioned = 0;
   const scripted = options.session ?? fakeSession();
@@ -213,6 +215,7 @@ function fakes(options: {
         kill: async () => {},
       } as unknown as CheckSandbox;
       boxes.push(box);
+      liveSandboxIds.add(box.sandboxId);
       events.push(`provision:${box.sandboxId}`);
       return box;
     },
@@ -231,6 +234,7 @@ function fakes(options: {
       };
     },
     killSandbox: async (sandbox) => {
+      if (sandbox) liveSandboxIds.delete(sandbox.sandboxId);
       events.push(`kill:${sandbox?.sandboxId ?? "none"}`);
     },
     ...(options.ladder ? { resolveLadder: () => options.ladder! } : {}),
@@ -246,7 +250,14 @@ function fakes(options: {
     now: () => 0,
   };
 
-  return { deps, events, boxes, attempts: scripted.attempts, clones };
+  return {
+    deps,
+    events,
+    boxes,
+    liveSandboxIds,
+    attempts: scripted.attempts,
+    clones,
+  };
 }
 
 async function stopOf(promise: Promise<unknown>): Promise<CheckStoppedByPlan> {
@@ -533,6 +544,7 @@ describe("resolveAndStart — degraded and refused", () => {
     );
     // Every box is dead on the failure path.
     expect(f.events).toContain("kill:sb_1");
+    expect(f.liveSandboxIds).toEqual(new Set());
   });
 
   it("an unreachable /plan/candidates executes NO local candidate", async () => {
@@ -557,6 +569,7 @@ describe("resolveAndStart — degraded and refused", () => {
       false
     );
     expect(f.events).toContain("kill:sb_1");
+    expect(f.liveSandboxIds).toEqual(new Set());
   });
 
   it("stops when the plan comes back with no candidates at all", async () => {
@@ -716,6 +729,7 @@ describe("resolveAndStart — a fresh sandbox per candidate", () => {
     const result = await resolveAndStart(ARGS, f.deps);
     expect(result.sandbox.sandboxId).toBe("sb_2");
     expect(f.boxes).toHaveLength(2);
+    expect(f.liveSandboxIds).toEqual(new Set(["sb_2"]));
     expect(f.events.indexOf("kill:sb_1")).toBeGreaterThan(-1);
     expect(f.events.indexOf("kill:sb_1")).toBeLessThan(
       f.events.indexOf("provision:sb_2")
