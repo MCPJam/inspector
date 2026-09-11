@@ -25,7 +25,7 @@ logger.debug("Processing request", requestData);
 - `logger.error` → Sentry **and** Axiom. This is the server's single Sentry
   capture path for free-form errors. `logger.ts` owns every
   `Sentry.captureException` call in the server; the error-origin policy
-  (`error-origin-capture.ts`) decides *whether* to capture and then calls
+  (`error-origin-capture.ts`) decides _whether_ to capture and then calls
   `captureOriginErrorToSentry` here, so there is one policy module and one
   mechanism, not two of each.
 - Route catch-sites use `reportRouteFailure` (`utils/route-error-report.ts`),
@@ -87,6 +87,7 @@ Tests live in `__tests__/` directories next to source files. Use existing tests 
 - **Factories** (`client/src/test/factories.ts`): `createServer()`, `createTool()`, `createMany()`, etc.
 - **Mock presets** (`client/src/test/mocks/`): `mcpApiPresets`, `storePresets`
 - **Server helpers** (`server/routes/mcp/__tests__/helpers/`): `createTestApp()`, `createMockMcpClientManager()`, `postJson()`, `expectError()`
+- **WorkOS emulator** (`server/test/support/workos-emulator.ts`): `startWorkosEmulator()`, `loginWithPkce()`, `mintUserApiKey()`. The `*.emulator.test.ts` suites drive the real WorkOS paths against a local `@workos/emulate` server instead of stubbing `fetch` — use them when the assertion depends on what WorkOS actually does (a rotated refresh token, a revoked key, a real JWKS). One emulator per file on port 0; see the WorkOS contract tests section in `../CONTRIBUTING.md`.
 
 ### Checklist
 

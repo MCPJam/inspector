@@ -28,7 +28,7 @@
  * (bootstrap MUST resolve before discovery decides whether to delegate).
  */
 import { z } from "zod";
-import { HOSTED_MODE } from "../../config.js";
+import { HOSTED_MODE, hostedBrowserEnabled } from "../../config.js";
 import { logger } from "../logger.js";
 import {
   getConvexHttpUrl,
@@ -184,6 +184,50 @@ export function isHostedDesktopProvisionable(): boolean | null {
  */
 export function isHostedBrowserRefused(): boolean {
   return refusesOnVerdict(isHostedBrowserExposable());
+}
+
+/**
+ * Is booking a per-run DESKTOP BOX for a hosted browser worth doing on this
+ * replica — the rollout env flag, plus the backend verdict that would NOT
+ * stop the reservation on its own?
+ *
+ * One definition because there are now two kinds of caller and they must not
+ * disagree: `resolveHostTools` asks at tool-resolution time, and the eval and
+ * swarm runners ask BEFORE PROVISIONING, because a desktop box is booked for
+ * the life of a run and a resolver that then suppresses every browser tool
+ * would leave that box paid for and idle. The backend refuses its own half of
+ * this (`desktop_not_advertised`, `desktop_unavailable`), but it cannot see an
+ * inspector-side env flag, so the provisioning side has to ask here.
+ *
+ * `isHostedDesktopUnavailable` is DELIBERATELY NOT one of them, though it
+ * looks like it belongs. The two backend verdicts fail differently:
+ *
+ *   - `exposable: false` does NOT stop a reservation. The control plane
+ *     decides from the run's FROZEN `builtInToolIds`, which still say
+ *     `browser`, so it boots a real desktop — and the resolver, reading this
+ *     verdict, then advertises nothing on it. A paid, idle box for the life of
+ *     the run, which is the whole reason this gate exists.
+ *
+ *   - a missing template or desktop rate DOES stop it, before any box is
+ *     created: `desktopTemplateRefFromConfig` is a pure config check that
+ *     throws `desktop_unavailable`, and `describeEvalSandboxRefusal` /
+ *     `describeAttemptSandboxRefusal` turn that into the sentence the run
+ *     surfaces. So asking costs nothing and produces the ONLY message an eval
+ *     can carry — it has no notice channel, the failed setup IS the message.
+ *     Refusing here instead would run the eval browser-less and score it as an
+ *     ordinary result, silently. It would also refuse every browser run
+ *     against a backend that merely predates `desktopProvisionable`, since
+ *     silence reads as refusal in hosted mode.
+ *
+ * Short version: gate on what the control plane cannot see or will not catch;
+ * let it refuse the rest itself, where the refusal comes with words.
+ *
+ * NOT a substitute for the resolver's own checks: this says nothing about a
+ * local engine, a guest actor, or bash co-tenancy, all of which are per-turn
+ * facts rather than deployment ones.
+ */
+export function hostedBrowserAdvertisable(): boolean {
+  return hostedBrowserEnabled() && !isHostedBrowserRefused();
 }
 
 /**

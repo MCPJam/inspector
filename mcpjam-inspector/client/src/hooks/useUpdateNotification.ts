@@ -8,6 +8,17 @@ const RELEASES_URL = "https://github.com/MCPJam/inspector/releases";
 
 export function useUpdateNotification() {
   const [status, setStatus] = useState<UpdateStatus>({ kind: "idle" });
+  /**
+   * The user asked to install, and we are waiting for the app to go away.
+   *
+   * Tracked here rather than read off `status` because the main process does
+   * not change the status when it starts a `downloaded` install — it hands off
+   * to Electron and the app tears down — so `downloaded` is both "ready to
+   * install" and "installing", and only the click tells them apart. Without
+   * this the button stays enabled through the whole teardown and a second
+   * click fires `quitAndInstall` twice (INSPECTOR-ELECTRON-GT).
+   */
+  const [restartRequested, setRestartRequested] = useState(false);
 
   useEffect(() => {
     if (!window.isElectron || !window.electronAPI?.update) {
@@ -24,6 +35,9 @@ export function useUpdateNotification() {
       setStatus(next);
     });
     api.onUpdateError(() => {
+      // The install did not happen, so let the user ask again. Its own toast
+      // offers the manual download; this re-arms the button behind it.
+      setRestartRequested(false);
       // Surface a fallback path — auto-update can stall silently on macOS
       // (Squirrel staging / signing issues), so always offer a manual
       // download as an escape hatch.
@@ -44,7 +58,8 @@ export function useUpdateNotification() {
     // Initial snapshot — apply only if a live event hasn't already overtaken it.
     // Avoids a startup race where an older idle snapshot overwrites a live
     // pending/downloaded event and hides the button until the next broadcast.
-    api.getUpdateStatus()
+    api
+      .getUpdateStatus()
       .then((initial) => {
         if (!cancelled && !liveEventReceived) setStatus(initial);
       })
@@ -60,6 +75,7 @@ export function useUpdateNotification() {
   }, []);
 
   const restartAndInstall = useCallback(() => {
+    setRestartRequested(true);
     window.electronAPI?.update?.restartAndInstall();
   }, []);
 
@@ -77,6 +93,7 @@ export function useUpdateNotification() {
 
   return {
     status,
+    restartRequested,
     restartAndInstall,
     simulateUpdate,
     simulateUpdateDownloaded,

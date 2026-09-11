@@ -132,6 +132,47 @@ describe("uploadVideoBlob", () => {
     expect((init.body as Blob).type).toBe("video/webm");
   });
 
+  test("posts an mp4 as an mp4 when the caller says so", async () => {
+    // Convex serves back exactly the content type the bytes were posted with,
+    // so a hosted daemon's MP4 announced as webm is a file the browser refuses
+    // to play — and the only symptom is an empty player on the trace page.
+    const { client } = makeClient("https://convex.example/upload");
+    const fetchMock = vi.fn(async () => okJson({ storageId: "vid-2" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const id = await uploadVideoBlob(client, Buffer.from([0, 0, 0, 0x18]), {
+      contentType: "video/mp4",
+    });
+
+    expect(id).toBe("vid-2");
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "video/mp4",
+    );
+    expect((init.body as Blob).type).toBe("video/mp4");
+  });
+
+  test("keeps webm for a caller that names no type", async () => {
+    // Every caller that predates a second recorder is the local widget
+    // harness, whose replay has always been a `.webm`.
+    const { client } = makeClient("https://convex.example/upload");
+    const fetchMock = vi.fn(async () => okJson({ storageId: "vid-3" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await uploadVideoBlob(client, Buffer.from([1]), {});
+
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "video/webm",
+    );
+  });
+
   test("returns undefined when the upload URL can't be generated (no fetch)", async () => {
     const { client } = makeClient("");
     const fetchMock = vi.fn();

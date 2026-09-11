@@ -7,13 +7,17 @@ const {
   mockRepos,
   mockBindings,
   mockConnectRepo,
+  mockSetRepoForkCredentials,
+  mockSetRepoPrServerOAuth,
   mockConnectVerifiedRepo,
   mockListInstallationRepos,
   mockNavigate,
   mockToast,
 } = vi.hoisted(() => ({
   mockAvailability: {
-    value: undefined as { state: "enabled" | "disabled" } | undefined,
+    value: undefined as
+      | { state: "enabled" | "disabled"; canManage?: boolean }
+      | undefined,
   },
   mockRepos: { value: undefined as any[] | undefined },
   // The org's installations, on a live query. What the listing below is a
@@ -22,6 +26,12 @@ const {
   // The unverified connect the backend still exposes for the two-deploy
   // window. Handed to the component so that reaching for it is a recorded
   // call rather than a crash — "never called" is the assertion.
+  mockSetRepoForkCredentials: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
+  mockSetRepoPrServerOAuth: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
   mockConnectRepo: vi.fn(async () => ({ configId: "cfg-legacy" })),
   // Loosely typed for the same reason as the settings-route suite: these stand
   // in for Convex actions whose arguments are hand-mirrored, and a narrow
@@ -46,7 +56,7 @@ const {
         installationRef: "bind-1",
         accountLogin: "mcpjam",
       },
-    ]
+    ],
   ),
   mockNavigate: vi.fn(),
   mockToast: { error: vi.fn(), success: vi.fn() },
@@ -58,6 +68,8 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     repos: mockRepos.value,
     bindings: mockBindings.value,
     connectRepo: mockConnectRepo,
+    setRepoForkCredentials: mockSetRepoForkCredentials,
+    setRepoPrServerOAuth: mockSetRepoPrServerOAuth,
     connectVerifiedRepo: mockConnectVerifiedRepo,
     listInstallationRepos: mockListInstallationRepos,
   }),
@@ -76,6 +88,11 @@ const CONNECTED_HERE = {
   repoFullName: "mcpjam/mcp-check-fixture",
   enabled: true,
   suiteId: "suite-1",
+  projectId: "proj-1",
+  prServerOAuth: {
+    status: "not_configured" as const,
+    sources: [],
+  },
 };
 const CONNECTED_ELSEWHERE = {
   _id: "cfg-2",
@@ -86,9 +103,11 @@ const CONNECTED_ELSEWHERE = {
 
 function renderSection(
   opts: {
-    availability?: { state: "enabled" | "disabled" } | undefined;
+    availability?:
+      | { state: "enabled" | "disabled"; canManage?: boolean }
+      | undefined;
     repos?: any[] | undefined;
-  } = {}
+  } = {},
 ) {
   // Read the key's PRESENCE, not its value: a destructuring default fires on an
   // explicit `undefined` too, which would silently turn the "still loading"
@@ -104,7 +123,7 @@ function renderSection(
       suiteId="suite-1"
       projectId="proj-1"
       organizationId="org-1"
-    />
+    />,
   );
 }
 
@@ -112,7 +131,7 @@ function renderSection(
 async function chooseOption(
   user: ReturnType<typeof userEvent.setup>,
   triggerLabel: string,
-  optionName: string
+  optionName: string,
 ) {
   await user.click(screen.getByLabelText(triggerLabel));
   await user.click(await screen.findByRole("option", { name: optionName }));
@@ -134,19 +153,19 @@ describe("SuiteGithubChecksSection", () => {
   it("lists only the repositories running THIS suite", async () => {
     renderSection({ repos: [CONNECTED_HERE, CONNECTED_ELSEWHERE] });
     expect(
-      await screen.findByTestId("suite-github-repo-mcpjam/mcp-check-fixture")
+      await screen.findByTestId("suite-github-repo-mcpjam/mcp-check-fixture"),
     ).toBeInTheDocument();
     // Connected to a different suite — showing it here would imply this suite
     // runs on it.
     expect(
-      screen.queryByTestId("suite-github-repo-mcpjam/inspector")
+      screen.queryByTestId("suite-github-repo-mcpjam/inspector"),
     ).not.toBeInTheDocument();
   });
 
   it("says so when no repository runs this suite", () => {
     renderSection({ repos: [CONNECTED_ELSEWHERE] });
     expect(
-      screen.getByText("No repositories run this suite yet.")
+      screen.getByText("No repositories run this suite yet."),
     ).toBeInTheDocument();
   });
 
@@ -164,8 +183,8 @@ describe("SuiteGithubChecksSection", () => {
     expect(trigger).toBeInTheDocument();
     await waitFor(() =>
       expect(
-        screen.queryByText("No repositories available to connect.")
-      ).not.toBeInTheDocument()
+        screen.queryByText("No repositories available to connect."),
+      ).not.toBeInTheDocument(),
     );
   });
 
@@ -201,7 +220,7 @@ describe("SuiteGithubChecksSection", () => {
     await user.click(screen.getByRole("button", { name: /Connect/ }));
 
     await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1),
     );
     expect(mockConnectVerifiedRepo).toHaveBeenCalledWith({
       repoFullName: "mcpjam/inspector",
@@ -253,7 +272,7 @@ describe("SuiteGithubChecksSection", () => {
       () =>
         new Promise((resolve) => {
           resolveConnect = resolve as (result: unknown) => void;
-        })
+        }),
     );
     const user = userEvent.setup();
     const { unmount } = renderSection({ repos: [] });
@@ -263,7 +282,7 @@ describe("SuiteGithubChecksSection", () => {
     await chooseOption(user, "Outage policy", "Fail open");
     await user.click(screen.getByRole("button", { name: /Connect/ }));
     await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1),
     );
 
     unmount();
@@ -280,13 +299,13 @@ describe("SuiteGithubChecksSection", () => {
 
     expect(
       screen.getByText(
-        /During an MCPJam outage or pause, the check reports neutral\./
-      )
+        /During an MCPJam outage or pause, the check reports neutral\./,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Whether a failed or neutral check blocks merging depends on this repository's branch-protection settings\./
-      )
+        /Whether a failed or neutral check blocks merging depends on this repository's branch-protection settings\./,
+      ),
     ).toBeInTheDocument();
     const page = document.body.textContent ?? "";
     for (const forbidden of [/merges proceed/i, /merges are blocked/i]) {
@@ -339,41 +358,30 @@ describe("SuiteGithubChecksSection repository identity", () => {
     await user.click(screen.getByRole("button", { name: /Connect/ }));
 
     await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1),
     );
     expect(mockConnectVerifiedRepo).toHaveBeenCalledWith(
       expect.objectContaining({
         repoFullName: "widgets",
         installationRef: "bind-globex",
         repositoryId: 202,
-      })
+      }),
     );
   });
 
-  it("omits installationRef when the listing carried none", async () => {
-    // The compatibility window: an organization with no binding is still listed
-    // through the backend's pinned installation, and omitting the reference is
-    // what keeps that connect path reachable.
+  it("rejects a stale listing entry without installation identity", async () => {
     mockListInstallationRepos.mockResolvedValue([
       { repositoryId: 301, fullName: "mcpjam/pinned" },
     ]);
-    const user = userEvent.setup();
     renderSection({ repos: [] });
     await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
-
-    await chooseOption(user, "Repository", "mcpjam/pinned");
-    await chooseOption(user, "Outage policy", "Fail open");
-    await user.click(screen.getByRole("button", { name: /Connect/ }));
-
+    expect(
+      await screen.findByText(/No repositories available to connect\./),
+    ).toBeInTheDocument();
     await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole("button", { name: /Connect/ })).toBeDisabled(),
     );
-    const sent = mockConnectVerifiedRepo.mock.calls[0]?.[0] as Record<
-      string,
-      unknown
-    >;
-    expect(sent).not.toHaveProperty("installationRef");
-    expect(sent.repositoryId).toBe(301);
+    expect(mockConnectVerifiedRepo).not.toHaveBeenCalled();
   });
 });
 
@@ -395,20 +403,24 @@ describe("SuiteGithubChecksSection binding changes", () => {
         suiteId="suite-1"
         projectId="proj-1"
         organizationId="org-1"
-      />
+      />,
     );
   }
 
   it("re-lists when an account is connected elsewhere", async () => {
     mockListInstallationRepos.mockReset();
-    mockListInstallationRepos
-      .mockResolvedValueOnce([])
-      .mockResolvedValue([{ repositoryId: 401, fullName: "acme/widgets" }]);
+    mockListInstallationRepos.mockResolvedValueOnce([]).mockResolvedValue([
+      {
+        repositoryId: 401,
+        fullName: "acme/widgets",
+        installationRef: "bind-acme",
+      },
+    ]);
 
     const user = userEvent.setup();
     const { rerender } = renderWithBindings([]);
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1),
     );
 
     mockBindings.value = [
@@ -426,22 +438,26 @@ describe("SuiteGithubChecksSection binding changes", () => {
         suiteId="suite-1"
         projectId="proj-1"
         organizationId="org-1"
-      />
+      />,
     );
 
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2),
     );
     await user.click(screen.getByLabelText("Repository"));
     expect(
-      await screen.findByRole("option", { name: "acme/widgets" })
+      await screen.findByRole("option", { name: "acme/widgets" }),
     ).toBeInTheDocument();
   });
 
   it("does not re-list when the query re-delivers the same bindings", async () => {
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([
-      { repositoryId: 402, fullName: "acme/widgets" },
+      {
+        repositoryId: 402,
+        fullName: "acme/widgets",
+        installationRef: "bind-acme",
+      },
     ]);
     const rows = () => [
       {
@@ -456,7 +472,7 @@ describe("SuiteGithubChecksSection binding changes", () => {
 
     const { rerender } = renderWithBindings(rows());
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1),
     );
 
     // A fresh array with identical content, which is what every delivery of a
@@ -467,10 +483,163 @@ describe("SuiteGithubChecksSection binding changes", () => {
         suiteId="suite-1"
         projectId="proj-1"
         organizationId="org-1"
-      />
+      />,
     );
     await act(async () => {});
 
     expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
   });
+});
+
+it("the suite section edits the same repository credential policy", async () => {
+  renderSection({
+    availability: { state: "enabled", canManage: true },
+    repos: [{ ...CONNECTED_HERE, connectionStatus: "verified" }],
+  });
+  const toggle = screen.getByRole("switch", {
+    name: /Allow suite credentials in approved forks/,
+  });
+  expect(toggle).not.toBeChecked();
+  await userEvent.setup().click(toggle);
+  expect(mockSetRepoForkCredentials).toHaveBeenCalledWith({
+    configId: CONNECTED_HERE._id,
+    enabled: true,
+  });
+});
+
+it("the suite section asks only when several OAuth sources need a choice", async () => {
+  renderSection({
+    availability: { state: "enabled", canManage: true },
+    repos: [
+      {
+        ...CONNECTED_HERE,
+        connectionStatus: "verified",
+        prServerOAuth: {
+          status: "selection_required",
+          sources: [
+            {
+              serverId: "server-oauth",
+              name: "Test OAuth server",
+              authorized: true,
+            },
+            {
+              serverId: "server-other",
+              name: "Other OAuth server",
+              authorized: true,
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  await chooseOption(
+    userEvent.setup(),
+    `Server authorization for ${CONNECTED_HERE.repoFullName}`,
+    "Test OAuth server",
+  );
+
+  expect(mockSetRepoPrServerOAuth).toHaveBeenCalledWith({
+    configId: CONNECTED_HERE._id,
+    sourceServerId: "server-oauth",
+  });
+});
+
+it("keeps each repository OAuth selector busy independently", async () => {
+  let resolveFirst: ((value: unknown) => void) | undefined;
+  let resolveSecond: ((value: unknown) => void) | undefined;
+  mockSetRepoPrServerOAuth
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecond = resolve;
+        }),
+    );
+  const oauthResolution = {
+    status: "selection_required" as const,
+    sources: [
+      {
+        serverId: "server-oauth",
+        name: "Test OAuth server",
+        authorized: true,
+      },
+    ],
+  };
+  const second = {
+    ...CONNECTED_HERE,
+    _id: "cfg-2",
+    repoFullName: "mcpjam/second-fixture",
+  };
+  const user = userEvent.setup();
+  renderSection({
+    availability: { state: "enabled", canManage: true },
+    repos: [
+      { ...CONNECTED_HERE, prServerOAuth: oauthResolution },
+      { ...second, prServerOAuth: oauthResolution },
+    ],
+  });
+  const firstLabel = `Server authorization for ${CONNECTED_HERE.repoFullName}`;
+  const secondLabel = `Server authorization for ${second.repoFullName}`;
+
+  await chooseOption(user, firstLabel, "Test OAuth server");
+  await chooseOption(user, secondLabel, "Test OAuth server");
+  expect(screen.getByLabelText(firstLabel)).toBeDisabled();
+  expect(screen.getByLabelText(secondLabel)).toBeDisabled();
+
+  await act(async () => resolveSecond?.({ changed: true }));
+  await waitFor(() => expect(screen.getByLabelText(secondLabel)).toBeEnabled());
+  expect(screen.getByLabelText(firstLabel)).toBeDisabled();
+  await act(async () => resolveFirst?.({ changed: true }));
+});
+
+it("does not toast when an OAuth write fails after the suite section is gone", async () => {
+  let rejectWrite: ((error: unknown) => void) | undefined;
+  mockSetRepoPrServerOAuth.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectWrite = reject;
+      }),
+  );
+  const { unmount } = renderSection({
+    availability: { state: "enabled", canManage: true },
+    repos: [
+      {
+        ...CONNECTED_HERE,
+        prServerOAuth: {
+          status: "selection_required",
+          sources: [
+            {
+              serverId: "server-oauth",
+              name: "Test OAuth server",
+              authorized: true,
+            },
+          ],
+        },
+      },
+    ],
+  });
+  await chooseOption(
+    userEvent.setup(),
+    `Server authorization for ${CONNECTED_HERE.repoFullName}`,
+    "Test OAuth server",
+  );
+  unmount();
+  await act(async () => rejectWrite?.(new Error("stale failure")));
+  expect(mockToast.error).not.toHaveBeenCalled();
+});
+
+it("the suite section keeps credential controls disabled for a member", () => {
+  renderSection({
+    availability: { state: "enabled", canManage: false },
+    repos: [{ ...CONNECTED_HERE, connectionStatus: "verified" }],
+  });
+  expect(
+    screen.getByRole("switch", { name: /Allow suite credentials/ }),
+  ).toBeDisabled();
 });

@@ -9,13 +9,14 @@
  * Click a session chip to watch its live stream in the right pane
  * (`SwarmLiveStreamPane` — same Trace / Chat / Raw surface as Personas).
  *
- * Open findings / Done / Leave all leave this watch surface for the swarm's
- * Findings page. The run keeps going. A first-finding ping at the top is a
- * notification, not the only door.
+ * "Open findings" and Leave both exit this watch surface for the swarm's
+ * Findings page; the run keeps going. A finished run goes there on its own —
+ * see `COMPLETION_TOAST_DWELL_MS`.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
+import { toast } from "@/lib/toast";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { SwarmRunningHero } from "@/components/swarms/swarm-running-hero";
 import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
@@ -34,13 +35,19 @@ import {
   type SwarmCellLiveStatus,
 } from "@/components/swarms/use-journey-run-stream";
 import {
+  attemptTargetKey,
   buildSwarmRunTargets,
+  findAttemptForSelection,
   findTargetCellForChatSessionId,
   summaryTargetKey,
   type SwarmTargetColumn,
 } from "@/components/swarms/swarm-targets";
 import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
-import { humanizeSwarmAttemptError } from "@/shared/swarm-attempt-error";
+import {
+  humanizeSwarmAttemptError,
+  isAccountLimit,
+} from "@/shared/swarm-attempt-error";
+import { providerLabelForModelId } from "./session-rate-limit";
 import {
   DEFAULT_PAGE_SIZE,
   SWARM_QUERIES,
@@ -182,25 +189,6 @@ function avatarState(
   if (outcome === "failed") return "error";
   return "idle";
 }
-
-type FirstFinding = {
-  text: string;
-  /**
-   * The session that produced it. Kept so we only ping a finding that can
-   * still be traced on the swarm page — a row without a session id is a
-   * claim, so it is skipped. The ping opens THIS session on the swarm's own
-   * page; "Open findings" beside it is the route to Findings.
-   */
-  sessionId: string;
-  /**
-   * The criterion that failed, when exactly one did. Carried so the run page
-   * this link leaves for can NAME the finding — the wizard's own line says
-   * what was found, and that sentence used to be lost the moment the viewer
-   * followed it. Omitted for a multi-check failure: naming one of several
-   * would misreport which claim the viewer is looking at.
-   */
-  criterionId?: string;
-};
 
 function columnsFromRun(
   run: JourneyRun,
@@ -526,15 +514,19 @@ function collectSessionSlots(args: {
   const slots: SessionSlot[] = [];
 
   // Attempts are claimed with the SAME id the client mints below, so the
-  // chatSessionId join is exact. `(hostId, sessionIdx)` is the fallback for
-  // an attempt that failed before it could claim one.
+  // chatSessionId join is exact. The target slot is the fallback for an attempt
+  // that failed before it could claim one — keyed by target rather than host,
+  // or two environments sharing a host would read each other's outcome.
   const attemptByChatSessionId = new Map<string, JourneyRunAttempt>();
-  const attemptByHostSlot = new Map<string, JourneyRunAttempt>();
+  const attemptByTargetSlot = new Map<string, JourneyRunAttempt>();
   for (const attempt of snap.attempts) {
     if (attempt.chatSessionId) {
       attemptByChatSessionId.set(attempt.chatSessionId, attempt);
     }
-    attemptByHostSlot.set(`${attempt.hostId}#${attempt.sessionIdx}`, attempt);
+    attemptByTargetSlot.set(
+      `${attemptTargetKey(attempt)}#${attempt.sessionIdx}`,
+      attempt
+    );
   }
 
   for (let index = 0; index < snap.sessionsPerTarget; index++) {
@@ -564,7 +556,7 @@ function collectSessionSlots(args: {
       (fromEnvelope?.envelope.chatSessionId
         ? attemptByChatSessionId.get(fromEnvelope.envelope.chatSessionId)
         : undefined) ??
-      attemptByHostSlot.get(`${target.hostId}#${index}`) ??
+      attemptByTargetSlot.get(`${columnKey}#${index}`) ??
       null;
 
     slots.push({
@@ -612,60 +604,14 @@ function mergeStreams(
   return stream;
 }
 
-function findFirstFinding(
-  snapshots: Record<string, RunLiveSnapshot>
-): FirstFinding | null {
-  for (const snap of Object.values(snapshots)) {
-    for (const session of snap.sessions) {
-      const criteria = session.criteria;
-      if (criteria?.status !== "completed" || !criteria.results?.length) {
-        continue;
-      }
-      const failed = criteria.results.filter((result) => !result.passed);
-      if (failed.length === 0) continue;
-      if (!session.id) continue;
-      const reason =
-        session.goalScore?.reason?.trim() ||
-        `failed ${failed.length} ${failed.length === 1 ? "check" : "checks"}`;
-      return {
-        text: `First finding: ${reason}`,
-        sessionId: session.id,
-        ...(failed.length === 1 && failed[0]
-          ? { criterionId: failed[0].criterionId }
-          : {}),
-      };
-    }
-  }
-  return null;
-}
-
-function FirstFindingPing({
-  finding,
-  onOpen,
-}: {
-  finding: FirstFinding;
-  onOpen: () => void;
-}) {
-  return (
-    <div
-      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2.5"
-      data-testid="new-swarm-running-finding"
-    >
-      <p className="min-w-0 flex-1 text-sm leading-snug text-foreground">
-        {finding.text}
-      </p>
-      <button
-        type="button"
-        className="shrink-0 text-sm font-medium text-primary hover:text-primary/80"
-        data-testid="new-swarm-running-finding-open"
-        aria-label="Open the session behind this finding"
-        onClick={onOpen}
-      >
-        Look now
-      </button>
-    </div>
-  );
-}
+/**
+ * How long the finished screen stays up before Findings takes over.
+ *
+ * BB-161 wants both halves: the step checkmark, 100%, and the per-goal
+ * completion lines, AND an automatic trip to Findings. Navigating on the same
+ * tick the run finishes would make the first half unobservable.
+ */
+const COMPLETION_TOAST_DWELL_MS = 1800;
 
 export function NewSwarmRunningStep({
   runs,
@@ -674,6 +620,7 @@ export function NewSwarmRunningStep({
   hosts = [],
   onLeave,
   onOpenSession,
+  onRunsComplete,
 }: {
   projectId: string;
   runs: SwarmLaunchedRun[];
@@ -691,7 +638,13 @@ export function NewSwarmRunningStep({
    * Follow one session's transcript out of the wizard (the live pane's
    * completed-session control). Findings is a different exit — `onLeave`.
    */
-  onOpenSession: (sessionId: string, criterionId?: string) => void;
+  onOpenSession: (sessionId: string) => void;
+  /**
+   * Fired once, when every launched run has reached a terminal state. The
+   * wizard owns the step rail, so this is how the last step gets its
+   * checkmark before the automatic trip to Findings.
+   */
+  onRunsComplete?: () => void;
 }) {
   const hostById = useMemo(() => {
     return new Map(hosts.map((host) => [host.hostId, host] as const));
@@ -843,6 +796,38 @@ export function NewSwarmRunningStep({
       };
     }, [runs, snapshots]);
 
+  // Read through a ref so the effect below depends on `allTerminal` alone:
+  // re-running it because a callback's identity changed would clear the
+  // pending timer and strand the viewer on a finished run.
+  const callbacksRef = useRef({ onLeave, onRunsComplete });
+  useEffect(() => {
+    callbacksRef.current = { onLeave, onRunsComplete };
+  }, [onLeave, onRunsComplete]);
+
+  /**
+   * Announce the finish, then hand the viewer to Findings (BB-161).
+   *
+   * Only the announcement is ref-guarded. The trip is scheduled on every
+   * terminal setup, because a wave that settles, blips off terminal, and
+   * settles again replays this effect: the cleanup cancels the pending trip,
+   * and a setup that skipped rescheduling would strand the viewer on a
+   * finished run. That cleanup is also what keeps an unmounted wizard from
+   * navigating out from under whatever replaced it.
+   */
+  const completionAnnouncedRef = useRef(false);
+  useEffect(() => {
+    if (!allTerminal) return;
+    if (!completionAnnouncedRef.current) {
+      completionAnnouncedRef.current = true;
+      callbacksRef.current.onRunsComplete?.();
+      toast.success("Swarm complete!");
+    }
+    const timer = window.setTimeout(() => {
+      callbacksRef.current.onLeave();
+    }, COMPLETION_TOAST_DWELL_MS);
+    return () => window.clearTimeout(timer);
+  }, [allTerminal]);
+
   /**
    * The first non-success terminal, humanized — what the run banner explains.
    *
@@ -853,7 +838,12 @@ export function NewSwarmRunningStep({
    * envelope.
    */
   const runFailure = useMemo(() => {
-    if (!allTerminal || rateLimited + failed === 0) return null;
+    // Every line of the banner asserts that nothing ran, so one success
+    // silences it: on a mixed run it contradicted the title above it, which
+    // counts the run as finished. Those sessions speak through their own chips.
+    if (!allTerminal || succeeded > 0 || rateLimited + failed === 0) {
+      return null;
+    }
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
@@ -872,10 +862,9 @@ export function NewSwarmRunningStep({
       }
     }
     return null;
-  }, [allTerminal, failed, rateLimited, snapshots]);
+  }, [allTerminal, failed, rateLimited, snapshots, succeeded]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
-  const finding = useMemo(() => findFirstFinding(snapshots), [snapshots]);
 
   const mergedStream = useMemo(() => mergeStreams(snapshots), [snapshots]);
 
@@ -888,6 +877,57 @@ export function NewSwarmRunningStep({
       ) ?? null
     );
   }, [selection, snapshots]);
+
+  // The pane resolves its own outcome, so it needs the attempt row for the same
+  // reason the chip does: the chat-session lifecycle can complete while the
+  // attempt holds a refusal. Same join order as the cells.
+  const selectedAttempt = useMemo(() => {
+    if (!selection) return null;
+    const snap = snapshots[selection.runId];
+    if (!snap) return null;
+    return findAttemptForSelection(snap.attempts, selection);
+  }, [selection, snapshots]);
+
+  // Three of twelve sessions can be throttled while the swarm keeps working.
+  // The chips go amber, but nobody finds the reason by clicking each one, and
+  // the run banner below only speaks when NO session ran at all.
+  const providerRateLimit = useMemo(() => {
+    let count = 0;
+    const labels = new Set<string>();
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited") continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        // The code comes off the attempt, not the humanized info: that only
+        // carries a code through for the codes it words itself, so the
+        // whole-run `spend_cap_exceeded` finalize reaches here carrying none.
+        if (isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
+          continue;
+        }
+        count += 1;
+        // "The host's configured provider", per the ticket — joined on the
+        // attempt's own chatSessionId. Two environments can share a host and
+        // pin different models, so matching on hostId would let the banner name
+        // a provider that throttled nothing. An attempt we cannot tie to a
+        // session row has no model we can trust, and falls back to the generic
+        // label rather than a guess.
+        const session = attempt.chatSessionId
+          ? snap.sessions.find(
+              (row) => row.chatSessionId === attempt.chatSessionId,
+            )
+          : undefined;
+        labels.add(providerLabelForModelId(session?.modelId));
+      }
+    }
+    if (count === 0) return null;
+    // Two providers throttling in the same run name neither: the banner would
+    // otherwise blame whichever attempt was read first for both.
+    const [only] = labels;
+    return { count, label: labels.size === 1 ? (only ?? null) : null };
+  }, [snapshots]);
 
   const selectedRunStatus = selection
     ? snapshots[selection.runId]?.status ?? "running"
@@ -941,18 +981,6 @@ export function NewSwarmRunningStep({
                 >
                   Open findings
                 </Button>
-                {allTerminal ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    data-testid="new-swarm-running-done"
-                    onClick={onLeave}
-                  >
-                    Done
-                  </Button>
-                ) : null}
               </div>
             </div>
             {columns.length > 0 ? (
@@ -960,18 +988,6 @@ export function NewSwarmRunningStep({
                 Clients:{" "}
                 {columns.map((column) => column.label).join(" · ")}
               </p>
-            ) : null}
-            {finding ? (
-              <FirstFindingPing
-                finding={finding}
-                // The session that produced the finding, with the criterion
-                // riding along so that page can NAME what was found instead of
-                // opening an unexplained transcript. "Open findings" beside it
-                // is the route to Findings; this one is not a duplicate of it.
-                onOpen={() =>
-                  onOpenSession(finding.sessionId, finding.criterionId)
-                }
-              />
             ) : null}
             {missingPlannedClients.length > 0 ? (
               <p
@@ -987,6 +1003,26 @@ export function NewSwarmRunningStep({
                 launch the swarm again to include it.
               </p>
             ) : null}
+            {providerRateLimit ? (
+              <div
+                className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                data-testid="new-swarm-running-rate-limit"
+                role="status"
+              >
+                <p className="font-medium">
+                  {providerRateLimit.label
+                    ? `${providerRateLimit.label} rate-limited this key.`
+                    : "Your providers rate-limited these keys."}
+                </p>
+                <p className="mt-0.5">
+                  {providerRateLimit.count === 1
+                    ? "1 session stopped."
+                    : `${providerRateLimit.count} sessions stopped.`}{" "}
+                  Retry again later or switch models.
+                </p>
+              </div>
+            ) : null}
+
             {runFailure ? (
               <div
                 className={cn(
@@ -1196,6 +1232,7 @@ export function NewSwarmRunningStep({
           selection={selection}
           stream={mergedStream}
           convexSession={selectedConvex}
+          attempt={selectedAttempt}
           fallbackTrace={fallbackTrace}
           runStatus={selectedRunStatus}
           // The session, not just "somewhere else". This used to hand the pane

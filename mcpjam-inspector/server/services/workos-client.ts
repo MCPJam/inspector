@@ -1,4 +1,5 @@
 import { WorkOS } from "@workos-inc/node";
+import { resolveWorkosApiBaseUrl } from "./workos-api-base.js";
 
 /**
  * Server-side WorkOS Node SDK client.
@@ -29,7 +30,14 @@ export function getWorkOSClient(): WorkOS {
       "WORKOS_API_KEY is not set — required for WorkOS API key validation and management."
     );
   }
-  cachedClient = new WorkOS(apiKey);
+  // Unset `WORKOS_API_BASE_URL` means no options at all, so the production
+  // path is the same single-argument construction as before; a loopback value
+  // points the SDK at a test emulator, and anything else throws here rather
+  // than shipping the admin key to another host.
+  const { sdkOptions } = resolveWorkosApiBaseUrl(process.env);
+  cachedClient = sdkOptions
+    ? new WorkOS(apiKey, sdkOptions)
+    : new WorkOS(apiKey);
   return cachedClient;
 }
 

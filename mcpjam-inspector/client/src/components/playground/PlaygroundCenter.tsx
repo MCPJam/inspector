@@ -47,6 +47,8 @@ export function PlaygroundCenter({
   onEvalChatHandoffConsumed,
 }: PlaygroundCenterProps) {
   const state = usePlaygroundStateContext();
+  const isGuidedPostConnect = state.onboarding.isGuidedPostConnect;
+  const isFirstRunUnfinished = state.onboarding.isFirstRunUnfinished;
 
   if (state.loadingState.kind === "skeleton") {
     return (
@@ -95,12 +97,20 @@ export function PlaygroundCenter({
           state.firstRunComposerSeed ? PLAYGROUND_FIRST_RUN_PROMPT : undefined
         }
         initialInputTypewriter={state.firstRunComposerSeed}
-        blockSubmitUntilServerConnected={state.firstRunComposerSeed}
+        blockSubmitUntilServerConnected={state.firstRunSubmitBlocked}
         ensureServersReady={ensureServersReady}
         pulseSubmit={state.firstRunComposerSeed}
+        // Stays false: this branch replaces the hero rather than adding to it,
+        // so flipping it drops the logo and the selectors again — the BB-112
+        // bug. The nudge alone rides on `showPostConnectGuideCopy` (see its
+        // JSDoc).
         showPostConnectGuide={false}
+        showPostConnectGuideCopy={isGuidedPostConnect}
+        // The copy needs the server up; retiring the run does not. A message
+        // sent while Excalidraw is still connecting — or failed to — finishes
+        // the run all the same, and is its only exit now that a run resumes.
         onFirstMessageSent={
-          state.onboarding.isGuidedPostConnect
+          isFirstRunUnfinished
             ? () => {
                 state.onboarding.completeOnboarding();
               }

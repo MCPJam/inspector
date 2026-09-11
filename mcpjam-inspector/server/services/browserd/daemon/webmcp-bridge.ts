@@ -4,9 +4,8 @@
  *
  * This is the cooperation layer, not the drive mechanism — `navigate`/`act`/
  * `observe` are how browserd gets work done; `webmcp_*` is the bonus when a
- * page chooses to expose structured tools. The state machine is ported from
- * the local inspector's `webmcp-inspector/playwright-provider.ts` (the only
- * other module that speaks this domain) and keeps its hard-won behaviors:
+ * page chooses to expose structured tools. Node, cloud and Electron use this
+ * shared state machine, which preserves these browser-specific behaviors:
  *
  *   - identity is `${frameId} ${name}`, the browser's own notion;
  *   - navigation fires NO `toolsRemoved` and the main frame KEEPS its id, so
@@ -18,17 +17,24 @@
  *   - a cancel that the page never answers still settles, so a caller is never
  *     left waiting on a browser that is gone.
  *
- * Written against an injected `CdpLike`, so all of it is unit-testable with a
- * fake CDP session — no Chromium required. That zero-import design is also what
- * lets it be the SINGLE copy of this machine: the local inspector's
- * `webmcp-inspector/playwright-provider.ts` instantiates it too, because
- * Playwright's `CDPSession` satisfies `CdpLike` structurally.
+ * MORE THAN ONE CDP SESSION. A cross-origin frame is a separate Chromium
+ * target: its tools never reach the page's session and it is not even in that
+ * session's `Page.getFrameTree` (pinned in `webmcp-cdp.spike.test.ts`). So the
+ * bridge listens on a SET of sessions — the page's, plus one per
+ * separately-targeted frame — and merges what they report into the single tool
+ * map. CDP frame ids are unique across sessions, so merging changes no
+ * identity; what each entry additionally remembers is WHICH session registered
+ * it, because a session's teardown may arrive after its replacement has
+ * already registered tools for the same frame and cleanup keyed on frame id
+ * alone would empty a frame that is working.
  *
- * That import direction — inspector reaching into `browserd/daemon/` — is
- * deliberate but temporary. This file has no imports at all, so the eventual
- * move into a shared `webmcp-runtime/` package consumed by both is a file move
- * and nothing else. Anyone doing that extraction should move this rather than
- * inverting the dependency in place.
+ * The bridge never learns what a Playwright `Frame` or an Electron
+ * `webContents` is: the provider decides when a frame has its own target and
+ * hands over a `CdpLike` through {@link WebMcpBridge.addSession}.
+ *
+ * Written against an injected `CdpLike`, so all of it is unit-testable with a
+ * fake CDP session — no Chromium required. Chromium and Electron adapters
+ * supply the same contract; WebMCP inspection reuses the daemon's tab owner.
  */
 
 /** The CDP surface this bridge uses; `chromium-launch.ts` supplies the real one. */
@@ -80,11 +86,30 @@ export interface WebMcpToolDescriptor {
   origin: string;
   isMainFrame: boolean;
   /**
-   * How the page registered it. Load-bearing for approval reasoning:
-   * Chromium 151 does not carry `annotations` through for IMPERATIVE
-   * registrations, so a `readOnly: false` on one of those is the absence of a
-   * signal, not a claim — which is exactly why the approval classifier does
-   * not trust page annotations at all.
+   * WHICH REGISTRATION this is, minted here on the `toolsAdded` that carried
+   * the tool and never reused.
+   *
+   * The piece of identity nothing the browser reports can supply. A same-origin
+   * reload re-registers the page's tools under the SAME name in the SAME frame
+   * (the main frame keeps its id across navigation — see this file's header),
+   * so name, origin and frame id together still describe two different
+   * documents' tools identically. A consumer that bound a model tool to the
+   * first one would invoke it against the second and be told nothing was wrong.
+   *
+   * Monotone per bridge, so it also orders registrations within one document.
+   */
+  registrationSeq: number;
+  /**
+   * How the page registered it. Provenance, not permission.
+   *
+   * Chromium 151 DOES carry annotation values through for imperative
+   * registrations — from the `readOnlyHint` / `untrustedContentHint` keys the
+   * page API reads, reported under the CDP `Annotation` type's bare names
+   * (`webmcp-cdp.spike.test.ts` asserts each field separately). What it does
+   * not carry at this pin is `consequential`, and `autosubmit` only ever comes
+   * from markup. None of that changes the rule: every one of these values is a
+   * claim the inspected PAGE makes about itself, so the approval classifier
+   * does not derive a decision from any of them.
    */
   registrationKind: "declarative" | "imperative" | "unknown";
 }
@@ -96,6 +121,8 @@ export type WebMcpInvokeFailure =
   | "webmcp_tool_gone"
   /** We asked the page to stop, or it never answered in time. */
   | "webmcp_cancelled"
+  /** The call reached the page; cancellation cannot establish its effects. */
+  | "webmcp_outcome_unknown"
   /** The page's own handler threw. */
   | "webmcp_error";
 
@@ -115,6 +142,16 @@ interface PendingInvocation {
   resolve: (value: { output: unknown }) => void;
   reject: (error: Error) => void;
   cancelReason?: "cancelled" | "timeout";
+  /**
+   * The session this invocation was ISSUED on, captured at invoke time.
+   *
+   * Not re-resolved from the frame later: a cross-origin frame can be replaced
+   * underneath a running invocation (its target swaps, or it navigates and a
+   * new session attaches), and a cancel routed through whatever session
+   * currently owns the frame would be sent to a renderer that never started
+   * this invocation.
+   */
+  cdp: CdpLike;
   /** The invocation deadline. */
   timer?: ReturnType<typeof setTimeout>;
   /**
@@ -125,6 +162,39 @@ interface PendingInvocation {
    * neither `settle` nor `dispose` can reach.
    */
   cancelTimer?: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * One CDP session the bridge listens on: the page's own, plus one per frame
+ * that turned out to be a separate target.
+ */
+interface BridgeSession {
+  /** Unique per ATTACHMENT, never per frame — see {@link WebMcpBridge.addSession}. */
+  key: string;
+  /** The frame this session was attached for, for routing and replacement. */
+  frameId: string;
+  cdp: CdpLike;
+  /**
+   * The page's own session. ONLY this one may say what the main frame is or
+   * trigger a support re-probe: a child session's `Page.frameNavigated` also
+   * arrives with no `parentId` (its target's root frame IS that frame), so
+   * `parentId` cannot tell the two apart and a subframe navigation would
+   * otherwise redefine the page's main frame and re-probe on every ad iframe.
+   */
+  isMain: boolean;
+}
+
+/**
+ * The page's own session, which has no attachment token because nothing
+ * attached it. The NUL prefix keeps it outside the `${frameId}#${n}` space
+ * `addSession` mints from, so a caller cannot name it by accident.
+ */
+const MAIN_SESSION_KEY = "\u0000main";
+
+/** The recursive shape `Page.getFrameTree` answers with. */
+interface FrameTreeNode {
+  frame?: { id: string; url?: string };
+  childFrames?: FrameTreeNode[];
 }
 
 interface RespondedPayload {
@@ -145,6 +215,28 @@ interface RespondedPayload {
  */
 const MAX_EARLY_RESPONSES = 16;
 
+/**
+ * How many just-settled invocation ids to remember, so a SECOND response for
+ * one is dropped instead of buffered as an early response for an invocation
+ * that will never ask for it.
+ *
+ * A real shape, not a hypothetical: a tool that returns a value and THEN
+ * navigates cross-document (`submit_and_return` in the fixtures) is answered
+ * twice — once with its own returned value, once with the destination
+ * document's JSON-LD after Blink finishes parsing it. The first answer is the
+ * invocation's true outcome and already won; without this, the second would sit
+ * in `earlyResponses` evicting genuinely-early responses belonging to other
+ * invocations.
+ */
+const MAX_SETTLED_IDS = 32;
+
+export interface LocalDiscoveryBudget {
+  rate?: { tokens: number; at: number };
+  entries: Map<
+    object,
+    { registrations: number; bytes: number; frames: number }
+  >;
+}
 export interface WebMcpBridgeOptions {
   /**
    * How long a page has to answer before we cancel it.
@@ -152,6 +244,9 @@ export interface WebMcpBridgeOptions {
    * Only used for an invocation with NO `signal`. A caller that supplies one
    * owns the deadline — see {@link WebMcpBridge.invoke}.
    */
+  localSecurity?: boolean;
+  localBudget?: LocalDiscoveryBudget;
+  onDiscoveryLimit?: () => void;
   invocationTimeoutMs?: number;
   /** Grace for the browser's own `Canceled` after we ask it to stop. */
   cancelSettleGraceMs?: number;
@@ -173,6 +268,9 @@ export interface WebMcpBridgeOptions {
   onExternalInvocation?: (toolName: string) => void;
 }
 
+/** Unsubscribe a listener registered with {@link WebMcpBridge.subscribe}. */
+export type WebMcpUnsubscribe = () => void;
+
 const DEFAULT_INVOCATION_TIMEOUT_MS = 60_000;
 const DEFAULT_CANCEL_SETTLE_GRACE_MS = 1_000;
 
@@ -189,30 +287,240 @@ function originOf(url: string): string {
  * per driven tab, created lazily on the first `webmcp_*` action.
  */
 export class WebMcpBridge {
-  /** Tools keyed `${frameId} ${name}` — the browser's own notion of identity. */
-  private readonly tools = new Map<string, WebMcpCdpTool>();
+  private readonly externalSubscribers = new Set<(toolName: string) => void>();
+  subscribeExternalInvocation(
+    listener: (toolName: string) => void,
+  ): () => void {
+    this.externalSubscribers.add(listener);
+    return () => {
+      this.externalSubscribers.delete(listener);
+    };
+  }
+  /**
+   * Tools keyed `${frameId} ${name}` — the browser's own notion of identity —
+   * each carrying the registration sequence minted when it arrived.
+   */
+  private readonly tools = new Map<
+    string,
+    {
+      tool: WebMcpCdpTool;
+      registrationSeq: number;
+      /**
+       * WHICH session reported this registration.
+       *
+       * Load-bearing for teardown ordering: a session's removal can arrive
+       * after its replacement has already registered tools for the same frame,
+       * and cleanup keyed on frame id alone would delete the live session's
+       * tools and leave a working frame looking empty.
+       */
+      sessionKey: string;
+      bytes?: number;
+    }
+  >();
+  /**
+   * The next registration sequence to hand out. Bumped ONCE per `toolsAdded`
+   * event, so tools registered together share a sequence and a
+   * re-registration (reload, unregister/register) always gets a fresh one.
+   */
+  private nextRegistrationSeq = 1;
   /** frameId → last known URL, for origin labelling. */
   private readonly frames = new Map<string, string>();
+  /** Every session this bridge listens on, keyed by its attachment token. */
+  private readonly sessions = new Map<string, BridgeSession>();
+  /**
+   * frameId → the token of the session that owns that frame.
+   *
+   * The routing table for invocation: `WebMCP.invokeTool` rejects a frame id
+   * that belongs to another target ("FrameId does not belong to current
+   * target"), so the session is part of addressing a tool, not an optimisation.
+   */
+  private readonly frameSessions = new Map<string, string>();
   private readonly pending = new Map<string, PendingInvocation>();
   /** Responses that arrived before their invocation was registered. */
   private readonly earlyResponses = new Map<string, RespondedPayload>();
+  /** Invocation ids already settled, so a duplicate response is dropped. */
+  private readonly settledIds = new Set<string>();
+  /** Next attachment number, so no two attachments ever share a key. */
+  private nextSessionSeq = 1;
   private mainFrameId = "";
   /** `WebMCP.invokeTool` calls whose reply has not come back yet. See `wire`. */
   private outstandingSends = 0;
   private readonly invocationTimeoutMs: number;
   private readonly cancelSettleGraceMs: number;
   private supported = false;
+  /**
+   * The domain half of `supported`, remembered so a RE-probe can recombine
+   * without re-enabling anything: `WebMCP.enable` is per session, not per
+   * document, so a navigation cannot take the domain away — only the page's
+   * `document.modelContext` can change.
+   */
+  private domainEnabled = false;
+  /**
+   * The page-side probe, kept so main-frame navigation can re-run it.
+   *
+   * WHY THE CACHED PROBE WAS A BUG. `start()` set `supported` once and nothing
+   * ever revisited it, so a tab that opened on a page without WebMCP reported
+   * "this browser has no WebMCP" for the rest of its life — including after
+   * navigating to a page whose whole point is the tools it registers. The
+   * probe is a page question and has to be re-asked of each page.
+   */
+  private probe: (() => Promise<boolean>) | undefined;
+  /**
+   * The in-flight re-probe, so a reader arriving between a navigation and its
+   * answer can wait for the truth instead of reading the previous page's.
+   */
+  private probing: Promise<void> | null = null;
+  /**
+   * Which re-probe is current. A slow probe for the page we LEFT must not
+   * overwrite the answer for the page we are on, and navigations can outrun a
+   * `Runtime.evaluate`.
+   */
+  private probeGeneration = 0;
+  private readonly subscribers = new Set<
+    (tools: WebMcpToolDescriptor[]) => void
+  >();
   private disposed = false;
+  private localSecurity = false;
+  private localBudget?: LocalDiscoveryBudget;
+  private updateBudget(): void {
+    if (!this.localBudget) return;
+    if (this.disposed) {
+      this.localBudget.entries.delete(this);
+      return;
+    }
+    let bytes = 0;
+    for (const entry of this.tools.values()) bytes += entry.bytes ?? 0;
+    this.localBudget.entries.set(this, {
+      registrations: this.tools.size,
+      bytes,
+      frames: Math.max(
+        this.frames.size,
+        this.sessions.size,
+        this.frameSessions.size,
+      ),
+    });
+  }
+  private otherBudget(): {
+    registrations: number;
+    bytes: number;
+    frames: number;
+  } {
+    const total = { registrations: 0, bytes: 0, frames: 0 };
+    for (const [owner, entry] of this.localBudget?.entries ?? [])
+      if (owner !== this) {
+        total.registrations += entry.registrations;
+        total.bytes += entry.bytes;
+        total.frames += entry.frames;
+      }
+    return total;
+  }
+  private discoveryBlocked = false;
+  private onDiscoveryLimit?: () => void;
+  private changeTokens = 2048;
+  private changeAt = Date.now();
+  discoveryLimitReached(): boolean {
+    return this.discoveryBlocked;
+  }
+  private blockDiscovery(): false {
+    if (!this.discoveryBlocked) {
+      this.discoveryBlocked = true;
+      this.tools.clear();
+      for (const [id, waiter] of this.pending) {
+        void waiter.cdp
+          .send("WebMCP.cancelInvocation", { invocationId: id })
+          .catch(() => {});
+        this.settle(id);
+        waiter.reject(
+          new WebMcpBridgeError(
+            "webmcp_tool_gone",
+            "Page tool discovery exceeded its security budget. Reload the page after reducing its registrations.",
+          ),
+        );
+      }
+      this.onDiscoveryLimit?.();
+      this.announce();
+    }
+    return false;
+  }
+  private allowChanges(count: number): boolean {
+    if (!this.localSecurity) return true;
+    if (this.discoveryBlocked) return false;
+    const now = Date.now();
+    const rate = this.localBudget
+      ? (this.localBudget.rate ??= { tokens: 2048, at: now })
+      : { tokens: this.changeTokens, at: this.changeAt };
+    rate.tokens = Math.min(
+      2048,
+      rate.tokens + Math.max(0, now - rate.at) * 1.024,
+    );
+    rate.at = now;
+    if (count > rate.tokens) return this.blockDiscovery();
+    rate.tokens -= count;
+    this.changeTokens = rate.tokens;
+    this.changeAt = now;
+    return true;
+  }
+  private allowTool(tool: WebMcpCdpTool): boolean {
+    if (!this.localSecurity) return true;
+    // Bound traversal before stringify/retention. CDP supplies JSON, but never
+    // trust the page's size or nesting to be inexpensive to process.
+    let bytes = 0,
+      nodes = 0;
+    const stack: Array<[unknown, number]> = [[tool, 0]];
+    while (stack.length) {
+      const [value, depth] = stack.pop()!;
+      if (++nodes > 65536 || depth > 32) return this.blockDiscovery();
+      if (typeof value === "string") {
+        if (value.length > 65536) return this.blockDiscovery();
+        bytes += new TextEncoder().encode(value).byteLength;
+      } else if (value && typeof value === "object") {
+        for (const key of Object.keys(value)) {
+          bytes += key.length * 3;
+          if (stack.length >= 65536) return this.blockDiscovery();
+          stack.push([(value as Record<string, unknown>)[key], depth + 1]);
+        }
+      } else bytes += 8;
+      if (bytes > 65536) return this.blockDiscovery();
+    }
+    const others = this.otherBudget();
+    if (
+      this.tools.size + others.registrations >= 1024 &&
+      !this.tools.has(this.key(tool.frameId, tool.name))
+    )
+      return this.blockDiscovery();
+    let retained = bytes;
+    for (const entry of this.tools.values()) retained += entry.bytes ?? 0;
+    if (retained + others.bytes > 8 * 1024 * 1024) return this.blockDiscovery();
+    if (
+      !this.frameSessions.has(tool.frameId) &&
+      this.frameSessions.size + others.frames >= 64
+    )
+      return this.blockDiscovery();
+    this.nextToolBytes = bytes;
+    return true;
+  }
+  private nextToolBytes = 0;
 
   private readonly onChange:
-    ((tools: WebMcpToolDescriptor[]) => void) | undefined;
+    | ((tools: WebMcpToolDescriptor[]) => void)
+    | undefined;
   private readonly onExternalInvocation:
-    ((toolName: string) => void) | undefined;
+    | ((toolName: string) => void)
+    | undefined;
 
   constructor(
     private readonly cdp: CdpLike,
     options: WebMcpBridgeOptions = {},
   ) {
+    this.localSecurity = options.localSecurity ?? false;
+    this.localBudget = options.localBudget;
+    this.onDiscoveryLimit = options.onDiscoveryLimit;
+    this.sessions.set(MAIN_SESSION_KEY, {
+      key: MAIN_SESSION_KEY,
+      frameId: "",
+      cdp,
+      isMain: true,
+    });
     this.invocationTimeoutMs =
       options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
     this.cancelSettleGraceMs =
@@ -230,12 +538,50 @@ export class WebMcpBridge {
    * responsible for the bridge's own bookkeeping.
    */
   private announce(): void {
-    if (!this.onChange) return;
+    this.updateBudget();
+    // Nothing is published after dispose. `subscribers` is cleared there, but
+    // `onChange` is the CONSTRUCTOR's callback and is not — so without this a
+    // late event would still reach the provider, on a session it has closed.
+    if (this.disposed) return;
+    if (!this.onChange && this.subscribers.size === 0) return;
+    const tools = this.list();
+    for (const listener of [this.onChange, ...this.subscribers]) {
+      if (!listener) continue;
+      try {
+        listener(tools);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /**
+   * Watch the tool set, alongside the constructor's `onChange`.
+   *
+   * A second channel because the two consumers arrive at different times: the
+   * bridge is constructed by the page adapter (which knows how to probe the
+   * page) while the DRIVER — the one that has to keep a per-tab revision — only
+   * meets the bridge once it has resolved one. Handing the adapter the driver's
+   * callback would make the adapter know about tab bookkeeping; this way each
+   * side subscribes to what it needs.
+   *
+   * The listener is called with the CURRENT set immediately, so a subscriber
+   * that attached after the page had already registered its tools does not
+   * have to wait for the next change to learn about them — the exact gap that
+   * makes an eagerly-attached bridge worth having.
+   */
+  subscribe(
+    listener: (tools: WebMcpToolDescriptor[]) => void,
+  ): WebMcpUnsubscribe {
+    this.subscribers.add(listener);
     try {
-      this.onChange(this.list());
+      listener(this.list());
     } catch {
       /* ignore */
     }
+    return () => {
+      this.subscribers.delete(listener);
+    };
   }
 
   /**
@@ -245,7 +591,7 @@ export class WebMcpBridge {
    * is never the probe.
    */
   async start(probeSupported: () => Promise<boolean>): Promise<void> {
-    this.wire();
+    this.wireSession(this.mainSession());
     await this.cdp.send("Page.enable").catch(() => {});
     // BOTH halves have to hold. The page probe alone would accept a browser
     // that exposes `document.modelContext` while the CDP domain is unavailable
@@ -255,6 +601,7 @@ export class WebMcpBridge {
     await this.cdp.send("WebMCP.enable").catch(() => {
       domainEnabled = false;
     });
+    this.domainEnabled = domainEnabled;
     // Run the probe REGARDLESS of the domain, then combine. `&&` would
     // short-circuit past it, and the callback is the caller's only hook for
     // work that has to happen inside `start` — the inspector navigates the
@@ -270,26 +617,137 @@ export class WebMcpBridge {
     return this.supported;
   }
 
-  private wire(): void {
-    this.cdp.on("WebMCP.toolsAdded", (payload) => {
+  /**
+   * Re-ask this probe of every page the main frame goes to.
+   *
+   * Separate from `start()`'s argument because support is a property of the
+   * PAGE, not of the session: `start()` answers it for the document that
+   * happened to be open, and a bridge that stopped there tells a caller "this
+   * browser has no WebMCP" about a page that registered five tools a moment
+   * ago. Opt-in so a consumer that cannot cheaply re-probe (a test fake) is
+   * unchanged.
+   */
+  resupport(probe: () => Promise<boolean>): void {
+    this.probe = probe;
+  }
+
+  /**
+   * Resolve once no re-probe is outstanding.
+   *
+   * `Page.frameNavigated` is a synchronous event and the probe is a round trip
+   * into the page, so there is a window in which `isSupported()` still answers
+   * for the page we LEFT. A reader that has just navigated (the driver, about
+   * to list tools) waits here rather than reporting the previous page's answer
+   * as this page's.
+   */
+  async probeSettled(): Promise<void> {
+    await this.probing;
+  }
+
+  /** Re-run the page probe for the document the main frame just committed. */
+  private reprobe(): void {
+    const probe = this.probe;
+    if (!probe || this.disposed) return;
+    const generation = ++this.probeGeneration;
+    this.probing = (async () => {
+      const probed = await probe().catch(() => false);
+      // A slow probe for the page we left must never overwrite the answer for
+      // the page we are on: navigations outrun a `Runtime.evaluate` routinely
+      // (a redirect chain fires several).
+      if (generation !== this.probeGeneration || this.disposed) return;
+      const next = this.domainEnabled && probed;
+      if (next === this.supported) return;
+      this.supported = next;
+      // Support IS part of what a consumer renders ("this page offers no
+      // tools" vs "this browser cannot"), so a flip is a change like any
+      // other — and on the false→true edge the tools are usually already here.
+      this.announce();
+    })().finally(() => {
+      if (generation === this.probeGeneration) this.probing = null;
+    });
+  }
+
+  private mainSession(): BridgeSession {
+    // Always present: the constructor registers it and nothing removes it.
+    return this.sessions.get(MAIN_SESSION_KEY)!;
+  }
+
+  /**
+   * Whether events from this session still count.
+   *
+   * `CdpLike` has deliberately no `off`, so nothing can UNSUBSCRIBE a session's
+   * handlers — `removeSession` and `dispose` drop the bridge's bookkeeping and
+   * leave the wiring in place. Without this check a `toolsAdded` arriving after
+   * either one would find the frame unowned, claim it, re-populate the map the
+   * teardown just cleared, and publish it: tools resurrected for a session the
+   * provider has already closed.
+   *
+   * Identity, not just presence: a replacement attachment for the same frame is
+   * a DIFFERENT session object under a different key, so a stale one must not
+   * pass by having a live namesake.
+   */
+  private live(session: BridgeSession): boolean {
+    if (this.disposed) return false;
+    return this.sessions.get(session.key) === session;
+  }
+
+  /**
+   * Subscribe one session's events. Every handler closes over the session it
+   * belongs to, because almost every one of them has to answer "whose?" —
+   * which frames this session owns, whose tools a removal may delete, and
+   * whether a navigation is the PAGE's or a subframe target's.
+   */
+  private wireSession(session: BridgeSession): void {
+    session.cdp.on("WebMCP.toolsAdded", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = (payload ?? {}) as { tools?: WebMcpCdpTool[] };
+      // ONE sequence for the whole event, minted before the loop: tools a page
+      // registers together belong to one registration, and a per-tool counter
+      // would make the identity of a tool depend on how many siblings the page
+      // happened to declare beside it.
+      if (!Array.isArray(tools) || !this.allowChanges(tools.length)) return;
+      const registrationSeq = this.nextRegistrationSeq++;
       for (const tool of tools ?? []) {
-        this.tools.set(this.key(tool.frameId, tool.name), tool);
+        if (!this.allowTool(tool)) return;
+        // A session speaks for a frame only while it OWNS that frame. A
+        // retiring session can still emit for a frame its replacement has
+        // taken over, and honouring that would both re-route invocations to a
+        // dying renderer and re-stamp the live registration with the dead
+        // session's key — the exact ordering the token scheme exists to
+        // survive. An unowned frame is claimed here, which is how the page's
+        // own session picks up its same-process subframes.
+        const owner = this.frameSessions.get(tool.frameId);
+        if (owner !== undefined && owner !== session.key) continue;
+        this.tools.set(this.key(tool.frameId, tool.name), {
+          tool,
+          registrationSeq,
+          sessionKey: session.key,
+          bytes: this.nextToolBytes,
+        });
+        this.frameSessions.set(tool.frameId, session.key);
+        this.updateBudget();
       }
       this.announce();
     });
 
-    this.cdp.on("WebMCP.toolsRemoved", (payload) => {
+    session.cdp.on("WebMCP.toolsRemoved", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = (payload ?? {}) as {
         tools?: Array<{ name: string; frameId: string }>;
       };
+      if (!Array.isArray(tools) || !this.allowChanges(tools.length)) return;
       for (const tool of tools ?? []) {
-        this.tools.delete(this.key(tool.frameId, tool.name));
+        // SCOPED. A stale session can still be delivering events after a
+        // replacement has taken over the same frame; its removals describe the
+        // document IT saw, not the one now registered under that key.
+        const key = this.key(tool.frameId, tool.name);
+        if (this.tools.get(key)?.sessionKey !== session.key) continue;
+        this.tools.delete(key);
       }
       this.announce();
     });
 
-    this.cdp.on("WebMCP.toolInvoked", (payload) => {
+    session.cdp.on("WebMCP.toolInvoked", (payload) => {
       const invoked = (payload ?? {}) as {
         invocationId?: string;
         toolName?: string;
@@ -305,14 +763,30 @@ export class WebMcpBridge {
       // gap in an advisory one.
       if (this.outstandingSends > 0) return;
       this.onExternalInvocation?.(invoked.toolName ?? "");
+      for (const listener of this.externalSubscribers)
+        listener(invoked.toolName ?? "");
     });
 
-    this.cdp.on("WebMCP.toolResponded", (payload) => {
+    // NOT guarded by `live`. A response settles a PENDING INVOCATION, and a
+    // caller waiting on one is owed its answer even if the session it was
+    // issued on has since been removed — refusing it here would strand that
+    // caller until its deadline. `dispose` rejects the waiters itself, and an
+    // id nobody is waiting for goes no further than the bounded early-response
+    // buffer.
+    session.cdp.on("WebMCP.toolResponded", (payload) => {
       const responded = (payload ?? {}) as RespondedPayload;
       const id = responded.invocationId;
       if (!id) return;
       const waiter = this.pending.get(id);
       if (!waiter) {
+        // A SECOND answer to an invocation we already settled. The platform
+        // sends one when a tool returns a value and then navigates
+        // cross-document: Blink answers again with the destination document's
+        // JSON-LD once it has finished parsing. The first answer was the
+        // invocation's true outcome and already won, so this one is dropped
+        // rather than buffered — buffering it would evict genuinely-early
+        // responses belonging to OTHER invocations.
+        if (this.settledIds.has(id)) return;
         // Either a tool someone ELSE invoked (the page's own agent, devtools)
         // or ours finishing before `invokeTool`'s reply told us its id. Both
         // land here; `invoke` claims the latter once it knows the id.
@@ -327,45 +801,240 @@ export class WebMcpBridge {
       this.deliver(waiter, responded);
     });
 
-    this.cdp.on("Page.frameNavigated", (payload) => {
+    session.cdp.on("Page.frameNavigated", (payload) => {
+      if (!this.live(session)) return;
       const { frame } = (payload ?? {}) as {
         frame?: { id: string; url: string; parentId?: string };
       };
       if (!frame) return;
+      if (this.localSecurity && session.isMain && !frame.parentId) {
+        this.discoveryBlocked = false;
+        this.changeTokens = 2048;
+        this.changeAt = Date.now();
+        this.tools.clear();
+        this.frames.clear();
+        this.frameSessions.clear();
+      }
+      if (
+        this.localSecurity &&
+        !this.frames.has(frame.id) &&
+        this.frames.size + this.otherBudget().frames >= 64
+      ) {
+        this.blockDiscovery();
+        return;
+      }
       this.frames.set(frame.id, frame.url);
       // Navigation fires NO toolsRemoved and the main frame KEEPS its id, so
       // nothing the browser says separates "tools of the page we left" from
       // "tools of the page we are on". Dropping them here is what stops the
       // registry serving tools that no longer exist.
-      this.dropFrame(frame.id);
-      if (!frame.parentId) this.mainFrameId = frame.id;
+      //
+      // Scoped to this session for the same reason removals are: a stale
+      // session still reporting the frame it used to own must not clear the
+      // registration its replacement just published.
+      this.dropFrame(frame.id, session.key);
+      // A child session's root frame ALSO arrives with no `parentId`, so the
+      // page's own session — not the payload — is what says "main frame".
+      if (session.isMain && !frame.parentId) {
+        this.mainFrameId = frame.id;
+        // A NEW DOCUMENT is a new answer to "does this page speak WebMCP?".
+        // Only the main frame: a subframe navigating says nothing about the
+        // top-level page's `document.modelContext`, and re-probing on every
+        // ad iframe would be a round trip per frame per page.
+        this.reprobe();
+      }
       this.announce();
     });
 
-    this.cdp.on("Page.frameDetached", (payload) => {
-      const { frameId } = (payload ?? {}) as { frameId?: string };
+    session.cdp.on("Page.frameDetached", (payload) => {
+      if (!this.live(session)) return;
+      const { frameId, reason } = (payload ?? {}) as {
+        frameId?: string;
+        reason?: string;
+      };
       if (!frameId) return;
+      // `swap` is a TARGET MOVING, not a frame going away: it is what the
+      // page's session reports the moment a frame becomes cross-origin and
+      // Chromium hands it to its own renderer. The frame is still on the page
+      // and another session is about to speak for it, so only what THIS
+      // session registered goes — anything else would delete the tools of the
+      // frame that just started working.
+      if (reason === "swap") {
+        this.dropFrame(frameId, session.key);
+        if (this.frameSessions.get(frameId) === session.key) {
+          this.frameSessions.delete(frameId);
+        }
+        this.announce();
+        return;
+      }
+      // `remove` (and any build that names no reason) is the frame itself
+      // going away, so every session's tools for it go with it — including a
+      // child session's, which the page's session is the only one to hear
+      // about.
       this.frames.delete(frameId);
+      this.frameSessions.delete(frameId);
       this.dropFrame(frameId);
       this.announce();
     });
+  }
+
+  /**
+   * Listen on one more CDP session — a frame that turned out to be its own
+   * Chromium target — and answer with the TOKEN that names this attachment.
+   *
+   * The token is per attachment, not per frame, and that is the whole point.
+   * A frame keeps its id across a cross-origin navigation (measured: an OOPIF
+   * navigated cross-origin reports the same CDP frame id), so a frame id names
+   * the FRAME, never one particular session on it. Teardown quotes the token,
+   * so a removal that arrives after the frame has already been re-attached
+   * names an attachment that is gone and does nothing — instead of emptying a
+   * frame that is working.
+   *
+   * Attaching again for the same frame RETIRES the previous attachment first,
+   * so a replaced frame is never listened to twice.
+   *
+   * The domains are enabled here rather than by the caller so a provider only
+   * has to know how to open a session, and the frame tree is read back so a
+   * frame that finished navigating BEFORE we attached still has an origin —
+   * `Page.frameNavigated` has already been and gone for it.
+   */
+  async addSession(frameId: string, cdp: CdpLike): Promise<string> {
+    const key = `${frameId}#${this.nextSessionSeq++}`;
+    if (this.disposed) return key;
+    if (
+      this.localSecurity &&
+      (this.discoveryBlocked ||
+        this.sessions.size + this.otherBudget().frames >= 64)
+    ) {
+      this.blockDiscovery();
+      return key;
+    }
+    for (const existing of [...this.sessions.values()]) {
+      if (!existing.isMain && existing.frameId === frameId) {
+        this.removeSession(existing.key);
+      }
+    }
+    const session: BridgeSession = { key, frameId, cdp, isMain: false };
+    this.sessions.set(key, session);
+    this.updateBudget();
+    this.frameSessions.set(frameId, key);
+    this.wireSession(session);
+    await cdp.send("Page.enable").catch(() => {});
+    await cdp.send("WebMCP.enable").catch(() => {});
+    await this.seedFrames(cdp).catch(() => {});
+    // Three round trips have passed. A `dispose`, or a replacement attachment
+    // for this frame, may have retired this session in that window — and
+    // publishing here would announce a session nobody is listening on. The
+    // handlers are already inert (`live`); this stops the announcement too.
+    if (!this.live(session)) return key;
+    this.announce();
+    return key;
+  }
+
+  /**
+   * Stop listening on one attachment and drop what IT registered.
+   *
+   * Takes the token {@link addSession} answered with, never a frame id: a
+   * removal can arrive after the frame has been re-attached, and anything
+   * scoped to the frame would delete the live session's tools.
+   */
+  removeSession(sessionKey: string): void {
+    if (sessionKey === MAIN_SESSION_KEY) return;
+    if (!this.sessions.delete(sessionKey)) return;
+    for (const [toolKey, entry] of [...this.tools]) {
+      if (entry.sessionKey === sessionKey) this.tools.delete(toolKey);
+    }
+    for (const [frameId, owner] of [...this.frameSessions]) {
+      if (owner === sessionKey) this.frameSessions.delete(frameId);
+    }
+    this.announce();
+  }
+
+  /** Frame ids with their own attached session. Exists for tests and logging. */
+  attachedFrameIds(): string[] {
+    return [...this.sessions.values()]
+      .filter((session) => !session.isMain)
+      .map((session) => session.frameId);
+  }
+
+  /** Record a session's frame URLs, for origins we missed by attaching late. */
+  private async seedFrames(cdp: CdpLike): Promise<void> {
+    const tree = (await cdp.send("Page.getFrameTree")) as {
+      frameTree?: FrameTreeNode;
+    };
+    let visited = 0;
+    const walk = (node: FrameTreeNode | undefined): void => {
+      if (this.localSecurity && (++visited > 64 || this.discoveryBlocked)) {
+        this.blockDiscovery();
+        return;
+      }
+      if (!node?.frame) return;
+      // Never overwrite: a `Page.frameNavigated` that already arrived on this
+      // session describes a LATER document than the tree we are catching up on.
+      if (!this.frames.has(node.frame.id)) {
+        this.frames.set(node.frame.id, node.frame.url ?? "");
+      }
+      for (const child of node.childFrames ?? []) {
+        if (this.localSecurity && this.discoveryBlocked) break;
+        walk(child);
+      }
+    };
+    walk(tree?.frameTree);
+  }
+
+  /**
+   * The session that can run a tool in this frame.
+   *
+   * No fallback to the page's session. `WebMCP.invokeTool` rejects a frame id
+   * belonging to another target ("FrameId does not belong to current target"),
+   * so a plausible-looking default is not a degraded call — it is a call to the
+   * wrong renderer, which for a same-named tool would run something the caller
+   * never named.
+   */
+  private sessionForFrame(frameId: string, toolName: string): CdpLike {
+    const key = this.frameSessions.get(frameId);
+    const session = key ? this.sessions.get(key) : undefined;
+    if (!session) {
+      throw new WebMcpBridgeError(
+        "webmcp_tool_gone",
+        `The frame that offered "${toolName}" is no longer attached to this session.`,
+      );
+    }
+    return session.cdp;
   }
 
   private key(frameId: string, name: string): string {
     return `${frameId} ${name}`;
   }
 
-  private dropFrame(frameId: string): void {
-    for (const key of [...this.tools.keys()]) {
-      if (key.startsWith(`${frameId} `)) this.tools.delete(key);
+  /**
+   * Forget a frame's tools. With `sessionKey`, only the ones THAT session
+   * registered — the ordering-safe form, for anything a single session says
+   * about a frame it may no longer own.
+   */
+  private dropFrame(frameId: string, sessionKey?: string): void {
+    for (const [key, entry] of [...this.tools]) {
+      if (!key.startsWith(`${frameId} `)) continue;
+      if (sessionKey !== undefined && entry.sessionKey !== sessionKey) continue;
+      this.tools.delete(key);
     }
   }
 
+  /**
+   * The ONE terminal transition for an invocation: clear its timers, stop
+   * tracking it, and remember that it is done so a later duplicate response
+   * cannot be mistaken for an early one.
+   */
   private settle(invocationId: string): void {
     const waiter = this.pending.get(invocationId);
     if (waiter?.timer) clearTimeout(waiter.timer);
     if (waiter?.cancelTimer) clearTimeout(waiter.cancelTimer);
     this.pending.delete(invocationId);
+    if (this.settledIds.size >= MAX_SETTLED_IDS) {
+      const oldest = this.settledIds.values().next().value;
+      if (oldest !== undefined) this.settledIds.delete(oldest);
+    }
+    this.settledIds.add(invocationId);
   }
 
   /** Resolve or reject a waiter from the page's response. */
@@ -381,10 +1050,10 @@ export class WebMcpBridge {
       const reason = waiter.cancelReason ?? "cancelled";
       waiter.reject(
         new WebMcpBridgeError(
-          "webmcp_cancelled",
+          "webmcp_outcome_unknown",
           reason === "timeout"
-            ? "The page tool did not respond in time."
-            : "The invocation was cancelled.",
+            ? "Stopped waiting for the page tool after a timeout. Execution may continue; verify the page state before retrying."
+            : "Cancellation requested. Page execution may continue; verify the page state before retrying.",
           reason,
         ),
       );
@@ -404,7 +1073,7 @@ export class WebMcpBridge {
 
   /** The tools currently on offer, as the model should see them. */
   list(): WebMcpToolDescriptor[] {
-    return [...this.tools.values()].map((tool) => ({
+    return [...this.tools.values()].map(({ tool, registrationSeq }) => ({
       frameId: tool.frameId,
       name: tool.name,
       description: tool.description ?? "",
@@ -416,12 +1085,13 @@ export class WebMcpBridge {
         : {}),
       origin: originOf(this.frames.get(tool.frameId) ?? ""),
       isMainFrame: tool.frameId === this.mainFrameId,
+      registrationSeq,
       registrationKind:
         tool.backendNodeId !== undefined
           ? ("declarative" as const)
           : tool.stackTrace
-            ? ("imperative" as const)
-            : ("unknown" as const),
+          ? ("imperative" as const)
+          : ("unknown" as const),
     }));
   }
 
@@ -431,12 +1101,12 @@ export class WebMcpBridge {
    * time rather than being carried around as identity.
    */
   private resolveFrame(toolName: string): string {
-    for (const tool of this.tools.values()) {
+    for (const { tool } of this.tools.values()) {
       if (tool.name === toolName && tool.frameId === this.mainFrameId) {
         return tool.frameId;
       }
     }
-    for (const tool of this.tools.values()) {
+    for (const { tool } of this.tools.values()) {
       if (tool.name === toolName) return tool.frameId;
     }
     throw new WebMcpBridgeError(
@@ -452,9 +1122,29 @@ export class WebMcpBridge {
    * the subframe detached), so an id that no longer matches falls back to
    * resolution rather than being sent to the browser to fail obscurely.
    */
-  private frameFor(frameId: string | undefined, toolName: string): string {
+  private frameFor(
+    frameId: string | undefined,
+    toolName: string,
+    strict = false,
+  ): string {
     if (frameId && this.tools.has(this.key(frameId, toolName))) return frameId;
+    // STRICT callers named a frame as part of an identity they already
+    // validated, so falling back would invoke a DIFFERENT tool than the one
+    // approved — a same-named main-frame tool standing in for the subframe's.
+    // Silent substitution is exactly the failure the caller's binding exists
+    // to prevent, so an unmatched frame is `webmcp_tool_gone` instead.
+    if (strict) {
+      throw new WebMcpBridgeError(
+        "webmcp_tool_gone",
+        `The frame that offered "${toolName}" no longer offers it.`,
+      );
+    }
     return this.resolveFrame(toolName);
+  }
+
+  /** The registration sequence for one (frame, name), or undefined if gone. */
+  registrationSeqFor(frameId: string, toolName: string): number | undefined {
+    return this.tools.get(this.key(frameId, toolName))?.registrationSeq;
   }
 
   /**
@@ -481,6 +1171,36 @@ export class WebMcpBridge {
      * omitted, and when the frame given no longer offers the tool.
      */
     frameId?: string;
+    /**
+     * Refuse rather than re-resolve when `frameId` no longer offers the tool.
+     *
+     * For a caller invoking against an identity it has already validated: a
+     * fallback would run a same-named tool in another frame under an approval
+     * that named this one.
+     */
+    strictFrame?: boolean;
+    /**
+     * The registration this invocation was approved against.
+     *
+     * Checked at the LAST possible moment — the line before the CDP send —
+     * because everything between a caller validating a binding and the browser
+     * being told to run something is time in which the page can unregister the
+     * tool and register a new one under the same name in the same frame. The
+     * driver checks this too, one layer up; that check answers "was this
+     * binding valid when we decided", and this one answers "is it still valid
+     * now that we are about to act", which is the only question the page cannot
+     * invalidate behind our back.
+     */
+    expectedRegistrationSeq?: number;
+    /**
+     * The invocation id, the moment the browser hands it back.
+     *
+     * The whole reason a cancel could not reach the page before: `invoke` is
+     * synchronous from the caller's side and only RETURNS the id once the tool
+     * has settled, so nothing upstream could name the thing it wanted stopped
+     * while it was still running.
+     */
+    onStarted?: (invocationId: string) => void;
     signal?: AbortSignal;
   }): Promise<{ invocationId: string; output: unknown }> {
     if (this.disposed) {
@@ -510,7 +1230,31 @@ export class WebMcpBridge {
         reason,
       );
     }
-    const frameId = this.frameFor(args.frameId, args.toolName);
+    const frameId = this.frameFor(
+      args.frameId,
+      args.toolName,
+      args.strictFrame === true,
+    );
+    // RE-ASKED AT THE SEND BOUNDARY. `frameFor` proves the frame still offers
+    // SOMETHING by this name; it cannot prove it is the same registration the
+    // caller's approval named, and a page that unregisters and re-registers
+    // between the driver's check and this line would otherwise run its
+    // replacement under that approval.
+    if (args.expectedRegistrationSeq !== undefined) {
+      const live = this.registrationSeqFor(frameId, args.toolName);
+      if (live !== args.expectedRegistrationSeq) {
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          `"${args.toolName}" was re-registered by the page after it was listed.`,
+        );
+      }
+    }
+
+    // RESOLVED HERE, once, and carried on the pending entry. A cross-origin
+    // frame's session can be replaced while its tool runs, and a cancel that
+    // looked the session up again afterwards would reach a renderer that never
+    // started this invocation.
+    const owner = this.sessionForFrame(frameId, args.toolName);
 
     let invocationId: string;
     try {
@@ -521,7 +1265,7 @@ export class WebMcpBridge {
       this.outstandingSends += 1;
       let result: { invocationId?: string };
       try {
-        result = (await this.cdp.send("WebMCP.invokeTool", {
+        result = (await owner.send("WebMCP.invokeTool", {
           frameId,
           toolName: args.toolName,
           input: args.input,
@@ -536,6 +1280,23 @@ export class WebMcpBridge {
         );
       }
       invocationId = result.invocationId;
+      if (this.localSecurity && (this.discoveryBlocked || this.disposed)) {
+        void owner
+          .send("WebMCP.cancelInvocation", { invocationId })
+          .catch(() => {});
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          "Page tool discovery is no longer available; earlier effects may already have occurred.",
+        );
+      }
+      // BEFORE the await below, so a cancel arriving while the page's handler
+      // is still running has an id to name. A throwing subscriber must not
+      // fail the invocation it is only observing.
+      try {
+        args.onStarted?.(invocationId);
+      } catch {
+        /* ignore */
+      }
     } catch (error) {
       if (error instanceof WebMcpBridgeError) throw error;
       // An unknown tool rejects HERE rather than settling as a response.
@@ -550,12 +1311,16 @@ export class WebMcpBridge {
     }
 
     const output = await new Promise<{ output: unknown }>((resolve, reject) => {
-      const waiter: PendingInvocation = { resolve, reject };
+      const waiter: PendingInvocation = { resolve, reject, cdp: owner };
       // Claim a response that beat `invokeTool`'s own reply here — otherwise
       // an instant tool would be waited out to the full timeout.
       const early = this.earlyResponses.get(invocationId);
       if (early) {
         this.earlyResponses.delete(invocationId);
+        // Terminal without ever having been pending, so the settled record is
+        // written by hand: a return-then-navigate tool answers twice, and the
+        // second answer must be dropped rather than buffered.
+        this.settle(invocationId);
         this.deliver(waiter, early);
         return;
       }
@@ -572,19 +1337,21 @@ export class WebMcpBridge {
         // the grace timer below is what settles this waiter now.
         if (waiter.timer) clearTimeout(waiter.timer);
         void Promise.resolve(
-          this.cdp.send("WebMCP.cancelInvocation", { invocationId }),
+          owner.send("WebMCP.cancelInvocation", { invocationId }),
         ).catch(() => {});
         // Settle even if the page never answers our cancel — a dead page must
-        // not leave the caller waiting forever.
+        // not leave the caller waiting forever. Through `settle` like every
+        // other terminal transition, so the id is remembered and a late answer
+        // to this invocation is dropped rather than buffered.
         waiter.cancelTimer = setTimeout(() => {
           if (!this.pending.has(invocationId)) return;
-          this.pending.delete(invocationId);
+          this.settle(invocationId);
           reject(
             new WebMcpBridgeError(
-              "webmcp_cancelled",
+              "webmcp_outcome_unknown",
               reason === "timeout"
-                ? "The page tool did not respond in time."
-                : "The invocation was cancelled.",
+                ? "Stopped waiting for the page tool after a timeout. Execution may continue; verify the page state before retrying."
+                : "Cancellation requested. Page execution may continue; verify the page state before retrying.",
               reason,
             ),
           );
@@ -628,23 +1395,50 @@ export class WebMcpBridge {
     // Mark BEFORE awaiting: the page can answer `Canceled` inside the send,
     // and a reason set afterwards would arrive too late to be reported.
     if (waiter) waiter.cancelReason = "cancelled";
-    await Promise.resolve(
-      this.cdp.send("WebMCP.cancelInvocation", { invocationId }),
-    ).catch(() => {});
+    // The session that STARTED it, when we know — no other one can stop it.
+    // For an id this bridge does not track (a caller holding one across a
+    // reconnect) every session is asked, rather than guessing at the page's:
+    // the contract is that the browser is told to stop either way, and a
+    // renderer that never heard of the id simply rejects.
+    const targets = waiter
+      ? [waiter.cdp]
+      : [...this.sessions.values()].map((session) => session.cdp);
+    await Promise.all(
+      targets.map((cdp) =>
+        Promise.resolve(
+          cdp.send("WebMCP.cancelInvocation", { invocationId }),
+        ).catch(() => {}),
+      ),
+    );
     return Boolean(waiter);
   }
 
   /** Reject every waiter; called when the tab or daemon goes away. */
   dispose(): void {
+    this.localBudget?.entries.delete(this);
     if (this.disposed) return;
     this.disposed = true;
+    this.subscribers.clear();
+    this.externalSubscribers.clear();
+    this.probe = undefined;
+    // Child sessions are the provider's to close; what the bridge drops is its
+    // own bookkeeping. It cannot UNSUBSCRIBE them — `CdpLike` has no `off` —
+    // so the handlers stay wired and `live()` is what makes them inert. Without
+    // that, a `toolsAdded` from a target still detaching would repopulate this
+    // map and publish it through `onChange`, which `subscribers.clear()` does
+    // not cover.
+    for (const key of [...this.sessions.keys()]) {
+      if (key !== MAIN_SESSION_KEY) this.sessions.delete(key);
+    }
+    this.frameSessions.clear();
+    this.tools.clear();
     for (const [id, waiter] of this.pending) {
       if (waiter.timer) clearTimeout(waiter.timer);
       if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);
       waiter.reject(
         new WebMcpBridgeError(
-          "webmcp_cancelled",
-          "The browser tab was closed.",
+          "webmcp_outcome_unknown",
+          "The browser session ended before the page tool's outcome was known. Verify the page state before retrying.",
           "cancelled",
         ),
       );

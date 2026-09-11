@@ -14,9 +14,28 @@ import type {
   IterationTranscript,
   RenderObservationSummary,
   ToolErrorRecord,
+  TranscriptCapture,
+  TranscriptCaptureState,
   TranscriptToolCall,
+  TranscriptToolCallTiming,
+  TranscriptToolInventoryEntry,
+  TranscriptToolResult,
   TranscriptUsage,
 } from "./types.js";
+
+/**
+ * Caps on the evidence channels, so one pathological iteration cannot inflate
+ * every persisted transcript.
+ *
+ * The text cap is a STORAGE cap and nothing else: `size.bytes` is measured on
+ * the untruncated part before this applies, so a budget check still grades
+ * what the server actually returned. Row caps mark the capture `partial` when
+ * they bite, which is what stops a check from reading a truncated list as the
+ * whole story.
+ */
+export const MAX_TOOL_RESULT_TEXT_CHARS = 64_000;
+export const MAX_TOOL_RESULT_ROWS = 200;
+export const MAX_TOOL_CALL_TIMING_ROWS = 500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -95,6 +114,27 @@ export interface BuildTranscriptInput {
    * Otherwise derived from the trace's user-role messages.
    */
   turnCount?: number;
+  /**
+   * Observed tool results, when the caller captured them.
+   *
+   * ABSENT is not the same as EMPTY, and the difference decides whether a
+   * result-shaped check reports a scored absence or an error. A caller that
+   * did not look passes nothing here and gets `capture.toolResults: "absent"`;
+   * a caller that looked and saw none passes `[]` with
+   * `resultsCaptured: true`.
+   */
+  toolResults?: TranscriptToolResult[];
+  /** True when the caller actually looked for results. See {@link toolResults}. */
+  resultsCaptured?: boolean;
+  /** Observed per-call durations. Same absent-vs-empty rule. */
+  toolCallTimings?: TranscriptToolCallTiming[];
+  /** True when the caller actually looked for timings. */
+  timingsCaptured?: boolean;
+  /**
+   * The tools advertised to the model this iteration, as the runner had them.
+   * Absent ⇒ declaration-comparing checks report `status: "error"`.
+   */
+  toolInventory?: TranscriptToolInventoryEntry[];
 }
 
 /**
@@ -138,6 +178,49 @@ export function buildTurnTranscript(
   };
 }
 
+/**
+ * Cap a result's stored text WITHOUT touching its measured size.
+ *
+ * `truncated` marks the text; `size.bytes` keeps whatever the caller measured
+ * on the whole part. A reader that grades the stored length instead would
+ * report every oversized result as exactly the cap.
+ */
+function capResultText(result: TranscriptToolResult): TranscriptToolResult {
+  if (
+    typeof result.text !== "string" ||
+    result.text.length <= MAX_TOOL_RESULT_TEXT_CHARS
+  ) {
+    return result;
+  }
+  return {
+    ...result,
+    text: result.text.slice(0, MAX_TOOL_RESULT_TEXT_CHARS),
+    truncated: true,
+  };
+}
+
+/**
+ * How completely one channel was captured.
+ *
+ * Three states, because they are three different facts: nobody looked
+ * (`absent`), we looked and the rows we have are uncapped (`complete`), we
+ * looked and the cap bit (`partial`).
+ *
+ * `complete` is a claim about THIS CHANNEL, not about the run: it says no row
+ * was dropped on the way here, not that every observed call produced one. A
+ * check reading "no rows" as "nothing happened" needs both — the channel
+ * complete AND no calls in its scope — which is why the evaluator consults
+ * `toolCalls` before it scores an empty scope.
+ */
+function stateFor(
+  captured: boolean | undefined,
+  rows: readonly unknown[] | undefined,
+  cap: number
+): TranscriptCaptureState {
+  if (rows === undefined && captured !== true) return "absent";
+  return (rows?.length ?? 0) > cap ? "partial" : "complete";
+}
+
 /** Assemble an {@link IterationTranscript} from runner per-iteration data. */
 export function buildIterationTranscript(
   input: BuildTranscriptInput
@@ -150,6 +233,19 @@ export function buildIterationTranscript(
     ...(input.toolErrors ?? []),
   ];
   const turnCount = input.turnCount ?? countUserTurns(messagesOf(input.trace));
+  const capture: TranscriptCapture = {
+    toolResults: stateFor(
+      input.resultsCaptured,
+      input.toolResults,
+      MAX_TOOL_RESULT_ROWS
+    ),
+    toolCallTimings: stateFor(
+      input.timingsCaptured,
+      input.toolCallTimings,
+      MAX_TOOL_CALL_TIMING_ROWS
+    ),
+    toolInventory: input.toolInventory === undefined ? "absent" : "complete",
+  };
   return {
     toolCalls: input.toolCalls,
     toolErrors,
@@ -159,5 +255,22 @@ export function buildIterationTranscript(
       ? { renderObservations: input.renderObservations }
       : {}),
     ...(turnCount !== undefined ? { turnCount } : {}),
+    ...(input.toolResults
+      ? {
+          toolResults: input.toolResults
+            .slice(0, MAX_TOOL_RESULT_ROWS)
+            .map(capResultText),
+        }
+      : {}),
+    ...(input.toolCallTimings
+      ? {
+          toolCallTimings: input.toolCallTimings.slice(
+            0,
+            MAX_TOOL_CALL_TIMING_ROWS
+          ),
+        }
+      : {}),
+    ...(input.toolInventory ? { toolInventory: input.toolInventory } : {}),
+    capture,
   };
 }

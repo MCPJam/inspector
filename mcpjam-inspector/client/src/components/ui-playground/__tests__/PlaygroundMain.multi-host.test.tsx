@@ -469,6 +469,48 @@ const mockHostMutations = vi.hoisted(() => ({
 }));
 mockHostMutations.createHost = mockCreateHost;
 
+// Local Claude Code execution, forced ON so the per-column wiring is
+// observable. Left to the real controller this would settle to "unavailable"
+// under jsdom, every column would read `requested: false`, and a test asserting
+// that would pass just as happily with the bug in place.
+const localHarnessFixture = vi.hoisted(() => ({
+  requestedTarget: "local-native" as string | null,
+}));
+vi.mock("@/hooks/useLocalHarnessTarget", () => ({
+  // ONLY `requestedTarget` is meaningful here — it is what the per-column
+  // derivation reads, and it is what these tests assert on. The rest is filler
+  // to satisfy the shape. `needs-consent` rather than `ready` because `ready`
+  // means a verified runtime AND a live grant, and `consent: null` below would
+  // make that an impossible state for anyone who later renders the dialog from
+  // this file.
+  useLocalHarnessController: () => ({
+    requestedTarget: localHarnessFixture.requestedTarget,
+    effectiveTarget: "hosted",
+    phase: "needs-consent",
+    reason: null,
+    availability: null,
+    loading: false,
+    availabilityError: null,
+    runtimeStatus: { state: "ready", packVersion: "3.4.0" },
+    statusFetchFailed: false,
+    consent: null,
+    workspace: { workspaceGrantId: "ws_1", displayRoot: "~/code/project" },
+    pendingApproval: null,
+    hostedAvailable: false,
+    select: vi.fn(),
+    refresh: vi.fn(),
+    chooseWorkspace: vi.fn(),
+    adoptWorkspace: vi.fn(),
+    captureApproval: vi.fn(),
+    cancelApproval: vi.fn(),
+    startInstall: vi.fn(),
+    authorize: vi.fn(),
+    revoke: vi.fn(),
+    resolveSendTarget: vi.fn(() => null),
+  }),
+  useLocalHarnessRunsHere: () => false,
+}));
+
 vi.mock("@/hooks/use-persisted-host", () => ({
   usePersistedHost: (projectId: string | null) => {
     usePersistedHostProjectIds.push(projectId);
@@ -669,6 +711,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.selectedHostIds = [];
     multiHostFixture.hostList = [];
     multiHostFixture.hosts = {};
+    localHarnessFixture.requestedTarget = "local-native";
     // Reset shared-app-state to the default project; the shared-project
     // test mutates this to force `convexProjectId !== activeProjectId`.
     mockSharedAppState.projects = {};
@@ -1229,6 +1272,70 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(cards[0].getAttribute("data-host-style")).toBe("chatgpt");
     expect(cards[1].getAttribute("data-host-style")).toBe("claude");
     expect(cards[0].getAttribute("data-compare-kind")).toBe("host");
+  });
+
+  // ── Local execution is per-LANE ────────────────────────────────────────
+  //
+  // The regression: `localHarnessExecution` was computed once from the
+  // PREVIEWED host and handed to every column. In a grid whose lead runs
+  // Claude Code, a Codex column inherited `requested: true` — a local
+  // authorization it can never satisfy, because the local target is not a
+  // thing a Codex turn can have. `use-chat-session` then refuses the send,
+  // and the only screen that could clear it authorizes a different host.
+  //
+  // Each column runs its own host, so each answers this for itself.
+  it("asks the local-execution question per column, not once per page", () => {
+    const claudeCode = makeHost("h-cc", "Claude Code", {
+      hostStyle: "claude",
+      harness: "claude-code",
+    } as Partial<HostConfigDtoV2>);
+    const codex = makeHost("h-codex", "Codex", {
+      hostStyle: "chatgpt",
+      harness: "codex",
+    } as Partial<HostConfigDtoV2>);
+    multiHostFixture.hostList = [
+      { hostId: "h-cc", name: "Claude Code" },
+      { hostId: "h-codex", name: "Codex" },
+    ];
+    multiHostFixture.hosts = { "h-cc": claudeCode, "h-codex": codex };
+    multiHostFixture.selectedHostIds = ["h-cc", "h-codex"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const byColumn = new Map<string, boolean>();
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      byColumn.set(props.compareId, props.localHarnessExecution?.requested);
+    }
+    expect(byColumn.get("h-cc")).toBe(true);
+    expect(byColumn.get("h-codex")).toBe(false);
+  });
+
+  // The other half of the same rule: nothing is local when nothing asked for
+  // it, so a Claude Code column is not special-cased into running here.
+  it("leaves every column non-local when local execution is not requested", () => {
+    localHarnessFixture.requestedTarget = "hosted";
+    const claudeCode = makeHost("h-cc", "Claude Code", {
+      hostStyle: "claude",
+      harness: "claude-code",
+    } as Partial<HostConfigDtoV2>);
+    const codex = makeHost("h-codex", "Codex", {
+      hostStyle: "chatgpt",
+      harness: "codex",
+    } as Partial<HostConfigDtoV2>);
+    multiHostFixture.hostList = [
+      { hostId: "h-cc", name: "Claude Code" },
+      { hostId: "h-codex", name: "Codex" },
+    ];
+    multiHostFixture.hosts = { "h-cc": claudeCode, "h-codex": codex };
+    multiHostFixture.selectedHostIds = ["h-cc", "h-codex"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      expect(props.localHarnessExecution?.requested).toBe(false);
+    }
   });
 
   it("shares selectedServers across all columns (project-scoped invariant)", () => {
@@ -2032,7 +2139,7 @@ describe("PlaygroundMain — environment mode", () => {
     render(<PlaygroundMain {...defaultProps} />);
 
     expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
-      undefined
+      undefined,
     );
   });
 
