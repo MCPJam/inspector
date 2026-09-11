@@ -8,6 +8,10 @@
  * BEFORE spending anything, and it has to stay honest as environments are
  * added — see {@link estimateSwarmSessions}.
  *
+ * `sessionsPerTarget` must differ across all three presets: once a slate is
+ * authored it is the only preset field the Confirm quote reads, so two presets
+ * sharing a value quote the same conversation count and read as duplicates.
+ *
  * Bounds these values must respect (backend validators, not style choices):
  *   personaCount    1..12  (`MAX_PERSONA_COUNT`, persona slate)
  *   journeyCount    1..5   (`MAX_JOURNEY_COUNT`, journey slate)
@@ -56,7 +60,8 @@ export const SWARM_INTENSITY_PRESETS: Record<
     label: "Launch ready",
     personaCount: 12,
     journeyCount: 5,
-    sessionsPerTarget: 2,
+    // Must differ from `standard` — see the distinctness note above.
+    sessionsPerTarget: 3,
     maxTurns: 10,
     eta: "~15 min",
   },

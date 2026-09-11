@@ -18,7 +18,16 @@ describe("swarm intensity presets", () => {
   it("quotes the advertised session counts for a single environment", () => {
     expect(estimateSwarmSessions(SWARM_INTENSITY_PRESETS.quick, 1)).toBe(15);
     expect(estimateSwarmSessions(SWARM_INTENSITY_PRESETS.standard, 1)).toBe(36);
-    expect(estimateSwarmSessions(SWARM_INTENSITY_PRESETS.launch, 1)).toBe(120);
+    expect(estimateSwarmSessions(SWARM_INTENSITY_PRESETS.launch, 1)).toBe(180);
+  });
+
+  it("gives every preset its own sessionsPerTarget", () => {
+    // Once a slate exists this is the only preset field the Confirm quote
+    // reads, so a shared value makes two options quote the same count.
+    const perTarget = SWARM_INTENSITY_ORDER.map(
+      (value) => SWARM_INTENSITY_PRESETS[value].sessionsPerTarget,
+    );
+    expect(new Set(perTarget).size).toBe(perTarget.length);
   });
 
   it("treats no environment as one — the quote is never zero", () => {
@@ -65,10 +74,25 @@ describe("swarm intensity presets", () => {
  * control silently re-prices work the control does not size.
  */
 describe("estimateLaunchSessions", () => {
+  it("quotes a different count per preset for a newly authored slate", () => {
+    // BB-194: Standard and Launch ready both quoted 36 because they shared
+    // sessionsPerTarget, and this formula reads no other preset field.
+    const quotes = SWARM_INTENSITY_ORDER.map((value) =>
+      estimateLaunchSessions({
+        preset: SWARM_INTENSITY_PRESETS[value],
+        newJourneyCount: 6,
+        reusedSessionsPerTarget: [],
+        environmentCount: 1,
+      }),
+    );
+    expect(new Set(quotes).size).toBe(quotes.length);
+    expect(quotes).toEqual([...quotes].sort((a, b) => a - b));
+  });
+
   it("prices reused journeys at their own sessions, not the preset's", () => {
     expect(
       estimateLaunchSessions({
-        preset: SWARM_INTENSITY_PRESETS.launch, // sessionsPerTarget: 2
+        preset: SWARM_INTENSITY_PRESETS.launch, // sessionsPerTarget: 3
         newJourneyCount: 0,
         reusedSessionsPerTarget: [4, 1],
         environmentCount: 1,
