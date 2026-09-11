@@ -6,18 +6,25 @@ import userEvent from "@testing-library/user-event";
 // `vi.hoisted` because the vi.mock factory is lifted above this declaration.
 // The arrow-wrapper form also works, but every other suite here uses hoisted —
 // keep one idiom.
-const { reportBoundaryError } = vi.hoisted(() => ({
+const { reportBoundaryError, reportCaught } = vi.hoisted(() => ({
   reportBoundaryError: vi.fn(),
+  reportCaught: vi.fn(),
 }));
 vi.mock("@/lib/error-reporting", () => ({
   reportBoundaryError,
-  reportCaught: vi.fn(),
+  reportCaught,
 }));
 
 import { ErrorBoundary } from "../error-boundary";
 
-function Boom({ shouldThrow }: { shouldThrow: boolean }): React.ReactElement {
-  if (shouldThrow) throw new Error("kaboom");
+function Boom({
+  shouldThrow,
+  message = "kaboom",
+}: {
+  shouldThrow: boolean;
+  message?: string;
+}): React.ReactElement {
+  if (shouldThrow) throw new Error(message);
   return <div>recovered</div>;
 }
 
@@ -26,6 +33,7 @@ describe("ErrorBoundary", () => {
 
   beforeEach(() => {
     reportBoundaryError.mockReset();
+    reportCaught.mockReset();
     // React logs caught boundary errors; silence it so the suite output stays
     // readable without hiding real failures.
     consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -175,6 +183,34 @@ describe("ErrorBoundary", () => {
     expect((reportBoundaryError.mock.calls[0][0] as Error).message).toBe(
       "kaboom",
     );
+  });
+
+  it("reloads once for a chunk the deploy no longer serves, instead of blaming the subtree", () => {
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+    window.sessionStorage.clear();
+
+    render(
+      <ErrorBoundary name="lazy_boundary">
+        <Boom
+          shouldThrow
+          message="Failed to fetch dynamically imported module: /assets/highlighted-body-OFNGDK62-BtUjfQ3T.js"
+        />
+      </ErrorBoundary>,
+    );
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(reportBoundaryError).not.toHaveBeenCalled();
+    expect(reportCaught).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ source: "stale_chunk", level: "warning" }),
+    );
+    expect(
+      screen.getByText(/MCPJam was updated while this tab was open/),
+    ).toBeInTheDocument();
   });
 
   it("renders the default UI and does not report when nothing throws", () => {

@@ -1,7 +1,12 @@
 import React from "react";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { reportBoundaryError } from "@/lib/error-reporting";
+import { reportBoundaryError, reportCaught } from "@/lib/error-reporting";
+import {
+  attemptStaleChunkRecovery,
+  isStaleChunkError,
+  STALE_CHUNK_MESSAGE,
+} from "@/lib/stale-chunk";
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -74,6 +79,20 @@ export class ErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    // A chunk this build no longer serves is not a defect in the subtree that
+    // happened to import it, and no reset can fix it — only a document load
+    // can. Recover first, and report it as the deploy-shaped warning it is
+    // rather than as one error issue per boundary that mounts a lazy child.
+    if (isStaleChunkError(error)) {
+      const recovery = attemptStaleChunkRecovery();
+      reportCaught(error, {
+        source: "stale_chunk",
+        level: "warning",
+        extra: { recovery, boundary: this.props.name ?? "unnamed" },
+      });
+      this.props.onError?.(error, errorInfo);
+      return;
+    }
     // An expected error is still worth a breadcrumb — it just is not a fault,
     // so it goes to `debug` rather than shouting on the console once per visit.
     const expected = this.isExpected(error);
@@ -122,7 +141,9 @@ export class ErrorBoundary extends React.Component<
             <AlertTriangle className="h-12 w-12 text-destructive mx-auto mb-4" />
             <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
             <p className="text-sm text-muted-foreground mb-4">
-              {this.state.error?.message || "An unexpected error occurred"}
+              {isStaleChunkError(this.state.error)
+                ? STALE_CHUNK_MESSAGE
+                : this.state.error?.message || "An unexpected error occurred"}
             </p>
             <Button onClick={this.handleReset} variant="outline">
               Try again

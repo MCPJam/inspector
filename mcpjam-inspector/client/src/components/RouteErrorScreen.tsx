@@ -4,6 +4,11 @@ import { AlertTriangle } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { reportCaught } from "@/lib/error-reporting";
 import { scrubSensitiveUrl } from "@/lib/PosthogUtils";
+import {
+  attemptStaleChunkRecovery,
+  isStaleChunkError,
+  STALE_CHUNK_MESSAGE,
+} from "@/lib/stale-chunk";
 
 const GENERIC_MESSAGE = "An unexpected error occurred";
 
@@ -36,6 +41,7 @@ function errorMessage(error: unknown): string {
  */
 export function RouteErrorScreen() {
   const error = useRouteError();
+  const stale = isStaleChunkError(error);
   // Effect (not render) so StrictMode's double-render and any re-render from a
   // parent can't multiply the report; the ref keeps it to one per error.
   const reported = useRef<unknown>(null);
@@ -43,14 +49,29 @@ export function RouteErrorScreen() {
   useEffect(() => {
     if (reported.current === error) return;
     reported.current = error;
+    // Scrubbed: `/results/<token>` is a bearer-credential path, and a crash
+    // there would otherwise ship the token straight to Sentry/PostHog —
+    // the exact leak the rest of this PR closes elsewhere.
+    const pathname = scrubSensitiveUrl(window.location.pathname);
+
+    if (stale) {
+      // Warning, not error: the build is fine, this tab is just old. It is
+      // still worth a signal — a `cooldown` outcome means the reload did not
+      // help, which is a real broken deploy rather than a stale tab.
+      const recovery = attemptStaleChunkRecovery();
+      reportCaught(error, {
+        source: "stale_chunk",
+        level: "warning",
+        extra: { pathname, recovery, boundary: "route_error_element" },
+      });
+      return;
+    }
+
     reportCaught(error, {
       source: "route_error_element",
-      // Scrubbed: `/results/<token>` is a bearer-credential path, and a crash
-      // there would otherwise ship the token straight to Sentry/PostHog —
-      // the exact leak the rest of this PR closes elsewhere.
-      extra: { pathname: scrubSensitiveUrl(window.location.pathname) },
+      extra: { pathname },
     });
-  }, [error]);
+  }, [error, stale]);
 
   return (
     <div
@@ -59,9 +80,13 @@ export function RouteErrorScreen() {
     >
       <div className="text-center max-w-md">
         <AlertTriangle className="h-12 w-12 text-destructive mx-auto mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
+        <h2 className="text-xl font-semibold mb-2">
+          {stale
+            ? "A newer version of MCPJam is available"
+            : "Something went wrong"}
+        </h2>
         <p className="text-sm text-muted-foreground mb-4">
-          {errorMessage(error)}
+          {stale ? STALE_CHUNK_MESSAGE : errorMessage(error)}
         </p>
         <div className="flex items-center justify-center gap-2">
           <Button onClick={() => location.reload()} variant="outline">
