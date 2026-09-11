@@ -12,6 +12,7 @@
  */
 
 import { authFetch } from "@/lib/session-token";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
@@ -971,10 +972,14 @@ export interface SwarmGeneratedPersona {
  */
 export class SwarmGenerateError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** A model limit the dialog took over. The caller must not also render this
+   * message inline — the modal already carries it, with the actions. */
+  readonly limitDialogRaised: boolean;
+  constructor(status: number, message: string, limitDialogRaised = false) {
     super(message);
     this.name = "SwarmGenerateError";
     this.status = status;
+    this.limitDialogRaised = limitDialogRaised;
   }
 }
 
@@ -1017,6 +1022,21 @@ async function postGenerate<T>(
       body?.details && typeof body.details === "object"
         ? (body.details as Record<string, unknown>)
         : undefined;
+    // Raise the top-up dialog HERE, where the body still carries the route's
+    // `code`. `SwarmGenerateError` keeps only status + message, so by the time
+    // the create flow catches this the limit is no longer identifiable — and
+    // it renders as the catalog's "Unknown error" instead.
+    const limitDialogRaised = notifyMCPJamLimitError({
+      ...(code ? { code } : {}),
+      details: parsed,
+      message,
+      surface: "swarm",
+    });
+    // The dialog owns this failure, so the error only has to carry the flag
+    // that suppresses the card — `normalized` exists to feed that same card.
+    if (limitDialogRaised) {
+      throw new SwarmGenerateError(response.status, message, true);
+    }
     if (normalized) {
       throw new WebApiError(
         response.status,

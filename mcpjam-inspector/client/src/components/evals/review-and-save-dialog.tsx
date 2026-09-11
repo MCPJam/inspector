@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import type { SuiteSettingsChange } from "./suite-settings-draft";
+import { QUALITY_GATE_REASON_HINT } from "./suite-quality-gate-section";
 
 const MAX_NOTE_LENGTH = 500;
 
@@ -33,6 +34,7 @@ export function ReviewAndSaveDialog({
   isCommitting,
   onConfirm,
   extraContent,
+  requireNote = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -42,8 +44,17 @@ export function ReviewAndSaveDialog({
   onConfirm: (note: string) => void;
   /** Slot for the judge backtest panel (S6). */
   extraContent?: React.ReactNode;
+  /**
+   * Quality-gate writes need a reason. The note lives HERE, so a missing
+   * reason must never disable the commit-bar opener — only this Save.
+   */
+  requireNote?: boolean;
 }) {
   const [note, setNote] = useState("");
+  const trimmedNote = note.trim();
+  const noteReady =
+    !requireNote ||
+    (trimmedNote.length > 0 && trimmedNote.length <= MAX_NOTE_LENGTH);
 
   // A reason belongs to one change. The dialog is mounted unconditionally by
   // the sheet, so closing it — including the parent's own `setReviewOpen(false)`
@@ -102,8 +113,13 @@ export function ReviewAndSaveDialog({
 
         <label className="block">
           <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-            Note (optional)
+            {requireNote ? "Reason (required)" : "Note (optional)"}
           </span>
+          {requireNote ? (
+            <p className="mt-1 text-[11px] text-muted-foreground/60">
+              {QUALITY_GATE_REASON_HINT}
+            </p>
+          ) : null}
           <textarea
             className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs"
             rows={2}
@@ -123,7 +139,10 @@ export function ReviewAndSaveDialog({
           >
             Keep editing
           </Button>
-          <Button onClick={() => onConfirm(note)} disabled={isCommitting}>
+          <Button
+            onClick={() => onConfirm(note)}
+            disabled={isCommitting || !noteReady}
+          >
             {isCommitting ? "Saving…" : "Save settings"}
           </Button>
         </DialogFooter>

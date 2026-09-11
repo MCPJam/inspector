@@ -21,6 +21,13 @@
  * screenshot out of a trace while someone types their password.
  */
 import type { BrowserdStack } from "./daemon/server";
+import {
+  decodePaneCommand,
+  decodePaneState,
+  decodeViewport,
+  type BrowserPaneClient,
+} from "./pane-client";
+import type { BrowserLedgerEntry } from "./daemon/command-ledger";
 import type { BrowserCommand } from "./protocol";
 import {
   asRecord,
@@ -34,6 +41,17 @@ import {
   type BrowserdLeaseState,
   type BrowserdStatus,
 } from "./browserd-codec";
+
+/** A non-200 from the daemon is a failure, not an empty answer. */
+function assertOk(
+  response: { status: number; body: Record<string, unknown> },
+  path: string,
+): void {
+  if (response.status === 200) return;
+  const error =
+    typeof response.body.error === "string" ? response.body.error : "unknown";
+  throw new Error(`browserd ${path} answered ${response.status}: ${error}`);
+}
 
 /** What the hosted client exposes, satisfied here without a socket. */
 export interface InProcessBrowserdClient {
@@ -50,20 +68,50 @@ export interface InProcessBrowserdClient {
     command: BrowserCommand,
     expectedBootId?: string,
   ): Promise<BrowserdCommandResponse>;
+  /** Read the command ledger forward from a cursor. */
+  readTrace(args?: {
+    afterSeq?: number;
+    commandId?: string;
+    limit?: number;
+  }): Promise<{ entries: BrowserLedgerEntry[]; headSeq: number }>;
+  /**
+   * Record a command the INSPECTOR refused, so the daemon's ring stays the one
+   * ordered ledger with one seq minter. Nothing is sent to the browser.
+   */
+  recordRefusal(args: {
+    command: BrowserCommand;
+    errorCode: string;
+    durationMs?: number;
+  }): Promise<{ seq: number }>;
+  exportProfile(): Promise<Uint8Array>;
 }
+
+/** The shell's three calls, satisfied in-process. @see BrowserPaneClient */
+export type InProcessPaneClient = InProcessBrowserdClient & BrowserPaneClient;
 
 export function createInProcessBrowserdClient(
   stack: Pick<BrowserdStack, "handler">,
   token: string,
-): InProcessBrowserdClient {
-  const call = async (
+): InProcessPaneClient {
+  const callRaw = async (
     method: string,
     path: string,
     body?: unknown,
-  ): Promise<{ status: number; body: Record<string, unknown> }> => {
+  ): Promise<{ status: number; body: unknown }> => {
+    // Split the query the way the http adapter's `new URL(...)` does. The
+    // handler matches `req.path` EXACTLY and reads arguments from `req.query`,
+    // so passing "/v1/trace?afterSeq=3" whole would 404 a route that exists —
+    // and a caller has no way to tell that apart from a daemon too old to
+    // serve it.
+    const queryStart = path.indexOf("?");
+    const pathname = queryStart === -1 ? path : path.slice(0, queryStart);
+    const query =
+      queryStart === -1
+        ? undefined
+        : new URLSearchParams(path.slice(queryStart + 1));
     const response = await stack.handler.handle({
       method,
-      path,
+      path: pathname,
       // No Origin, ever. The handler rejects any request that carries one as a
       // DNS-rebinding attempt, and an in-process caller genuinely has none —
       // sending a synthetic value to "look like a browser" would be inventing
@@ -71,7 +119,16 @@ export function createInProcessBrowserdClient(
       origin: undefined,
       authorization: `Bearer ${token}`,
       body: body === undefined ? "" : JSON.stringify(body),
+      ...(query ? { query } : {}),
     });
+    return { status: response.status, body: response.body };
+  };
+  const call = async (
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: Record<string, unknown> }> => {
+    const response = await callRaw(method, path, body);
     return { status: response.status, body: asRecord(response.body) };
   };
 
@@ -92,6 +149,60 @@ export function createInProcessBrowserdClient(
       return decodeCommandResponse(
         await call("POST", "/v1/commands", { command, expectedBootId }),
       );
+    },
+    async paneState(args) {
+      const query = args.holder
+        ? `?holder=${encodeURIComponent(args.holder)}`
+        : "";
+      return decodePaneState(await call("GET", `/v1/state${query}`));
+    },
+    async paneCommand(args) {
+      return decodePaneCommand(await call("POST", "/v1/pane-command", args));
+    },
+    async paneViewport(args) {
+      const res = await call("POST", "/v1/viewport", args);
+      return res.status === 200 ? decodeViewport(res.body.viewport) : null;
+    },
+    async readTrace(args = {}) {
+      const query = new URLSearchParams();
+      if (args.afterSeq !== undefined)
+        query.set("afterSeq", String(args.afterSeq));
+      if (args.commandId !== undefined) query.set("commandId", args.commandId);
+      if (args.limit !== undefined) query.set("limit", String(args.limit));
+      const suffix = query.size > 0 ? `?${query.toString()}` : "";
+      const response = await call("GET", `/v1/trace${suffix}`);
+      // THROWN, not smoothed into an empty page. A 501 means this daemon keeps
+      // no ledger and a 401 means the credential is wrong; answering both with
+      // "no rows" tells a caller its history is empty, which is the one thing
+      // it must not conclude from a failure to read it.
+      assertOk(response, "/v1/trace");
+      const entries = response.body.entries;
+      return {
+        entries: Array.isArray(entries)
+          ? (entries as BrowserLedgerEntry[])
+          : [],
+        headSeq:
+          typeof response.body.headSeq === "number" ? response.body.headSeq : 0,
+      };
+    },
+    async recordRefusal(args) {
+      const response = await call("POST", "/v1/trace", args);
+      // Likewise: a refusal that was not recorded is a hole in the trace, and
+      // the door turns this rejection into the caller's `historyWarning`.
+      assertOk(response, "/v1/trace");
+      return {
+        seq: typeof response.body.seq === "number" ? response.body.seq : 0,
+      };
+    },
+    async exportProfile() {
+      const response = await callRaw("POST", "/v1/profile/export");
+      if (response.status !== 200 || !(response.body instanceof Uint8Array)) {
+        const body = asRecord(response.body);
+        throw new Error(
+          `browser profile export failed with status ${response.status}: ${String(body.error ?? "unknown")}`,
+        );
+      }
+      return response.body;
     },
   };
 }

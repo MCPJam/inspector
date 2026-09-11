@@ -77,6 +77,14 @@ type ConvexErrorData = {
  * running in the other direction. An unlisted code falls through to the
  * translator's terminal 500, which is logged, which is how we would find out.
  */
+/**
+ * The backend's refusal code for a write to a CI-owned suite. Spelled here
+ * rather than imported: this repo does not depend on the backend's source, and
+ * a hand-mirrored constant with the reason written down beats a string literal
+ * buried in a conditional.
+ */
+const CI_OWNED_SUITE_READ_ONLY_CODE = "CI_OWNED_SUITE_READ_ONLY";
+
 const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "gate_waiver_unscoped_suite",
   "gate_waiver_reason_empty",
@@ -85,10 +93,30 @@ const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "gate_waiver_expiry_too_far",
 ]);
 
+/**
+ * The structured payload a `ConvexError` carried, THROUGH any wrapper.
+ *
+ * `CaseBatchPartialFailureError` (and anything else that adds context by
+ * rethrowing) copies the message but not the `data` — `super(cause.message)`
+ * loses the payload — so a coded refusal reaching this file inside a wrapper
+ * matched no branch below and fell all the way to the terminal 500. That is
+ * exactly backwards: a wrapper exists to ADD what landed, not to erase why it
+ * did not. So the `cause` chain is walked, nearest first.
+ *
+ * Bounded, and by depth rather than by a seen-set: a self-referential `cause`
+ * is a bug worth surviving, and three links is already more nesting than any
+ * path here has.
+ */
 function convexErrorData(error: unknown): ConvexErrorData | null {
-  const data = (error as { data?: unknown } | null)?.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  return data as ConvexErrorData;
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    const data = (current as { data?: unknown }).data;
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      return data as ConvexErrorData;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 /** Strip Convex's own framing so it cannot reach a public response body. */
@@ -349,6 +377,38 @@ export function translateConvexWriteError(
       400,
       ErrorCode.VALIDATION_ERROR,
       structuredMessage ?? fallbackMessage
+    );
+  }
+
+  // ── The CI-owned suite lock (mcpjam-backend lib/evalPermissions.ts) ──────
+  //
+  // A suite whose configuration lives in a repository — a committed suite file,
+  // or SDK ingest — refuses configuration writes from the app and from this
+  // API. 409 rather than 403, because this is NOT a permission problem: the
+  // caller's role is fine and no amount of privilege changes the answer. What
+  // changes it is editing the source of truth, or taking a copy. A 403 would
+  // send someone to ask their admin for access they already have.
+  //
+  // The backend's `message` names both remedies and is forwarded verbatim; the
+  // hint below is added for the API caller specifically, who has a third
+  // option the app's user does not — send `declaredSuiteId` and write AS the
+  // file.
+  //
+  // Handled explicitly rather than left to fall through, for the same reason
+  // the two branches around it are: an unrecognized code reaches the prose
+  // sniffing below, which reads `error.message` — the JSON of a ConvexError's
+  // data — and either loses the message on a 500 or matches a pattern by
+  // accident and answers with the wrong status.
+  if (code === CI_OWNED_SUITE_READ_ONLY_CODE) {
+    return new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      structuredMessage ??
+        "This suite is managed by CI and cannot be edited here.",
+      {
+        reason: CI_OWNED_SUITE_READ_ONLY_CODE,
+        hint: "Edit the suite file in your repository (and send its suite id as declaredSuiteId), or duplicate the suite to get an editable copy.",
+      }
     );
   }
 

@@ -1,4 +1,3 @@
-import type { ProjectRouteState } from "./project-route-state";
 import {
   isProjectIdShape,
   readProjectPathSegment,
@@ -6,66 +5,54 @@ import {
 } from "./project-route";
 
 export interface ProjectSignInReturnRecoveryIntent {
+  path: string;
   requestedProjectId: string;
 }
 
 export type ProjectSignInReturnRecoveryDecision =
   | { kind: "none" }
-  | { kind: "clear" }
+  | { kind: "wait" }
+  | { kind: "open"; path: string }
   | { kind: "home" }
-  | { kind: "switch"; path: string; message: string };
+  | { kind: "switch"; path: string };
 
-/** Arm recovery only for a path selected by the completed sign-in flow. */
+/** Arm recovery only for a project-scoped path selected by sign-in. */
 export function createProjectSignInReturnRecoveryIntent(
   path: string,
 ): ProjectSignInReturnRecoveryIntent | null {
   const requestedProjectId = readProjectPathSegment(path);
-  return requestedProjectId ? { requestedProjectId } : null;
+  return requestedProjectId ? { path, requestedProjectId } : null;
 }
 
 /**
- * Decide whether a sign-in return is stale using the authoritative membership
- * response. Timeouts, malformed ids, direct links and ordinary navigation do
- * not recover to another project.
+ * Resolve a project-scoped sign-in return before it is allowed to navigate.
+ * Only the first authoritative membership response may declare the saved
+ * project stale; malformed paths still open normally so the route boundary
+ * can report them instead of silently changing their meaning.
  */
 export function resolveProjectSignInReturnRecovery(args: {
   intent: ProjectSignInReturnRecoveryIntent | null;
-  routeState: ProjectRouteState;
-  currentPath: string;
   membershipProjectIds: ReadonlySet<string> | undefined;
-  fallbackProject: { id: string; name: string } | null;
+  fallbackProjectId: string | null;
 }): ProjectSignInReturnRecoveryDecision {
-  const {
-    intent,
-    routeState,
-    currentPath,
-    membershipProjectIds,
-    fallbackProject,
-  } = args;
+  const { intent, membershipProjectIds, fallbackProjectId } = args;
   if (!intent) return { kind: "none" };
-  if (routeState.status === "unscoped") return { kind: "clear" };
-
-  const routeProjectId =
-    routeState.status === "ready"
-      ? routeState.projectId
-      : routeState.requestedProjectId;
-  if (routeProjectId !== intent.requestedProjectId) return { kind: "clear" };
-  if (routeState.status === "resolving") return { kind: "none" };
-  if (routeState.status === "ready") return { kind: "clear" };
-
-  if (!isProjectIdShape(intent.requestedProjectId)) return { kind: "clear" };
-  if (membershipProjectIds === undefined) return { kind: "none" };
-  if (
-    routeState.reason !== "not-a-member" ||
-    membershipProjectIds.has(intent.requestedProjectId)
-  ) {
-    return { kind: "clear" };
+  if (!isProjectIdShape(intent.requestedProjectId)) {
+    return { kind: "open", path: intent.path };
   }
-  if (!fallbackProject) return { kind: "home" };
-
-  return {
-    kind: "switch",
-    path: replaceProjectInPath(currentPath, fallbackProject.id),
-    message: `Project not found. Switched to ${fallbackProject.name}.`,
-  };
+  if (membershipProjectIds === undefined) return { kind: "wait" };
+  if (membershipProjectIds.has(intent.requestedProjectId)) {
+    return { kind: "open", path: intent.path };
+  }
+  if (
+    fallbackProjectId &&
+    isProjectIdShape(fallbackProjectId) &&
+    membershipProjectIds.has(fallbackProjectId)
+  ) {
+    return {
+      kind: "switch",
+      path: replaceProjectInPath(intent.path, fallbackProjectId),
+    };
+  }
+  return { kind: "home" };
 }
