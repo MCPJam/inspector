@@ -80,6 +80,7 @@ describe("PosthogUtils", () => {
     // `register` feeds EVENTS; `/flags` evaluates PERSON properties. Without
     // this call a `deployment = self_hosted` flag rule matches nobody.
     expect(posthog.setPersonPropertiesForFlags).toHaveBeenCalledWith({
+      local_browser_security_version: "1",
       deployment: "self_hosted",
       platform: expect.any(String),
     });
@@ -231,8 +232,11 @@ describe("PosthogUtils", () => {
         pathname: "/results/super-secret-token",
       });
       vi.resetModules();
-      const { options: opts, shouldRecordSession, isCredentialBearingPath } =
-        await import("../PosthogUtils");
+      const {
+        options: opts,
+        shouldRecordSession,
+        isCredentialBearingPath,
+      } = await import("../PosthogUtils");
 
       expect(isCredentialBearingPath("/results/abc")).toBe(true);
       expect(isCredentialBearingPath("/conformance/shared/secret")).toBe(true);
@@ -358,9 +362,7 @@ describe("PosthogUtils", () => {
       const { syncSessionRecordingForPath } = await import("../PosthogUtils");
 
       // Missing methods, and a method that throws — neither may break render.
-      expect(() =>
-        syncSessionRecordingForPath({}, "/results/x"),
-      ).not.toThrow();
+      expect(() => syncSessionRecordingForPath({}, "/results/x")).not.toThrow();
       expect(() =>
         syncSessionRecordingForPath(
           {

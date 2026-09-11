@@ -277,3 +277,71 @@ describe("streamFrames", () => {
     await sink.ended;
   });
 });
+
+/**
+ * V-5. The video stream is the ACTIVE tab: the encoder grabs the X display,
+ * which has no concept of a tab. Sending a `tabId` alongside `codec=h264`
+ * would be a request the daemon cannot honour and a promise the pane would
+ * read as kept.
+ */
+describe("streamFrames — asking for video", () => {
+  it("asks for the codec and drops the tabId", async () => {
+    const urls: string[] = [];
+    const client = new BrowserdClient({
+      baseUrl: "https://box.example",
+      bearer: "secret",
+      fetchImpl: (async (url: string) => {
+        urls.push(String(url));
+        return new Response(new ReadableStream(), { status: 200 });
+      }) as never,
+    });
+    await client.streamFrames({
+      holder: "u1",
+      tabId: "tab-2",
+      codec: "h264",
+      signal: new AbortController().signal,
+      onFrame: () => {},
+      onEnd: () => {},
+    });
+    expect(urls[0]).toContain("codec=h264");
+    expect(urls[0]).not.toContain("tabId");
+  });
+
+  it("keeps the tabId on a JPEG stream", async () => {
+    const urls: string[] = [];
+    const client = new BrowserdClient({
+      baseUrl: "https://box.example",
+      bearer: "secret",
+      fetchImpl: (async (url: string) => {
+        urls.push(String(url));
+        return new Response(new ReadableStream(), { status: 200 });
+      }) as never,
+    });
+    await client.streamFrames({
+      holder: "u1",
+      tabId: "tab-2",
+      signal: new AbortController().signal,
+      onFrame: () => {},
+      onEnd: () => {},
+    });
+    expect(urls[0]).toContain("tabId=tab-2");
+  });
+});
+
+it("threads large-frame negotiation through the request and decoder", async () => {
+  const body = pushableResponse();
+  const sink = collector();
+  const fetchImpl = vi.fn(async () => body.response);
+  await clientFor(fetchImpl as unknown as typeof fetch).streamFrames({
+    sharp: true,
+    signal: new AbortController().signal,
+    ...sink,
+  });
+  expect((fetchImpl.mock.calls[0] as unknown as [string])[0]).toContain(
+    "sharp=1",
+  );
+  body.push(frameBytes({ jpeg: new Uint8Array(300_000) }));
+  body.finish();
+  await sink.ended;
+  expect(sink.frames[0]?.jpeg.byteLength).toBe(300_000);
+});

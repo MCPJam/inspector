@@ -46,10 +46,11 @@ describe("page tool namespace", () => {
     expect(PAGE_TOOL_ALIAS_REGEX.source).toContain("page_");
   });
 
-  it("always requires approval for a model-driven call", () => {
-    // Not a flag, and not derived from annotations: page annotations are claims
-    // by the party whose code would run, and Chromium does not carry their
-    // values through for imperative registrations anyway.
-    expect(pageToolCallNeedsApproval()).toBe(true);
+  it("takes approval from the user's switch, never from the page", () => {
+    // Page annotations are claims by the party whose code would run, and
+    // Chromium does not carry their values through for imperative
+    // registrations anyway — so they are still not consulted. The switch is.
+    expect(pageToolCallNeedsApproval(true)).toBe(true);
+    expect(pageToolCallNeedsApproval(false)).toBe(false);
   });
 });

@@ -6,7 +6,8 @@
  * time someone opens the New case menu.
  *
  * The draft kind is carried inside the `test-edit` route's `testId` as an opaque
- * sentinel (e.g. `draft:prompt` or `draft:record`), so no route/navigation
+ * sentinel (e.g. `draft:prompt`, `draft:record`, or `draft:describe`), so no
+ * route/navigation
  * plumbing has to learn a new field — every consumer keeps treating `testId`
  * as a string. The sentinel is not a real Convex id, so it must never be
  * handed to a Convex query.
@@ -15,11 +16,11 @@
  * not the widget recorder.
  */
 
-export type DraftCaseKind = "prompt" | "record";
+export type DraftCaseKind = "prompt" | "record" | "describe";
 
 const DRAFT_TEST_CASE_PREFIX = "draft:";
 
-const DRAFT_KINDS = new Set<DraftCaseKind>(["prompt", "record"]);
+const DRAFT_KINDS = new Set<DraftCaseKind>(["prompt", "record", "describe"]);
 
 /** Route `testId` sentinel for an unsaved case of the given kind. */
 export function draftTestCaseId(kind: DraftCaseKind): string {

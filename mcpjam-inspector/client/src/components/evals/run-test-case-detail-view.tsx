@@ -117,7 +117,7 @@ export function RunTestCaseDetailView({
           Back to run
         </Button>
         <span className="text-xs text-muted-foreground">
-          Run #{run.runNumber}
+          #{run.runNumber}
         </span>
       </div>
 

@@ -24,7 +24,11 @@ import {
   type ComputerTokenClaims,
 } from "./jwks-verifier.js";
 
-export type ComputerBrowserClaims = ComputerTokenClaims;
+export type ComputerBrowserClaims = ComputerTokenClaims &
+  (
+    | { computerId: string; sandboxRowId?: undefined }
+    | { sandboxRowId: string; computerId?: undefined }
+  );
 
 const verifier = createComputerJwksVerifier({
   issuer: "https://api.mcpjam.com/computer-browser",
@@ -40,7 +44,7 @@ const verifier = createComputerJwksVerifier({
 export async function verifyComputerBrowserToken(
   token: string,
 ): Promise<ComputerBrowserClaims | null> {
-  return verifier.verify(token);
+  return verifier.verify(token) as Promise<ComputerBrowserClaims | null>;
 }
 
 export function resetComputerBrowserJwksCacheForTests(): void {

@@ -67,6 +67,15 @@ export default defineConfig({
         // have found its wasm/registry assets at runtime anyway).
         "playwright",
         "playwright-core",
+        // `ws`'s optional native accelerators. Vite resolves an absent optional
+        // peer dep to a stub module whose body THROWS, and Rollup evaluates that
+        // module eagerly — outside the `try { require(...) } catch {}` that `ws`
+        // wraps around the probe — so the throw escapes and takes down the whole
+        // embedded server at import time. Keeping them external restores a real
+        // runtime `require()` that `ws` can catch, which is precisely the "no
+        // native masker" path `src/ws-native-fallback.ts` already forces.
+        "bufferutil",
+        "utf-8-validate",
         ...builtinModules,
         ...builtinModules.map((m) => `node:${m}`),
       ],

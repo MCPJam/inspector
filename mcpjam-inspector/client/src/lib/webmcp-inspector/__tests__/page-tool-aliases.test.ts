@@ -7,6 +7,7 @@ function tool(
   overrides: Partial<WebMcpToolDescriptor> = {},
 ): WebMcpToolDescriptor {
   return {
+    binding: { frameId: "frame-main", registrationSeq: 1 },
     toolKey: "https://shop.test::add_to_cart",
     name: "add_to_cart",
     origin: "https://shop.test",
@@ -54,6 +55,7 @@ describe("buildPageToolSnapshot", () => {
     const [entry] = buildPageToolSnapshot("session-1", [tool()]);
     expect(entry).toMatchObject({
       sessionId: "session-1",
+      binding: { frameId: "frame-main", registrationSeq: 1 },
       toolKey: "https://shop.test::add_to_cart",
       rawName: "add_to_cart",
       origin: "https://shop.test",
@@ -92,4 +94,19 @@ describe("buildPageToolSnapshot", () => {
     );
     expect(original?.alias).toBe(before[0].alias);
   });
+});
+
+it("does not advertise a legacy tool without registration identity", () => {
+  expect(buildPageToolSnapshot("s", [tool({ binding: undefined })])).toEqual(
+    [],
+  );
+});
+
+it("changes the alias when a page re-registers under the same name", () => {
+  const first = buildPageToolSnapshot("s", [tool()])[0];
+  const next = buildPageToolSnapshot("s", [
+    tool({ binding: { frameId: "frame-main", registrationSeq: 2 } }),
+  ])[0];
+  expect(next.alias).not.toBe(first.alias);
+  expect(first.binding?.registrationSeq).toBe(1);
 });
