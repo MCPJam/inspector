@@ -132,4 +132,21 @@ describe("JudgeVerdictPanel calibration", () => {
     // exists to protect the calibration, not to withhold the verdict.
     expect(screen.getByText(/The answer never named the file/)).toBeTruthy();
   });
+
+  it("calls onRevealed when the judge verdict is asked for", async () => {
+    const user = userEvent.setup();
+    const onRevealed = vi.fn();
+    render(
+      <JudgeVerdictPanel
+        judgeCase={JUDGE_CASE}
+        onReview={vi.fn()}
+        onRevealed={onRevealed}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Reveal judge verdict" }),
+    );
+    expect(onRevealed).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/The answer never named the file/)).toBeTruthy();
+  });
 });

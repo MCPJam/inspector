@@ -1,11 +1,5 @@
 import type { Tool } from "@modelcontextprotocol/client";
 import { RefreshCw, Play, Clock, PanelLeftClose, Save } from "lucide-react";
-import {
-  Accordion,
-  AccordionItem,
-  AccordionTrigger,
-  AccordionContent,
-} from "@mcpjam/design-system/accordion";
 import { type RefObject, useState, useEffect } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -17,7 +11,7 @@ import type { SavedRequest } from "@/lib/types/request-types";
 import { track } from "@/lib/analytics";
 import { SelectedToolHeader } from "../ui-playground/SelectedToolHeader";
 import { ParametersForm } from "../ui-playground/ParametersForm";
-import { SchemaViewer } from "@/components/ui/schema-viewer";
+import { ToolDetailsAccordion } from "@/components/ui/tool-details-accordion";
 import type { FormField } from "@/lib/tool-form";
 import {
   CacheProvenanceBadge,
@@ -275,67 +269,31 @@ export function ToolsSidebar({
             toolName={selectedToolName}
             onExpand={() => onSelectTool("")}
             toolSwitchList={{
-              names: toolNames,
+              items: toolNames.map((name) => ({ id: name, label: name })),
+              selectedId: selectedToolName,
               onSelect: (name) => onSelectTool(name),
             }}
           />
 
           <div className="flex-1 overflow-hidden">
             <ScrollArea className="h-full">
-              <Accordion
-                type="multiple"
-                value={openSections}
-                onValueChange={setOpenSections}
-                className="px-3"
-              >
-                {selectedTool?.description && (
-                  <AccordionItem value="description">
-                    <AccordionTrigger className="text-xs">
-                      Description
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <p className="text-xs text-muted-foreground leading-relaxed">
-                        {selectedTool.description}
-                      </p>
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-                {selectedTool?.inputSchema && (
-                  <AccordionItem value="input-schema">
-                    <AccordionTrigger className="text-xs">
-                      Input Schema
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <SchemaViewer schema={selectedTool.inputSchema} />
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-                {selectedTool?.outputSchema && (
-                  <AccordionItem value="output-schema">
-                    <AccordionTrigger className="text-xs">
-                      Output Schema
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <SchemaViewer schema={selectedTool.outputSchema} />
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-                {formFields && formFields.length > 0 && (
-                  <AccordionItem value="parameters">
-                    <AccordionTrigger className="text-xs">
-                      Parameters
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <ParametersForm
-                        fields={formFields}
-                        onFieldChange={onFieldChange}
-                        onToggleField={onToggleField ?? (() => {})}
-                        onExecute={onExecute}
-                      />
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
-              </Accordion>
+              <ToolDetailsAccordion
+                description={selectedTool?.description}
+                inputSchema={selectedTool?.inputSchema}
+                outputSchema={selectedTool?.outputSchema}
+                openSections={openSections}
+                onOpenSectionsChange={setOpenSections}
+                parameters={
+                  formFields && formFields.length > 0 ? (
+                    <ParametersForm
+                      fields={formFields}
+                      onFieldChange={onFieldChange}
+                      onToggleField={onToggleField ?? (() => {})}
+                      onExecute={onExecute}
+                    />
+                  ) : undefined
+                }
+              />
 
               {/* Task execution options */}
               {serverSupportsTaskToolCalls && tasksDisabledByHost && (

@@ -6,6 +6,8 @@ import {
   buildSuiteRunHistoryRows,
   buildSuiteTestCaseRows,
   filterSuiteRunHistoryRows,
+  formatRunHistoryDate,
+  formatRunHistoryDateRange,
   formatSuiteIdentitySubline,
   resolveRunHistoryVerdict,
   runHistoryFilterOptions,
@@ -168,9 +170,53 @@ describe("runPlatformLabel", () => {
       ),
     ).toBe("GitHub #4188");
   });
+
+  it("prefers a declared launcher over the stamp, like the badge does", () => {
+    // This label read the stamp directly, so it could only ever say "API" for
+    // a CLI run, an Actions job or an MCP agent — the three things `source`
+    // cannot tell apart. It reads the shared resolver now, so a run cannot
+    // badge one way in the table and another way here.
+    expect(
+      runPlatformLabel(
+        makeRun({ _id: "r3", source: "api", launcher: { kind: "cli" } }),
+      ),
+    ).toBe("CLI");
+    expect(
+      runPlatformLabel(
+        makeRun({
+          _id: "r4",
+          source: "api",
+          launcher: { kind: "github_action" },
+          ciMetadata: { pipelineId: "77.1" },
+        }),
+      ),
+    ).toBe("GitHub #77.1");
+  });
+
+  it("still answers for a run from a backend with no provenance fields", () => {
+    expect(runPlatformLabel(makeRun({ _id: "r5", source: "api" }))).toBe("API");
+  });
 });
 
 describe("buildSuiteRunHistoryRows", () => {
+  it("uses launch time consistently with global Runs, even when an older run finishes later", () => {
+    const rows = buildSuiteRunHistoryRows([
+      makeRun({ _id: "older", createdAt: 100, completedAt: 900 }),
+      makeRun({ _id: "newer", createdAt: 200, completedAt: 300 }),
+    ], [], makeSuite(), new Map(), false);
+    expect(rows.map(row => row.runId)).toEqual(["newer", "older"]);
+    expect(rows[0].date).toBe(200);
+  });
+
+  it("shows the frozen client model before any iterations arrive", () => {
+    const rows = buildSuiteRunHistoryRows(
+      [makeRun({ _id: "pending", effectiveModelId: "claude-sonnet", status: "pending" })],
+      [], makeSuite(), new Map(), false,
+    );
+    expect(rows[0].models).toEqual(["claude-sonnet"]);
+    expect(rows[0].latencyMs).toBeNull();
+  });
+
   it("builds newest-first rows with real pass rate, platform, and models", () => {
     const rows = buildSuiteRunHistoryRows(
       [
@@ -458,6 +504,16 @@ describe("suiteRunBlockedReason", () => {
     ).toBe("Add a test case first.");
   });
 
+  it("explains unsaved drafts without treating them as runnable cases", () => {
+    const options = {
+      caseCount: 0, draftCount: 8, hasServersConfigured: true,
+      isEnvironmentSuite: false, isRerunning: false, isReplaying: false,
+      runningTestCase: false,
+    };
+    expect(suiteRunBlockedReason(options)).toContain("8 generated drafts are waiting to be added");
+    expect(suiteRunBlockedReason({ ...options, caseCount: 1 })).toBeNull();
+  });
+
   it("does not require local servers for environment suites", () => {
     expect(
       suiteRunBlockedReason({
@@ -475,6 +531,47 @@ describe("suiteRunBlockedReason", () => {
 describe("SUITE_RUN_HISTORY_PAGE_SIZE", () => {
   it("caps the default table", () => {
     expect(SUITE_RUN_HISTORY_PAGE_SIZE).toBe(8);
+  });
+
+  it("formats a run timestamp as a short date and time", () => {
+    expect(formatRunHistoryDate(1_700_000_000_000)).toBe(
+      new Date(1_700_000_000_000).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+    );
+  });
+
+  it("collapses a same-day suite range and spans different days", () => {
+    const morning = new Date(2026, 8, 8, 9, 0).getTime();
+    const evening = new Date(2026, 8, 8, 17, 30).getTime();
+    const later = new Date(2026, 8, 10, 12, 0).getTime();
+    const day = {
+      month: "short" as const,
+      day: "numeric" as const,
+    };
+    expect(formatRunHistoryDateRange(evening, morning)).toBe(
+      new Date(morning).toLocaleString(undefined, day),
+    );
+    expect(formatRunHistoryDateRange(morning, later)).toBe(
+      `${new Date(morning).toLocaleString(undefined, day)} – ${new Date(
+        later,
+      ).toLocaleString(undefined, day)}`,
+    );
+  });
+
+  it("treats a missing timestamp as unavailable", () => {
+    const morning = new Date(2026, 8, 8, 9, 0).getTime();
+    expect(formatRunHistoryDate(0)).toBe("-");
+    expect(formatRunHistoryDateRange(0, 0)).toBe("-");
+    expect(formatRunHistoryDateRange(0, morning)).toBe(
+      new Date(morning).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+      }),
+    );
   });
 });
 

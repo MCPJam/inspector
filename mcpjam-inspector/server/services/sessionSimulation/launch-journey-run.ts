@@ -25,8 +25,6 @@
  * re-resolved per unit of work rather than per outbound call — see
  * `swarm-runner.ts`.
  */
-import type { McpProtocolVersion } from "@mcpjam/sdk";
-import { isKnownProtocolVersion } from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import {
   createAuthorizedManager,
@@ -34,14 +32,11 @@ import {
 } from "../../routes/web/auth.js";
 import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
-import {
-  createJourneyRun,
-  SwarmAgentError,
-  type PinnedHostExecutionSpec,
-} from "../swarm-agent.js";
+import { createJourneyRun, SwarmAgentError } from "../swarm-agent.js";
 import { startJourneyRun } from "./swarm-runner.js";
 import { resolveTargetPluginServerIds } from "../journeys/plugin-servers.js";
 import { createConvexClient } from "../evals/route-helpers.js";
+import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { logger } from "../../utils/logger.js";
 
 /** The request-derived values a launch needs, resolved by the calling route. */
@@ -229,137 +224,6 @@ function requireConvexHttpUrl(): string {
 }
 
 /**
- * Non-secret connection settings threaded into the manager for a pinned host
- * so a swarm run reconnects with the SAME transport behavior the snapshot
- * captured (per-request timeout + MCP protocol pins) rather than whatever the
- * host's CURRENT live config negotiates. Headers / credentials are deliberately
- * EXCLUDED — those stay live-resolved by the authorize batch (a run must use
- * fresh secrets, not a stale snapshot). Every field is read defensively: the
- * pinned `connectionDefaults` / `serverConnectionOverrides` are opaque
- * (`Record<string, unknown>`) snapshot blobs, so a malformed or absent value
- * simply falls back to the live default and never breaks the launch.
- */
-interface PinnedConnectionSettings {
-  timeoutMs: number;
-  initializePins?: {
-    clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
-    supportedProtocolVersions?: string[];
-    mcpProtocolVersion?: McpProtocolVersion;
-  };
-  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
-  /**
-   * Per-server request-timeout pins (ms) from the snapshot's
-   * `serverConnectionOverrides[serverId].requestTimeoutOverride`. A server
-   * absent from this map uses the host-level `timeoutMs`.
-   */
-  requestTimeoutByServerId?: Record<string, number>;
-}
-
-function coerceTimeoutMs(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function coerceProtocolVersion(value: unknown): McpProtocolVersion | undefined {
-  return typeof value === "string" && isKnownProtocolVersion(value)
-    ? value
-    : undefined;
-}
-
-function buildPinnedConnectionSettings(
-  host: PinnedHostExecutionSpec,
-  fallbackTimeoutMs: number
-): PinnedConnectionSettings {
-  const defaults = asRecord(host.connectionDefaults);
-
-  // Timeout: read from the (scrubbed) `connectionDefaults` — the ONLY field the
-  // backend retains there is `requestTimeout` (header values are stripped).
-  // Accept either wire spelling defensively; require a positive finite number,
-  // else fall back to the live default.
-  const timeoutMs =
-    coerceTimeoutMs(defaults?.timeoutMs ?? defaults?.requestTimeout) ??
-    fallbackTimeoutMs;
-
-  // INITIALIZE pins come from the pinned `mcpProfile`, NOT `connectionDefaults`.
-  // The backend's `materializeHostSpec` copies the host's `mcpProfile` verbatim
-  // (`mcpProtocolVersion` + `initialize.{clientInfo,supportedProtocolVersions}`)
-  // and scrubs `connectionDefaults` down to just `{ requestTimeout }`, so reading
-  // the pins from `connectionDefaults` (the old behavior) always found nothing.
-  const initializePins: NonNullable<
-    PinnedConnectionSettings["initializePins"]
-  > = {};
-  const initialize = asRecord(host.mcpProfile?.initialize);
-  const clientInfo = asRecord(initialize?.clientInfo);
-  if (clientInfo) {
-    initializePins.clientInfo = clientInfo as {
-      name?: string;
-      version?: string;
-    } & Record<string, unknown>;
-  }
-  if (Array.isArray(initialize?.supportedProtocolVersions)) {
-    const versions = initialize.supportedProtocolVersions.filter(
-      (v): v is string => typeof v === "string"
-    );
-    if (versions.length > 0) {
-      initializePins.supportedProtocolVersions = versions;
-    }
-  }
-  const batchProtocol = coerceProtocolVersion(
-    host.mcpProfile?.mcpProtocolVersion
-  );
-  if (batchProtocol) {
-    initializePins.mcpProtocolVersion = batchProtocol;
-  }
-
-  // Per-server protocol pins from the pinned overrides. Accept both the
-  // resolver key (`mcpProtocolVersion`) and the project-config key
-  // (`mcpProtocolVersionOverride`); createAuthorizedManager re-validates.
-  const overrides = asRecord(host.serverConnectionOverrides);
-  let mcpProtocolVersionsByServerId:
-    | Record<string, McpProtocolVersion>
-    | undefined;
-  let requestTimeoutByServerId: Record<string, number> | undefined;
-  if (overrides) {
-    for (const [serverId, rawOverride] of Object.entries(overrides)) {
-      const override = asRecord(rawOverride);
-      if (!override) continue;
-      const pin = coerceProtocolVersion(
-        override.mcpProtocolVersion ?? override.mcpProtocolVersionOverride
-      );
-      if (pin) {
-        mcpProtocolVersionsByServerId ??= {};
-        mcpProtocolVersionsByServerId[serverId] = pin;
-      }
-      // Per-server request-timeout pin. Accept both the resolver spelling
-      // (`requestTimeout`) and the project-config override spelling
-      // (`requestTimeoutOverride`); a malformed value is simply skipped so the
-      // server falls back to the host-level timeout.
-      const perServerTimeout = coerceTimeoutMs(
-        override.requestTimeoutOverride ?? override.requestTimeout
-      );
-      if (perServerTimeout !== undefined) {
-        requestTimeoutByServerId ??= {};
-        requestTimeoutByServerId[serverId] = perServerTimeout;
-      }
-    }
-  }
-
-  return {
-    timeoutMs,
-    ...(Object.keys(initializePins).length > 0 ? { initializePins } : {}),
-    ...(mcpProtocolVersionsByServerId ? { mcpProtocolVersionsByServerId } : {}),
-    ...(requestTimeoutByServerId ? { requestTimeoutByServerId } : {}),
-  };
-}
-
-/**
  * Create the run, then start its fan-out runner fire-and-forget.
  *
  * Returns as soon as the run row exists — the caller answers 202 and the work
@@ -537,10 +401,7 @@ export async function launchJourneyRun(
         // (per-request timeout + MCP protocol pins) so the run reproduces
         // the pinned snapshot rather than the host's current live config.
         // Secrets/headers stay live-resolved by the authorize batch.
-        const connection = buildPinnedConnectionSettings(
-          host,
-          WEB_STREAM_TIMEOUT_MS
-        );
+        const connection = buildHostConnectionPins(host, WEB_STREAM_TIMEOUT_MS);
         const { manager } = await createAuthorizedManager(
           deps.callerContext,
           // Per-SESSION: `managerFactory` runs once per session attempt,

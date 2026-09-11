@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   suiteIterationsView: vi.fn(),
   updateSuiteMutation: vi.fn(),
   handleGenerateTests: vi.fn(),
+  handleDuplicateSuite: vi.fn(),
   handleRerun: vi.fn(),
   handleCancelRun: vi.fn(),
   confirmDelete: vi.fn(async () => true),
@@ -200,6 +201,7 @@ vi.mock("../evals/use-eval-handlers", () => ({
     isGeneratingTests: false,
     handleGenerateTests: mocks.handleGenerateTests,
     handleCreateTestCase: vi.fn(),
+    handleDuplicateSuite: mocks.handleDuplicateSuite,
     handleRerun: mocks.handleRerun,
     handleCancelRun: mocks.handleCancelRun,
     handleDelete: vi.fn(),
@@ -224,6 +226,7 @@ function makeSuiteEntry(
   suiteId: string,
   overrides?: {
     source?: "ui" | "sdk";
+    declaredSuiteId?: string;
     latestRun?: { _id: string; completedAt: number } | null;
   },
 ) {
@@ -238,6 +241,9 @@ function makeSuiteEntry(
       createdAt: 1,
       updatedAt: 1,
       source: overrides?.source ?? ("ui" as const),
+      ...(overrides?.declaredSuiteId
+        ? { declaredSuiteId: overrides.declaredSuiteId }
+        : {}),
       tags: ["explore"],
     },
     latestRun: overrides?.latestRun ?? null,
@@ -778,5 +784,82 @@ describe("EvalsTab", () => {
         },
       });
     });
+  });
+});
+
+/**
+ * A suite whose configuration lives in a repository reaches the detail view
+ * already locked.
+ *
+ * The TAB is the only place that can answer this: it holds the suite row, and
+ * the row is where both halves of the predicate live (`declaredSuiteId` from a
+ * committed suite file, `source: 'sdk'` from ingest). Getting it wrong here
+ * means every control below is offered against a backend that will refuse it.
+ */
+describe("EvalsTab — CI-managed suites", () => {
+  // This describe sits OUTSIDE the suite that owns the shared `beforeEach`, so
+  // it restores the two pieces of module state its tests depend on itself —
+  // otherwise a `selectedSuite` override from one case leaks into the next and
+  // the unlocked assertion reads a locked suite.
+  beforeEach(() => {
+    mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+        makeQueryState(selectedSuiteId),
+    );
+  });
+
+  function lockedQueryState(overrides: {
+    source?: "ui" | "sdk";
+    declaredSuiteId?: string;
+  }) {
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const state = makeQueryState(selectedSuiteId);
+        if (!state.selectedSuite) return state;
+        return {
+          ...state,
+          selectedSuite: { ...state.selectedSuite, ...overrides },
+        };
+      },
+    );
+  }
+
+  function lastProps(): Record<string, unknown> {
+    return (mocks.suiteIterationsView.mock.calls.at(-1)?.[0] ?? {}) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  it("locks a file-declared suite and wires the way out", () => {
+    lockedQueryState({ declaredSuiteId: "s_from_file" });
+    render(<EvalsTab projectId="ws-1" />);
+
+    expect(lastProps().configLocked).toBe(true);
+    // The escape hatch has to be WIRED, not merely rendered — so CALL it.
+    // `onDuplicateSuite` is an arrow closing over the handler, which means a
+    // `typeof … === "function"` check passes whether or not anything is
+    // behind it; invoking it is the only assertion that can fail.
+    (lastProps().onDuplicateSuite as () => void)();
+    expect(mocks.handleDuplicateSuite).toHaveBeenCalledTimes(1);
+    // With the suite the lock is being shown for. `duplicateTestSuite` is
+    // what stamps the copy `source: 'ui'` and drops the declared id, and it
+    // can only do that for the suite it is handed.
+    expect(mocks.handleDuplicateSuite.mock.calls[0]?.[0]).toMatchObject({
+      _id: "suite-a",
+      declaredSuiteId: "s_from_file",
+    });
+  });
+
+  it("locks an SDK-created suite the same way", () => {
+    lockedQueryState({ source: "sdk" });
+    render(<EvalsTab projectId="ws-1" />);
+    expect(lastProps().configLocked).toBe(true);
+  });
+
+  it("leaves an app-authored suite unlocked", () => {
+    render(<EvalsTab projectId="ws-1" />);
+    expect(lastProps().configLocked).toBe(false);
   });
 });

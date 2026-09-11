@@ -42,6 +42,7 @@ import {
   evalRunVerdictSchema,
   evalVerdictDecisionSchema,
   evalVerdictPolicyVersionSchema,
+  casePassesNeeded,
   isEvalRunVerdict,
   isEvalTrialExclusionReason,
   isEvalValidityDecisionReason,
@@ -901,6 +902,27 @@ describe("verdict policy — effective thresholds come from the resolved suite f
     );
     expect(byId.get("c_inherited")?.effectivePassThreshold).toBe(0.5);
     expect(byId.get("c_override")?.effectivePassThreshold).toBe(1);
+  });
+});
+
+describe("casePassesNeeded restates the case decision rule as a count", () => {
+  it("uses equality: k/n >= threshold, including 0 and 1", () => {
+    expect(casePassesNeeded(5, 0.8)).toBe(4);
+    expect(casePassesNeeded(3, 0.8)).toBe(3);
+    expect(casePassesNeeded(2, 0.5)).toBe(1);
+    expect(casePassesNeeded(10, 0.3)).toBe(3);
+    expect(casePassesNeeded(1, 1)).toBe(1);
+    expect(casePassesNeeded(10, 1)).toBe(10);
+    expect(casePassesNeeded(1, 0)).toBe(0);
+    expect(casePassesNeeded(10, 0)).toBe(0);
+    expect(casePassesNeeded(3, 0.5)).toBe(2);
+  });
+
+  it("does not invent a verdict for an empty or non-finite case", () => {
+    expect(casePassesNeeded(0, 0.8)).toBe(0);
+    expect(casePassesNeeded(-1, 0.8)).toBe(0);
+    expect(casePassesNeeded(Number.NaN, 0.8)).toBe(0);
+    expect(casePassesNeeded(3, Number.POSITIVE_INFINITY)).toBe(0);
   });
 });
 

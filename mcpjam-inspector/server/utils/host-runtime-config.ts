@@ -28,6 +28,8 @@ export type HostRuntimeConfig = RuntimeExecutionFields & {
   hostStyle: string;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
+  /** Shared local-only preference; never added to hosted tool configuration. */
+  localBrowserEnabled?: boolean;
   // Host harness selector from the pinned HostConfigV2. Optional so a backend
   // that predates the endpoint returns omitted → emulated path. Omitted by the
   // backend for guest actors.
