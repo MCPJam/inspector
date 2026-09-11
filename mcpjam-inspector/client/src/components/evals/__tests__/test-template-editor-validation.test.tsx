@@ -23,6 +23,8 @@ const useAuthMock = vi.hoisted(() => ({
   getAccessToken: vi.fn().mockResolvedValue("token"),
 }));
 
+const convexClientMock = vi.hoisted(() => ({ query: vi.fn() }));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => useAuthMock,
 }));
@@ -57,7 +59,11 @@ vi.mock("convex/react", () => ({
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
   useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
-  useConvex: () => ({ query: vi.fn() }),
+  // ONE client, not a fresh object per render. `useConvex()` returns a stable
+  // client from context in the app, and any hook that lists it as an effect
+  // dependency (capability probes do) re-fires forever against a mock that
+  // does not — the failure lands as a heap OOM, not a React warning.
+  useConvex: () => convexClientMock,
 }));
 
 describe("getStepsBlockReason", () => {

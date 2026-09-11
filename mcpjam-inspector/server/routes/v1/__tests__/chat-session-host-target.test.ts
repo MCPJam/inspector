@@ -1075,3 +1075,89 @@ describe("hostSelectedServerIds", () => {
     expect(hostSelectedServerIds({})).toEqual([]);
   });
 });
+
+import * as sessionBrowser from "../chat-session-browser";
+import * as browserRegistry from "../../../utils/built-in-tools/registry";
+import * as browserOutbox from "../../../services/browser-artifact-outbox";
+import { BrowserSessionService } from "../../../services/browserd/session-service";
+
+describe("browser turn integration", () => {
+  afterEach(() => vi.restoreAllMocks());
+  function browserFixture() {
+    mutationMock.mockImplementation(async (name: string) => name === "chatSessions:claimTurnLease" ? { status: "claimed", turnId: "turn_1", executionOwnerToken: "owner" } : null);
+    queryMock.mockImplementation(async (name: string) => name === "chatSessions:getSession" ? { _id: "cs_1", projectId: PROJECT, chatSessionId: "wire", origin: "api", sourceType: "direct", version: 1, apiConfigState: "unconfigured" } : name === "chatSessions:getBrowserArtifacts" ? { browserInteractionSteps: [{ turnId: "turn_1", toolCallId: "call", stepIndex: 0, screenshotUrl: "https://storage.test/shot" }] } : null);
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ builtInToolIds: ["browser"], browserToolPolicy: { mode: "allow_all" }, modelId: MODEL }));
+    vi.spyOn(BrowserSessionService.prototype, "agentRequest").mockImplementation(async op => op === "create_shell" ? { sessionId: "cs_1", chatSessionId: "wire" } : { ok: true });
+    vi.spyOn(sessionBrowser, "getConversationBrowser").mockResolvedValue(null);
+    vi.spyOn(sessionBrowser, "openConversationBrowser").mockResolvedValue({ sessionId: "logical", browserSessionId: "logical", policy: { mode: "allow_all" }, state: "active" });
+    vi.spyOn(sessionBrowser, "provisionConversationBrowser").mockResolvedValue({ bootId: "boot", target: "sandbox", sandboxRowId: "box" } as never);
+    const tools = { browser_observe: { execute: vi.fn(async () => ({ screenshot: Buffer.from([137,80,78,71,13,10,26,10]).toString("base64") })) } };
+    vi.spyOn(browserRegistry, "resolveHostTools").mockReturnValue(tools as never);
+    vi.spyOn(browserOutbox, "createBrowserArtifactOutbox").mockReturnValue({ enqueueSteps: vi.fn(), flush: vi.fn(async () => ({ written: 1, pending: 0, videoAttached: false })) } as never);
+    prepareChatV2Mock.mockImplementation(async args => ({ allTools: args.builtInTools ?? {}, enhancedSystemPrompt: "system" }));
+    return firstTurn({ environmentId: ENVIRONMENT, browser: { policy: { mode: "allow_all" } } });
+  }
+  it.each(["claude-sonnet-5", "cursor/auto"])("rejects unrunnable shell model %s before claiming or provisioning", async (modelId) => {
+    const input = browserFixture();
+    const response = await turn({ ...input, sessionId: "cs_1", modelId });
+    expect(response.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+    expect(sessionBrowser.provisionConversationBrowser).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+  it("provisions before engine execution and strips screenshots from persistence and response", async () => {
+    const input = browserFixture();
+    runUnifiedAssistantTurnMock.mockImplementation(async args => {
+      const output = await args.tools.browser_observe.execute({}, { toolCallId: "call", messages: [] });
+      const call = { toolCallId: "call", toolName: "browser_observe", input: {} };
+      return { messages: [{ role: "tool", content: [{ type: "tool-result", ...call, output }] }], assistantMessages: [], toolCalls: [call], toolResults: [{ ...call, output }], turnTrace: { turnId: "turn_1", spans: [{ ...call, output }] }, usage: { inputTokens: 1, outputTokens: 2 }, finishReason: "stop" };
+    });
+    const response = await turn(input);
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.browser).toMatchObject({ attached: true, browserSessionId: "logical", screenshots: [{ status: "ready", url: "https://storage.test/shot" }] });
+    expect(body.chatSessionId).toBe("wire");
+    const pixels = Buffer.from([137,80,78,71,13,10,26,10]).toString("base64");
+    expect(JSON.stringify(body)).not.toContain(pixels);
+    expect(JSON.stringify(persistChatSessionToConvexMock.mock.calls)).not.toContain(pixels);
+    expect(persistChatSessionToConvexMock.mock.calls[0][0].turnLeaseOwnerToken).toBe("owner");
+    expect(prepareChatV2Mock.mock.calls[0][0].builtInTools).toBeDefined();
+  });
+  it("closes the first-turn desktop when the engine throws after provisioning", async () => {
+    const input = browserFixture();
+    runUnifiedAssistantTurnMock.mockRejectedValueOnce(new Error("engine failed"));
+    await turn(input);
+    expect(BrowserSessionService.prototype.agentRequest).toHaveBeenCalledWith("close", expect.objectContaining({ body: { sessionId: "logical", expectedBootId: "boot" } }));
+    expect(mutationMock).toHaveBeenCalledWith("chatSessions:transitionTurnLease", expect.objectContaining({ op: "fail", executionOwnerToken: "owner" }));
+  });
+  it("flushes screenshot writes again at turn settlement", async () => {
+    const input = browserFixture();
+    await turn(input);
+    const outbox = vi.mocked(browserOutbox.createBrowserArtifactOutbox).mock.results[0].value;
+    expect(outbox.flush).toHaveBeenCalledTimes(2);
+    expect(persistChatSessionToConvexMock.mock.invocationCallOrder[0]).toBeLessThan(outbox.flush.mock.invocationCallOrder[0]);
+  });
+  it("reports narrowed permissions separately from the stored grant", async () => {
+    const input = browserFixture();
+    const response = await turn({ ...input, toolMode: "read_only" });
+    const body = await response.json();
+    expect(body.browser.policy.mode).toBe("allow_all");
+    expect(body.browser.effectivePolicy.tools).toContain("browser_observe");
+    expect(body.browser.effectivePolicy.tools).not.toContain("browser_navigate");
+  });
+  it("retries failed evidence at terminal cleanup without failing the turn", async () => {
+    const input = browserFixture();
+    const flush = vi.fn().mockRejectedValueOnce(new Error("storage unavailable")).mockResolvedValue({ written: 1, pending: 0, videoAttached: false });
+    vi.mocked(browserOutbox.createBrowserArtifactOutbox).mockReturnValue({ enqueueSteps: vi.fn(), flush } as never);
+    expect((await turn(input)).status).toBe(200);
+    expect(flush).toHaveBeenCalledTimes(2);
+  });
+  it("releases ownership on capacity refusal without calling the engine", async () => {
+    const input = browserFixture();
+    vi.mocked(sessionBrowser.provisionConversationBrowser).mockRejectedValue(new sessionBrowser.SessionBrowserError("BROWSER_CAP_EXCEEDED", 409, "Desktop cap reached", 60_000));
+    const response = await turn(input);
+    expect(response.status).toBe(409);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+    expect(mutationMock).toHaveBeenCalledWith("chatSessions:releaseTurnLease", { turnId: "turn_1", executionOwnerToken: "owner" });
+  });
+});

@@ -13,6 +13,7 @@ import {
   FRAME_STREAM_HEADER_BYTES,
   FRAME_STREAM_KIND,
   FRAME_STREAM_MAX_PAYLOAD_BYTES,
+  FRAME_STREAM_MAX_PAYLOAD_BY_KIND,
   FRAME_STREAM_VERSION,
   type FrameStreamFrame,
 } from "../frame-stream";
@@ -259,5 +260,251 @@ describe("frame-stream — a reader that has lost its place says so", () => {
     expect(decoded).toMatchObject({
       jpeg: expect.objectContaining({ byteLength: jpeg.byteLength }),
     });
+  });
+});
+
+/**
+ * V-4a. The heartbeat carries the daemon's own drop accounting. This is safe
+ * without a protocol bump for exactly one reason, and it is worth pinning: a
+ * v1 reader already slices the heartbeat's payload by its length field and
+ * discards it, so an old inspector against a new daemon sees the heartbeat it
+ * always did rather than a framing error.
+ */
+describe("heartbeat stats", () => {
+  it("round-trips the counters", () => {
+    const stats = {
+      framesIn: 12,
+      framesOut: 9,
+      bytesOut: 4_000,
+      dropped: { dedupe: 2, oversize: 1, pacer: 0 },
+      subscribers: 1,
+      encoderIdle: false,
+    };
+    const decoder = createFrameStreamDecoder();
+    const decoded = decoder.push(
+      encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat, stats }),
+    );
+    expect(decoded).toEqual({
+      ok: true,
+      records: [{ kind: FRAME_STREAM_KIND.heartbeat, stats }],
+    });
+  });
+
+  it("is still a plain heartbeat without one", () => {
+    const decoder = createFrameStreamDecoder();
+    const decoded = decoder.push(
+      encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }),
+    );
+    expect(decoded).toEqual({
+      ok: true,
+      records: [{ kind: FRAME_STREAM_KIND.heartbeat }],
+    });
+  });
+
+  it("survives a payload it cannot parse", () => {
+    // Unlike an unknown KIND, this cannot desynchronise the reader — the length
+    // field already said where the record ends — so the recoverable answer is
+    // a heartbeat without stats rather than a dead connection.
+    const bytes = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.heartbeat,
+      stats: { framesIn: 1 },
+    });
+    // Corrupt the JSON in place, keeping the length honest.
+    bytes[FRAME_STREAM_HEADER_BYTES] = 0x7b; // '{' with no closing brace
+    bytes[FRAME_STREAM_HEADER_BYTES + 1] = 0x7b;
+    const decoded = createFrameStreamDecoder().push(bytes);
+    expect(decoded).toEqual({
+      ok: true,
+      records: [{ kind: FRAME_STREAM_KIND.heartbeat }],
+    });
+  });
+
+  it("still delimits the records that follow it", () => {
+    // The whole reason this is additive: a reader that mis-measured the
+    // heartbeat would lose its place in the stream forever.
+    const decoder = createFrameStreamDecoder();
+    const merged = new Uint8Array([
+      ...encodeFrameStreamRecord({
+        kind: FRAME_STREAM_KIND.heartbeat,
+        stats: { framesIn: 3, encoderIdle: true },
+      }),
+      ...encodeFrameStreamRecord({
+        kind: FRAME_STREAM_KIND.end,
+        reason: "shutting_down",
+      }),
+    ]);
+    const decoded = decoder.push(merged);
+    expect(decoded.ok && decoded.records).toHaveLength(2);
+    expect(decoded.ok && decoded.records[1]).toEqual({
+      kind: FRAME_STREAM_KIND.end,
+      reason: "shutting_down",
+    });
+  });
+});
+
+/**
+ * V-5's video records.
+ *
+ * The version is negotiated PER STREAM rather than bumped globally, and these
+ * pin what that buys: a reader that never asked for video refuses one at the
+ * version check, which is the same refusal an unknown kind would give but one
+ * field earlier and with a message that names what happened.
+ */
+describe("video records", () => {
+  const AU = new Uint8Array([0, 0, 0, 1, 9, 0x10, 0, 0, 1, 5, 0xab]);
+
+  it("round-trips through a reader that asked for video", () => {
+    const bytes = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.video_key,
+      deviceWidth: 1536,
+      deviceHeight: 1152,
+      scale: 1.5,
+      ts: 42,
+      seq: 9,
+      au: AU,
+    });
+    const decoded = createFrameStreamDecoder({ video: true }).push(bytes);
+    expect(decoded).toEqual({
+      ok: true,
+      records: [
+        {
+          kind: FRAME_STREAM_KIND.video_key,
+          deviceWidth: 1536,
+          deviceHeight: 1152,
+          scale: 1.5,
+          ts: 42,
+          seq: 9,
+          au: AU,
+        },
+      ],
+    });
+  });
+
+  it("is refused by a reader that did not", () => {
+    const bytes = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.video_delta,
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      scale: 1,
+      ts: 1,
+      seq: 1,
+      au: AU,
+    });
+    const decoded = createFrameStreamDecoder().push(bytes);
+    expect(decoded.ok).toBe(false);
+    expect(decoded.ok === false && decoded.error).toContain(
+      "unsupported version",
+    );
+  });
+
+  it("still carries JPEG and heartbeats on a video-capable reader", () => {
+    // The same stream mixes them: pixels are video, liveness is a heartbeat,
+    // and the reason it stopped is an end record.
+    const decoder = createFrameStreamDecoder({ video: true });
+    const decoded = decoder.push(
+      new Uint8Array([
+        ...encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          stats: { encoderIdle: true },
+        }),
+        ...encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.video_key,
+          deviceWidth: 1024,
+          deviceHeight: 768,
+          scale: 1,
+          ts: 1,
+          seq: 1,
+          au: AU,
+        }),
+        ...encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.end,
+          reason: "video_unavailable",
+        }),
+      ]),
+    );
+    expect(decoded.ok && decoded.records.map((r) => r.kind)).toEqual([
+      FRAME_STREAM_KIND.heartbeat,
+      FRAME_STREAM_KIND.video_key,
+      FRAME_STREAM_KIND.end,
+    ]);
+  });
+
+  it("bounds each kind by what that kind can legitimately be", () => {
+    // One number could not serve both: a JPEG above 256 KiB is a frame worth
+    // dropping, while a keyframe of a dense page is legitimately bigger — and
+    // capping video at the JPEG bound would drop exactly the records a decoder
+    // cannot start without.
+    expect(FRAME_STREAM_MAX_PAYLOAD_BY_KIND[FRAME_STREAM_KIND.video_key]).toBe(
+      2 * 1024 * 1024,
+    );
+    expect(
+      FRAME_STREAM_MAX_PAYLOAD_BY_KIND[FRAME_STREAM_KIND.frame],
+    ).toBeLessThan(
+      FRAME_STREAM_MAX_PAYLOAD_BY_KIND[FRAME_STREAM_KIND.video_key]!,
+    );
+  });
+
+  it("refuses a video record with no access unit in it", () => {
+    // An empty chunk desynchronises a decoder just as surely as losing our
+    // place in the stream would.
+    const bytes = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.video_delta,
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      scale: 1,
+      ts: 1,
+      seq: 1,
+      au: new Uint8Array(0),
+    });
+    const decoded = createFrameStreamDecoder({ video: true }).push(bytes);
+    expect(decoded.ok).toBe(false);
+  });
+
+  it("reassembles a keyframe that crosses chunk boundaries", () => {
+    const big = new Uint8Array(300 * 1024);
+    big.set([0, 0, 0, 1, 9, 0x10, 0, 0, 1, 5]);
+    const bytes = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.video_key,
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      scale: 1,
+      ts: 1,
+      seq: 1,
+      au: big,
+    });
+    const decoder = createFrameStreamDecoder({ video: true });
+    expect(decoder.push(bytes.slice(0, 100_000))).toEqual({
+      ok: true,
+      records: [],
+    });
+    const rest = decoder.push(bytes.slice(100_000));
+    expect(rest.ok && rest.records).toHaveLength(1);
+  });
+});
+
+describe("negotiated large JPEG frames", () => {
+  it("accepts a fragmented 2 MiB frame only for an opted-in reader", () => {
+    const encoded = encodeFrameStreamRecord(
+      frame({ jpeg: new Uint8Array(2 * 1024 * 1024).fill(1) }),
+    );
+    expect(createFrameStreamDecoder().push(encoded.subarray(0, 24)).ok).toBe(
+      false,
+    );
+    const decoder = createFrameStreamDecoder({ sharp: true });
+    expect(decoder.push(encoded.subarray(0, 100))).toEqual({
+      ok: true,
+      records: [],
+    });
+    const result = decoder.push(encoded.subarray(100));
+    expect(result.ok && result.records).toHaveLength(1);
+  });
+  it("still rejects a frame larger than the negotiated ceiling", () => {
+    const encoded = encodeFrameStreamRecord(
+      frame({ jpeg: new Uint8Array(2 * 1024 * 1024 + 1) }),
+    );
+    expect(
+      createFrameStreamDecoder({ sharp: true }).push(encoded.subarray(0, 24))
+        .ok,
+    ).toBe(false);
   });
 });

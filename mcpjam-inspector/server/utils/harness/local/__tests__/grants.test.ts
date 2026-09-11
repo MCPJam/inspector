@@ -17,6 +17,7 @@ import {
 import {
   getLocalMachineId,
   GrantStateUnreadableError,
+  isFilesystemRoot,
   grantLocalHarnessConsent,
   hashGrantBinding,
   pruneExpiredHarnessGrants,
@@ -98,6 +99,57 @@ describe("workspace grants", () => {
     await expect(resolveWorkspaceGrant("ws_nope")).resolves.toMatchObject({
       ok: false,
     });
+  });
+
+  // Driven through the predicate rather than `registerWorkspaceGrant`: on a
+  // Linux runner `realpath("C:\\")` fails long before the root check runs, so
+  // the one platform-specific rule this covers would never be exercised.
+  it("treats a Windows drive root as a filesystem root", () => {
+    for (const root of ["C:\\", "C:/", "D:\\", "z:", "C:"]) {
+      expect(isFilesystemRoot(root)).toBe(true);
+    }
+    expect(isFilesystemRoot("/")).toBe(true);
+    // A UNC SHARE root is a root too. An earlier version of this test asserted
+    // the opposite, which is how the gap got written down as intended.
+    for (const share of [
+      "\\\\server\\share",
+      "\\\\server\\share\\",
+      "\\\\server\\share/",
+      "\\\\server",
+    ]) {
+      expect(isFilesystemRoot(share)).toBe(true);
+    }
+    // A directory ON a volume, or BELOW a share, is neither.
+    for (const notRoot of [
+      "C:\\code",
+      "C:/code",
+      "C:\\code\\project",
+      "/home/user/code",
+      "\\\\server\\share\\project",
+    ]) {
+      expect(isFilesystemRoot(notRoot)).toBe(false);
+    }
+  });
+
+  it("does not read a doubled leading slash as a share root", () => {
+    // POSIX lets an implementation keep exactly two leading slashes, and
+    // `//server/share` is only a share on Windows — where the canonical form
+    // this predicate is handed always uses backslashes, because that is what
+    // `realpath` and `path.resolve` answer there. Matching `//` as well meant
+    // an ordinary POSIX directory was refused as a whole network share, so
+    // `//tmp/project` could not be a workspace at all.
+    for (const posix of [
+      "//tmp/project",
+      "//home/user",
+      "//tmp/project/",
+      "//server/share/project",
+    ]) {
+      expect(isFilesystemRoot(posix)).toBe(false);
+    }
+    // The two-slash forms that ARE roots stay roots, by the rule above them:
+    // one slash is the POSIX root, and everything under `//` is an ordinary
+    // path with a doubled separator.
+    expect(isFilesystemRoot("/")).toBe(true);
   });
 
   it("refuses a file, a missing path, the home directory, and the root", async () => {
