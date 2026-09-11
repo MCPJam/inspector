@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultFilter } from "cmdk";
 import { ArrowUpRight, Check, X } from "lucide-react";
@@ -37,6 +38,9 @@ import { loadLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 interface ModelSelectorProps {
+  /** Alternate trigger for embedded surfaces such as eval tables. */
+  trigger?: ReactNode;
+  inModal?: boolean;
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
   /** `userInitiated` marks a pick made from this menu, as opposed to the
@@ -44,7 +48,7 @@ interface ModelSelectorProps {
    * the remembered own-provider model. */
   onModelChange: (
     model: ModelDefinition,
-    options?: { userInitiated?: boolean }
+    options?: { userInitiated?: boolean },
   ) => void;
   onOpenChange?: (open: boolean) => void;
   disabled?: boolean;
@@ -99,7 +103,7 @@ type PendingSelectionChange =
     };
 
 const groupModelsByProvider = (
-  models: ModelDefinition[]
+  models: ModelDefinition[],
 ): Map<GroupKey, ModelDefinition[]> => {
   const groupedModels = new Map<GroupKey, ModelDefinition[]>();
 
@@ -154,7 +158,7 @@ const MIN_MODEL_SEARCH_SCORE = 0.3;
 export const modelFilter = (
   value: string,
   search: string,
-  keywords?: string[]
+  keywords?: string[],
 ): number => {
   const score = defaultFilter(value, search, keywords);
   if (score <= 0) {
@@ -163,7 +167,7 @@ export const modelFilter = (
 
   const words = search.split(/\s+/).filter((word) => word.length > 1);
   const everyWordMatches = words.every(
-    (word) => defaultFilter(value, word, keywords) >= MIN_MODEL_SEARCH_SCORE
+    (word) => defaultFilter(value, word, keywords) >= MIN_MODEL_SEARCH_SCORE,
   );
 
   return everyWordMatches ? score : 0;
@@ -178,23 +182,25 @@ export const modelFilter = (
  */
 const groupHasMatch = (group: ModelGroup, search: string): boolean =>
   group.models.some(
-    (model) => modelFilter(modelSearchValue(model, group.title), search) > 0
+    (model) => modelFilter(modelSearchValue(model, group.title), search) > 0,
   );
 
 function sameModelOrder(
   left: ModelDefinition[],
-  right: ModelDefinition[]
+  right: ModelDefinition[],
 ): boolean {
   if (left.length !== right.length) {
     return false;
   }
 
   return left.every(
-    (model, index) => String(model.id) === String(right[index]?.id)
+    (model, index) => String(model.id) === String(right[index]?.id),
   );
 }
 
 export function ModelSelector({
+  trigger,
+  inModal = false,
   currentModel,
   availableModels,
   onModelChange,
@@ -216,7 +222,7 @@ export function ModelSelector({
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
-    "provided"
+    "provided",
   );
   const [search, setSearch] = useState("");
   const keepPopoverOpenRef = useRef(false);
@@ -229,7 +235,7 @@ export function ModelSelector({
   const handledProvidersTabNonceRef = useRef(0);
   const selectedProvidersTabNonceRef = useRef(0);
   const providersTabNonce = useModelPickerIntentStore((state) =>
-    respondToProviderTabIntent ? state.openProvidersTabNonce : 0
+    respondToProviderTabIntent ? state.openProvidersTabNonce : 0,
   );
 
   useEffect(() => {
@@ -251,7 +257,7 @@ export function ModelSelector({
         return;
       }
       setProviderTab(
-        isMCPJamProvidedModelMenuItem(currentModel) ? "provided" : "configured"
+        isMCPJamProvidedModelMenuItem(currentModel) ? "provided" : "configured",
       );
     } else {
       forceConfiguredTabRef.current = false;
@@ -334,11 +340,11 @@ export function ModelSelector({
 
   const groupedModels = useMemo(
     () => groupModelsByProvider(availableModels),
-    [availableModels]
+    [availableModels],
   );
   const sortedProviders = useMemo(
     () => Array.from(groupedModels.keys()).sort(),
-    [groupedModels]
+    [groupedModels],
   );
 
   const modelGroups = useMemo(() => {
@@ -355,10 +361,10 @@ export function ModelSelector({
       }
 
       const provided = filtered.filter((model) =>
-        isMCPJamProvidedModelMenuItem(model)
+        isMCPJamProvidedModelMenuItem(model),
       );
       const configured = filtered.filter(
-        (model) => !isMCPJamProvidedModelMenuItem(model)
+        (model) => !isMCPJamProvidedModelMenuItem(model),
       );
       const title = getProviderDisplayName(provider);
 
@@ -385,7 +391,7 @@ export function ModelSelector({
 
   const selectedIds = useMemo(
     () => new Set(selectedModelsData.map((model) => String(model.id))),
-    [selectedModelsData]
+    [selectedModelsData],
   );
   const canUseMultiModel =
     enableMultiModel &&
@@ -394,20 +400,19 @@ export function ModelSelector({
     availableModels.length > 1;
   const leadModel = selectedModelsData[0] ?? currentModel;
   const isComparingModels = multiModelEnabled && selectedModelsData.length > 1;
-  const triggerLabel =
-    isComparingModels
-      ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
-      : compactModelLabel(leadModel.name);
+  const triggerLabel = isComparingModels
+    ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
+    : compactModelLabel(leadModel.name);
   const modelSections = useMemo(() => {
     const provided = modelGroups.filter((g) => g.providerType === "provided");
     const configured = modelGroups.filter(
-      (g) => g.providerType === "configured"
+      (g) => g.providerType === "configured",
     );
     return { provided, configured };
   }, [modelGroups]);
   const configuredModels = useMemo(
     () => modelSections.configured.flatMap((group) => group.models),
-    [modelSections]
+    [modelSections],
   );
   // Headings for providers whose rows all get filtered out are dropped here;
   // `search` (not its trimmed form) gates this so the set of headings tracks
@@ -418,10 +423,10 @@ export function ModelSelector({
     }
     return {
       provided: modelSections.provided.filter((group) =>
-        groupHasMatch(group, search)
+        groupHasMatch(group, search),
       ),
       configured: modelSections.configured.filter((group) =>
-        groupHasMatch(group, search)
+        groupHasMatch(group, search),
       ),
     };
   }, [modelSections, search]);
@@ -457,7 +462,7 @@ export function ModelSelector({
 
     const nextModel = pickOwnProviderModel(
       configuredModels,
-      loadLastOwnProviderModelId()
+      loadLastOwnProviderModelId(),
     );
     // No own-provider models resolved yet (keys still loading). Leave the
     // nonce unconsumed so this settles once the list arrives.
@@ -533,7 +538,7 @@ export function ModelSelector({
     const isSelected = selectedIds.has(String(model.id));
     const nextSelectedModels = isSelected
       ? selectedModelsData.filter(
-          (selectedModel) => String(selectedModel.id) !== String(model.id)
+          (selectedModel) => String(selectedModel.id) !== String(model.id),
         )
       : [...selectedModelsData, model];
 
@@ -558,7 +563,7 @@ export function ModelSelector({
     const nextSelectedModels = [
       model,
       ...selectedModelsData.filter(
-        (selectedModel) => String(selectedModel.id) !== String(model.id)
+        (selectedModel) => String(selectedModel.id) !== String(model.id),
       ),
     ];
 
@@ -603,7 +608,7 @@ export function ModelSelector({
           className={cn(
             "cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed",
             lockedRowHighlightId &&
-              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit"
+              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit",
           )}
         >
           <ProviderLogo
@@ -620,7 +625,7 @@ export function ModelSelector({
                 "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
                 isSelected
                   ? "border-primary bg-primary shadow-sm"
-                  : "border-border/60 bg-transparent hover:border-border"
+                  : "border-border/60 bg-transparent hover:border-border",
               )}
               aria-hidden
             >
@@ -643,7 +648,7 @@ export function ModelSelector({
             <div
               className={cn(
                 "rounded-sm transition-colors",
-                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60"
+                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60",
               )}
               onMouseEnter={() => setHoveredLockedModelId(String(model.id))}
               onMouseLeave={() => setHoveredLockedModelId(null)}
@@ -664,60 +669,62 @@ export function ModelSelector({
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={disabled || isLoading}
-                className={cn(
-                  "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                  isComparingModels
-                    ? "max-w-[280px] gap-1"
-                    : "max-w-[180px] gap-1",
-                )}
-                data-testid="model-selector-trigger"
-              >
-                {isComparingModels ? (
-                  <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
-                    {selectedModelsData.map((model, index) => (
-                      <span
-                        key={String(model.id)}
-                        className={cn(
-                          "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
-                          index === 0
-                            ? "border-primary/25 text-foreground"
-                            : "border-border/50 text-muted-foreground",
-                        )}
-                      >
-                        <ProviderLogo
-                          provider={model.provider}
-                          customProviderName={model.customProviderName}
-                          className="size-3 shrink-0"
-                        />
-                        <span className="truncate">
-                          {compactModelLabel(model.name)}
+              {trigger ?? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled || isLoading}
+                  className={cn(
+                    "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
+                    isComparingModels
+                      ? "max-w-[280px] gap-1"
+                      : "max-w-[180px] gap-1",
+                  )}
+                  data-testid="model-selector-trigger"
+                >
+                  {isComparingModels ? (
+                    <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
+                      {selectedModelsData.map((model, index) => (
+                        <span
+                          key={String(model.id)}
+                          className={cn(
+                            "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
+                            index === 0
+                              ? "border-primary/25 text-foreground"
+                              : "border-border/50 text-muted-foreground",
+                          )}
+                        >
+                          <ProviderLogo
+                            provider={model.provider}
+                            customProviderName={model.customProviderName}
+                            className="size-3 shrink-0"
+                          />
+                          <span className="truncate">
+                            {compactModelLabel(model.name)}
+                          </span>
                         </span>
+                      ))}
+                    </span>
+                  ) : (
+                    <>
+                      <ProviderLogo
+                        provider={leadModel.provider}
+                        customProviderName={leadModel.customProviderName}
+                      />
+                      <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
+                        {triggerLabel}
                       </span>
-                    ))}
-                  </span>
-                ) : (
-                  <>
+                    </>
+                  )}
+                  {isComparingModels ? (
                     <ProviderLogo
                       provider={leadModel.provider}
                       customProviderName={leadModel.customProviderName}
+                      className="hidden size-3 shrink-0 @max-2xl/toolbar:block"
                     />
-                    <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
-                      {triggerLabel}
-                    </span>
-                  </>
-                )}
-                {isComparingModels ? (
-                  <ProviderLogo
-                    provider={leadModel.provider}
-                    customProviderName={leadModel.customProviderName}
-                    className="hidden size-3 shrink-0 @max-2xl/toolbar:block"
-                  />
-                ) : null}
-              </Button>
+                  ) : null}
+                </Button>
+              )}
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
@@ -728,6 +735,7 @@ export function ModelSelector({
         </Tooltip>
 
         <PopoverContent
+          portalled={!inModal}
           align={align}
           className="w-[280px] p-0"
           sideOffset={8}
@@ -769,7 +777,7 @@ export function ModelSelector({
                             "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
                             isLead
                               ? "border-primary/25 bg-primary/5 text-foreground"
-                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
+                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
                           )}
                           onClick={() => handlePromoteLeadModel(model)}
                         >
@@ -843,7 +851,7 @@ export function ModelSelector({
                             "flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                             providerTab === tab
                               ? "bg-muted text-foreground"
-                              : "text-muted-foreground hover:text-foreground"
+                              : "text-muted-foreground hover:text-foreground",
                           )}
                         >
                           {tab === "provided"

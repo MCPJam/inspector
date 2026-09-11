@@ -6,14 +6,21 @@ import {
 import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
 import { type TestStep } from "@/shared/steps";
 import {
+  caseHasOwnAssertion,
   deriveCaseKind,
   displayCaseKind,
-  EXCLUDED_FROM_MORE_CHECKS,
+  inAppStepLabel,
   initialToolsChoice,
+  isPromptFirst,
   isSimpleCaseShape,
+  isToolCalledWithAssert,
+  isStepCheckAssert,
+  leftoverSteps,
   matchOptionsForKind,
-  MORE_CHECK_GROUPS,
   readSimpleCase,
+  readStepChecks,
+  resolveToolsQuestion,
+  updateStepCheck,
   writeSimpleCase,
 } from "../simple-case/simple-case-model";
 
@@ -186,7 +193,7 @@ describe("isSimpleCaseShape", () => {
     ).toBe(false);
   });
 
-  it("rejects an interact step", () => {
+  it("accepts an interact step after the prompt", () => {
     expect(
       isSimpleCaseShape([
         prompt("p1", "go"),
@@ -197,20 +204,24 @@ describe("isSimpleCaseShape", () => {
           action: { kind: "click", target: { testId: "canvas" } },
         },
       ]),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("rejects a widget assert", () => {
+  it("accepts a widget assert after the prompt", () => {
     expect(
       isSimpleCaseShape([
         prompt("p1", "go"),
         {
           id: "w1",
           kind: "assert",
-          assertion: { kind: "textVisible", text: "ok" },
+          assertion: {
+            kind: "textVisible",
+            toolName: "create_view",
+            text: "ok",
+          },
         },
       ]),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("rejects a non-toolCalledWith inline predicate", () => {
@@ -247,6 +258,7 @@ describe("readSimpleCase / writeSimpleCase", () => {
     const view = readSimpleCase(steps);
     expect(view).toEqual({
       prompt: "Find the latest incidents",
+      inApp: [],
       noTool: false,
       tools: [
         { id: "a1", toolName: "list_incidents", arguments: { limit: 5 } },
@@ -303,6 +315,64 @@ describe("readSimpleCase / writeSimpleCase", () => {
     });
     expect(next[1]).toEqual(toolCalledWith("a1", "search", { q: "new" }));
   });
+
+  it("preserves executor order on a read/write round-trip", () => {
+    const interact: TestStep = {
+      id: "i1",
+      kind: "interact",
+      toolName: "create_view",
+      action: { kind: "click", target: { testId: "canvas" } },
+    };
+    const widget: TestStep = {
+      id: "w1",
+      kind: "assert",
+      assertion: {
+        kind: "textVisible",
+        toolName: "create_view",
+        text: "ok",
+      },
+    };
+    const prev: TestStep[] = [
+      prompt("p1", "Draw a box"),
+      interact,
+      toolCalledWith("a1", "create_view"),
+      widget,
+    ];
+    const view = readSimpleCase(prev);
+    expect(view.inApp).toEqual([interact, widget]);
+    expect(writeSimpleCase(prev, view)).toEqual(prev);
+    expect(
+      writeSimpleCase(prev, {
+        prompt: view.prompt,
+        tools: [...view.tools, { toolName: "search", arguments: {} }],
+        noTool: false,
+      }).map((step) => step.id),
+    ).toEqual(["p1", "i1", "a1", expect.any(String), "w1"]);
+  });
+
+  it("does not let interact steps flip the tools-assert set", () => {
+    const interact: TestStep = {
+      id: "i1",
+      kind: "interact",
+      toolName: "create_view",
+      action: { kind: "click", target: { testId: "canvas" } },
+    };
+    const withTool = [prompt("p1", "go"), toolCalledWith("a1", "search")];
+    const withToolAndInteract = [
+      prompt("p1", "go"),
+      interact,
+      toolCalledWith("a1", "search"),
+    ];
+    expect(withTool.some(isToolCalledWithAssert)).toBe(
+      withToolAndInteract.some(isToolCalledWithAssert),
+    );
+    expect([prompt("p1", "go")].some(isToolCalledWithAssert)).toBe(
+      [prompt("p1", "go"), interact].some(isToolCalledWithAssert),
+    );
+    expect(
+      writeSimpleCase(withToolAndInteract, readSimpleCase(withToolAndInteract)),
+    ).toEqual(withToolAndInteract);
+  });
 });
 
 describe("matchOptionsForKind carries argument matching over", () => {
@@ -324,30 +394,440 @@ describe("matchOptionsForKind carries argument matching over", () => {
   });
 });
 
-describe("More checks groups partition the predicate catalog", () => {
-  it("files every predicate kind exactly once, or excludes it on purpose", () => {
-    const filed = new Map<string, string[]>();
-    for (const group of MORE_CHECK_GROUPS) {
-      for (const kind of group.kinds) {
-        filed.set(kind, [...(filed.get(kind) ?? []), group.id]);
-      }
-    }
-    for (const kind of Object.keys(PREDICATE_KIND_LABELS)) {
-      const groups = filed.get(kind) ?? [];
-      const excluded = EXCLUDED_FROM_MORE_CHECKS.has(
-        kind as Parameters<typeof EXCLUDED_FROM_MORE_CHECKS.has>[0],
-      );
-      expect(
-        { kind, groups, excluded },
-        `predicate kind "${kind}" must be in exactly one More checks group or excluded on purpose`,
-      ).toSatisfy(
-        (entry: { groups: string[]; excluded: boolean }) =>
-          (entry.groups.length === 1 && !entry.excluded) ||
-          (entry.groups.length === 0 && entry.excluded),
-      );
-    }
-    for (const kind of EXCLUDED_FROM_MORE_CHECKS) {
-      expect(kind in PREDICATE_KIND_LABELS).toBe(true);
-    }
+/*
+ * The partition guard moved. It used to pin `MORE_CHECK_GROUPS` — the form's
+ * own three-way grouping — against the predicate catalog. That grouping is
+ * gone; the equivalent invariant now lives in `case-scorecard-model.test.ts`
+ * as "offers every predicate kind exactly once, or the route owns it", over
+ * the shared scorer library. The guard is the same: a kind added to the
+ * catalog fails until somebody files it, rather than silently disappearing
+ * from the only place it can be authored.
+ */
+
+describe("inAppStepLabel", () => {
+  it("names a role locator by its accessible name, never by the role object", () => {
+    expect(
+      inAppStepLabel({
+        id: "i1",
+        kind: "interact",
+        toolName: "cart",
+        action: {
+          kind: "click",
+          target: { role: { role: "button", name: "Add to cart" } },
+        },
+      }),
+    ).toBe("Click Add to cart");
+    expect(
+      inAppStepLabel({
+        id: "i2",
+        kind: "interact",
+        toolName: "cart",
+        action: { kind: "click", target: { role: { role: "button" } } },
+      }),
+    ).toBe("Click button");
   });
+
+  it("follows the recorder's precedence: testId, role name, text, css", () => {
+    expect(
+      inAppStepLabel({
+        id: "i3",
+        kind: "interact",
+        toolName: "cart",
+        action: {
+          kind: "type",
+          target: { testId: "qty", role: { role: "textbox", name: "Qty" } },
+          text: "2",
+        },
+      }),
+    ).toBe("Type qty");
+    expect(
+      inAppStepLabel({
+        id: "i4",
+        kind: "interact",
+        toolName: "cart",
+        action: { kind: "click", target: { css: ".buy" } },
+      }),
+    ).toBe("Click .buy");
+  });
+
+  it("labels widget asserts with a role-located target", () => {
+    expect(
+      inAppStepLabel({
+        id: "w1",
+        kind: "assert",
+        assertion: {
+          kind: "elementVisible",
+          toolName: "cart",
+          target: { role: { role: "heading", name: "Your cart" } },
+        },
+      }),
+    ).toContain("Your cart");
+  });
+});
+
+const stepCheck = (id: string, assertion: any): TestStep => ({
+  id,
+  kind: "assert",
+  assertion,
+});
+
+/** The shape every CLI- and SDK-authored case has. */
+const goldenSteps: TestStep[] = [
+  prompt("s1", "Who am I signed in as?"),
+  stepCheck("a1", { type: "firstToolWas", toolName: "get_me" }),
+  stepCheck("a2", {
+    type: "responseContains",
+    needle: "marcelo@mcpjam.com",
+  }),
+  stepCheck("a3", { type: "noToolErrors" }),
+];
+
+describe("resolveToolsQuestion", () => {
+  it("is tools whenever a route is named, whatever else the case carries", () => {
+    expect(
+      resolveToolsQuestion({
+        choice: "noTool",
+        hasToolAsserts: true,
+        hasOwnAssertion: true,
+      }),
+    ).toBe("tools");
+  });
+
+  it("is noTool only when the author chose it", () => {
+    expect(
+      resolveToolsQuestion({
+        choice: "noTool",
+        hasToolAsserts: false,
+        hasOwnAssertion: true,
+      }),
+    ).toBe("noTool");
+  });
+
+  it("is checks for a positive case graded by what it carries", () => {
+    expect(
+      resolveToolsQuestion({
+        choice: "unset",
+        hasToolAsserts: false,
+        hasOwnAssertion: true,
+      }),
+    ).toBe("checks");
+  });
+
+  it("is unset for a draft that asserts nothing", () => {
+    expect(
+      resolveToolsQuestion({
+        choice: "unset",
+        hasToolAsserts: false,
+        hasOwnAssertion: false,
+      }),
+    ).toBe("unset");
+  });
+
+  it("falls back to unset when a stale tools choice has no rows left", () => {
+    // The stored tri-state could say "tools" after the last row was removed;
+    // that used to pass the block and save as a derived negative test.
+    expect(
+      resolveToolsQuestion({
+        choice: "tools",
+        hasToolAsserts: false,
+        hasOwnAssertion: false,
+      }),
+    ).toBe("unset");
+  });
+});
+
+describe("caseHasOwnAssertion", () => {
+  it("counts an assert step, a rubric, or an explicit predicate list", () => {
+    expect(caseHasOwnAssertion({ steps: goldenSteps })).toBe(true);
+    expect(
+      caseHasOwnAssertion({
+        steps: [prompt("s1", "hi")],
+        expectedOutput: " the answer ",
+      }),
+    ).toBe(true);
+    expect(
+      caseHasOwnAssertion({
+        steps: [prompt("s1", "hi")],
+        predicates: { mode: "extend", list: [{ type: "noToolErrors" }] },
+      }),
+    ).toBe(true);
+  });
+
+  it("does not count an inherit-mode list — the editor blanks it on save", () => {
+    expect(
+      caseHasOwnAssertion({
+        steps: [prompt("s1", "hi")],
+        predicates: { mode: "inherit", list: [{ type: "noToolErrors" }] },
+      }),
+    ).toBe(false);
+  });
+
+  it("is false for a prompt-only draft with an empty rubric", () => {
+    expect(
+      caseHasOwnAssertion({
+        steps: [prompt("s1", "hi")],
+        expectedOutput: "  ",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("readStepChecks / updateStepCheck", () => {
+  it("reads non-widget, non-route asserts in execution order", () => {
+    expect(readStepChecks(goldenSteps)).toEqual([
+      { stepId: "a1", predicate: { type: "firstToolWas", toolName: "get_me" } },
+      {
+        stepId: "a2",
+        predicate: {
+          type: "responseContains",
+          needle: "marcelo@mcpjam.com",
+        },
+      },
+      { stepId: "a3", predicate: { type: "noToolErrors" } },
+    ]);
+  });
+
+  it("leaves the tool route and widget asserts to their own sections", () => {
+    const steps: TestStep[] = [
+      prompt("s1", "go"),
+      toolCalledWith("t1", "search"),
+      stepCheck("w1", { kind: "widgetRendered", toolName: "search" }),
+    ];
+    expect(readStepChecks(steps)).toEqual([]);
+  });
+
+  it("rewrites one check without moving or re-keying any step", () => {
+    const next = updateStepCheck(goldenSteps, "a2", {
+      type: "responseContains",
+      needle: "nacho@mcpjam.com",
+    });
+    expect(next.map((step) => step.id)).toEqual(["s1", "a1", "a2", "a3"]);
+    expect(next[2]).toMatchObject({
+      id: "a2",
+      kind: "assert",
+      assertion: { type: "responseContains", needle: "nacho@mcpjam.com" },
+    });
+    expect(next[1]).toBe(goldenSteps[1]);
+  });
+});
+
+describe("leftoverSteps", () => {
+  const shownIds = (steps: TestStep[]) => {
+    const view = readSimpleCase(steps);
+    return [
+      ...(steps[0] && isPromptFirst(steps) ? [steps[0].id] : []),
+      ...view.inApp.map((step) => step.id),
+      ...view.tools.map((tool) => tool.id),
+      ...readStepChecks(steps).map((check) => check.stepId),
+    ];
+  };
+
+  const cases: Array<[string, TestStep[]]> = [
+    ["golden", goldenSteps],
+    [
+      "two-turn",
+      [
+        prompt("s1", "first"),
+        toolCalledWith("t1", "search"),
+        prompt("s2", "second"),
+      ],
+    ],
+    [
+      "pinned first",
+      [
+        {
+          id: "call-1",
+          kind: "toolCall",
+          serverName: "srv",
+          toolName: "render",
+          arguments: {},
+        } as TestStep,
+      ],
+    ],
+    [
+      "in the app",
+      [
+        prompt("s1", "go"),
+        {
+          id: "i1",
+          kind: "interact",
+          action: { kind: "click", target: { testId: "row" } },
+        } as TestStep,
+      ],
+    ],
+  ];
+
+  it.each(cases)(
+    "every step is either shown or listed as leftover (%s)",
+    (_name, steps) => {
+      const accounted = [
+        ...shownIds(steps),
+        ...leftoverSteps(steps).map((step) => step.id),
+      ].sort();
+      expect(accounted).toEqual(steps.map((step) => step.id).sort());
+    },
+  );
+
+  it("keeps step-authored checks out of the leftover list", () => {
+    expect(leftoverSteps(goldenSteps)).toEqual([]);
+  });
+});
+
+describe("writeSimpleCase keeps other turns where they are", () => {
+  it("round-trips a golden case without touching its checks", () => {
+    const view = readSimpleCase(goldenSteps);
+    const next = writeSimpleCase(goldenSteps, {
+      prompt: view.prompt,
+      tools: view.tools,
+      noTool: false,
+    });
+    expect(next).toEqual(goldenSteps);
+  });
+
+  it("attaches a newly chosen tool to the FIRST turn, not the last", () => {
+    const steps: TestStep[] = [
+      prompt("s1", "first"),
+      toolCalledWith("t1", "search"),
+      prompt("s2", "second"),
+      toolCalledWith("t2", "get"),
+    ];
+    const next = writeSimpleCase(steps, {
+      prompt: "first",
+      tools: [
+        { id: "t1", toolName: "search", arguments: {} },
+        { id: "t2", toolName: "get", arguments: {} },
+        { toolName: "list", arguments: {} },
+      ],
+      noTool: false,
+    });
+    expect(next.map((step) => step.id).slice(0, 3)).toEqual([
+      "s1",
+      "t1",
+      next[2]!.id,
+    ]);
+    expect(next[2]).toMatchObject({
+      kind: "assert",
+      assertion: { type: "toolCalledWith", toolName: "list" },
+    });
+    expect(next.slice(3).map((step) => step.id)).toEqual(["s2", "t2"]);
+  });
+
+  it("never prepends a prompt turn to a case that starts with a pinned call", () => {
+    const steps: TestStep[] = [
+      {
+        id: "call-1",
+        kind: "toolCall",
+        serverName: "srv",
+        toolName: "render",
+        arguments: {},
+      } as TestStep,
+    ];
+    expect(
+      writeSimpleCase(steps, { prompt: "", tools: [], noTool: true }),
+    ).toEqual(steps);
+  });
+});
+
+describe("isPromptFirst", () => {
+  it("is true for an empty draft and a normal case, false for a pinned head", () => {
+    expect(isPromptFirst([])).toBe(true);
+    expect(isPromptFirst(goldenSteps)).toBe(true);
+    expect(
+      isPromptFirst([
+        {
+          id: "call-1",
+          kind: "toolCall",
+          serverName: "srv",
+          toolName: "render",
+          arguments: {},
+        } as TestStep,
+      ]),
+    ).toBe(false);
+  });
+});
+
+describe("an advisory tool assert is not the route", () => {
+  const advisoryTool = {
+    id: "a1",
+    kind: "assert",
+    assertion: {
+      type: "toolCalledWith",
+      toolName: "get_me",
+      args: { args: {} },
+      role: "advisory",
+      severity: "warn",
+    },
+  } as unknown as TestStep;
+  const gatingTool = {
+    id: "a2",
+    kind: "assert",
+    assertion: { type: "toolCalledWith", toolName: "get_me", args: { args: {} } },
+  } as unknown as TestStep;
+
+  it("routes only on a gating tool assert", () => {
+    // `deriveExpectedToolCalls` and `stepsToPromptTurns` both skip an advisory
+    // `toolCalledWith`, so it never becomes a matcher expectation. Reading it
+    // as the route would show a Gate route on a case the backend does not
+    // route at all.
+    expect(isToolCalledWithAssert(gatingTool)).toBe(true);
+    expect(isToolCalledWithAssert(advisoryTool)).toBe(false);
+  });
+
+  it("files the advisory one as a step scorer instead, so it stays visible", () => {
+    expect(isStepCheckAssert(advisoryTool)).toBe(true);
+    expect(isStepCheckAssert(gatingTool)).toBe(false);
+    expect(readStepChecks([prompt("p1", "go"), advisoryTool])).toHaveLength(1);
+  });
+
+  it("keeps it out of the tool list the route question renders", () => {
+    expect(readSimpleCase([prompt("p1", "go"), advisoryTool]).tools).toEqual([]);
+    expect(readSimpleCase([prompt("p1", "go"), gatingTool]).tools).toHaveLength(1);
+  });
+
+  it("does not strand it in the leftover list", () => {
+    // `leftoverSteps` is the complement of what the form renders; a step that
+    // is neither the route nor a step check would vanish from every editor.
+    expect(leftoverSteps([prompt("p1", "go"), advisoryTool])).toEqual([]);
+  });
+});
+
+describe("readSimpleCase on an empty draft", () => {
+  it("reads a case with no steps at all instead of throwing", () => {
+    // A brand-new case has nothing until the first keystroke; the narrowing
+    // helpers dereference `.kind`, so an unguarded `steps[0]` crashes the pane.
+    expect(readSimpleCase([])).toMatchObject({ prompt: "", tools: [] });
+  });
+});
+
+describe("writeSimpleCase on an empty draft", () => {
+  it("mints the first prompt instead of throwing", () => {
+    const next = writeSimpleCase([], {
+      prompt: "hi",
+      tools: [],
+      noTool: false,
+    });
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ kind: "prompt", prompt: "hi" });
+  });
+});
+
+it("no-tool authoring removes advisory toolCalledWith assertions too", () => {
+  const steps = [
+    prompt("p", "hi"),
+    toolCalledWith("gate", "search"),
+    {
+      id: "report",
+      kind: "assert" as const,
+      assertion: {
+        type: "toolCalledWith" as const,
+        toolName: "search",
+        args: { args: {} },
+        role: "advisory" as const,
+        severity: "info" as const,
+      },
+    },
+  ];
+  expect(
+    writeSimpleCase(steps, { prompt: "hi", tools: [], noTool: true }),
+  ).toEqual([steps[0]]);
 });
