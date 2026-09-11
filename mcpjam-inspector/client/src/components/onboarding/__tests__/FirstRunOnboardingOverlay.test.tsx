@@ -176,7 +176,6 @@ describe("FirstRunOnboardingOverlay", () => {
       transport: "http",
       urlOrCommand: "https://mcp.example.com/mcp",
       authentication: "auto",
-      header: "",
     });
 
     rerenderWithConnectionState({
@@ -206,7 +205,6 @@ describe("FirstRunOnboardingOverlay", () => {
       transport: "http",
       urlOrCommand: "https://mcp.example.com/mcp",
       authentication: "auto",
-      header: "",
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
@@ -351,8 +349,27 @@ describe("FirstRunOnboardingOverlay", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("6 tools · no setup · nothing to install"),
+      screen.getByText("No setup · nothing to install"),
     ).toBeInTheDocument();
+  });
+
+  it("only offers credential modes that the onboarding form can submit", () => {
+    const { rerenderWithConnectionState } = renderOverlay();
+
+    rerenderWithConnectionState({
+      status: "failed",
+      serverName: "Example",
+      serverKind: "personal",
+      error: "Connection refused",
+    });
+
+    expect(screen.getByRole("option", { name: "Auto" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "OAuth" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "None" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Bearer token" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Header")).not.toBeInTheDocument();
   });
 
   it("requires a server URL or command before opening the details sheet", () => {

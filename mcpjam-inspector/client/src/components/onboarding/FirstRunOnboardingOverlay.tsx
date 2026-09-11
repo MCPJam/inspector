@@ -52,8 +52,7 @@ export interface FirstRunServerDraft {
   name: string;
   transport: "http" | "stdio";
   urlOrCommand: string;
-  authentication: "auto" | "oauth" | "bearer" | "none";
-  header: string;
+  authentication: "auto" | "oauth" | "none";
 }
 
 interface FirstRunOnboardingOverlayProps {
@@ -102,7 +101,6 @@ export function FirstRunOnboardingOverlay({
   );
   const [serverAuthentication, setServerAuthentication] =
     useState<FirstRunServerDraft["authentication"]>("auto");
-  const [serverHeader, setServerHeader] = useState("");
 
   useEffect(() => {
     if (!open) setStep(skipWelcome ? "choose" : "welcome");
@@ -139,7 +137,6 @@ export function FirstRunOnboardingOverlay({
         transport: inferredTransport,
         urlOrCommand: trimmedUrlOrCommand,
         authentication: "auto",
-        header: "",
       });
     },
     [onConnectOwnServer, serverName, serverUrlOrCommand],
@@ -153,13 +150,11 @@ export function FirstRunOnboardingOverlay({
         transport: serverTransport,
         urlOrCommand: serverUrlOrCommand,
         authentication: serverAuthentication,
-        header: serverHeader.trim(),
       });
     },
     [
       onConnectOwnServer,
       serverAuthentication,
-      serverHeader,
       serverName,
       serverTransport,
       serverUrlOrCommand,
@@ -355,7 +350,7 @@ export function FirstRunOnboardingOverlay({
                   Try the Excalidraw demo server
                 </Button>
                 <p className="mt-1.5 text-center text-[10.5px] text-muted-foreground">
-                  6 tools · no setup · nothing to install
+                  No setup · nothing to install
                 </p>
               </div>
               <Button
@@ -548,7 +543,7 @@ export function FirstRunOnboardingOverlay({
                   />
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-1.5">
                   <label className="grid gap-1.5 font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase">
                     Authentication
                     <select
@@ -563,25 +558,9 @@ export function FirstRunOnboardingOverlay({
                     >
                       <option value="auto">Auto</option>
                       <option value="oauth">OAuth</option>
-                      <option value="bearer">Bearer token</option>
                       <option value="none">None</option>
                     </select>
                   </label>
-                  <div className="grid gap-1.5">
-                    <Label
-                      htmlFor="first-run-server-header"
-                      className="font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase"
-                    >
-                      Header
-                    </Label>
-                    <Input
-                      id="first-run-server-header"
-                      className="h-10 border-border bg-card font-mono text-[11.5px] shadow-none"
-                      placeholder="X-Api-Key"
-                      value={serverHeader}
-                      onChange={(event) => setServerHeader(event.target.value)}
-                    />
-                  </div>
                 </div>
               </div>
 
