@@ -48,11 +48,22 @@ export type ScenarioGoalChainHandler = (
 export function ScenarioGoalChain({
   scenarioId,
   goalId,
+  sentiment,
   onResolved,
 }: {
   scenarioId: string;
   /** The goal-axis cluster id. A User Testing goal IS its cluster. */
   goalId: string;
+  /**
+   * The persona this goal is being read inside. A User Testing persona IS the
+   * session's sentiment, and the panel is a card ABOUT that persona: its count,
+   * its session list, its goal row.
+   *
+   * Without it the funnel answers for the whole cluster, and the card prints a
+   * number about everyone who tried the goal between two numbers about one
+   * persona — "2 sessions" above, "failed in 3 of 6 graded" in the middle.
+   */
+  sentiment?: string;
   onResolved: ScenarioGoalChainHandler;
 }) {
   return (
@@ -61,7 +72,7 @@ export function ScenarioGoalChain({
     // every LATER goal too: one transient failure and the rest of the study
     // reads as unmeasured until the whole tab remounts.
     <ErrorBoundary
-      key={`${scenarioId}:${goalId}`}
+      key={`${scenarioId}:${goalId}:${sentiment ?? "all"}`}
       name="scenario-goal-stage-chain"
       fallback={null}
       onError={() => onResolved(goalId, null)}
@@ -69,6 +80,7 @@ export function ScenarioGoalChain({
       <ScenarioGoalChainQuery
         scenarioId={scenarioId}
         goalId={goalId}
+        sentiment={sentiment}
         onResolved={onResolved}
       />
     </ErrorBoundary>
@@ -78,17 +90,27 @@ export function ScenarioGoalChain({
 function ScenarioGoalChainQuery({
   scenarioId,
   goalId,
+  sentiment,
   onResolved,
 }: {
   scenarioId: string;
   goalId: string;
+  sentiment?: string;
   onResolved: ScenarioGoalChainHandler;
 }) {
   // Named rather than generated: the inspector holds no Convex codegen, so
   // every call site in this tree addresses functions this way.
+  //
+  // `sentiment` is omitted rather than sent as undefined when the tab has no
+  // persona to name: the server validates arguments, and an explicit
+  // `undefined` is not the same thing as an absent optional.
   const funnel = useQuery(
     "chatSessionStageDerivation:getScenarioStageFunnel" as never,
-    { scenarioId, clusterId: goalId } as never,
+    {
+      scenarioId,
+      clusterId: goalId,
+      ...(sentiment ? { sentiment } : {}),
+    } as never,
   ) as ChatSessionStageFunnel | null | undefined;
 
   // Keyed on the RESULT'S IDENTITY, which `useQuery` keeps stable while the
