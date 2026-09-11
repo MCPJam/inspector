@@ -48,7 +48,12 @@
 - Removed Bearer-token and custom-header controls from onboarding because the form did not collect or submit their credential values. OAuth, automatic authentication, and no-auth remain available.
 - Added regressions for stdio parsing, user-controlled selection after restore, and the supported credential choices.
 - Verification on `feature/onboarding-quick-fixes`: 1,676 focused tests pass with 6 existing skips; client type-check and targeted Prettier check pass.
-- Kept `onboarding-review-followups.md` unchanged. The unrelated developer onboarding and repository-flow guides moved to the separate `small-doc-fixes` branch.
+- Reused the initial onboarding-state snapshot during eligibility checks instead of parsing localStorage on every App render.
+- Made legacy `completed` records without `shownAt` recoverable and ensured newly completed records always carry that marker.
+- Failure recovery actions now reset the parent connection state before returning to server choice, so stale errors cannot reopen later.
+- Removed the redundant Welcome-acknowledgement alias and its duplicate persistence write.
+- Added state and overlay regressions for these recovery paths; 145 directly affected tests and client type-check pass.
+- Removed completed findings from `onboarding-review-followups.md`. The unrelated developer onboarding and repository-flow guides remain isolated on `small-doc-fixes`.
 
 ## Remaining before integration
 

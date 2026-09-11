@@ -12,7 +12,6 @@ import {
   markFirstRunPlaygroundPromptPending,
   markFirstRunServerChoiceDismissed,
   markFirstRunServerChoiceStarted,
-  markFirstRunServerChoiceWelcomeAcknowledged,
   markFirstRunServerChoiceWelcomeShown,
   markFirstRunServerChoiceCompleted,
   readFirstRunServerChoiceState,
@@ -213,7 +212,13 @@ describe("onboarding-state", () => {
     it("keeps a visibly started flow eligible when a server row hydrates", () => {
       markFirstRunServerChoiceWelcomeShown();
 
-      expect(isFirstRunServerChoiceEligible(true, "playground")).toBe(true);
+      expect(
+        isFirstRunServerChoiceEligible(
+          true,
+          "playground",
+          readFirstRunServerChoiceState(),
+        ),
+      ).toBe(true);
     });
 
     it("records the server associated with a connection attempt", () => {
@@ -255,13 +260,25 @@ describe("onboarding-state", () => {
     it("does not inherit completion from the legacy automatic flow", () => {
       writeOnboardingState({ status: "seen", shownAt: Date.now() });
 
-      expect(isFirstRunServerChoiceEligible(false, "home")).toBe(true);
+      expect(
+        isFirstRunServerChoiceEligible(
+          false,
+          "home",
+          readFirstRunServerChoiceState(),
+        ),
+      ).toBe(true);
     });
 
     it("stays hidden after the user explicitly chooses setup later", () => {
       markFirstRunServerChoiceDismissed();
 
-      expect(isFirstRunServerChoiceEligible(false, "home")).toBe(false);
+      expect(
+        isFirstRunServerChoiceEligible(
+          false,
+          "home",
+          readFirstRunServerChoiceState(),
+        ),
+      ).toBe(false);
     });
 
     it("does not hide the welcome after an automatic legacy completion", () => {
@@ -270,15 +287,45 @@ describe("onboarding-state", () => {
         JSON.stringify({ status: "completed", completedAt: Date.now() }),
       );
 
-      expect(isFirstRunServerChoiceEligible(false, "home")).toBe(true);
+      expect(
+        isFirstRunServerChoiceEligible(
+          false,
+          "home",
+          readFirstRunServerChoiceState(),
+        ),
+      ).toBe(true);
+    });
+
+    it("lets a legacy completion without shownAt enter and exit the explicit flow", () => {
+      localStorage.setItem(
+        "mcp-first-run-server-choice-state",
+        JSON.stringify({ status: "completed", completedAt: Date.now() }),
+      );
+
+      markFirstRunServerChoiceWelcomeShown();
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "started",
+          shownAt: expect.any(Number),
+        }),
+      );
+
+      markFirstRunServerChoiceDismissed();
+      expect(readFirstRunServerChoiceState()).toEqual({ status: "dismissed" });
     });
 
     it("stays hidden after an explicit welcome and successful connection", () => {
-      markFirstRunServerChoiceWelcomeAcknowledged();
+      markFirstRunServerChoiceWelcomeShown();
       markFirstRunServerChoiceStarted();
       markFirstRunServerChoiceCompleted();
 
-      expect(isFirstRunServerChoiceEligible(false, "home")).toBe(false);
+      expect(
+        isFirstRunServerChoiceEligible(
+          false,
+          "home",
+          readFirstRunServerChoiceState(),
+        ),
+      ).toBe(false);
     });
   });
 });

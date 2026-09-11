@@ -80,7 +80,6 @@ import {
   markFirstRunServerChoiceCompleted,
   markFirstRunServerChoiceDismissed,
   markFirstRunServerChoiceStarted,
-  markFirstRunServerChoiceWelcomeAcknowledged,
   markFirstRunServerChoiceWelcomeShown,
   readFirstRunServerChoiceState,
 } from "./lib/onboarding-state";
@@ -3461,6 +3460,7 @@ export default function App() {
       isFirstRunServerChoiceEligible(
         hasAnyFirstRunBlockingProjectServers && !isFirstRunConnectionActive,
         activeTab,
+        initialFirstRunServerChoiceState,
         !!workOsUser,
         isNewSignedInAccount,
       ));
@@ -3675,6 +3675,12 @@ export default function App() {
     }
     setFirstRunConnectionState({ status: "idle" });
   }, [firstRunConnectionState, handleRuntimeDisconnect]);
+
+  const returnToFirstRunChoice = useCallback(() => {
+    firstRunConnectionAttemptRef.current += 1;
+    setPendingFirstRunConnection(null);
+    setFirstRunConnectionState({ status: "idle" });
+  }, []);
 
   const openFirstRunPlayground = useCallback(() => {
     firstRunConnectionAttemptRef.current += 1;
@@ -5766,11 +5772,9 @@ export default function App() {
                 onConnectOwnServer={openFirstRunServerConnection}
                 onConnectDemo={connectFirstRunDemo}
                 onCancelConnection={cancelFirstRunConnection}
+                onReturnToChoice={returnToFirstRunChoice}
                 onOpenPlayground={openFirstRunPlayground}
                 onWelcomeShown={markFirstRunServerChoiceWelcomeShown}
-                onWelcomeAcknowledged={
-                  markFirstRunServerChoiceWelcomeAcknowledged
-                }
                 onSkip={dismissFirstRunOverlay}
               />
             </div>
