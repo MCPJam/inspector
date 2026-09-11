@@ -45,6 +45,7 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
+import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { Thread } from "@/components/chat-v2/thread";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
@@ -2226,9 +2227,20 @@ export function ChatTabV2({
     setFileAttachments([]);
   };
 
+  /**
+   * What Up/Down walk through in the composer (BB-183): this thread's own user
+   * messages, newest first. Derived from what is already on screen — no store,
+   * no query, and it follows a session restored from the history rail for free.
+   */
+  const chatInputHistory = useMemo(
+    () => collectInputHistory(messages),
+    [messages],
+  );
+
   const sharedChatInputProps = {
     value: input,
     onChange: setInput,
+    inputHistory: chatInputHistory,
     onSubmit,
     stop: stopActiveChat,
     disabled: composerDisabled,
