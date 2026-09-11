@@ -8,10 +8,14 @@ import {
   markOnboardingStarted,
   markOnboardingShown,
   isFirstRunServerChoiceEligible,
+  markFirstRunPlaygroundPromptConsumed,
+  markFirstRunPlaygroundPromptPending,
   markFirstRunServerChoiceDismissed,
   markFirstRunServerChoiceStarted,
   markFirstRunServerChoiceWelcomeAcknowledged,
+  markFirstRunServerChoiceWelcomeShown,
   markFirstRunServerChoiceCompleted,
+  readFirstRunServerChoiceState,
 } from "../onboarding-state";
 
 describe("onboarding-state", () => {
@@ -195,6 +199,59 @@ describe("onboarding-state", () => {
   });
 
   describe("isFirstRunServerChoiceEligible", () => {
+    it("records the welcome as shown before the user interacts", () => {
+      markFirstRunServerChoiceWelcomeShown();
+
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "started",
+          shownAt: expect.any(Number),
+        }),
+      );
+    });
+
+    it("keeps a visibly started flow eligible when a server row hydrates", () => {
+      markFirstRunServerChoiceWelcomeShown();
+
+      expect(isFirstRunServerChoiceEligible(true, "playground")).toBe(true);
+    });
+
+    it("records the server associated with a connection attempt", () => {
+      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceStarted("Personal server");
+
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "started",
+          attemptedServerName: "Personal server",
+        }),
+      );
+    });
+
+    it("keeps the attempted server and starter prompt across completion", () => {
+      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceStarted("Excalidraw (App)");
+      markFirstRunServerChoiceCompleted();
+      markFirstRunPlaygroundPromptPending();
+
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "completed",
+          attemptedServerName: "Excalidraw (App)",
+          playgroundPromptPending: true,
+        }),
+      );
+
+      markFirstRunPlaygroundPromptConsumed();
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "completed",
+          attemptedServerName: "Excalidraw (App)",
+          playgroundPromptPending: false,
+        }),
+      );
+    });
+
     it("does not inherit completion from the legacy automatic flow", () => {
       writeOnboardingState({ status: "seen", shownAt: Date.now() });
 

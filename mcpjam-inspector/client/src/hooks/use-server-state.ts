@@ -3288,7 +3288,16 @@ export function useServerState({
   ]);
 
   const handleConnect = useCallback(
-    async (formData: ServerFormData) => {
+    async (
+      formData: ServerFormData,
+      options?: { suppressErrorToast?: boolean }
+    ) => {
+      const showConnectionError = (
+        message: string,
+        data?: Parameters<typeof toast.error>[1]
+      ) => {
+        if (!options?.suppressErrorToast) toast.error(message, data);
+      };
       // Snapshot the client BEFORE the first await, not when the toast is
       // built. This connect resolves its protocol pin from whichever client is
       // previewed as it starts, then spends seconds inside
@@ -3305,7 +3314,7 @@ export function useServerState({
 
       const validationError = validateForm(formData);
       if (validationError) {
-        toast.error(validationError);
+        showConnectionError(validationError);
         return;
       }
 
@@ -3442,7 +3451,7 @@ export function useServerState({
           name: formData.name,
           error: errorMessage,
         });
-        toast.error(errorMessage);
+        showConnectionError(errorMessage);
         return;
       }
       if (!isAuthenticated) {
@@ -3532,7 +3541,7 @@ export function useServerState({
               normalized: (storedCredentialResult as { normalized?: unknown })
                 .normalized as any,
             });
-            toast.error(errorMessage);
+            showConnectionError(errorMessage);
             return;
           }
           // Auto escalation gate: the user picked Auto, not OAuth, so a 401
@@ -3554,7 +3563,7 @@ export function useServerState({
               autoOAuthEscalation.markFailed(escalationIdentity);
               const errorMessage = `Server "${formData.name}" still returns 401 after OAuth. Check the server's authorization configuration.`;
               failWithoutEscalation(errorMessage);
-              toast.error(errorMessage);
+              showConnectionError(errorMessage);
               return;
             }
             const proceed = await confirmAutoOAuthEscalation(formData.name);
@@ -3677,7 +3686,7 @@ export function useServerState({
               name: formData.name,
               error: errorMessage,
             });
-            toast.error(errorMessage);
+            showConnectionError(errorMessage);
             return;
           }
           prepareHostedProjectOAuthRedirect({
@@ -3729,7 +3738,7 @@ export function useServerState({
                     connectionResult.error || "OAuth connection test failed",
                   oauthTrace: oauthResult.oauthTrace,
                 });
-                toast.error(
+                showConnectionError(
                   `OAuth succeeded but connection failed: ${connectionResult.error}`
                 );
               }
@@ -3753,7 +3762,9 @@ export function useServerState({
             error: oauthResult.error || "OAuth initialization failed",
             oauthTrace: oauthResult.oauthTrace,
           });
-          toast.error(`OAuth initialization failed: ${oauthResult.error}`);
+          showConnectionError(
+            `OAuth initialization failed: ${oauthResult.error}`
+          );
           return;
         }
 
@@ -3809,7 +3820,7 @@ export function useServerState({
             serverName: formData.name,
             error: result.error,
           });
-          toast.error(
+          showConnectionError(
             `Failed to connect to ${formData.name}${
               result.error ? `: ${result.error}` : ""
             }`,
@@ -3869,7 +3880,7 @@ export function useServerState({
           serverName: formData.name,
           error: errorMessage,
         });
-        toast.error(
+        showConnectionError(
           errorMessage === PROJECT_NOT_PROVISIONED_ERROR_MESSAGE
             ? errorMessage
             : `Network error: ${errorMessage}`

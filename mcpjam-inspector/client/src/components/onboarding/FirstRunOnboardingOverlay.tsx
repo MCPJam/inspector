@@ -13,7 +13,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { Check, Circle, Loader2 } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, Circle, Loader2 } from "lucide-react";
 
 /** Time the welcome splash remains visible before it advances to server choice. */
 export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 8_500;
@@ -58,11 +58,13 @@ export interface FirstRunServerDraft {
 
 interface FirstRunOnboardingOverlayProps {
   open: boolean;
+  skipWelcome?: boolean;
   connectionState: FirstRunConnectionState;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
   onCancelConnection: () => void;
   onOpenPlayground: () => void;
+  onWelcomeShown: () => void;
   onWelcomeAcknowledged: () => void;
   onSkip: () => void;
 }
@@ -76,16 +78,20 @@ interface FirstRunOnboardingOverlayProps {
  */
 export function FirstRunOnboardingOverlay({
   open,
+  skipWelcome = false,
   connectionState,
   onConnectOwnServer,
   onConnectDemo,
   onCancelConnection,
   onOpenPlayground,
+  onWelcomeShown,
   onWelcomeAcknowledged,
   onSkip,
 }: FirstRunOnboardingOverlayProps) {
   const prefersReducedMotion = useReducedMotion();
-  const [step, setStep] = useState<FirstRunOverlayStep>("welcome");
+  const [step, setStep] = useState<FirstRunOverlayStep>(() =>
+    skipWelcome ? "choose" : "welcome",
+  );
   const [isWelcomeCountdownRunning, setIsWelcomeCountdownRunning] =
     useState(false);
   const [serverUrlOrCommand, setServerUrlOrCommand] = useState("");
@@ -99,8 +105,12 @@ export function FirstRunOnboardingOverlay({
   const [serverHeader, setServerHeader] = useState("");
 
   useEffect(() => {
-    if (!open) setStep("welcome");
-  }, [open]);
+    if (!open) setStep(skipWelcome ? "choose" : "welcome");
+  }, [open, skipWelcome]);
+
+  useEffect(() => {
+    if (open && step === "welcome") onWelcomeShown();
+  }, [onWelcomeShown, open, step]);
 
   const continueToChoice = useCallback(() => {
     onWelcomeAcknowledged();
@@ -216,8 +226,8 @@ export function FirstRunOnboardingOverlay({
         <DialogOverlay
           className={
             step === "welcome"
-              ? "backdrop-blur-[32px] backdrop-brightness-50"
-              : undefined
+              ? "bg-background/95 bg-[radial-gradient(ellipse_at_center,var(--background)_0%,var(--background)_42%,transparent_72%),radial-gradient(circle,var(--primary)_1px,transparent_1px)] bg-[size:auto,24px_24px] backdrop-blur-[32px] backdrop-brightness-50 duration-500 dark:bg-none"
+              : "backdrop-blur-sm"
           }
         />
         <DialogPrimitive.Content
@@ -236,14 +246,14 @@ export function FirstRunOnboardingOverlay({
           {step === "welcome" ? (
             <>
               <DialogHeader className="gap-0 text-left">
-                <DialogTitle className="max-w-[12ch] pb-0 text-[2rem] leading-[1.12] font-semibold tracking-[-0.038em] text-primary-foreground">
+                <DialogTitle className="max-w-[12ch] pb-0 text-[2rem] leading-[1.12] font-semibold tracking-[-0.038em] text-card-foreground">
                   Welcome to MCPJam
                 </DialogTitle>
                 <span
                   className="mt-4 block h-px w-[72px] bg-primary"
                   aria-hidden
                 />
-                <DialogDescription className="mt-4 max-w-[42ch] text-[14.5px] leading-[1.5] text-primary-foreground/80">
+                <DialogDescription className="mt-4 max-w-[42ch] text-[14.5px] leading-[1.5] text-muted-foreground">
                   From your first prompt to a continuous gate on every release,
                   MCPJam shows what breaks across every AI client, and how to
                   fix it.
@@ -252,14 +262,14 @@ export function FirstRunOnboardingOverlay({
               <Button
                 type="button"
                 variant="link"
-                className="mt-7 h-auto justify-self-start p-0 text-[12.5px] font-semibold text-primary-foreground underline decoration-primary-foreground/35 underline-offset-4 hover:text-primary-foreground hover:decoration-primary-foreground focus-visible:!border-0 focus-visible:!ring-0"
+                className="mt-7 h-auto justify-self-start p-0 text-[12.5px] font-semibold text-foreground underline decoration-foreground/35 underline-offset-4 hover:text-foreground hover:decoration-foreground focus-visible:!border-0 focus-visible:!ring-0"
                 onClick={continueToChoice}
               >
                 Continue
               </Button>
               {!prefersReducedMotion ? (
                 <div
-                  className="mt-6 h-px w-full overflow-hidden bg-primary-foreground/25"
+                  className="mt-6 h-px w-full overflow-hidden bg-border"
                   data-testid="welcome-countdown"
                   aria-hidden
                 >
@@ -446,12 +456,10 @@ export function FirstRunOnboardingOverlay({
                   try again or connect your own server instead.
                 </DialogDescription>
               </DialogHeader>
-              <p
-                className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] leading-[1.45] text-destructive"
-                role="alert"
-              >
-                {connectionState.error}
-              </p>
+              <ConnectionFailureNotice
+                key={connectionState.error}
+                error={connectionState.error}
+              />
               <Button
                 type="button"
                 className="mt-4 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
@@ -459,14 +467,16 @@ export function FirstRunOnboardingOverlay({
               >
                 Try demo again
               </Button>
-              <Button
-                type="button"
-                variant="link"
-                className="mx-auto mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
-                onClick={() => setStep("choose")}
-              >
-                Connect my own server
-              </Button>
+              <div className="flex justify-center">
+                <Button
+                  type="button"
+                  variant="link"
+                  className="mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+                  onClick={() => setStep("choose")}
+                >
+                  Connect my own server
+                </Button>
+              </div>
             </div>
           ) : (
             <form onSubmit={submitServerDetails}>
@@ -481,12 +491,10 @@ export function FirstRunOnboardingOverlay({
               </DialogHeader>
 
               {connectionState.status === "failed" ? (
-                <p
-                  className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] leading-[1.45] text-destructive"
-                  role="alert"
-                >
-                  {connectionState.error}
-                </p>
+                <ConnectionFailureNotice
+                  key={connectionState.error}
+                  error={connectionState.error}
+                />
               ) : null}
 
               <div className="mt-[18px] grid gap-3">
@@ -596,6 +604,59 @@ export function FirstRunOnboardingOverlay({
         </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>
+  );
+}
+
+function ConnectionFailureNotice({ error }: { error: string }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const detailsId = "first-run-connection-error-details";
+
+  return (
+    <div
+      className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3"
+      role="alert"
+    >
+      <div className="flex items-start gap-2.5">
+        <span
+          className="flex size-7 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
+          aria-hidden
+        >
+          <AlertCircle className="size-4" strokeWidth={2} />
+        </span>
+        <div className="min-w-0 flex-1 pt-0.5">
+          <p className="text-[12px] leading-4 font-semibold text-card-foreground">
+            Failed to connect to MCP server
+          </p>
+          <Button
+            type="button"
+            variant="link"
+            className="mt-1 h-auto gap-1 p-0 text-[10.5px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+            aria-expanded={isExpanded}
+            aria-controls={detailsId}
+            onClick={() => setIsExpanded((current) => !current)}
+          >
+            {isExpanded ? "Hide technical details" : "View technical details"}
+            <ChevronDown
+              className={cn(
+                "size-3 transition-transform",
+                isExpanded && "rotate-180",
+              )}
+              aria-hidden
+            />
+          </Button>
+        </div>
+      </div>
+      {isExpanded ? (
+        <div className="mt-3 border-t border-destructive/15 pt-3">
+          <p
+            id={detailsId}
+            className="break-words font-mono text-[10.5px] leading-[1.5] text-muted-foreground"
+          >
+            {error}
+          </p>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

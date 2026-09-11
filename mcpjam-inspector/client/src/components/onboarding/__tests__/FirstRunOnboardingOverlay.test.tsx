@@ -21,21 +21,25 @@ import {
 
 function renderOverlay(
   connectionState: FirstRunConnectionState = { status: "idle" },
+  skipWelcome = false,
 ) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
   const onCancelConnection = vi.fn();
   const onOpenPlayground = vi.fn();
+  const onWelcomeShown = vi.fn();
   const onWelcomeAcknowledged = vi.fn();
   const onSkip = vi.fn();
   const view = render(
     <FirstRunOnboardingOverlay
       open
+      skipWelcome={skipWelcome}
       connectionState={connectionState}
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
       onCancelConnection={onCancelConnection}
       onOpenPlayground={onOpenPlayground}
+      onWelcomeShown={onWelcomeShown}
       onWelcomeAcknowledged={onWelcomeAcknowledged}
       onSkip={onSkip}
     />,
@@ -45,6 +49,7 @@ function renderOverlay(
     onConnectDemo,
     onCancelConnection,
     onOpenPlayground,
+    onWelcomeShown,
     onWelcomeAcknowledged,
     onSkip,
     rerenderWithConnectionState: (
@@ -53,11 +58,13 @@ function renderOverlay(
       view.rerender(
         <FirstRunOnboardingOverlay
           open
+          skipWelcome={skipWelcome}
           connectionState={nextConnectionState}
           onConnectOwnServer={onConnectOwnServer}
           onConnectDemo={onConnectDemo}
           onCancelConnection={onCancelConnection}
           onOpenPlayground={onOpenPlayground}
+          onWelcomeShown={onWelcomeShown}
           onWelcomeAcknowledged={onWelcomeAcknowledged}
           onSkip={onSkip}
         />,
@@ -72,9 +79,31 @@ afterEach(() => {
 });
 
 describe("FirstRunOnboardingOverlay", () => {
+  it("records the welcome when it is shown and can resume at server choice", () => {
+    const { onWelcomeShown } = renderOverlay();
+    expect(onWelcomeShown).toHaveBeenCalledOnce();
+
+    cleanup();
+    renderOverlay({ status: "idle" }, true);
+    expect(
+      screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("advances from the welcome card with Continue", () => {
     const { onWelcomeAcknowledged } = renderOverlay();
 
+    expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
+      "backdrop-blur-[32px]",
+      "bg-background/95",
+      "bg-[radial-gradient(ellipse_at_center,var(--background)_0%,var(--background)_42%,transparent_72%),radial-gradient(circle,var(--primary)_1px,transparent_1px)]",
+      "bg-[size:auto,24px_24px]",
+      "dark:bg-none",
+      "duration-500",
+    );
     const continueButton = screen.getByRole("button", { name: "Continue" });
     expect(continueButton).toHaveClass(
       "justify-self-start",
@@ -87,6 +116,9 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("heading", { name: "Point MCPJam at a server" }),
     ).toBeInTheDocument();
+    expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
+      "backdrop-blur-sm",
+    );
   });
 
   it("advances from the welcome card with Enter", () => {
@@ -156,7 +188,17 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("heading", { name: "Set up your server" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to connect to MCP server",
+    );
+    expect(screen.queryByText("Connection refused")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View technical details" }),
+    );
+    expect(screen.getByText("Connection refused")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Hide technical details" }),
+    ).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
     expect(onConnectOwnServer).toHaveBeenCalledTimes(2);
     expect(onConnectOwnServer).toHaveBeenLastCalledWith({
@@ -273,6 +315,21 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.queryByRole("heading", { name: "Set up your server" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Connect my own server" }),
+    ).toHaveTextContent("Connect my own server");
+    expect(
+      screen.getByRole("button", { name: "Connect my own server" })
+        .parentElement,
+    ).toHaveClass("flex", "justify-center");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to connect to MCP server",
+    );
+    expect(screen.queryByText("Service unavailable")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View technical details" }),
+    );
+    expect(screen.getByText("Service unavailable")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try demo again" }));
     expect(onConnectDemo).toHaveBeenCalledOnce();
   });

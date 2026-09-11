@@ -12,23 +12,35 @@
 - Show editable server details only after an automatic connection attempt fails.
 - Keep the explicit server-choice flow separate from the legacy automatic Excalidraw onboarding state.
 - Treat `localhost` and `127.0.0.1` as separate browser origins during local testing.
-- Persist completion only after the welcome is acknowledged and the server connection succeeds.
+- Record the one-time welcome as soon as it is rendered, then resume unfinished sessions at server choice.
+- Persist completion from the successful connection and tool-discovery outcome; the final button remains an explicit navigation handoff.
+- Keep the original Home-first onboarding backdrop until a later shell-loading pass can move it safely.
 
-## Bugs to fix
+## Completed bug fixes
 
-- Recover stale `started` onboarding records created by earlier builds. A successful setup must stay complete after refreshing the same origin.
-- Record completion directly from the successful connection outcome instead of relying only on a later runtime-state observation.
-- Add an integration test covering successful onboarding followed by a full refresh.
-- Check the local-development welcome timer restart during project hydration; it should not freeze or visibly restart.
-- Show the welcome splash only once per browser origin. If a user refreshes before choosing or connecting a server—even without clicking Continue—the next load should resume at `Point MCPJam at a server`, not replay Welcome.
-- Stop the blurred background from shifting while the welcome screen is open. Render a stable, intentional first-run background and keep route/project hydration changes visually hidden until the welcome step finishes.
+- Added a mild backdrop blur to server choice and later steps while retaining the stronger Welcome depth effect.
+- Welcome now records `shownAt` on render. A refresh before interaction resumes at `Point MCPJam at a server` instead of replaying the splash and timer.
+- Successful tool discovery now persists completion immediately, so refreshing before or after `Open Playground` cannot restart onboarding.
+- Interrupted connection records now remember the attempted server and auto-repair only when that same server is connected. Legacy records auto-repair only after a conservative stale interval with exactly one connected server, preventing an unrelated hydrated server from closing a fresh choice screen.
+- Refreshing after successful onboarding restores the chosen server selection, reconnects that saved server, and retains the prefilled Playground prompt until the user sends it.
+- Personal failure still opens the editable form and demo failure still opens the demo-unavailable screen.
+- Personal and demo failures now show a compact, plain-language connection notice with the original diagnostic available through an explicit technical-details disclosure.
+- The demo recovery link is centered, and Welcome now fades over a nearly opaque theme-aware backdrop so route changes are no longer visible through the splash.
+- Light-mode Welcome uses a subtle primary-token dot grid with a borderless clear halo behind the copy; onboarding failures suppress the duplicate toast because the inline disclosure owns the diagnostic.
+- Rolled back the experimental Playground-first backdrop and startup-choice hydration screen after they exposed an invalid temporary project ID during guest provisioning; Home remains the stable first-run backdrop.
+- Added App, state, overlay, refresh, stale-record, and blur regression coverage.
 
-## Verification notes
+## Verification completed
 
-- Fresh `127.0.0.1:5173` onboarding completes and stays dismissed after refresh.
-- Existing `localhost:5173` state can repeat onboarding because it contains an unfinished record from the earlier flow.
-- Chrome demonstrated the expected completed-refresh behavior.
-- Focused onboarding state and App tests currently pass.
+- 254 focused App, onboarding-state, overlay, connection-state, and Playground tests pass, covering both server paths, reconnection, failure recovery, and durable prompt restoration.
+- Client type-check passes.
+- Design drift and design lint pass with no errors; only the repository's existing unused-token warnings remain.
+- Interactive preview confirms the approved Welcome styling over Home, refresh resumes at `Point MCPJam at a server`, and no invalid-project error occurs.
+- The broader repository suite was also sampled; unrelated socket, subprocess, DNS, and headless-browser tests cannot run in the restricted sandbox and time out there.
+
+## Remaining before integration
+
+- None. The user approved the personal and demo paths, failure presentation, refresh behavior, and final Welcome styling.
 
 ## Connection progress and success
 
@@ -37,7 +49,7 @@
 - Keep the progress and success UI server-agnostic: use the selected server's name and real tool count for both personal servers and the Excalidraw demo.
 - Let the user cancel while work is in progress and return to server choice without completing onboarding.
 - Hold on a final checkmark with the connected server name and real tool count.
-- Open Playground only after the user clicks the final button; mark onboarding complete at that handoff.
+- Open Playground only after the user clicks the final button; persist successful setup before that CTA so refresh remains safe.
 - Keep this frontend-owned by mapping the existing connection and discovery state into the overlay. Add backend work only if the current APIs cannot expose a truthful stage or cancellation result.
 - Test progress transitions, cancellation, success details, and refresh after completion.
 - Keep failure recovery path-specific: personal-server failures open the editable form; demo failures use the dedicated demo-unavailable screen.
@@ -48,9 +60,9 @@
 - Reused the existing save-and-connect handshake, then called the existing tools-list API with a live refresh to obtain the real tool count.
 - The first two checks complete only when the server reports connected; tool loading remains active until the list request resolves. No timed or simulated protocol progress is shown.
 - Cancel returns to server choice, invalidates the current onboarding attempt, and disconnects its visible runtime state without completing onboarding.
-- Successful setup remains on the confirmation screen until `Open Playground`; that action records completion and navigates.
+- Successful setup remains on the confirmation screen until `Open Playground`; completion is already durable and the action performs the prompt handoff.
 - Interactive preview against the live Excalidraw demo returned 5 tools and opened the populated Playground correctly.
-- Refresh after that success reproduced the already-listed stale first-run persistence bug on `localhost`; keep that repair in its own follow-up branch.
+- Refresh persistence and stale-record recovery are now handled in the combined bug-fix branch.
 - Verification: 96 focused component/App tests passed, including both connection paths and cancellation; client type-check and design-token drift checks passed.
 - Review polish: completed progress checks now use the success color; the final success indicator is green with a reduced-motion-safe entry animation; the centered server name is highlighted for easier scanning.
 
@@ -64,5 +76,5 @@
 ## Deferred follow-ups
 
 - Guest sign-up bar: a dismissible Playground strip inviting anonymous users to create an account so they can keep their server, history, and evals.
-- Demo-only Home banner: a persistent, dismissible confirmation and client-exploration prompt while Excalidraw is the user's only connected server.
+- Excalidraw-only connection banner on Home and Playground moved into the separate `BB-217 Onboarding Next Phase` task and sub-feature branch.
 - Guided product tour: a later, dismissible spotlight sequence covering (1) the full left navigation rail, (2) the Playground configuration controls such as fill, locale, strictness, Client Context, and Host Capabilities, and (3) the sign-in/create-account area.

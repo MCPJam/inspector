@@ -98,12 +98,19 @@ const {
     handleDisconnect: vi.fn(),
     handleRuntimeDisconnect: vi.fn(),
     handleReconnect: vi.fn(),
+    ensureServersReady: vi.fn().mockResolvedValue({
+      connected: [],
+      failed: [],
+      missing: [],
+      reauth: [],
+    }),
     handleUpdate: vi.fn().mockResolvedValue({
       ok: true,
       serverName: "test-server",
     }),
     handleRemoveServer: vi.fn(),
     setSelectedServer: vi.fn(),
+    setSelectedMCPConfigs: vi.fn(),
     toggleServerSelection: vi.fn(),
     setSelectedMultipleServersToAllServers: vi.fn(),
     projects: {
@@ -3338,10 +3345,155 @@ describe("App hosted OAuth callback handling", () => {
       ).toBeInTheDocument();
     });
 
-    // The root URL resolves to Home already, so no history replacement is
-    // needed merely to open the overlay.
     expect(window.location.pathname).toBe("/");
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("shows Welcome once and resumes at server choice after a refresh", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    await waitFor(() => {
+      expect(
+        JSON.parse(
+          localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+        ),
+      ).toEqual(
+        expect.objectContaining({
+          status: "started",
+          shownAt: expect.any(Number),
+        }),
+      );
+    });
+
+    view.unmount();
+    appState.projectServers = {
+      savedServer: {
+        name: "savedServer",
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+        config: {
+          transportType: "http",
+          url: "https://saved.example/mcp",
+        },
+      },
+    };
+    render(<App />);
+
+    await screen.findByRole("heading", {
+      name: "Point MCPJam at a server",
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Point MCPJam at a server" }),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("restores the onboarding server and pending prompt after a refresh", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "completed",
+        startedAt: Date.now() - 2_000,
+        shownAt: Date.now() - 2_000,
+        completedAt: Date.now() - 1_000,
+        attemptedServerName: "Excalidraw (App)",
+        playgroundPromptPending: true,
+      }),
+    );
+    window.history.replaceState({}, "", "/playground");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    appState.projectServers = {
+      "Excalidraw (App)": {
+        name: "Excalidraw (App)",
+        connectionStatus: "disconnected",
+        enabled: true,
+        retryCount: 0,
+        lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+        config: {
+          transportType: "http",
+          url: "https://mcp.excalidraw.com/mcp",
+        },
+      },
+    };
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(appState.setSelectedServer).toHaveBeenCalledWith(
+        "Excalidraw (App)",
+      );
+      expect(appState.setSelectedMCPConfigs).toHaveBeenCalledWith([
+        "Excalidraw (App)",
+      ]);
+      expect(appState.ensureServersReady).toHaveBeenCalledWith([
+        "Excalidraw (App)",
+      ]);
+    });
+    expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        firstRunPrompt: "What can this server do?",
+      }),
+    );
+  });
+
+  it("keeps onboarding open when a saved server hydrates after Welcome", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+
+    appState.projectServers = {
+      savedServer: {
+        name: "savedServer",
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+        config: {
+          transportType: "http",
+          url: "https://saved.example/mcp",
+        },
+      },
+    };
+    view.rerender(<App />);
+
+    expect(
+      screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
   });
 
   it("shows first-run onboarding from a project-scoped Home route", async () => {
@@ -3463,6 +3615,7 @@ describe("App hosted OAuth callback handling", () => {
         url: "https://mcp.example.com/mcp",
         authMethod: "auto",
       }),
+      { suppressErrorToast: true },
     );
     expect(
       JSON.parse(
@@ -3484,7 +3637,9 @@ describe("App hosted OAuth callback handling", () => {
       expect(
         screen.getByRole("heading", { name: "Set up your server" }),
       ).toBeInTheDocument();
-      expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Failed to connect to MCP server",
+      );
     });
   });
 
@@ -3534,6 +3689,7 @@ describe("App hosted OAuth callback handling", () => {
         type: "http",
         url: "https://mcp.excalidraw.com/mcp",
       }),
+      { suppressErrorToast: true },
     );
 
     appState.appState.servers = {
@@ -3565,7 +3721,7 @@ describe("App hosted OAuth callback handling", () => {
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
       ),
-    ).toEqual(expect.objectContaining({ status: "started" }));
+    ).toEqual(expect.objectContaining({ status: "completed" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
 
@@ -3719,6 +3875,7 @@ describe("App hosted OAuth callback handling", () => {
           name: "Excalidraw (App)",
           url: "https://mcp.excalidraw.com/mcp",
         }),
+        { suppressErrorToast: true },
       );
       expect(
         screen.getByRole("heading", {
@@ -3823,6 +3980,53 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(window.location.pathname).toBe("/home");
+  });
+
+  it("repairs a stale started record when its server is already connected", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    localStorage.setItem(
+      "mcp-first-run-server-choice-state",
+      JSON.stringify({
+        status: "started",
+        startedAt: Date.now() - 1_000,
+        shownAt: Date.now() - 1_000,
+        attemptedServerName: "Excalidraw (App)",
+      }),
+    );
+    window.history.replaceState({}, "", "/playground");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      projectServers: {
+        "Excalidraw (App)": {
+          name: "Excalidraw (App)",
+          connectionStatus: "connected",
+          enabled: true,
+          retryCount: 0,
+          lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+          config: {
+            transportType: "http",
+            url: "https://mcp.excalidraw.com/mcp",
+          },
+        },
+      },
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(
+        JSON.parse(
+          localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+        ),
+      ).toEqual(expect.objectContaining({ status: "completed" }));
+    });
+    expect(screen.getByTestId("home-tab")).toBeInTheDocument();
   });
 
   it("does not auto-route to Playground when any saved server already exists", async () => {

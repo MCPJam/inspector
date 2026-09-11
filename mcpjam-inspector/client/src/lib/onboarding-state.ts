@@ -11,6 +11,8 @@ export interface OnboardingPersistedState {
   startedAt?: number;
   shownAt?: number;
   completedAt?: number;
+  attemptedServerName?: string;
+  playgroundPromptPending?: boolean;
 }
 
 const STORAGE_KEY = "mcp-onboarding-state";
@@ -38,6 +40,14 @@ function readPersistedState(
         completedAt:
           typeof parsed.completedAt === "number"
             ? parsed.completedAt
+            : undefined,
+        attemptedServerName:
+          typeof parsed.attemptedServerName === "string"
+            ? parsed.attemptedServerName
+            : undefined,
+        playgroundPromptPending:
+          typeof parsed.playgroundPromptPending === "boolean"
+            ? parsed.playgroundPromptPending
             : undefined,
       };
     }
@@ -109,7 +119,9 @@ function writeFirstRunServerChoiceState(state: OnboardingPersistedState): void {
   );
 }
 
-export function markFirstRunServerChoiceStarted(): void {
+export function markFirstRunServerChoiceStarted(
+  attemptedServerName?: string,
+): void {
   const current = readFirstRunServerChoiceState();
   if (current?.status === "completed" || current?.status === "dismissed") {
     return;
@@ -118,15 +130,18 @@ export function markFirstRunServerChoiceStarted(): void {
     status: "started",
     startedAt: current?.startedAt ?? Date.now(),
     shownAt: current?.shownAt,
+    attemptedServerName:
+      attemptedServerName ?? current?.attemptedServerName,
+    playgroundPromptPending: current?.playgroundPromptPending,
   });
 }
 
 /**
- * Records that the user reached the server-choice step. A completed state
+ * Records that the one-time welcome was rendered. A completed state
  * without this marker came from an older automatic flow, so it must not hide
  * the explicit welcome screen.
  */
-export function markFirstRunServerChoiceWelcomeAcknowledged(): void {
+export function markFirstRunServerChoiceWelcomeShown(): void {
   const current = readFirstRunServerChoiceState();
   if (current?.status === "completed" || current?.status === "dismissed") {
     return;
@@ -135,7 +150,14 @@ export function markFirstRunServerChoiceWelcomeAcknowledged(): void {
     status: "started",
     startedAt: current?.startedAt ?? Date.now(),
     shownAt: Date.now(),
+    attemptedServerName: current?.attemptedServerName,
+    playgroundPromptPending: current?.playgroundPromptPending,
   });
+}
+
+/** Kept as the semantic action used when Continue or the timer advances. */
+export function markFirstRunServerChoiceWelcomeAcknowledged(): void {
+  markFirstRunServerChoiceWelcomeShown();
 }
 
 export function markFirstRunServerChoiceDismissed(): void {
@@ -149,6 +171,29 @@ export function markFirstRunServerChoiceCompleted(): void {
     status: "completed",
     completedAt: Date.now(),
     shownAt: current?.shownAt,
+    attemptedServerName: current?.attemptedServerName,
+    playgroundPromptPending: current?.playgroundPromptPending,
+  });
+}
+
+/** Keeps the first Playground prompt durable until the user actually sends it. */
+export function markFirstRunPlaygroundPromptPending(): void {
+  const current = readFirstRunServerChoiceState();
+  writeFirstRunServerChoiceState({
+    status: "completed",
+    completedAt: current?.completedAt ?? Date.now(),
+    shownAt: current?.shownAt,
+    attemptedServerName: current?.attemptedServerName,
+    playgroundPromptPending: true,
+  });
+}
+
+export function markFirstRunPlaygroundPromptConsumed(): void {
+  const current = readFirstRunServerChoiceState();
+  if (!current || current.status !== "completed") return;
+  writeFirstRunServerChoiceState({
+    ...current,
+    playgroundPromptPending: false,
   });
 }
 
@@ -158,7 +203,6 @@ export function isFirstRunServerChoiceEligible(
   isSignedInWithWorkOs = false,
   isNewSignedInAccount = false,
 ): boolean {
-  if (hasAnyBlockingServers) return false;
   if (isSignedInWithWorkOs && !isNewSignedInAccount) return false;
 
   const rawRoute = currentRouteTab.replace(/^#?\/?/, "");
@@ -181,7 +225,15 @@ export function isFirstRunServerChoiceEligible(
 
   // A completion written before the explicit welcome existed (or before the
   // visitor reached its choice step) must not make the welcome disappear.
-  return !(persisted?.status === "completed" && persisted.shownAt);
+  if (persisted?.status === "completed" && persisted.shownAt) return false;
+
+  // Once the explicit flow is visibly underway, a server record arriving
+  // during project hydration must not dismiss it. Successful connected rows
+  // are repaired to `completed` by App; failed or disconnected rows need the
+  // recovery UI to stay reachable.
+  if (persisted?.status === "started" && persisted.shownAt) return true;
+
+  return !hasAnyBlockingServers;
 }
 
 /**
