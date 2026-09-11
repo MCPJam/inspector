@@ -27,6 +27,7 @@ import { getScenarioComposerAppearance } from "@/lib/scenario-composer-appearanc
 import { getScenarioHostFamily } from "@/lib/scenario-client-style";
 
 export interface McpjamAgentComposerProps {
+  evalStyle?: boolean;
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
@@ -46,6 +47,7 @@ export interface McpjamAgentComposerProps {
 }
 
 export function McpjamAgentComposer({
+  evalStyle = false,
   value,
   onChange,
   onSubmit,
@@ -66,13 +68,13 @@ export function McpjamAgentComposer({
   const scenarioHostTheme = useScenarioHostTheme();
   const globalThemeMode = usePreferencesStore((state) => state.themeMode);
   const isScenarioMode = scenarioHostStyle != null;
-  const isDark =
-    (scenarioHostTheme ?? globalThemeMode) === "dark";
+  const isDark = (scenarioHostTheme ?? globalThemeMode) === "dark";
   const hostFamily = getScenarioHostFamily(scenarioHostStyle);
   const scenarioAppearance = getScenarioComposerAppearance(hostFamily, isDark);
 
   const canSubmit = value.trim().length > 0 && ready && !isStreaming;
-  const showInvite = !isScenarioMode && ready && value.length === 0 && !isStreaming;
+  const showInvite =
+    !isScenarioMode && ready && value.length === 0 && !isStreaming;
   const showHint =
     !ready || (!isScenarioMode && ready && focused && value.length === 0);
 
@@ -102,24 +104,26 @@ export function McpjamAgentComposer({
     ? loadingMessage
     : "Enter to send · Shift+Enter for newline";
 
-  const shellClasses = isScenarioMode
-    ? cn(
-        "relative flex w-full cursor-text flex-col px-2 pt-2 pb-2",
-        scenarioAppearance.shellClasses,
-      )
-    : cn(
-        "relative cursor-text rounded-2xl border bg-card/60 shadow-sm transition-[border-color,box-shadow,background-color]",
-        showInvite
-          ? cn(
-              "border-primary/50 ring-2 ring-primary/25 shadow-[0_8px_24px_-12px] shadow-primary/30",
-              focused && "border-primary/60 bg-card/80",
-            )
-          : cn(
-              "border-border/70",
-              focused &&
-                "border-foreground/30 bg-card/80 shadow-md ring-1 ring-foreground/10",
-            ),
-      );
+  const shellClasses = evalStyle
+    ? "relative flex w-full cursor-text flex-col rounded-xl border border-primary/35 bg-card p-3 shadow-none focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15"
+    : isScenarioMode
+      ? cn(
+          "relative flex w-full cursor-text flex-col px-2 pt-2 pb-2",
+          scenarioAppearance.shellClasses,
+        )
+      : cn(
+          "relative cursor-text rounded-2xl border bg-card/60 shadow-sm transition-[border-color,box-shadow,background-color]",
+          showInvite
+            ? cn(
+                "border-primary/50 ring-2 ring-primary/25 shadow-[0_8px_24px_-12px] shadow-primary/30",
+                focused && "border-primary/60 bg-card/80",
+              )
+            : cn(
+                "border-border/70",
+                focused &&
+                  "border-foreground/30 bg-card/80 shadow-md ring-1 ring-foreground/10",
+              ),
+        );
 
   const textareaClasses = isScenarioMode
     ? cn(
@@ -142,6 +146,7 @@ export function McpjamAgentComposer({
         if (target.closest("button")) return;
         textareaRef?.current?.focus();
       }}
+      data-eval-composer={evalStyle ? "true" : undefined}
       className={cn(shellClasses, className)}
     >
       {header}
@@ -156,9 +161,12 @@ export function McpjamAgentComposer({
         minRows={resolvedMinRows}
         maxRows={resolvedMaxRows}
         disabled={isStreaming}
-        className={textareaClasses}
+        className={cn(
+          textareaClasses,
+          evalStyle && "px-1 pt-1 pb-3 text-sm md:text-sm",
+        )}
       />
-      <div className={footerClasses}>
+      <div className={cn(footerClasses, evalStyle && "px-1 pt-2 pb-1")}>
         {footerControls ? (
           <div
             className={cn(
@@ -207,14 +215,19 @@ export function McpjamAgentComposer({
             className={cn(
               "shrink-0 rounded-full transition-colors shadow-none",
               isScenarioMode ? "size-[34px]" : "size-8 self-center",
-              isScenarioMode
-                ? canSubmit
-                  ? scenarioAppearance.activeSubmitButtonClasses
-                  : scenarioAppearance.inactiveSubmitButtonClasses
-                : undefined,
+              evalStyle
+                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                : isScenarioMode
+                  ? canSubmit
+                    ? scenarioAppearance.activeSubmitButtonClasses
+                    : scenarioAppearance.inactiveSubmitButtonClasses
+                  : undefined,
             )}
           >
-            <ArrowUp className={isScenarioMode ? "size-4" : "size-4"} aria-hidden />
+            <ArrowUp
+              className={isScenarioMode ? "size-4" : "size-4"}
+              aria-hidden
+            />
           </Button>
         )}
       </div>

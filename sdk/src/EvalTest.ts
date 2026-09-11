@@ -734,9 +734,10 @@ export class EvalTest {
               // Derived exclusively from the gating scores. The legacy
               // expression `passed && predicatePassed && toolMatch.passed` is
               // now one projection among several rather than the verdict — and
-              // it is equivalent by construction, because `test()`,
-              // `expectedToolCalls` and each predicate each contribute one
-              // gating score of exactly that value.
+              // it is equivalent by construction for gating checks, because
+              // `test()`, `expectedToolCalls` and each gating predicate each
+              // contribute one gating score of exactly that value. Advisory
+              // predicates contribute an advisory row and never fail the trial.
               passed: graded.passed,
               // The iteration RAN. `graded.passed === false` is the server
               // under test failing its task, which is not an execution

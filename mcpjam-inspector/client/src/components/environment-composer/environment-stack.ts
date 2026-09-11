@@ -54,6 +54,12 @@ export type EnvironmentStack = {
    * today's behavior. Explicit ids mint override cells.
    */
   modelSelection: ModelSelection;
+  /**
+   * Optional per-client model choices. The shared selection remains the
+   * backwards-compatible fallback for surfaces that intentionally configure a
+   * full client × model matrix.
+   */
+  modelSelectionsByHost?: Record<string, ModelSelection>;
 };
 
 export type EnvironmentComposerState = {
@@ -80,6 +86,18 @@ export function emptyEnvironmentStack(): EnvironmentStack {
     computerEnvironmentId: null,
     modelSelection: emptyModelSelection(),
   };
+}
+
+/** The model choices a particular client runs; falls back to the shared axis. */
+export function modelSelectionForHost(
+  stack: Pick<EnvironmentStack, "modelSelection" | "modelSelectionsByHost">,
+  hostId: string,
+): ModelSelection {
+  return (
+    stack.modelSelectionsByHost?.[hostId] ??
+    stack.modelSelection ??
+    emptyModelSelection()
+  );
 }
 
 export function emptyComposerState(): EnvironmentComposerState {
@@ -432,16 +450,20 @@ export function composerHasTarget(state: EnvironmentComposerState): boolean {
   if (!isComposeMode(state)) return state.environmentIds.length > 0;
   return (
     state.stack.hostIds.length > 0 &&
-    modelChoiceCount(state.stack.modelSelection ?? emptyModelSelection()) > 0
+    state.stack.hostIds.every(
+      (hostId) =>
+        modelChoiceCount(modelSelectionForHost(state.stack, hostId)) > 0,
+    )
   );
 }
 
 /** Count used for intensity / session estimates before resolution. */
 export function composerTargetCount(state: EnvironmentComposerState): number {
   if (isComposeMode(state)) {
-    return (
-      state.stack.hostIds.length *
-      modelChoiceCount(state.stack.modelSelection ?? emptyModelSelection())
+    return state.stack.hostIds.reduce(
+      (total, hostId) =>
+        total + modelChoiceCount(modelSelectionForHost(state.stack, hostId)),
+      0,
     );
   }
   return state.environmentIds.length;

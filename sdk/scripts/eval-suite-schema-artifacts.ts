@@ -146,10 +146,14 @@ export function buildEvalSuiteSchemaDocument(): Record<string, unknown> {
       "SDK validator also accepts structurally. The zod validator remains the " +
       "authoritative superset: it additionally enforces cross-field rules " +
       "(unique case ids, unique step ids within a case, a per-case import " +
-      "block requiring top-level provenance, and a per-case import note " +
-      "being required when the claimed status is exact) and a " +
-      "serialized-size cap on " +
-      "tool-call arguments, none of which JSON Schema can express. " +
+      "block requiring top-level provenance, a per-case import note " +
+      "being required when the claimed status is exact, and an OBSERVATION " +
+      "check — noEndingQuestion, noRepeatedIdenticalCall, " +
+      "noDeprecatedToolCalled, toolErrorNamesInput, fullPageHasContinuation " +
+      "— being refused unless it carries role: \"advisory\", because a " +
+      "heuristic must not decide a release) and serialized-size caps on " +
+      "tool-call arguments and on toolResultMatchesSchema's authored schema, " +
+      "none of which JSON Schema can express. " +
       "The authored intent label's already-trimmed invariant is encoded as a " +
       "boundary pattern in the schema. " +
       "Objects the suite file and the step union declare are closed " +

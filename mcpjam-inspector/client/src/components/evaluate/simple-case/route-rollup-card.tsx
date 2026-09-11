@@ -32,7 +32,7 @@ export function RouteRollupCard({
         <div className="flex items-start justify-between gap-2">
           <div>
             <p className="text-[11px] font-medium text-foreground">
-              Across {rollup.total} trials
+              Across {rollup.total} iterations
             </p>
             {top ? (
               <p className="text-[11px] text-muted-foreground">
