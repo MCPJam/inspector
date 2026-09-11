@@ -37,7 +37,7 @@
  */
 import {
   attachBrowserSession,
-  type HostedBrowserSessionHandle,
+  type ComputerHostedBrowserSessionHandle,
 } from "../browserd/browser-session.js";
 import { liveBrowserSessionDeps } from "../browserd/live-session-deps.js";
 import { convexGetDesktopComputerStatus } from "../../utils/computers/convex-environment-client.js";
@@ -226,9 +226,11 @@ export interface HostedResolveDeps {
   statusOf?: typeof convexGetDesktopComputerStatus;
   /** Test seam for the re-check throttle. */
   now?: () => number;
+  // COMPUTER-typed: an attach adopts the browser on a machine the caller has
+  // already proven it owns. A per-run box has no panel to attach to.
   attach?: (args: {
     computerId: string;
-  }) => Promise<HostedBrowserSessionHandle>;
+  }) => Promise<ComputerHostedBrowserSessionHandle>;
   /** Poll cadence for a re-hydrated runtime; 0 disables (tests). */
   toolPollMs?: number;
   onCommand?: (info: { computerId: string; sessionId: string }) => void;

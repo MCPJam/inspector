@@ -1,3 +1,9 @@
+import {
+  setDescribeNeedsResume,
+  useDescribeFlow,
+} from "@/lib/mcpjam-agent/describe-flow";
+import { getOrCreateAgentChat } from "@/lib/mcpjam-agent/agent-chat-instances";
+import { dismissAskUserQuestions } from "@/lib/webmcp/ask-user-store";
 /**
  * MCPJam Agent right-side panel.
  *
@@ -8,32 +14,31 @@
  * hidden when closed) so closing the panel never tears down an in-flight
  * stream.
  *
- * On viewports < 768px the panel renders as a full-width `Sheet` drawer
- * instead of an inline resizable panel.
+ * On narrow viewports it overlays the right edge of the workspace with a
+ * responsive width. The same chat stays mounted across breakpoints.
  */
 import {
   useCallback,
   useEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
 import { ArrowLeft, Plus, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@mcpjam/design-system/sheet";
 import { cn } from "@/lib/utils";
-import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  useEvalAgentScopes,
+  newEvalChat,
+  invalidateEvalTurn,
+} from "@/lib/mcpjam-agent/eval-scope";
 import { McpjamAgentHero } from "@/components/mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "@/components/mcpjam-agent/McpjamAgentThread";
 import {
-  AGENT_PANEL_MIN_WIDTH,
+  agentPanelWidthBounds,
+  clampAgentPanelWidth,
   useAgentPanelStore,
 } from "@/stores/agent-panel/agent-panel-store";
 import { track } from "@/lib/analytics";
@@ -53,12 +58,29 @@ export function AgentSidePanel({
   organizationId,
   activeTab,
 }: AgentSidePanelProps) {
-  const isMobile = useIsMobile();
+  const [overlay, setOverlay] = useState(
+    () => window.matchMedia("(max-width: 1023px)").matches,
+  );
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1023px)");
+    const update = () => {
+      setOverlay(media.matches);
+      setViewportWidth(window.innerWidth);
+    };
+    update();
+    media.addEventListener("change", update);
+    window.addEventListener("resize", update);
+    return () => {
+      media.removeEventListener("change", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
   const isOpen = useAgentPanelStore((s) => s.isOpen);
   const width = useAgentPanelStore((s) => s.width);
   const storedSessionId = useAgentPanelStore((s) => s.activeSessionId);
   const storedSessionProjectId = useAgentPanelStore(
-    (s) => s.activeSessionProjectId
+    (s) => s.activeSessionProjectId,
   );
   const setOpen = useAgentPanelStore((s) => s.setOpen);
   const setWidth = useAgentPanelStore((s) => s.setWidth);
@@ -73,22 +95,46 @@ export function AgentSidePanel({
       ? storedSessionId
       : null;
 
+  const evalScope = useEvalAgentScopes((s) =>
+    activeSessionId ? s.scopes[activeSessionId] : undefined,
+  );
+
   // Track previous open state to fire close telemetry exactly when the user
   // closes the panel — not on every render where `isOpen` happens to be false.
   const previousOpenRef = useRef(isOpen);
   useEffect(() => {
     if (previousOpenRef.current && !isOpen) {
+      if (activeSessionId && evalScope) {
+        const chat = getOrCreateAgentChat(activeSessionId).chat;
+        if (
+          (chat.status === "submitted" || chat.status === "streaming") &&
+          useDescribeFlow.getState().sessions[activeSessionId]?.phase ===
+            "describing"
+        ) {
+          setDescribeNeedsResume(activeSessionId, true);
+          invalidateEvalTurn(activeSessionId);
+        }
+      }
       track("mcpjam_agent_panel_closed", {
         location: "agent_side_panel",
         tab: activeTab,
       });
     }
     previousOpenRef.current = isOpen;
-  }, [activeTab, isOpen]);
+  }, [activeTab, isOpen, activeSessionId, evalScope]);
+
+  const abandonCurrentEvalTurn = useCallback(() => {
+    if (!activeSessionId || !evalScope) return;
+    invalidateEvalTurn(activeSessionId);
+    dismissAskUserQuestions("new_message", { scope: activeSessionId });
+    void getOrCreateAgentChat(activeSessionId).chat.stop();
+  }, [activeSessionId, evalScope]);
 
   const handleNewChat = useCallback(() => {
-    setActiveSession(null, null);
-  }, [setActiveSession]);
+    abandonCurrentEvalTurn();
+    if (evalScope) newEvalChat(evalScope);
+    else setActiveSession(null, null);
+  }, [setActiveSession, evalScope, abandonCurrentEvalTurn]);
 
   const handleSessionStart = useCallback(
     (sessionId: string, firstMessage: string) => {
@@ -99,14 +145,14 @@ export function AgentSidePanel({
       writePendingAgentPrompt(sessionId, firstMessage);
       setActiveSession(sessionId, projectId);
     },
-    [projectId, setActiveSession]
+    [projectId, setActiveSession],
   );
 
   const handleResumeSession = useCallback(
     (sessionId: string) => {
       setActiveSession(sessionId, projectId);
     },
-    [projectId, setActiveSession]
+    [projectId, setActiveSession],
   );
 
   const handleClose = useCallback(() => {
@@ -149,30 +195,34 @@ export function AgentSidePanel({
 
   const header = (
     <div className="flex items-center justify-between border-b border-border/40 px-3 py-2">
-      <div className="flex items-center gap-1">
-        {activeSessionId && (
+      {evalScope ? (
+        <p className="px-1 text-sm font-semibold">Ask MCPJam</p>
+      ) : (
+        <div className="flex items-center gap-1">
+          {activeSessionId && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleNewChat}
+              aria-label="Back to compose"
+              className="h-8 w-8 rounded-full p-0 text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+            </Button>
+          )}
           <Button
             type="button"
             variant="ghost"
             size="sm"
             onClick={handleNewChat}
-            aria-label="Back to compose"
-            className="h-8 w-8 rounded-full p-0 text-muted-foreground hover:text-foreground"
+            className="h-8 gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
           >
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+            <span className="text-xs">New chat</span>
           </Button>
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={handleNewChat}
-          className="h-8 gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
-        >
-          <Plus className="h-3.5 w-3.5" aria-hidden />
-          <span className="text-xs">New chat</span>
-        </Button>
-      </div>
+        </div>
+      )}
       <Button
         type="button"
         variant="ghost"
@@ -186,33 +236,15 @@ export function AgentSidePanel({
     </div>
   );
 
-  if (isMobile) {
-    return (
-      <Sheet open={isOpen} onOpenChange={setOpen}>
-        <SheetContent
-          side="right"
-          className="flex w-full flex-col gap-0 bg-background p-0 sm:max-w-md [&>button]:hidden"
-        >
-          <SheetHeader className="sr-only">
-            <SheetTitle>MCPJam Agent</SheetTitle>
-            <SheetDescription>
-              Ask the MCPJam Agent for help with docs, evals, and tools.
-            </SheetDescription>
-          </SheetHeader>
-          {header}
-          {body}
-        </SheetContent>
-      </Sheet>
-    );
-  }
-
   return (
     <InlineSidePanelShell
       isOpen={isOpen}
-      width={width}
+      overlay={overlay}
+      viewportWidth={viewportWidth}
+      width={clampAgentPanelWidth(width, viewportWidth)}
       onWidthChange={setWidth}
       onWidthCommit={(committed) => {
-        if (committed < AGENT_PANEL_MIN_WIDTH * 0.9) {
+        if (committed < agentPanelWidthBounds(viewportWidth).min * 0.9) {
           setOpen(false);
         } else {
           track("mcpjam_agent_panel_resized", {
@@ -230,6 +262,8 @@ export function AgentSidePanel({
 
 interface InlineSidePanelShellProps {
   isOpen: boolean;
+  overlay: boolean;
+  viewportWidth: number;
   width: number;
   onWidthChange: (next: number) => void;
   onWidthCommit: (committed: number) => void;
@@ -238,6 +272,8 @@ interface InlineSidePanelShellProps {
 
 function InlineSidePanelShell({
   isOpen,
+  overlay,
+  viewportWidth,
   width,
   onWidthChange,
   onWidthCommit,
@@ -255,8 +291,7 @@ function InlineSidePanelShell({
       const onPointerMove = (moveEvent: PointerEvent) => {
         if (!draggingRef.current) return;
         // Panel sits on the right edge; pulling left increases width.
-        const next = window.innerWidth - moveEvent.clientX;
-        onWidthChange(next);
+        onWidthChange(window.innerWidth - moveEvent.clientX);
       };
       const onPointerUp = (upEvent: PointerEvent) => {
         if (!draggingRef.current) return;
@@ -270,11 +305,12 @@ function InlineSidePanelShell({
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
     },
-    [onWidthChange, onWidthCommit]
+    [onWidthChange, onWidthCommit],
   );
 
   const style: CSSProperties = {
     width: `${width}px`,
+    maxWidth: "calc(100% - 24px)",
     // Keep the panel mounted even when closed so an in-flight stream isn't
     // canceled by toggling the trigger. `display: none` is enough to drop it
     // out of the flex layout without unmounting `useChat`.
@@ -284,8 +320,11 @@ function InlineSidePanelShell({
   return (
     <aside
       data-slot="agent-side-panel"
+      data-agent-dock="side"
+      aria-label="Ask MCPJam"
       className={cn(
-        "relative hidden shrink-0 flex-col border-l border-border/60 bg-background md:flex"
+        "flex min-h-0 shrink-0 flex-col border-l border-input bg-background",
+        overlay ? "absolute inset-y-0 right-0 z-30" : "relative",
       )}
       style={style}
     >
@@ -293,8 +332,20 @@ function InlineSidePanelShell({
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize MCPJam Agent panel"
+        tabIndex={0}
+        aria-valuemin={agentPanelWidthBounds(viewportWidth).min}
+        aria-valuemax={agentPanelWidthBounds(viewportWidth).max}
+        aria-valuenow={width}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+          event.preventDefault();
+          onWidthChange(width + (event.key === "ArrowLeft" ? 24 : -24));
+        }}
         onPointerDown={onPointerDown}
-        className="absolute inset-y-0 left-0 z-10 w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent transition hover:bg-border/70 active:bg-border"
+        className={cn(
+          "absolute z-10 touch-none bg-transparent transition hover:bg-input/70 active:bg-input focus-visible:outline-ring",
+          "inset-y-0 left-0 w-1.5 -translate-x-1/2 cursor-col-resize",
+        )}
       />
       {children}
     </aside>

@@ -6,7 +6,7 @@
  * between showing that data and showing it USEFULLY:
  *
  *   - `changedFields` are STORAGE keys. A reader who sees "defaultPredicates"
- *     has to know the schema to connect it back to the Checks row they edited.
+ *     has to know the schema to connect it back to the Scorers row they edited.
  *   - a key with no label renders RAW rather than being dropped: an unnamed
  *     change is still a change, and hiding it makes a revision look emptier
  *     than it was.
@@ -73,7 +73,7 @@ function renderHistory(
 describe("SuiteRevisionHistory", () => {
   it("labels a storage key the way the settings page names it", () => {
     renderHistory([row()]);
-    expect(screen.getByText("Checks")).toBeTruthy();
+    expect(screen.getByText("Scorers")).toBeTruthy();
     // The storage spelling never reaches a reader.
     expect(screen.queryByText("defaultPredicates")).toBeNull();
   });
@@ -167,7 +167,7 @@ describe("fieldLabel", () => {
         (entry) => entry.key === "verdictPolicyDefaults",
       ),
     ).toBe(false);
-    expect(fieldLabel("verdictPolicyDefaults")).toBe("Policy defaults");
+    expect(fieldLabel("verdictPolicyDefaults")).toBe("Quality gate defaults");
     expect(fieldLabel("unknownKey")).toBe("unknownKey");
   });
 });

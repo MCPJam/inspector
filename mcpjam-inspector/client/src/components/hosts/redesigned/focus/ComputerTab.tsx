@@ -14,6 +14,7 @@ import {
 } from "@/lib/host-config-computer";
 
 interface ComputerTabProps {
+  projectId?: string;
   draft: HostConfigInputV2;
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,

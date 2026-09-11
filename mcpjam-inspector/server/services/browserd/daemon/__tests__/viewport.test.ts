@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createTabViewport, type ViewportFrame } from "../viewport";
 import type { CdpLike } from "../webmcp-bridge";
 
@@ -19,6 +19,9 @@ function fakeCdp() {
     cdp,
     sent,
     methods: () => sent.map((s) => s.method),
+    emitNavigation(frame: { parentId?: string } = {}) {
+      handlers.get("Page.frameNavigated")?.({ frame });
+    },
     emitFrame(data: string, sessionId = 1) {
       handlers.get("Page.screencastFrame")?.({ data, sessionId });
     },
@@ -102,7 +105,9 @@ describe("tab viewport", () => {
     const a = viewport.subscribe(() => {});
     const b = viewport.subscribe(() => {});
     await Promise.resolve();
-    expect(methods().filter((m) => m === "Page.startScreencast")).toHaveLength(1);
+    expect(methods().filter((m) => m === "Page.startScreencast")).toHaveLength(
+      1,
+    );
 
     a();
     await Promise.resolve();
@@ -143,7 +148,9 @@ describe("tab viewport", () => {
   });
 
   it("refuses to publish a frame too large to carry", async () => {
-    const { viewport, frames, emitFrame, time } = make({ maxFrameBytes: 1_000 });
+    const { viewport, frames, emitFrame, time } = make({
+      maxFrameBytes: 1_000,
+    });
     viewport.subscribe((f) => frames.push(f));
     await Promise.resolve();
     emitFrame("x".repeat(10_000));
@@ -211,7 +218,8 @@ describe("tab viewport", () => {
 
 describe("createTabViewport — the button mask Chromium actually reads", () => {
   function cdpRecorder() {
-    const sent: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const sent: Array<{ method: string; params?: Record<string, unknown> }> =
+      [];
     const handlers = new Map<string, (p: unknown) => void>();
     const cdp: CdpLike = {
       async send(method, params) {
@@ -356,18 +364,26 @@ describe("createTabViewport — the mask does not outlive the hand that set it",
 
     // Control changes. The rest of the drag is refused...
     permitted = false;
-    await viewport.dispatchInput([{ type: "mouse_move", x: 3, y: 3 }], () => permitted);
+    await viewport.dispatchInput(
+      [{ type: "mouse_move", x: 3, y: 3 }],
+      () => permitted,
+    );
 
     // ...and the next holder's first move is a hover, not a drag.
     permitted = true;
-    await viewport.dispatchInput([{ type: "mouse_move", x: 9, y: 9 }], () => permitted);
+    await viewport.dispatchInput(
+      [{ type: "mouse_move", x: 9, y: 9 }],
+      () => permitted,
+    );
     expect(masks(sent).at(-1)).toBe(0);
   });
 
   it("does not record a button whose press Chromium never accepted", async () => {
     // `dispatchOne`'s rejection is swallowed. Committing the mask first would
     // leave us claiming a button the page is not holding.
-    const { cdp, sent } = recorder((method) => method === "Input.dispatchMouseEvent" && sent.length === 1);
+    const { cdp, sent } = recorder(
+      (method) => method === "Input.dispatchMouseEvent" && sent.length === 1,
+    );
     const viewport = createTabViewport(cdp, {
       surface: { width: 100, height: 100 },
     });
@@ -469,4 +485,312 @@ describe("createTabViewport — the mask does not outlive the hand that set it",
 
     expect(masks(sent)).toEqual([1]);
   });
+});
+
+/**
+ * V-4a. Three drop paths existed and every one was silent, so a pane showing a
+ * stale picture and a pane on a healthy quiet page looked identical from
+ * outside the box. Each of these fails when its counter is reverted.
+ */
+describe("counting what the viewport threw away", () => {
+  it("counts a byte-identical frame as a dedupe drop", async () => {
+    const { viewport, emitFrame } = make({ minIntervalMs: 0 });
+    viewport.subscribe(() => {});
+    await Promise.resolve();
+    emitFrame(JPEG_1PX, 1);
+    emitFrame(JPEG_1PX, 2);
+    const counters = viewport.counters();
+    expect(counters.framesIn).toBe(2);
+    expect(counters.dropped.dedupe).toBe(1);
+    expect(counters.framesOut).toBe(1);
+  });
+
+  it("counts an oversized frame as its own kind of drop", async () => {
+    const { viewport, emitFrame } = make({
+      minIntervalMs: 0,
+      maxFrameBytes: 8,
+    });
+    viewport.subscribe(() => {});
+    await Promise.resolve();
+    emitFrame(JPEG_1PX, 1);
+    expect(viewport.counters().dropped.oversize).toBe(1);
+    expect(viewport.counters().dropped.dedupe).toBe(0);
+    expect(viewport.counters().framesOut).toBe(0);
+  });
+
+  it("counts a transport's own drop against the same viewport", () => {
+    // The pacer's overwrite is one layer up, but it is the same loss and
+    // belongs in the same number — one figure describes the whole way out.
+    const { viewport } = make();
+    viewport.noteTransportDrop();
+    viewport.noteTransportDrop();
+    expect(viewport.counters().dropped.pacer).toBe(2);
+  });
+
+  it("hands out a snapshot, not the live object", () => {
+    const { viewport } = make();
+    const first = viewport.counters();
+    viewport.noteTransportDrop();
+    expect(first.dropped.pacer).toBe(0);
+    expect(viewport.counters().dropped.pacer).toBe(1);
+  });
+});
+
+describe("shared viewport lifecycle", () => {
+  it("serializes resize and restarts at the new geometry", async () => {
+    const h = make();
+    h.viewport.subscribe(() => {});
+    expect(await h.viewport.ready()).toBe(true);
+    let release!: () => void;
+    const applied: number[] = [];
+    let entered!: () => void;
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const first = h.viewport.resize({ width: 600, height: 700 }, async () => {
+      applied.push(600);
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    const second = h.viewport.resize({ width: 800, height: 500 }, async () => {
+      applied.push(800);
+    });
+    await entering;
+    expect(applied).toEqual([600]);
+    release();
+    await Promise.all([first, second]);
+    expect(applied).toEqual([600, 800]);
+    expect(
+      h.sent.filter((call) => call.method === "Page.startScreencast").at(-1)
+        ?.params,
+    ).toMatchObject({ maxWidth: 800, maxHeight: 500, quality: 85 });
+    await h.viewport.dispose();
+  });
+
+  it("restarts after a rejected resize and never restarts after disposal", async () => {
+    const h = make();
+    h.viewport.subscribe(() => {});
+    await h.viewport.ready();
+    await expect(
+      h.viewport.resize({ width: 600, height: 700 }, async () => {
+        throw new Error("closed");
+      }),
+    ).rejects.toThrow("closed");
+    expect(await h.viewport.ready()).toBe(true);
+    await h.viewport.dispose();
+    const count = h.methods().length;
+    await h.viewport.resize({ width: 800, height: 500 });
+    expect(h.methods()).toHaveLength(count);
+    expect(await h.viewport.ready()).toBe(false);
+  });
+
+  it("invalidates a deduplicated frame when navigation reuses the same pixels", async () => {
+    const h = make();
+    h.viewport.subscribe((frame) => h.frames.push(frame));
+    await h.viewport.ready();
+    h.emitFrame(JPEG_1PX);
+    h.emitFrame(JPEG_1PX);
+    expect(h.frames).toHaveLength(1);
+    h.viewport.invalidate();
+    h.time.advance(100);
+    h.emitFrame(JPEG_1PX);
+    expect(h.frames).toHaveLength(2);
+    await h.viewport.dispose();
+  });
+});
+
+it("reduces an oversized picture progressively and stops at the floor", async () => {
+  const h = make({ maxFrameBytes: 1024 });
+  h.viewport.subscribe((f) => h.frames.push(f));
+  await h.viewport.ready();
+  h.emitFrame("x".repeat(2048));
+  await h.viewport.ready();
+  expect(
+    h.sent
+      .filter((c) => c.method === "Page.startScreencast")
+      .map((c) => c.params?.quality),
+  ).toEqual([85, 75]);
+  h.emitFrame(JPEG_1PX);
+  expect(h.frames).toHaveLength(1);
+  h.emitFrame("y".repeat(2048));
+  await h.viewport.ready();
+  expect(
+    h.sent.filter((c) => c.method === "Page.startScreencast"),
+  ).toHaveLength(3);
+  for (const suffix of ["a", "b", "c", "d"]) {
+    h.emitFrame(suffix.repeat(2048));
+    await h.viewport.ready();
+  }
+  expect(h.viewport.counters().jpeg).toMatchObject({
+    quality: 40,
+    reason: "jpeg_frame_limit",
+  });
+  expect(
+    h.sent.filter((c) => c.method === "Page.startScreencast"),
+  ).toHaveLength(5);
+  await h.viewport.dispose();
+});
+
+it("does not restart oversize recovery after the viewer retires", async () => {
+  const h = make({ maxFrameBytes: 8 });
+  const unsubscribe = h.viewport.subscribe(() => {});
+  await h.viewport.ready();
+  h.emitFrame(JPEG_1PX);
+  unsubscribe();
+  await h.viewport.dispose();
+  await h.viewport.ready();
+  expect(
+    h.sent.filter((c) => c.method === "Page.startScreencast"),
+  ).toHaveLength(1);
+});
+
+it("defers first-subscriber startup until all queued viewport changes finish", async () => {
+  const h = make();
+  let release!: () => void;
+  let entered!: () => void;
+  const applying = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const first = h.viewport.resize({ width: 600, height: 700 }, async () => {
+    entered();
+    await gate;
+  });
+  const second = h.viewport.resize({ width: 800, height: 500 });
+  await applying;
+  h.viewport.subscribe(() => {});
+  const ready = h.viewport.ready();
+  expect(h.methods()).not.toContain("Page.startScreencast");
+  release();
+  await Promise.all([first, second]);
+  expect(await ready).toBe(true);
+  expect(
+    h.sent
+      .filter((c) => c.method === "Page.startScreencast")
+      .map((c) => c.params),
+  ).toEqual([expect.objectContaining({ maxWidth: 800, maxHeight: 500 })]);
+  await h.viewport.dispose();
+});
+
+it("releases resize ownership after a failed apply and after disposal", async () => {
+  const h = make();
+  let release!: () => void;
+  let entered!: () => void;
+  const applying = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const resizing = h.viewport.resize({ width: 600, height: 700 }, async () => {
+    entered();
+    await gate;
+    throw new Error("closed");
+  });
+  const rejected = expect(resizing).rejects.toThrow("closed");
+  await applying;
+  h.viewport.subscribe(() => {});
+  await h.viewport.dispose();
+  release();
+  await rejected;
+  expect(await h.viewport.ready()).toBe(false);
+  expect(h.methods()).not.toContain("Page.startScreencast");
+});
+
+describe("JPEG quality recovery", () => {
+  it("recovers on a static page and backs off a failed probe", async () => {
+    const h = make({ maxFrameBytes: 1024 });
+    h.viewport.subscribe((f) => h.frames.push(f));
+    await h.viewport.ready();
+    h.emitFrame("x".repeat(2048));
+    await h.viewport.ready();
+    h.emitFrame(JPEG_1PX);
+    h.time.advance(10_000);
+    await h.viewport.ready();
+    expect(h.viewport.counters().jpeg?.quality).toBe(85);
+    h.emitFrame("x".repeat(2048));
+    await h.viewport.ready();
+    h.emitFrame(JPEG_1PX);
+    h.time.advance(10_000);
+    await h.viewport.ready();
+    expect(h.viewport.counters().jpeg?.quality).toBe(75);
+    h.time.advance(10_000);
+    await h.viewport.ready();
+    h.emitFrame(JPEG_1PX);
+    expect(h.viewport.counters().jpeg?.quality).toBe(85);
+    await h.viewport.dispose();
+  });
+
+  it("uses the smallest active subscriber limit and filters old in-flight frames", async () => {
+    const h = make();
+    h.viewport.subscribe((f) => h.frames.push(f), 2 * 1024 * 1024);
+    await h.viewport.ready();
+    const large = "x".repeat(400_000);
+    h.emitFrame(large);
+    expect(h.frames).toHaveLength(1);
+    const legacyFrames: ViewportFrame[] = [];
+    const leave = h.viewport.subscribe((f) => legacyFrames.push(f));
+    h.emitFrame("y".repeat(400_000));
+    expect(legacyFrames).toHaveLength(0);
+    await h.viewport.ready();
+    expect(h.viewport.counters().jpeg?.maxFrameBytes).toBe(256 * 1024);
+    leave();
+    await h.viewport.ready();
+    expect(h.viewport.counters().jpeg).toMatchObject({
+      maxFrameBytes: 2 * 1024 * 1024,
+      quality: 85,
+    });
+    await h.viewport.dispose();
+  });
+
+  it("cancels a static recovery probe after the last viewer leaves", async () => {
+    const h = make({ maxFrameBytes: 1024 });
+    const leave = h.viewport.subscribe(() => {});
+    await h.viewport.ready();
+    h.emitFrame("x".repeat(2048));
+    await h.viewport.ready();
+    h.emitFrame(JPEG_1PX);
+    leave();
+    await h.viewport.ready();
+    const count = h.sent.length;
+    h.time.advance(60_000);
+    await h.viewport.ready();
+    expect(h.sent).toHaveLength(count);
+    await h.viewport.dispose();
+  });
+});
+
+it("resets capture quality on main-frame navigation, not an iframe navigation", async () => {
+  const h = make({ maxFrameBytes: 1024 });
+  h.viewport.subscribe(() => {});
+  await h.viewport.ready();
+  h.emitFrame("x".repeat(2048));
+  await h.viewport.ready();
+  h.emitNavigation({ parentId: "main" });
+  await h.viewport.ready();
+  expect(h.viewport.counters().jpeg?.quality).toBe(75);
+  h.emitNavigation();
+  await h.viewport.ready();
+  expect(h.viewport.counters().jpeg?.quality).toBe(85);
+  await h.viewport.dispose();
+});
+
+it("does not block context teardown on an unanswered stopScreencast", async () => {
+  vi.useFakeTimers();
+  try {
+    const fake = fakeCdp();
+    const send = fake.cdp.send.bind(fake.cdp);
+    fake.cdp.send = (method, params) => method === "Page.stopScreencast" ? new Promise(() => {}) : send(method, params);
+    const viewport = createTabViewport(fake.cdp, { surface: { width: 800, height: 600 } });
+    viewport.subscribe(() => {});
+    await Promise.resolve();
+    const disposed = viewport.dispose();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await disposed;
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
 });

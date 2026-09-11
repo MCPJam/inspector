@@ -38,10 +38,7 @@ function startStalledInstallWatchdog(): void {
   stalledInstallTimer = setTimeout(() => {
     stalledInstallTimer = null;
     // Re-check at fire-time: if anything succeeded or moved on, do nothing.
-    if (
-      currentStatus.kind === "pending" &&
-      currentStatus.installRequested
-    ) {
+    if (currentStatus.kind === "pending" && currentStatus.installRequested) {
       log.error(
         `Auto-updater stalled in pending+installRequested for ${stalledInstallTimeoutMs}ms — surfacing error`,
       );
@@ -216,6 +213,22 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
       return;
     }
     if (currentStatus.kind === "downloaded") {
+      // The same guard `update-downloaded` and `installUpdateOnQuit` already
+      // carry, and this handler is the one that was missing it. `quitAndInstall`
+      // is NOT idempotent: with a window still open Electron registers this
+      // AutoUpdater on the window list and waits for the windows to close, so a
+      // second call re-registers the same observer and Chromium reports
+      // "Observers can only be added once!" via DumpWithoutCrashing
+      // (INSPECTOR-ELECTRON-GT).
+      //
+      // Nothing here clears the status, so the button stays live for the whole
+      // teardown — which is exactly the window a double-click lands in. The
+      // renderer disables it too; this is the half that also covers a resend
+      // from anywhere else.
+      if (isQuittingForUpdate) {
+        log.info("Install already underway — ignoring repeat restart request");
+        return;
+      }
       log.info("Restarting app to install update...");
       isQuittingForUpdate = true;
       try {

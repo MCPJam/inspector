@@ -39,8 +39,8 @@ describe("FindingsGoalSessions", () => {
 
     render(
       <FindingsGoalSessions
-        projectId="proj-1"
-        runId="run-1"
+        scope={{ kind: "swarm", projectId: "proj-1" }}
+        goalId="run-1"
         expectedCount={4}
         onOpenSession={vi.fn()}
       />
@@ -64,6 +64,40 @@ describe("FindingsGoalSessions", () => {
     ).toBeInTheDocument();
   });
 
+  it("pages a User Testing goal by its cluster, carrying the surface filter", () => {
+    // A swarm goal is a run; a scenario goal is a goal-axis cluster. Paging a
+    // scenario by journeyRunIds would ask the wrong query, and dropping the
+    // filter would list sessions the count above it excluded.
+    const filters = { preset: "all" as const, chips: [] };
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("sess-a", "draw a cat")],
+        nextBefore: null,
+        total: 1,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+
+    render(
+      <FindingsGoalSessions
+        scope={{ kind: "scenario", scenarioId: "cb-1", filters }}
+        goalId="cluster-9"
+        expectedCount={1}
+        onOpenSession={vi.fn()}
+      />
+    );
+
+    expect(mockUseGoalOutcomeDrilldown).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: { kind: "scenario", scenarioId: "cb-1" },
+        clusterId: "cluster-9",
+        filters,
+      })
+    );
+    expect(screen.getByText("Session 1")).toBeInTheDocument();
+  });
+
   it("opens the clicked session", async () => {
     const onOpenSession = vi.fn();
     mockUseGoalOutcomeDrilldown.mockReturnValue({
@@ -81,8 +115,8 @@ describe("FindingsGoalSessions", () => {
 
     render(
       <FindingsGoalSessions
-        projectId="proj-1"
-        runId="run-1"
+        scope={{ kind: "swarm", projectId: "proj-1" }}
+        goalId="run-1"
         expectedCount={2}
         onOpenSession={onOpenSession}
       />

@@ -11,6 +11,7 @@ import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
 export type HostFocusTabId =
   | "behavior"
   | "tools"
+  | "browser"
   | "computer"
   | "protocol"
   | "apps"
@@ -386,6 +387,12 @@ export interface BuiltinToolsNodeData extends Record<string, unknown> {
  *   - `null` — attached in config, but no machine reserved yet
  *   - `ComputerStatus` — live provider lifecycle (ready / waking / …)
  */
+export interface BrowserNodeData extends Record<string, unknown> {
+  kind: "browser";
+  enabled: boolean;
+  profileLabel: string;
+}
+
 export interface ComputerNodeData extends Record<string, unknown> {
   kind: "computer";
   attached: boolean;
@@ -401,6 +408,7 @@ export type HostRedesignNodeData =
   | ServerCardNodeData
   | AddServerPillNodeData
   | BuiltinToolsNodeData
+  | BrowserNodeData
   | ComputerNodeData;
 
 export type HostRedesignNodeType =
@@ -409,6 +417,7 @@ export type HostRedesignNodeType =
   | "redesignServerCard"
   | "redesignAddServer"
   | "redesignBuiltinTools"
+  | "redesignBrowser"
   | "redesignComputer";
 
 export type HostRedesignFlowNode =
@@ -417,6 +426,7 @@ export type HostRedesignFlowNode =
   | Node<ServerCardNodeData, "redesignServerCard">
   | Node<AddServerPillNodeData, "redesignAddServer">
   | Node<BuiltinToolsNodeData, "redesignBuiltinTools">
+  | Node<BrowserNodeData, "redesignBrowser">
   | Node<ComputerNodeData, "redesignComputer">;
 
 export interface HostRedesignViewModel {
@@ -463,6 +473,8 @@ export interface HostRedesignContext {
    * GA canvas is byte-for-byte unchanged.
    */
   computersEnabled?: boolean;
+  browsersEnabled?: boolean;
+  browserProfileName?: string;
   /** Caller's live computer for the project (`null` none, `undefined` loading). */
   computerStatus?: ComputerView | null;
   /** Enabled built-in tool catalog (id → label / requiresComputer). */
@@ -486,6 +498,7 @@ export const SERVERS_HUB_NODE_ID = "servers-hub";
 export const ADD_SERVER_NODE_ID = "add-server";
 /** Project Computers islands (gated behind `computers-enabled`). */
 export const BUILTIN_TOOLS_NODE_ID = "builtin-tools";
+export const BROWSER_NODE_ID = "browser";
 export const COMPUTER_NODE_ID = "computer";
 
 /** Leaf id constructors — stable across hosts so RF can morph in place. */
@@ -529,6 +542,7 @@ export function focusTabForNodeId(nodeId: string): {
     // state; the tab owns editing it.
     return { tab: "tools", selectedServerId: null };
   }
+  if (nodeId === BROWSER_NODE_ID) return { tab: "browser", selectedServerId: null };
   if (nodeId === COMPUTER_NODE_ID) {
     // The Computer island opens the dedicated Computer tab (the
     // personal-computer attach/detach toggle). Flag-gated, same as the

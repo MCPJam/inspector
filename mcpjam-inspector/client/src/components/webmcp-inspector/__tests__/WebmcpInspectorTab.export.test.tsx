@@ -1,16 +1,45 @@
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => ({
+    granted: true,
+    token: "test-consent",
+    grant: vi.fn(async () => true),
+  }),
+}));
 /**
  * The export buttons are the surface's takeaway: whatever the session recorded
  * leaves as a file. A download that silently does nothing is the one failure
  * mode with no error to show for it.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { ReactNode } from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import type {
   WebMcpActivityEntry,
   WebMcpSessionPublic,
 } from "@/shared/webmcp-inspector-protocol";
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel-group">{children}</div>
+  ),
+  ResizablePanel: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="resizable-handle" />,
+}));
+
+async function openExportMenu(user = userEvent.setup()) {
+  await user.click(screen.getByRole("button", { name: "Export activity" }));
+  return user;
+}
+
+async function openMoreActions(user = userEvent.setup()) {
+  await user.click(screen.getByRole("button", { name: "More actions" }));
+  return user;
+}
 
 // jsdom implements neither, and the tab reconnects its stream on mount.
 class FakeEventSource {
@@ -66,7 +95,10 @@ describe("WebmcpInspectorTab — export", () => {
   it("copies the viewport's own diagnostics, and only with a session", async () => {
     clipboard.copy.mockClear();
     const view = render(<WebmcpInspectorTab />);
-    fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
+    const user = await openMoreActions();
+    await user.click(
+      screen.getByRole("menuitem", { name: "Copy diagnostics" }),
+    );
     await Promise.resolve();
 
     const copied = JSON.parse(String(clipboard.copy.mock.calls[0]![0]));
@@ -88,8 +120,7 @@ describe("WebmcpInspectorTab — export", () => {
     ).toBeNull();
   });
 
-  it("does not revoke the blob URL in the same task as the click", () => {
-    vi.useFakeTimers();
+  it("does not revoke the blob URL in the same task as the click", async () => {
     const createObjectURL = vi
       .spyOn(URL, "createObjectURL")
       .mockReturnValue("blob:fake");
@@ -101,7 +132,13 @@ describe("WebmcpInspectorTab — export", () => {
       .mockImplementation(() => {});
 
     render(<WebmcpInspectorTab />);
-    fireEvent.click(screen.getByRole("button", { name: "Export JSON" }));
+    // Open with userEvent so Radix receives a real pointer sequence. The
+    // revoke assertion is about the download click's own task, so that click
+    // has to stay synchronous — awaiting userEvent would flush the delayed
+    // revoke before we can observe it.
+    await openExportMenu();
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Export JSON" }));
 
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(click).toHaveBeenCalledTimes(1);
@@ -113,7 +150,7 @@ describe("WebmcpInspectorTab — export", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake");
   });
 
-  it("names the downloaded file after the session and format", () => {
+  it("names the downloaded file after the session and format", async () => {
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fake");
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     const downloads: string[] = [];
@@ -124,8 +161,10 @@ describe("WebmcpInspectorTab — export", () => {
     });
 
     render(<WebmcpInspectorTab />);
-    fireEvent.click(screen.getByRole("button", { name: "Export JSON" }));
-    fireEvent.click(screen.getByRole("button", { name: "Export OTLP" }));
+    const user = await openExportMenu();
+    await user.click(screen.getByRole("menuitem", { name: "Export JSON" }));
+    await openExportMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: "Export OTLP" }));
 
     expect(downloads).toEqual([
       "webmcp-session-426581af.json",
@@ -139,13 +178,26 @@ describe("WebmcpInspectorTab — export", () => {
     useWebmcpInspectorStore.setState({ session: undefined });
     render(<WebmcpInspectorTab />);
     expect(
-      screen.getByRole("button", { name: "Export JSON" }),
+      screen.getByRole("button", { name: "Export activity" }),
     ).toBeInTheDocument();
   });
 
   it("offers no export for a session with an empty timeline", () => {
     useWebmcpInspectorStore.setState({ activity: [] });
     render(<WebmcpInspectorTab />);
-    expect(screen.queryByRole("button", { name: "Export JSON" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Export activity" }),
+    ).toBeNull();
+  });
+
+  it("clears the timeline from the activity rail", () => {
+    render(<WebmcpInspectorTab />);
+    expect(screen.getByText("sess")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear activity" }));
+
+    expect(useWebmcpInspectorStore.getState().activity).toEqual([]);
+    expect(screen.queryByText("sess")).toBeNull();
+    expect(screen.getByText("No logs yet")).toBeInTheDocument();
   });
 });
