@@ -1320,8 +1320,17 @@ export function ChatInput({
     // Up/Down through your own past messages (BB-183). AFTER the prompts
     // popover, which owns the arrows while it is open, and never with a
     // modifier held: Shift+Up selects, and the rest belong to the OS.
+    //
+    // Not while the composer is disabled, and NOT while the mic is open. While
+    // recording, the box shows "Listening..." and `value` holds the draft
+    // underneath it — a recall there would measure the caret against one
+    // string, test it against another, and overwrite a draft nobody can see.
+    // The textarea's own `onChange` already refuses writes in that state; this
+    // path reaches `onChange` directly, so it has to refuse them too.
     if (
       (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      !disabled &&
+      voiceInputState === "idle" &&
       !event.shiftKey &&
       !event.altKey &&
       !event.ctrlKey &&
