@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Hand, MousePointer2, Settings2 } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
 import { Button } from "@mcpjam/design-system/button";
@@ -59,7 +60,9 @@ export function PaneSettingsMenu({
   tier,
   onTier,
   tiers,
+  children,
 }: {
+  children?: ReactNode;
   statsOpen: boolean;
   onToggleStats: (next: boolean) => void;
   tier?: QualityTier;
@@ -96,6 +99,13 @@ export function PaneSettingsMenu({
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
+        {children ? (
+          <>
+            <DropdownMenuLabel>Profiles</DropdownMenuLabel>
+            {children}
             <DropdownMenuSeparator />
           </>
         ) : null}

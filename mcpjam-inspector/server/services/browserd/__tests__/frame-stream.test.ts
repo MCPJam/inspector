@@ -263,7 +263,6 @@ describe("frame-stream — a reader that has lost its place says so", () => {
   });
 });
 
-
 /**
  * V-4a. The heartbeat carries the daemon's own drop accounting. This is safe
  * without a protocol bump for exactly one reason, and it is worth pinning: a
@@ -342,7 +341,6 @@ describe("heartbeat stats", () => {
     });
   });
 });
-
 
 /**
  * V-5's video records.
@@ -481,5 +479,32 @@ describe("video records", () => {
     });
     const rest = decoder.push(bytes.slice(100_000));
     expect(rest.ok && rest.records).toHaveLength(1);
+  });
+});
+
+describe("negotiated large JPEG frames", () => {
+  it("accepts a fragmented 2 MiB frame only for an opted-in reader", () => {
+    const encoded = encodeFrameStreamRecord(
+      frame({ jpeg: new Uint8Array(2 * 1024 * 1024).fill(1) }),
+    );
+    expect(createFrameStreamDecoder().push(encoded.subarray(0, 24)).ok).toBe(
+      false,
+    );
+    const decoder = createFrameStreamDecoder({ sharp: true });
+    expect(decoder.push(encoded.subarray(0, 100))).toEqual({
+      ok: true,
+      records: [],
+    });
+    const result = decoder.push(encoded.subarray(100));
+    expect(result.ok && result.records).toHaveLength(1);
+  });
+  it("still rejects a frame larger than the negotiated ceiling", () => {
+    const encoded = encodeFrameStreamRecord(
+      frame({ jpeg: new Uint8Array(2 * 1024 * 1024 + 1) }),
+    );
+    expect(
+      createFrameStreamDecoder({ sharp: true }).push(encoded.subarray(0, 24))
+        .ok,
+    ).toBe(false);
   });
 });

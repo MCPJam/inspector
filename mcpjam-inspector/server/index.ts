@@ -1,3 +1,4 @@
+import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import fixPath from "fix-path";
@@ -964,6 +965,7 @@ const server = serve({
   port: SERVER_PORT,
   hostname,
 });
+registerBrowserController(`http://127.0.0.1:${SERVER_PORT}`);
 // Count socket-level failures. These die before Node parses a request line,
 // so they emit no `http.request.*` event and are otherwise invisible — the
 // class the 08-11 Cloudflare 502 fell into. Must be attached before traffic

@@ -60,6 +60,8 @@
  * ask can never be handed one — which is what keeps "unknown kind is fatal"
  * safe as the wave adds kinds.
  */
+import { jpegFrameLimit } from "./browser-viewport-policy";
+
 export const FRAME_STREAM_VERSION = 1;
 
 /**
@@ -194,6 +196,12 @@ export interface FrameStreamHeartbeat {
 
 /** What the daemon says about its own side of the stream. */
 export interface FrameStreamStats {
+  jpeg?: {
+    requestedQuality: number;
+    quality: number;
+    maxFrameBytes: number;
+    reason: string;
+  };
   framesIn?: number;
   framesOut?: number;
   bytesOut?: number;
@@ -260,7 +268,8 @@ export interface FrameStreamEnd {
  */
 export interface FrameStreamVideo {
   kind:
-    typeof FRAME_STREAM_KIND.video_key | typeof FRAME_STREAM_KIND.video_delta;
+    | typeof FRAME_STREAM_KIND.video_key
+    | typeof FRAME_STREAM_KIND.video_delta;
   deviceWidth: number;
   deviceHeight: number;
   scale: number;
@@ -271,7 +280,10 @@ export interface FrameStreamVideo {
 }
 
 export type FrameStreamRecord =
-  FrameStreamFrame | FrameStreamHeartbeat | FrameStreamEnd | FrameStreamVideo;
+  | FrameStreamFrame
+  | FrameStreamHeartbeat
+  | FrameStreamEnd
+  | FrameStreamVideo;
 
 /**
  * Pack one record.
@@ -287,12 +299,12 @@ export function encodeFrameStreamRecord(record: FrameStreamRecord): Uint8Array {
     record.kind === FRAME_STREAM_KIND.frame
       ? record.jpeg
       : video
-        ? record.au
-        : record.kind === FRAME_STREAM_KIND.end
-          ? new TextEncoder().encode(record.reason)
-          : record.stats
-            ? new TextEncoder().encode(JSON.stringify(record.stats))
-            : new Uint8Array(0);
+      ? record.au
+      : record.kind === FRAME_STREAM_KIND.end
+      ? new TextEncoder().encode(record.reason)
+      : record.stats
+      ? new TextEncoder().encode(JSON.stringify(record.stats))
+      : new Uint8Array(0);
 
   const bytes = new Uint8Array(FRAME_STREAM_HEADER_BYTES + payload.byteLength);
   const view = new DataView(bytes.buffer);
@@ -327,7 +339,8 @@ function clampU16(value: number): number {
 }
 
 export type FrameStreamDecodeResult =
-  { ok: true; records: FrameStreamRecord[] } | { ok: false; error: string };
+  | { ok: true; records: FrameStreamRecord[] }
+  | { ok: false; error: string };
 
 /**
  * A reader that survives chunk boundaries.
@@ -354,6 +367,7 @@ export function createFrameStreamDecoder(
      * the stream behind.
      */
     video?: boolean;
+    sharp?: boolean;
   } = {},
 ): {
   push(chunk: Uint8Array): FrameStreamDecodeResult;
@@ -403,8 +417,10 @@ export function createFrameStreamDecoder(
         }
         const payloadLength = view.getUint32(20, true);
         const maxPayload =
-          FRAME_STREAM_MAX_PAYLOAD_BY_KIND[kind] ??
-          FRAME_STREAM_MAX_PAYLOAD_BYTES;
+          kind === FRAME_STREAM_KIND.frame
+            ? jpegFrameLimit(options.sharp === true)
+            : FRAME_STREAM_MAX_PAYLOAD_BY_KIND[kind] ??
+              FRAME_STREAM_MAX_PAYLOAD_BYTES;
         if (payloadLength > maxPayload) {
           return { ok: false, error: `record too large (${payloadLength})` };
         }

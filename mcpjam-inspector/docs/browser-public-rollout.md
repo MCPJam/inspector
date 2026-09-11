@@ -7,7 +7,10 @@ Two rollout flags, neither dependent on `computers-enabled`:
 | `local-browser-enabled`  | Verified guests and signed-in users in local Node/Electron | Browser on this machine, after explicit Browser consent                            |
 | `hosted-browser-enabled` | Signed-in users                                            | Hosted Browser, subject to existing account, entitlement, image, and credit checks |
 
-`webmcp-inspector-enabled` is unchanged. There is no third Browser master flag.
+The WebMCP tab, direct route, and Playground page-tools section follow
+`local-browser-enabled` in Node/Electron and `hosted-browser-enabled` in hosted
+deployments. The old `webmcp-inspector-enabled` flag no longer controls these
+surfaces. There is no third Browser master flag.
 The existing workspace-layout experiment is not required: with it off, Browser
 uses the right rail's Browser tab.
 

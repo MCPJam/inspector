@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createTabViewport, type ViewportFrame } from "../viewport";
 import type { CdpLike } from "../webmcp-bridge";
 
@@ -19,6 +19,9 @@ function fakeCdp() {
     cdp,
     sent,
     methods: () => sent.map((s) => s.method),
+    emitNavigation(frame: { parentId?: string } = {}) {
+      handlers.get("Page.frameNavigated")?.({ frame });
+    },
     emitFrame(data: string, sessionId = 1) {
       handlers.get("Page.screencastFrame")?.({ data, sessionId });
     },
@@ -562,7 +565,7 @@ describe("shared viewport lifecycle", () => {
     expect(
       h.sent.filter((call) => call.method === "Page.startScreencast").at(-1)
         ?.params,
-    ).toMatchObject({ maxWidth: 800, maxHeight: 500, quality: 75 });
+    ).toMatchObject({ maxWidth: 800, maxHeight: 500, quality: 85 });
     await h.viewport.dispose();
   });
 
@@ -598,7 +601,7 @@ describe("shared viewport lifecycle", () => {
   });
 });
 
-it("restarts an oversized static picture once at lower quality without oscillating", async () => {
+it("reduces an oversized picture progressively and stops at the floor", async () => {
   const h = make({ maxFrameBytes: 1024 });
   h.viewport.subscribe((f) => h.frames.push(f));
   await h.viewport.ready();
@@ -608,14 +611,25 @@ it("restarts an oversized static picture once at lower quality without oscillati
     h.sent
       .filter((c) => c.method === "Page.startScreencast")
       .map((c) => c.params?.quality),
-  ).toEqual([75, 40]);
+  ).toEqual([85, 75]);
   h.emitFrame(JPEG_1PX);
   expect(h.frames).toHaveLength(1);
   h.emitFrame("y".repeat(2048));
   await h.viewport.ready();
   expect(
     h.sent.filter((c) => c.method === "Page.startScreencast"),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
+  for (const suffix of ["a", "b", "c", "d"]) {
+    h.emitFrame(suffix.repeat(2048));
+    await h.viewport.ready();
+  }
+  expect(h.viewport.counters().jpeg).toMatchObject({
+    quality: 40,
+    reason: "jpeg_frame_limit",
+  });
+  expect(
+    h.sent.filter((c) => c.method === "Page.startScreencast"),
+  ).toHaveLength(5);
   await h.viewport.dispose();
 });
 
@@ -685,4 +699,98 @@ it("releases resize ownership after a failed apply and after disposal", async ()
   await rejected;
   expect(await h.viewport.ready()).toBe(false);
   expect(h.methods()).not.toContain("Page.startScreencast");
+});
+
+describe("JPEG quality recovery", () => {
+  it("recovers on a static page and backs off a failed probe", async () => {
+    const h = make({ maxFrameBytes: 1024 });
+    h.viewport.subscribe((f) => h.frames.push(f));
+    await h.viewport.ready();
+    h.emitFrame("x".repeat(2048));
+    await h.viewport.ready();
+    h.emitFrame(JPEG_1PX);
+    h.time.advance(10_000);
+    await h.viewport.ready();
+    expect(h.viewport.counters().jpeg?.quality).toBe(85);
+    h.emitFrame("x".repeat(2048));
+    await h.viewport.ready();
+    h.emitFrame(JPEG_1PX);
+    h.time.advance(10_000);
+    await h.viewport.ready();
+    expect(h.viewport.counters().jpeg?.quality).toBe(75);
+    h.time.advance(10_000);
+    await h.viewport.ready();
+    h.emitFrame(JPEG_1PX);
+    expect(h.viewport.counters().jpeg?.quality).toBe(85);
+    await h.viewport.dispose();
+  });
+
+  it("uses the smallest active subscriber limit and filters old in-flight frames", async () => {
+    const h = make();
+    h.viewport.subscribe((f) => h.frames.push(f), 2 * 1024 * 1024);
+    await h.viewport.ready();
+    const large = "x".repeat(400_000);
+    h.emitFrame(large);
+    expect(h.frames).toHaveLength(1);
+    const legacyFrames: ViewportFrame[] = [];
+    const leave = h.viewport.subscribe((f) => legacyFrames.push(f));
+    h.emitFrame("y".repeat(400_000));
+    expect(legacyFrames).toHaveLength(0);
+    await h.viewport.ready();
+    expect(h.viewport.counters().jpeg?.maxFrameBytes).toBe(256 * 1024);
+    leave();
+    await h.viewport.ready();
+    expect(h.viewport.counters().jpeg).toMatchObject({
+      maxFrameBytes: 2 * 1024 * 1024,
+      quality: 85,
+    });
+    await h.viewport.dispose();
+  });
+
+  it("cancels a static recovery probe after the last viewer leaves", async () => {
+    const h = make({ maxFrameBytes: 1024 });
+    const leave = h.viewport.subscribe(() => {});
+    await h.viewport.ready();
+    h.emitFrame("x".repeat(2048));
+    await h.viewport.ready();
+    h.emitFrame(JPEG_1PX);
+    leave();
+    await h.viewport.ready();
+    const count = h.sent.length;
+    h.time.advance(60_000);
+    await h.viewport.ready();
+    expect(h.sent).toHaveLength(count);
+    await h.viewport.dispose();
+  });
+});
+
+it("resets capture quality on main-frame navigation, not an iframe navigation", async () => {
+  const h = make({ maxFrameBytes: 1024 });
+  h.viewport.subscribe(() => {});
+  await h.viewport.ready();
+  h.emitFrame("x".repeat(2048));
+  await h.viewport.ready();
+  h.emitNavigation({ parentId: "main" });
+  await h.viewport.ready();
+  expect(h.viewport.counters().jpeg?.quality).toBe(75);
+  h.emitNavigation();
+  await h.viewport.ready();
+  expect(h.viewport.counters().jpeg?.quality).toBe(85);
+  await h.viewport.dispose();
+});
+
+it("does not block context teardown on an unanswered stopScreencast", async () => {
+  vi.useFakeTimers();
+  try {
+    const fake = fakeCdp();
+    const send = fake.cdp.send.bind(fake.cdp);
+    fake.cdp.send = (method, params) => method === "Page.stopScreencast" ? new Promise(() => {}) : send(method, params);
+    const viewport = createTabViewport(fake.cdp, { surface: { width: 800, height: 600 } });
+    viewport.subscribe(() => {});
+    await Promise.resolve();
+    const disposed = viewport.dispose();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await disposed;
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
 });

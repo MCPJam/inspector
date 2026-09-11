@@ -1,3 +1,9 @@
+import { admissionForBearer } from "./browser-admission.js";
+import { createBrowserConsentLifetime } from "./consent-lifetime.js";
+import {
+  createLocalBrowserSecurityPolicy,
+  type LocalBrowserSecurityPolicy,
+} from "./security-policy.js";
 /**
  * The browser on THIS machine — the npm engine's half of the agent browser.
  *
@@ -166,6 +172,10 @@ export function resolveLocalBrowserSurface(
 
 /** Everything this module needs from the outside, injectable for tests. */
 export interface LocalBrowserDeps {
+  security?(
+    fingerprint?: string,
+    authHeader?: string,
+  ): Promise<LocalBrowserSecurityPolicy>;
   launch(options: LaunchBrowserdContextOptions): Promise<DriverContext>;
   /**
    * Hidden `BrowserWindow`s, for the packaged desktop app.
@@ -175,6 +185,7 @@ export interface LocalBrowserDeps {
    * reaching a Chromium that is already on the machine.
    */
   launchElectron(options: {
+    securityPolicy?: LocalBrowserSecurityPolicy;
     contextMode: BrowserContextMode;
     partitionKey?: string;
     /** Tabs as views the pane can show natively, rather than hidden windows. */
@@ -202,6 +213,21 @@ export interface LocalBrowserDeps {
 }
 
 const liveDeps = (): LocalBrowserDeps => ({
+  async security(fingerprint, authHeader) {
+    const admission = authHeader
+      ? await admissionForBearer(authHeader)
+      : undefined;
+    const lifetime = await createBrowserConsentLifetime(
+      fingerprint,
+      undefined,
+      admission,
+    );
+    return createLocalBrowserSecurityPolicy({
+      ...lifetime,
+      dispose: lifetime.dispose,
+      onAudit: (counts) => logger.info("Local Browser policy summary", counts),
+    });
+  },
   launch: launchBrowserdContext,
   launchElectron: launchElectronContext,
   runtime: resolveLocalBrowserRuntime,
@@ -214,6 +240,8 @@ const liveDeps = (): LocalBrowserDeps => ({
 });
 
 export interface EnsureLocalBrowserArgs {
+  authHeader?: string;
+  consentFingerprint?: string;
   projectId: string;
   /** Durable logical session identity; absent keeps the legacy project browser. */
   sessionId?: string;
@@ -255,6 +283,7 @@ export interface EnsureLocalBrowserArgs {
 }
 
 interface LocalSession {
+  consentFingerprint?: string;
   viewedUntil?: number;
   key: string;
   /**
@@ -407,7 +436,12 @@ export async function ensureLocalBrowserSession(
       );
     }
     const existing = sessions.get(key);
-    if (existing && !existing.disposing && existing.context.isConnected()) {
+    if (
+      existing &&
+      !existing.disposing &&
+      existing.context.isConnected() &&
+      existing.consentFingerprint === args.consentFingerprint
+    ) {
       existing.lastUsedAt = deps.now();
       return { ...existing.handle, reused: true };
     }
@@ -529,32 +563,44 @@ async function startSession(
       })
     : undefined;
 
-  const context =
-    runtime === "electron"
-      ? await deps.launchElectron({
-          contextMode,
-          nativeSurface,
-          ...(surface ? { surface } : {}),
-          ...(persistent
-            ? {
-                partitionKey: args.sessionId
-                  ? `${validateLocalProjectKey(
-                      args.projectId,
-                    )}--session-${validateLogicalSessionId(args.sessionId)}`
-                  : validateLocalProjectKey(args.projectId),
-              }
-            : {}),
-        })
-      : await deps.launch({
-          userDataDir: profileDir ?? "",
-          headless: !wantsHeadedWindow(deps.env),
-          // The FULL Chromium build, not the headless shell: `headless: true`
-          // alone selects `chromium-headless-shell`, which is the old headless
-          // — a different binary with a different compositor path and a
-          // fingerprint that public sites recognise and block.
-          channel: "chromium",
-          contextMode,
-        });
+  const securityPolicy = await deps.security?.(
+    args.consentFingerprint,
+    args.authHeader,
+  );
+  const context = await (async () => {
+    try {
+      return runtime === "electron"
+        ? await deps.launchElectron({
+            ...(securityPolicy ? { securityPolicy } : {}),
+            contextMode,
+            nativeSurface,
+            ...(surface ? { surface } : {}),
+            ...(persistent
+              ? {
+                  partitionKey: args.sessionId
+                    ? `${validateLocalProjectKey(
+                        args.projectId,
+                      )}--session-${validateLogicalSessionId(args.sessionId)}`
+                    : validateLocalProjectKey(args.projectId),
+                }
+              : {}),
+          })
+        : await deps.launch({
+            ...(securityPolicy ? { securityPolicy } : {}),
+            userDataDir: profileDir ?? "",
+            headless: !wantsHeadedWindow(deps.env),
+            // The FULL Chromium build, not the headless shell: `headless: true`
+            // alone selects `chromium-headless-shell`, which is the old headless
+            // — a different binary with a different compositor path and a
+            // fingerprint that public sites recognise and block.
+            channel: "chromium",
+            contextMode,
+          });
+    } catch (error) {
+      securityPolicy?.dispose?.();
+      throw error;
+    }
+  })();
 
   // The launch is the long await in this function, and a sweep can begin
   // inside it. A Chromium registered after the drain has already run is one
@@ -678,6 +724,7 @@ async function startSession(
   };
   const now = deps.now();
   const session: LocalSession = {
+    consentFingerprint: args.consentFingerprint,
     key,
     projectKey: validateLocalProjectKey(args.projectId),
     stack,

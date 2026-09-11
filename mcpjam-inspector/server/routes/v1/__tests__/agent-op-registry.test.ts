@@ -55,6 +55,14 @@ import {
 } from "@mcpjam/sdk/platform";
 
 describe("agent op registry", () => {
+  it("describes the concrete browser action and session with bounded quoted data", () => {
+    const describe = proposalMetaFor("drive_chat_session_browser").description;
+    expect(describe({ op: "navigate", sessionId: "session", url: "https://example.com" })).toContain('Navigate to "https://example.com"');
+    expect(describe({ op: "invoke", sessionId: "session", toolKey: "submit" })).toContain('Invoke page tool "submit"');
+    const text = describe({ op: "act", sessionId: "session", command: { verb: "type", value: "x".repeat(10000) } });
+    expect(text).toContain('session "session"');
+    expect(text.length).toBeLessThan(1000);
+  });
   it("declares every operation exactly once", () => {
     const names = AGENT_OP_REGISTRY.map((entry) => entry.operation.name);
     expect(new Set(names).size).toBe(names.length);

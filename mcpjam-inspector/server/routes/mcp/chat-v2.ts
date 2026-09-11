@@ -1,4 +1,7 @@
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
+import { resolveLocalBrowserTools } from "../../../shared/local-browser-settings.js";
+import { readLocalBrowserSetting } from "../../utils/computers/local-browser-settings.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isChromiumInstalled } from "../../utils/browser-rendering-setup.js";
 import { resolveLocalBrowserRuntime } from "../../services/browserd/local/local-browser-session.js";
 import { resolveBrowserEngine } from "../../utils/computers/browser-engine.js";
@@ -916,12 +919,27 @@ chatV2.post("/", async (c) => {
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
         hostStyle:
           body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
-        builtInToolIds: body.builtInToolIds,
+        builtInToolIds: isScenarioSession ? undefined : body.builtInToolIds,
       },
       // Scenario: published host wins. Host preview: owner's body tweaks win,
       // harness/computer stay host-only (not overridable). See web/chat-v2.ts.
       precedence: isScenarioSession ? "host-wins" : "override-wins",
     });
+    let localBrowserSettingsUnavailable = false;
+    if (!HOSTED_MODE && !isScenarioSession && body.browserEngine === "local") {
+      let enabled = typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
+        ? hostRuntimeConfig.localBrowserEnabled : undefined;
+      if (!hostRuntimeConfig && typeof body.projectId === "string" && body.projectId && c.req.header("authorization") && !isGuestChatRequest(c.req.header("authorization"))) {
+        try {
+          enabled = await readLocalBrowserSetting(await getConvexBearerForRequest(c), body.projectId);
+        } catch {
+          localBrowserSettingsUnavailable = true;
+        }
+      }
+      resolvedExecution.builtInToolIds = resolveLocalBrowserTools(
+        resolvedExecution.builtInToolIds, enabled, true,
+      );
+    }
     // Preserve the per-field warnings the inline code emitted — the
     // resolver returns drift as data so the call site can keep its
     // existing log shape unchanged.
@@ -1350,7 +1368,7 @@ chatV2.post("/", async (c) => {
     });
 
     const localBrowserRequested = body.browserEngine === "local";
-    const browserRollout = resolvedExecution.builtInToolIds?.includes(
+    const browserRollout = !localBrowserSettingsUnavailable && resolvedExecution.builtInToolIds?.includes(
       BROWSER_BUILT_IN_TOOL_ID,
     )
       ? await resolveBrowserRollout(c, localBrowserRequested)
@@ -1372,7 +1390,9 @@ chatV2.post("/", async (c) => {
       localConsentValid: browserConsentValid,
     });
     if (!browserRollout.enabled) browserEngine = "unavailable";
-    let browserUnavailableReason = !browserRollout.enabled
+    let browserUnavailableReason = localBrowserSettingsUnavailable
+      ? "browser_runtime_unavailable: Could not load local Browser settings. Retry your request."
+      : !browserRollout.enabled
       ? "browser_rollout_unavailable: Browser is not available for this location."
       : localBrowserRequested && browserEngine !== "local"
       ? browserConsentValid
@@ -1437,7 +1457,21 @@ chatV2.post("/", async (c) => {
     // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built. See
     // the twin block in `routes/web/chat-v2.ts`: read-only, fail-empty, and
     // skipped entirely for a turn that has no browser capability.
+    // One owner for discovery AND execution; never infer it from the visible pane.
+    const browserSessionScope =
+      body.browserScope === "conversation" &&
+      body.chatSessionId &&
+      !isScenarioSession
+        ? {
+            kind: "conversation" as const,
+            sessionId: body.chatSessionId,
+            ...(bodyHostId ? { hostId: bodyHostId } : {}),
+          }
+        : undefined;
     const pageToolsPeek = await peekPageToolsForChatTurn({
+      ...(browserSessionScope
+        ? { conversationId: browserSessionScope.sessionId }
+        : {}),
       builtInToolIds: browserUnavailableReason
         ? []
         : resolvedExecution.builtInToolIds,
@@ -1539,17 +1573,7 @@ chatV2.post("/", async (c) => {
             ...(resolvedExecution.browserProfileId
               ? { browserProfileId: resolvedExecution.browserProfileId }
               : {}),
-            ...(body.browserScope === "conversation" &&
-            body.chatSessionId &&
-            !isScenarioSession
-              ? {
-                  browserSessionScope: {
-                    kind: "conversation" as const,
-                    sessionId: body.chatSessionId,
-                    ...(bodyHostId ? { hostId: bodyHostId } : {}),
-                  },
-                }
-              : {}),
+            ...(browserSessionScope ? { browserSessionScope } : {}),
             ...(pageToolsSnapshot
               ? { browserPageTools: pageToolsSnapshot }
               : {}),
@@ -1582,7 +1606,25 @@ chatV2.post("/", async (c) => {
     // persisted direct-chat/resume configs keep the RAW user prompt; the env
     // block is turn-injected, not user configuration.
     const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
-      systemPrompt,
+      systemPrompt:
+        browserUnavailableReason &&
+        resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+          ? [
+              systemPrompt,
+              "Browser is configured for this conversation but is temporarily unavailable for this turn. " +
+                (browserUnavailableReason.startsWith(
+                  "browser_consent_required:",
+                )
+                  ? "The user must click Allow in the Browser panel, then retry their request."
+                  : browserUnavailableReason.replace(
+                      /^browser_[a-z_]+:\s*/,
+                      "",
+                    )),
+              "If the request needs browsing, explain this setup step briefly. Do not claim that this assistant cannot browse in general. Do not claim navigation succeeded or switch browser locations.",
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+          : systemPrompt,
       // The environment context describes the pinned E2B image — the WRONG
       // machine when this turn's bash runs on the user's own computer.
       hasBashTool:

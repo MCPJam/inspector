@@ -18,7 +18,10 @@ import {
 import { useComputersDataPlaneConfig } from "./useProjectComputer";
 
 /** Selection is independent of consent and readiness: never silently move a browser. */
-export function useBrowserEngine(projectId: string | null) {
+export function useBrowserEngine(
+  projectId: string | null,
+  scope: "conversation" | "preference" = "conversation",
+) {
   const { user } = useAuth();
   const config = useComputersDataPlaneConfig();
   const consent = useLocalBrowserConsent();
@@ -26,7 +29,8 @@ export function useBrowserEngine(projectId: string | null) {
   const hostedEnabled = useHostedBrowserEnabled();
   const [environmentId] = usePreviewedEnvironmentId(projectId);
   const environmentsEnabled = useProjectEnvironmentsEnabled();
-  const environmentMode = environmentsEnabled && Boolean(environmentId);
+  const environmentMode =
+    scope === "conversation" && environmentsEnabled && Boolean(environmentId);
   const boundLocation = useActiveChatSessionStore((state) =>
     state.browserLocation?.projectId === projectId &&
     state.browserLocation.sessionId === state.sessionId
@@ -52,17 +56,20 @@ export function useBrowserEngine(projectId: string | null) {
     },
     [projectId, environmentMode],
   );
+  // Rollout chooses the default; explicit/bound local selection still needs
+  // truthful server readiness so users can grant Browser permission.
   const localAvailable =
     !HOSTED_MODE &&
     !environmentMode &&
-    enabled &&
     config?.engines.local.browserAvailable === true;
   // Only an explicit preference or a bound conversation survives loss of
   // candidacy. An unseeded rollout continues using the existing Cloud path.
   const selectedEngine: BrowserEngineChoice =
     HOSTED_MODE || environmentMode
       ? "cloud"
-      : boundLocation ?? preference ?? (localAvailable ? "local" : "cloud");
+      : (scope === "conversation" ? boundLocation : null) ??
+        preference ??
+        (enabled && localAvailable ? "local" : "cloud");
   const cloudAvailable =
     Boolean(user) && hostedEnabled && config?.engines.cloud.available === true;
   return {
@@ -72,7 +79,11 @@ export function useBrowserEngine(projectId: string | null) {
     resolved: config !== undefined,
     localAvailable,
     cloudAvailable,
-    toggleVisible: !HOSTED_MODE && !environmentMode,
+    // Same rule as the Computer tab: a location picker only exists when
+    // both engines are real options. `cloudAvailable` already includes the
+    // hosted-browser rollout, so a local-only launch never offers Cloud.
+    toggleVisible:
+      !HOSTED_MODE && !environmentMode && localAvailable && cloudAvailable,
     environmentMode,
     consent,
   };

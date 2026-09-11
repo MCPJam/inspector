@@ -8,6 +8,8 @@ import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useMintConversationBrowserToken } from "@/hooks/useProjectComputer";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
+import { ComparisonBrowser } from "@/components/browser/ComparisonBrowser";
 
 /**
  * The browser, beside chat.
@@ -60,6 +62,13 @@ export function PlaygroundBrowserPanel({
     (state) => state.sessionId,
   );
   const browserSessionId = activeChatSessionId ?? undefined;
+  const hasComparison = useBrowserComparisonStore((state) =>
+    Object.values(state.clients).some(
+      (client) =>
+        client.workspaceId === browserSessionId &&
+        client.projectId === projectId,
+    ),
+  );
   const mintHostedBrowserToken = useCallback(
     ({ projectId: tokenProjectId }: { projectId: string }) => {
       if (!browserSessionId)
@@ -132,6 +141,7 @@ export function PlaygroundBrowserPanel({
             <Maximize2 className="size-3.5" aria-hidden />
           )}
         </button>
+        <BrowserRuntimeControls projectId={projectId} compact />
         <button
           type="button"
           onClick={onClose}
@@ -147,9 +157,15 @@ export function PlaygroundBrowserPanel({
           <PanelRightClose className="size-3.5" aria-hidden />
         </button>
       </div>
-      <BrowserRuntimeControls projectId={projectId} />
       <div className="flex min-h-0 flex-1 flex-col">
-        {isLocal && !engine.localAvailable ? (
+        {hasComparison && projectId ? (
+          <ComparisonBrowser
+            key={`${projectId}:${browserSessionId}`}
+            projectId={projectId}
+            workspaceId={browserSessionId}
+            active={visible}
+          />
+        ) : isLocal && !engine.localAvailable ? (
           <p className="p-4 text-sm text-muted-foreground">
             Browser is unavailable on this machine. Check Browser settings or
             choose Cloud for a new chat.
@@ -195,11 +211,16 @@ export function PlaygroundBrowserPanel({
  */
 export function browserPanelAvailable(args: {
   hostHasBrowser: boolean;
+  sessionHasBrowser?: boolean;
   selectedEngine: "local" | "cloud";
   isAuthenticated: boolean;
   localBrowserRunning: boolean;
 }): boolean {
+  if (args.sessionHasBrowser && args.isAuthenticated) return true;
   if (args.localBrowserRunning) return true;
+  // Local users must be able to open the explicit setup prompt before any
+  // client has Browser attached. Callers already enforce the rollout gate.
+  if (args.selectedEngine === "local") return true;
   if (!args.hostHasBrowser) return false;
-  return args.selectedEngine === "local" || args.isAuthenticated;
+  return args.isAuthenticated;
 }

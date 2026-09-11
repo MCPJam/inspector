@@ -689,3 +689,23 @@ stabilize first.
   response fields, new error codes — are considered non-breaking and can ship
   at any time. Write clients that ignore unknown fields.
 - Error **codes** are stable identifiers; error **messages** are not.
+
+### Browser tools on chat sessions
+
+<Note>
+Hosted browser availability depends on the account and deployment. The browser workspace must be enabled to open the live pane in the Playground.
+</Note>
+
+`POST /chat-sessions/messages` accepts an optional `browser: { policy?, profileId? }`. Attach it on every turn that should browse. The initial grant and profile are fixed; the current host policy and pinned read-only mode can narrow the effective permissions. Responses and traces include the read-only `chatSessionId`, browser metadata, and screenshot URLs without inline image data.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/chat-sessions/browser` | Create an empty API session and its browser with `projectId`, `policy`, optional `profileId`, and a stable `idempotencyKey`. |
+| POST | `/chat-sessions/{sessionId}/browser/open` | Open or wake the session browser. |
+| POST | `/chat-sessions/{sessionId}/browser/command` | Execute a browser command under the session policy with a stable `commandId`. |
+| POST | `/chat-sessions/{sessionId}/browser/note` | Append a command-ledger note. |
+| POST | `/chat-sessions/{sessionId}/browser/trace` | Read command receipts and screenshot evidence. |
+| POST | `/chat-sessions/{sessionId}/browser/artifact` | Resolve a command screenshot URL. |
+| POST | `/chat-sessions/{sessionId}/browser/close` | Release the session desktop. |
+
+Only the owning user can drive an API session's browser. All inputs use the public `sessionId`; conversation and browser identifiers in responses are informational. Capacity refusals before execution release the turn lease so the same idempotency key can be retried. An execution with an unknown outcome must be inspected before attempting a new action.
