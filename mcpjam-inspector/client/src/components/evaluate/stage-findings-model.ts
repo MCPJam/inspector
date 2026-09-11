@@ -217,10 +217,10 @@ export function buildStageFindings(
     // let it read as a finding about the server.
     return {
       kind: "unavailable",
-      title: input.error?.title ?? "Couldn't load the trial evidence",
+      title: input.error?.title ?? "Couldn't load the iteration evidence",
       detail:
         input.error?.detail ??
-        "The read did not complete, so the trials behind these stage counts are not listed here.",
+        "The read did not complete, so the iterations behind these stage counts are not listed here.",
     };
   }
   const { analytics, summary } = input;
@@ -342,14 +342,14 @@ export function buildStageFindings(
             count: orphans.length,
             line:
               `${orphans.length} non-passing ${
-                orphans.length === 1 ? "trial is" : "trials are"
+                orphans.length === 1 ? "iteration is" : "iterations are"
               } not attributable to a stage` +
-              ` — a setup abort, an evaluator error, or no recorded chain.`,
+              `. A setup abort, an evaluator error, or no recorded chain.`,
           }
         : null,
     provisionalNote:
       analytics.materializationState === "provisional"
-        ? "These stage counts are provisional — a judge pass is still landing, so they may change."
+        ? "These stage counts are provisional. A judge pass is still landing, so they may change."
         : null,
   };
 }
@@ -367,10 +367,10 @@ function stageHeadline(stage: UserValueStage, tally: EvalStageTally): string {
   if (tally.measured === 0) {
     // Never "0 of 0 failed": no denominator means nothing was decided, which
     // is the one thing a percentage-shaped sentence cannot say.
-    return `${label} was not measured on any trial in this run.`;
+    return `${label} was not measured on any iteration in this run.`;
   }
   return `${label} failed in ${tally.failed} of ${tally.measured} measured ${
-    tally.measured === 1 ? "trial" : "trials"
+    tally.measured === 1 ? "iteration" : "iterations"
   }.`;
 }
 
@@ -391,7 +391,7 @@ function unattributedNote(
   if (gap <= 0) return null;
   return (
     `${gap} further stage ${gap === 1 ? "failure" : "failures"} occurred on ` +
-    `trials whose cases passed, so they have no diagnostic row here.`
+    `iterations whose cases passed, so they have no diagnostic row here.`
   );
 }
 
@@ -410,7 +410,7 @@ function reconciliationNote(
   if (!completeScan) return null;
   if (attributed <= tally.failed) return null;
   return (
-    `${attributed} trials are listed here while the run's own tally counts ` +
+    `${attributed} iterations are listed here while the run's own tally counts ` +
     `${tally.failed} failing at this stage. The tally is shown as recorded; ` +
     `this disagreement is worth reporting.`
   );

@@ -32,6 +32,7 @@ import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { apiKeyTail, runAgentName } from "@/lib/evals/run-origin";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import {
@@ -66,6 +67,28 @@ type RunResultBadgeKind =
   | "timed_out"
   | "inconclusive"
   | "pending";
+
+/**
+ * The second line of the "Run by" tooltip: which credential, or which agent.
+ *
+ * `null` when neither is known — a run launched from the app by a signed-in
+ * person has nothing to add, and a backend that predates run provenance sends
+ * neither field.
+ */
+/**
+ * "via claude-code" / "via API key ····3f9a" — WHICH CREDENTIAL made this run.
+ *
+ * The agent name comes from the DECLARED `launcher.kind`, not the resolved
+ * origin: a run made through the Slack or Discord agent resolves to
+ * `slack`/`discord`, so asking the origin whether this was an MCP run hid the
+ * name for exactly the runs that have one.
+ */
+function runCredentialLabel(run: EvalSuiteRun): string | null {
+  const agent = runAgentName(run);
+  if (agent) return `via ${agent}`;
+  const tail = apiKeyTail(run.attribution?.apiKeyId);
+  return tail ? `via API key ${tail}` : null;
+}
 
 function runResultBadge(result: RunResultBadgeKind) {
   switch (result) {
@@ -811,32 +834,59 @@ export function RunOverview({
                           {(() => {
                             const creator =
                               run.createdBy && userMap?.get(run.createdBy);
-                            if (creator) {
+                            /*
+                              WHICH CREDENTIAL, not just which person. A run
+                              made with an API key is attributed to the key's
+                              owner, so an automated launch and that person
+                              clicking Run showed the same avatar and the same
+                              name. The key id is minted by the backend from
+                              the credential the request authenticated with —
+                              a fact, not a claim.
+
+                              Resolved OUTSIDE the creator branch. An
+                              unresolvable creator (a member who left, a
+                              `userMap` that hasn't loaded) is the case where
+                              knowing the credential matters most, and nesting
+                              this under the avatar meant those runs — the
+                              automated ones — were the ones that showed
+                              nothing.
+                            */
+                            const credential = runCredentialLabel(run);
+                            if (!creator && !credential) {
                               return (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Avatar className="size-6">
+                                <Avatar className="size-6">
+                                  <AvatarFallback className="text-[10px]">
+                                    ?
+                                  </AvatarFallback>
+                                </Avatar>
+                              );
+                            }
+                            return (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Avatar className="size-6">
+                                    {creator ? (
                                       <AvatarImage
                                         src={creator.imageUrl}
                                         alt={creator.name}
                                       />
-                                      <AvatarFallback className="text-[10px]">
-                                        {getInitials(creator.name)}
-                                      </AvatarFallback>
-                                    </Avatar>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
+                                    ) : null}
+                                    <AvatarFallback className="text-[10px]">
+                                      {creator ? getInitials(creator.name) : "?"}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {creator ? (
                                     <p className="text-xs">{creator.name}</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              );
-                            }
-                            return (
-                              <Avatar className="size-6">
-                                <AvatarFallback className="text-[10px]">
-                                  ?
-                                </AvatarFallback>
-                              </Avatar>
+                                  ) : null}
+                                  {credential ? (
+                                    <p className="text-[10px] opacity-70">
+                                      {credential}
+                                    </p>
+                                  ) : null}
+                                </TooltipContent>
+                              </Tooltip>
                             );
                           })()}
                         </span>

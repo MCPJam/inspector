@@ -37,6 +37,7 @@ vi.mock("@/lib/apis/eval-run-decision-summary-api", async (importOriginal) => {
 });
 
 const mocks = vi.hoisted(() => ({
+  convex: { query: vi.fn() },
   paginated: {
     current: {
       results: [] as unknown[],
@@ -48,6 +49,10 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("convex/react", () => ({
   usePaginatedQuery: () => mocks.paginated.current,
+  useConvex: () => mocks.convex,
+}));
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({ hosts: [] }),
 }));
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
@@ -58,7 +63,12 @@ import { SuiteDetailOverview } from "../../evaluate/suite-detail-overview";
 import { evalDecisionSummaryStore } from "@/lib/evals/eval-decision-summary-store";
 import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import { readDecisionSummaryFixture } from "@/test/eval-decision-summary-fixtures";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../types";
 
 const INCONCLUSIVE = readDecisionSummaryFixture(
   "inconclusive-no-gradeable-trials",
@@ -141,9 +151,7 @@ afterEach(cleanup);
 
 // ── project runs table ───────────────────────────────────────────────────────
 
-function makeProjectRow(
-  overrides: Partial<ProjectRunRow> = {},
-): ProjectRunRow {
+function makeProjectRow(overrides: Partial<ProjectRunRow> = {}): ProjectRunRow {
   return {
     _id: "run_aaaaaaaaaaaa",
     suiteId: "suite_1",
@@ -179,7 +187,9 @@ describe("ProjectRunsTable with canonical verdicts", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     // And the table still shows exactly what it always did.
-    expect(within(screen.getByRole("table")).getByText("Passed")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("table")).getByText("Passed"),
+    ).toBeInTheDocument();
   });
 
   it("replaces the status-derived label with the run's own verdict", async () => {
@@ -206,9 +216,7 @@ describe("ProjectRunsTable with canonical verdicts", () => {
         within(screen.getByRole("table")).getByText("Inconclusive"),
       ).toBeInTheDocument();
     });
-    expect(
-      within(screen.getByRole("table")).queryByText("Passed"),
-    ).toBeNull();
+    expect(within(screen.getByRole("table")).queryByText("Passed")).toBeNull();
   });
 
   it("shows canonical counts with the population they are in", async () => {
@@ -490,230 +498,53 @@ function renderHistory(
   return render(historyElement(props, runs, iterations));
 }
 
-describe("Evaluate suite run history with canonical verdicts", () => {
-  it("issues no summary requests at all when the flag is off", async () => {
-    renderHistory({ projectId: "p1" }, [makeRun({ _id: "run-1" })], [
-      makeIteration({ _id: "i1", suiteRunId: "run-1" }),
-    ]);
-    await Promise.resolve();
+describe("Evaluate suite run history status", () => {
+  it.each([false, true])(
+    "does not fetch row verdicts, even when report decisions are enabled (%s)",
+    async (decisionSummaryEnabled) => {
+      renderHistory(
+        { projectId: "p1", decisionSummaryEnabled },
+        [makeRun({ _id: "run-1" })],
+        [makeIteration({ _id: "i1", suiteRunId: "run-1" })],
+      );
+      await Promise.resolve();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(
+        within(screen.getByTestId("suite-run-row-run-1")).getByText("Finished"),
+      ).toBeVisible();
+      expect(
+        screen.queryByRole("columnheader", { name: "Verdict" }),
+      ).toBeNull();
+    },
+  );
 
+  it("does not fetch verdicts when revealing older runs", async () => {
+    const runs = Array.from({ length: 20 }, (_, index) =>
+      makeRun({
+        _id: `run-${index}`,
+        runNumber: index + 1,
+        createdAt: 1700000000000 - index * 1000,
+      }),
+    );
+    renderHistory({ projectId: "p1", decisionSummaryEnabled: true }, runs, []);
+    fireEvent.click(screen.getByRole("button", { name: /view all 20 runs/ }));
+    expect(screen.getByTestId("suite-run-row-run-19")).toBeInTheDocument();
+    await Promise.resolve();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("lets the canonical verdict override the local pass-rate derivation", async () => {
-    fetchMock.mockResolvedValue(INCONCLUSIVE);
-    // Locally: one iteration, it failed, pass rate 0, threshold 80 → "Hold".
-    // Canonically: the validity phase withheld a verdict entirely.
-    renderHistory(
-      { projectId: "p1", decisionSummaryEnabled: true },
-      [makeRun({ _id: "run-1", result: "failed" })],
-      [
-        makeIteration({
-          _id: "i1",
-          suiteRunId: "run-1",
-          result: "failed",
-          resultSource: "reported",
-        }),
-      ],
-    );
-
-    const row = await screen.findByTestId("suite-run-row-run-1");
-    await waitFor(() => {
-      expect(within(row).getByText("Inconclusive")).toBeInTheDocument();
-    });
-    expect(within(row).queryByText("Hold")).toBeNull();
-  });
-
-  it("keeps the canonical verdict once fetched, whatever the iterations say", async () => {
-    fetchMock.mockResolvedValue(PASSED_WITH_FAILING_TRIAL);
-    // A case that passes on threshold with a failing trial under it — the
-    // exact shape local pass-rate math gets wrong.
-    renderHistory(
-      { projectId: "p1", decisionSummaryEnabled: true },
-      [makeRun({ _id: "run-1", result: "failed" })],
-      [
-        makeIteration({
-          _id: "i1",
-          suiteRunId: "run-1",
-          result: "failed",
-          resultSource: "reported",
-        }),
-        makeIteration({
-          _id: "i2",
-          suiteRunId: "run-1",
-          iterationNumber: 2,
-          result: "passed",
-          resultSource: "reported",
-        }),
-      ],
-    );
-
-    const row = await screen.findByTestId("suite-run-row-run-1");
-    await waitFor(() => {
-      expect(within(row).getByText("Passed")).toBeInTheDocument();
-    });
-  });
-
-  it("holds the canonical verdict when the iterations underneath change", async () => {
-    fetchMock.mockResolvedValue(PASSED_WITH_FAILING_TRIAL);
-    const runs = [makeRun({ _id: "run-1", result: "failed" })];
-    const props = { projectId: "p1", decisionSummaryEnabled: true } as const;
-    const { rerender } = renderHistory(props, runs, [
-      makeIteration({
-        _id: "i1",
-        suiteRunId: "run-1",
-        result: "failed",
-        resultSource: "reported",
-      }),
-    ]);
-
-    const row = await screen.findByTestId("suite-run-row-run-1");
-    await waitFor(() => {
-      expect(within(row).getByText("Passed")).toBeInTheDocument();
-    });
-
-    // Iterations stream in live. Recomputing `buildSuiteRunHistoryRows` must
-    // not put a locally derived verdict back over the run's own decision.
-    rerender(
-      historyElement(props, runs, [
-        makeIteration({
-          _id: "i1",
-          suiteRunId: "run-1",
-          result: "failed",
-          resultSource: "reported",
-        }),
-        makeIteration({
-          _id: "i2",
-          suiteRunId: "run-1",
-          iterationNumber: 2,
-          result: "failed",
-          resultSource: "reported",
-        }),
-      ]),
-    );
-
-    const after = screen.getByTestId("suite-run-row-run-1");
-    expect(within(after).getByText("Passed")).toBeInTheDocument();
-    expect(within(after).queryByText("Hold")).toBeNull();
-  });
-
-  it("says the history verdict is unreadable instead of leaving Ship/Hold up", async () => {
-    fetchMock.mockRejectedValue(
-      new EvalRunDecisionSummaryError("routeUnavailable", "not served"),
-    );
-    renderHistory(
-      { projectId: "p1", decisionSummaryEnabled: true },
-      [makeRun({ _id: "run-1", result: "failed" })],
-      [
-        makeIteration({
-          _id: "i1",
-          suiteRunId: "run-1",
-          result: "failed",
-          resultSource: "reported",
-        }),
-      ],
-    );
-
-    const row = await screen.findByTestId("suite-run-row-run-1");
-    await waitFor(() => {
-      expect(within(row).getByText("Not available")).toBeInTheDocument();
-    });
-    expect(within(row).queryByText("Hold")).toBeNull();
-    expect(within(row).queryByText("Ship")).toBeNull();
-  });
-
-  it("keeps the local label while the read is still in flight", async () => {
-    // The other side of the same rule: a row that has not heard back yet still
-    // has only its own derivation, and blanking it would be worse than showing
-    // it. Never resolving the fetch holds the row in `loading`.
-    fetchMock.mockImplementation(() => new Promise(() => {}));
-    renderHistory(
-      { projectId: "p1", decisionSummaryEnabled: true },
-      [makeRun({ _id: "run-1", result: "failed" })],
-      [
-        makeIteration({
-          _id: "i1",
-          suiteRunId: "run-1",
-          result: "failed",
-          resultSource: "reported",
-        }),
-      ],
-    );
-
-    const row = await screen.findByTestId("suite-run-row-run-1");
-    expect(within(row).getByText("Hold")).toBeInTheDocument();
-    expect(
-      within(row).queryByTestId("run-decision-verdict-unavailable"),
-    ).toBeNull();
-  });
-
-  it("reads only the rows the first page shows", async () => {
-    autoIntersect = false;
-    fetchMock.mockResolvedValue(INCONCLUSIVE);
-    const runs = Array.from({ length: 20 }, (_, index) =>
-      makeRun({
-        _id: `run-${index}`,
-        createdAt: 1_700_000_000_000 - index * 1_000,
-        completedAt: 1_700_000_000_000 - index * 1_000,
-      }),
-    );
-
-    renderHistory({ projectId: "p1", decisionSummaryEnabled: true }, runs, []);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-
-    // Eight rendered rows, eight reads. This is the PAGE SLICE — the rows
-    // beyond it are not rendered at all yet, so it says nothing about the
-    // visibility gate. The next test covers that.
-    const runIds = new Set(
-      fetchMock.mock.calls.map((call) => (call[0] as { runId: string }).runId),
-    );
-    expect(runIds.size).toBe(8);
-  });
-
-  it("reads nothing extra when Show all reveals the rest of the history", async () => {
-    autoIntersect = false;
-    fetchMock.mockResolvedValue(INCONCLUSIVE);
-    const runs = Array.from({ length: 20 }, (_, index) =>
-      makeRun({
-        _id: `run-${index}`,
-        createdAt: 1_700_000_000_000 - index * 1_000,
-        completedAt: 1_700_000_000_000 - index * 1_000,
-      }),
-    );
-
-    renderHistory({ projectId: "p1", decisionSummaryEnabled: true }, runs, []);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const readRunIds = () =>
-      new Set(
-        fetchMock.mock.calls.map((call) => (call[0] as { runId: string }).runId),
-      );
-    expect(readRunIds().size).toBe(8);
-
-    // Reveal the whole history. Twelve more rows mount, and NONE of them may
-    // read: one click asking for an entire suite's run history at once is the
-    // burst the visibility gate exists to prevent.
-    fireEvent.click(screen.getByRole("button", { name: /view all 20 runs/ }));
-    await waitFor(() =>
-      expect(screen.getByTestId("suite-run-row-run-19")).toBeInTheDocument(),
-    );
-    expect(readRunIds().size).toBe(8);
-
-    // Scrolled to, they read — the gate defers the request, it does not drop it.
-    scrollAllIntoView();
-    await waitFor(() => expect(readRunIds().size).toBe(20));
-  });
-
-  it("does not read a pending row that has decided nothing", async () => {
-    fetchMock.mockResolvedValue(INCONCLUSIVE);
+  it("shows an active run without reading a verdict", async () => {
     renderHistory(
       { projectId: "p1", decisionSummaryEnabled: true },
       [makeRun({ _id: "run-1", status: "running", result: "pending" })],
       [],
     );
+    expect(
+      within(screen.getByTestId("suite-run-row-run-1")).getByText(
+        "In progress",
+      ),
+    ).toBeVisible();
     await Promise.resolve();
-
     expect(fetchMock).not.toHaveBeenCalled();
-    const row = await screen.findByTestId("suite-run-row-run-1");
-    expect(within(row).getByText("Running")).toBeInTheDocument();
   });
 });

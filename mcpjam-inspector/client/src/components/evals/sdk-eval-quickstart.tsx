@@ -58,7 +58,7 @@ export const SDK_EVAL_QUICKSTART_DOTENV = buildSdkEvalQuickstartDotenv();
 export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk";
 
 export const SDK_EVAL_QUICKSTART_RUN = `import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner, EvalTest } from "@mcpjam/sdk";
 
 // MCPJam hosted learning server (tools: greet, display-mcp-app — see Learn in the app)
 const SERVER_ID = "learn";
@@ -66,19 +66,19 @@ const MCP_SERVER_URL =
   process.env.MCP_SERVER_URL ?? "https://learn.mcpjam.com/mcp";
 // Use the same env var you exported above (e.g. OPENAI_API_KEY instead of LLM_API_KEY).
 const LLM_API_KEY = process.env.LLM_API_KEY!;
-// provider/model-id — must match an allowed TestAgent provider (see Configure environment in the app or SDK README).
+// provider/model-id — must match an allowed HostRunner provider (see Configure environment in the app or SDK README).
 const MODEL = process.env.EVAL_MODEL!;
 
 describe("MCP eval quickstart", () => {
   let manager: MCPClientManager;
-  let agent: TestAgent;
+  let agent: HostRunner;
 
   beforeAll(async () => {
     manager = new MCPClientManager();
     // Streamable HTTP — swap URL + SERVER_ID for your own MCP server
     await manager.connectToServer(SERVER_ID, { url: MCP_SERVER_URL });
     const tools = await manager.getToolsForAiSdk([SERVER_ID]);
-    agent = new TestAgent({
+    agent = new HostRunner({
       tools,
       model: MODEL,
       apiKey: LLM_API_KEY,
@@ -102,8 +102,8 @@ describe("MCP eval quickstart", () => {
         name: "learning-server-greet-multi-turn",
         expectedToolCalls: [{ toolName: "greet" }],
         test: async (agent) => {
-          const r1 = await agent.prompt("Use the greet tool to say hello to Ada.");
-          const r2 = await agent.prompt("Now greet Grace too.", { context: [r1] });
+          const r1 = await agent.run("Use the greet tool to say hello to Ada.");
+          const r2 = await agent.run("Now greet Grace too.", { context: [r1] });
           return r1.hasToolCall("greet") && r2.hasToolCall("greet");
         },
       });
@@ -292,7 +292,7 @@ function CreateApiKeyStep({
             </span>
           ) : null}
           {keyReady ? (
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-success">
               <Check className="size-3.5" aria-hidden />
               API key available
             </span>

@@ -1,17 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { withDataRouter } from "./settings-sheet-harness";
+import {
+  withDataRouter,
+} from "./settings-sheet-harness";
 import { render, screen } from "@testing-library/react";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 
-/**
- * The GitHub Checks availability read is allowed to THROW.
- *
- * It is a backend-decided gate, and the backend refuses (rather than answers)
- * for a caller who is not a signed-in member of the org — `useQuery` re-throws
- * that during render. These tests pin the consequence: the suite settings sheet
- * loses the GitHub Checks section and nothing else.
- */
+/** Simplified suite settings omit organization-wide GitHub Checks controls. */
 
 const mocks = vi.hoisted(() => ({
   useMutation: vi.fn(() => vi.fn()),
@@ -33,6 +28,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
   useGithubChecksAvailability: (organizationId: unknown) =>
     mocks.availability(organizationId),
+  useGithubChecksSettings: () => ({
+    availability: { state: "enabled" },
+    repos: [],
+  }),
 }));
 
 vi.mock("../suite-github-checks-section", () => ({
@@ -75,9 +74,18 @@ vi.mock("@/state/app-state-context", () => ({
 // S3 — capabilities `unavailable` is the "behave exactly as before" case, and
 // it is what these tests want: the GitHub row's own gate is the availability
 // read, not the capabilities query.
-vi.mock("@/hooks/use-suite-capabilities", () => ({
-  useSuiteCapabilities: () => ({ state: "unavailable", capabilities: null }),
-}));
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => ({
+      state: "unavailable",
+      capabilities: null,
+    }),
+  };
+});
 
 const noopNav = {
   toSuiteOverview: vi.fn(),
@@ -132,6 +140,12 @@ function renderSettingsSheet() {
 
 describe("SuiteIterationsView GitHub Checks gate", () => {
   beforeEach(() => {
+    class FakeIntersectionObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
     vi.clearAllMocks();
     mocks.useMutation.mockReturnValue(vi.fn());
     mocks.useQuery.mockImplementation(() => undefined);
@@ -145,65 +159,19 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps the settings sheet up when the availability read throws", () => {
-    mocks.availability.mockImplementation(() => {
-      throw new Error(
-        "[CONVEX Q(github/checkRepoConfigs:getGithubChecksSettingsAvailability)] Server Error"
-      );
-    });
-
-    const { container } = renderSettingsSheet();
-
-    // The sheet survived: a sibling section still rendered.
-    expect(screen.getByText("Minimum iterations")).toBeTruthy();
-    // The section whose gate refused is now a DISABLED ROW that says so,
-    // rather than nothing at all. A row that vanishes makes a refused gate,
-    // a missing permission and a backend that could not answer look identical
-    // — and none of them is a thing the reader can act on from an empty space.
-    expect(screen.queryByTestId("github-checks-section")).toBeNull();
-    const row = container.querySelector('[data-setting-key="githubChecks"]');
-    expect(row).toBeTruthy();
-    expect(row?.getAttribute("data-disabled-reason")).toBe(
-      "GitHub Checks could not be loaded for this organization"
-    );
-  });
-
-  it("still reports the swallowed error to the error sinks", () => {
-    mocks.availability.mockImplementation(() => {
-      throw new Error("Not a member of this organization");
-    });
-
-    renderSettingsSheet();
-
-    // The fallback ROW is a UI choice, never a telemetry one: a boundary that
-    // renders something helpful still has to report what it caught.
-    expect(mocks.reportBoundaryError).toHaveBeenCalled();
-    expect(mocks.reportBoundaryError.mock.calls[0]?.[2]).toBe(
-      "suite_github_checks"
-    );
-  });
-
-  it("hides the section when the backend answers `disabled`", () => {
-    mocks.availability.mockReturnValue({ state: "disabled" });
-
-    const { container } = renderSettingsSheet();
-
-    // `disabled` is the backend ANSWERING, not failing — the boundary never
-    // trips, so the row stays hidden exactly as before.
-    expect(screen.getByText("Minimum iterations")).toBeTruthy();
-    expect(screen.queryByTestId("github-checks-section")).toBeNull();
-    expect(
-      container.querySelector('[data-setting-key="githubChecks"]')
-    ).toBeNull();
-    expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
-  });
-
-  it("renders the section when the backend answers `enabled`", () => {
-    mocks.availability.mockReturnValue({ state: "enabled" });
-
-    renderSettingsSheet();
-
-    expect(screen.getByText("GitHub Checks")).toBeTruthy();
-    expect(screen.getByTestId("github-checks-section")).toBeTruthy();
-  });
+  it.each(["enabled", "disabled", "throws"])(
+    "keeps organization GitHub controls off the simplified page (%s)",
+    (availability) => {
+      mocks.availability.mockImplementation(() => {
+        if (availability === "throws") throw new Error("Not a member");
+        return { state: availability };
+      });
+      const { container } = renderSettingsSheet();
+      expect(screen.queryByRole("button", { name: "Triggers" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("github-checks-section")).not.toBeInTheDocument();
+      expect(container.querySelector('[data-setting-key="githubChecks"]')).toBeNull();
+      expect(mocks.availability).not.toHaveBeenCalled();
+      expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
+    },
+  );
 });

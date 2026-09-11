@@ -215,6 +215,12 @@ describe("SuiteAutomationRow", () => {
     expect(red[0].getAttribute("data-run-result")).toBe("failed");
   });
 
+  it("mounts the editor inline and hides Manage", () => {
+    renderRow({ editor: "inline" });
+    expect(screen.queryByRole("button", { name: "Manage" })).toBeNull();
+    expect(screen.getByTestId("schedule-editor")).toBeTruthy();
+  });
+
   it("opens the unchanged editor from Manage", async () => {
     const user = userEvent.setup();
     renderRow();

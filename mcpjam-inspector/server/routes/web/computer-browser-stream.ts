@@ -308,7 +308,10 @@ export function createComputerBrowserStreamWsHandler(
         rejectMessage = "Invalid or expired browser token.";
       } else {
         viewerId = claims.userId;
-        const info = await sandboxInfo({ computerId: claims.computerId });
+        const target = claims.computerId
+          ? { computerId: claims.computerId }
+          : { sandboxRowId: claims.sandboxRowId };
+        const info = await sandboxInfo(target);
         if (!info.ok) {
           rejectCode = CLOSE_UNAVAILABLE;
           rejectMessage = `Computer unavailable: ${info.error}`;
@@ -323,13 +326,20 @@ export function createComputerBrowserStreamWsHandler(
           rejectMessage = "Invalid or expired browser token.";
         } else {
           const lookup = await lookupSession({
-            computerId: claims.computerId,
+            ...target,
+            ...(claims.sandboxRowId ? { watched: true } : {}),
             expectedBundleHash: bundleHash(),
             expectedContextMode: "persistent",
           });
           if (!lookup.session) {
             rejectCode = CLOSE_GONE;
             rejectMessage = "No browser is running on this computer.";
+          } else if (
+            claims.sessionId &&
+            lookup.session.logicalSessionId !== claims.sessionId
+          ) {
+            rejectCode = CLOSE_UNAUTHORIZED;
+            rejectMessage = "Invalid or expired browser token.";
           } else {
             session = lookup.session;
           }
@@ -446,7 +456,10 @@ export function createComputerBrowserStreamWsHandler(
           },
           (reason) => {
             logger.warn("[computers] browser stream handshake failed", {
-              computerId: live.computerId,
+              browserTarget:
+                live.target === "computer"
+                  ? live.computerId
+                  : live.sandboxRowId,
               reason,
             });
             shutdown(CLOSE_UNAVAILABLE, "Could not reach the browser stream.");
@@ -469,7 +482,8 @@ export function createComputerBrowserStreamWsHandler(
         });
         upstream.onError((error) => {
           logger.warn("[computers] browser stream upstream error", {
-            computerId: live.computerId,
+            browserTarget:
+              live.target === "computer" ? live.computerId : live.sandboxRowId,
             error: error instanceof Error ? error.message : String(error),
           });
           shutdown(CLOSE_UNAVAILABLE, "The browser stream failed.");

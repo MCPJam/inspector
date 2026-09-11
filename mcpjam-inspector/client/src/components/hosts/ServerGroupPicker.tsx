@@ -12,6 +12,7 @@ import { useMutation, useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
 import {
   deriveServerGroupName,
+  isObservedStatus,
   newGroupDraft,
 } from "@/components/hosts/server-group-name";
 import { Button } from "@mcpjam/design-system/button";
@@ -28,8 +29,11 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
+import { getConnectionStatusMeta } from "@/components/connection/server-card-utils";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useProjectServers } from "@/hooks/useViews";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
+import { findProjectByAnyId } from "@/state/app-types";
 import { ServerSelectionList } from "@/components/hosts/server-selection-list";
 import type { EvalServerAttachment } from "@/components/evals/types";
 
@@ -53,7 +57,11 @@ type ServerGroupPickerProps = {
     attachment: EvalServerAttachment,
   ) => void;
   disabled?: boolean;
-  /** Trigger label when no attachment is selected. */
+  /**
+   * Trigger label when no attachment is selected. Defaults off
+   * `variant`: the chip copy reads as an instruction next to other
+   * chips and as a broken placeholder inside a labelled form column.
+   */
   emptyTriggerLabel?: string;
   /** Info-tooltip copy explaining what an attachment is in this context. */
   infoText?: string;
@@ -76,6 +84,23 @@ type ServerGroupPickerProps = {
   inModal?: boolean;
   /** `data-testid` on the trigger, for composer/lego-strip surfaces. */
   triggerTestId?: string;
+  /**
+   * `id` for the trigger, so a sibling `<Label htmlFor>` names the control.
+   * Without it the accessible name is only the selected group — "Stripe",
+   * never "Server".
+   */
+  triggerId?: string;
+  /**
+   * Trigger shape. `pill` (default) is the compact chip the bars and
+   * lego-strips use. `field` renders a full-width, `h-9` form control that
+   * lines up with an `<Input>`/`<Select>` in a labelled form column — used by
+   * the promote-to-test-case modal, where Client and Server sit side by side
+   * and a chip next to a select reads as a different kind of control.
+   *
+   * Shape only: the popover, inline create, and delete affordances are
+   * identical in both variants.
+   */
+  variant?: "pill" | "field";
 };
 
 export function ServerGroupPicker({
@@ -83,12 +108,14 @@ export function ServerGroupPicker({
   value,
   onChange,
   disabled = false,
-  emptyTriggerLabel = "No server group · pick one",
+  emptyTriggerLabel,
   infoText = "A server group is a named set of MCP servers that every client in the suite runs against.",
   selectedDeleteHint = "In use by this suite — pick another first",
   onClearSelection,
   inModal = false,
   triggerTestId,
+  triggerId,
+  variant = "pill",
 }: ServerGroupPickerProps) {
   const { isAuthenticated } = useConvexAuth();
   const { serverAttachments, isLoading } = useProjectServerAttachments({
@@ -99,6 +126,32 @@ export function ServerGroupPicker({
     isAuthenticated,
     projectId,
   });
+  /**
+   * Convex stores a server's config, not whether it answers — the live status
+   * is in app state, keyed by name. Joining them is what stops this form
+   * offering a failed server as readily as a working one (BB-49). Optional
+   * read: the picker also renders with no provider above it.
+   */
+  const appState = useOptionalSharedAppState();
+  // ...but only the ACTIVE project's: `SWITCH_PROJECT` and hydration both
+  // replace `servers` wholesale. This picker is handed a record's own
+  // `projectId` (a suite's, a scenario's), which a bookmarked URL can point at
+  // a project that is not active — and a name like `github` exists in more than
+  // one of them. Join only when the two resolve to the same project: an
+  // unmarked row is a supported state, another project's status is not.
+  const activeProjectId = appState?.activeProjectId;
+  const joinable =
+    activeProjectId !== undefined &&
+    findProjectByAnyId(appState?.projects, projectId)?.id === activeProjectId;
+  const runtimeServers = joinable ? appState?.servers : undefined;
+  const serverPool = useMemo(
+    () =>
+      projectServers.map((server) => ({
+        ...server,
+        status: runtimeServers?.[server.name]?.connectionStatus,
+      })),
+    [projectServers, runtimeServers],
+  );
 
   const [open, setOpen] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -281,7 +334,10 @@ export function ServerGroupPicker({
 
   const triggerLabel = selectedAttachment
     ? selectedAttachment.name
-    : emptyTriggerLabel;
+    : (emptyTriggerLabel ??
+      (variant === "field"
+        ? "Select a server group"
+        : "No server group · pick one"));
   const triggerCount = selectedAttachment
     ? `${selectedAttachment.serverIds.length} server${selectedAttachment.serverIds.length === 1 ? "" : "s"}`
     : null;
@@ -306,22 +362,48 @@ export function ServerGroupPicker({
         <button
           type="button"
           disabled={disabled}
+          id={triggerId}
           data-testid={triggerTestId}
           className={cn(
-            "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
+            "flex items-center gap-1 border text-foreground",
             "outline-none transition-colors",
-            !value && !justCreated
-              ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
-              : "border-border/60 bg-muted/40 hover:bg-muted/60",
+            variant === "field"
+              ? "h-9 w-full rounded-md px-3 text-sm shadow-xs focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              : "h-8 max-w-[260px] shrink-0 rounded-full px-2",
+            variant === "field"
+              ? "border-input bg-transparent hover:bg-muted/30"
+              : !value && !justCreated
+                ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
+                : "border-border/60 bg-muted/40 hover:bg-muted/60",
             disabled && "cursor-not-allowed opacity-50"
           )}
         >
-          <Server className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+          <Server
+            className={cn(
+              "shrink-0 text-muted-foreground",
+              variant === "field" ? "size-4" : "size-3.5"
+            )}
+          />
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate",
+              variant === "field"
+                ? cn(
+                    "text-left text-sm",
+                    !value && !justCreated && "text-muted-foreground"
+                  )
+                : "text-xs font-medium"
+            )}
+          >
             {triggerLabel}
           </span>
           {triggerCount ? (
-            <span className="text-[10px] text-muted-foreground">
+            <span
+              className={cn(
+                "text-muted-foreground",
+                variant === "field" ? "text-xs" : "text-[10px]"
+              )}
+            >
               · {triggerCount}
             </span>
           ) : null}
@@ -489,15 +571,39 @@ export function ServerGroupPicker({
                       </p>
                     ) : (
                       <ul className="space-y-0.5">
-                        {serverNames.map((name, i) => (
-                          <li
-                            key={`${attachment._id}-${i}`}
-                            className="flex items-center gap-1.5 py-0.5 text-[11px] text-muted-foreground"
-                          >
-                            <Server className="size-3 shrink-0" />
-                            <span className="truncate">{name}</span>
-                          </li>
-                        ))}
+                        {serverNames.map((name, i) => {
+                          // Expanding a group is how you check what is inside
+                          // it before picking it (BB-49). Nothing in the row
+                          // is focusable, so the label rides a hidden node
+                          // rather than an accessible name.
+                          const status =
+                            runtimeServers?.[name]?.connectionStatus;
+                          const meta = isObservedStatus(status)
+                            ? getConnectionStatusMeta(status)
+                            : null;
+                          return (
+                            <li
+                              key={`${attachment._id}-${i}`}
+                              className="flex items-center gap-1.5 py-0.5 text-[11px] text-muted-foreground"
+                            >
+                              <Server className="size-3 shrink-0" />
+                              {meta ? (
+                                <>
+                                  <span
+                                    className={cn(
+                                      "size-1.5 shrink-0 rounded-full",
+                                      meta.indicatorClassName,
+                                    )}
+                                    title={meta.label}
+                                    aria-hidden
+                                  />
+                                  <span className="sr-only">{meta.label}</span>
+                                </>
+                              ) : null}
+                              <span className="truncate">{name}</span>
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
@@ -509,10 +615,7 @@ export function ServerGroupPicker({
               <button
                 type="button"
                 onClick={() => {
-                  const draft = newGroupDraft(
-                    projectServers,
-                    existingGroupNames
-                  );
+                  const draft = newGroupDraft(serverPool, existingGroupNames);
                   setShowCreate(true);
                   setNameEdited(false);
                   setCreateTouched(false);
@@ -562,9 +665,10 @@ export function ServerGroupPicker({
                   pushes the Create button below the fold. */}
               <div className="max-h-48 overflow-y-auto pr-1">
                 <ServerSelectionList
-                  servers={projectServers.map((s) => ({
+                  servers={serverPool.map((s) => ({
                     id: s._id,
                     name: s.name,
+                    status: s.status,
                   }))}
                   selectedIds={createServerIds}
                   onToggle={handleToggleServer}
