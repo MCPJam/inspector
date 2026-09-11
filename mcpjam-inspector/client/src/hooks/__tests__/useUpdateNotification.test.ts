@@ -194,6 +194,28 @@ describe("useUpdateNotification", () => {
       );
     });
 
+    it("drops the try-again promise once auto-update has given up", () => {
+      // In `manual` there is no in-app retry left to promise: the main
+      // process ignores every later update-available for the session.
+      const mocks = setupElectronMock();
+
+      renderHook(() => useUpdateNotification());
+      act(() => {
+        mocks.mockOnUpdateStatus.mock.calls[0][0]({
+          kind: "manual",
+          version: undefined,
+        });
+        mocks.mockOnUpdateError.mock.calls[0][0]();
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith(
+        errorToastMessage(
+          "Automatic update isn't working on this install. Download the new version instead.",
+        ),
+        expect.anything(),
+      );
+    });
+
     it("toast action opens the releases page via openExternal", () => {
       const mocks = setupElectronMock();
       const mockOpenExternal = vi.fn().mockResolvedValue(undefined);
@@ -285,6 +307,63 @@ describe("useUpdateNotification", () => {
       });
 
       expect(result.current.restartRequested).toBe(false);
+    });
+
+    it("re-arms when a silent collapse retires the download", () => {
+      // A click can race a collapse: the main process drops to `idle` without
+      // broadcasting an error, so nothing used to clear this and the pill came
+      // back stuck on "Updating…" at the next download.
+      const { mockOnUpdateStatus } = setupElectronMock();
+
+      const { result } = renderHook(() => useUpdateNotification());
+      const onStatus = mockOnUpdateStatus.mock.calls[0][0];
+
+      act(() => {
+        onStatus({ kind: "pending", installRequested: false });
+        result.current.restartAndInstall();
+      });
+      expect(result.current.restartRequested).toBe(true);
+
+      act(() => {
+        onStatus({ kind: "idle" });
+      });
+
+      expect(result.current.restartRequested).toBe(false);
+    });
+
+    it("stays armed through a downloaded install so a second click cannot land", () => {
+      const { mockOnUpdateStatus } = setupElectronMock();
+
+      const { result } = renderHook(() => useUpdateNotification());
+      const onStatus = mockOnUpdateStatus.mock.calls[0][0];
+
+      act(() => {
+        onStatus({ kind: "downloaded", version: "3.6.0" });
+        result.current.restartAndInstall();
+      });
+
+      expect(result.current.restartRequested).toBe(true);
+    });
+  });
+
+  describe("downloadManually", () => {
+    it("opens the releases page", () => {
+      // The escape hatch behind the `manual` status: auto-update announced a
+      // build it could not install, so the pill stops offering an in-app
+      // install and sends the user somewhere that works.
+      setupElectronMock();
+      const mockOpenExternal = vi.fn().mockResolvedValue(undefined);
+      (window.electronAPI as any).app = { openExternal: mockOpenExternal };
+
+      const { result } = renderHook(() => useUpdateNotification());
+
+      act(() => {
+        result.current.downloadManually();
+      });
+
+      expect(mockOpenExternal).toHaveBeenCalledWith(
+        "https://github.com/MCPJam/inspector/releases",
+      );
     });
   });
 
