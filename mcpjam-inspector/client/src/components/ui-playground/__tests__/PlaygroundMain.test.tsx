@@ -2046,6 +2046,38 @@ describe("PlaygroundMain", () => {
   });
 
   describe("multi-model chat", () => {
+    it("connects model browsers to the parent workspace in comparison order", () => {
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic" },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          activeProjectId="project-1"
+          enableMultiModelChat={true}
+        />
+      );
+
+      for (const [order, model] of mockUseChatSession.availableModels.entries()) {
+        const props = mockMultiModelPlaygroundCard.mock.calls
+          .map(([props]) => props)
+          .find((props) => props.compareId === model.id);
+        expect(props).toMatchObject({
+          compareKind: "model",
+          compareLabel: model.name,
+          browserWorkspace: {
+            id: "chat-session-1",
+            order,
+            clientCount: 2,
+          },
+        });
+      }
+    });
+
     it("shows centered starter layout, hidden compare grid, and composer like Chat tab when multi-model Chat is empty", () => {
       mockUseChatSession.availableModels = [
         {
