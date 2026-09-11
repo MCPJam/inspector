@@ -6,12 +6,15 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { create as createTar, list as listTar } from "tar";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   expectedPackFor,
@@ -20,8 +23,16 @@ import {
   packSourceFor,
   packVersionRoot,
   readRuntimeInstallStatus,
+  readVerifiedRuntimeStatus,
+  resetRuntimeInstallStateForTests,
   runtimeInstallRoot,
+  startRuntimeInstall,
 } from "../runtime-install.js";
+import {
+  PREVIOUS_SUFFIX,
+  reserveRuntimeUse,
+  type RuntimeOperationKey,
+} from "../runtime-lifecycle.js";
 import { computeTreeDigest } from "../runtime-identity.js";
 import { localPackTarget } from "../targets.js";
 import * as packDigests from "../pack-digests.generated.js";
@@ -77,17 +88,53 @@ const PACK_VERSION = "test-pack-1";
 const PLATFORM_KEY = packPlatformKey();
 
 /**
- * Build a miniature but structurally real pack: the files a pack must have,
- * tarred the way the build script tars one, with a manifest beside it.
+ * Is there a GNU tar on this host?
+ *
+ * Asked ONCE, and used only to gate the suite that tests GNU tar's own
+ * PRODUCER behaviour. Everything about the installer — download, signature,
+ * archive hash, tree digest, extraction filtering, activation — is tested with
+ * fixtures built by the `tar` package this server already depends on, so the
+ * core suite runs identically on macOS, Windows and Linux. It used to shell
+ * out to `tar --sort=name` unconditionally, which is a GNU flag: the whole
+ * file was silently a Linux-only suite for the one component whose bugs are
+ * per-platform by construction.
  */
-async function buildFixturePack(
-  dir: string,
-  opts: {
-    extraFile?: string;
-    withSymlink?: boolean;
-    withHardLink?: boolean;
-  } = {},
-): Promise<{ archive: string; digest: string }> {
+function gnuTarBin(): string | null {
+  for (const bin of ["tar", "gtar"]) {
+    try {
+      const version = execFileSync(bin, ["--version"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      if (/GNU tar/.test(version)) return bin;
+    } catch {
+      // Not installed, or too old to answer `--version`; try the next name.
+    }
+  }
+  return null;
+}
+const GNU_TAR = gnuTarBin();
+
+interface FixtureOptions {
+  extraFile?: string;
+  withSymlink?: boolean;
+  withHardLink?: boolean;
+  /** A macOS AppleDouble sibling, as bsdtar would write for an xattr. */
+  withAppleDouble?: boolean;
+  /** Archive with GNU tar and the build script's own reproducibility flags. */
+  useGnuTar?: boolean;
+}
+
+/**
+ * Stage a miniature but structurally real pack, and return its tree digest.
+ *
+ * Split from the archiving step so both producers below archive the SAME tree:
+ * a fixture whose GNU and node-tar variants staged different bytes could not
+ * be used to say anything about the producer.
+ */
+async function stagePack(
+  opts: FixtureOptions,
+): Promise<{ staging: string; digest: string }> {
   const staging = await mkdtemp(join(base, "stage-"));
   const packRoot = join(staging, "claude-code");
   await mkdir(join(packRoot, "bin"), { recursive: true });
@@ -102,43 +149,100 @@ async function buildFixturePack(
 
   if (opts.withHardLink === true) {
     // What pnpm leaves behind: two paths, one inode. The digest walk sees two
-    // regular files; GNU tar sees the second as a link to the first.
+    // regular files; a tar that deduplicates sees the second as a link.
     await link(join(packRoot, "package.json"), join(packRoot, "linked.json"));
   }
 
   const digest = await computeTreeDigest(packRoot);
+
+  // Both of these are added AFTER the digest, so the archive carries something
+  // the digest does not vouch for — which is exactly the shape each defends
+  // against. A tree containing either could not be digested at all (symlink)
+  // or would digest to something else (AppleDouble).
   if (opts.withSymlink === true) {
-    // Added AFTER the digest, so the archive carries a link the extractor must
-    // refuse on its own rather than one the digest would have caught first.
     await symlink("/etc/passwd", join(packRoot, "sneaky"));
   }
+  if (opts.withAppleDouble === true) {
+    await writeFile(
+      join(packRoot, "._package.json"),
+      Buffer.from([0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00]),
+    );
+  }
+
+  return { staging, digest };
+}
+
+/**
+ * Build a fixture pack archive.
+ *
+ * The default producer is the `tar` package — the same one the installer
+ * extracts with, available on every platform this server runs on. It
+ * reproduces all three adversarial entry types the extractor has to refuse:
+ * `SymbolicLink`, `Link` (a deduplicated hardlink), and an ordinary `File`
+ * that should not be in the tree at all.
+ */
+async function buildFixturePack(
+  dir: string,
+  opts: FixtureOptions = {},
+): Promise<{ archive: string; digest: string }> {
+  const { staging, digest } = await stagePack(opts);
 
   await mkdir(dir, { recursive: true });
   const archive = join(
     dir,
     `local-harness-pack-${PLATFORM_KEY}-${PACK_VERSION}.tar.gz`,
   );
-  execFileSync(
-    "tar",
-    [
-      "--sort=name",
-      "--mtime=UTC 2020-01-01",
-      "--owner=0",
-      "--group=0",
-      "--numeric-owner",
-      // Deliberately no `--hard-dereference`: the fixture archives the way GNU
-      // tar does by default, which is the behaviour the build script has to
-      // defend against.
-      "-czf",
-      archive,
-      "-C",
-      staging,
-      "claude-code",
-    ],
-    { stdio: "pipe" },
-  );
+
+  if (opts.useGnuTar === true) {
+    if (GNU_TAR === null) throw new Error("no GNU tar on this host");
+    execFileSync(
+      GNU_TAR,
+      [
+        // The build script's own reproducibility flags, so what this asserts
+        // is the archive a release actually produces.
+        "--sort=name",
+        "--mtime=UTC 2020-01-01",
+        "--owner=0",
+        "--group=0",
+        "--numeric-owner",
+        "--hard-dereference",
+        "-czf",
+        archive,
+        "-C",
+        staging,
+        "claude-code",
+      ],
+      { stdio: "pipe" },
+    );
+  } else {
+    await createTar(
+      {
+        file: archive,
+        gzip: true,
+        // ABSOLUTE, and load-bearing. node-tar only emits a `Link` entry when
+        // the cached target path starts with `cwd`, so a relative cwd silently
+        // turns every hardlink into a second regular file — and the fixture
+        // that exists to produce hardlink entries would produce none.
+        cwd: resolve(staging),
+        // `portable: true` would strip `nlink` from the header and disable
+        // that dedup for the same reason.
+        portable: false,
+        follow: false,
+      },
+      ["claude-code"],
+    );
+  }
+
   await rm(staging, { recursive: true, force: true });
   return { archive, digest };
+}
+
+/** The entry types an archive actually carries, so a fixture can be checked
+ *  rather than assumed. */
+async function archiveEntryTypes(archive: string): Promise<string[]> {
+  const types: string[] = [];
+  await listTar({ file: archive, onReadEntry: (entry) => types.push(entry.type) });
+  return types;
 }
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -168,6 +272,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  resetRuntimeInstallStateForTests();
   await rm(installRoot, { recursive: true, force: true });
 });
 
@@ -301,15 +406,23 @@ describe("installing a pack", () => {
     process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = other.archive;
     try {
       const result = await installRuntimePack({ harnessId: "claude-code" });
-      expect(result.state).toBe("corrupt");
+      // `failed` + `verification`, not `corrupt`. The two are different things
+      // a user does different things about: nothing was installed here, so
+      // there is nothing to repair — the pack that arrived was not ours.
+      expect(result).toMatchObject({ state: "failed", reason: "verification" });
       expect((result as { message: string }).message).toMatch(
         /does not match the digest this Inspector was built with/,
       );
-      // Nothing was activated: a failed install leaves no version directory
-      // for `resolveManagedBundle` to find.
+      // Nothing was activated — there is no version directory for
+      // `resolveManagedBundle` to find — and the failure is RETAINED. A poll
+      // after a failed download that decayed back to `absent` is the reading
+      // that loses the only thing the user needed to see.
       await expect(
         readRuntimeInstallStatus({ harnessId: "claude-code" }),
-      ).resolves.toMatchObject({ state: "absent" });
+      ).resolves.toMatchObject({ state: "failed", reason: "verification" });
+      await expect(
+        stat(join(packVersionRoot(PACK_VERSION), "claude-code")),
+      ).rejects.toThrow();
     } finally {
       process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
     }
@@ -331,6 +444,9 @@ describe("installing a pack", () => {
     // can express.
     const linkDir = join(base, "linked");
     const linked = await buildFixturePack(linkDir, { withSymlink: true });
+    await expect(archiveEntryTypes(linked.archive)).resolves.toContain(
+      "SymbolicLink",
+    );
     const saved = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
     process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = linked.archive;
     try {
@@ -348,16 +464,24 @@ describe("installing a pack", () => {
     // The bug that made every real install fail, pinned as a test.
     //
     // pnpm hardlinks out of its store, so a staged pack has hundreds of paths
-    // sharing an inode; tar records the later ones as hardlink entries; the
-    // extractor accepts only regular files and directories, so they never
-    // land. The tree that results is missing files and cannot hash to the
-    // digest the manifest names — which is what this asserts, because a
-    // refusal is the correct behaviour for an archive shaped like that.
+    // sharing an inode; a tar that deduplicates records the later ones as
+    // hardlink entries; the extractor accepts only regular files and
+    // directories, so they never land. The tree that results is missing files
+    // and cannot hash to the digest the manifest names — which is what this
+    // asserts, because a refusal is the correct behaviour for an archive
+    // shaped like that.
     //
     // The fix is upstream, in `flattenHardLinks` (see its own test): the
-    // ARCHIVE must not be shaped like this in the first place.
+    // ARCHIVE must not be shaped like this in the first place. Nothing here is
+    // GNU-specific — the `tar` package this fixture uses deduplicates the same
+    // way, which is why this stays in the core suite.
     const linkDir = join(base, "hardlinked");
     const linked = await buildFixturePack(linkDir, { withHardLink: true });
+    // The fixture must actually BE adversarial. node-tar only deduplicates
+    // when `cwd` is absolute and `portable` is false, and a fixture that
+    // quietly wrote two regular files would make this test pass while
+    // asserting nothing.
+    await expect(archiveEntryTypes(linked.archive)).resolves.toContain("Link");
     const saved = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
     process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = linked.archive;
     // The fixture's own digest is what the table would carry for it, so the
@@ -365,7 +489,10 @@ describe("installing a pack", () => {
     packRecords.mockReturnValue(tableFor(linked.digest));
     try {
       const result = await installRuntimePack({ harnessId: "claude-code" });
-      expect(result.state).toBe("corrupt");
+      // `failed` + `verification`, not `corrupt`. The two are different things
+      // a user does different things about: nothing was installed here, so
+      // there is nothing to repair — the pack that arrived was not ours.
+      expect(result).toMatchObject({ state: "failed", reason: "verification" });
       expect((result as { message: string }).message).toMatch(
         /does not match the digest this Inspector was built with/,
       );
@@ -380,5 +507,281 @@ describe("installing a pack", () => {
       readRuntimeInstallStatus({ harnessId: "codex" }),
     ).resolves.toMatchObject({ state: "unsupported-platform" });
     expect(expectedPackFor("codex", "linux-x64")).toBeNull();
+  });
+
+  it("refuses an archive carrying macOS AppleDouble members", async () => {
+    // Why `build-local-harness-pack.mjs` sets COPYFILE_DISABLE=1 and then
+    // reads its own archive back to check.
+    //
+    // bsdtar on macOS stores a file's extended attributes as a sibling
+    // `._name` member. The tree digest is taken from the staged pack BEFORE
+    // archiving, so those members are in the archive and in no digest;
+    // extraction produces a tree with extra files and the install refuses the
+    // pack it just downloaded. The vendor CLI arrives quarantined, so this was
+    // the ordinary macOS case rather than an edge one — and the refusal is
+    // correct, which is precisely why the suppression has to happen in the
+    // producer.
+    const appleDir = join(base, "appledouble");
+    const fixture = await buildFixturePack(appleDir, { withAppleDouble: true });
+    const saved = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
+    process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = fixture.archive;
+    packRecords.mockReturnValue(tableFor(fixture.digest));
+    try {
+      const result = await installRuntimePack({ harnessId: "claude-code" });
+      // `failed` + `verification`, not `corrupt`. The two are different things
+      // a user does different things about: nothing was installed here, so
+      // there is nothing to repair — the pack that arrived was not ours.
+      expect(result).toMatchObject({ state: "failed", reason: "verification" });
+      expect((result as { message: string }).message).toMatch(
+        /does not match the digest this Inspector was built with/,
+      );
+    } finally {
+      packRecords.mockReturnValue(tableFor(realDigest));
+      process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
+    }
+  });
+});
+
+/**
+ * GNU tar as a PRODUCER — the only thing in this file that is genuinely
+ * GNU-specific.
+ *
+ * The release archives with GNU tar's reproducibility flags where one is
+ * available, and `--hard-dereference` is what turns a deduplicated tree back
+ * into one entry per file. That is a claim about GNU tar's behaviour, so it is
+ * tested against GNU tar and skipped where there is none. Everything else
+ * about the installer runs on every platform.
+ */
+describe.skipIf(GNU_TAR === null)("GNU tar as the release producer", () => {
+  it("flattens hardlinks with --hard-dereference, so the pack installs", async () => {
+    const gnuDir = join(base, "gnu-hardlinked");
+    const fixture = await buildFixturePack(gnuDir, {
+      withHardLink: true,
+      useGnuTar: true,
+    });
+    const saved = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
+    process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = fixture.archive;
+    packRecords.mockReturnValue(tableFor(fixture.digest));
+    try {
+      // The same tree that fails to install from a deduplicating producer
+      // installs cleanly from this one — which is the whole reason the release
+      // reaches for GNU tar when it can find one.
+      const result = await installRuntimePack({ harnessId: "claude-code" });
+      expect(result.state).toBe("ready");
+      const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
+      await expect(
+        readFile(join(packRoot, "linked.json"), "utf8"),
+      ).resolves.toContain("pack");
+    } finally {
+      packRecords.mockReturnValue(tableFor(realDigest));
+      process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
+    }
+  });
+});
+
+
+describe("the acknowledgement contract", () => {
+  // The install route turns each of these into an HTTP status. The shape lives
+  // here so the route is a thin adapter rather than a second implementation.
+
+  it("answers before the download finishes", async () => {
+    const started = await startRuntimeInstall({ harnessId: "claude-code" });
+    expect(started.kind).toBe("started");
+    expect(started.status.state).toBe("downloading");
+    // And the work is genuinely still running: a call that had already
+    // finished would defeat the whole point of acknowledging.
+    await expect(
+      installRuntimePack({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+  });
+
+  it("joins rather than starting a second extraction", async () => {
+    const first = await startRuntimeInstall({ harnessId: "claude-code" });
+    const second = await startRuntimeInstall({ harnessId: "claude-code" });
+    expect(first.kind).toBe("started");
+    expect(second.kind).toBe("joined");
+    await installRuntimePack({ harnessId: "claude-code" });
+  });
+
+  it("answers ready without downloading when a verified pack is installed", async () => {
+    await installRuntimePack({ harnessId: "claude-code" });
+    const saved = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
+    // Point the source at nothing: if this path fetched, it would fail.
+    process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = join(base, "not-a-pack.tar.gz");
+    try {
+      await expect(
+        startRuntimeInstall({ harnessId: "claude-code" }),
+      ).resolves.toMatchObject({ kind: "ready", status: { state: "ready" } });
+    } finally {
+      process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
+    }
+  });
+
+  it("refuses to download a different runtime than the one approved", async () => {
+    // A server that updated between the dialog opening and the click. Consent
+    // binds to a runtime identity, so fetching another one under the same
+    // approval would bind the user's click to something they never saw.
+    const started = await startRuntimeInstall({
+      harnessId: "claude-code",
+      expectedPack: {
+        packVersion: PACK_VERSION,
+        treeDigest: `sha256:${"9".repeat(64)}`,
+      },
+    });
+    expect(started).toMatchObject({
+      kind: "refused",
+      status: { state: "failed", reason: "verification" },
+    });
+    // Nothing was fetched and nothing was staged.
+    await expect(
+      readRuntimeInstallStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "absent" });
+  });
+
+  it("proceeds when the approved pack still matches", async () => {
+    const started = await startRuntimeInstall({
+      harnessId: "claude-code",
+      expectedPack: { packVersion: PACK_VERSION, treeDigest: realDigest },
+    });
+    expect(started.kind).toBe("started");
+    await installRuntimePack({ harnessId: "claude-code" });
+  });
+});
+
+describe("runtime health, separately from operation state", () => {
+  it("catches a pack whose bytes changed under an intact marker", async () => {
+    // The marker records what the install verified AT THE TIME, so a truncated
+    // or edited tree keeps reporting `ready` from it forever. The caller that
+    // needs this answer is deciding whether to skip a download and mint
+    // consent against the runtime's identity, so it re-verifies.
+    await installRuntimePack({ harnessId: "claude-code" });
+    const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
+    await writeFile(join(packRoot, "bridge.mjs"), "export const bridge = 2;\n");
+
+    // The cheap read still believes the marker…
+    await expect(
+      readRuntimeInstallStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+    // …and the verified read does not.
+    await expect(
+      readVerifiedRuntimeStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "corrupt" });
+  });
+
+  it("repairs by reinstalling the same version", async () => {
+    await installRuntimePack({ harnessId: "claude-code" });
+    const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
+    await writeFile(join(packRoot, "bridge.mjs"), "export const bridge = 2;\n");
+    await expect(
+      readVerifiedRuntimeStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "corrupt" });
+
+    // An explicit retry of the same version replaces the tree — and the
+    // verification cache does not remember the old answer for the new bytes.
+    await expect(
+      installRuntimePack({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+    await expect(
+      readVerifiedRuntimeStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+  });
+});
+
+describe("a runtime somebody is using is not replaced", () => {
+  it("refuses to activate over a reserved version directory", async () => {
+    await installRuntimePack({ harnessId: "claude-code" });
+    const key: RuntimeOperationKey = {
+      runtimeRoot: runtimeInstallRoot(),
+      harnessId: "claude-code",
+      target: localPackTarget()!,
+      packVersion: PACK_VERSION,
+      treeDigest: realDigest,
+    };
+    const held = await reserveRuntimeUse({
+      key,
+      runtimeRoot: packVersionRoot(PACK_VERSION),
+      label: "session-1",
+    });
+    try {
+      // Corrupt it so a repair is actually attempted rather than short-circuited
+      // by the verified-ready fast path.
+      await writeFile(
+        join(packVersionRoot(PACK_VERSION), "claude-code", "bridge.mjs"),
+        "export const bridge = 3;\n",
+      );
+      const result = await installRuntimePack({ harnessId: "claude-code" });
+      expect(result).toMatchObject({ state: "failed" });
+      expect((result as { message: string }).message).toMatch(/in use/);
+      // The tree the running session verified is still there, unchanged.
+      await expect(
+        readFile(
+          join(packVersionRoot(PACK_VERSION), "claude-code", "bridge.mjs"),
+          "utf8",
+        ),
+      ).resolves.toContain("bridge = 3");
+    } finally {
+      await held.release();
+    }
+  });
+
+  it("proceeds once the session releases it", async () => {
+    await installRuntimePack({ harnessId: "claude-code" });
+    const key: RuntimeOperationKey = {
+      runtimeRoot: runtimeInstallRoot(),
+      harnessId: "claude-code",
+      target: localPackTarget()!,
+      packVersion: PACK_VERSION,
+      treeDigest: realDigest,
+    };
+    const held = await reserveRuntimeUse({
+      key,
+      runtimeRoot: packVersionRoot(PACK_VERSION),
+    });
+    await held.release();
+    await writeFile(
+      join(packVersionRoot(PACK_VERSION), "claude-code", "bridge.mjs"),
+      "export const bridge = 3;\n",
+    );
+    await expect(
+      installRuntimePack({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+  });
+
+  it("keeps another version rather than sweeping it", async () => {
+    // The old install swept every other version after activating, which is how
+    // a running session lost the tree it had verified and was executing from.
+    await installRuntimePack({ harnessId: "claude-code" });
+    const neighbour = packVersionRoot("some-other-version");
+    await mkdir(join(neighbour, "claude-code"), { recursive: true });
+    await writeFile(
+      join(neighbour, ".mcpjam-pack-installed.json"),
+      JSON.stringify({ packVersion: "some-other-version" }),
+    );
+
+    await rm(packVersionRoot(PACK_VERSION), { recursive: true, force: true });
+    await installRuntimePack({ harnessId: "claude-code" });
+
+    await expect(stat(join(neighbour, "claude-code"))).resolves.toBeTruthy();
+  });
+});
+
+describe("an interrupted activation is recovered, not re-downloaded", () => {
+  it("puts the runtime back on the next status read", async () => {
+    await installRuntimePack({ harnessId: "claude-code" });
+    // The crash window: moved aside, never renamed in.
+    await rename(
+      packVersionRoot(PACK_VERSION),
+      `${packVersionRoot(PACK_VERSION)}${PREVIOUS_SUFFIX}`,
+    );
+    await expect(
+      stat(join(packVersionRoot(PACK_VERSION), "claude-code")),
+    ).rejects.toThrow();
+
+    await expect(
+      readRuntimeInstallStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+    await expect(
+      stat(join(packVersionRoot(PACK_VERSION), "claude-code")),
+    ).resolves.toBeTruthy();
   });
 });

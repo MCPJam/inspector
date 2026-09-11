@@ -13,6 +13,7 @@ import { fieldsWithIssues } from "./useHostDraftValidation";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
 import { ToolsTab } from "./ToolsTab";
+import { BrowserTab } from "./BrowserTab";
 import { ComputerTab } from "./ComputerTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
@@ -31,6 +32,7 @@ import {
 } from "./host-focus-shell";
 
 interface HostFocusPanelProps {
+  projectId?: string;
   /**
    * Stable host identifier. Used as a React key on the JSON-native tabs so
    * they hard-remount when the user switches hosts — otherwise the
@@ -55,10 +57,7 @@ interface HostFocusPanelProps {
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
-  onSaveLatest: (
-    name: string,
-    draft: HostConfigInputV2,
-  ) => Promise<boolean>;
+  onSaveLatest: (name: string, draft: HostConfigInputV2) => Promise<boolean>;
   hostLoaded: boolean;
   saveInFlight: boolean;
   attention: ReadonlyArray<HostAttentionIssue>;
@@ -71,6 +70,7 @@ interface HostFocusPanelProps {
 }
 
 export function HostFocusPanel({
+  projectId,
   hostId,
   tab,
   onTabChange,
@@ -102,10 +102,7 @@ export function HostFocusPanel({
   const activeTab = activeHostFocusTab(tab, visibleTabs);
 
   return (
-    <div
-      className={hostFocusShellRootClass}
-      aria-busy={saveInFlight}
-    >
+    <div className={hostFocusShellRootClass} aria-busy={saveInFlight}>
       <div className="contents" inert={saveInFlight || undefined}>
         <HostIdentityRow
           className={cn(hostFocusShellHeaderRowClass, "py-2")}
@@ -115,8 +112,10 @@ export function HostFocusPanel({
           logoSrc={logoSrc}
           action={
             // The stamp sits left of the button on purpose: it says how old the
-            // profile is, the button is what fixes that.
-            <div className="flex items-center gap-2">
+            // profile is, the button is what fixes that. No wrapper here —
+            // `HostIdentityRow` lays the action out so it can restyle the group
+            // when it wraps to its own line.
+            <>
               <HostVerifiedAtStamp hostStyle={draft.hostStyle} />
               <UpdateHostToLatestButton
                 hostId={hostId}
@@ -131,7 +130,7 @@ export function HostFocusPanel({
                 hostLoaded={hostLoaded}
                 saveInFlight={saveInFlight}
               />
-            </div>
+            </>
           }
         />
       </div>
@@ -172,10 +171,25 @@ export function HostFocusPanel({
           />
         ) : null}
         {activeTab === "tools" ? (
-          <ToolsTab draft={draft} onDraftChange={onDraftChange} />
+          <ToolsTab
+            projectId={projectId}
+            draft={draft}
+            onDraftChange={onDraftChange}
+          />
+        ) : null}
+        {activeTab === "browser" ? (
+          <BrowserTab
+            projectId={projectId}
+            draft={draft}
+            onDraftChange={onDraftChange}
+          />
         ) : null}
         {activeTab === "computer" ? (
-          <ComputerTab draft={draft} onDraftChange={onDraftChange} />
+          <ComputerTab
+            projectId={projectId}
+            draft={draft}
+            onDraftChange={onDraftChange}
+          />
         ) : null}
         {activeTab === "appearance" ? (
           <AppearanceTab draft={draft} onDraftChange={onDraftChange} />

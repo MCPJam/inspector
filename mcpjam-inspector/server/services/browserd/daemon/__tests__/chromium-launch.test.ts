@@ -17,6 +17,8 @@ function fakeAnyPage(over: Partial<AnyPage> = {}): AnyPage {
     async goto() {},
     async reload() {},
     async goBack() {},
+    async goForward() {},
+    async setViewportSize() {},
     async waitForLoadState() {}, // resolves = the page idled
     async evaluate() { return undefined as never; },
     async screenshot() { return Buffer.from("png"); },

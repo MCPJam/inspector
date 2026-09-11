@@ -101,14 +101,23 @@ describe("validatePageToolEntries", () => {
 });
 
 describe("buildPageTools", () => {
-  it("keys tools by alias and gates every one for approval", () => {
-    const tools = buildPageTools(validatePageToolEntries([entry()]));
-    expect(Object.keys(tools)).toEqual(["page_1a2b3c4d"]);
-    // Unconditional: a page tool runs code on a third-party site, and nothing
-    // the page says about it is evidence.
+  it("keys tools by alias and takes approval from the switch", () => {
+    const gated = buildPageTools(validatePageToolEntries([entry()]), true);
+    expect(Object.keys(gated)).toEqual(["page_1a2b3c4d"]);
+    // A page tool runs code on a third-party site and nothing the page says
+    // about it is evidence — which is why its annotations are never read. The
+    // user's switch is what decides, here as everywhere else.
     expect(
-      (tools.page_1a2b3c4d as { needsApproval?: boolean }).needsApproval,
+      (gated.page_1a2b3c4d as { needsApproval?: boolean }).needsApproval,
     ).toBe(true);
+
+    // ABSENT rather than `false`: `toNoExecuteAiSdkTool` spells a free tool by
+    // omission, so a no-execute turn built before floors existed stays
+    // byte-identical. The AI SDK reads the two the same way.
+    const free = buildPageTools(validatePageToolEntries([entry()]), false);
+    expect(
+      (free.page_1a2b3c4d as { needsApproval?: boolean }).needsApproval,
+    ).toBeUndefined();
   });
 
   it("has no execute, so the browser fulfills the call", () => {

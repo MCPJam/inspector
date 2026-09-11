@@ -45,7 +45,30 @@ const modulePath = join(
 );
 
 /** Every module `iteration-verdict.ts` is permitted to import. */
-const ALLOWED_IMPORTS = ["./types", "@/shared/eval-matching", "@mcpjam/sdk"];
+const ALLOWED_IMPORTS = [
+  "./types",
+  "@/shared/eval-matching",
+  "@mcpjam/sdk",
+  // ADDED DELIBERATELY (plan step C3), per the note above.
+  //
+  // `transcript-evidence.ts` reads the iteration's own trace — tool results,
+  // per-call span durations, the advertised tool inventory — and shapes them
+  // for the predicate transcript. It is an INPUT to the verdict, in the same
+  // class as `@/shared/eval-matching`, and the seal is about OUTPUTS: what
+  // this module must not see is the score contract, the grading mode, the
+  // judge and the second pass, because at `enforce` the rows are a projection
+  // of what this module decided and a module that could read them would be
+  // grading its own output. An evidence extractor cannot do that, and the
+  // assertion below pins that it stays that way.
+  "./transcript-evidence",
+];
+
+/** The extractor is held to the same seal, so widening it is not a back door. */
+const EVIDENCE_MODULE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "transcript-evidence.ts"
+);
 
 describe("iteration-verdict is sealed against the score engine", () => {
   test("imports nothing beyond the pre-B3a allowlist", () => {
@@ -55,6 +78,20 @@ describe("iteration-verdict is sealed against the score engine", () => {
     );
     expect(specifiers.length).toBeGreaterThan(0);
     expect([...new Set(specifiers)].sort()).toEqual([...ALLOWED_IMPORTS].sort());
+  });
+
+  test("the evidence extractor is sealed the same way", () => {
+    const source = readFileSync(EVIDENCE_MODULE, "utf8");
+    for (const forbidden of [
+      "score-rows",
+      "grading-mode",
+      "judge",
+      "@mcpjam/sdk/contract",
+    ]) {
+      expect(source, `transcript-evidence.ts mentions "${forbidden}"`).not.toContain(
+        forbidden
+      );
+    }
   });
 
   test("never mentions the score contract, the mode gate, or the judge", () => {

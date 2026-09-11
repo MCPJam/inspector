@@ -84,6 +84,17 @@ export interface ToolRenderContext {
   output: unknown;
   rawOutput: unknown;
   errorText?: string;
+  /**
+   * The trace adapter's readable rendering of the result, when it attached one
+   * to the part (`toolResultDisplay: "attached-to-tool"`). Distinct from
+   * `output`/`rawOutput`, which are the payload itself.
+   *
+   * Forwarded because a host that supplies `renderTool` replaces the package's
+   * own tool block and would otherwise have no way to reach it — it would show
+   * the raw payload for exactly the sessions this exists to make readable
+   * (BB-198). Prefer it over `output` when present; see `ToolCallPart`.
+   */
+  resultText?: string;
   uiType: UIType | null;
   isWidget: boolean;
   serverId?: string;

@@ -155,6 +155,55 @@ function caseSide(value: unknown): Rec {
   };
 }
 
+/**
+ * How much of each side's cost was actually observed.
+ *
+ * Travels WITH the cost diff rather than beside it, because the two are only
+ * meaningful together: a 40% drop across full coverage is a regression
+ * signal, and the same 40% with half the compare side unpriced is an
+ * artifact. A CLI gate reads these counts to decide `non_gateable` rather
+ * than passing or failing on a partial sum.
+ */
+function costCoverage(value: unknown): Rec | undefined {
+  // ABSENT STAYS ABSENT. A backend predating cost coverage sends no block at
+  // all, and answering `{ costed: 0, total: 0 }` on its behalf turns "this
+  // platform has no opinion" into the false statement "none of the run was
+  // priced". The SDK type documents absence as the no-opinion value and both
+  // cost gates refuse to judge on it; manufacturing a block here would strip
+  // that distinction before it ever reached them.
+  if (!isRecord(value)) return undefined;
+  const source = value;
+  const side = (raw: unknown): Rec => {
+    const inner = isRecord(raw) ? raw : {};
+    // These are COUNTS. A non-finite, negative or fractional value is not a
+    // count of iterations, and forwarding one would let a gate compare
+    // `costed < total` against nonsense. Zero is the conservative answer:
+    // it reads as "nothing priced", which refuses rather than passes.
+    const count = (raw2: unknown): number => {
+      const n = numOrNull(raw2);
+      return typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : 0;
+    };
+    const costed = count(inner.costed);
+    const total = count(inner.total);
+    // `costed > total` is not a coverage reading, it is corrupt data — and it
+    // would slip past `costed < total`, which is how a gate ends up judging
+    // a cost regression on numbers that cannot both be true. Reported as
+    // nothing costed, which the gates already refuse.
+    return { costed: costed <= total ? costed : 0, total };
+  };
+  return { base: side(source.base), compare: side(source.compare) };
+}
+
+/** Per-case metrics. An explicit whitelist, like every projection here. */
+function caseMetrics(value: unknown): Rec {
+  const metrics = isRecord(value) ? value : {};
+  const coverage = costCoverage(metrics.costCoverage);
+  return {
+    estimatedCostUsd: numericDiff(metrics.estimatedCostUsd),
+    ...(coverage !== undefined ? { costCoverage: coverage } : {}),
+  };
+}
+
 const CASE_STATUSES = new Set([
   "unchanged_passed",
   "unchanged_failed",
@@ -310,6 +359,7 @@ export function toRunCompareDto(
   const source = isRecord(diff) ? diff : {};
   const suite = isRecord(source.suite) ? source.suite : {};
   const metrics = isRecord(source.metrics) ? source.metrics : {};
+  const runCostCoverage = costCoverage(metrics.costCoverage);
   // The internal name is `scores`; see the module comment for why it is not
   // that here.
   const passSummary = isRecord(source.scores) ? source.scores : {};
@@ -330,6 +380,9 @@ export function toRunCompareDto(
       wallDurationMs: numericDiff(metrics.wallDurationMs),
       totalTokens: numericDiff(metrics.totalTokens),
       estimatedCostUsd: numericDiff(metrics.estimatedCostUsd),
+      ...(runCostCoverage !== undefined
+        ? { costCoverage: runCostCoverage }
+        : {}),
     },
     scoreContract: scoreContract(source.scoreContract),
     skills: skills(source.skills),
@@ -342,6 +395,10 @@ export function toRunCompareDto(
       scoreDeltas: scoreDeltas(row.scoreDeltas),
       base: caseSide(row.base),
       compare: caseSide(row.compare),
+      // Absent stays absent. A backend that reports no per-case metrics is
+      // saying nothing; publishing `{ estimatedCostUsd: all-null }` on its
+      // behalf turns that silence into a measured claim of no cost.
+      ...(isRecord(row.metrics) ? { metrics: caseMetrics(row.metrics) } : {}),
     })),
   };
 }

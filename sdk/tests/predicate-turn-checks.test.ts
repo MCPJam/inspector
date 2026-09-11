@@ -8,6 +8,7 @@ import {
   isTurnScopablePredicateKind,
   TURN_SCOPABLE_PREDICATE_KINDS,
 } from "../src/predicates/types";
+import { PREDICATE_KINDS } from "../src/contract/grader-stage";
 
 // Per-turn checks reuse the whole-iteration evaluator against a turn-scoped
 // slice. These tests prove the slice makes positional checks resolve to the
@@ -115,7 +116,47 @@ describe("TURN_SCOPABLE_PREDICATE_KINDS", () => {
     expect(isTurnScopablePredicateKind("noToolErrors")).toBe(true);
     expect(isTurnScopablePredicateKind("tokenBudgetUnder")).toBe(false);
     expect(TURN_SCOPABLE_PREDICATE_KINDS).not.toContain("tokenBudgetUnder");
-    // 12 predicate kinds total, exactly one (tokenBudgetUnder) is case-only.
-    expect(TURN_SCOPABLE_PREDICATE_KINDS).toHaveLength(11);
+    expect(isTurnScopablePredicateKind("noEndingQuestion")).toBe(true);
+    expect(isTurnScopablePredicateKind("onlyToolsCalled")).toBe(true);
+    // Pinned as the COMPLEMENT of the case-only kinds, each named with the
+    // reason it is case-only. A bare count went stale the moment the union
+    // grew past 12 and said nothing about WHICH kinds it was counting.
+    const CASE_ONLY = {
+      // Meaningless against a single turn's slice.
+      tokenBudgetUnder: "per-turn token usage is not captured",
+      turnCountUnder: "a turn's own turn count is always 1",
+      // `buildTurnTranscript` carries tool calls, errors, the turn's message
+      // and render observations — and nothing else. A kind that reads results,
+      // timings or the tool inventory would fail closed on every turn.
+      toolLatencyUnder: "a turn slice carries no timings",
+      toolResultContains: "a turn slice carries no results",
+      toolResultMatchesSchema: "a turn slice carries no results",
+      toolResultSizeUnder: "a turn slice carries no results",
+      toolErrorNamesInput: "a turn slice carries no tool inventory",
+      fullPageHasContinuation: "a turn slice carries no results",
+      argumentsMatchToolSchema: "a turn slice carries no tool inventory",
+      noDeprecatedToolCalled: "a turn slice carries no tool inventory",
+      noDestructiveToolCalled: "a turn slice carries no tool inventory",
+    };
+    expect([...TURN_SCOPABLE_PREDICATE_KINDS].sort()).toEqual(
+      (PREDICATE_KINDS as readonly string[])
+        .filter((kind) => !(kind in CASE_ONLY))
+        .slice()
+        .sort(),
+    );
   });
+});
+
+it("evaluates onlyToolsCalled separately for each prompt turn", () => {
+  const results = evaluateTurnChecks(
+    ["search", "delete"].map((toolName, promptIndex) => ({
+      promptIndex,
+      checks: [{ type: "onlyToolsCalled" as const, toolNames: ["search"] }],
+      transcript: buildTurnTranscript({
+        toolCalls: [{ toolName, arguments: {} }],
+      }),
+    }))
+  );
+  expect(results.map((r) => r.passed)).toEqual([true, false]);
+  expect(results[1].scope).toMatchObject({ promptIndex: 1 });
 });
