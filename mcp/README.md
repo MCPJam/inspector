@@ -83,6 +83,7 @@ so results respect the caller's project access.
 | `get_eval_run_stage_analytics` | Get one run's user-value chain funnel: per stage, how many trials it applied to, reached it, were measured there, passed, failed, and were excluded and why — overall and by intent, model and host. Counts only; a zero denominator means not measured, never 0. | — |
 | `get_eval_run_gate` | Get one run's stored suite quality-gate report: passed, failed, non_gateable, or not_configured. `not_configured` is a real report, never an absent route. A deployment that does not serve the route is a different fact — do not report it as no policy. A run waiver never covers this report. | — |
 | `get_eval_run_route_facts` | Get one run's tool routes and expected-versus-observed facts per case: which tool sequence each trial took, how many called nothing or looped, and for each expected tool how many trials never called it — with denominators, never a verdict. A run that exists but has no persisted document reads as `routeFactsState: "unmeasured"` — permanently, there is no backfill and nothing is computed locally; a run that cannot be retrieved is a run-not-found error. | — |
+| `get_eval_run_server_facts` | Get one run's server facts: per server the tool count, the catalog's measured size and its basis, annotation and output-schema coverage, and the deterministic tool-metadata prechecks — plus what connect and discovery observed, and any conformance or readiness runs for the same servers. Facts, never a verdict: only a precheck with `class: "spec_required"` names a violation, tokens are an estimate against a reference window, and related assessments are joined by server id alone. Computed on read, so there is no backfill window; a run with nothing to describe answers `state: "unavailable"` with a reason. | — |
 | `list_eval_suite_stage_analytics` | List a suite's chain funnels newest-first, one document per run — a trend series, never an aggregate. Partition on the parity fields before claiming a trend; runs that do not share them are separate observations. | — |
 | `compare_eval_run` | Compare an eval run against a baseline run: per-case status (regressed, fixed, new, removed, changed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. | — |
 | `get_eval_gate_waiver` | Read the audited override in force over an eval run's release gate — who granted it, why, and until when — or null. Available to anyone who can view the run. | — |
@@ -94,8 +95,10 @@ so results respect the caller's project access.
 | `propose_eval_description_rewrite` | Draft a rewritten description for one tool from a finished run's failed trials. SPENDS a small model budget; the developer applies the diff in their own server, MCPJam never edits it. | — |
 | `start_eval_description_experiment` | Replay the affected cases twice, original description versus the proposed rewrite, with the model, host and grader held still. SPENDS eval-iteration credits up to the stated cap; read the report from `get_eval_description_experiment`. | — |
 | `get_eval_description_experiment` | Read a description experiment: its proposal diff, the two arm runs, and the report-only result — pass rates per arm, the interval on the difference, regressions on untouched cases, and whether the evidence was controlled or only reproducible. | — |
-| `list_eval_check_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
-| `connect_eval_check_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
+| `list_eval_github_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
+| `connect_eval_github_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
+| `list_eval_check_repos` | Deprecated spelling of `list_eval_github_repos` — a `check` here is a GITHUB check, never a case's grading check. | — |
+| `connect_eval_check_repo` | Deprecated spelling of `connect_eval_github_repo`. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
@@ -110,7 +113,9 @@ so results respect the caller's project access.
 | `get_scenario` | Get one scenario's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |
 | `search_sessions` | Search a project's sessions across every surface (Playground, user testing, evals, swarms), ranked by relevance. `scope=titles` searches titles and opening messages; `scope=transcripts` searches what was said. Every result carries a link. | — |
-| `send_chat_message` | Send one message to a project's MCP servers and get the reply plus the raw tool calls, per-call latency and token usage. SPENDS model credits. Pass the returned `sessionId` back to continue. Tools default to `read_only`; `toolMode=auto` may cause real side effects. `idempotencyKey` is required and must be stable across retries. | — |
+| `send_chat_message` | Send one message to a project's MCP servers and get the reply plus the raw tool calls, per-call latency and token usage. SPENDS model credits. Send `browser: {policy: …}` initially and `browser: {}` on later browser turns. Pass the returned `sessionId` back to continue. Tools default to `read_only`; `toolMode=auto` may cause real side effects. `idempotencyKey` is required and must be stable across retries. | — |
+| `drive_chat_session_browser` | Open or drive an API Playground session browser under its stored policy; uses metered desktop time. | — |
+| `observe_chat_session_browser` | Observe the session browser (may wake a metered desktop), or read command traces and screenshot URLs. | — |
 | `get_chat_session` | Read a session's metadata and a window of its raw messages, indexed by absolute transcript position — the same indices the trace spans reference. | — |
 | `get_chat_session_trace` | Read a session's per-turn spans: tool latency, token usage, transcript indices. Returns the latest turn by default; page older turns with `afterPromptIndex`, or pass `includeSpans=false` for summaries. | — |
 | `get_capabilities` | Your role, which betas this organization has, your plan's limits, and a `can` block of booleans. Ask this before planning work that authors, launches or publishes — the tool list is the same for every caller and cannot tell you a beta is off. | — |
@@ -272,7 +277,7 @@ This worker serves MCPJam's own Agent Skills alongside its tools, so an agent th
 
 and implements `skills/list`, `skills/get`, and `resources/read` for every URI in a skill's manifest. `resources/directory/read` is **not** implemented, so `directoryRead` is not declared — the manifest already enumerates every file.
 
-The catalog is `run-mcpjam-evals`, `mcpjam-eval-import`, `create-mcp-eval`, and `explore-to-sdk-evals`. Only the first teaches this server's *tools* — the eval-run loop, what bills, and how to triage a failure. The other three teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
+The catalog includes `drive-mcpjam-playground`, which teaches agent-driven session turns, browser commands, handoff, and screenshot evidence. The eval skills are `run-mcpjam-evals`, `mcpjam-eval-import`, `create-mcp-eval`, and `explore-to-sdk-evals`. Among the eval skills, only the first teaches this server's *tools* — the eval-run loop, what bills, and how to triage a failure. The other three teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
 
 **The bundle is generated and committed.** `scripts/generate-skills-bundle.mjs` reads the SKILL.md sources, computes SHA-256 digests and byte sizes, and writes `src/generated/SkillsBundle.generated.ts`. After editing a skill, run `npm run bundle:skills -w @mcpjam/mcp` and commit the result; `tests/skillsBundleDrift.test.ts` fails if you forget. The generator is not a build hook because `build:ui` and `deploy` do not build `@mcpjam/sdk`, which it imports on purpose — it must parse frontmatter with the same function a host re-parses with, or we manufacture our own `frontmatter_drift`.
 
@@ -304,6 +309,32 @@ The verified bearer token is forwarded to the Platform API
 (`PLATFORM_API_URL`, the Inspector `/api/v1` surface) on every tool call, so
 the API sees the same WorkOS identity the main app does and applies its own
 per-project authorization to listings, probes, and eval runs.
+
+### How a run this worker starts is attributed
+
+Every eval run started through a tool here lands on the Platform API, which
+stamps its `source` as `api` — the same stamp a curl script gets, because from
+the API's side that is what this is. So a Runs table could not tell an agent's
+run from anyone else's.
+
+The worker closes that gap by DECLARING itself: each Platform API client it
+builds carries `launcher: { kind: "mcp", client: <the request's user-agent> }`,
+which the platform stores beside the stamp and the Runs table renders as
+**MCP**, naming the calling agent.
+
+Three things about that are deliberate:
+
+- **It is a label, not a claim of authority.** `source` is still stamped
+  server-side, and the platform separately records the verified credential the
+  request authenticated with. Nothing reads the declaration to decide access.
+- **It is set on the client, not on the tool's input.** An operation's input
+  schema is exposed verbatim as the MCP tool's own input, so a `launcher` field
+  there would let the agent whose run it is choose its own badge.
+- **`client` comes from the request's `user-agent`, not from `initialize`.**
+  `createMcpHandler` builds a fresh `McpServer` per HTTP request, so by the time
+  a tool call runs there is no session that remembers the handshake's
+  `clientInfo`. An absent header leaves the launcher unnamed rather than
+  guessed.
 
 ### AuthKit domains
 

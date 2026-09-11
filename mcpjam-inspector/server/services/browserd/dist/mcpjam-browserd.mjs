@@ -3,11 +3,15 @@
 
 // server/services/browserd/daemon/server.ts
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
-var BROWSERD_PROTOCOL_VERSION = 1;
+var BROWSERD_PROTOCOL_VERSION = 2;
+var BROWSERD_WEBMCP_FEATURES = [
+  "webmcp-eager",
+  "webmcp-binding"
+];
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
@@ -17,8 +21,12 @@ var HOSTED_DISPLAY = {
   width: BROWSERD_OBSERVATION_VIEWPORT.width,
   height: BROWSERD_OBSERVATION_VIEWPORT.height
 };
-function isPointInViewport(x, y) {
-  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 && y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1;
+function wantsFor(observe) {
+  const mode = observe ?? "screenshot";
+  return {
+    a11y: mode === "a11y" || mode === "both",
+    screenshot: mode === "screenshot" || mode === "both"
+  };
 }
 var DEFAULT_COMMAND_QUEUE_OPTIONS = {
   maxRetained: 512,
@@ -51,16 +59,36 @@ var BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  "browser_policy_refused",
+  /** A `fill_form` stopped partway; the detail names which field and why. */
+  "fill_form_failed",
   "out_of_viewport",
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /**
+   * Something is on top of the target at its click point, so the input would
+   * land on that element instead. The detail names the covering element.
+   *
+   * Its own code because the recovery is specific and the model can perform
+   * it: dismiss the banner or the modal, then retry the original target. A
+   * click that silently hit the overlay reports success, and a bare
+   * `act_failed` sends the model back to re-observe a page that has not
+   * changed.
+   */
+  "target_covered",
   /** A ref this tab's last observation never issued. */
   "unknown_ref",
   /** The page could not answer an accessibility tree at all. */
   "a11y_unavailable",
   "webmcp_unsupported",
   "webmcp_error",
+  /**
+   * The tool the caller named is not the tool it bound to: the tab navigated,
+   * the frame is gone, or the page re-registered under the same name. Nothing
+   * was invoked. Recoverable — the caller re-reads the page's tools.
+   */
+  "stale_binding",
   /** A dialog is open and waiting for the person who holds the lease. */
   "dialog_pending",
   /** A download exceeded the per-file or per-session cap and was cancelled. */
@@ -73,7 +101,9 @@ var BROWSERD_ERROR_CODES = [
   /** Another live process owns this profile directory. */
   "profile_in_use",
   /** A result's URL is outside an unattended run's origin allowlist. */
-  "origin_not_allowed"
+  "origin_not_allowed",
+  /** The session policy does not admit this command. */
+  "tool_not_allowed"
 ];
 var BROWSERD_ERROR_CODE_SET = new Set(
   BROWSERD_ERROR_CODES
@@ -88,6 +118,9 @@ function parseBrowserdErrorCode(error) {
 }
 
 // server/services/browserd/daemon/command-queue.ts
+function isOutOfBand(command) {
+  return command.action.kind === "webmcp_cancel";
+}
 function queueKeyFor(command) {
   return command.tabId ?? DEFAULT_QUEUE_KEY;
 }
@@ -147,12 +180,20 @@ var CommandQueue = class {
       );
     }
   }
+  /** Whether every per-tab FIFO is drained. Used for profile snapshots. */
+  isIdle() {
+    for (const count of this.depth.values()) {
+      if (count > 0) return false;
+    }
+    return true;
+  }
   async submit(command) {
+    if (isOutOfBand(command)) return this.runOutOfBand(command);
     if (isReplayable(command)) return this.runUntracked(command);
     const existing = this.lookup(command.commandId);
     if (existing) {
       const result2 = existing.state === "running" ? await existing.promise : existing.result;
-      return { status: "ok", result: result2, bootId: this.bootId };
+      return { status: "ok", result: result2, bootId: this.bootId, deduped: true };
     }
     if (this.evicted.has(command.commandId)) {
       return { status: "expired", bootId: this.bootId };
@@ -204,6 +245,23 @@ var CommandQueue = class {
       this.depth.set(key, (this.depth.get(key) ?? 1) - 1);
       if (this.tails.get(key) === raw) this.tails.delete(key);
     }
+  }
+  /**
+   * Run a command NOW, off the tab's FIFO entirely.
+   *
+   * Not depth-capped either, and deliberately: the depth cap exists to stop a
+   * caller stampeding the browser with work, and this lane carries only
+   * cancellations — refusing one because the tab is busy would refuse it in
+   * exactly the situation it is for. Untracked, like a read: a cancellation is
+   * idempotent, so a retry replaying it costs nothing and a tombstone would buy
+   * nothing.
+   */
+  async runOutOfBand(command) {
+    const result = await this.executor(command).then(
+      (value) => value,
+      normalizeError
+    );
+    return { status: "ok", result, bootId: this.bootId };
   }
   /** Current retained-result count. Exposed for tests. */
   get retainedCount() {
@@ -270,6 +328,506 @@ var CommandQueue = class {
   }
 };
 
+// server/services/browserd/daemon/command-ledger.ts
+var DEFAULT_LEDGER_OPTIONS = {
+  maxRows: 512,
+  maxArtifacts: 64,
+  maxArtifactBytes: 32 * 1024 * 1024
+};
+var artifactCounter = 0;
+function defaultMintId() {
+  artifactCounter += 1;
+  return `art_${Date.now().toString(36)}_${artifactCounter.toString(36)}`;
+}
+function sanitizeLedgerUrl(value) {
+  if (typeof value !== "string" || !value) return void 0;
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return void 0;
+  }
+  if (parsed.protocol === "data:") return void 0;
+  parsed.username = "";
+  parsed.password = "";
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+function redactAction(action, options = {}) {
+  switch (action.kind) {
+    case "navigate":
+      return {
+        kind: "navigate",
+        ...sanitizeLedgerUrl(action.url) ? { url: sanitizeLedgerUrl(action.url) } : {}
+      };
+    case "back":
+    case "forward":
+    case "reload":
+      return { kind: action.kind };
+    case "act": {
+      const target = action.target;
+      const record = {
+        kind: "act",
+        verb: action.verb,
+        ...target ? {
+          target: "selector" in target ? { selector: target.selector } : "a11yRef" in target ? { a11yRef: target.a11yRef } : { coordinates: target.coordinates }
+        } : {}
+      };
+      if (typeof action.value === "string") {
+        if (action.verb === "type" && !options.captureTypedText) {
+          record.redactedValue = { redacted: true, chars: action.value.length };
+        } else {
+          record.value = action.value;
+        }
+      }
+      return record;
+    }
+    case "observe":
+      return { kind: "observe", mode: action.mode };
+    case "webmcp_invoke":
+      return { kind: "webmcp_invoke", toolKey: action.toolKey };
+    case "webmcp_cancel":
+      return { kind: "webmcp_cancel" };
+    default: {
+      const exhaustive = action;
+      return { kind: exhaustive.kind };
+    }
+  }
+}
+var CommandLedger = class {
+  bootId;
+  maxRows;
+  maxArtifacts;
+  maxArtifactBytes;
+  mintId;
+  nextSeq = 1;
+  entries = [];
+  artifacts = /* @__PURE__ */ new Map();
+  /** Every id this boot has minted, payload or not. @see knowsArtifact */
+  knownArtifacts = /* @__PURE__ */ new Set();
+  artifactBytes = 0;
+  constructor(options) {
+    this.bootId = options.bootId;
+    this.maxRows = options.maxRows ?? DEFAULT_LEDGER_OPTIONS.maxRows;
+    this.maxArtifacts = options.maxArtifacts ?? DEFAULT_LEDGER_OPTIONS.maxArtifacts;
+    this.maxArtifactBytes = options.maxArtifactBytes ?? DEFAULT_LEDGER_OPTIONS.maxArtifactBytes;
+    this.mintId = options.mintId ?? defaultMintId;
+    if (!Number.isInteger(this.maxRows) || this.maxRows < 1) {
+      throw new RangeError(`maxRows must be an integer >= 1, got ${this.maxRows}`);
+    }
+  }
+  /** The highest seq minted so far. A reader's cursor starts here to tail. */
+  get headSeq() {
+    return this.nextSeq - 1;
+  }
+  /**
+   * Record one command's disposition.
+   *
+   * Called for EVERY command the handler answers — executed, refused or
+   * unknown alike — and returns the row it wrote so the caller can hand the
+   * seq straight back to a client that wants to look it up.
+   */
+  record(input) {
+    const { command } = input;
+    const output = input.capturePage ? asRecord(input.output) : void 0;
+    const artifacts = output ? this.storeArtifacts(output) : void 0;
+    const url = sanitizeLedgerUrl(output?.url);
+    const row = {
+      kind: "command",
+      seq: this.nextSeq++,
+      commandId: command.commandId,
+      ...input.sessionId ? { sessionId: input.sessionId } : {},
+      bootId: this.bootId,
+      ...command.tabId ? { tabId: command.tabId } : {},
+      source: command.source,
+      actor: input.actor,
+      ...input.correlation && Object.keys(input.correlation).length ? { correlation: input.correlation } : {},
+      ts: input.ts,
+      durationMs: input.durationMs,
+      command: redactAction(command.action, {
+        captureTypedText: input.captureTypedText === true
+      }),
+      outcome: input.outcome,
+      ...input.ok === void 0 ? {} : { ok: input.ok },
+      ...input.errorCode ? { errorCode: input.errorCode } : {},
+      ...input.deduped ? { deduped: true } : {},
+      ...url ? { url } : {},
+      ...typeof output?.title === "string" ? { title: output.title } : {},
+      ...input.capturePage && input.stateToken ? { stateToken: input.stateToken } : {},
+      ...input.capturePage && input.viewport ? { viewport: input.viewport } : {},
+      ...artifacts && Object.keys(artifacts).length ? { artifacts } : {},
+      ...typeof input.cursors?.console === "number" ? { consoleSeqAfter: input.cursors.console } : {},
+      ...typeof input.cursors?.errors === "number" ? { errorsSeqAfter: input.cursors.errors } : {}
+    };
+    this.push(row);
+    return row;
+  }
+  /**
+   * Note history this ledger knows it does not have.
+   *
+   * The `daemon_restart` case is written by whoever notices a bootId change —
+   * the ring itself cannot, being new. Without it a relaunch mid-session reads
+   * as a quiet stretch rather than as a browser that went away and came back.
+   */
+  noteGap(reason, span) {
+    const gap = {
+      kind: "gap",
+      seq: this.nextSeq++,
+      bootId: this.bootId,
+      ts: Date.now(),
+      fromSeq: span?.fromSeq ?? 0,
+      toSeq: span?.toSeq ?? 0,
+      reason
+    };
+    this.entries.push(gap);
+    this.trim();
+  }
+  /**
+   * Read forward from a cursor.
+   *
+   * Incremental by default: a reader tails with the `seq` it last saw, which is
+   * what both the CLI's `trace` and the rail's Activity list do on a timer. A
+   * `commandId` lookup is the other shape — the one a caller uses after an
+   * `unknown` outcome to find out what actually happened to it.
+   */
+  read(options = {}) {
+    const limit = Math.max(1, Math.min(options.limit ?? 100, 1e3));
+    let matched = this.entries;
+    if (options.commandId !== void 0) {
+      const id = options.commandId;
+      matched = matched.filter(
+        (entry) => entry.kind === "command" && entry.commandId === id
+      );
+    }
+    if (options.afterSeq !== void 0) {
+      const after = options.afterSeq;
+      matched = matched.filter((entry) => entry.seq > after);
+    }
+    return { entries: matched.slice(0, limit), headSeq: this.headSeq };
+  }
+  /**
+   * Has this ledger ever minted this artifact id?
+   *
+   * Lets a reader tell a typo from a payload that aged out — 404 against 410 —
+   * which are different problems with different fixes. The id set is bounded by
+   * the same eviction the payloads are: it is trimmed alongside them.
+   */
+  knowsArtifact(id) {
+    return this.knownArtifacts.has(id);
+  }
+  /** Fetch one artifact payload, or undefined once it has aged out. */
+  artifact(id) {
+    const stored = this.artifacts.get(id);
+    if (!stored) return void 0;
+    return {
+      id: stored.id,
+      mediaType: stored.mediaType,
+      encoding: stored.encoding,
+      data: stored.data
+    };
+  }
+  /**
+   * Forget one artifact payload, once something durable has it.
+   *
+   * The inspector calls this after writing a screenshot to disk: the daemon's
+   * store is a hand-off buffer, not a second copy, and holding megabytes of
+   * pictures that already exist as files is how a long session runs a laptop
+   * out of memory.
+   */
+  releaseArtifact(id) {
+    const stored = this.artifacts.get(id);
+    if (!stored) return;
+    this.artifacts.delete(id);
+    this.artifactBytes -= stored.bytes;
+  }
+  push(row) {
+    this.entries.push(row);
+    this.trim();
+  }
+  /**
+   * Drop the oldest entries past the cap and say so IN PLACE.
+   *
+   * The gap row is written during the trim rather than deferred to the next
+   * command, because a reader can arrive at any moment — including right after
+   * an overflow and before anything else happens — and a ring whose last entry
+   * is a real row would then be lying about history it had just thrown away.
+   *
+   * The gap is inserted AFTER the drop loop, never inside it: a gap row placed
+   * mid-loop is itself over the cap, gets dropped on the next iteration, and
+   * the loop trims forever. So the loop only ACCUMULATES the span — absorbing
+   * any older gap it passes over — and one row is written at the end.
+   *
+   * It goes at the FRONT, where the dropped rows were, and coalesces with a
+   * leading overflow gap already there. Coalescing is what keeps this bounded:
+   * one gap describing everything dropped so far, rather than a ring that fills
+   * with gap rows about gap rows. The ring therefore holds `maxRows` entries
+   * plus at most that one leading gap.
+   *
+   * Its `seq` is the LAST dropped row's, so cursor arithmetic still works: a
+   * reader tailing from beyond it already has those rows and is not told about
+   * a hole it does not have, while a reader starting behind it is.
+   */
+  trim() {
+    let fromSeq;
+    let toSeq;
+    while (this.entries.length > this.maxRows) {
+      const dropped = this.entries.shift();
+      if (!dropped) break;
+      if (dropped.kind === "gap") {
+        if (dropped.reason === "ring_overflow") {
+          fromSeq = Math.min(fromSeq ?? dropped.fromSeq, dropped.fromSeq);
+          toSeq = Math.max(toSeq ?? dropped.toSeq, dropped.toSeq);
+        }
+        continue;
+      }
+      if (dropped.artifacts) {
+        for (const ref of Object.values(dropped.artifacts)) {
+          if (!ref) continue;
+          this.releaseArtifact(ref.id);
+          this.knownArtifacts.delete(ref.id);
+        }
+      }
+      fromSeq = Math.min(fromSeq ?? dropped.seq, dropped.seq);
+      toSeq = Math.max(toSeq ?? dropped.seq, dropped.seq);
+    }
+    if (fromSeq === void 0 || toSeq === void 0) return;
+    const head = this.entries[0];
+    if (head?.kind === "gap" && head.reason === "ring_overflow") {
+      head.fromSeq = Math.min(head.fromSeq, fromSeq);
+      head.toSeq = Math.max(head.toSeq, toSeq);
+      head.seq = head.toSeq;
+      return;
+    }
+    this.entries.unshift({
+      kind: "gap",
+      seq: toSeq,
+      bootId: this.bootId,
+      ts: Date.now(),
+      fromSeq,
+      toSeq,
+      reason: "ring_overflow"
+    });
+  }
+  /**
+   * Lift the page-derived payloads out of a result and into the artifact store.
+   *
+   * They leave the ROW because a row is metadata a UI lists a hundred at a time
+   * and a screenshot is a hundred kilobytes. The row keeps the id, the size and
+   * the media type — enough to render "screenshot, 84 KB" and fetch it on
+   * demand.
+   */
+  storeArtifacts(output) {
+    if (!output) return void 0;
+    const artifacts = {};
+    const screenshot = output.screenshot;
+    if (typeof screenshot === "string" && screenshot) {
+      artifacts.screenshot = this.put(screenshot, "image/jpeg", "base64");
+    }
+    const a11y = output.a11y;
+    if (typeof a11y === "string" && a11y) {
+      artifacts.a11y = this.put(a11y, "text/plain", "utf8");
+    }
+    const text = output.text;
+    if (typeof text === "string" && text) {
+      artifacts.text = this.put(text, "text/plain", "utf8");
+    }
+    return artifacts;
+  }
+  put(data, mediaType, encoding) {
+    const id = this.mintId();
+    this.knownArtifacts.add(id);
+    const bytes = encoding === "base64" ? Math.floor(data.length * 3 / 4) : Buffer.byteLength(data, "utf8");
+    if (bytes > this.maxArtifactBytes) {
+      return { id, bytes, mediaType, evicted: true };
+    }
+    this.artifacts.set(id, { id, mediaType, encoding, data, bytes });
+    this.artifactBytes += bytes;
+    this.evictArtifacts();
+    return { id, bytes, mediaType };
+  }
+  evictArtifacts() {
+    while (this.artifacts.size > this.maxArtifacts || this.artifactBytes > this.maxArtifactBytes) {
+      const oldest = this.artifacts.keys().next();
+      if (oldest.done) break;
+      const id = oldest.value;
+      this.releaseArtifact(id);
+      for (const entry of this.entries) {
+        if (entry.kind !== "command" || !entry.artifacts) continue;
+        for (const ref of Object.values(entry.artifacts)) {
+          if (ref?.id === id) ref.evicted = true;
+        }
+      }
+    }
+  }
+};
+function asRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+
+// server/services/browserd/daemon/pane-command.ts
+import { randomUUID } from "node:crypto";
+
+// shared/browser-pane-command.ts
+var BROWSER_PANE_OPS = [
+  "navigate",
+  "back",
+  "forward",
+  "reload",
+  "create_tab",
+  "activate_tab",
+  "close_tab"
+];
+function normalizePaneUrl(input) {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const schemeless = !hasExplicitScheme(trimmed);
+  let parsed;
+  try {
+    parsed = new URL(schemeless ? `https://${trimmed}` : trimmed);
+  } catch {
+    return null;
+  }
+  if (schemeless && isLoopbackHost(parsed.hostname)) {
+    try {
+      parsed = new URL(`http://${trimmed}`);
+    } catch {
+      return null;
+    }
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  if (!parsed.hostname) return null;
+  const bare = !parsed.hostname.includes(".");
+  if (bare && !isLoopbackHost(parsed.hostname) && !parsed.port) return null;
+  return parsed.toString();
+}
+function hasExplicitScheme(input) {
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(input)) return false;
+  return !/^[a-zA-Z][a-zA-Z0-9+.-]*:\d+(?:[/?#]|$)/.test(input);
+}
+function isLoopbackHost(hostname2) {
+  return hostname2 === "localhost" || hostname2.endsWith(".localhost") || hostname2 === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname2);
+}
+
+// server/services/browserd/daemon/pane-command.ts
+var PANE_NEW_TAB_URL = "about:blank";
+var PANE_OPS = new Set(BROWSER_PANE_OPS);
+var MAX_TAB_ID_CHARS = 200;
+function parsePaneCommand(raw) {
+  if (typeof raw !== "object" || raw === null) return null;
+  const value = raw;
+  const op = value.op;
+  if (typeof op !== "string" || !PANE_OPS.has(op)) return null;
+  const tabId = typeof value.tabId === "string" && value.tabId.length <= MAX_TAB_ID_CHARS ? value.tabId : void 0;
+  switch (op) {
+    case "navigate": {
+      if (typeof value.url !== "string") return null;
+      const url = normalizePaneUrl(value.url);
+      if (!url) return null;
+      return { op: "navigate", url, ...tabId ? { tabId } : {} };
+    }
+    case "back":
+    case "forward":
+    case "reload":
+      return { op, ...tabId ? { tabId } : {} };
+    case "create_tab": {
+      if (value.url === void 0) return { op: "create_tab" };
+      if (typeof value.url !== "string") return null;
+      const url = normalizePaneUrl(value.url);
+      if (!url) return null;
+      return { op: "create_tab", url };
+    }
+    case "activate_tab":
+    case "close_tab":
+      if (!tabId) return null;
+      return { op, tabId };
+    default:
+      return null;
+  }
+}
+function parseAnchor(raw) {
+  if (typeof raw !== "object" || raw === null) return void 0;
+  const value = raw;
+  if (typeof value.tabId !== "string" || typeof value.url !== "string" || typeof value.navCounter !== "number") {
+    return void 0;
+  }
+  return {
+    tabId: value.tabId,
+    url: value.url,
+    navCounter: value.navCounter,
+    ...typeof value.bootId === "string" ? { bootId: value.bootId } : {},
+    ...typeof value.viewportRevision === "number" ? { viewportRevision: value.viewportRevision } : {}
+  };
+}
+function paneCommandToAction(command) {
+  switch (command.op) {
+    case "navigate":
+      return {
+        action: { kind: "navigate", url: command.url, observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "back":
+      return {
+        action: { kind: "back", observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "forward":
+      return {
+        action: { kind: "forward", observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "reload":
+      return {
+        action: { kind: "reload", observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "create_tab":
+      return {
+        action: {
+          kind: "navigate",
+          url: command.url ?? PANE_NEW_TAB_URL,
+          newTab: true,
+          observe: "none"
+        },
+        tabId: `pane-${randomUUID().slice(0, 8)}`
+      };
+    case "activate_tab":
+      return {
+        action: { kind: "act", verb: "activate_tab", observe: "none" },
+        tabId: command.tabId
+      };
+    case "close_tab":
+      return {
+        action: { kind: "act", verb: "close_tab", observe: "none" },
+        tabId: command.tabId
+      };
+    default: {
+      const exhaustive = command;
+      throw new Error(
+        `pane command ${JSON.stringify(exhaustive)} has no daemon action`
+      );
+    }
+  }
+}
+
+// server/services/browserd/daemon/state-token.ts
+import { createHash } from "node:crypto";
+function shortHash(value) {
+  return createHash("sha1").update(value, "utf8").digest("hex").slice(0, 16);
+}
+function computeStateToken(inputs) {
+  return {
+    tabId: inputs.tabId,
+    navCounter: inputs.navCounter,
+    urlHash: shortHash(inputs.url),
+    domHash: shortHash(inputs.domSignal),
+    ...inputs.viewportRevision !== void 0 ? { viewportRevision: inputs.viewportRevision } : {}
+  };
+}
+
+// server/services/browserd/daemon/request-handler.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+
 // server/services/browserd/daemon/auth.ts
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 function presentedBearer(headerValue2) {
@@ -284,6 +842,259 @@ function constantTimeEquals(a, b) {
   const digestA = createHmac("sha256", AUTH_DIGEST_KEY).update(a, "utf8").digest();
   const digestB = createHmac("sha256", AUTH_DIGEST_KEY).update(b, "utf8").digest();
   return timingSafeEqual(digestA, digestB);
+}
+
+// server/services/browserd/daemon/video-recorder.ts
+import { spawn } from "node:child_process";
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
+var MIN_RECORD_FPS = 1;
+var MAX_RECORD_FPS = 30;
+var DEFAULT_RECORD_FPS = 15;
+var FRAGMENT_SECONDS = 4;
+var DEFAULT_FINALIZE_GRACE_MS = 2e3;
+function recorderArgs(options) {
+  return [
+    "-loglevel",
+    "error",
+    "-progress",
+    "pipe:2",
+    "-f",
+    "x11grab",
+    "-framerate",
+    String(options.fps),
+    "-video_size",
+    `${options.width}x${options.height}`,
+    "-draw_mouse",
+    "1",
+    "-i",
+    options.display,
+    "-vf",
+    // `max`: the most consecutive frames mpdecimate may drop — the floor
+    // that gives `-force_key_frames` below something to land on.
+    `mpdecimate=max=${options.fps * FRAGMENT_SECONDS}`,
+    "-fps_mode",
+    "vfr",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-tune",
+    "zerolatency",
+    "-threads",
+    "1",
+    "-profile:v",
+    "baseline",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    String(options.fps * FRAGMENT_SECONDS),
+    "-sc_threshold",
+    "0",
+    // Wall clock, not frame count — the only one of the three that survives
+    // decimation. `t` is the frame's presentation time in seconds.
+    "-force_key_frames",
+    `expr:gte(t,n_forced*${FRAGMENT_SECONDS})`,
+    "-crf",
+    "28",
+    "-maxrate",
+    "800k",
+    "-bufsize",
+    "1600k",
+    "-movflags",
+    "+frag_keyframe+empty_moov+default_base_moof",
+    "-fs",
+    String(options.maxBytes),
+    "-f",
+    "mp4",
+    // OVERWRITE. Without it ffmpeg stops at an interactive "File exists?"
+    // prompt on a reused id — with stdin ignored that is a process that writes
+    // nothing and exits, AFTER `start` has already answered `ok`. A take that
+    // reuses an id means the previous one is finished with; replacing it is
+    // the only reading under which the answer stays true.
+    "-y",
+    options.outputPath
+  ];
+}
+function createProgressReader() {
+  let pending = "";
+  return {
+    push(chunk) {
+      const text = pending + chunk;
+      const lastBreak = text.lastIndexOf("\n");
+      if (lastBreak < 0) {
+        pending = text;
+        return void 0;
+      }
+      pending = text.slice(lastBreak + 1);
+      let found;
+      for (const line2 of text.slice(0, lastBreak).split("\n")) {
+        const match = /^frame=\s*(\d+)\s*$/.exec(line2.trim());
+        if (!match) continue;
+        const value = Number(match[1]);
+        if (Number.isFinite(value)) found = value;
+      }
+      return found;
+    }
+  };
+}
+function createVideoRecorder(options) {
+  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn(command, [...args], {
+    stdio: [...spawnOptions.stdio]
+  }));
+  const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
+  const statFile = options.statFile ?? (async (path) => stat(path));
+  const now = options.now ?? Date.now;
+  const nonce = options.nonce ?? randomBytes2(4).toString("hex");
+  const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
+  let take;
+  let stopping;
+  let takeSeq = 0;
+  let disposed = false;
+  const start = (args) => {
+    if (disposed) return { ok: false, error: "record_unavailable" };
+    if (take || stopping) return { ok: false, error: "record_active" };
+    takeSeq += 1;
+    const path = join(options.dir, `${args.id}-${nonce}-${takeSeq}.mp4`);
+    let child;
+    try {
+      child = spawnProcess(
+        ffmpegPath,
+        recorderArgs({
+          display: options.display,
+          width: options.width,
+          height: options.height,
+          fps: args.fps,
+          maxBytes: options.maxBytes,
+          outputPath: path
+        }),
+        // stdout ignored: everything this process says rides the progress pipe
+        // on stderr, and the video goes to a file.
+        { stdio: ["ignore", "ignore", "pipe"] }
+      );
+    } catch {
+      return { ok: false, error: "record_unavailable" };
+    }
+    let settleExit = () => {
+    };
+    const exited = new Promise((resolve2) => {
+      settleExit = resolve2;
+    });
+    const entry = {
+      id: args.id,
+      fps: args.fps,
+      path,
+      startedAtMs: now(),
+      child,
+      distinctFrames: 0,
+      exited,
+      settleExit,
+      endedEarly: false
+    };
+    take = entry;
+    child.on("error", () => {
+      if (take !== entry) return;
+      entry.endedEarly = true;
+      entry.settleExit();
+    });
+    child.on("exit", () => {
+      entry.settleExit();
+      if (take !== entry) return;
+      entry.endedEarly = true;
+    });
+    const progress = createProgressReader();
+    child.stderr.on("data", (chunk) => {
+      const frames = progress.push(String(chunk));
+      if (frames !== void 0) entry.distinctFrames = frames;
+    });
+    return { ok: true };
+  };
+  const stop = async () => {
+    const entry = take;
+    take = void 0;
+    if (!entry) return null;
+    const processGone = entry.exited.then(() => {
+      if (stopping === processGone) stopping = void 0;
+    });
+    stopping = processGone;
+    return runStop(entry);
+  };
+  const runStop = async (entry) => {
+    if (!entry.endedEarly) {
+      try {
+        entry.child.kill("SIGINT");
+      } catch {
+      }
+    }
+    await entry.exited;
+    const durationMs = Math.max(0, now() - entry.startedAtMs);
+    let bytes = 0;
+    try {
+      bytes = (await statFile(entry.path)).size;
+    } catch {
+      bytes = 0;
+    }
+    return {
+      path: entry.path,
+      bytes,
+      durationMs,
+      distinctFrames: entry.distinctFrames,
+      truncated: entry.endedEarly
+    };
+  };
+  return {
+    start,
+    stop,
+    status() {
+      if (!take) return { active: false };
+      return {
+        active: !take.endedEarly,
+        id: take.id,
+        fps: take.fps,
+        startedAtMs: take.startedAtMs,
+        distinctFrames: take.distinctFrames
+      };
+    },
+    async finalize(args) {
+      disposed = true;
+      const entry = take;
+      if (!entry) return;
+      take = void 0;
+      if (entry.endedEarly) return;
+      try {
+        entry.child.kill("SIGINT");
+      } catch {
+        return;
+      }
+      const graceMs = args?.graceMs ?? DEFAULT_FINALIZE_GRACE_MS;
+      let timer;
+      await Promise.race([
+        entry.exited,
+        new Promise((resolve2) => {
+          timer = setTimer(() => {
+            try {
+              entry.child.kill("SIGKILL");
+            } catch {
+            }
+            resolve2();
+          }, graceMs);
+        })
+      ]);
+      clearTimer(timer);
+    },
+    dispose() {
+      disposed = true;
+      const entry = take;
+      take = void 0;
+      if (!entry || entry.endedEarly) return;
+      try {
+        entry.child.kill("SIGKILL");
+      } catch {
+      }
+    }
+  };
 }
 
 // server/services/browserd/daemon/lease.ts
@@ -493,19 +1304,36 @@ function handoffNoteFor(kind) {
 
 // server/services/browserd/daemon/request-handler.ts
 var MAX_INPUT_EVENTS = 64;
-var INPUT_BOOST_INTERVAL_MS = 33;
-var INPUT_BOOST_WINDOW_MS = 1500;
+var ACTIVITY_BOOST_INTERVAL_MS = 33;
+var ACTIVITY_BOOST_WINDOW_MS = 1500;
+var MOTION_ACTIONS = /* @__PURE__ */ new Set([
+  "navigate",
+  "back",
+  "forward",
+  "reload",
+  "act"
+]);
+var UNATTRIBUTED_ACTOR = {
+  kind: "inspector",
+  id: "unattributed"
+};
+var RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 var BrowserdRequestHandler = class {
   queue;
   driver;
   bootId;
   token;
   lease;
+  authority;
   features;
   bundleHash;
   contextMode;
   startedBy;
   setVideoTier;
+  ledger;
+  captureTypedText;
+  recorder;
+  profileExport;
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -525,17 +1353,36 @@ var BrowserdRequestHandler = class {
    * the very thing this whole compatibility mechanism exists to avoid).
    */
   lastActivityAt = null;
+  retiring = false;
+  suspensionId = null;
+  completedSuspensions = /* @__PURE__ */ new Set();
+  activeOperations = 0;
+  /** Atomic admission barrier held through teardown; a read of isIdle alone races. */
+  tryRetireIfIdle(disconnected = false) {
+    if (this.retiring || this.activeOperations > 0 || !this.queue.isIdle?.() || !disconnected && this.lease.state().state === "held")
+      return false;
+    this.retiring = true;
+    return true;
+  }
   constructor(deps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
-    this.features = deps.features ?? [];
+    this.authority = deps.authority ?? "lease";
+    this.features = [
+      "sharp-stream-v1",
+      .../* @__PURE__ */ new Set([...deps.features ?? [], ...BROWSERD_WEBMCP_FEATURES])
+    ];
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
     this.setVideoTier = deps.setVideoTier;
+    this.ledger = deps.ledger;
+    this.captureTypedText = deps.captureTypedText === true;
+    this.recorder = deps.recorder;
+    this.profileExport = deps.profileExport;
   }
   /**
    * What is open and which tab is on screen, for a stream's heartbeat.
@@ -545,6 +1392,17 @@ var BrowserdRequestHandler = class {
    */
   tabsSnapshot() {
     return this.driver.tabsSnapshot?.();
+  }
+  /**
+   * The driven tab's page-tool set as a CHANGE SIGNAL, for a heartbeat.
+   *
+   * A cache read: it touches no page, which is the property that makes it safe
+   * on a beat that fires several times a second. `undefined` from a driver with
+   * no WebMCP, which the pane reads as "this engine cannot tell you" rather
+   * than as "no tools".
+   */
+  webmcpSnapshot(tabId) {
+    return this.driver.webmcpToolsSnapshot?.(tabId);
   }
   /** Let the stream host report itself on `/v1/status`. See `watchers`. */
   attachFrameCounters(watchers) {
@@ -568,9 +1426,28 @@ var BrowserdRequestHandler = class {
     if (req.origin !== void 0) {
       return { status: 403, body: { error: "cross_origin_forbidden" } };
     }
+    if (this.retiring)
+      return {
+        status: 503,
+        body: { error: "browser_stopped", bootId: this.bootId }
+      };
+    if (this.suspensionId && req.path !== "/v1/status" && req.path !== "/v1/lifecycle")
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId }
+      };
     return void 0;
   }
   async handle(req) {
+    const operation = req.method === "POST" && req.path !== "/v1/lifecycle";
+    if (operation) this.activeOperations += 1;
+    try {
+      return await this.dispatch(req);
+    } finally {
+      if (operation) this.activeOperations -= 1;
+    }
+  }
+  async dispatch(req) {
     if (req.path === "/healthz") {
       if (req.method !== "GET" && req.method !== "HEAD") {
         return { status: 405, headers: { allow: "GET, HEAD" } };
@@ -580,6 +1457,46 @@ var BrowserdRequestHandler = class {
     }
     const refusal = this.authorize(req);
     if (refusal) return refusal;
+    if (req.path === "/v1/lifecycle" && req.method === "POST") {
+      let body;
+      try {
+        body = JSON.parse(req.body ?? "");
+      } catch {
+        return { status: 400 };
+      }
+      if (!body || body.bootId !== this.bootId)
+        return { status: 409, body: { error: "stale_boot" } };
+      if (typeof body.operationId !== "string" || !body.operationId || body.operationId.length > 128)
+        return { status: 400 };
+      if (body.action === "resume") {
+        if (this.suspensionId && this.suspensionId !== body.operationId)
+          return { status: 409 };
+        if (!this.suspensionId && !this.completedSuspensions.has(body.operationId) && this.completedSuspensions.size >= 4096)
+          return { status: 409 };
+        this.suspensionId = null;
+        this.completedSuspensions.add(body.operationId);
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      }
+      if (body.action !== "prepare_sleep") return { status: 400 };
+      if (this.completedSuspensions.has(body.operationId) || this.completedSuspensions.size >= 4096)
+        return { status: 409 };
+      if (this.suspensionId === body.operationId)
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      if (this.suspensionId || this.activeOperations > 0 || !this.queue.isIdle?.() || this.lease.state().state === "held") {
+        return {
+          status: 409,
+          body: { error: "browser_busy", bootId: this.bootId }
+        };
+      }
+      this.suspensionId = body.operationId;
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
+    }
+    if (this.suspensionId && req.path !== "/v1/status") {
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId }
+      };
+    }
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -602,10 +1519,12 @@ var BrowserdRequestHandler = class {
         // never as a verdict: the caller applies its own quiet threshold, so
         // changing that threshold does not need a daemon deploy.
         lease: this.lease.state().state,
+        leaseHeld: this.lease.state().state !== "free",
         ...this.watchers ? { watchers: this.watchers() } : {},
-        ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) }
+        ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) },
+        ...this.tabsSnapshot()?.list ? { tabs: this.tabsSnapshot().list } : {}
       };
-      return health.ok ? { status: 200, body: { ok: true, ...identity } } : {
+      return health.ok && !this.suspensionId ? { status: 200, body: { ok: true, ...identity } } : {
         status: 503,
         body: { ok: false, detail: health.detail, ...identity }
       };
@@ -622,13 +1541,363 @@ var BrowserdRequestHandler = class {
       }
       return this.handlePolicy(req);
     }
+    if (req.path === "/v1/record") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleRecord(req);
+    }
+    if (req.path === "/v1/profile/export") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleProfileExport();
+    }
     if (req.path === "/v1/input") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
       }
       return this.handleInput(req);
     }
+    if (req.path === "/v1/trace") {
+      if (req.method === "POST") return this.handleTraceRecord(req);
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleTrace(req);
+    }
+    if (req.path === "/v1/artifact") {
+      if (req.method !== "GET" && req.method !== "DELETE") {
+        return { status: 405, headers: { allow: "GET, DELETE" } };
+      }
+      return this.handleArtifact(req);
+    }
+    if (req.path === "/v1/state") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      return this.handleState(req);
+    }
+    if (req.path === "/v1/pane-command") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handlePaneCommand(req);
+    }
+    if (req.path === "/v1/viewport") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleViewport(req);
+    }
     return { status: 404 };
+  }
+  /**
+   * The browser's whole state, for the pane's shell.
+   *
+   * LEASE-GATED exactly as the frames are, and for exactly the same reason:
+   * the tab titles and URLs of a browser somebody has taken over describe the
+   * page they are signing into. "Reset your password | Acme" is not a
+   * screenshot, but it is not nothing either, and a second pane that could
+   * read it while the frames were withheld would be a hole in a wall that is
+   * otherwise complete.
+   */
+  async handleState(req) {
+    const holder = req.query?.get("holder") ?? void 0;
+    const refusal = this.watcherRefusal(holder);
+    if (refusal) {
+      return { status: 423, body: { error: refusal, bootId: this.bootId } };
+    }
+    if (!this.driver.stateSnapshot) {
+      return {
+        status: 501,
+        body: { error: "state_unsupported", bootId: this.bootId }
+      };
+    }
+    const snapshot = await this.driver.stateSnapshot();
+    const webmcp = this.webmcpSnapshot(snapshot.activeTabId ?? void 0);
+    const lease = this.lease.state();
+    return {
+      status: 200,
+      body: {
+        bootId: this.bootId,
+        ...snapshot,
+        ...webmcp ? { webmcp } : {},
+        control: lease.state === "free" ? { kind: "agent" } : {
+          kind: lease.holderKind === "script" ? "script" : "human",
+          holder: lease.holder,
+          ...lease.state === "parked" ? { parked: true } : {}
+        }
+      }
+    };
+  }
+  /**
+   * One human navigation, taking the browser first if it is free.
+   *
+   * The order is the whole design and it is not negotiable: acquire, THEN
+   * re-check the anchor, THEN dispatch. Acquiring is a round trip — to another
+   * continent on the hosted engine — and a page that finished loading during
+   * it is a different page. Dispatching first would race the agent; checking
+   * the anchor first would check a page that could still move.
+   */
+  async handlePaneCommand(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    const body = parsed;
+    if (typeof body?.holder !== "string" || !body.holder) {
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId }
+      };
+    }
+    const command = parsePaneCommand(body.command);
+    if (!command) {
+      return {
+        status: 400,
+        body: { error: "invalid_command", bootId: this.bootId }
+      };
+    }
+    const holder = body.holder;
+    const lease = this.authority === "shared" ? this.lease.state() : this.lease.acquire(holder);
+    if (this.authority === "lease" && (lease.state === "free" || lease.holder !== holder)) {
+      return {
+        status: 423,
+        body: {
+          error: "lease_held",
+          holder: lease.state === "free" ? void 0 : {
+            kind: lease.holderKind === "script" ? "script" : "human",
+            id: lease.holder
+          },
+          bootId: this.bootId
+        }
+      };
+    }
+    this.lastActivityAt = Date.now();
+    const anchor = parseAnchor(body.anchor);
+    if (anchor) {
+      const fresh = await this.currentAnchor(anchor.tabId);
+      const moved = fresh !== "unsupported" && // HASHED on this side. The pane sends the URL it saw; the daemon's
+      // token carries a digest of the URL it has. Comparing in the digest's
+      // space keeps the hashing scheme internal — the pane never learns it —
+      // and costs one hash of a string the pane already sent.
+      (!fresh || fresh.urlHash !== shortHash(anchor.url) || fresh.navCounter !== anchor.navCounter);
+      if (moved) {
+        return {
+          status: 409,
+          body: { error: "page_changed", bootId: this.bootId }
+        };
+      }
+    }
+    const mapped = paneCommandToAction(command);
+    mapped.tabId ??= this.driver.tabsSnapshot?.().active;
+    const outcome = await this.queue.submit({
+      // `manual` is the one source `leaseRefusalFor` admits while a lease is
+      // held, which is what lets this run at all now that the pane owns the
+      // browser.
+      source: "manual",
+      holder,
+      commandId: typeof body.commandId === "string" && body.commandId ? body.commandId : `pane-${Math.random().toString(36).slice(2)}-${Date.now()}`,
+      ...mapped.tabId !== void 0 ? { tabId: mapped.tabId } : {},
+      action: mapped.action
+    });
+    const viewport = this.driver.sessionViewportState ? this.driver.sessionViewportState() : void 0;
+    if (outcome.status !== "ok") {
+      return {
+        status: outcome.status === "busy" ? 429 : 409,
+        body: {
+          error: `command_${outcome.status}`,
+          ...viewport ? { viewport } : {},
+          bootId: this.bootId
+        }
+      };
+    }
+    return {
+      status: outcome.result.ok ? 200 : 409,
+      body: {
+        ok: outcome.result.ok,
+        ...outcome.result.ok ? {} : { error: outcome.result.error },
+        ...viewport ? { viewport } : {},
+        bootId: this.bootId
+      }
+    };
+  }
+  /**
+   * The tab's identity as the pane's anchor describes it.
+   *
+   * The DRIVER's token rather than a fresh CDP read: it already carries the
+   * nav counter and the URL, it is the number the staleness guard compares,
+   * and asking twice would let the two disagree.
+   */
+  async currentAnchor(tabId) {
+    if (!this.driver.currentStateToken) return "unsupported";
+    const token = await this.driver.currentStateToken(tabId);
+    if (!token) return null;
+    return { urlHash: token.urlHash, navCounter: token.navCounter };
+  }
+  /** The panel measured a size; answer with the size the session is at. */
+  async handleViewport(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    const body = parsed;
+    if (typeof body?.width !== "number" || typeof body?.height !== "number") {
+      return {
+        status: 400,
+        body: { error: "invalid_viewport", bootId: this.bootId }
+      };
+    }
+    if (!this.driver.requestViewport) {
+      return {
+        status: 501,
+        body: { error: "viewport_unsupported", bootId: this.bootId }
+      };
+    }
+    const viewport = await this.driver.requestViewport({
+      ...body.policy === "fixed" || body.policy === "followPane" ? { policy: body.policy } : {},
+      width: body.width,
+      height: body.height
+    });
+    return { status: 200, body: { viewport, bootId: this.bootId } };
+  }
+  async handleProfileExport() {
+    if (!this.profileExport) {
+      return { status: 501, body: { error: "profile_export_unavailable" } };
+    }
+    if (!this.queue.isIdle?.()) {
+      return { status: 409, body: { error: "profile_busy" } };
+    }
+    if (this.lease.state().state !== "free") {
+      return { status: 423, body: { error: "lease_held" } };
+    }
+    const holder = `profile-export:${randomUUID2()}`;
+    const claim = this.lease.acquire(holder, void 0, "script");
+    if (claim.state === "free" || claim.holder !== holder) {
+      return { status: 423, body: { error: "lease_held" } };
+    }
+    try {
+      const archive = await this.profileExport();
+      return {
+        status: 200,
+        body: archive,
+        headers: {
+          "content-type": "application/gzip",
+          "content-disposition": "attachment; filename=browser-profile.tar.gz"
+        }
+      };
+    } catch (error) {
+      return {
+        status: 500,
+        body: {
+          error: error instanceof Error ? error.message : "profile_export_failed"
+        }
+      };
+    } finally {
+      this.lease.resume(holder);
+    }
+  }
+  handleTrace(req) {
+    if (!this.ledger) {
+      return {
+        status: 501,
+        body: { error: "ledger_unavailable", bootId: this.bootId }
+      };
+    }
+    const query = req.query;
+    const afterSeq = readNumber(query?.get("afterSeq"));
+    const limit = readNumber(query?.get("limit"));
+    const commandId = query?.get("commandId") ?? void 0;
+    const { entries, headSeq } = this.ledger.read({
+      ...afterSeq === void 0 ? {} : { afterSeq },
+      ...limit === void 0 ? {} : { limit },
+      ...commandId ? { commandId } : {}
+    });
+    return {
+      status: 200,
+      body: { entries, headSeq, bootId: this.bootId }
+    };
+  }
+  handleTraceRecord(req) {
+    if (!this.ledger) {
+      return {
+        status: 501,
+        body: { error: "ledger_unavailable", bootId: this.bootId }
+      };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    if (!isValidCommand(parsed?.command)) {
+      return {
+        status: 400,
+        body: { error: "invalid_command", bootId: this.bootId }
+      };
+    }
+    const row = this.ledger.record({
+      command: parsed.command,
+      actor: parsed.command.actor ?? UNATTRIBUTED_ACTOR,
+      ...parsed.command.sessionId ? { sessionId: parsed.command.sessionId } : {},
+      ...parsed.command.correlation ? { correlation: parsed.command.correlation } : {},
+      ts: Date.now(),
+      durationMs: typeof parsed.durationMs === "number" ? Math.max(0, parsed.durationMs) : 0,
+      // Record-only means exactly one thing: NOTHING RAN. The inspector refused
+      // it, so there is no page and no artifact to attach, and `capturePage`
+      // stays off.
+      outcome: "refused",
+      ...typeof parsed.errorCode === "string" ? { errorCode: parsed.errorCode } : {},
+      ...this.captureTypedText ? { captureTypedText: true } : {}
+    });
+    return { status: 200, body: { seq: row.seq, bootId: this.bootId } };
+  }
+  handleArtifact(req) {
+    if (!this.ledger) {
+      return {
+        status: 501,
+        body: { error: "ledger_unavailable", bootId: this.bootId }
+      };
+    }
+    const id = req.query?.get("id") ?? "";
+    if (!id) {
+      return {
+        status: 400,
+        body: { error: "artifact_id_required", bootId: this.bootId }
+      };
+    }
+    if (req.method === "DELETE") {
+      this.ledger.releaseArtifact(id);
+      return { status: 200, body: { released: true, bootId: this.bootId } };
+    }
+    const artifact = this.ledger.artifact(id);
+    if (!artifact) {
+      const known = this.ledger.knowsArtifact(id);
+      return {
+        status: known ? 410 : 404,
+        body: {
+          error: known ? "artifact_evicted" : "artifact_unknown",
+          id,
+          bootId: this.bootId
+        }
+      };
+    }
+    return { status: 200, body: { artifact, bootId: this.bootId } };
   }
   handlePolicy(req) {
     let parsed;
@@ -650,6 +1919,98 @@ var BrowserdRequestHandler = class {
     this.setVideoTier?.(tier);
     return { status: 200, body: { ok: true, tier, bootId: this.bootId } };
   }
+  /**
+   * Start or stop a recording.
+   *
+   * EVERY argument is validated before any spawn. A recording id becomes a
+   * filename and an fps becomes an x11grab rate: getting either wrong after
+   * the process is running means a file in the wrong place or an encoder at a
+   * rate the box cannot sustain, and neither is visible from the 200 that
+   * would come back. `fps` and `id` are echoed on every answer — including the
+   * refusals — so a caller never has to remember what it asked for to make
+   * sense of what it got.
+   */
+  async handleRecord(req) {
+    if (req.method === "GET") {
+      const status = this.recorder?.status() ?? { active: false };
+      return { status: 200, body: { ...status, bootId: this.bootId } };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return {
+        status: 400,
+        body: { error: "invalid_record_action", bootId: this.bootId }
+      };
+    }
+    const { action, id, fps } = parsed;
+    if (action !== "start" && action !== "stop") {
+      return {
+        status: 400,
+        body: { error: "invalid_record_action", bootId: this.bootId }
+      };
+    }
+    if (action === "stop") {
+      if (!this.recorder) {
+        return {
+          status: 503,
+          body: { error: "record_unavailable", bootId: this.bootId }
+        };
+      }
+      const result = await this.recorder.stop();
+      return {
+        status: 200,
+        body: { ok: true, recording: result, bootId: this.bootId }
+      };
+    }
+    const resolvedFps = fps === void 0 ? DEFAULT_RECORD_FPS : fps;
+    if (typeof resolvedFps !== "number" || !Number.isInteger(resolvedFps) || resolvedFps < MIN_RECORD_FPS || resolvedFps > MAX_RECORD_FPS) {
+      return {
+        status: 400,
+        body: { error: "invalid_fps", fps, bootId: this.bootId }
+      };
+    }
+    if (typeof id !== "string" || !RECORD_ID_PATTERN.test(id)) {
+      return {
+        status: 400,
+        body: { error: "invalid_record_id", id, bootId: this.bootId }
+      };
+    }
+    if (!this.recorder) {
+      return {
+        status: 503,
+        body: {
+          error: "record_unavailable",
+          id,
+          fps: resolvedFps,
+          bootId: this.bootId
+        }
+      };
+    }
+    const started = this.recorder.start({ id, fps: resolvedFps });
+    if (!started.ok) {
+      return {
+        status: started.error === "record_active" ? 409 : 503,
+        body: {
+          error: started.error,
+          id,
+          fps: resolvedFps,
+          bootId: this.bootId
+        }
+      };
+    }
+    return {
+      status: 200,
+      body: { ok: true, id, fps: resolvedFps, bootId: this.bootId }
+    };
+  }
   async handleInput(req) {
     let parsed;
     try {
@@ -666,7 +2027,7 @@ var BrowserdRequestHandler = class {
         body: { error: "invalid_input", bootId: this.bootId }
       };
     }
-    const { holder, tabId, events } = parsed;
+    const { holder, tabId, events, anchor } = parsed;
     if (typeof holder !== "string" || holder.length === 0) {
       return {
         status: 400,
@@ -689,16 +2050,18 @@ var BrowserdRequestHandler = class {
     const outcome = await this.dispatchInput({
       ...typeof tabId === "string" ? { tabId } : {},
       holder,
-      events
+      events,
+      ...anchor !== void 0 ? { anchor } : {}
     });
     if (outcome.ok)
       return { status: 200, body: { ok: true, bootId: this.bootId } };
     return {
-      status: outcome.error === "unknown_tab" ? 404 : 423,
+      status: outcome.error === "page_changed" ? 409 : outcome.error === "unknown_tab" ? 404 : 423,
       body: { error: outcome.error, bootId: this.bootId }
     };
   }
   async handleCommand(req) {
+    const startedAt = Date.now();
     let parsed;
     try {
       parsed = JSON.parse(req.body);
@@ -716,11 +2079,12 @@ var BrowserdRequestHandler = class {
     }
     this.lastActivityAt = Date.now();
     const leaseState = this.lease.state();
-    const refusal = leaseRefusalFor(
-      leaseState,
-      parsed.command
-    );
+    const refusal = this.authority === "shared" ? void 0 : leaseRefusalFor(leaseState, parsed.command);
     if (refusal) {
+      this.recordRow(parsed.command, startedAt, {
+        outcome: "refused",
+        errorCode: refusal
+      });
       return {
         status: 423,
         body: {
@@ -734,13 +2098,160 @@ var BrowserdRequestHandler = class {
       };
     }
     if (parsed.expectedBootId !== void 0 && parsed.expectedBootId !== this.bootId) {
+      this.recordRow(parsed.command, startedAt, {
+        outcome: "unknown",
+        errorCode: "command_unknown_boot"
+      });
       return {
         status: 409,
         body: { error: "command_unknown_boot", bootId: this.bootId }
       };
     }
+    const action = parsed.command.action;
+    if (action.kind === "webmcp_invoke" && action.expectedBinding !== void 0 && action.expectedBinding.bootId !== this.bootId) {
+      return this.mapOutcome({
+        status: "ok",
+        bootId: this.bootId,
+        result: {
+          ok: false,
+          error: formatBrowserdError(
+            "stale_binding",
+            "this tool was listed on a previous run of this browser; re-read the page's tools"
+          )
+        }
+      });
+    }
     const outcome = await this.queue.submit(parsed.command);
-    return this.mapOutcome(outcome);
+    const response = this.mapOutcome(outcome);
+    this.recordOutcome(parsed.command, outcome, startedAt);
+    await this.boostAfterMotion(parsed.command, outcome);
+    return response;
+  }
+  /**
+   * One command, one row — written from the one place that sees them all.
+   *
+   * The mapping from queue outcome to ledger outcome is the interesting part,
+   * and it turns on a single distinction the rest of this file is careful
+   * about: `refused` means NOTHING RAN, `unknown` means WE CANNOT SAY. They are
+   * never collapsed. A caller that reads "refused" and retries is correct; a
+   * caller that reads "unknown" and retries may double-submit a payment, which
+   * is why `expired` — a result the queue evicted and therefore may not re-run —
+   * is `unknown` rather than the more comfortable-looking `refused`.
+   */
+  recordOutcome(command, outcome, startedAt) {
+    if (!this.ledger) return;
+    if (outcome.status !== "ok") {
+      this.recordRow(command, startedAt, {
+        // `busy` and `at_capacity` are back-pressure: the queue never admitted
+        // the command, so nothing ran and a retry is safe. `expired` is the
+        // opposite — it ran once, its result is gone, and re-running it is the
+        // thing the tombstone exists to prevent.
+        outcome: outcome.status === "expired" ? "unknown" : "refused",
+        errorCode: outcome.status === "expired" ? "command_expired" : outcome.status === "busy" ? "busy" : "daemon_at_capacity"
+      });
+      return;
+    }
+    const { result } = outcome;
+    if (result.leaseBlocked) {
+      this.recordRow(command, startedAt, {
+        outcome: "refused",
+        errorCode: parseBrowserdErrorCode(result.error) ?? "lease_held"
+      });
+      return;
+    }
+    if (result.staleObservation) {
+      this.recordRow(command, startedAt, {
+        outcome: "refused",
+        errorCode: "stale_observation",
+        result,
+        capturePage: true
+      });
+      return;
+    }
+    if (outcome.deduped) {
+      const known = this.ledger.read({
+        commandId: command.commandId,
+        limit: 1
+      });
+      if (known.entries.length > 0) return;
+      this.recordRow(command, startedAt, {
+        outcome: "executed",
+        deduped: true,
+        result,
+        capturePage: true
+      });
+      return;
+    }
+    this.recordRow(command, startedAt, {
+      outcome: "executed",
+      result,
+      capturePage: true
+    });
+  }
+  /** The single call site that turns a disposition into a row. */
+  recordRow(command, startedAt, what) {
+    if (!this.ledger) return;
+    const result = what.result;
+    this.ledger.record({
+      command,
+      actor: command.actor ?? UNATTRIBUTED_ACTOR,
+      ...command.sessionId ? { sessionId: command.sessionId } : {},
+      ...command.correlation ? { correlation: command.correlation } : {},
+      ts: startedAt,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      outcome: what.outcome,
+      ...result ? { ok: result.ok } : {},
+      ...what.errorCode ? { errorCode: what.errorCode } : result && !result.ok && parseBrowserdErrorCode(result.error) ? { errorCode: parseBrowserdErrorCode(result.error) } : {},
+      ...what.deduped ? { deduped: true } : {},
+      ...what.capturePage && result ? { output: result.output } : {},
+      ...what.capturePage && result?.stateToken ? { stateToken: result.stateToken } : {},
+      // The SESSION's size, not the constant. The ledger row is what a replay
+      // is reconstructed from, so a row that recorded 1024x768 for a command
+      // executed at 1400x900 would produce an artifact whose coordinates
+      // cannot be read back — and there would be nothing in the row to say so.
+      ...what.capturePage ? { viewport: this.publishedViewport() } : {},
+      ...result?.cursors ? { cursors: result.cursors } : {},
+      ...what.capturePage ? { capturePage: true } : {},
+      ...this.captureTypedText ? { captureTypedText: true } : {}
+    });
+  }
+  /**
+   * The size to stamp on a published result.
+   *
+   * From the DRIVER, which is the only thing that knows whether a resize
+   * landed. A driver that cannot answer — a unit fake, an engine with no
+   * session viewport — falls back to the constant, which is the size it is
+   * necessarily running at.
+   */
+  publishedViewport() {
+    const session = this.driver.sessionViewportState ? this.driver.sessionViewportState() : void 0;
+    return session ? { width: session.width, height: session.height } : { ...BROWSERD_OBSERVATION_VIEWPORT };
+  }
+  /**
+   * Raise the frame rate for a moment after a command that moved the page.
+   *
+   * The seam is HERE rather than in the driver because this is where the
+   * command's fate is known: a `navigate` the lease refused, or one the queue
+   * de-duplicated, never touched the page, and boosting after it would spend a
+   * box's cores on a picture nothing changed. It runs for every source —
+   * a chat-driven scroll and a person's own `manual` command are the same
+   * motion to whoever is watching.
+   *
+   * `viewportIfWatched` and never `viewport`: on a box where nobody has the
+   * pane open there is no viewport, and building one here would attach a CDP
+   * screencast and start encoding JPEGs for an audience of nobody — on the
+   * same two cores the agent is using. A driver too old to answer the question
+   * (or a fake that does not implement it) simply gets no boost.
+   */
+  async boostAfterMotion(command, outcome) {
+    if (!MOTION_ACTIONS.has(command.action.kind)) return;
+    if (outcome.status !== "ok") return;
+    if (!outcome.result.ok) return;
+    try {
+      const viewport = await this.driver.viewportIfWatched?.(command.tabId);
+      viewport?.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
+    } catch {
+    }
   }
   /**
    * Watch a tab.
@@ -781,7 +2292,7 @@ var BrowserdRequestHandler = class {
         return;
       }
       args.listener(frame);
-    });
+    }, args.maxFrameBytes);
     if (!live) unsubscribe();
     return {
       ok: true,
@@ -869,28 +2380,48 @@ var BrowserdRequestHandler = class {
    * reached the endpoint".
    */
   async dispatchInput(args) {
-    const stillTheirs = () => leaseRefusalFor(this.lease.state(), {
-      source: "manual",
-      holder: args.holder
-    });
+    const stillTheirs = () => {
+      const refused = this.authority === "shared" ? void 0 : leaseRefusalFor(this.lease.state(), {
+        source: "manual",
+        holder: args.holder
+      });
+      if (refused) return refused;
+      if (args.anchor !== void 0) {
+        const before = parseAnchor(args.anchor);
+        const after = this.driver.interactionAnchor?.();
+        if (!before || !after || before.bootId !== this.bootId || before.tabId !== after.tabId || before.url !== after.url || before.navCounter !== after.navCounter || before.viewportRevision !== after.viewportRevision) {
+          return "page_changed";
+        }
+      }
+      return void 0;
+    };
     const refusal = stillTheirs();
     if (refusal) return { ok: false, error: refusal };
-    const viewport = await this.driver.viewport?.(args.tabId);
+    const viewport = await this.driver.viewport?.(
+      parseAnchor(args.anchor)?.tabId ?? args.tabId
+    );
     if (!viewport) return { ok: false, error: "unknown_tab" };
     const afterAwait = stillTheirs();
     if (afterAwait) return { ok: false, error: afterAwait };
+    let inputRefusal;
     await viewport.dispatchInput(
       args.events,
-      () => stillTheirs() === void 0,
+      () => {
+        inputRefusal = stillTheirs();
+        return inputRefusal === void 0;
+      },
       args.holder
     );
+    if (inputRefusal === "page_changed")
+      return { ok: false, error: inputRefusal };
     if (args.events.length > 0) {
-      viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+      viewport.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
     }
     return { ok: true };
   }
   /** May this watcher see frames right now? */
   watcherRefusal(holder) {
+    if (this.authority === "shared") return void 0;
     const lease = this.lease.state();
     if (lease.state === "free") return void 0;
     return holder && holder === lease.holder ? void 0 : lease.state === "held" ? "lease_held" : "lease_parked";
@@ -900,6 +2431,11 @@ var BrowserdRequestHandler = class {
    * cannot be released by another tab that happens to know the endpoint.
    */
   handleLease(req) {
+    if (this.authority === "shared" && req.method !== "GET")
+      return {
+        status: 409,
+        body: { error: "shared_authority", bootId: this.bootId }
+      };
     if (req.method === "GET") {
       return { status: 200, body: this.leaseBody(this.lease.state()) };
     }
@@ -1004,11 +2540,34 @@ var BrowserdRequestHandler = class {
     }
   }
 };
+function readNumber(value) {
+  if (value === null || value === void 0 || value === "") return void 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : void 0;
+}
 function isValidCommand(value) {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value;
   return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
 }
+
+// shared/browser-viewport-policy.ts
+var BROWSER_VIEWPORT_POLICY = {
+  quality: 85,
+  maxFrameBytes: 256 * 1024,
+  minIntervalMs: 100,
+  inputIntervalMs: 33,
+  inputBoostWindowMs: 1500
+};
+var SHARP_JPEG_MAX_BYTES = 2 * 1024 * 1024;
+function jpegFrameLimit(sharp) {
+  return sharp ? SHARP_JPEG_MAX_BYTES : BROWSER_VIEWPORT_POLICY.maxFrameBytes;
+}
+var JPEG_RECOVERY_POLICY = {
+  qualities: [85, 75, 65, 55, 40],
+  probeMs: 1e4,
+  maxProbeMs: 6e4
+};
 
 // shared/browserd-frame-stream.ts
 var FRAME_STREAM_VERSION = 1;
@@ -1122,6 +2681,14 @@ var WRITE_STALL_MS = 15e3;
 var MAX_CONCURRENT_STREAMS = 4;
 var PROBE_BEATS = 3;
 var PROBE_INTERVAL_MS = 1e3;
+function statsWebmcp(revision) {
+  return {
+    revision: revision.revision,
+    hash: revision.hash,
+    count: revision.count,
+    ...revision.url ? { url: revision.url } : {}
+  };
+}
 function createFrameStreamHost(handler, options = {}) {
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
   const stallMs = options.stallMs ?? WRITE_STALL_MS;
@@ -1158,12 +2725,21 @@ function createFrameStreamHost(handler, options = {}) {
       return true;
     }
     if (query?.get("codec") === "h264") {
-      void startVideoSubscription({ res, holder }).catch(() => {
+      void startVideoSubscription({
+        res,
+        holder,
+        sharp: query?.get("sharp") === "1"
+      }).catch(() => {
         writeEndAndClose(res, "video_unavailable");
       });
       return true;
     }
-    void startSubscription({ res, tabId, holder }).catch(() => {
+    void startSubscription({
+      res,
+      tabId,
+      holder,
+      sharp: query?.get("sharp") === "1"
+    }).catch(() => {
       writeEndAndClose(res, "tab_gone");
     });
     return true;
@@ -1181,11 +2757,17 @@ function createFrameStreamHost(handler, options = {}) {
     let unsubscribe;
     let release;
     let seq = 0;
-    const size = options.displaySize ?? {
-      width: BROWSERD_OBSERVATION_VIEWPORT.width,
-      height: BROWSERD_OBSERVATION_VIEWPORT.height
+    const geometry = () => {
+      const size = options.displaySize?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height
+      };
+      const css = options.cssViewport?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height
+      };
+      return { size, css, scale: size.width / css.width };
     };
-    const scale = size.width / BROWSERD_OBSERVATION_VIEWPORT.width;
     const entry = { end: (reason) => end(reason) };
     const end = (reason) => {
       if (ended) return;
@@ -1250,12 +2832,13 @@ function createFrameStreamHost(handler, options = {}) {
       if (ended) return;
       gate.revalidate();
       if (ended) return;
+      const geo = geometry();
       pacer.push(
         encodeFrameStreamRecord({
           kind: unit.key ? FRAME_STREAM_KIND.video_key : FRAME_STREAM_KIND.video_delta,
-          deviceWidth: size.width,
-          deviceHeight: size.height,
-          scale,
+          deviceWidth: geo.size.width,
+          deviceHeight: geo.size.height,
+          scale: geo.scale,
           ts: Date.now(),
           seq: seq += 1,
           au: unit.bytes
@@ -1265,7 +2848,7 @@ function createFrameStreamHost(handler, options = {}) {
         // next GOP, four seconds later, being sent units it cannot decode.
         unit.key ? { essential: true } : {}
       );
-    });
+    }, args.sharp);
     const failure = encoder.failure();
     if (failure) {
       end("video_unavailable");
@@ -1275,6 +2858,7 @@ function createFrameStreamHost(handler, options = {}) {
     const beat = () => {
       if (ended) return;
       const tabs = handler.tabsSnapshot?.();
+      const webmcp = handler.webmcpSnapshot?.(tabs?.active);
       const emitted = encoder.emitted();
       const idle = emitted === lastEmitted;
       lastEmitted = emitted;
@@ -1288,6 +2872,7 @@ function createFrameStreamHost(handler, options = {}) {
             // under them — and kiosk hides Chromium's own tab strip, so nothing
             // else here would say so.
             ...tabs ? { tabs } : {},
+            ...webmcp ? { webmcp: statsWebmcp(webmcp) } : {},
             // `mpdecimate` means an idle page produces NO frames at all, so
             // silence here is a quiet page rather than a stall. Saying which
             // is what stops an adaptive client stepping the quality down on a
@@ -1422,6 +3007,7 @@ function createFrameStreamHost(handler, options = {}) {
       pacer.close();
     });
     subscription = await handler.subscribeFrames({
+      maxFrameBytes: jpegFrameLimit(args.sharp),
       ...tabId ? { tabId } : {},
       ...holder ? { holder } : {},
       listener: (frame) => {
@@ -1465,7 +3051,12 @@ function createFrameStreamHost(handler, options = {}) {
             const stats = statsFor(live, lastFramesIn);
             lastFramesIn = stats.framesIn;
             const tabs = handler.tabsSnapshot?.();
-            return tabs ? { ...stats, tabs } : stats;
+            const webmcp = handler.webmcpSnapshot?.(tabId);
+            return {
+              ...stats,
+              ...tabs ? { tabs } : {},
+              ...webmcp ? { webmcp: statsWebmcp(webmcp) } : {}
+            };
           })()
         })
       );
@@ -1513,6 +3104,7 @@ function createFrameStreamHost(handler, options = {}) {
 function statsFor(subscription, previousFramesIn) {
   const counters = subscription.counters();
   return {
+    jpeg: counters.jpeg,
     framesIn: counters.framesIn,
     framesOut: counters.framesOut,
     bytesOut: counters.bytesOut,
@@ -1522,13 +3114,72 @@ function statsFor(subscription, previousFramesIn) {
   };
 }
 
+// shared/browser-viewport.ts
+var DEFAULT_SESSION_VIEWPORT = { width: 1024, height: 768 };
+var MIN_SESSION_VIEWPORT = { width: 400, height: 300 };
+var MAX_SESSION_VIEWPORT = { width: 2560, height: 1600 };
+var INITIAL_SESSION_VIEWPORT = {
+  width: DEFAULT_SESSION_VIEWPORT.width,
+  height: DEFAULT_SESSION_VIEWPORT.height,
+  revision: 0
+};
+function normalizeViewportSize(size) {
+  return {
+    width: clampDimension(
+      size.width,
+      MIN_SESSION_VIEWPORT.width,
+      MAX_SESSION_VIEWPORT.width
+    ),
+    height: clampDimension(
+      size.height,
+      MIN_SESSION_VIEWPORT.height,
+      MAX_SESSION_VIEWPORT.height
+    )
+  };
+}
+function clampDimension(value, min, max) {
+  const numeric = typeof value === "number" ? value : Number.NaN;
+  if (!Number.isFinite(numeric)) return min;
+  return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+function advanceViewport(current, requested, policy) {
+  if (policy === "fixed") return current;
+  const next = normalizeViewportSize(requested);
+  if (next.width === current.width && next.height === current.height) {
+    return current;
+  }
+  return {
+    width: next.width,
+    height: next.height,
+    revision: current.revision + 1
+  };
+}
+function isPointInSessionViewport(x, y, viewport) {
+  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= viewport.width - 1 && y <= viewport.height - 1;
+}
+function negotiateViewport(policy, capability) {
+  if (policy === "fixed") return { ok: true, policy };
+  if (capability?.responsiveViewport === true) return { ok: true, policy };
+  return { ok: false, reason: "responsive_viewport_required" };
+}
+function parseViewportPolicy(value) {
+  return value === "followPane" ? "followPane" : "fixed";
+}
+
 // server/services/browserd/daemon/browser-driver.ts
 function stateTokensMatch(a, b) {
-  return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash;
+  const viewportAgrees = a.viewportRevision === void 0 || b.viewportRevision === void 0 || a.viewportRevision === b.viewportRevision;
+  return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash && viewportAgrees;
 }
 function guardStaleness(driver, lease) {
   return async (command) => {
     const { action } = command;
+    if (command.source !== "manual" && action.kind !== "webmcp_cancel" && !negotiateViewport(driver.sessionViewportPolicy?.() ?? "fixed", command).ok) {
+      return {
+        ok: false,
+        error: "responsive_viewport_required: this session follows an interactive pane; use a fixed session or declare responsiveViewport support"
+      };
+    }
     if (action.kind !== "act" || action.expectedState === void 0) {
       return driver.execute(command);
     }
@@ -1536,11 +3187,17 @@ function guardStaleness(driver, lease) {
     const refusal = lease && leaseRefusalFor(lease.state(), command);
     if (refusal) return leaseBlockedResult(refusal);
     if (current !== void 0 && !stateTokensMatch(current, action.expectedState)) {
+      const fresh = await Promise.resolve(
+        driver.observeForRefusal?.(command, wantsFor(action.observe))
+      ).catch(() => void 0);
+      if (fresh?.leaseBlocked) return fresh;
+      const bound = fresh?.stateToken !== void 0;
       return {
         ok: false,
         staleObservation: true,
         error: "stale_observation",
-        stateToken: current
+        stateToken: bound ? fresh.stateToken : current,
+        ...bound && fresh.output !== void 0 ? { output: fresh.output } : {}
       };
     }
     return driver.execute(command);
@@ -1569,7 +3226,7 @@ var DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
 var BodyTooLargeError = class extends Error {
 };
 function readRequestBody(req, limitBytes) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const chunks = [];
     let size = 0;
     let refused = false;
@@ -1584,7 +3241,7 @@ function readRequestBody(req, limitBytes) {
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => resolve2(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
@@ -1595,6 +3252,16 @@ function writeResponse(res, response) {
       ...response.headers
     });
     res.end();
+    return;
+  }
+  if (response.body instanceof Uint8Array) {
+    const payload2 = Buffer.from(response.body);
+    res.writeHead(response.status, {
+      "content-type": "application/octet-stream",
+      "content-length": payload2.byteLength,
+      ...response.headers
+    });
+    res.end(payload2);
     return;
   }
   const payload = JSON.stringify(response.body);
@@ -1666,10 +3333,11 @@ function headerValue(value) {
   return Array.isArray(value) ? value[0] : value;
 }
 function buildBrowserdStack(driver, config) {
-  const bootId = config.bootId ?? randomUUID();
+  const bootId = config.bootId ?? randomUUID3();
+  const ledger = new CommandLedger({ bootId });
   const lease = config.lease ?? new HandoffLease();
   const queue = new CommandQueue(
-    guardLease(lease, guardStaleness(driver, lease)),
+    config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease)),
     bootId
   );
   const handler = new BrowserdRequestHandler({
@@ -1677,19 +3345,25 @@ function buildBrowserdStack(driver, config) {
     driver,
     bootId,
     token: config.token,
+    authority: config.authority,
     lease,
     ...config.features ? { features: config.features } : {},
     ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
     ...config.contextMode ? { contextMode: config.contextMode } : {},
     ...config.startedBy ? { startedBy: config.startedBy } : {},
-    ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {}
+    ledger,
+    ...config.captureTypedText ? { captureTypedText: true } : {},
+    ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {},
+    ...config.recorder ? { recorder: config.recorder } : {},
+    ...config.profileExport ? { profileExport: config.profileExport } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
     frames: {
       ...config.frames ?? {},
       ...config.video ? { video: config.video } : {},
-      ...config.displaySize ? { displaySize: config.displaySize } : {}
+      ...config.displaySize ? { displaySize: config.displaySize } : {},
+      ...config.cssViewport ? { cssViewport: config.cssViewport } : {}
     }
   });
   handler.attachFrameCounters(() => frames.count());
@@ -1697,6 +3371,7 @@ function buildBrowserdStack(driver, config) {
     server,
     handler,
     queue,
+    ledger,
     bootId,
     lease,
     closeStreams: (reason = "shutting_down") => frames.closeAll(reason)
@@ -1704,11 +3379,20 @@ function buildBrowserdStack(driver, config) {
 }
 
 // server/services/browserd/daemon/video-encoder.ts
-import { spawn } from "node:child_process";
+import { spawn as spawn2 } from "node:child_process";
 var NAL_AUD = 9;
 var NAL_IDR = 5;
 var MAX_RING_BYTES = 3 * 1024 * 1024;
-function tierArgs(tier) {
+function tierArgs(tier, sharp = false) {
+  if (sharp)
+    return [
+      "-crf",
+      tier === "sharp" ? "18" : tier === "saver" ? "23" : "20",
+      "-maxrate",
+      tier === "sharp" ? "6M" : "2500k",
+      "-bufsize",
+      tier === "sharp" ? "12M" : "5M"
+    ];
   switch (tier) {
     case "sharp":
       return ["-crf", "18", "-maxrate", "6M", "-bufsize", "12M"];
@@ -1728,7 +3412,8 @@ function tierArgs(tier) {
   }
 }
 function ffmpegArgs(options) {
-  const tier = tierArgs(options.tier);
+  const tier = tierArgs(options.tier, options.sharp);
+  const fps = options.sharp ? options.tier === "sharp" ? 30 : options.tier === "saver" ? 10 : 20 : 30;
   const filters = tier.includes("-vf") ? [] : ["-vf", "mpdecimate"];
   return [
     "-loglevel",
@@ -1736,7 +3421,7 @@ function ffmpegArgs(options) {
     "-f",
     "x11grab",
     "-framerate",
-    "30",
+    String(fps),
     "-video_size",
     `${options.width}x${options.height}`,
     "-draw_mouse",
@@ -1757,11 +3442,15 @@ function ffmpegArgs(options) {
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "120",
+    String(fps * 4),
     "-sc_threshold",
     "0",
     "-x264-params",
     "aud=1:repeat-headers=1",
+    // Before the tier args and the output, so a tier that ever grows its own
+    // rate-control flags cannot end up on the far side of it.
+    "-threads",
+    "1",
     ...tier,
     "-f",
     "h264",
@@ -1830,12 +3519,16 @@ function containsIdr(bytes) {
   return false;
 }
 function createVideoEncoder(options) {
-  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn(command, [...args], {
+  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn2(command, [...args], {
     stdio: [...spawnOptions.stdio]
   }));
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const listeners = /* @__PURE__ */ new Set();
   let tier = options.tier ?? "auto";
+  const sharpSubscribers = /* @__PURE__ */ new Set();
+  let sharp = false;
+  let width = Math.max(2, Math.round(options.width));
+  let height = Math.max(2, Math.round(options.height));
   let child;
   let splitter = createAccessUnitSplitter();
   let failure;
@@ -1884,9 +3577,15 @@ function createVideoEncoder(options) {
         ffmpegPath,
         ffmpegArgs({
           display: options.display,
-          width: options.width,
-          height: options.height,
-          tier
+          // The CURRENT geometry, not the one this encoder was built with: a
+          // `followPane` session moves the display, and an ffmpeg restarted
+          // after that must grab the screen that is actually there. `x11grab`
+          // with a `-video_size` larger than the screen fails outright; one
+          // smaller silently captures a corner.
+          width,
+          height,
+          tier,
+          sharp
         }),
         { stdio: ["ignore", "pipe", "pipe"] }
       );
@@ -1913,8 +3612,17 @@ function createVideoEncoder(options) {
     });
   };
   return {
-    subscribe(listener) {
+    subscribe(listener, wantsSharp = false) {
       listeners.add(listener);
+      if (wantsSharp) sharpSubscribers.add(listener);
+      const nextSharp = sharpSubscribers.size === listeners.size;
+      if (sharp !== nextSharp) {
+        sharp = nextSharp;
+        if (child) {
+          stop();
+          start();
+        }
+      }
       if (listeners.size === 1) start();
       for (const unit of ring) {
         try {
@@ -1924,12 +3632,31 @@ function createVideoEncoder(options) {
       }
       return () => {
         listeners.delete(listener);
+        sharpSubscribers.delete(listener);
         if (listeners.size === 0) stop();
+        else {
+          const nextSharp2 = sharpSubscribers.size === listeners.size;
+          if (sharp !== nextSharp2) {
+            sharp = nextSharp2;
+            stop();
+            start();
+          }
+        }
       };
     },
     subscriberCount: () => listeners.size,
     failure: () => failure,
     tier: () => tier,
+    resize(size) {
+      const nextWidth = Math.max(2, Math.round(size.width));
+      const nextHeight = Math.max(2, Math.round(size.height));
+      if (nextWidth === width && nextHeight === height) return;
+      width = nextWidth;
+      height = nextHeight;
+      if (!child) return;
+      stop();
+      start();
+    },
     setTier(next) {
       if (next === tier) return;
       tier = next;
@@ -1948,17 +3675,704 @@ function createVideoEncoder(options) {
   };
 }
 
-// server/services/browserd/daemon/state-token.ts
-import { createHash } from "node:crypto";
-function shortHash(value) {
-  return createHash("sha1").update(value, "utf8").digest("hex").slice(0, 16);
+// shared/browser-session-state.ts
+var BROWSER_TAB_CAP = 8;
+function tabAfterClose(tabs, closingId, activeId) {
+  if (activeId !== closingId) return activeId;
+  const index = tabs.findIndex((tab) => tab.id === closingId);
+  if (index < 0) return activeId;
+  const openerId = tabs[index].openerId;
+  return (openerId && tabs.some((tab) => tab.id === openerId && tab.id !== closingId) ? openerId : void 0) ?? tabs[index + 1]?.id ?? tabs[index - 1]?.id ?? null;
 }
-function computeStateToken(inputs) {
+
+// server/services/browserd/daemon/network.ts
+var RETAINED_HEADERS = [
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "cache-control",
+  "location",
+  "date",
+  "server",
+  "via",
+  "retry-after",
+  "x-request-id",
+  "x-trace-id",
+  "traceparent"
+];
+var RETAINED = new Set(RETAINED_HEADERS);
+function retainHeaders(headers) {
+  if (!headers) return void 0;
+  const kept = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const lower = name.toLowerCase();
+    if (!RETAINED.has(lower)) continue;
+    kept[lower] = lower === "location" ? sanitizeNetworkUrl(String(value)) : String(value).slice(0, 512);
+  }
+  return Object.keys(kept).length > 0 ? kept : void 0;
+}
+function sanitizeNetworkUrl(raw) {
+  try {
+    const url = new URL(raw);
+    if (url.protocol === "data:" || url.protocol === "blob:") {
+      return `${url.protocol}\u2026`;
+    }
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return raw.slice(0, 200);
+  }
+}
+var NETWORK_RING_SIZE = 200;
+var DEFAULT_NETWORK_BUDGET = { maxEntries: 50 };
+function capNetwork(entries, budget = DEFAULT_NETWORK_BUDGET) {
+  const kept = entries.slice(-budget.maxEntries);
   return {
-    tabId: inputs.tabId,
-    navCounter: inputs.navCounter,
-    urlHash: shortHash(inputs.url),
-    domHash: shortHash(inputs.domSignal)
+    entries: kept.map((entry) => ({ ...entry })),
+    omitted: Math.max(0, entries.length - kept.length)
+  };
+}
+var NetworkRing = class {
+  constructor(size = NETWORK_RING_SIZE) {
+    this.size = size;
+  }
+  order = [];
+  byId = /* @__PURE__ */ new Map();
+  total = 0;
+  started(entry) {
+    const existing = this.byId.get(entry.requestId);
+    if (existing) {
+      existing.url = sanitizeNetworkUrl(entry.url);
+      existing.method = entry.method;
+      return;
+    }
+    const row = {
+      requestId: entry.requestId,
+      method: entry.method,
+      url: sanitizeNetworkUrl(entry.url),
+      ...entry.resourceType ? { resourceType: entry.resourceType } : {},
+      at: Date.now()
+    };
+    this.byId.set(row.requestId, row);
+    this.order.push(row.requestId);
+    this.total += 1;
+    while (this.order.length > this.size) {
+      const evicted = this.order.shift();
+      if (evicted !== void 0) this.byId.delete(evicted);
+    }
+  }
+  finished(update) {
+    const row = this.byId.get(update.requestId);
+    if (!row) return;
+    if (update.status !== void 0) row.status = update.status;
+    if (update.statusText) row.statusText = update.statusText;
+    if (update.mimeType) row.mimeType = update.mimeType;
+    if (update.bytes !== void 0) row.bytes = update.bytes;
+    if (update.failure) row.failure = update.failure;
+    const headers = retainHeaders(update.headers);
+    if (headers) row.headers = headers;
+    row.durationMs = Math.max(0, Date.now() - row.at);
+  }
+  entries() {
+    return this.order.map((id) => this.byId.get(id)).filter((row) => row !== void 0);
+  }
+  get(requestId) {
+    return this.byId.get(requestId);
+  }
+  /** Monotonic across eviction AND purge, exactly like the console cursor. */
+  count() {
+    return this.total;
+  }
+  /**
+   * Drop everything captured at or after `since`.
+   *
+   * The handoff purge. The ring fills from an eager listener that knows
+   * nothing about the lease, so the requests a person's own signing-in
+   * produced — the login POST, the token refresh, the URLs they visited —
+   * would otherwise be readable by the agent the instant they hand back. The
+   * console has had this from the start; a ring of URLs needs it at least as
+   * much.
+   */
+  dropSince(since) {
+    for (const id of [...this.order]) {
+      const row = this.byId.get(id);
+      if (row && row.at >= since) {
+        this.byId.delete(id);
+        this.order.splice(this.order.indexOf(id), 1);
+      }
+    }
+  }
+};
+
+// server/services/browserd/daemon/dialogs.ts
+function agentDefaultAccepts(kind) {
+  return kind === "beforeunload";
+}
+function safeUnderDialog(action) {
+  if (action.kind === "observe") {
+    return action.mode === "screenshot" || action.mode === "url" || action.mode === "console" || action.mode === "network" || // Reading the dialog is how a caller learns what it is deciding about.
+    action.mode === "dialog" || action.mode === "webmcp_revision";
+  }
+  if (action.kind === "act") {
+    return action.verb === "close_tab" || action.verb === "activate_tab" || // ANSWERING it is the one act that must always get through: it is the
+    // thing that unblocks the page, and refusing it because a dialog is open
+    // would be the deadlock this whole file exists to prevent.
+    action.verb === "accept_dialog" || action.verb === "dismiss_dialog";
+  }
+  return false;
+}
+function dialogRefusal(dialog) {
+  const quoted = dialog.message ? `: "${dialog.message}"` : "";
+  return `dialog_pending: a JavaScript ${dialog.kind} dialog is blocking this page${quoted}. The page cannot be read or acted on until it is answered \u2014 answer it with \`accept_dialog\` or \`dismiss_dialog\`, hand the browser back so a person can, or close the tab.`;
+}
+
+// server/services/browserd/daemon/cdp-a11y.ts
+var UNINTERESTING_ROLES = /* @__PURE__ */ new Set([
+  "generic",
+  "none",
+  "presentation",
+  "InlineTextBox",
+  "LineBreak",
+  "StaticText"
+]);
+var TRISTATE_PROPERTIES = /* @__PURE__ */ new Set(["checked", "pressed"]);
+var CARRIED_PROPERTIES = {
+  checked: "checked",
+  disabled: "disabled",
+  expanded: "expanded",
+  focused: "focused",
+  level: "level",
+  pressed: "pressed",
+  readonly: "readonly",
+  required: "required",
+  selected: "selected",
+  url: "url",
+  valuemin: "valueMin",
+  valuemax: "valueMax",
+  valuetext: "valueText"
+};
+function scalar(value) {
+  const raw = value?.value;
+  if (typeof raw === "string") return raw.length > 0 ? raw : void 0;
+  if (typeof raw === "number") return raw;
+  return void 0;
+}
+async function readAxTree(cdp, rootBackendNodeId) {
+  try {
+    await cdp.send("Accessibility.enable");
+    const response = await cdp.send("Accessibility.getFullAXTree");
+    const nodes = response?.nodes;
+    if (!nodes || nodes.length === 0) return { ok: false };
+    const byId = /* @__PURE__ */ new Map();
+    for (const node of nodes) byId.set(node.nodeId, node);
+    const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
+    if (!root) return { ok: true, tree: null };
+    const seen = /* @__PURE__ */ new Set();
+    const built = build(root, byId, seen);
+    if (built.length === 0) return { ok: true, tree: null };
+    return {
+      ok: true,
+      tree: built.length === 1 ? built[0] : { role: "RootWebArea", children: built }
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+function build(node, byId, seen) {
+  if (seen.has(node.nodeId)) return [];
+  seen.add(node.nodeId);
+  const children = [];
+  for (const childId of node.childIds ?? []) {
+    const child = byId.get(childId);
+    if (child) children.push(...build(child, byId, seen));
+  }
+  const role = scalar(node.role);
+  const name = scalar(node.name);
+  if (node.ignored) return children;
+  if (typeof role === "string" && UNINTERESTING_ROLES.has(role)) {
+    if (role === "StaticText" && typeof name === "string") {
+      return [{ role: "text", name }];
+    }
+    return children;
+  }
+  const built = {};
+  if (typeof role === "string") built.role = role;
+  if (typeof node.backendDOMNodeId === "number") {
+    built.backendDOMNodeId = node.backendDOMNodeId;
+  }
+  if (name !== void 0) built.name = String(name);
+  const value = scalar(node.value);
+  if (value !== void 0) built.value = value;
+  const description = scalar(node.description);
+  if (description !== void 0) built.description = String(description);
+  for (const property of node.properties ?? []) {
+    const key = property.name && CARRIED_PROPERTIES[property.name];
+    if (!key) continue;
+    const raw = property.value?.value;
+    if (raw === void 0 || raw === null || raw === "") continue;
+    built[key] = TRISTATE_PROPERTIES.has(property.name) && (raw === "true" || raw === "false") ? raw === "true" : raw;
+  }
+  if (children.length > 0) built.children = children;
+  return [built];
+}
+async function resolveBackendNodeId(cdp, selector) {
+  try {
+    const doc = await cdp.send("DOM.getDocument", { depth: 0 });
+    const rootNodeId = doc?.root?.nodeId;
+    if (rootNodeId === void 0) return null;
+    const found = await cdp.send("DOM.querySelector", {
+      nodeId: rootNodeId,
+      selector
+    });
+    if (!found?.nodeId) return null;
+    const described = await cdp.send("DOM.describeNode", {
+      nodeId: found.nodeId
+    });
+    return described?.node?.backendNodeId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// server/services/browserd/daemon/node-target.ts
+async function pointForBackendNodeId(cdp, backendNodeId, label) {
+  await cdp.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => {
+  });
+  const box = await cdp.send("DOM.getBoxModel", { backendNodeId }).catch(() => void 0);
+  const quad = box?.model?.content;
+  if (!quad || quad.length < 8) {
+    throw new Error(
+      `target_not_found: ${label} is on the page but has no visible box to aim at (it may be hidden or collapsed); observe again and pick a target that is showing`
+    );
+  }
+  const xs = [quad[0], quad[2], quad[4], quad[6]];
+  const ys = [quad[1], quad[3], quad[5], quad[7]];
+  return {
+    x: Math.round(xs.reduce((a, b) => a + b, 0) / 4),
+    y: Math.round(ys.reduce((a, b) => a + b, 0) / 4)
+  };
+}
+async function resolveRefNode(cdp, ref, entry, guard = () => {
+}) {
+  const known = entry.backendDOMNodeId;
+  if (known !== void 0 && await nodeResolves(cdp, known)) {
+    return { backendNodeId: known, recovered: false };
+  }
+  guard();
+  const recovered = await findByRoleAndName(cdp, entry);
+  if (recovered !== void 0) {
+    return { backendNodeId: recovered, recovered: true };
+  }
+  throw new Error(
+    `stale_ref: ${ref} pointed at ${describeEntry(entry)}, which is no longer on this page; observe again and use a ref from the new tree`
+  );
+}
+async function nodeResolves(cdp, backendNodeId) {
+  return cdp.send("DOM.describeNode", { backendNodeId }).then(
+    () => true,
+    () => false
+  );
+}
+async function findByRoleAndName(cdp, entry) {
+  const read = await readAxTree(cdp);
+  if (!read.ok || !read.tree) return void 0;
+  const wanted = entry.nth ?? 0;
+  let seen = 0;
+  let found;
+  const stack = [read.tree];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node.role === entry.role && (typeof node.name === "string" ? node.name : "") === entry.name && typeof node.backendDOMNodeId === "number") {
+      if (seen === wanted) {
+        found = node.backendDOMNodeId;
+        break;
+      }
+      seen += 1;
+    }
+    const children = node.children ?? [];
+    for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
+  }
+  return found;
+}
+function describeEntry(entry) {
+  const name = entry.name ? ` "${entry.name}"` : "";
+  return `${entry.role}${name}`;
+}
+async function focusBackendNodeId(cdp, backendNodeId) {
+  await cdp.send("DOM.focus", { backendNodeId });
+}
+async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
+}) {
+  await focusBackendNodeId(cdp, backendNodeId);
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (objectId) {
+    await cdp.send("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function () {
+          if (typeof this.select === "function") { this.select(); return; }
+          const doc = this.ownerDocument;
+          const view = doc && doc.defaultView;
+          if (!view || !doc.createRange) return;
+          const range = doc.createRange();
+          range.selectNodeContents(this);
+          const selection = view.getSelection();
+          if (!selection) return;
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }`
+    }).catch(() => {
+    });
+  }
+  guard();
+  await cdp.send("Input.insertText", { text });
+}
+async function selectOptionOnNode(cdp, backendNodeId, value, label) {
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (!objectId) {
+    throw new Error(
+      `target_not_found: ${label} could not be resolved to select an option`
+    );
+  }
+  const outcome = await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    arguments: [{ value }],
+    functionDeclaration: `function (wanted) {
+      if (this.tagName !== "SELECT") return "not_select";
+      const options = Array.from(this.options || []);
+      const match =
+        options.find((o) => o.value === wanted) ||
+        options.find((o) => (o.label || o.textContent || "").trim() === wanted);
+      if (!match) {
+        return "no_option:" + options
+          .slice(0, 12)
+          .map((o) => (o.label || o.textContent || "").trim())
+          .join(", ");
+      }
+      this.value = match.value;
+      this.dispatchEvent(new Event("input", { bubbles: true }));
+      this.dispatchEvent(new Event("change", { bubbles: true }));
+      return "ok";
+    }`
+  });
+  const answer = outcome?.result?.value ?? "";
+  if (answer === "ok") return;
+  if (answer === "not_select") {
+    throw new Error(
+      `target_not_found: ${label} is not a <select>; use click or type instead`
+    );
+  }
+  const offered = answer.startsWith("no_option:") ? answer.slice(10) : "";
+  throw new Error(
+    `target_not_found: ${label} has no option matching "${value}"` + (offered ? `; it offers: ${offered}` : "")
+  );
+}
+async function coveringElementAt(cdp, backendNodeId) {
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (!objectId) return null;
+  const outcome = await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    functionDeclaration: `function () {
+        const el = this;
+        const doc = el.ownerDocument;
+        if (!doc || typeof doc.elementFromPoint !== "function") return null;
+        const rect = el.getBoundingClientRect();
+        if (!rect || rect.width === 0 || rect.height === 0) return null;
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        let hit = doc.elementFromPoint(x, y);
+        if (!hit) return null;
+        // Shadow roots answer for their host, so descend to what a click
+        // would really reach.
+        let guard = 0;
+        while (hit.shadowRoot && guard < 32) {
+          const inner = hit.shadowRoot.elementFromPoint(x, y);
+          if (!inner || inner === hit) break;
+          hit = inner;
+          guard += 1;
+        }
+        // Walk upward THROUGH shadow boundaries: a node inside a shadow root
+        // has the root as its parent, and the root's host is the next element.
+        const up = (n) => {
+          const p = n.parentNode;
+          if (!p) return null;
+          return p.nodeType === 11 && p.host ? p.host : p;
+        };
+        const reaches = (from, to) => {
+          let n = from;
+          let steps = 0;
+          while (n && steps < 256) {
+            if (n === to) return true;
+            n = up(n);
+            steps += 1;
+          }
+          return false;
+        };
+        // The element itself, anything inside it, or anything it sits inside:
+        // in all three the click reaches the node the model named.
+        if (hit === el || reaches(hit, el) || reaches(el, hit)) return null;
+        // A label drives its own control, so a click on it is a click on this.
+        try {
+          if (hit.control === el || (hit.tagName === "LABEL" && reaches(el, hit))) return null;
+          const labels = el.labels ? Array.from(el.labels) : [];
+          if (labels.some((l) => l === hit || reaches(hit, l))) return null;
+        } catch (_) {}
+        const describe = (n) => {
+          if (!n || !n.tagName) return "another element";
+          const tag = n.tagName.toLowerCase();
+          if (n.id) return tag + "#" + n.id;
+          const cls = (n.className && typeof n.className === "string" ? n.className : "")
+            .trim().split(/\\s+/).filter(Boolean).slice(0, 2);
+          return cls.length ? tag + "." + cls.join(".") : tag;
+        };
+        let named = describe(hit);
+        // The nearest identified ancestor, which is usually what a person
+        // would call the thing ("inside div#cookie-banner").
+        let owner = up(hit);
+        let steps = 0;
+        while (owner && steps < 32) {
+          if (owner.id) { named += " inside " + describe(owner); break; }
+          owner = up(owner);
+          steps += 1;
+        }
+        return named.slice(0, 120);
+      }`
+  }).catch(() => void 0);
+  const value = outcome?.result?.value;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+async function resolveObjectId(cdp, backendNodeId) {
+  const resolved = await cdp.send("DOM.resolveNode", { backendNodeId }).catch(() => void 0);
+  return resolved?.object?.objectId;
+}
+
+// server/services/browserd/daemon/session-barrier.ts
+var DEFAULT_DEBOUNCE_MS = 150;
+var DEFAULT_MAX_WAIT_MS = 5e3;
+var SessionBarrier = class {
+  constructor(apply, options = {}) {
+    this.apply = apply;
+    this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    this.maxWaitMs = options.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
+    this.now = options.now ?? (() => Date.now());
+    this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+    this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
+  }
+  inFlight = 0;
+  /**
+   * Is a person's pointer down on the page right now?
+   *
+   * Separate from `inFlight` because it is not work the barrier can wait for:
+   * a drag has no promise to await, it ends when somebody lifts a finger, and
+   * a resize during one corrupts a value rather than merely disturbing it.
+   */
+  dragging = false;
+  /**
+   * The transition in progress, or null.
+   *
+   * A PROMISE rather than a boolean plus a waiter list, because the two lists
+   * a naive version needs — "waiting for this resize to end" and "waiting for
+   * my measurement to land" — are refilled at different moments, and a `run()`
+   * that queued itself on the second one waits for the NEXT resize instead of
+   * the current one. That is a deadlock when there is no next resize, which is
+   * the ordinary case: somebody stops dragging.
+   */
+  resizing = null;
+  /** The newest measurement, waiting for the debounce. */
+  pending = null;
+  debounceHandle;
+  pendingSince = 0;
+  /**
+   * Everyone whose `request` has not landed yet.
+   *
+   * Resolved together when the resize that supersedes them all completes: they
+   * are waiting for the same transition, and a caller that got its own promise
+   * would resolve at a different moment from the others for no reason.
+   */
+  requestWaiters = [];
+  /**
+   * Armed when a resize is deferred, so the ceiling can enforce itself.
+   *
+   * Without it `maxWaitMs` was only ever CHECKED, never awaited: `maybeResize`
+   * runs on the debounce firing, on work finishing and on a drag ending, and a
+   * command that hangs while nobody is dragging produces none of the three. The
+   * pending resize then waited on an event that was never coming, which is the
+   * opposite of what a ceiling is for — the one case it exists for is the one
+   * where the session never goes quiet.
+   */
+  expiryHandle;
+  debounceMs;
+  maxWaitMs;
+  now;
+  setTimer;
+  clearTimer;
+  /**
+   * Run one piece of page work, held off while a resize is transitioning.
+   *
+   * Wrapping rather than a bare `enter`/`leave` pair, because the thing being
+   * guarded can throw and a `leave` that a rejection skipped would wedge the
+   * barrier closed for the life of the session — every subsequent resize
+   * waiting out `maxWaitMs` for work that finished long ago.
+   */
+  async run(work) {
+    while (this.resizing) await this.resizing;
+    this.inFlight += 1;
+    try {
+      return await work();
+    } finally {
+      this.inFlight -= 1;
+      this.maybeResize();
+    }
+  }
+  /** A pointer went down on the page; hold resizes until it comes up. */
+  beginDrag() {
+    this.dragging = true;
+  }
+  endDrag() {
+    if (!this.dragging) return;
+    this.dragging = false;
+    this.maybeResize();
+  }
+  /**
+   * Ask for a size. Coalesces with anything already waiting.
+   *
+   * Returns a promise that settles when a resize carrying AT LEAST this
+   * measurement's intent has been applied — which for a coalesced burst is one
+   * resize for all of them. It deliberately does not promise that the applied
+   * size equals the requested one: a later measurement supersedes an earlier
+   * one, and the earlier caller wanted "the panel is now the right size", not
+   * "my particular number was used".
+   */
+  request(size) {
+    this.pending = size;
+    if (this.pendingSince === 0) this.pendingSince = this.now();
+    const settled = new Promise((resolve2) => {
+      this.requestWaiters.push(resolve2);
+    });
+    this.clearTimer(this.debounceHandle);
+    this.debounceHandle = this.setTimer(() => {
+      this.debounceHandle = void 0;
+      this.maybeResize();
+    }, this.debounceMs);
+    return settled;
+  }
+  /** Is a resize waiting or running? For the pane's "settling" affordance. */
+  get busy() {
+    return this.resizing !== null || this.pending !== null;
+  }
+  /**
+   * Wake up in `ms` and reconsider, replacing any timer already waiting.
+   *
+   * Replacing rather than stacking: the budget is a property of the pending
+   * measurement, not of the calls that noticed it, and several deferrals in a
+   * row must not each add a wake-up.
+   */
+  armExpiry(ms) {
+    this.clearTimer(this.expiryHandle);
+    this.expiryHandle = this.setTimer(() => {
+      this.expiryHandle = void 0;
+      this.maybeResize();
+    }, Math.max(0, ms));
+  }
+  /**
+   * Run the pending resize only when the session is quiet.
+   *
+   * Called from three places (the debounce firing, work finishing, a drag
+   * ending) because those are the three ways the answer can change, and a
+   * version that only checked on the timer would leave a resize parked behind
+   * a command that outlived its debounce.
+   */
+  maybeResize() {
+    if (this.resizing || this.pending === null) return;
+    if (this.debounceHandle !== void 0) return;
+    const waited = this.now() - this.pendingSince;
+    const expired = waited >= this.maxWaitMs;
+    if (this.inFlight > 0 || this.dragging) {
+      if (!expired) this.armExpiry(this.maxWaitMs - waited);
+      return;
+    }
+    this.clearTimer(this.expiryHandle);
+    this.expiryHandle = void 0;
+    const size = this.pending;
+    this.pending = null;
+    this.pendingSince = 0;
+    const waiters = this.requestWaiters;
+    this.requestWaiters = [];
+    this.resizing = this.apply(size).catch(() => {
+    }).then(() => {
+      this.resizing = null;
+      for (const resolve2 of waiters) resolve2();
+      this.maybeResize();
+    });
+  }
+};
+
+// server/services/browserd/daemon/tab-metadata.ts
+async function navigationHistory(cdp) {
+  try {
+    const raw = await cdp.send("Page.getNavigationHistory");
+    if (typeof raw?.currentIndex !== "number" || !Array.isArray(raw?.entries)) {
+      return null;
+    }
+    return { currentIndex: raw.currentIndex, entries: raw.entries };
+  } catch {
+    return null;
+  }
+}
+var FAVICON_EXPRESSION = `(() => {
+  const link = document.querySelector(
+    'link[rel~="icon" i], link[rel="shortcut icon" i], link[rel~="apple-touch-icon" i]'
+  );
+  return link ? link.href : "";
+})()`;
+var MAX_FAVICON_CHARS = 2048;
+var MAX_TITLE_CHARS = 256;
+async function favicon(cdp) {
+  try {
+    const raw = await cdp.send("Runtime.evaluate", {
+      expression: FAVICON_EXPRESSION,
+      returnByValue: true,
+      // A page that has installed a Proxy on `document.querySelector` cannot
+      // make this hang the strip; a page that throws is simply a page with no
+      // icon.
+      timeout: 1e3
+    });
+    const value = raw?.result?.value;
+    if (typeof value !== "string" || !value) return void 0;
+    if (!value.startsWith("https://") && !value.startsWith("http://") && !value.startsWith("data:image/")) {
+      return void 0;
+    }
+    if (value.length > MAX_FAVICON_CHARS) return void 0;
+    return value;
+  } catch {
+    return void 0;
+  }
+}
+async function readTabMetadata(cdp, fallbackUrl, options = {}) {
+  if (!cdp) {
+    return {
+      url: fallbackUrl,
+      title: "",
+      canGoBack: false,
+      canGoForward: false
+    };
+  }
+  const history = await navigationHistory(cdp);
+  const current = history?.entries[history.currentIndex];
+  const icon = options.favicon === false ? void 0 : await favicon(cdp);
+  return {
+    url: current?.url ?? fallbackUrl,
+    title: (current?.title ?? "").slice(0, MAX_TITLE_CHARS),
+    ...icon ? { faviconUrl: icon } : {},
+    // A history of one entry is a tab that has been nowhere. Chromium counts
+    // the current document as an entry, so `currentIndex > 0` — not
+    // `entries.length > 1` — is the question "is there something behind me".
+    canGoBack: !!history && history.currentIndex > 0,
+    canGoForward: !!history && history.currentIndex < history.entries.length - 1
   };
 }
 
@@ -2204,114 +4618,6 @@ var PAGE_TEXT_FN = `() => {
 var DEFAULT_PAGE_TEXT_MAX_BYTES = 16e3;
 var PAGE_TEXT_RETRIEVAL_HINT = 'narrow with observe {mode:"a11y", rootSelector} or scroll and re-read';
 
-// server/services/browserd/daemon/cdp-a11y.ts
-var UNINTERESTING_ROLES = /* @__PURE__ */ new Set([
-  "generic",
-  "none",
-  "presentation",
-  "InlineTextBox",
-  "LineBreak",
-  "StaticText"
-]);
-var TRISTATE_PROPERTIES = /* @__PURE__ */ new Set(["checked", "pressed"]);
-var CARRIED_PROPERTIES = {
-  checked: "checked",
-  disabled: "disabled",
-  expanded: "expanded",
-  focused: "focused",
-  level: "level",
-  pressed: "pressed",
-  readonly: "readonly",
-  required: "required",
-  selected: "selected",
-  url: "url",
-  valuemin: "valueMin",
-  valuemax: "valueMax",
-  valuetext: "valueText"
-};
-function scalar(value) {
-  const raw = value?.value;
-  if (typeof raw === "string") return raw.length > 0 ? raw : void 0;
-  if (typeof raw === "number") return raw;
-  return void 0;
-}
-async function readAxTree(cdp, rootBackendNodeId) {
-  try {
-    await cdp.send("Accessibility.enable");
-    const response = await cdp.send("Accessibility.getFullAXTree");
-    const nodes = response?.nodes;
-    if (!nodes || nodes.length === 0) return { ok: false };
-    const byId = /* @__PURE__ */ new Map();
-    for (const node of nodes) byId.set(node.nodeId, node);
-    const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
-    if (!root) return { ok: true, tree: null };
-    const seen = /* @__PURE__ */ new Set();
-    const built = build(root, byId, seen);
-    if (built.length === 0) return { ok: true, tree: null };
-    return {
-      ok: true,
-      tree: built.length === 1 ? built[0] : { role: "RootWebArea", children: built }
-    };
-  } catch {
-    return { ok: false };
-  }
-}
-function build(node, byId, seen) {
-  if (seen.has(node.nodeId)) return [];
-  seen.add(node.nodeId);
-  const children = [];
-  for (const childId of node.childIds ?? []) {
-    const child = byId.get(childId);
-    if (child) children.push(...build(child, byId, seen));
-  }
-  const role = scalar(node.role);
-  const name = scalar(node.name);
-  if (node.ignored) return children;
-  if (typeof role === "string" && UNINTERESTING_ROLES.has(role)) {
-    if (role === "StaticText" && typeof name === "string") {
-      return [{ role: "text", name }];
-    }
-    return children;
-  }
-  const built = {};
-  if (typeof role === "string") built.role = role;
-  if (typeof node.backendDOMNodeId === "number") {
-    built.backendDOMNodeId = node.backendDOMNodeId;
-  }
-  if (name !== void 0) built.name = String(name);
-  const value = scalar(node.value);
-  if (value !== void 0) built.value = value;
-  const description = scalar(node.description);
-  if (description !== void 0) built.description = String(description);
-  for (const property of node.properties ?? []) {
-    const key = property.name && CARRIED_PROPERTIES[property.name];
-    if (!key) continue;
-    const raw = property.value?.value;
-    if (raw === void 0 || raw === null || raw === "") continue;
-    built[key] = TRISTATE_PROPERTIES.has(property.name) && (raw === "true" || raw === "false") ? raw === "true" : raw;
-  }
-  if (children.length > 0) built.children = children;
-  return [built];
-}
-async function resolveBackendNodeId(cdp, selector) {
-  try {
-    const doc = await cdp.send("DOM.getDocument", { depth: 0 });
-    const rootNodeId = doc?.root?.nodeId;
-    if (rootNodeId === void 0) return null;
-    const found = await cdp.send("DOM.querySelector", {
-      nodeId: rootNodeId,
-      selector
-    });
-    if (!found?.nodeId) return null;
-    const described = await cdp.send("DOM.describeNode", {
-      nodeId: found.nodeId
-    });
-    return described?.node?.backendNodeId ?? null;
-  } catch {
-    return null;
-  }
-}
-
 // server/services/browserd/daemon/a11y-refs.ts
 var INTERACTIVE_ROLES = /* @__PURE__ */ new Set([
   "button",
@@ -2530,7 +4836,9 @@ var WebMcpBridgeError = class extends Error {
     this.name = "WebMcpBridgeError";
   }
 };
+var MAIN_SESSION_KEY = "\0main";
 var MAX_EARLY_RESPONSES = 16;
+var MAX_SETTLED_IDS = 32;
 var DEFAULT_INVOCATION_TIMEOUT_MS = 6e4;
 var DEFAULT_CANCEL_SETTLE_GRACE_MS = 1e3;
 function originOf(url) {
@@ -2543,25 +4851,197 @@ function originOf(url) {
 var WebMcpBridge = class {
   constructor(cdp, options = {}) {
     this.cdp = cdp;
+    this.localSecurity = options.localSecurity ?? false;
+    this.localBudget = options.localBudget;
+    this.onDiscoveryLimit = options.onDiscoveryLimit;
+    this.sessions.set(MAIN_SESSION_KEY, {
+      key: MAIN_SESSION_KEY,
+      frameId: "",
+      cdp,
+      isMain: true
+    });
     this.invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
     this.cancelSettleGraceMs = options.cancelSettleGraceMs ?? DEFAULT_CANCEL_SETTLE_GRACE_MS;
     this.onChange = options.onChange;
     this.onExternalInvocation = options.onExternalInvocation;
   }
-  /** Tools keyed `${frameId} ${name}` — the browser's own notion of identity. */
+  externalSubscribers = /* @__PURE__ */ new Set();
+  subscribeExternalInvocation(listener) {
+    this.externalSubscribers.add(listener);
+    return () => {
+      this.externalSubscribers.delete(listener);
+    };
+  }
+  /**
+   * Tools keyed `${frameId} ${name}` — the browser's own notion of identity —
+   * each carrying the registration sequence minted when it arrived.
+   */
   tools = /* @__PURE__ */ new Map();
+  /**
+   * The next registration sequence to hand out. Bumped ONCE per `toolsAdded`
+   * event, so tools registered together share a sequence and a
+   * re-registration (reload, unregister/register) always gets a fresh one.
+   */
+  nextRegistrationSeq = 1;
   /** frameId → last known URL, for origin labelling. */
   frames = /* @__PURE__ */ new Map();
+  /** Every session this bridge listens on, keyed by its attachment token. */
+  sessions = /* @__PURE__ */ new Map();
+  /**
+   * frameId → the token of the session that owns that frame.
+   *
+   * The routing table for invocation: `WebMCP.invokeTool` rejects a frame id
+   * that belongs to another target ("FrameId does not belong to current
+   * target"), so the session is part of addressing a tool, not an optimisation.
+   */
+  frameSessions = /* @__PURE__ */ new Map();
   pending = /* @__PURE__ */ new Map();
   /** Responses that arrived before their invocation was registered. */
   earlyResponses = /* @__PURE__ */ new Map();
+  /** Invocation ids already settled, so a duplicate response is dropped. */
+  settledIds = /* @__PURE__ */ new Set();
+  /** Next attachment number, so no two attachments ever share a key. */
+  nextSessionSeq = 1;
   mainFrameId = "";
   /** `WebMCP.invokeTool` calls whose reply has not come back yet. See `wire`. */
   outstandingSends = 0;
   invocationTimeoutMs;
   cancelSettleGraceMs;
   supported = false;
+  /**
+   * The domain half of `supported`, remembered so a RE-probe can recombine
+   * without re-enabling anything: `WebMCP.enable` is per session, not per
+   * document, so a navigation cannot take the domain away — only the page's
+   * `document.modelContext` can change.
+   */
+  domainEnabled = false;
+  /**
+   * The page-side probe, kept so main-frame navigation can re-run it.
+   *
+   * WHY THE CACHED PROBE WAS A BUG. `start()` set `supported` once and nothing
+   * ever revisited it, so a tab that opened on a page without WebMCP reported
+   * "this browser has no WebMCP" for the rest of its life — including after
+   * navigating to a page whose whole point is the tools it registers. The
+   * probe is a page question and has to be re-asked of each page.
+   */
+  probe;
+  /**
+   * The in-flight re-probe, so a reader arriving between a navigation and its
+   * answer can wait for the truth instead of reading the previous page's.
+   */
+  probing = null;
+  /**
+   * Which re-probe is current. A slow probe for the page we LEFT must not
+   * overwrite the answer for the page we are on, and navigations can outrun a
+   * `Runtime.evaluate`.
+   */
+  probeGeneration = 0;
+  subscribers = /* @__PURE__ */ new Set();
   disposed = false;
+  localSecurity = false;
+  localBudget;
+  updateBudget() {
+    if (!this.localBudget) return;
+    if (this.disposed) {
+      this.localBudget.entries.delete(this);
+      return;
+    }
+    let bytes = 0;
+    for (const entry of this.tools.values()) bytes += entry.bytes ?? 0;
+    this.localBudget.entries.set(this, {
+      registrations: this.tools.size,
+      bytes,
+      frames: Math.max(
+        this.frames.size,
+        this.sessions.size,
+        this.frameSessions.size
+      )
+    });
+  }
+  otherBudget() {
+    const total = { registrations: 0, bytes: 0, frames: 0 };
+    for (const [owner, entry] of this.localBudget?.entries ?? [])
+      if (owner !== this) {
+        total.registrations += entry.registrations;
+        total.bytes += entry.bytes;
+        total.frames += entry.frames;
+      }
+    return total;
+  }
+  discoveryBlocked = false;
+  onDiscoveryLimit;
+  changeTokens = 2048;
+  changeAt = Date.now();
+  discoveryLimitReached() {
+    return this.discoveryBlocked;
+  }
+  blockDiscovery() {
+    if (!this.discoveryBlocked) {
+      this.discoveryBlocked = true;
+      this.tools.clear();
+      for (const [id, waiter] of this.pending) {
+        void waiter.cdp.send("WebMCP.cancelInvocation", { invocationId: id }).catch(() => {
+        });
+        this.settle(id);
+        waiter.reject(
+          new WebMcpBridgeError(
+            "webmcp_tool_gone",
+            "Page tool discovery exceeded its security budget. Reload the page after reducing its registrations."
+          )
+        );
+      }
+      this.onDiscoveryLimit?.();
+      this.announce();
+    }
+    return false;
+  }
+  allowChanges(count) {
+    if (!this.localSecurity) return true;
+    if (this.discoveryBlocked) return false;
+    const now = Date.now();
+    const rate = this.localBudget ? this.localBudget.rate ??= { tokens: 2048, at: now } : { tokens: this.changeTokens, at: this.changeAt };
+    rate.tokens = Math.min(
+      2048,
+      rate.tokens + Math.max(0, now - rate.at) * 1.024
+    );
+    rate.at = now;
+    if (count > rate.tokens) return this.blockDiscovery();
+    rate.tokens -= count;
+    this.changeTokens = rate.tokens;
+    this.changeAt = now;
+    return true;
+  }
+  allowTool(tool) {
+    if (!this.localSecurity) return true;
+    let bytes = 0, nodes = 0;
+    const stack = [[tool, 0]];
+    while (stack.length) {
+      const [value, depth] = stack.pop();
+      if (++nodes > 65536 || depth > 32) return this.blockDiscovery();
+      if (typeof value === "string") {
+        if (value.length > 65536) return this.blockDiscovery();
+        bytes += new TextEncoder().encode(value).byteLength;
+      } else if (value && typeof value === "object") {
+        for (const key of Object.keys(value)) {
+          bytes += key.length * 3;
+          if (stack.length >= 65536) return this.blockDiscovery();
+          stack.push([value[key], depth + 1]);
+        }
+      } else bytes += 8;
+      if (bytes > 65536) return this.blockDiscovery();
+    }
+    const others = this.otherBudget();
+    if (this.tools.size + others.registrations >= 1024 && !this.tools.has(this.key(tool.frameId, tool.name)))
+      return this.blockDiscovery();
+    let retained = bytes;
+    for (const entry of this.tools.values()) retained += entry.bytes ?? 0;
+    if (retained + others.bytes > 8 * 1024 * 1024) return this.blockDiscovery();
+    if (!this.frameSessions.has(tool.frameId) && this.frameSessions.size + others.frames >= 64)
+      return this.blockDiscovery();
+    this.nextToolBytes = bytes;
+    return true;
+  }
+  nextToolBytes = 0;
   onChange;
   onExternalInvocation;
   /**
@@ -2573,11 +5053,42 @@ var WebMcpBridge = class {
    * responsible for the bridge's own bookkeeping.
    */
   announce() {
-    if (!this.onChange) return;
+    this.updateBudget();
+    if (this.disposed) return;
+    if (!this.onChange && this.subscribers.size === 0) return;
+    const tools = this.list();
+    for (const listener of [this.onChange, ...this.subscribers]) {
+      if (!listener) continue;
+      try {
+        listener(tools);
+      } catch {
+      }
+    }
+  }
+  /**
+   * Watch the tool set, alongside the constructor's `onChange`.
+   *
+   * A second channel because the two consumers arrive at different times: the
+   * bridge is constructed by the page adapter (which knows how to probe the
+   * page) while the DRIVER — the one that has to keep a per-tab revision — only
+   * meets the bridge once it has resolved one. Handing the adapter the driver's
+   * callback would make the adapter know about tab bookkeeping; this way each
+   * side subscribes to what it needs.
+   *
+   * The listener is called with the CURRENT set immediately, so a subscriber
+   * that attached after the page had already registered its tools does not
+   * have to wait for the next change to learn about them — the exact gap that
+   * makes an eagerly-attached bridge worth having.
+   */
+  subscribe(listener) {
+    this.subscribers.add(listener);
     try {
-      this.onChange(this.list());
+      listener(this.list());
     } catch {
     }
+    return () => {
+      this.subscribers.delete(listener);
+    };
   }
   /**
    * Enable the domains and wire the events. `probeSupported` is the page-side
@@ -2586,47 +5097,136 @@ var WebMcpBridge = class {
    * is never the probe.
    */
   async start(probeSupported) {
-    this.wire();
+    this.wireSession(this.mainSession());
     await this.cdp.send("Page.enable").catch(() => {
     });
     let domainEnabled = true;
     await this.cdp.send("WebMCP.enable").catch(() => {
       domainEnabled = false;
     });
+    this.domainEnabled = domainEnabled;
     const probed = await probeSupported().catch(() => false);
     this.supported = domainEnabled && probed;
   }
   isSupported() {
     return this.supported;
   }
-  wire() {
-    this.cdp.on("WebMCP.toolsAdded", (payload) => {
+  /**
+   * Re-ask this probe of every page the main frame goes to.
+   *
+   * Separate from `start()`'s argument because support is a property of the
+   * PAGE, not of the session: `start()` answers it for the document that
+   * happened to be open, and a bridge that stopped there tells a caller "this
+   * browser has no WebMCP" about a page that registered five tools a moment
+   * ago. Opt-in so a consumer that cannot cheaply re-probe (a test fake) is
+   * unchanged.
+   */
+  resupport(probe) {
+    this.probe = probe;
+  }
+  /**
+   * Resolve once no re-probe is outstanding.
+   *
+   * `Page.frameNavigated` is a synchronous event and the probe is a round trip
+   * into the page, so there is a window in which `isSupported()` still answers
+   * for the page we LEFT. A reader that has just navigated (the driver, about
+   * to list tools) waits here rather than reporting the previous page's answer
+   * as this page's.
+   */
+  async probeSettled() {
+    await this.probing;
+  }
+  /** Re-run the page probe for the document the main frame just committed. */
+  reprobe() {
+    const probe = this.probe;
+    if (!probe || this.disposed) return;
+    const generation = ++this.probeGeneration;
+    this.probing = (async () => {
+      const probed = await probe().catch(() => false);
+      if (generation !== this.probeGeneration || this.disposed) return;
+      const next = this.domainEnabled && probed;
+      if (next === this.supported) return;
+      this.supported = next;
+      this.announce();
+    })().finally(() => {
+      if (generation === this.probeGeneration) this.probing = null;
+    });
+  }
+  mainSession() {
+    return this.sessions.get(MAIN_SESSION_KEY);
+  }
+  /**
+   * Whether events from this session still count.
+   *
+   * `CdpLike` has deliberately no `off`, so nothing can UNSUBSCRIBE a session's
+   * handlers — `removeSession` and `dispose` drop the bridge's bookkeeping and
+   * leave the wiring in place. Without this check a `toolsAdded` arriving after
+   * either one would find the frame unowned, claim it, re-populate the map the
+   * teardown just cleared, and publish it: tools resurrected for a session the
+   * provider has already closed.
+   *
+   * Identity, not just presence: a replacement attachment for the same frame is
+   * a DIFFERENT session object under a different key, so a stale one must not
+   * pass by having a live namesake.
+   */
+  live(session) {
+    if (this.disposed) return false;
+    return this.sessions.get(session.key) === session;
+  }
+  /**
+   * Subscribe one session's events. Every handler closes over the session it
+   * belongs to, because almost every one of them has to answer "whose?" —
+   * which frames this session owns, whose tools a removal may delete, and
+   * whether a navigation is the PAGE's or a subframe target's.
+   */
+  wireSession(session) {
+    session.cdp.on("WebMCP.toolsAdded", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = payload ?? {};
+      if (!Array.isArray(tools) || !this.allowChanges(tools.length)) return;
+      const registrationSeq = this.nextRegistrationSeq++;
       for (const tool of tools ?? []) {
-        this.tools.set(this.key(tool.frameId, tool.name), tool);
+        if (!this.allowTool(tool)) return;
+        const owner = this.frameSessions.get(tool.frameId);
+        if (owner !== void 0 && owner !== session.key) continue;
+        this.tools.set(this.key(tool.frameId, tool.name), {
+          tool,
+          registrationSeq,
+          sessionKey: session.key,
+          bytes: this.nextToolBytes
+        });
+        this.frameSessions.set(tool.frameId, session.key);
+        this.updateBudget();
       }
       this.announce();
     });
-    this.cdp.on("WebMCP.toolsRemoved", (payload) => {
+    session.cdp.on("WebMCP.toolsRemoved", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = payload ?? {};
+      if (!Array.isArray(tools) || !this.allowChanges(tools.length)) return;
       for (const tool of tools ?? []) {
-        this.tools.delete(this.key(tool.frameId, tool.name));
+        const key = this.key(tool.frameId, tool.name);
+        if (this.tools.get(key)?.sessionKey !== session.key) continue;
+        this.tools.delete(key);
       }
       this.announce();
     });
-    this.cdp.on("WebMCP.toolInvoked", (payload) => {
+    session.cdp.on("WebMCP.toolInvoked", (payload) => {
       const invoked = payload ?? {};
       if (!invoked.invocationId) return;
       if (this.pending.has(invoked.invocationId)) return;
       if (this.outstandingSends > 0) return;
       this.onExternalInvocation?.(invoked.toolName ?? "");
+      for (const listener of this.externalSubscribers)
+        listener(invoked.toolName ?? "");
     });
-    this.cdp.on("WebMCP.toolResponded", (payload) => {
+    session.cdp.on("WebMCP.toolResponded", (payload) => {
       const responded = payload ?? {};
       const id = responded.invocationId;
       if (!id) return;
       const waiter = this.pending.get(id);
       if (!waiter) {
+        if (this.settledIds.has(id)) return;
         if (this.earlyResponses.size >= MAX_EARLY_RESPONSES) {
           const oldest = this.earlyResponses.keys().next().value;
           if (oldest !== void 0) this.earlyResponses.delete(oldest);
@@ -2637,35 +5237,187 @@ var WebMcpBridge = class {
       this.settle(id);
       this.deliver(waiter, responded);
     });
-    this.cdp.on("Page.frameNavigated", (payload) => {
+    session.cdp.on("Page.frameNavigated", (payload) => {
+      if (!this.live(session)) return;
       const { frame } = payload ?? {};
       if (!frame) return;
+      if (this.localSecurity && session.isMain && !frame.parentId) {
+        this.discoveryBlocked = false;
+        this.changeTokens = 2048;
+        this.changeAt = Date.now();
+        this.tools.clear();
+        this.frames.clear();
+        this.frameSessions.clear();
+      }
+      if (this.localSecurity && !this.frames.has(frame.id) && this.frames.size + this.otherBudget().frames >= 64) {
+        this.blockDiscovery();
+        return;
+      }
       this.frames.set(frame.id, frame.url);
-      this.dropFrame(frame.id);
-      if (!frame.parentId) this.mainFrameId = frame.id;
+      this.dropFrame(frame.id, session.key);
+      if (session.isMain && !frame.parentId) {
+        this.mainFrameId = frame.id;
+        this.reprobe();
+      }
       this.announce();
     });
-    this.cdp.on("Page.frameDetached", (payload) => {
-      const { frameId } = payload ?? {};
+    session.cdp.on("Page.frameDetached", (payload) => {
+      if (!this.live(session)) return;
+      const { frameId, reason } = payload ?? {};
       if (!frameId) return;
+      if (reason === "swap") {
+        this.dropFrame(frameId, session.key);
+        if (this.frameSessions.get(frameId) === session.key) {
+          this.frameSessions.delete(frameId);
+        }
+        this.announce();
+        return;
+      }
       this.frames.delete(frameId);
+      this.frameSessions.delete(frameId);
       this.dropFrame(frameId);
       this.announce();
     });
   }
+  /**
+   * Listen on one more CDP session — a frame that turned out to be its own
+   * Chromium target — and answer with the TOKEN that names this attachment.
+   *
+   * The token is per attachment, not per frame, and that is the whole point.
+   * A frame keeps its id across a cross-origin navigation (measured: an OOPIF
+   * navigated cross-origin reports the same CDP frame id), so a frame id names
+   * the FRAME, never one particular session on it. Teardown quotes the token,
+   * so a removal that arrives after the frame has already been re-attached
+   * names an attachment that is gone and does nothing — instead of emptying a
+   * frame that is working.
+   *
+   * Attaching again for the same frame RETIRES the previous attachment first,
+   * so a replaced frame is never listened to twice.
+   *
+   * The domains are enabled here rather than by the caller so a provider only
+   * has to know how to open a session, and the frame tree is read back so a
+   * frame that finished navigating BEFORE we attached still has an origin —
+   * `Page.frameNavigated` has already been and gone for it.
+   */
+  async addSession(frameId, cdp) {
+    const key = `${frameId}#${this.nextSessionSeq++}`;
+    if (this.disposed) return key;
+    if (this.localSecurity && (this.discoveryBlocked || this.sessions.size + this.otherBudget().frames >= 64)) {
+      this.blockDiscovery();
+      return key;
+    }
+    for (const existing of [...this.sessions.values()]) {
+      if (!existing.isMain && existing.frameId === frameId) {
+        this.removeSession(existing.key);
+      }
+    }
+    const session = { key, frameId, cdp, isMain: false };
+    this.sessions.set(key, session);
+    this.updateBudget();
+    this.frameSessions.set(frameId, key);
+    this.wireSession(session);
+    await cdp.send("Page.enable").catch(() => {
+    });
+    await cdp.send("WebMCP.enable").catch(() => {
+    });
+    await this.seedFrames(cdp).catch(() => {
+    });
+    if (!this.live(session)) return key;
+    this.announce();
+    return key;
+  }
+  /**
+   * Stop listening on one attachment and drop what IT registered.
+   *
+   * Takes the token {@link addSession} answered with, never a frame id: a
+   * removal can arrive after the frame has been re-attached, and anything
+   * scoped to the frame would delete the live session's tools.
+   */
+  removeSession(sessionKey) {
+    if (sessionKey === MAIN_SESSION_KEY) return;
+    if (!this.sessions.delete(sessionKey)) return;
+    for (const [toolKey, entry] of [...this.tools]) {
+      if (entry.sessionKey === sessionKey) this.tools.delete(toolKey);
+    }
+    for (const [frameId, owner] of [...this.frameSessions]) {
+      if (owner === sessionKey) this.frameSessions.delete(frameId);
+    }
+    this.announce();
+  }
+  /** Frame ids with their own attached session. Exists for tests and logging. */
+  attachedFrameIds() {
+    return [...this.sessions.values()].filter((session) => !session.isMain).map((session) => session.frameId);
+  }
+  /** Record a session's frame URLs, for origins we missed by attaching late. */
+  async seedFrames(cdp) {
+    const tree = await cdp.send("Page.getFrameTree");
+    let visited = 0;
+    const walk = (node) => {
+      if (this.localSecurity && (++visited > 64 || this.discoveryBlocked)) {
+        this.blockDiscovery();
+        return;
+      }
+      if (!node?.frame) return;
+      if (!this.frames.has(node.frame.id)) {
+        this.frames.set(node.frame.id, node.frame.url ?? "");
+      }
+      for (const child of node.childFrames ?? []) {
+        if (this.localSecurity && this.discoveryBlocked) break;
+        walk(child);
+      }
+    };
+    walk(tree?.frameTree);
+  }
+  /**
+   * The session that can run a tool in this frame.
+   *
+   * No fallback to the page's session. `WebMCP.invokeTool` rejects a frame id
+   * belonging to another target ("FrameId does not belong to current target"),
+   * so a plausible-looking default is not a degraded call — it is a call to the
+   * wrong renderer, which for a same-named tool would run something the caller
+   * never named.
+   */
+  sessionForFrame(frameId, toolName) {
+    const key = this.frameSessions.get(frameId);
+    const session = key ? this.sessions.get(key) : void 0;
+    if (!session) {
+      throw new WebMcpBridgeError(
+        "webmcp_tool_gone",
+        `The frame that offered "${toolName}" is no longer attached to this session.`
+      );
+    }
+    return session.cdp;
+  }
   key(frameId, name) {
     return `${frameId} ${name}`;
   }
-  dropFrame(frameId) {
-    for (const key of [...this.tools.keys()]) {
-      if (key.startsWith(`${frameId} `)) this.tools.delete(key);
+  /**
+   * Forget a frame's tools. With `sessionKey`, only the ones THAT session
+   * registered — the ordering-safe form, for anything a single session says
+   * about a frame it may no longer own.
+   */
+  dropFrame(frameId, sessionKey) {
+    for (const [key, entry] of [...this.tools]) {
+      if (!key.startsWith(`${frameId} `)) continue;
+      if (sessionKey !== void 0 && entry.sessionKey !== sessionKey) continue;
+      this.tools.delete(key);
     }
   }
+  /**
+   * The ONE terminal transition for an invocation: clear its timers, stop
+   * tracking it, and remember that it is done so a later duplicate response
+   * cannot be mistaken for an early one.
+   */
   settle(invocationId) {
     const waiter = this.pending.get(invocationId);
     if (waiter?.timer) clearTimeout(waiter.timer);
     if (waiter?.cancelTimer) clearTimeout(waiter.cancelTimer);
     this.pending.delete(invocationId);
+    if (this.settledIds.size >= MAX_SETTLED_IDS) {
+      const oldest = this.settledIds.values().next().value;
+      if (oldest !== void 0) this.settledIds.delete(oldest);
+    }
+    this.settledIds.add(invocationId);
   }
   /** Resolve or reject a waiter from the page's response. */
   deliver(waiter, responded) {
@@ -2677,8 +5429,8 @@ var WebMcpBridge = class {
       const reason = waiter.cancelReason ?? "cancelled";
       waiter.reject(
         new WebMcpBridgeError(
-          "webmcp_cancelled",
-          reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+          "webmcp_outcome_unknown",
+          reason === "timeout" ? "Stopped waiting for the page tool after a timeout. Execution may continue; verify the page state before retrying." : "Cancellation requested. Page execution may continue; verify the page state before retrying.",
           reason
         )
       );
@@ -2693,7 +5445,7 @@ var WebMcpBridge = class {
   }
   /** The tools currently on offer, as the model should see them. */
   list() {
-    return [...this.tools.values()].map((tool) => ({
+    return [...this.tools.values()].map(({ tool, registrationSeq }) => ({
       frameId: tool.frameId,
       name: tool.name,
       description: tool.description ?? "",
@@ -2701,6 +5453,7 @@ var WebMcpBridge = class {
       ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {},
       origin: originOf(this.frames.get(tool.frameId) ?? ""),
       isMainFrame: tool.frameId === this.mainFrameId,
+      registrationSeq,
       registrationKind: tool.backendNodeId !== void 0 ? "declarative" : tool.stackTrace ? "imperative" : "unknown"
     }));
   }
@@ -2710,12 +5463,12 @@ var WebMcpBridge = class {
    * time rather than being carried around as identity.
    */
   resolveFrame(toolName) {
-    for (const tool of this.tools.values()) {
+    for (const { tool } of this.tools.values()) {
       if (tool.name === toolName && tool.frameId === this.mainFrameId) {
         return tool.frameId;
       }
     }
-    for (const tool of this.tools.values()) {
+    for (const { tool } of this.tools.values()) {
       if (tool.name === toolName) return tool.frameId;
     }
     throw new WebMcpBridgeError(
@@ -2730,9 +5483,19 @@ var WebMcpBridge = class {
    * the subframe detached), so an id that no longer matches falls back to
    * resolution rather than being sent to the browser to fail obscurely.
    */
-  frameFor(frameId, toolName) {
+  frameFor(frameId, toolName, strict = false) {
     if (frameId && this.tools.has(this.key(frameId, toolName))) return frameId;
+    if (strict) {
+      throw new WebMcpBridgeError(
+        "webmcp_tool_gone",
+        `The frame that offered "${toolName}" no longer offers it.`
+      );
+    }
     return this.resolveFrame(toolName);
+  }
+  /** The registration sequence for one (frame, name), or undefined if gone. */
+  registrationSeqFor(frameId, toolName) {
+    return this.tools.get(this.key(frameId, toolName))?.registrationSeq;
   }
   /**
    * Invoke a page tool and wait for the page's own response.
@@ -2768,13 +5531,27 @@ var WebMcpBridge = class {
         reason
       );
     }
-    const frameId = this.frameFor(args.frameId, args.toolName);
+    const frameId = this.frameFor(
+      args.frameId,
+      args.toolName,
+      args.strictFrame === true
+    );
+    if (args.expectedRegistrationSeq !== void 0) {
+      const live = this.registrationSeqFor(frameId, args.toolName);
+      if (live !== args.expectedRegistrationSeq) {
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          `"${args.toolName}" was re-registered by the page after it was listed.`
+        );
+      }
+    }
+    const owner = this.sessionForFrame(frameId, args.toolName);
     let invocationId;
     try {
       this.outstandingSends += 1;
       let result;
       try {
-        result = await this.cdp.send("WebMCP.invokeTool", {
+        result = await owner.send("WebMCP.invokeTool", {
           frameId,
           toolName: args.toolName,
           input: args.input
@@ -2789,6 +5566,18 @@ var WebMcpBridge = class {
         );
       }
       invocationId = result.invocationId;
+      if (this.localSecurity && (this.discoveryBlocked || this.disposed)) {
+        void owner.send("WebMCP.cancelInvocation", { invocationId }).catch(() => {
+        });
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          "Page tool discovery is no longer available; earlier effects may already have occurred."
+        );
+      }
+      try {
+        args.onStarted?.(invocationId);
+      } catch {
+      }
     } catch (error) {
       if (error instanceof WebMcpBridgeError) throw error;
       const message = error instanceof Error ? error.message : String(error);
@@ -2800,11 +5589,12 @@ var WebMcpBridge = class {
       }
       throw error;
     }
-    const output = await new Promise((resolve, reject) => {
-      const waiter = { resolve, reject };
+    const output = await new Promise((resolve2, reject) => {
+      const waiter = { resolve: resolve2, reject, cdp: owner };
       const early = this.earlyResponses.get(invocationId);
       if (early) {
         this.earlyResponses.delete(invocationId);
+        this.settle(invocationId);
         this.deliver(waiter, early);
         return;
       }
@@ -2816,16 +5606,16 @@ var WebMcpBridge = class {
         waiter.cancelReason = reason;
         if (waiter.timer) clearTimeout(waiter.timer);
         void Promise.resolve(
-          this.cdp.send("WebMCP.cancelInvocation", { invocationId })
+          owner.send("WebMCP.cancelInvocation", { invocationId })
         ).catch(() => {
         });
         waiter.cancelTimer = setTimeout(() => {
           if (!this.pending.has(invocationId)) return;
-          this.pending.delete(invocationId);
+          this.settle(invocationId);
           reject(
             new WebMcpBridgeError(
-              "webmcp_cancelled",
-              reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+              "webmcp_outcome_unknown",
+              reason === "timeout" ? "Stopped waiting for the page tool after a timeout. Execution may continue; verify the page state before retrying." : "Cancellation requested. Page execution may continue; verify the page state before retrying.",
               reason
             )
           );
@@ -2857,23 +5647,37 @@ var WebMcpBridge = class {
   async cancel(invocationId) {
     const waiter = this.pending.get(invocationId);
     if (waiter) waiter.cancelReason = "cancelled";
-    await Promise.resolve(
-      this.cdp.send("WebMCP.cancelInvocation", { invocationId })
-    ).catch(() => {
-    });
+    const targets = waiter ? [waiter.cdp] : [...this.sessions.values()].map((session) => session.cdp);
+    await Promise.all(
+      targets.map(
+        (cdp) => Promise.resolve(
+          cdp.send("WebMCP.cancelInvocation", { invocationId })
+        ).catch(() => {
+        })
+      )
+    );
     return Boolean(waiter);
   }
   /** Reject every waiter; called when the tab or daemon goes away. */
   dispose() {
+    this.localBudget?.entries.delete(this);
     if (this.disposed) return;
     this.disposed = true;
+    this.subscribers.clear();
+    this.externalSubscribers.clear();
+    this.probe = void 0;
+    for (const key of [...this.sessions.keys()]) {
+      if (key !== MAIN_SESSION_KEY) this.sessions.delete(key);
+    }
+    this.frameSessions.clear();
+    this.tools.clear();
     for (const [id, waiter] of this.pending) {
       if (waiter.timer) clearTimeout(waiter.timer);
       if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);
       waiter.reject(
         new WebMcpBridgeError(
-          "webmcp_cancelled",
-          "The browser tab was closed.",
+          "webmcp_outcome_unknown",
+          "The browser session ended before the page tool's outcome was known. Verify the page state before retrying.",
           "cancelled"
         )
       );
@@ -2881,6 +5685,101 @@ var WebMcpBridge = class {
     }
   }
 };
+
+// shared/declared-tools.ts
+var WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 8192;
+var WEBMCP_TOOL_INPUT_SCHEMA_MAX_DEPTH = 12;
+var CONTROL_CHARS = new RegExp(
+  "[\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F]",
+  "g"
+);
+var BIDI_AND_INVISIBLE = new RegExp(
+  "[\\u200B-\\u200F\\u061C\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF]",
+  "g"
+);
+var SEP = "\0";
+function fnv1a(input, seed) {
+  let hash = seed;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+    hash >>>= 0;
+  }
+  return hash >>> 0;
+}
+function declaredToolHex8(input) {
+  const high = fnv1a(input, 2166136261);
+  const low = fnv1a(input, 16777619);
+  return high.toString(16).padStart(8, "0").slice(0, 4) + low.toString(16).padStart(8, "0").slice(0, 4);
+}
+function canonicalJson(value, depth = 0, budget = { left: CANONICAL_JSON_BUDGET_CHARS }) {
+  if (depth > WEBMCP_TOOL_INPUT_SCHEMA_MAX_DEPTH * 2) return '"[deep]"';
+  if (budget.left <= 0) return '"[budget]"';
+  if (value === null || typeof value !== "object") {
+    const scalar2 = typeof value === "string" && value.length > budget.left ? `${value.slice(0, budget.left)}\u2026` : value;
+    const out = JSON.stringify(scalar2) ?? "null";
+    budget.left -= out.length;
+    return out;
+  }
+  if (Array.isArray(value)) {
+    const parts2 = [];
+    for (const item of value) {
+      if (budget.left <= 0) {
+        parts2.push('"[budget]"');
+        break;
+      }
+      parts2.push(canonicalJson(item, depth + 1, budget));
+    }
+    budget.left -= parts2.length + 1;
+    return `[${parts2.join(",")}]`;
+  }
+  const record = value;
+  const parts = [];
+  for (const key of Object.keys(record).sort()) {
+    if (budget.left <= 0) {
+      parts.push('"[budget]":0');
+      break;
+    }
+    const encodedKey = JSON.stringify(
+      key.length > budget.left ? `${key.slice(0, budget.left)}\u2026` : key
+    );
+    budget.left -= encodedKey.length + 1;
+    parts.push(`${encodedKey}:${canonicalJson(record[key], depth + 1, budget)}`);
+  }
+  budget.left -= parts.length + 1;
+  return `{${parts.join(",")}}`;
+}
+var CANONICAL_JSON_BUDGET_CHARS = WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES * 4;
+function declaredSchemaHash(schema) {
+  return declaredToolHex8(schema === void 0 ? "" : canonicalJson(schema));
+}
+function declaredToolsHash(descriptors, context) {
+  const rows = descriptors.map(
+    (descriptor) => [
+      descriptor.frameId ?? "",
+      String(descriptor.registrationSeq ?? 0),
+      descriptor.rawName,
+      descriptor.description ?? "",
+      declaredSchemaHash(descriptor.inputSchema)
+    ].join(SEP)
+  ).sort();
+  return declaredToolHex8(
+    [String(context?.navCounter ?? 0), String(rows.length), ...rows].join(SEP)
+  );
+}
+function declaredToolsFromWebmcp(tools) {
+  return tools.map((tool) => ({
+    rawName: tool.name,
+    description: tool.description ?? "",
+    ...tool.inputSchema !== void 0 ? { inputSchema: tool.inputSchema } : {},
+    ...tool.origin !== void 0 ? { origin: tool.origin } : {},
+    ...tool.frameId !== void 0 ? { frameId: tool.frameId } : {},
+    isMainFrame: tool.isMainFrame === true,
+    ...tool.registrationSeq !== void 0 ? { registrationSeq: tool.registrationSeq } : {},
+    registrationKind: tool.registrationKind ?? "unknown",
+    ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {}
+  }));
+}
 
 // server/services/webmcp-inspector/frame-throttle.ts
 function createFrameThrottle(options) {
@@ -2996,19 +5895,34 @@ function base64Bytes(data) {
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
 }
-var DEFAULT_QUALITY = 75;
-var DEFAULT_MIN_INTERVAL_MS = 100;
-var DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
+var DEFAULT_QUALITY = BROWSER_VIEWPORT_POLICY.quality;
+var DEFAULT_MIN_INTERVAL_MS = BROWSER_VIEWPORT_POLICY.minIntervalMs;
+var DEFAULT_MAX_FRAME_BYTES = BROWSER_VIEWPORT_POLICY.maxFrameBytes;
 function createTabViewport(cdp, options) {
-  const quality = options.quality ?? DEFAULT_QUALITY;
+  let quality = options.quality ?? DEFAULT_QUALITY;
+  const requestedQuality = quality;
+  let recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+  let probing = false;
+  let recoveryTimer;
+  let captureError;
+  const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((id) => clearTimeout(id));
+  const cancelRecovery = () => {
+    if (recoveryTimer !== void 0) clearTimer(recoveryTimer);
+    recoveryTimer = void 0;
+  };
   const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const now = options.now ?? Date.now;
-  const listeners = /* @__PURE__ */ new Set();
+  const listeners = /* @__PURE__ */ new Map();
+  const effectiveLimit = () => Math.min(...listeners.values(), SHARP_JPEG_MAX_BYTES);
   let streaming = false;
+  let startPending = Promise.resolve();
   let streamGeneration = 0;
   let disposed = false;
   let buttonMask = 0;
   let inputChain = Promise.resolve();
+  let resizeChain = Promise.resolve();
+  let pendingResizes = 0;
   let inputHolder;
   let lastData;
   let seq = 0;
@@ -3021,7 +5935,8 @@ function createTabViewport(cdp, options) {
   const publish = (frame) => {
     counters.framesOut += 1;
     counters.bytesOut += base64Bytes(frame.data);
-    for (const listener of listeners) {
+    for (const [listener, limit] of listeners) {
+      if (base64Bytes(frame.data) > limit) continue;
       try {
         listener(frame);
       } catch {
@@ -3048,11 +5963,31 @@ function createTabViewport(cdp, options) {
       return;
     }
     lastData = frame.data;
-    const bytes = Math.floor(frame.data.length * 3 / 4);
-    if (bytes > maxBytes) {
+    const bytes = base64Bytes(frame.data);
+    if (bytes > effectiveLimit()) {
       counters.dropped.oversize += 1;
+      cancelRecovery();
+      if (probing)
+        recoveryDelay = Math.min(
+          JPEG_RECOVERY_POLICY.maxProbeMs,
+          recoveryDelay * 2
+        );
+      probing = false;
+      const next = JPEG_RECOVERY_POLICY.qualities.find((q) => q < quality);
+      if (next === void 0) {
+        captureError = "jpeg_frame_limit";
+      } else {
+        quality = next;
+        restartCapture();
+      }
       return;
     }
+    captureError = void 0;
+    if (probing) {
+      recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+      probing = false;
+    }
+    scheduleRecovery();
     const measured = measure(frame.data, options.surface);
     throttle.push({
       data: frame.data,
@@ -3063,11 +5998,21 @@ function createTabViewport(cdp, options) {
       seq: seq += 1
     });
   });
+  cdp.on("Page.frameNavigated", (payload) => {
+    const frame = payload.frame;
+    if (!frame || frame.parentId || disposed || listeners.size === 0) return;
+    if (quality < requestedQuality || captureError) {
+      resetQuality();
+      restartCapture();
+    }
+  });
   const start = async () => {
     if (streaming || disposed) return;
     streaming = true;
     const generation = ++streamGeneration;
     lastData = void 0;
+    void cdp.send("Page.enable").catch(() => {
+    });
     await cdp.send("Page.startScreencast", {
       format: "jpeg",
       quality,
@@ -3081,6 +6026,7 @@ function createTabViewport(cdp, options) {
     });
   };
   const stop = async () => {
+    cancelRecovery();
     if (!streaming) return;
     streaming = false;
     streamGeneration += 1;
@@ -3088,18 +6034,107 @@ function createTabViewport(cdp, options) {
     await cdp.send("Page.stopScreencast").catch(() => {
     });
   };
+  function restartCapture() {
+    const run = resizeChain.then(async () => {
+      if (disposed || listeners.size === 0) return;
+      await stop();
+      if (!disposed && listeners.size > 0) await start();
+    });
+    resizeChain = run.catch(() => {
+    });
+    startPending = resizeChain;
+  }
+  function scheduleRecovery() {
+    if (quality >= requestedQuality || recoveryTimer !== void 0 || disposed)
+      return;
+    recoveryTimer = setTimer(() => {
+      recoveryTimer = void 0;
+      if (disposed || listeners.size === 0) return;
+      quality = Math.min(
+        requestedQuality,
+        [...JPEG_RECOVERY_POLICY.qualities].reverse().find((q) => q > quality) ?? requestedQuality
+      );
+      probing = true;
+      restartCapture();
+    }, recoveryDelay);
+  }
+  function resetQuality() {
+    cancelRecovery();
+    quality = requestedQuality;
+    recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+    probing = false;
+    captureError = void 0;
+  }
   return {
-    subscribe(listener) {
-      listeners.add(listener);
-      if (listeners.size === 1) void start();
+    subscribe(listener, frameLimit = maxBytes) {
+      const before = effectiveLimit();
+      listeners.set(
+        listener,
+        Math.min(SHARP_JPEG_MAX_BYTES, Math.max(1, frameLimit))
+      );
+      if (listeners.size === 1 || effectiveLimit() !== before || captureError) {
+        resetQuality();
+        if (listeners.size > 1) restartCapture();
+      }
+      if (listeners.size === 1) {
+        startPending = pendingResizes > 0 ? resizeChain : start();
+      }
       return () => {
+        const before2 = effectiveLimit();
         listeners.delete(listener);
         if (listeners.size === 0) void stop();
+        else if (effectiveLimit() !== before2) {
+          resetQuality();
+          restartCapture();
+        }
       };
     },
     subscriberCount: () => listeners.size,
+    ready: async () => {
+      await startPending;
+      return streaming && !disposed;
+    },
+    invalidate() {
+      lastData = void 0;
+      if (quality < requestedQuality || captureError) {
+        resetQuality();
+        restartCapture();
+      }
+    },
+    resize(surface, apply) {
+      pendingResizes++;
+      const run = resizeChain.then(async () => {
+        try {
+          if (disposed || options.surface.width === surface.width && options.surface.height === surface.height)
+            return;
+          await stop();
+          if (disposed) return;
+          await apply?.();
+          resetQuality();
+          Object.assign(options.surface, surface);
+        } finally {
+          pendingResizes--;
+          if (pendingResizes === 0 && !disposed && listeners.size > 0) {
+            await start();
+          }
+        }
+      });
+      resizeChain = run.catch(() => {
+      });
+      startPending = resizeChain;
+      return run;
+    },
     boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),
-    counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
+    counters: () => ({
+      ...counters,
+      dropped: { ...counters.dropped },
+      jpeg: {
+        requestedQuality,
+        quality,
+        maxFrameBytes: effectiveLimit(),
+        reason: captureError ?? (quality < requestedQuality ? "frame_size" : "default")
+      }
+    }),
     noteTransportDrop() {
       counters.dropped.pacer += 1;
     },
@@ -3115,7 +6150,17 @@ function createTabViewport(cdp, options) {
       disposed = true;
       buttonMask = 0;
       listeners.clear();
-      await stop();
+      let timer;
+      try {
+        await Promise.race([
+          stop(),
+          new Promise((resolve2) => {
+            timer = setTimeout(resolve2, 1e3);
+          })
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
     }
   };
   async function dispatchBatch(events, stillPermitted, holder) {
@@ -3253,6 +6298,36 @@ async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
 
 // server/services/browserd/daemon/chromium-driver.ts
 var DEFAULT_TAB = DEFAULT_QUEUE_KEY;
+var ActError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+    this.name = "ActError";
+  }
+};
+var LeaseTakenMidAct = class extends Error {
+};
+function withoutRefIndex(fields) {
+  const { refs: _unstored, ...rest } = fields;
+  return rest;
+}
+function isNotAnInputRefusal(message) {
+  return /not an <input>/i.test(message) && !/<select>/i.test(message);
+}
+function webmcpHashFor(tools, navCounter) {
+  return declaredToolsHash(declaredToolsFromWebmcp(tools), { navCounter });
+}
+function emptyWebmcpState() {
+  return {
+    revision: 0,
+    hash: webmcpHashFor([], 0),
+    supported: false,
+    tools: []
+  };
+}
+var MAX_TRACKED_INVOCATIONS = 256;
+var MAX_PENDING_CANCELS = 64;
+var PENDING_CANCEL_TTL_MS = 6e4;
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
 function parsePoint(value) {
   if (!value) return null;
@@ -3286,6 +6361,8 @@ var ChromiumDriver = class {
   settleOptions;
   a11yBudget;
   consoleBudget;
+  networkBudget;
+  dialogPolicy;
   webmcpOutputBudgetBytes;
   pageTextMaxBytes;
   lease;
@@ -3316,6 +6393,14 @@ var ChromiumDriver = class {
    */
   refs = /* @__PURE__ */ new Map();
   /**
+   * What was decided about a dialog, waiting to ride the next observation.
+   *
+   * Carried rather than returned because the dialog is answered at the top of
+   * `execute`, before the command that will produce the result has run — the
+   * same shape as the handoff note, and read out in the same funnel.
+   */
+  dialogNotes = /* @__PURE__ */ new Map();
+  /**
    * Tab creations already under way, by tabId.
    *
    * `context.newPage()` is awaited, so without this two callers arriving
@@ -3334,25 +6419,261 @@ var ChromiumDriver = class {
    * was added to prevent, moved one step later.
    */
   closing = false;
+  /**
+   * `commandId -> invocationId`, recorded the instant the browser accepts an
+   * invocation.
+   *
+   * The whole cancellation path hangs off this. `webmcp_invoke` is synchronous
+   * — it does not return an invocation id until the page's tool has SETTLED —
+   * so a caller wanting to stop a running tool has never known what to name.
+   * Its own `commandId` is the one id it holds before the call, so that is the
+   * handle `webmcp_cancel` takes.
+   */
+  invocationsByCommand = /* @__PURE__ */ new Map();
+  /**
+   * Commands whose cancellation arrived before their invocation could act on
+   * it, mapped to when that intent expires.
+   *
+   * Three moments a cancel BY ID cannot reach: while the invoke is still
+   * queued behind another command on its tab, while it is dequeued but the
+   * browser has not yet named the invocation, and the gap between. All three
+   * latch here; `webmcpInvoke` consults the latch on entry, so a command
+   * cancelled before it ran never touches the page, and `rememberInvocation`
+   * consults it when the id arrives. Bounded by `MAX_PENDING_CANCELS` and
+   * `PENDING_CANCEL_TTL_MS` (see `latchCancel`); a latch guarding a running
+   * invocation is never evicted and never expires.
+   */
+  pendingCancels = /* @__PURE__ */ new Map();
+  /**
+   * Commands whose `webmcp_invoke` is in flight RIGHT NOW.
+   *
+   * Registered at dequeue, cleared in the `finally`. This is what protects a
+   * latch in `pendingCancels` from eviction and expiry: an intent for a
+   * running command is live for as long as the command is.
+   */
+  activeInvocations = /* @__PURE__ */ new Set();
+  /**
+   * How big this session's page is, and its revision.
+   *
+   * The DRIVER owns it rather than the launch args, because it is the thing
+   * that knows every open tab and can therefore be the one place that
+   * guarantees they all agree. A per-tab answer would let two tabs in one
+   * session render at different sizes while one number was published for both.
+   */
+  sessionViewport;
+  /** Monotonic per boot, so two snapshots in one millisecond still order. */
+  stateSeq = 0;
+  stopPageCreated;
+  nextPopupId = 0;
+  maxTabs;
+  onExternalInvocation;
+  allowPaneResize;
+  viewportPolicy;
+  latestViewportRequest;
+  onViewportChange;
+  barrier;
+  resizeDisplay;
   constructor(context, options = {}) {
     this.context = context;
+    this.onExternalInvocation = options.onExternalInvocation;
+    this.maxTabs = Math.max(1, options.maxTabs ?? BROWSER_TAB_CAP);
+    this.stopPageCreated = context.onPageCreated?.(
+      ({ page, opener, background }) => {
+        const openerId = [...this.tabs].find(
+          ([, entry]) => entry.page === opener
+        )?.[0];
+        if (this.closing || !openerId || this.tabs.size + this.pendingTabs.size >= this.maxTabs) {
+          void page.close().catch(() => {
+          });
+          return;
+        }
+        let id;
+        do {
+          id = `popup-${++this.nextPopupId}`;
+        } while (this.tabs.has(id) || this.pendingTabs.has(id));
+        void this.registerTab(id, page, openerId, background).then(() => options.onPopupOpened?.(safeUrl(page))).catch(() => page.close().catch(() => {
+        }));
+      }
+    );
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.dialogPolicy = options.dialogPolicy ?? "auto";
+    this.networkBudget = options.network ?? DEFAULT_NETWORK_BUDGET;
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
+    this.viewportPolicy = options.viewport?.policy ?? "fixed";
+    this.allowPaneResize = options.viewport?.allowPaneResize === true;
+    const initial = options.viewport?.initial;
+    this.sessionViewport = initial ? { width: initial.width, height: initial.height, revision: 0 } : INITIAL_SESSION_VIEWPORT;
+    this.onViewportChange = options.viewport?.onChange;
+    this.resizeDisplay = options.viewport?.resizeDisplay;
+    this.barrier = new SessionBarrier(
+      (size) => this.applyViewport(size),
+      options.viewport?.debounceMs !== void 0 ? { debounceMs: options.viewport.debounceMs } : {}
+    );
   }
+  /** This session's page size and revision, for everything that publishes it. */
+  sessionViewportState() {
+    return this.sessionViewport;
+  }
+  /**
+   * Ask for a new size, and resolve once the request has been dealt with.
+   *
+   * "Dealt with" rather than "applied": a burst of measurements from a drag
+   * collapses into one transition, and every caller in the burst resolves when
+   * that transition lands, whatever size it carried. A `fixed` session
+   * resolves immediately, having changed nothing.
+   */
+  sessionViewportPolicy() {
+    return this.viewportPolicy;
+  }
+  async requestViewport(size) {
+    if (size.policy === "followPane" && this.allowPaneResize)
+      this.viewportPolicy = "followPane";
+    if (this.viewportPolicy === "fixed") return this.sessionViewport;
+    const request2 = size.policy === "fixed" ? { ...size, width: 1024, height: 768 } : size;
+    this.latestViewportRequest = request2;
+    await this.barrier.request(request2);
+    return this.sessionViewport;
+  }
+  /** Is a resize waiting or transitioning? Surfaces as the pane's affordance. */
+  viewportSettling() {
+    return this.barrier.busy;
+  }
+  /** Resize an attached capture together with its page, including rollback. */
+  async resizePage(page, size) {
+    const tab = [...this.tabs].find(([, entry]) => entry.page === page);
+    const capture = tab ? await this.viewports.get(tab[0]) : void 0;
+    const apply = async () => {
+      await page.setViewportSize?.({ width: size.width, height: size.height });
+    };
+    if (capture) await capture.resize(size, apply);
+    else await apply();
+  }
+  /**
+   * Take every tab to a new size, or leave every tab where it was.
+   *
+   * ALL OR NOTHING, and rolled back by hand rather than left half-applied. A
+   * session whose tabs render at two different sizes has no honest number to
+   * publish for either — and the pane would draw the one that was written
+   * last, over a page that is not that size. The rollback is best-effort
+   * because a page that just refused a resize may refuse the way back too; what
+   * matters is that `sessionViewport` is not advanced unless every page took
+   * the new size, so the published number never runs ahead of the picture.
+   */
+  async applyViewport(size) {
+    const next = advanceViewport(this.sessionViewport, size, "followPane");
+    if (next === this.sessionViewport) {
+      if (size.policy === "fixed" && this.latestViewportRequest === size)
+        this.viewportPolicy = "fixed";
+      return;
+    }
+    const pages = [...this.tabs.values()].map((entry) => entry.page).filter((page) => !page.isClosed());
+    const unable = pages.find(
+      (page) => typeof page.setViewportSize !== "function"
+    );
+    if (unable) {
+      throw new Error(
+        "viewport_unsupported: this engine cannot resize its pages"
+      );
+    }
+    const previous = this.sessionViewport;
+    if (this.resizeDisplay) {
+      const moved = await this.resizeDisplay(
+        { width: next.width, height: next.height },
+        { width: previous.width, height: previous.height }
+      );
+      if (!moved) {
+        throw new Error(
+          "display_resize_failed: the box would not change its display size"
+        );
+      }
+    }
+    const applied = [];
+    try {
+      for (const page of pages) {
+        await this.resizePage(page, next);
+        applied.push(page);
+      }
+    } catch (error) {
+      for (const page of applied) {
+        await this.resizePage(page, previous).catch(() => {
+        });
+      }
+      if (this.resizeDisplay) {
+        await this.resizeDisplay(
+          { width: previous.width, height: previous.height },
+          { width: next.width, height: next.height }
+        ).catch(() => false);
+      }
+      throw error;
+    }
+    this.sessionViewport = next;
+    if (size.policy === "fixed" && this.latestViewportRequest === size)
+      this.viewportPolicy = "fixed";
+    for (const entry of this.tabs.values()) {
+      if (applied.includes(entry.page) || entry.page.isClosed()) continue;
+      await this.resizePage(entry.page, next).catch(() => {
+      });
+    }
+    try {
+      this.onViewportChange?.(next);
+    } catch {
+    }
+  }
+  /**
+   * Is this coordinate on the page?
+   *
+   * The SESSION's numbers, not the module constant. The two agree exactly when
+   * the session is `fixed`, which is every caller that predates this — so the
+   * refusals a caller sees today do not move, and a resized session refuses
+   * the coordinates that are genuinely off ITS page rather than off a 1024x768
+   * one it is not.
+   */
+  inViewport(x, y) {
+    return isPointInSessionViewport(x, y, this.sessionViewport);
+  }
+  /** How this session's size reads in an error a caller has to act on. */
+  get viewportLabel() {
+    return `${this.sessionViewport.width}x${this.sessionViewport.height}`;
+  }
+  /**
+   * Run one command, never across a resize.
+   *
+   * The barrier is here rather than around the queue because the queue is
+   * per-TAB and a resize is per-SESSION: two tabs' FIFOs can each be mid-act
+   * while the display changes underneath both. Wrapping the one place every
+   * verb passes through is what makes "never resize midway through an action"
+   * true for all of them at once — including the ones added later.
+   */
   async execute(command) {
-    this.purgeHandoffConsole();
+    return this.barrier.run(() => this.executeInBarrier(command));
+  }
+  async executeInBarrier(command) {
+    if (command.source !== "manual" && command.action.kind !== "webmcp_cancel" && !negotiateViewport(this.viewportPolicy, command).ok) {
+      return {
+        ok: false,
+        error: "responsive_viewport_required: read the session viewport before acting"
+      };
+    }
+    this.purgeHandoffRings();
     const permit = this.permitFor(command);
     if (!permit()) {
       return this.leaseBlockedResult(
         "a person took control of this browser before this action ran; nothing was run and nothing was observed"
       );
     }
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const action = command.action;
+    const blocked = await this.answerOrRefuseDialog(
+      tabId,
+      action,
+      permit,
+      command.source
+    );
+    if (blocked) return blocked;
     switch (action.kind) {
       case "navigate": {
         if (action.newTab) {
@@ -3380,46 +6701,62 @@ var ChromiumDriver = class {
             )
           };
         }
+        if (command.source === "manual" && action.newTab && action.url === "about:blank" && action.observe === "none" && safeUrl(entry.page) === "about:blank") {
+          return permit() ? { ok: true } : this.leaseBlockedResult(
+            "browser control changed while opening the tab; nothing was observed"
+          );
+        }
         return this.navigateVerb(
           tabId,
           entry,
           (page) => page.goto(action.url),
-          permit
+          permit,
+          action.observe
         );
       }
       case "back":
+      case "forward":
       case "reload": {
         const entry = this.tabs.get(tabId);
         if (!entry || entry.page.isClosed()) {
           return { ok: false, error: `unknown_tab: ${tabId}` };
         }
+        const kind = action.kind;
         return this.navigateVerb(
           tabId,
           entry,
-          (page) => action.kind === "back" ? page.goBack() : page.reload(),
-          permit
+          (page) => kind === "back" ? page.goBack() : kind === "forward" ? page.goForward() : page.reload(),
+          permit,
+          action.observe
         );
       }
       case "observe":
         return this.observe(tabId, action, permit);
       case "act":
-        return this.act(tabId, action, permit);
+        return this.act(tabId, action, permit, command.source);
       case "webmcp_invoke":
-        return this.webmcpInvoke(tabId, action, permit);
+        return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
         return this.webmcpCancel(tabId, action, permit);
     }
   }
   /**
    * Run one act verb, then FOLD THE OBSERVATION IN (L1): every act settles and
-   * returns the post-act screenshot + URL with a fresh state token, so the
-   * model never has to spend a turn asking "what happened?" — and the token it
-   * gets back is the one its NEXT act should be pinned to.
+   * returns what the page BECAME — its URL, the tree of what can be acted on
+   * next (with refs), a screenshot, or whichever of those `observe` asked for
+   * — with a fresh state token, so the model never has to spend a turn asking
+   * "what happened?" and the token it gets back is the one its NEXT act should
+   * be pinned to.
+   *
+   * The a11y half is what closes the last round trip: an act used to hand back
+   * a picture, and a model that wanted to know what was now CLICKABLE had to
+   * observe again. `afterAct` is the funnel every one of these paths — success,
+   * failure, and the stale refusal above — leaves through.
    *
    * L3 staleness is enforced upstream by `guardStaleness`, which compares the
    * act's `expectedState` before this runs.
    */
-  async act(tabId, action, permit) {
+  async act(tabId, action, permit, source) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -3429,21 +6766,76 @@ var ChromiumDriver = class {
       await page.close().catch(() => {
       });
       await this.dropTab(tabId);
+      if (!this.closing && this.tabs.size === 0)
+        await this.getOrCreateTab(DEFAULT_TAB);
       return { ok: true, output: { closed: tabId } };
+    }
+    if (action.verb === "accept_dialog" || action.verb === "dismiss_dialog") {
+      const pending = page.pendingDialog?.();
+      if (!pending) {
+        return {
+          ok: false,
+          error: formatBrowserdError(
+            "act_failed",
+            "there is no dialog open on this page to answer"
+          )
+        };
+      }
+      const accept = action.verb === "accept_dialog";
+      await page.resolveDialog?.(
+        accept,
+        accept && action.value !== void 0 ? action.value : void 0
+      );
+      this.dialogNotes.set(tabId, {
+        kind: pending.kind,
+        message: pending.message,
+        choice: accept ? "accepted" : "dismissed"
+      });
+      const settledAfter = await this.settle(page);
+      const observed2 = await this.afterAct(
+        tabId,
+        entry,
+        permit,
+        wantsFor(action.observe)
+      );
+      return observed2.ok ? { settled: settledAfter, ...observed2 } : observed2;
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
       this.activeTabId = tabId;
-      const frame2 = await this.snapshot(page);
-      return this.observation(tabId, entry, { url: frame2.url }, frame2, permit);
+      const frame = await this.snapshot(page);
+      return this.observation(tabId, entry, { url: frame.url }, frame, permit);
+    }
+    const wants = wantsFor(action.observe);
+    const before = await this.snapshot(page).catch(() => void 0);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+      );
     }
     try {
-      await this.dispatchVerb(page, action);
+      const refNode = await this.resolveActRef(
+        tabId,
+        entry,
+        action.target,
+        permit
+      );
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          "a person took control of this browser while its target was being resolved; nothing was run and nothing was observed"
+        );
+      }
+      await this.dispatchVerb(page, action, permit, refNode);
     } catch (error) {
+      if (error instanceof LeaseTakenMidAct) {
+        return this.leaseBlockedResult(
+          "a person took control of this browser partway through this action; any earlier steps of it have already been applied to the page \u2014 re-observe after they hand it back rather than repeating it"
+        );
+      }
       const message = error instanceof Error ? error.message : String(error);
-      const kind = /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
-      const before = permit() ? await this.snapshot(page).catch(() => null) : null;
-      const frame2 = permit() ? before : null;
+      const kind = error instanceof ActError ? error.code : /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
+      const fresh = await this.afterAct(tabId, entry, permit, wants, before);
+      if (fresh.leaseBlocked) return fresh;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
@@ -3452,100 +6844,361 @@ var ChromiumDriver = class {
         // carries the handoff note too — an act that failed right after a
         // person used the browser most likely failed BECAUSE the page is now
         // somewhere else, and "your click missed" would be the wrong lesson.
-        ...frame2 ? {
-          stateToken: this.tokenFor(tabId, entry, frame2),
-          output: this.withHandoffNote({ url: frame2.url })
+        ...fresh.ok ? {
+          ...fresh.stateToken ? { stateToken: fresh.stateToken } : {},
+          ...fresh.output !== void 0 ? { output: fresh.output } : {}
         } : {}
       };
     }
+    const stillBlocked = await this.answerOrRefuseDialog(
+      tabId,
+      action,
+      permit,
+      source
+    );
+    if (stillBlocked) {
+      const pending = entry.page.pendingDialog?.();
+      return {
+        ok: true,
+        settled: false,
+        output: {
+          ...pending ? {
+            dialog: {
+              kind: pending.kind,
+              message: pending.message,
+              pending: true
+            }
+          } : {},
+          note: "the action ran and the page is now blocked on a dialog; it is waiting for whoever holds this browser to answer it"
+        }
+      };
+    }
     const settled = await this.settle(page);
-    if (!permit()) {
-      return this.leaseBlockedResult(
-        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
+    const observed = await this.afterAct(
+      tabId,
+      entry,
+      permit,
+      wants,
+      before,
+      "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
+    );
+    return observed.ok ? { settled, ...observed } : observed;
+  }
+  /**
+   * Map an act verb onto the page primitives.
+   *
+   * `permit` is threaded in for the COMPOSITE verbs only. A single-step verb is
+   * one dispatch and the caller's check immediately precedes it; `fill_form` is
+   * a loop of awaited page writes, so a person taking the browser after the
+   * first field would otherwise have the rest of the form — and the Enter —
+   * typed into it. The check is between steps because there is no way to take
+   * back the ones already made.
+   */
+  /**
+   * Turn an `a11yRef` target into a live node, or refuse in the model's terms.
+   *
+   * Three refusals, and they send the model three different places:
+   *
+   *   - `stale_ref` for a ref minted against a page this tab has since left.
+   *     Checked against the state token BEFORE anything is resolved, because a
+   *     backend node id is only unique within a document: a new page can reuse
+   *     the number, and resolving it would click a stranger with confidence.
+   *   - `unknown_ref` for a ref this tab's last observation never issued —
+   *     a model quoting a ref from an older turn, or inventing one.
+   *   - `stale_ref` again when the id is dead AND no node still carries that
+   *     exact role and name (`resolveRefNode` does the recovery).
+   */
+  async resolveActRef(tabId, entry, target, permit = () => true) {
+    if (!target || !("a11yRef" in target)) return void 0;
+    const raw = target.a11yRef;
+    const map = this.refs.get(tabId);
+    if (map && !this.refsStillDescribe(tabId, entry, map)) {
+      this.refs.delete(tabId);
+      throw new ActError(
+        "stale_ref",
+        `${raw} was issued for a page this tab has since left; observe again and use a ref from the new page`
       );
     }
-    const frame = await this.snapshot(page);
-    const screenshot = await page.screenshotBase64().catch(() => void 0);
-    return {
-      ...this.observation(
-        tabId,
-        entry,
-        { url: frame.url, ...screenshot ? { screenshot } : {} },
-        frame,
-        permit,
-        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
-      ),
-      settled
-    };
+    const parsed = parseRef(raw);
+    const known = parsed ? map?.entries.get(parsed) : void 0;
+    if (!known) {
+      throw new ActError(
+        "unknown_ref",
+        `${raw} is not a ref from this tab's last observation; observe again and use a ref it names`
+      );
+    }
+    const cdp = await entry.page.cdp();
+    if (!cdp) {
+      throw new ActError(
+        "unsupported_target",
+        "this browser cannot resolve refs; use a selector or coordinates"
+      );
+    }
+    try {
+      return await resolveRefNode(cdp, parsed, known, permit);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ActError("stale_ref", message.replace(/^stale_ref:\s*/, ""));
+    }
   }
-  /** Map an act verb onto the page primitives. */
-  async dispatchVerb(page, action) {
+  /**
+   * Where to aim for a resolved ref, refusing when something is on top of it.
+   *
+   * The occlusion check is HERE and not on the selector path because the two
+   * are not in the same position: Playwright's own actionability already
+   * refuses a selector click whose element cannot receive the event, which is
+   * why those fail as timeouts rather than landing somewhere else. A ref is
+   * clicked by coordinate, so nothing else is checking — and a coordinate that
+   * lands on a consent banner reports a click that "worked".
+   */
+  async pointForRef(page, refNode, label, check) {
+    const cdp = await page.cdp();
+    if (!cdp) {
+      throw new ActError(
+        "unsupported_target",
+        "this browser cannot resolve refs; use a selector or coordinates"
+      );
+    }
+    const point = await pointForBackendNodeId(
+      cdp,
+      refNode.backendNodeId,
+      label
+    );
+    if (!this.inViewport(point.x, point.y)) {
+      throw new ActError(
+        "target_not_found",
+        `${label} is at (${point.x}, ${point.y}), outside the ${this.viewportLabel} viewport even after scrolling; observe again to see where it is now`
+      );
+    }
+    if (check === "occlusion") {
+      const covering = await coveringElementAt(cdp, refNode.backendNodeId);
+      if (covering) {
+        throw new ActError(
+          "target_covered",
+          `${label} is covered by ${covering} at its click point, so the input would land on that element instead. Dismiss or interact with the covering element first (it is often a dialog, banner, or sticky header).`
+        );
+      }
+    }
+    return point;
+  }
+  async dispatchVerb(page, action, permit = () => true, refNode) {
+    const stillOurs = () => {
+      if (!permit()) throw new LeaseTakenMidAct("lease taken mid-act");
+    };
     const target = action.target;
     const point = target && "coordinates" in target ? { x: target.coordinates[0], y: target.coordinates[1] } : null;
-    if (point && !isPointInViewport(point.x, point.y)) {
+    if (point && !this.inViewport(point.x, point.y)) {
       throw new Error(
-        `out_of_viewport: (${point.x}, ${point.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport; coordinates are CSS pixels with (0, 0) at the top-left of the last screenshot`
+        `out_of_viewport: (${point.x}, ${point.y}) is outside the ${this.viewportLabel} observation viewport; coordinates are CSS pixels with (0, 0) at the top-left of the last screenshot`
       );
     }
     const selector = target && "selector" in target ? target.selector : null;
-    if (target && "a11yRef" in target) {
-      throw new Error(
-        "unsupported_target: a11yRef targeting is not available; use coordinates or a selector"
-      );
-    }
+    const refLabel = target && "a11yRef" in target ? target.a11yRef : "the target";
+    const needCdp = async () => {
+      const cdp = await page.cdp();
+      if (!cdp) {
+        throw new ActError(
+          "unsupported_target",
+          "this browser cannot resolve refs; use a selector or coordinates"
+        );
+      }
+      return cdp;
+    };
     switch (action.verb) {
       case "click":
+        if (refNode) {
+          const at = await this.pointForRef(
+            page,
+            refNode,
+            refLabel,
+            "occlusion"
+          );
+          stillOurs();
+          return page.clickAt(at);
+        }
         if (point) return page.clickAt(point);
         if (selector) return page.clickSelector(selector);
-        throw new Error("no element: click needs coordinates or a selector");
+        throw new Error(
+          "no element: click needs a ref, coordinates or a selector"
+        );
       case "hover":
+        if (refNode) {
+          const at = await this.pointForRef(
+            page,
+            refNode,
+            refLabel,
+            "occlusion"
+          );
+          stillOurs();
+          return page.hoverAt(at);
+        }
         if (point) return page.hoverAt(point);
         if (selector) return page.hoverSelector(selector);
-        throw new Error("no element: hover needs coordinates or a selector");
+        throw new Error(
+          "no element: hover needs a ref, coordinates or a selector"
+        );
       case "type": {
         const text = action.value ?? "";
-        if (selector) return page.fillSelector(selector, text);
-        return page.typeText(text);
+        if (refNode) {
+          await replaceTextInNode(await needCdp(), refNode.backendNodeId, text);
+        } else if (selector) await page.fillSelector(selector, text);
+        else await page.typeText(text);
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
+        return;
+      }
+      case "fill_form": {
+        const fields = action.fields;
+        if (!Array.isArray(fields) || fields.length === 0 || fields.some(
+          (field) => typeof field?.selector !== "string" || !field.selector || typeof field?.value !== "string"
+        )) {
+          throw new ActError(
+            "act_failed",
+            "fill_form needs fields: [{selector, value}]"
+          );
+        }
+        for (const [index, field] of fields.entries()) {
+          stillOurs();
+          await this.fillOneField(page, field, index, stillOurs);
+        }
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
+        return;
       }
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
+        if (refNode) {
+          const cdp = await needCdp();
+          stillOurs();
+          await focusBackendNodeId(cdp, refNode.backendNodeId);
+          stillOurs();
+        }
         return page.press(action.value);
       case "scroll": {
         const [dx, dy] = parseScrollDelta(action.value);
         return page.scrollBy({ dx, dy });
       }
       case "drag": {
-        if (!point) throw new Error("drag needs start coordinates");
+        const from = refNode ? await this.pointForRef(page, refNode, refLabel, "occlusion") : point;
+        if (refNode) stillOurs();
+        if (!from) throw new Error("drag needs a ref or start coordinates");
         const to = parsePoint(action.value);
         if (!to) {
           throw new Error(
             'drag needs a destination in `value` as "x,y" (viewport coordinates)'
           );
         }
-        if (!isPointInViewport(to.x, to.y)) {
+        if (!this.inViewport(to.x, to.y)) {
           throw new Error(
-            `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport`
+            `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${this.viewportLabel} observation viewport`
           );
         }
-        return page.dragTo(point, to);
+        return page.dragTo(from, to);
       }
       case "select":
-        if (!selector) throw new Error("select needs a selector");
         if (action.value === void 0) {
           throw new Error("select needs the option value in `value`");
         }
+        if (refNode) {
+          const cdp = await needCdp();
+          stillOurs();
+          return selectOptionOnNode(
+            cdp,
+            refNode.backendNodeId,
+            action.value,
+            refLabel
+          );
+        }
+        if (!selector) throw new Error("select needs a ref or a selector");
         return page.selectOption(selector, action.value);
       case "close_tab":
       case "activate_tab":
         return;
+      default:
+        throw new ActError(
+          "act_failed",
+          `this browser daemon does not support the "${action.verb}" verb; it is running an older build`
+        );
     }
   }
-  async webmcpInvoke(tabId, action, permit) {
+  /**
+   * One field of a `fill_form`, with the `<select>` fallback.
+   *
+   * A model should not have to know what KIND of control it is filling: it
+   * read "Size" off a tree or a screenshot and wants "L" in it, so the
+   * fallback is driven by Playwright's own refusal rather than by a per-field
+   * hint the model would have to get right.
+   *
+   * WHICH refusal, measured against a real Chromium rather than guessed —
+   * the two messages differ by one item in the same list:
+   *
+   *   <select>  "Element is not an <input>, <textarea> or [contenteditable]
+   *              element"
+   *   <button>  "Element is not an <input>, <textarea>, <select> or
+   *              [contenteditable] and does not have a role allowing
+   *              [aria-readonly]"
+   *
+   * So "names <input>" alone is NOT the discriminator: it matches both, and
+   * matching the second sent a `fill` at a button off to `selectOption`, which
+   * failed for its own unrelated reason and reported that instead of "this
+   * element cannot be filled". The `<select>` case is the one whose message
+   * does not offer `<select>` as an alternative.
+   *
+   * Any OTHER failure stops the form. Half a filled form is a state the page
+   * is in and the model cannot see, so the error names the field that failed
+   * AND the ones that went in before it.
+   */
+  async fillOneField(page, field, index, stillOurs) {
+    try {
+      await page.fillSelector(field.selector, field.value);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isNotAnInputRefusal(message)) {
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${message.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
+        );
+      }
+      stillOurs();
+      try {
+        await page.selectOption(field.selector, field.value);
+      } catch (selectError) {
+        const detail = selectError instanceof Error ? selectError.message : String(selectError);
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${detail.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
+        );
+      }
+    }
+  }
+  async webmcpInvoke(tabId, action, permit, commandId) {
+    this.activeInvocations.add(commandId);
+    try {
+      if (this.consumeCancel(commandId)) {
+        return {
+          ok: false,
+          error: "webmcp_cancelled: the call was cancelled before it reached the page; nothing ran"
+        };
+      }
+      return await this.runWebmcpInvoke(tabId, action, permit, commandId);
+    } finally {
+      this.activeInvocations.delete(commandId);
+      this.pendingCancels.delete(commandId);
+    }
+  }
+  /** The body of `webmcpInvoke`, run inside its in-flight registration. */
+  async runWebmcpInvoke(tabId, action, permit, commandId) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
     }
     const bridge = await entry.page.webmcp();
+    await bridge?.probeSettled();
     if (!bridge || !bridge.isSupported()) {
       return {
         ok: false,
@@ -3557,6 +7210,25 @@ var ChromiumDriver = class {
         "a person took control of this browser before the page's tool could be called; nothing was run"
       );
     }
+    const binding = action.expectedBinding;
+    if (binding) {
+      const stale = this.bindingRefusal(
+        tabId,
+        entry,
+        bridge,
+        action.toolKey,
+        binding
+      );
+      if (stale) {
+        return {
+          ok: false,
+          error: formatBrowserdError("stale_binding", stale),
+          // The fresh revision rides along so the caller re-reads the page's
+          // tools instead of retrying the binding it already holds.
+          ...this.webmcpEnvelope(tabId, entry)
+        };
+      }
+    }
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
@@ -3564,14 +7236,41 @@ var ChromiumDriver = class {
         // in the main frame. `invoke` falls back to name resolution when it is
         // absent or when the frame no longer offers the tool, so an older
         // caller that sends no frame still works.
-        ...action.frameId ? { frameId: action.frameId } : {},
-        input: action.input
+        ...binding ? {
+          frameId: binding.frameId,
+          strictFrame: true,
+          // Re-checked inside `invoke`, against the same value
+          // `bindingRefusal` just accepted. The gap between the two is a
+          // real one — an abort check and a CDP round trip — and it is
+          // exactly long enough for a page to swap the tool.
+          expectedRegistrationSeq: binding.registrationSeq
+        } : {},
+        ...!binding && action.frameId ? { frameId: action.frameId } : {},
+        input: action.input,
+        // Recorded BEFORE the tool settles, which is the only window in which
+        // a cancel can still reach the page.
+        onStarted: (id) => {
+          if (!this.rememberInvocation(commandId, id, tabId)) return;
+          if (!permit()) return;
+          void bridge.cancel(id).catch(() => void 0);
+        }
       });
       const { output: capped, omitted } = capToolOutput(
         output,
         this.webmcpOutputBudgetBytes
       );
-      const frame = await this.snapshot(entry.page);
+      const frame = await this.snapshot(entry.page).catch(() => void 0);
+      if (!frame)
+        return permit() ? {
+          ok: true,
+          output: {
+            invocationId,
+            result: capped,
+            ...omitted ? { omitted } : {}
+          }
+        } : this.leaseBlockedResult(
+          "The tool ran, but control changed before its result could be read."
+        );
       return {
         ...this.observation(
           tabId,
@@ -3590,9 +7289,16 @@ var ChromiumDriver = class {
     }
   }
   async webmcpCancel(tabId, action, permit) {
-    const entry = this.tabs.get(tabId);
+    const started = action.commandId ? this.invocationsByCommand.get(action.commandId) : void 0;
+    const invocationId = action.invocationId ?? started?.invocationId;
+    if (!invocationId) {
+      if (action.commandId) this.latchCancel(action.commandId);
+      return { ok: true, output: { cancelled: false, known: false } };
+    }
+    const invocationTabId = started?.tabId ?? tabId;
+    const entry = this.tabs.get(invocationTabId);
     if (!entry || entry.page.isClosed()) {
-      return { ok: false, error: `unknown_tab: ${tabId}` };
+      return { ok: false, error: `unknown_tab: ${invocationTabId}` };
     }
     const bridge = await entry.page.webmcp();
     if (!bridge) {
@@ -3603,8 +7309,87 @@ var ChromiumDriver = class {
         "a person took control of this browser before the cancellation could be delivered"
       );
     }
-    const known = await bridge.cancel(action.invocationId);
-    return { ok: true, output: { cancelled: known } };
+    const known = await bridge.cancel(invocationId);
+    return {
+      ok: true,
+      output: { cancelled: known, known: true, invocationId }
+    };
+  }
+  /**
+   * Why this binding does not describe the tool that is here now, or undefined
+   * when it does.
+   *
+   * `bootId` is deliberately NOT checked here: the transport already refuses a
+   * command whose `expectedBootId` does not match (`command_unknown_boot`), so
+   * a binding from a previous boot cannot reach this method at all. Checking it
+   * again would need the driver to know the daemon's boot identity, which is
+   * the control plane's business.
+   */
+  bindingRefusal(tabId, entry, bridge, toolKey, binding) {
+    if (binding.tabId !== tabId) {
+      return `this tool was listed on tab "${binding.tabId}", not "${tabId}"`;
+    }
+    if (binding.navCounter !== entry.navCounter) {
+      return "the page navigated after this tool was listed, so the tool it named is gone";
+    }
+    const live = bridge.registrationSeqFor(binding.frameId, toolKey);
+    if (live === void 0) {
+      return `the frame that offered "${toolKey}" no longer offers it`;
+    }
+    if (live !== binding.registrationSeq) {
+      return `"${toolKey}" was re-registered by the page after it was listed`;
+    }
+    return void 0;
+  }
+  /** Remember which invocation a command started, evicting oldest-first. */
+  rememberInvocation(commandId, invocationId, tabId) {
+    const cancelWanted = this.consumeCancel(commandId);
+    if (this.invocationsByCommand.size >= MAX_TRACKED_INVOCATIONS) {
+      const oldest = this.invocationsByCommand.keys().next().value;
+      if (oldest !== void 0) this.invocationsByCommand.delete(oldest);
+    }
+    this.invocationsByCommand.set(commandId, { tabId, invocationId });
+    return cancelWanted;
+  }
+  /**
+   * Remember that `commandId` was cancelled, whether or not it has started.
+   *
+   * Expired latches for commands that are not running are swept first. At the
+   * ceiling, the oldest latch that guards NO running invocation is evicted; if
+   * every slot guards one, this intent is dropped rather than a live one — a
+   * lost cancellation for a command that may never arrive is the cheaper
+   * mistake.
+   */
+  latchCancel(commandId) {
+    const now = Date.now();
+    for (const [id, expiresAt] of this.pendingCancels) {
+      if (expiresAt <= now && !this.activeInvocations.has(id)) {
+        this.pendingCancels.delete(id);
+      }
+    }
+    if (this.pendingCancels.size >= MAX_PENDING_CANCELS && !this.pendingCancels.has(commandId)) {
+      for (const id of this.pendingCancels.keys()) {
+        if (!this.activeInvocations.has(id)) {
+          this.pendingCancels.delete(id);
+          break;
+        }
+      }
+      if (this.pendingCancels.size >= MAX_PENDING_CANCELS) return;
+    }
+    this.pendingCancels.set(commandId, now + PENDING_CANCEL_TTL_MS);
+  }
+  /**
+   * Take the latch for `commandId`, if one is still live.
+   *
+   * A latch for a RUNNING command is live regardless of its timestamp — the
+   * TTL exists for commands that never arrive, not for ones taking their time
+   * inside the bridge.
+   */
+  consumeCancel(commandId) {
+    const expiresAt = this.pendingCancels.get(commandId);
+    if (expiresAt === void 0) return false;
+    this.pendingCancels.delete(commandId);
+    return this.activeInvocations.has(commandId) || expiresAt > Date.now();
   }
   /**
    * Run a navigation on an already-resolved tab, bump its nav counter, settle
@@ -3612,27 +7397,22 @@ var ChromiumDriver = class {
    * (L3). Every W1 navigating verb funnels through here so settle + token are
    * never skipped. Tab creation is the caller's decision (only `navigate`).
    */
-  async navigateVerb(tabId, entry, navigate, permit) {
+  async navigateVerb(tabId, entry, navigate, permit, observe) {
+    await this.attachWebmcp(tabId, entry).catch(() => void 0);
     await navigate(entry.page);
     entry.navCounter += 1;
+    this.bumpWebmcpRevision(entry);
     const settled = await this.settle(entry.page);
-    if (!permit()) {
-      return this.leaseBlockedResult(
-        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back"
-      );
-    }
-    const frame = await this.snapshot(entry.page);
-    return {
-      ...this.observation(
-        tabId,
-        entry,
-        { url: frame.url },
-        frame,
-        permit,
-        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back"
-      ),
-      settled
-    };
+    const blockedDetail = "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back";
+    const observed = await this.afterAct(
+      tabId,
+      entry,
+      permit,
+      wantsFor(observe ?? "none"),
+      void 0,
+      blockedDetail
+    );
+    return observed.ok ? { settled, ...observed } : observed;
   }
   async observe(tabId, action, permit) {
     if (!permit()) {
@@ -3671,40 +7451,66 @@ var ChromiumDriver = class {
         return this.observeText(tabId, entry, permit);
       }
       case "a11y": {
-        const raw = await this.readA11y(tabId, entry, action);
-        if (!raw.ok) return raw.error;
-        const filtered = raw.filter === "interactive" && raw.tree ? filterInteractive(raw.tree) : raw.tree;
+        const rendered = await this.renderA11y(tabId, entry, action);
+        if (!rendered.ok) return rendered.error;
         const frame = await this.snapshot(entry.page);
-        const { tree, omittedSubtrees, totalNodes } = capA11yTree(
-          filtered,
-          this.a11yBudget
-        );
-        const refs = assignRefs(tree);
-        const rendered = renderA11yTree(tree, {
-          interactiveOnly: raw.filter === "interactive"
-        });
         const result = this.observation(
           tabId,
           entry,
-          {
-            a11y: rendered,
-            refs: Object.fromEntries(
-              [...refs].map(([ref, entryValue]) => [
-                ref,
-                { role: entryValue.role, name: entryValue.name }
-              ])
-            ),
-            ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
-          },
+          rendered.fields,
           frame,
           permit
         );
-        if (!result.ok) {
-          this.refs.delete(tabId);
-          return result;
-        }
-        this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
+        this.commitRefs(tabId, result, rendered.refMap);
         return result;
+      }
+      case "dialog": {
+        const pending = entry.page.pendingDialog?.() ?? null;
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { dialog: pending },
+          frame,
+          permit
+        );
+      }
+      case "network": {
+        const all = entry.page.networkEntries?.();
+        if (!all) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "a11y_unavailable",
+              "this browser build does not record network requests"
+            )
+          };
+        }
+        if (action.requestId) {
+          const one = entry.page.networkEntries?.().find((row) => row.requestId === action.requestId);
+          const frame2 = await this.snapshot(entry.page);
+          return this.observation(
+            tabId,
+            entry,
+            one ? { network: [one] } : {
+              network: [],
+              // Named rather than left as an empty list: the ring is
+              // bounded, and "it scrolled off" is the answer.
+              omitted: 1
+            },
+            frame2,
+            permit
+          );
+        }
+        const { entries: rows, omitted } = capNetwork(all, this.networkBudget);
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { network: rows, ...omitted > 0 ? { omitted } : {} },
+          frame,
+          permit
+        );
       }
       case "console": {
         const { entries, omitted } = capConsole(
@@ -3720,8 +7526,17 @@ var ChromiumDriver = class {
           permit
         );
       }
+      case "webmcp_revision": {
+        await this.attachWebmcp(tabId, entry);
+        return {
+          ok: true,
+          output: { url: safeUrl(entry.page) },
+          ...this.webmcpEnvelope(tabId, entry)
+        };
+      }
       case "webmcp_tools": {
         const bridge = await entry.page.webmcp();
+        await bridge?.probeSettled();
         const frame = await this.snapshot(entry.page);
         if (!bridge || !bridge.isSupported()) {
           return this.observation(
@@ -3735,7 +7550,13 @@ var ChromiumDriver = class {
         return this.observation(
           tabId,
           entry,
-          { webmcpSupported: true, tools: bridge.list() },
+          {
+            webmcpSupported: true,
+            tools: bridge.list(),
+            ...bridge.discoveryLimitReached?.() ? {
+              notice: "Page tool discovery exceeded its security budget. Reduce registrations and reload the page; browsing remains available."
+            } : {}
+          },
           frame,
           permit
         );
@@ -3826,13 +7647,14 @@ var ChromiumDriver = class {
     };
   }
   async currentStateToken(tabId) {
-    const entry = this.tabs.get(tabId ?? DEFAULT_TAB);
+    const entry = this.tabs.get(tabId ?? this.activeTabId ?? DEFAULT_TAB);
     if (!entry) return void 0;
     return computeStateToken({
-      tabId: tabId ?? DEFAULT_TAB,
+      tabId: tabId ?? this.activeTabId ?? DEFAULT_TAB,
       navCounter: entry.navCounter,
       url: entry.page.url(),
-      domSignal: await entry.page.domStructureSignal()
+      domSignal: await entry.page.domStructureSignal(),
+      viewportRevision: this.sessionViewport.revision
     });
   }
   /**
@@ -3858,6 +7680,74 @@ var ChromiumDriver = class {
    * than asking Chromium — because it runs on every heartbeat of every open
    * stream.
    */
+  /**
+   * The whole truth about this browser, for the pane's shell.
+   *
+   * A SEPARATE READ from `tabsSnapshot`, not a richer version of it, and the
+   * two are kept apart on purpose. `tabsSnapshot` rides the frame heartbeat:
+   * it is synchronous, budgeted to a few kilobytes, and drops tabs from the
+   * end when a session has more than fit — which is exactly right for a
+   * caption over a video and exactly wrong for a tab strip, where the tab that
+   * got dropped is the one somebody is looking for.
+   *
+   * This one is asynchronous (it asks each tab's CDP session for its title,
+   * icon and history), complete, and fetched on its own endpoint. Nothing is
+   * truncated: a browser with thirty tabs has thirty tabs, and a strip that
+   * silently showed sixteen of them would be lying about a thing the person
+   * can count.
+   *
+   * `seq` is a monotonic counter rather than a timestamp: two snapshots taken
+   * inside the same millisecond are ordinary on a fast box, and a reducer that
+   * cannot order them would drop one at random.
+   */
+  interactionAnchor() {
+    const tabId = this.activeTabId;
+    const entry = tabId ? this.tabs.get(tabId) : void 0;
+    if (!tabId || !entry || entry.page.isClosed()) return void 0;
+    return {
+      tabId,
+      url: safeUrl(entry.page),
+      navCounter: entry.navCounter,
+      viewportRevision: this.sessionViewport.revision
+    };
+  }
+  async stateSnapshot() {
+    const hadTabs = this.tabs.size > 0;
+    for (const [id, entry] of [...this.tabs]) {
+      if (entry.page.isClosed()) await this.dropTab(id);
+    }
+    if (hadTabs && this.tabs.size === 0 && !this.closing)
+      await this.getOrCreateTab(DEFAULT_TAB);
+    const live = [...this.tabs.entries()];
+    const read = await Promise.all(
+      live.map(async ([id, entry]) => {
+        const cdp = await entry.page.cdp().catch(() => null);
+        const meta = await readTabMetadata(cdp, safeUrl(entry.page));
+        return { id, meta, entry };
+      })
+    );
+    const activeTabId = this.activeTabId && read.some(({ id }) => id === this.activeTabId) ? this.activeTabId : read[0]?.id ?? null;
+    const active = read.find(({ id }) => id === activeTabId);
+    this.stateSeq += 1;
+    return {
+      seq: this.stateSeq,
+      tabs: read.map(({ id, meta, entry }) => ({
+        id,
+        navCounter: entry.navCounter,
+        ...entry.openerId ? { openerId: entry.openerId } : {},
+        url: meta.url,
+        title: meta.title,
+        ...meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {},
+        loading: entry.loading ?? false
+      })),
+      activeTabId,
+      // The ACTIVE tab's history, which is what the two buttons act on.
+      canGoBack: active?.meta.canGoBack ?? false,
+      canGoForward: active?.meta.canGoForward ?? false,
+      viewport: this.sessionViewport,
+      policy: this.viewportPolicy
+    };
+  }
   tabsSnapshot() {
     const live = [...this.tabs.entries()].filter(([, entry]) => !entry.page.isClosed());
     const activeAt = this.activeTabId ? live.findIndex(([id]) => id === this.activeTabId) : -1;
@@ -3882,8 +7772,24 @@ var ChromiumDriver = class {
     }
     return payload();
   }
+  /**
+   * The viewport this tab already has, without ever creating one.
+   *
+   * `viewport()` below opens the tab and attaches a CDP session on a miss.
+   * That is right for a person opening the pane and wrong for the frame-rate
+   * boost after an agent command, which only wants to nudge a picture someone
+   * is ALREADY watching: on a box with no pane open, going through
+   * `viewport()` would attach a screencast and start encoding JPEGs for
+   * nobody, on the same two cores the agent is using.
+   *
+   * Returns the map's promise rather than awaiting it, so a viewport that is
+   * still being created counts as watched — somebody asked for it.
+   */
+  viewportIfWatched(tabId) {
+    return this.viewports.get(tabId ?? DEFAULT_TAB) ?? null;
+  }
   async viewport(tabId) {
-    const key = tabId ?? DEFAULT_TAB;
+    const key = tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
     if (live && !live.page.isClosed()) {
       const cached = this.viewports.get(key);
@@ -3899,7 +7805,10 @@ var ChromiumDriver = class {
       const cdp = await entry.page.cdp();
       if (!cdp) return null;
       return createTabViewport(cdp, {
-        surface: BROWSERD_OBSERVATION_VIEWPORT
+        surface: {
+          width: this.sessionViewport.width,
+          height: this.sessionViewport.height
+        }
       });
     })();
     this.viewports.set(key, created);
@@ -3910,10 +7819,11 @@ var ChromiumDriver = class {
   }
   async close() {
     this.closing = true;
+    this.stopPageCreated?.();
     await Promise.race([
       Promise.allSettled([...this.pendingTabs.values()]),
-      new Promise((resolve) => {
-        const timer = setTimeout(resolve, CLOSE_PENDING_TAB_GRACE_MS);
+      new Promise((resolve2) => {
+        const timer = setTimeout(resolve2, CLOSE_PENDING_TAB_GRACE_MS);
         timer.unref?.();
       })
     ]);
@@ -3950,8 +7860,18 @@ var ChromiumDriver = class {
    */
   observation(tabId, entry, output, frame, permit, blockedDetail = "a person took control of this browser while this was running; the result was discarded and nothing was observed") {
     if (!permit()) return this.leaseBlockedResult(blockedDetail);
+    const cursors = entry.page.consoleCursor?.();
     return {
       ok: true,
+      // ON EVERY OBSERVATION, at the funnel, so no mode can forget it. A change
+      // the model's OWN action caused — a navigation, a click that mounted a
+      // component that registers a tool — is then visible in the result the
+      // model already paid for, and costs no extra round trip.
+      ...this.webmcpEnvelope(tabId, entry),
+      // Beside `stateToken`, never inside `output`: `output` is the payload
+      // that goes to the model through the untrusted-content fence, and our own
+      // ring accounting has no business in there. The ledger lifts them out.
+      ...cursors ? { cursors } : {},
       // WHERE this came from, on every observation without exception. The
       // unattended origin allowlist is enforced against the result's `url`
       // (`enforceResultOrigin` in built-in-tools/browser.ts), and a result
@@ -3959,7 +7879,27 @@ var ChromiumDriver = class {
       // page would reach the model unfiltered. Stamped at the funnel so no
       // future observation mode can forget it. An explicit `url` in `output`
       // still wins; today it is the same value.
-      output: this.withHandoffNote({ url: frame.url, ...output }),
+      output: this.withDialogNote(
+        tabId,
+        this.withHandoffNote({
+          url: frame.url,
+          // THE SIZE THIS WAS SEEN AT, on every observation without exception.
+          // It is what the model's coordinates are read in, and on a session
+          // that can be resized it is the only honest way to know: the tool
+          // schema states a range rather than a size, precisely so that it
+          // does not have to be regenerated — and its hash rotated — every
+          // time somebody drags a panel.
+          //
+          // In `output` rather than beside it, unlike `stateToken` and
+          // `cursors`, because this one IS for the model: it is the number it
+          // has to compute against.
+          viewport: {
+            width: this.sessionViewport.width,
+            height: this.sessionViewport.height
+          },
+          ...output
+        })
+      ),
       stateToken: this.tokenFor(tabId, entry, frame)
     };
   }
@@ -3970,6 +7910,19 @@ var ChromiumDriver = class {
    * change that just happened. Consumed once, so it marks the result that
    * actually crossed the handoff rather than every later one.
    */
+  /**
+   * Fold in what was decided about a dialog, once, on the next observation.
+   *
+   * Consumed like the handoff note and for the same reason: it describes one
+   * moment, and repeating it on every later result would tell the model a
+   * dialog keeps appearing.
+   */
+  withDialogNote(tabId, output) {
+    const note = this.dialogNotes.get(tabId);
+    if (!note) return output;
+    this.dialogNotes.delete(tabId);
+    return { ...output, dialog: note };
+  }
   withHandoffNote(output) {
     return this.lease?.consumeResumedDirty() ? {
       ...output,
@@ -3990,6 +7943,42 @@ var ChromiumDriver = class {
    * command can take seconds (a navigation settles for up to ten), and the
    * handoff it must respect is the one happening NOW.
    */
+  /**
+   * Answer a pending dialog, or refuse the command that cannot run past one.
+   *
+   * Returns a refusal when the command must not proceed, and `undefined` when
+   * the page is clear — either it always was, or this call just made it so.
+   *
+   * WHO ANSWERS depends on the lease, and that is the whole reason the page
+   * wrapper captures dialogs instead of answering them. With the browser free,
+   * an agent-driven dialog is answered here on the agent's behalf and the
+   * choice is recorded for the model to read. With a person holding it, the
+   * dialog is THEIRS — dismissing it out from under someone signing in is
+   * exactly the surprise the handoff exists to prevent — so it stays open and
+   * the agent is told why its command cannot run.
+   */
+  async answerOrRefuseDialog(tabId, action, permit, source) {
+    const entry = this.tabs.get(tabId);
+    const dialog = entry?.page.pendingDialog?.();
+    if (!entry || !dialog) return void 0;
+    if (safeUnderDialog(action)) return void 0;
+    const decideForCaller = source !== "manual" && permit() && this.dialogPolicy === "auto";
+    if (!decideForCaller) {
+      return { ok: false, error: dialogRefusal(dialog) };
+    }
+    const accept = agentDefaultAccepts(dialog.kind);
+    const answered = await entry.page.resolveDialog?.(accept).catch(() => false);
+    if (!answered) {
+      return void 0;
+    }
+    this.dialogNotes.set(tabId, {
+      kind: dialog.kind,
+      message: dialog.message,
+      choice: accept ? "accepted" : "dismissed",
+      auto: true
+    });
+    return void 0;
+  }
   permitFor(command) {
     const lease = this.lease;
     if (!lease) return () => true;
@@ -4008,13 +7997,14 @@ var ChromiumDriver = class {
    * they may have opened one, and a leak in a tab nobody was watching is
    * still a leak. Consumed once per handoff.
    */
-  purgeHandoffConsole() {
+  purgeHandoffRings() {
     const since = this.lease?.consumeResumedHeldSince?.();
     if (since === void 0) return;
     for (const entry of this.tabs.values()) {
       if (entry.page.isClosed()) continue;
       try {
         entry.page.dropConsoleSince(since);
+        entry.page.dropNetworkSince?.(since);
       } catch {
       }
     }
@@ -4025,7 +8015,12 @@ var ChromiumDriver = class {
       tabId,
       navCounter: entry.navCounter,
       url: frame.url,
-      domSignal: frame.domSignal
+      domSignal: frame.domSignal,
+      // The revision AT THE MOMENT OF THE OBSERVATION, which is what makes the
+      // comparison mean anything: an act decided from this token is refused
+      // once the layout has been re-flowed underneath it, even when the DOM
+      // came out structurally identical.
+      viewportRevision: this.sessionViewport.revision
     });
   }
   /** Read a tab's URL and DOM signal together, as one frame snapshot. */
@@ -4045,6 +8040,46 @@ var ChromiumDriver = class {
     const { settled } = await settlePage(steps, this.settleOptions);
     return settled;
   }
+  async registerTab(tabId, page, openerId, background = false) {
+    const entry = {
+      page,
+      ...openerId ? { openerId } : {},
+      navCounter: 0,
+      webmcp: emptyWebmcpState()
+    };
+    this.tabs.set(tabId, entry);
+    void page.cdp().then(async (cdp) => {
+      if (!cdp || this.tabs.get(tabId) !== entry) return;
+      const frames = /* @__PURE__ */ new Set();
+      cdp.on("Page.frameStartedLoading", (raw) => {
+        if (this.tabs.get(tabId) !== entry) return;
+        frames.add(raw.frameId);
+        entry.loading = true;
+      });
+      cdp.on("Page.frameStoppedLoading", (raw) => {
+        if (this.tabs.get(tabId) !== entry) return;
+        frames.delete(raw.frameId);
+        entry.loading = frames.size > 0;
+      });
+      await cdp.send("Page.enable");
+    }).catch(() => {
+    });
+    await entry.page.setViewportSize?.({
+      width: this.sessionViewport.width,
+      height: this.sessionViewport.height
+    }).catch(() => {
+    });
+    void this.attachWebmcp(tabId, entry);
+    if (!background) {
+      this.activeTabId = tabId;
+      if (openerId) await page.bringToFront?.().catch(() => {
+      });
+    } else if (this.activeTabId) {
+      await this.tabs.get(this.activeTabId)?.page.bringToFront?.().catch(() => {
+      });
+    }
+    return entry;
+  }
   /** `null` means teardown has begun and no new page will be opened. */
   async getOrCreateTab(tabId) {
     const existing = this.tabs.get(tabId);
@@ -4052,6 +8087,11 @@ var ChromiumDriver = class {
     const inFlight = this.pendingTabs.get(tabId);
     if (inFlight) return inFlight;
     if (this.closing) return null;
+    if (this.tabs.size + this.pendingTabs.size >= this.maxTabs) {
+      throw new Error(
+        `not found: this browser is at its limit of ${this.maxTabs} tabs \u2014 close one first`
+      );
+    }
     const creating = (async () => {
       await this.dropTab(tabId);
       const page = await this.context.newPage();
@@ -4060,10 +8100,7 @@ var ChromiumDriver = class {
         });
         return null;
       }
-      const entry = { page, navCounter: 0 };
-      this.tabs.set(tabId, entry);
-      this.activeTabId = tabId;
-      return entry;
+      return this.registerTab(tabId, page);
     })();
     this.pendingTabs.set(tabId, creating);
     try {
@@ -4071,6 +8108,176 @@ var ChromiumDriver = class {
     } finally {
       this.pendingTabs.delete(tabId);
     }
+  }
+  /**
+   * Read, filter, cap, number and render one a11y tree — everything between
+   * "ask the page" and "here are the fields", for BOTH readers of a tree.
+   *
+   * filter → cap → number → render, in that order, and the order is
+   * load-bearing. Filtering first keeps the budget from being spent on prose
+   * the interactive view will not show; numbering after the cap keeps every
+   * ref in the map reachable in the text (a ref stamped on a node the budget
+   * then dropped would be a name for something the model cannot see);
+   * rendering last means the map and the text were built from one pass over
+   * one tree.
+   *
+   * IT DOES NOT TAKE THE FRAME SNAPSHOT. The caller does, after this returns,
+   * so the token an observation carries describes the page as it was once the
+   * tree had been walked — never before it.
+   */
+  async renderA11y(tabId, entry, action) {
+    const raw = await this.readA11y(tabId, entry, action);
+    if (!raw.ok) return raw;
+    const filtered = raw.filter === "interactive" && raw.tree ? filterInteractive(raw.tree) : raw.tree;
+    const { tree, omittedSubtrees, totalNodes } = capA11yTree(
+      filtered,
+      this.a11yBudget
+    );
+    const refs = assignRefs(tree);
+    const rendered = renderA11yTree(tree, {
+      interactiveOnly: raw.filter === "interactive"
+    });
+    return {
+      ok: true,
+      fields: {
+        a11y: rendered,
+        refs: Object.fromEntries(
+          [...refs].map(([ref, entryValue]) => [
+            ref,
+            { role: entryValue.role, name: entryValue.name }
+          ])
+        ),
+        ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
+      },
+      refMap: refs
+    };
+  }
+  /**
+   * Store (or discard) the refs an observation just minted.
+   *
+   * COMMITTED ONLY IF THE OBSERVATION WAS HANDED OVER. A handoff landing
+   * mid-read discards the result — and refs stored anyway would be names for a
+   * page the model was never shown, guessable afterwards by a model that never
+   * received them. On that path the old map goes too: it described a page this
+   * tab may no longer be on.
+   *
+   * A commit REPLACES the per-tab map wholesale: refs are valid for exactly
+   * one observation, and leaving an older map merged underneath is how `e7`
+   * comes to mean two things at once. Bound to the token the observation
+   * carries, so a ref used after the page moved is refused rather than
+   * resolved by name against whatever is there now.
+   */
+  commitRefs(tabId, result, refMap) {
+    if (!result.ok || !refMap) {
+      this.refs.delete(tabId);
+      return;
+    }
+    this.refs.set(tabId, { stateToken: result.stateToken, entries: refMap });
+  }
+  /**
+   * THE ONE FUNNEL for "what does the page look like now that something
+   * happened to it" — the post-act observation (L1), the observation a failed
+   * act still owes, and the fresh page a `stale_observation` refusal hands
+   * back.
+   *
+   * Every caller reaches `observation` through here, so `withHandoffNote` and
+   * the final permit re-check are inherited rather than repeated, and the refs
+   * an act's tree hands out are committed with the same semantics an `observe`
+   * gives them — which is what makes `rootRef` zoom work off an act result.
+   *
+   * `before` is the frame captured just before the verb ran; `previousUrl` is
+   * reported only when the act actually moved the page, because a URL repeated
+   * on every result is noise the model has to read past.
+   */
+  async afterAct(tabId, entry, permit, wants, before, blockedDetail) {
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+      );
+    }
+    const page = entry.page;
+    const captures = wants.a11y || wants.screenshot;
+    const pre = captures ? await this.snapshot(page).catch(() => void 0) : void 0;
+    let a11yFields = {};
+    let refMap;
+    if (wants.a11y) {
+      const rendered = await this.renderA11y(tabId, entry, {
+        filter: "interactive"
+      }).catch(() => ({ ok: false, error: void 0 }));
+      if (rendered.ok) {
+        a11yFields = rendered.fields;
+        refMap = rendered.refMap;
+      } else {
+        a11yFields = { a11yUnavailable: true };
+      }
+    }
+    const screenshot = wants.screenshot ? await page.screenshotBase64().catch(() => void 0) : void 0;
+    const frame = await this.snapshot(page).catch(() => void 0);
+    if (!frame) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+        );
+      }
+      this.refs.delete(tabId);
+      const url = safeUrl(page);
+      return {
+        ok: true,
+        output: this.withHandoffNote(
+          url ? {
+            url,
+            ...withoutRefIndex(a11yFields),
+            ...screenshot ? { screenshot } : {},
+            observationFailed: true
+          } : { observationFailed: true }
+        ),
+        settled: false
+      };
+    }
+    const output = {
+      // Only when it MOVED. `url` is on every observation already; a
+      // `previousUrl` equal to it teaches the model nothing and costs a line
+      // on every act.
+      ...before && before.url !== frame.url ? { previousUrl: before.url } : {},
+      ...a11yFields,
+      ...screenshot ? { screenshot } : {}
+    };
+    const held = !captures || pre !== void 0 && pre.url === frame.url && pre.domSignal === frame.domSignal;
+    if (!held) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+        );
+      }
+      this.refs.delete(tabId);
+      return {
+        ok: true,
+        output: this.withHandoffNote({
+          url: frame.url,
+          ...withoutRefIndex(output)
+        }),
+        settled: false
+      };
+    }
+    const result = blockedDetail === void 0 ? this.observation(tabId, entry, output, frame, permit) : this.observation(tabId, entry, output, frame, permit, blockedDetail);
+    if (wants.a11y) this.commitRefs(tabId, result, refMap);
+    return result;
+  }
+  /**
+   * The observation that rides a refusal — `guardStaleness`'s recovery read.
+   *
+   * Public because the guard sits ABOVE the driver (it is pure, and testable
+   * with a fake), so the one thing it cannot do for itself is look at the
+   * page. Without this the refusal says "re-read the page" and the model
+   * spends the very round trip the state token exists to save.
+   */
+  async observeForRefusal(command, wants) {
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    return this.afterAct(tabId, entry, this.permitFor(command), wants);
   }
   /**
    * Read the tree for an a11y observation, rooted where the caller asked.
@@ -4166,13 +8373,93 @@ var ChromiumDriver = class {
     if (!minted) return false;
     return minted.tabId === tabId && minted.navCounter === entry.navCounter && minted.urlHash === shortHash(entry.page.url());
   }
+  /**
+   * Attach this tab's WebMCP bridge and start tracking its tool set.
+   *
+   * Idempotent and memoized on the entry: several readers can call it at once
+   * (an observation, a revision read, an invoke) and exactly one attach
+   * happens. Failures are swallowed into "this tab has no WebMCP", which is the
+   * ordinary case — most pages offer nothing and a browser build without the
+   * domain offers nothing anywhere.
+   */
+  attachWebmcp(tabId, entry) {
+    entry.webmcp.attaching ??= (async () => {
+      const bridge = await entry.page.webmcp().catch(() => null);
+      if (!bridge || this.tabs.get(tabId) !== entry) return;
+      const unsubscribeTools = bridge.subscribe((tools) => {
+        entry.webmcp.tools = tools;
+        entry.webmcp.supported = bridge.isSupported();
+        this.bumpWebmcpRevision(entry);
+      });
+      const unsubscribeExternal = bridge.subscribeExternalInvocation?.(
+        (name) => this.onExternalInvocation?.(tabId, name)
+      );
+      entry.webmcp.unsubscribe = () => {
+        unsubscribeTools();
+        unsubscribeExternal?.();
+      };
+    })().catch(() => {
+    });
+    return entry.webmcp.attaching;
+  }
+  /**
+   * The ONE way a tab's tool generation moves.
+   *
+   * Two callers: the bridge's change events, and `navigateVerb` — which bumps
+   * `navCounter` on a path the bridge never reports (`Page.frameNavigated` has
+   * already fired by then). The hash folds `navCounter` in, so it is re-stamped
+   * here, on every bump, rather than at announce time (which would describe the
+   * previous generation) or on every read (which cost a full hash per
+   * heartbeat).
+   */
+  bumpWebmcpRevision(entry) {
+    entry.webmcp.revision += 1;
+    entry.webmcp.hash = webmcpHashFor(entry.webmcp.tools, entry.navCounter);
+  }
+  /**
+   * A tab's tool set as `{revision, hash, count}`, read from the cache.
+   *
+   * TOUCHES NO PAGE and computes nothing: both fields are stamped when the
+   * generation moves. That is what lets this ride a heartbeat several times a
+   * second and be asked before every model step.
+   */
+  webmcpToolsSnapshot(tabId) {
+    const id = tabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(id);
+    if (!entry) return void 0;
+    return this.webmcpRevisionFor(entry);
+  }
+  webmcpRevisionFor(entry) {
+    return {
+      revision: entry.webmcp.revision,
+      hash: entry.webmcp.hash,
+      count: entry.webmcp.tools.length,
+      supported: entry.webmcp.supported,
+      // BOUNDED, like the tab list's URL. This rides an 8 KiB heartbeat record
+      // beside up to sixteen tabs' URLs, and a page can make its URL as long
+      // as it likes.
+      url: safeUrl(entry.page).slice(0, TAB_URL_MAX)
+    };
+  }
+  /** The `webmcpTools` half of a result envelope. */
+  webmcpEnvelope(tabId, entry) {
+    void tabId;
+    return { webmcpTools: this.webmcpRevisionFor(entry) };
+  }
   /** Forget a tab and everything attached to it. */
   async dropTab(tabId) {
+    const going = this.tabs.get(tabId);
+    going?.webmcp.unsubscribe?.();
+    const next = tabAfterClose(
+      [...this.tabs].map(([id, tab]) => ({ id, openerId: tab.openerId })),
+      tabId,
+      this.activeTabId ?? null
+    );
     this.tabs.delete(tabId);
-    if (this.activeTabId === tabId) {
-      const remaining = [...this.tabs.keys()];
-      this.activeTabId = remaining[remaining.length - 1];
-    }
+    this.activeTabId = next ?? void 0;
+    if (!this.closing && next)
+      await this.tabs.get(next)?.page.bringToFront?.().catch(() => {
+      });
     this.refs.delete(tabId);
     await this.dropViewport(tabId);
   }
@@ -4198,6 +8485,411 @@ function safeUrl(page) {
   } catch {
     return "";
   }
+}
+
+// server/services/browserd/local/egress-proxy.ts
+import { createServer as createServer2, request } from "node:http";
+import { connect } from "node:net";
+import { randomBytes as randomBytes3, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+
+// server/services/browserd/local/security-policy.ts
+import { networkInterfaces } from "node:os";
+
+// shared/hosted-web-timeouts.ts
+var WEB_CALL_TIMEOUT_MS = 3e4;
+
+// server/config.ts
+var SERVER_PORT = process.env.SERVER_PORT ? parseInt(process.env.SERVER_PORT, 10) : 6274;
+var SERVER_HOSTNAME = process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
+var LOCAL_SERVER_ADDR = `http://localhost:${SERVER_PORT}`;
+var HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
+var LOCAL_BROWSER_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_BROWSER_ENABLED !== "false";
+var LOCAL_COMPUTER_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
+var LOCAL_HARNESS_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
+var SCHEDULED_EVALS_WRITE_ENABLED = process.env.MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED === "true";
+var WEBMCP_INSPECTOR_ENABLED = process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
+var EVAL_WIDGET_MODEL_CONTEXT = process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
+var WEB_ALLOWED_ORIGINS = (process.env.WEB_ALLOWED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter((origin) => origin.length > 0);
+var CLIENT_PORT = process.env.CLIENT_PORT || "5173";
+var DEFAULT_CORS_ORIGINS = [
+  `http://localhost:${CLIENT_PORT}`,
+  // Vite dev server
+  "http://localhost:8080",
+  // Electron renderer dev server
+  `http://localhost:${SERVER_PORT}`,
+  // Hono server
+  `http://127.0.0.1:${SERVER_PORT}`,
+  // Hono server production
+  "https://staging.mcpjam.com"
+  // Hosted deployment
+];
+var CORS_ORIGINS = HOSTED_MODE && WEB_ALLOWED_ORIGINS.length > 0 ? WEB_ALLOWED_ORIGINS : Array.from(/* @__PURE__ */ new Set([...DEFAULT_CORS_ORIGINS, ...WEB_ALLOWED_ORIGINS]));
+var ELICITATION_FORM_TTL_MS = 5 * 6e4;
+var ELICITATION_URL_CONSENT_TTL_MS = 2 * 6e4;
+var ELICITATION_TIMEOUT_EXTENSION_MS = ELICITATION_FORM_TTL_MS + 3e4;
+var MRTR_CONTINUATION_TTL_MS = 10 * 6e4;
+var MRTR_CONTINUATION_ROUTE_TIMEOUT_MS = 1e4;
+var MRTR_CONTINUATION_LEASE_TTL_MS = 4 * MRTR_CONTINUATION_ROUTE_TIMEOUT_MS + WEB_CALL_TIMEOUT_MS + 6e4;
+var MRTR_RESUME_STATE_MAX_BYTES = 128 * 1024;
+var MRTR_DISPLAY_FIELD_MAX_BYTES = 16 * 1024;
+var MRTR_RESPONSE_CONTENT_MAX_BYTES = 64 * 1024;
+var MCPJAM_HOSTED_ORIGIN = process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") || "https://app.mcpjam.com";
+function parseAllowedHosts(raw) {
+  return raw ? raw.split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0) : [];
+}
+var ALLOWED_HOSTS = parseAllowedHosts(
+  process.env.MCPJAM_ALLOWED_HOSTS
+);
+var CANIUSE_LANDING_HOSTS = new Set(
+  (process.env.CANIUSE_LANDING_HOSTS ?? "caniuse.dev,www.caniuse.dev").split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0)
+);
+var SCORE_LANDING_HOSTS = new Set(
+  (process.env.SCORE_LANDING_HOSTS ?? "score.mcpjam.com,www.score.mcpjam.com").split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0)
+);
+var BARE_HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+function parseSandboxHosts(raw) {
+  return new Set(
+    raw.split(",").map((h) => h.trim().toLowerCase()).filter((h) => BARE_HOSTNAME.test(h))
+  );
+}
+var SANDBOX_HOSTS = parseSandboxHosts(
+  process.env.SANDBOX_HOSTS ?? "sandbox.mcpjam.com,sandbox-staging.mcpjam.com"
+);
+
+// server/services/browserd/local/security-policy.ts
+var BrowserPolicyError = class extends Error {
+  code = "browser_policy_refused";
+  constructor(message = "Browser access to this destination is not allowed.") {
+    super(`browser_policy_refused: ${message}`);
+    this.name = "BrowserPolicyError";
+  }
+};
+var controllerPorts = /* @__PURE__ */ new Map();
+var controllerOrigins = /* @__PURE__ */ new Map();
+function registerBrowserController(url) {
+  const parsed = new URL(url);
+  const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+  controllerOrigins.set(
+    parsed.origin,
+    (controllerOrigins.get(parsed.origin) ?? 0) + 1
+  );
+  const local = isMachineAddress(parsed.hostname);
+  if (local) controllerPorts.set(port, (controllerPorts.get(port) ?? 0) + 1);
+  let removed = false;
+  return () => {
+    if (removed) return;
+    removed = true;
+    for (const [map, key] of [
+      [controllerOrigins, parsed.origin],
+      [controllerPorts, port]
+    ]) {
+      if (map === controllerPorts && !local) continue;
+      const registry = map;
+      const count = registry.get(key) ?? 0;
+      if (count <= 1) registry.delete(key);
+      else registry.set(key, count - 1);
+    }
+  };
+}
+function host(raw) {
+  return raw.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+}
+function isMachineAddress(raw) {
+  const value = host(raw);
+  if (value === "localhost" || value.endsWith(".localhost") || value === "::1" || value === "::" || value === "0.0.0.0" || /^127\./.test(value))
+    return true;
+  if (value.startsWith("::ffff:")) {
+    const tail = value.slice(7);
+    if (tail.includes(".")) return isMachineAddress(tail);
+    const parts = tail.split(":");
+    if (parts.length === 2 && parts.every((p) => /^[\da-f]{1,4}$/.test(p))) {
+      const first = parseInt(parts[0], 16), last = parseInt(parts[1], 16);
+      return isMachineAddress(
+        `${first >> 8}.${first & 255}.${last >> 8}.${last & 255}`
+      );
+    }
+  }
+  return Object.values(networkInterfaces()).flat().some((a) => a && host(a.address) === value);
+}
+function secureDriverContext(context, policy) {
+  const pages = /* @__PURE__ */ new WeakMap();
+  let closed = false;
+  let stop;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    stop?.();
+    try {
+      await context.close();
+    } finally {
+      policy.dispose?.();
+    }
+  };
+  stop = policy.onRevoked(close);
+  function guard(page) {
+    const existing = pages.get(page);
+    if (existing) return existing;
+    const synchronous = /* @__PURE__ */ new Set([
+      "url",
+      "isClosed",
+      "consoleEntries",
+      "consoleCursor",
+      "dropConsoleSince",
+      "networkEntries",
+      "networkCursor",
+      "dropNetworkSince",
+      "pendingDialog"
+    ]);
+    const wrapped = new Proxy(page, {
+      get(target, key) {
+        const value = Reflect.get(target, key);
+        if (typeof value !== "function") return value;
+        if (key === "close" || key === "isClosed") return value.bind(target);
+        if (synchronous.has(String(key)))
+          return (...args) => {
+            if (!policy.isActive())
+              throw new BrowserPolicyError("Browser permission was revoked.");
+            return value.apply(target, args);
+          };
+        return async (...args) => {
+          await policy.assertActive();
+          if (key === "goto") policy.assertNavigation(args[0]);
+          if (key !== "goto" && !policy.allowsRequest(target.url()))
+            throw new BrowserPolicyError();
+          const result = await value.apply(target, args);
+          await policy.assertActive();
+          if ((key === "cdp" || key === "webmcp") && result) {
+            return new Proxy(result, {
+              get(rpc, method) {
+                const member = Reflect.get(rpc, method);
+                if (typeof member !== "function") return member;
+                if (!["send", "invoke"].includes(String(method)))
+                  return member.bind(rpc);
+                return async (...params) => {
+                  await policy.assertActive();
+                  if (!policy.allowsRequest(target.url()))
+                    throw new BrowserPolicyError();
+                  if (method === "send" && params[0] === "Page.navigate")
+                    policy.assertNavigation(params[1].url);
+                  const response = await member.apply(rpc, params);
+                  await policy.assertActive();
+                  return response;
+                };
+              }
+            });
+          }
+          return result;
+        };
+      }
+    });
+    pages.set(page, wrapped);
+    return wrapped;
+  }
+  return {
+    async newPage() {
+      await policy.assertActive();
+      const page = await context.newPage();
+      await policy.assertActive();
+      return guard(page);
+    },
+    ...context.onPageCreated ? {
+      onPageCreated: (listener) => context.onPageCreated(
+        (event) => listener({
+          ...event,
+          page: guard(event.page),
+          opener: guard(event.opener)
+        })
+      )
+    } : {},
+    isConnected: () => !closed && policy.isActive() && context.isConnected(),
+    close
+  };
+}
+
+// server/services/browserd/local/egress-proxy.ts
+function pinnedAddressOptions(addresses) {
+  const lookup = (_hostname, options, callback) => {
+    if (options.all) callback(null, addresses);
+    else callback(null, addresses[0].address, addresses[0].family);
+  };
+  return {
+    lookup,
+    autoSelectFamily: true,
+    autoSelectFamilyAttemptTimeout: 250
+  };
+}
+async function startLocalBrowserProxy(policy) {
+  const username = "browser";
+  const password = randomBytes3(32).toString("hex");
+  const expected = Buffer.from(
+    `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
+  );
+  const sockets = /* @__PURE__ */ new Set();
+  let closed = false;
+  const authorized = (req) => {
+    const actual = Buffer.from(req.headers["proxy-authorization"] ?? "");
+    return !closed && policy.isActive() && actual.length === expected.length && timingSafeEqual2(actual, expected);
+  };
+  const server = createServer2(
+    { maxHeaderSize: 64 * 1024, requestTimeout: 12e4 },
+    async (req, res) => {
+      if (!authorized(req)) {
+        res.writeHead(407, {
+          "Proxy-Authenticate": 'Basic realm="MCPJam managed browser"'
+        });
+        res.end();
+        return;
+      }
+      try {
+        const target = new URL(req.url ?? "");
+        if (target.protocol !== "http:" || target.username || target.password || !policy.allowsRequest(target.href))
+          throw new Error("denied");
+        const addresses = await policy.resolveDestination(
+          target.hostname,
+          Number(target.port || 80)
+        );
+        if (closed || req.destroyed) throw new Error("closed");
+        const headers = {
+          ...req.headers,
+          host: target.host
+        };
+        delete headers["proxy-authorization"];
+        delete headers["proxy-connection"];
+        const upstream = request(
+          {
+            hostname: target.hostname.replace(/^\[|\]$/g, ""),
+            ...pinnedAddressOptions(addresses),
+            port: target.port || 80,
+            path: target.pathname + target.search,
+            method: req.method,
+            headers,
+            maxHeaderSize: 64 * 1024,
+            agent: false
+          },
+          (incoming) => {
+            res.writeHead(incoming.statusCode ?? 502, incoming.headers);
+            incoming.pipe(res);
+          }
+        );
+        upstream.on("socket", (socket) => track(socket));
+        upstream.on("error", () => {
+          if (!res.headersSent) res.writeHead(502);
+          res.end();
+        });
+        res.on("close", () => upstream.destroy());
+        req.pipe(upstream);
+      } catch {
+        res.writeHead(403);
+        res.end("Browser destination blocked.");
+      }
+    }
+  );
+  function track(socket) {
+    if (closed || sockets.size >= 256) {
+      socket.destroy();
+      return;
+    }
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    socket.on("error", () => socket.destroy());
+  }
+  server.maxConnections = 128;
+  server.on("connection", track);
+  server.on("clientError", (_error, socket) => socket.destroy());
+  const tunnel = async (req, downstream, head, upgrade) => {
+    if (!authorized(req)) {
+      downstream.end(
+        'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="MCPJam managed browser"\r\nConnection: close\r\n\r\n'
+      );
+      return;
+    }
+    try {
+      const target = new URL(upgrade ? req.url ?? "" : `https://${req.url}`);
+      if (!(upgrade ? ["http:", "ws:"] : ["https:"]).includes(target.protocol) || target.username || target.password || !policy.allowsRequest(target.href))
+        throw new Error("denied");
+      const addresses = await policy.resolveDestination(
+        target.hostname,
+        Number(target.port || (upgrade ? 80 : 443))
+      );
+      if (closed || downstream.destroyed) throw new Error("closed");
+      const upstream = connect({
+        host: target.hostname.replace(/^\[|\]$/g, ""),
+        ...pinnedAddressOptions(addresses),
+        port: Number(target.port || (upgrade ? 80 : 443))
+      });
+      track(upstream);
+      upstream.setTimeout(3e4, () => {
+        if (upstream.connecting) upstream.destroy();
+      });
+      downstream.once("close", () => upstream.destroy());
+      upstream.once("close", () => downstream.destroy());
+      upstream.once("connect", () => {
+        upstream.setTimeout(0);
+        if (closed || !policy.isActive()) {
+          upstream.destroy();
+          return;
+        }
+        if (upgrade) {
+          const headers = Object.entries({
+            ...req.headers,
+            host: target.host
+          }).filter(
+            ([key]) => !["proxy-authorization", "proxy-connection"].includes(
+              key.toLowerCase()
+            )
+          );
+          upstream.write(
+            `${req.method} ${target.pathname}${target.search} HTTP/1.1\r
+${headers.map(
+              ([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`
+            ).join("\r\n")}\r
+\r
+`
+          );
+        } else downstream.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length) upstream.write(head);
+        downstream.pipe(upstream);
+        upstream.pipe(downstream);
+      });
+    } catch {
+      downstream.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+    }
+  };
+  server.on("connect", (req, socket, head) => {
+    void tunnel(req, socket, head, false);
+  });
+  server.on("upgrade", (req, socket, head) => {
+    void tunnel(req, socket, head, true);
+  });
+  await new Promise((resolve2, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve2();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("Browser network policy unavailable.");
+  const url = `http://127.0.0.1:${address.port}`;
+  const unregister = registerBrowserController(url);
+  let unsubscribe;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    unsubscribe?.();
+    unregister();
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve2) => server.close(() => resolve2()));
+  };
+  server.on("error", () => {
+    void close();
+  });
+  unsubscribe = policy.onRevoked(close);
+  return {
+    proxy: { server: url, username, password, bypass: "<-loopback>" },
+    close
+  };
 }
 
 // server/services/webmcp-inspector/launch-args.ts
@@ -4289,7 +8981,7 @@ function buildBrowserdLaunchArgs(extra = []) {
 import { execFileSync } from "node:child_process";
 import { readlink, unlink } from "node:fs/promises";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 var SINGLETON_FILES = [
   "SingletonLock",
   "SingletonSocket",
@@ -4310,7 +9002,7 @@ async function clearStaleSingletonLock(userDataDir, probe = probeSingletonOwner)
   const result = { removed: [], failed: [] };
   for (const name of SINGLETON_FILES) {
     try {
-      await unlink(join(userDataDir, name));
+      await unlink(join2(userDataDir, name));
       result.removed.push(name);
     } catch (err) {
       if (isNotFound(err)) continue;
@@ -4328,16 +9020,16 @@ function isNotFound(err) {
 async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, describeProcess = defaultDescribeProcess) {
   let target;
   try {
-    target = await readlink(join(userDataDir, "SingletonLock"));
+    target = await readlink(join2(userDataDir, "SingletonLock"));
   } catch {
     return { live: false };
   }
   const separator = target.lastIndexOf("-");
   if (separator <= 0) return { live: false };
-  const host = target.slice(0, separator);
+  const host2 = target.slice(0, separator);
   const pid = Number(target.slice(separator + 1));
   if (!Number.isInteger(pid) || pid <= 0) return { live: false };
-  if (host !== hostname()) return { live: true, pid, host };
+  if (host2 !== hostname()) return { live: true, pid, host: host2 };
   if (!isAlive(pid)) return { live: false, pid };
   const command = describeProcess(pid)?.trim();
   if (command && !looksLikeBrowser(command)) {
@@ -4394,19 +9086,97 @@ function abortPromise(signal) {
 }
 var CONSOLE_RING_SIZE = 200;
 var CONSOLE_ENTRY_CAPTURE_BYTES = 4e3;
+var DIALOG_MESSAGE_BYTES = 2e3;
+function warn(message) {
+  process.stderr.write(`[mcpjam-browserd] ${message}
+`);
+}
 var ACT_TIMEOUT_MS = 15e3;
 var SCREENSHOT_JPEG_QUALITY = 70;
-function wrapPage(page) {
+function wrapPage(page, localSecurity = false, localBudget) {
   const consoleRing = [];
-  page.on("console", (message) => {
+  let consoleTotal = 0;
+  let errorsTotal = 0;
+  page.on(
+    "console",
+    (message) => {
+      try {
+        const text = message.text?.() ?? "";
+        consoleRing.push({
+          type: message.type?.() ?? "log",
+          text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
+          at: Date.now()
+        });
+        consoleTotal += 1;
+        if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+      } catch {
+      }
+    }
+  );
+  const network = new NetworkRing();
+  const requestIds = /* @__PURE__ */ new WeakMap();
+  let nextRequestId = 0;
+  const idFor = (request2) => {
+    const known = requestIds.get(request2);
+    if (known) return known;
+    nextRequestId += 1;
+    const minted = `r${nextRequestId}`;
+    requestIds.set(request2, minted);
+    return minted;
+  };
+  page.on("request", (request2) => {
     try {
-      const text = message.text?.() ?? "";
-      consoleRing.push({
-        type: message.type?.() ?? "log",
-        text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
-        at: Date.now()
+      network.started({
+        requestId: idFor(request2),
+        method: request2.method?.() ?? "GET",
+        url: request2.url?.() ?? "",
+        ...request2.resourceType?.() ? { resourceType: request2.resourceType() } : {}
       });
-      if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+    } catch {
+    }
+  });
+  page.on("response", (response) => {
+    try {
+      const request2 = response.request?.();
+      if (!request2) return;
+      const headers = response.headers?.();
+      const length = Number(headers?.["content-length"]);
+      network.finished({
+        requestId: idFor(request2),
+        ...response.status ? { status: response.status() } : {},
+        ...response.statusText?.() ? { statusText: response.statusText() } : {},
+        ...Number.isFinite(length) ? { bytes: length } : {},
+        ...headers ? { headers } : {}
+      });
+    } catch {
+    }
+  });
+  page.on("requestfailed", (request2) => {
+    try {
+      network.finished({
+        requestId: idFor(request2),
+        failure: request2.failure?.()?.errorText ?? "request failed"
+      });
+    } catch {
+    }
+  });
+  let pending = null;
+  page.on("dialog", (dialog) => {
+    try {
+      pending = {
+        handle: dialog,
+        dialog: {
+          kind: dialog.type?.() ?? "alert",
+          message: capText(dialog.message?.() ?? "", DIALOG_MESSAGE_BYTES),
+          ...dialog.defaultValue?.() ? {
+            defaultPrompt: capText(
+              dialog.defaultValue(),
+              DIALOG_MESSAGE_BYTES
+            )
+          } : {},
+          at: Date.now()
+        }
+      };
     } catch {
     }
   });
@@ -4419,19 +9189,39 @@ function wrapPage(page) {
       ),
       at: Date.now()
     });
+    consoleTotal += 1;
+    errorsTotal += 1;
     if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
   });
   let webmcpPromise = null;
   let cdpPromise = null;
   const adapted = {
     async goto(url) {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async reload() {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.reload({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async goBack() {
-      await page.goBack({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goBack({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
+    },
+    async setViewportSize(size) {
+      await page.setViewportSize(size);
+    },
+    async goForward() {
+      await page.goForward({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async waitForNetworkIdle(signal) {
       const idle = page.waitForLoadState("networkidle", { timeout: 0 });
@@ -4503,7 +9293,23 @@ function wrapPage(page) {
         return "";
       }
     },
+    networkEntries: () => network.entries(),
+    dropNetworkSince: (since) => network.dropSince(since),
+    networkCursor: () => network.count(),
+    pendingDialog: () => pending?.dialog ?? null,
+    async resolveDialog(accept, promptText) {
+      const open = pending;
+      pending = null;
+      if (!open) return false;
+      try {
+        if (accept) await open.handle.accept(promptText);
+        else await open.handle.dismiss();
+      } catch {
+      }
+      return true;
+    },
     consoleEntries: () => consoleRing,
+    consoleCursor: () => ({ console: consoleTotal, errors: errorsTotal }),
     dropConsoleSince: (since) => {
       let keep = consoleRing.length;
       while (keep > 0 && consoleRing[keep - 1].at >= since) keep -= 1;
@@ -4512,7 +9318,7 @@ function wrapPage(page) {
     webmcp() {
       webmcpPromise ??= (async () => {
         const session = await adapted.cdp();
-        return session ? attachWebMcp(page, session) : null;
+        return session ? attachWebMcp(page, session, localSecurity, localBudget) : null;
       })();
       return webmcpPromise;
     },
@@ -4520,28 +9326,77 @@ function wrapPage(page) {
       cdpPromise ??= (async () => {
         const attach = cdpAttachers.get(page);
         if (!attach) return null;
-        return attach().catch(() => null);
+        return attach.page().catch(() => null);
       })();
       return cdpPromise;
     }
   };
   return adapted;
 }
-async function attachWebMcp(page, session) {
+async function attachWebMcp(page, session, localSecurity = false, localBudget) {
   try {
-    const bridge = new WebMcpBridge(session);
-    await bridge.start(async () => {
+    const probe = async () => {
       const supported = await page.evaluate(`(() => ${PAGE_API_PROBE})()`).catch(() => false);
       return supported === true;
-    });
+    };
+    const bridge = new WebMcpBridge(session, { localSecurity, localBudget });
+    bridge.resupport(probe);
+    await bridge.start(probe);
+    attachFrameSessions(page, bridge);
     return bridge;
   } catch {
     return null;
   }
 }
+function attachFrameSessions(page, bridge) {
+  const attach = cdpAttachers.get(page)?.frame;
+  if (!attach || !page.frames || !page.mainFrame) return;
+  const tokens = /* @__PURE__ */ new Map();
+  const busy = /* @__PURE__ */ new Set();
+  const attachOne = async (frame) => {
+    if (frame === page.mainFrame?.()) return;
+    if (tokens.has(frame) || busy.has(frame)) return;
+    busy.add(frame);
+    try {
+      const session = await attach(frame);
+      const tree = await session.send("Page.getFrameTree");
+      const frameId = tree?.frameTree?.frame?.id;
+      if (!frameId) return;
+      const token = await bridge.addSession(frameId, session);
+      if (!page.frames?.().includes(frame)) {
+        bridge.removeSession(token);
+        return;
+      }
+      tokens.set(frame, token);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/does not have a separate CDP session/i.test(message)) return;
+      warn(
+        `could not attach a CDP session to the frame at ${frame.url()}: ${message}`
+      );
+    } finally {
+      busy.delete(frame);
+    }
+  };
+  const sweep = () => {
+    for (const frame of page.frames?.() ?? []) void attachOne(frame);
+  };
+  page.on("frameattached", (frame) => void attachOne(frame));
+  page.on("framenavigated", () => sweep());
+  page.on("framedetached", (frame) => {
+    const token = tokens.get(frame);
+    if (token === void 0) return;
+    tokens.delete(frame);
+    bridge.removeSession(token);
+  });
+  sweep();
+}
 var cdpAttachers = /* @__PURE__ */ new WeakMap();
-function registerCdpAttacher(page, attach) {
-  cdpAttachers.set(page, attach);
+function registerCdpAttacher(page, attach, attachFrame) {
+  cdpAttachers.set(page, {
+    page: attach,
+    ...attachFrame ? { frame: attachFrame } : {}
+  });
 }
 function contextOptionsFor(options) {
   const dpr = options.deviceScaleFactor ?? 1;
@@ -4551,65 +9406,156 @@ function contextOptionsFor(options) {
   return { ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: dpr };
 }
 async function launchBrowserdContext(options) {
+  const policy = options.securityPolicy;
+  if (policy) {
+    if (process.getuid?.() === 0)
+      throw new Error(
+        "Local Browser requires a non-root user so Chromium can remain sandboxed."
+      );
+    if (options.extraArgs?.some(
+      (arg) => /--(?:no-sandbox|disable-setuid-sandbox|disable-web-security|proxy|host-resolver|ignore-certificate-errors)/.test(
+        arg
+      )
+    ))
+      throw new Error("Unsafe local Browser launch override.");
+    await policy.assertActive();
+  }
+  if (policy && options.contextMode !== "ephemeral" && options.userDataDir) {
+    const { rm } = await import("node:fs/promises");
+    const { join: join4 } = await import("node:path");
+    for (const cache of ["Service Worker", "Cache", "Code Cache"]) {
+      await rm(join4(options.userDataDir, "Default", cache), {
+        recursive: true,
+        force: true
+      });
+    }
+  }
   const { chromium } = await import("playwright");
-  const launchArgs = {
-    headless: options.headless ?? false,
-    ...options.channel ? { channel: options.channel } : {},
-    ...options.executablePath ? { executablePath: options.executablePath } : {},
-    // Chromium cannot start its renderer sandbox as uid 0 (the image builds
-    // as root), so it is disabled only in that case.
-    chromiumSandbox: process.getuid?.() !== 0,
-    args: buildBrowserdLaunchArgs(options.extraArgs)
-  };
-  if (options.contextMode === "ephemeral") {
-    const browser = await chromium.launch(launchArgs);
-    let context2;
+  const proxy = policy ? await startLocalBrowserProxy(policy) : void 0;
+  const finish = async (context, onClose) => {
     try {
-      context2 = await browser.newContext({
-        acceptDownloads: false,
-        permissions: [],
-        // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
-        // whatever the box says, so eval captures match across hosts.
-        ...contextOptionsFor({ contextMode: "ephemeral" })
+      if (policy) {
+        await context.route("**/*", async (route) => {
+          if (!policy.allowsRequest(route.request().url()))
+            await route.abort("blockedbyclient");
+          else await route.continue();
+        });
+        for (const page of context.pages()) {
+          if (!policy.allowsRequest(page.url())) await page.close();
+        }
+      }
+      const adapted = adaptContext(context, {
+        localSecurity: Boolean(policy),
+        localBudget: policy?.discoveryBudget,
+        onClose: async () => {
+          try {
+            await onClose?.();
+          } finally {
+            await proxy?.close();
+          }
+        }
       });
+      return policy ? secureDriverContext(adapted, policy) : adapted;
     } catch (error) {
-      await browser.close().catch(() => {
+      await context.close().catch(() => {
       });
+      await onClose?.();
       throw error;
     }
-    return adaptContext(context2, {
-      // The browser outlives the context, so closing the context alone would
-      // leave a Chromium process behind in the box.
-      onClose: () => browser.close()
-    });
-  }
-  const cleared = await clearStaleSingletonLock(options.userDataDir);
-  if (cleared.heldBy) {
-    throw new Error(
-      `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+  };
+  try {
+    const launchArgs = {
+      ...proxy ? { proxy: proxy.proxy } : {},
+      headless: options.headless ?? false,
+      ...options.channel ? { channel: options.channel } : {},
+      ...options.executablePath ? { executablePath: options.executablePath } : {},
+      // Chromium cannot start its renderer sandbox as uid 0 (the image builds
+      // as root), so it is disabled only in that case.
+      chromiumSandbox: process.getuid?.() !== 0,
+      args: buildBrowserdLaunchArgs(options.extraArgs)
+    };
+    if (options.contextMode === "ephemeral") {
+      const browser = await chromium.launch(launchArgs);
+      let context2;
+      try {
+        context2 = await browser.newContext({
+          acceptDownloads: false,
+          permissions: [],
+          // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
+          // whatever the box says, so eval captures match across hosts.
+          ...contextOptionsFor({ contextMode: "ephemeral" }),
+          deviceScaleFactor: options.deviceScaleFactor ?? 1
+        });
+      } catch (error) {
+        await browser.close().catch(() => {
+        });
+        throw error;
+      }
+      return await finish(context2, () => browser.close());
+    }
+    const cleared = await clearStaleSingletonLock(options.userDataDir);
+    if (cleared.heldBy) {
+      throw new Error(
+        `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+      );
+    }
+    const context = await chromium.launchPersistentContext(
+      options.userDataDir,
+      {
+        ...launchArgs,
+        acceptDownloads: false,
+        permissions: [],
+        ...contextOptionsFor({
+          contextMode: "persistent",
+          ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
+        })
+      }
     );
+    return await finish(context);
+  } catch (error) {
+    await proxy?.close();
+    throw error;
   }
-  const context = await chromium.launchPersistentContext(options.userDataDir, {
-    ...launchArgs,
-    acceptDownloads: false,
-    permissions: [],
-    ...contextOptionsFor({
-      contextMode: "persistent",
-      ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
-    })
-  });
-  return adaptContext(context);
 }
 function adaptContext(context, options = {}) {
   const startup = [...context.pages()];
   let adopted = 0;
+  const listeners = /* @__PURE__ */ new Set();
+  const wrapped = /* @__PURE__ */ new WeakMap();
+  function adopt(page) {
+    const existing = wrapped.get(page);
+    if (existing) return existing;
+    if (context.newCDPSession) {
+      registerCdpAttacher(
+        page,
+        () => context.newCDPSession(page),
+        (frame) => context.newCDPSession(frame)
+      );
+    }
+    const driverPage = wrapPage(
+      page,
+      options.localSecurity,
+      options.localBudget
+    );
+    wrapped.set(page, driverPage);
+    page.on("popup", (popup) => {
+      const child = adopt(popup);
+      for (const listener of listeners)
+        listener({ page: child, opener: driverPage });
+    });
+    return driverPage;
+  }
   return {
+    onPageCreated(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     async newPage() {
-      const page = adopted < startup.length ? startup[adopted++] : await context.newPage();
-      if (context.newCDPSession) {
-        registerCdpAttacher(page, () => context.newCDPSession(page));
-      }
-      return wrapPage(page);
+      return adopt(
+        adopted < startup.length ? startup[adopted++] : await context.newPage()
+      );
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;
@@ -4624,12 +9570,113 @@ function adaptContext(context, options = {}) {
   };
 }
 
+// server/services/browserd/daemon/main.ts
+import { mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { readFile as readFile2, unlink as unlink2 } from "node:fs/promises";
+
+// server/services/browserd/daemon/display-resize.ts
+function displayGeometryFor(size, options = {}) {
+  const dpr = options.deviceScaleFactor ?? 1;
+  const even = (value) => {
+    const scaled = Math.round(value * dpr);
+    return scaled % 2 === 0 ? scaled : scaled + 1;
+  };
+  return {
+    width: even(size.width),
+    height: even(size.height),
+    depth: options.depth ?? 24
+  };
+}
+function shellSafeDisplay(display) {
+  return /^:[0-9]+(\.[0-9]+)?$/.test(display) ? display : null;
+}
+async function resizeHostedDisplay(deps, next, previous) {
+  const display = shellSafeDisplay(deps.display);
+  if (!display) {
+    return {
+      ok: false,
+      reason: `refusing to resize a display named ${JSON.stringify(
+        deps.display
+      )}`,
+      restored: true
+    };
+  }
+  const geometry = displayGeometryFor(next, {
+    ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
+  });
+  const applyDisplay = async (size) => {
+    const { width, height } = size;
+    if (![width, height].every(
+      (value) => Number.isInteger(value) && value >= 32 && value <= 32768
+    )) {
+      return { ok: false, reason: "invalid display geometry" };
+    }
+    const mode = `mcpjam-${width}x${height}`;
+    const clock = ((width + 160) * (height + 45) * 60 / 1e6).toFixed(3);
+    const randr = `xrandr --display ${display}`;
+    const command = [
+      `${randr} --newmode ${mode} ${clock} ${width} ${width + 48} ${width + 80} ${width + 160} ${height} ${height + 3} ${height + 6} ${height + 45} 2>/dev/null || true`,
+      `${randr} --addmode VNC-0 ${mode} &&`,
+      `${randr} --output VNC-0 --mode ${mode} --fb ${width}x${height} &&`,
+      `${randr} --current | awk '$1 == "VNC-0" && $2 == "connected" && $3 == "${width}x${height}+0+0" { found = 1 } END { exit !found }'`
+    ].join("\n");
+    try {
+      const result = await deps.run(command);
+      return result.exitCode === 0 ? { ok: true } : {
+        ok: false,
+        reason: result.stderr?.trim() || `xrandr exited ${result.exitCode} resizing to ${size.width}x${size.height}`
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error)
+      };
+    }
+  };
+  const restore = async () => {
+    const back = displayGeometryFor(previous, {
+      ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
+    });
+    const result = await applyDisplay(back);
+    if (!result.ok) return false;
+    let pageRestored = true;
+    await deps.resizePage?.(previous).catch(() => {
+      pageRestored = false;
+    });
+    if (!pageRestored) return false;
+    await deps.restartEncoder?.(previous).catch(() => {
+    });
+    return true;
+  };
+  const display_ = await applyDisplay(geometry);
+  if (!display_.ok) {
+    return {
+      ok: false,
+      reason: display_.reason ?? "the display refused the new size",
+      restored: await restore()
+    };
+  }
+  try {
+    await deps.resizePage?.(next);
+    await deps.restartEncoder?.(next);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+      restored: await restore()
+    };
+  }
+  return { ok: true, applied: next };
+}
+
 // server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes2 } from "node:crypto";
+import { createHash as createHash2, randomBytes as randomBytes4 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
 var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+var DEFAULT_BROWSERD_RECORD_MAX_BYTES = 60 * 1024 * 1024;
 function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
   const supplied = env.MCPJAM_BROWSERD_TOKEN ?? "";
   const tokenFile = env.MCPJAM_BROWSERD_TOKEN_FILE?.trim() || void 0;
@@ -4665,8 +9712,20 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // contradictory rather than merely unusual, so the one that decides
     // whether there is a picture wins.
     kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
+    // NEVER WITHOUT KIOSK on a hosted box, and the guard is the same shape as
+    // kiosk's own: a display that resized under a Chromium that is not filling
+    // it leaves the page one size and the capture another, which is the exact
+    // disagreement between the number and the picture this whole path exists
+    // to prevent.
+    viewportPolicy: parseViewportPolicy(env.MCPJAM_BROWSERD_VIEWPORT_POLICY),
     deviceScaleFactor: readDeviceScaleFactor(env),
+    recordDir: env.MCPJAM_BROWSERD_RECORD_DIR?.trim() || `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
+    recordMaxBytes: readRecordMaxBytes(env),
+    // Only the exact string disables it, matching every other switch here: a
+    // typo must not silently cost a run its evidence.
+    recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...tokenFile ? { tokenFile } : {},
+    ...env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim() ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() } : {},
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
   };
@@ -4676,11 +9735,25 @@ function readDeviceScaleFactor(env) {
   if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
   return raw;
 }
+function readRecordMaxBytes(env) {
+  const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
+  if (!Number.isFinite(raw) || raw < 1)
+    return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
+}
 function defaultMintToken(path) {
-  const token = randomBytes2(32).toString("hex");
+  const token = randomBytes4(32).toString("hex");
   writeFileSync(path, token, { encoding: "utf8", mode: 384 });
   chmodSync(path, 384);
   return token;
+}
+function announcedFeatures(config, env = process.env) {
+  const features = [];
+  if (config.kiosk && env.MCPJAM_BROWSER_VIDEO !== "false") {
+    features.push("h264");
+  }
+  if (config.recordingEnabled) features.push("record");
+  return features;
 }
 function extraArgsFor(config) {
   const args = [];
@@ -4696,10 +9769,10 @@ function extraArgsFor(config) {
   }
   return args;
 }
-function formatReadyLine(host, port, bootId, protocolVersion) {
+function formatReadyLine(host2, port, bootId, protocolVersion) {
   return JSON.stringify({
     event: "listening",
-    host,
+    host: host2,
     port,
     bootId,
     ...protocolVersion === void 0 ? {} : { protocolVersion }
@@ -4718,26 +9791,320 @@ function defaultHashFile(path) {
   return createHash2("sha256").update(readFileSync(path)).digest("hex");
 }
 
+// server/services/browserd/profile-archive.ts
+import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { join as join3, relative, resolve, sep } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
+var MAX_BROWSER_PROFILE_ARCHIVE_BYTES = 256 * 1024 * 1024;
+var MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES = MAX_BROWSER_PROFILE_ARCHIVE_BYTES * 4;
+var TAR_BLOCK_BYTES = 512;
+var EXCLUDED_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
+  "cache",
+  "code cache",
+  "gpucache",
+  "dawncache",
+  "grshadercache",
+  "shadercache",
+  "singletonlock",
+  "singletoncookie",
+  "singletonsock"
+]);
+function isExcludedProfilePath(path) {
+  return path.split(/[\\/]+/).some((segment) => EXCLUDED_PROFILE_SEGMENTS.has(segment.toLowerCase()));
+}
+function assertSafeArchivePath(path) {
+  const normalized = path.replaceAll("\\", "/");
+  if (normalized.startsWith("/") || normalized.split("/").some((segment) => segment === "..")) {
+    throw new Error("browser profile archive contains an unsafe path");
+  }
+}
+function writeTarString(header, value, offset, length) {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.byteLength > length) {
+    throw new Error("browser profile path is too long for a portable archive");
+  }
+  bytes.copy(header, offset);
+}
+function writeTarOctal(header, value, offset, length) {
+  const encoded = `${Math.max(0, value).toString(8).padStart(length - 1, "0")}\0`;
+  if (encoded.length > length) {
+    throw new Error("browser profile archive metadata is too large");
+  }
+  header.write(encoded, offset, length, "ascii");
+}
+function makeTarHeader(path, kind, size, mode) {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
+  assertSafeArchivePath(normalized);
+  const header = Buffer.alloc(TAR_BLOCK_BYTES);
+  let name = normalized;
+  let prefix = "";
+  if (Buffer.byteLength(name) > 100) {
+    const slash = normalized.lastIndexOf("/");
+    if (slash <= 0) {
+      throw new Error(
+        "browser profile path is too long for a portable archive"
+      );
+    }
+    prefix = normalized.slice(0, slash);
+    name = normalized.slice(slash + 1);
+    if (Buffer.byteLength(prefix) > 155 || Buffer.byteLength(name) > 100) {
+      throw new Error(
+        "browser profile path is too long for a portable archive"
+      );
+    }
+  }
+  writeTarString(header, name, 0, 100);
+  writeTarOctal(header, mode & 4095, 100, 8);
+  writeTarOctal(header, 0, 108, 8);
+  writeTarOctal(header, 0, 116, 8);
+  writeTarOctal(header, size, 124, 12);
+  writeTarOctal(header, 0, 136, 12);
+  header.fill(32, 148, 156);
+  header[156] = kind === "directory" ? 53 : 48;
+  header.write("ustar\0", 257, "ascii");
+  header.write("00", 263, "ascii");
+  writeTarString(header, "mcpjam", 265, 32);
+  writeTarString(header, "mcpjam", 297, 32);
+  writeTarString(header, prefix, 345, 155);
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+  return header;
+}
+async function collectProfileEntries(profileDir, currentDir, entries, uncompressedBytes) {
+  const children = await readdir(currentDir, { withFileTypes: true });
+  for (const child of children) {
+    const absolutePath = join3(currentDir, child.name);
+    const archivePath = relative(profileDir, absolutePath).split(sep).join("/");
+    assertSafeArchivePath(archivePath);
+    if (isExcludedProfilePath(archivePath)) continue;
+    const stat2 = await lstat(absolutePath);
+    if (stat2.isDirectory()) {
+      const header2 = makeTarHeader(archivePath, "directory", 0, stat2.mode);
+      entries.push(header2);
+      uncompressedBytes.value += header2.byteLength;
+      if (uncompressedBytes.value > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+        throw new Error(
+          "browser profile archive exceeds the expanded size limit"
+        );
+      }
+      await collectProfileEntries(
+        profileDir,
+        absolutePath,
+        entries,
+        uncompressedBytes
+      );
+      continue;
+    }
+    if (!stat2.isFile()) continue;
+    if (uncompressedBytes.value + stat2.size > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+      throw new Error("browser profile archive exceeds the expanded size limit");
+    }
+    const contents = await readFile(absolutePath);
+    const header = makeTarHeader(
+      archivePath,
+      "file",
+      contents.byteLength,
+      stat2.mode
+    );
+    const padding = Buffer.alloc(
+      (TAR_BLOCK_BYTES - contents.byteLength % TAR_BLOCK_BYTES) % TAR_BLOCK_BYTES
+    );
+    entries.push(header, contents, padding);
+    uncompressedBytes.value += header.byteLength + contents.byteLength + padding.byteLength;
+    if (uncompressedBytes.value > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
+    }
+  }
+}
+function parseTarNumber(header, offset, length) {
+  const raw = header.subarray(offset, offset + length).toString("ascii").replace(/\0.*$/, "").trim();
+  if (!raw) return 0;
+  const value = Number.parseInt(raw, 8);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error("browser profile archive contains invalid metadata");
+  }
+  return value;
+}
+function parseTarString(header, offset, length) {
+  return header.subarray(offset, offset + length).toString("utf8").replace(/\0.*$/, "");
+}
+function isZeroTarBlock(block) {
+  for (const byte of block) {
+    if (byte !== 0) return false;
+  }
+  return true;
+}
+function assertTarChecksum(header) {
+  const expected = parseTarNumber(header, 148, 8);
+  const actual = header.reduce(
+    (sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte),
+    0
+  );
+  if (actual !== expected) {
+    throw new Error("browser profile archive has an invalid checksum");
+  }
+}
+async function ensureSafeDirectory(profileDir, directory) {
+  const absoluteProfileDir = resolve(profileDir);
+  const absoluteDirectory = resolve(directory);
+  if (absoluteDirectory !== absoluteProfileDir && !absoluteDirectory.startsWith(`${absoluteProfileDir}${sep}`)) {
+    throw new Error("browser profile archive contains an unsafe path");
+  }
+  const relativeDirectory = relative(absoluteProfileDir, absoluteDirectory);
+  let current = absoluteProfileDir;
+  for (const segment of relativeDirectory ? relativeDirectory.split(sep) : []) {
+    current = join3(current, segment);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) {
+        throw new Error("browser profile archive targets a symbolic link");
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      await mkdir(current, { mode: 448 });
+    }
+  }
+}
+async function exportBrowserProfileArchive(profileDir) {
+  const entries = [];
+  const uncompressedBytes = { value: 0 };
+  await collectProfileEntries(
+    profileDir,
+    profileDir,
+    entries,
+    uncompressedBytes
+  );
+  entries.push(Buffer.alloc(TAR_BLOCK_BYTES * 2));
+  const archive = gzipSync(Buffer.concat(entries), {
+    portable: true,
+    mtime: 0
+  });
+  if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
+    throw new Error("browser profile archive exceeds the 256 MB limit");
+  }
+  return new Uint8Array(archive);
+}
+async function importBrowserProfileArchive(profileDir, archive, options = {}) {
+  const maxUncompressed = options.maxUncompressedBytes ?? MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES;
+  if (archive.byteLength <= 0) {
+    throw new Error("browser profile archive is empty");
+  }
+  if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
+    throw new Error("browser profile archive exceeds the 256 MB limit");
+  }
+  let tarball;
+  try {
+    tarball = gunzipSync(Buffer.from(archive), {
+      maxOutputLength: maxUncompressed
+    });
+  } catch (error) {
+    if (error.code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
+    }
+    throw error;
+  }
+  await mkdir(profileDir, { recursive: true, mode: 448 });
+  await ensureSafeDirectory(profileDir, profileDir);
+  let offset = 0;
+  let sawEnd = false;
+  while (offset + TAR_BLOCK_BYTES <= tarball.byteLength) {
+    const header = tarball.subarray(offset, offset + TAR_BLOCK_BYTES);
+    offset += TAR_BLOCK_BYTES;
+    if (isZeroTarBlock(header)) {
+      if (sawEnd) break;
+      sawEnd = true;
+      continue;
+    }
+    if (sawEnd) {
+      throw new Error("browser profile archive has data after its end marker");
+    }
+    assertTarChecksum(header);
+    const name = parseTarString(header, 0, 100);
+    const prefix = parseTarString(header, 345, 155);
+    const archivePath = prefix ? `${prefix}/${name}` : name;
+    assertSafeArchivePath(archivePath);
+    const size = parseTarNumber(header, 124, 12);
+    if (size > tarball.byteLength - offset) {
+      throw new Error("browser profile archive is truncated");
+    }
+    if (!archivePath || archivePath === "." || isExcludedProfilePath(archivePath)) {
+      offset += Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+      continue;
+    }
+    const kind = header[156];
+    const target = join3(profileDir, ...archivePath.split("/"));
+    if (kind === 53) {
+      if (size !== 0)
+        throw new Error("browser profile directory has file data");
+      await ensureSafeDirectory(profileDir, target);
+    } else if (kind === 48 || kind === 0) {
+      const parent = resolve(target, "..");
+      await ensureSafeDirectory(profileDir, parent);
+      try {
+        if ((await lstat(target)).isSymbolicLink()) {
+          throw new Error("browser profile archive targets a symbolic link");
+        }
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      await writeFile(target, tarball.subarray(offset, offset + size), {
+        mode: 384
+      });
+    } else {
+      throw new Error("browser profile archive contains an unsupported entry");
+    }
+    offset += Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+  }
+  if (!sawEnd) {
+    throw new Error("browser profile archive is missing its end marker");
+  }
+}
+
 // server/services/browserd/daemon/main.ts
 function log(message) {
   process.stderr.write(`[mcpjam-browserd] ${message}
 `);
 }
+function runShell(command) {
+  return new Promise((resolve2) => {
+    execFile(
+      "/bin/sh",
+      ["-c", command],
+      { timeout: 1e4 },
+      (error, _stdout, stderr) => {
+        resolve2({
+          exitCode: error ? error.code ?? 1 : 0,
+          stderr: typeof stderr === "string" ? stderr : void 0
+        });
+      }
+    );
+  });
+}
 function displayWidth(config) {
-  return Math.round(BROWSERD_OBSERVATION_VIEWPORT.width * config.deviceScaleFactor);
+  return Math.round(
+    BROWSERD_OBSERVATION_VIEWPORT.width * config.deviceScaleFactor
+  );
 }
 function displayHeight(config) {
   return Math.round(
     BROWSERD_OBSERVATION_VIEWPORT.height * config.deviceScaleFactor
   );
 }
-function videoFeatures(config) {
-  if (process.env.MCPJAM_BROWSER_VIDEO === "false") return [];
-  return config.kiosk ? ["h264"] : [];
-}
 async function main() {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
+  if (config.profileArchivePath && config.contextMode === "persistent") {
+    const archive = await readFile2(config.profileArchivePath);
+    await importBrowserProfileArchive(
+      config.userDataDir,
+      new Uint8Array(archive)
+    );
+    await unlink2(config.profileArchivePath).catch(() => {
+    });
+  }
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
     headless: config.headless,
@@ -4746,13 +10113,86 @@ async function main() {
     deviceScaleFactor: config.deviceScaleFactor
   });
   const lease = new HandoffLease();
-  const driver = new ChromiumDriver(context, { lease });
-  const features = videoFeatures(config);
+  let encoder;
+  const canResize = config.contextMode === "persistent" && config.kiosk && (await runShell(
+    `xrandr --display ${process.env.DISPLAY || ":0"} --current | awk '$1 == "VNC-0" { found = 1 } END { exit !found }'`
+  )).exitCode === 0;
+  const driver = new ChromiumDriver(context, {
+    lease,
+    viewport: {
+      /**
+       * The DAEMON's default is `fixed`, and the door widens it.
+       *
+       * Every existing opener — an eval, a swarm, a CLI run, an SDK consumer —
+       * gets exactly the 1024x768 session it has always had, and only a caller
+       * that negotiated a responsive one moves off it. A daemon that defaulted
+       * the other way would silently change the size of every recorded eval
+       * the first time somebody dragged a panel.
+       */
+      policy: config.viewportPolicy,
+      allowPaneResize: canResize,
+      // KIOSK IS THE TEST for "does this box have a display of its own". It is
+      // the switch that makes "the display IS the page" true for the encoder,
+      // and it is set only on the hosted image; a local Chromium's page is a
+      // window, and resizing it is the whole job.
+      ...config.kiosk ? {
+        resizeDisplay: async (next, previous) => {
+          const outcome = await resizeHostedDisplay(
+            {
+              display: process.env.DISPLAY || ":0",
+              run: runShell,
+              deviceScaleFactor: config.deviceScaleFactor,
+              restartEncoder: async (size) => {
+                const { width, height } = displayGeometryFor(size, {
+                  deviceScaleFactor: config.deviceScaleFactor
+                });
+                await encoder?.resize?.({ width, height });
+              }
+            },
+            next,
+            previous
+          );
+          if (!outcome.ok) {
+            log(
+              `display resize failed (${outcome.reason}); ${outcome.restored ? "restored" : "COULD NOT RESTORE"} ${previous.width}x${previous.height}`
+            );
+          }
+          return outcome.ok;
+        }
+      } : {}
+    }
+  });
+  const features = announcedFeatures(config);
   const video = features.includes("h264") ? createVideoEncoder({
     display: process.env.DISPLAY || ":0",
     width: displayWidth(config),
     height: displayHeight(config)
   }) : void 0;
+  encoder = video;
+  const recorder = features.includes("record") ? createVideoRecorder({
+    display: process.env.DISPLAY || ":0",
+    width: displayWidth(config),
+    height: displayHeight(config),
+    dir: config.recordDir,
+    maxBytes: config.recordMaxBytes
+  }) : void 0;
+  if (recorder) {
+    try {
+      mkdirSync(config.recordDir, { recursive: true });
+    } catch (error) {
+      log(
+        `could not create ${config.recordDir}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  const liveDisplaySize = () => {
+    const session = driver.sessionViewportState?.();
+    const css = session ? { width: session.width, height: session.height } : { ...BROWSERD_OBSERVATION_VIEWPORT };
+    const { width, height } = displayGeometryFor(css, {
+      deviceScaleFactor: config.deviceScaleFactor
+    });
+    return { width, height };
+  };
   const stack = buildBrowserdStack(driver, {
     token: config.token,
     lease,
@@ -4765,9 +10205,30 @@ async function main() {
     startedBy: config.startedBy,
     features,
     ...video ? { video } : {},
-    displaySize: {
-      width: displayWidth(config),
-      height: displayHeight(config)
+    ...recorder ? { recorder } : {},
+    ...config.contextMode === "persistent" ? {
+      profileExport: async () => {
+        await context.close();
+        await driver.close();
+        return exportBrowserProfileArchive(config.userDataDir);
+      }
+    } : {},
+    // THE DISPLAY AS IT IS NOW, not as it booted.
+    //
+    // `cssViewport` below already follows the session, and these two are one
+    // contract: the frame stream divides them to get the scale a watcher maps
+    // its clicks through. A `displaySize` pinned to the boot geometry made the
+    // two diverge at precisely the moment something moved, so every click after
+    // a resize was scaled by a ratio built from one live number and one stale
+    // one.
+    //
+    // Through `displayGeometryFor`, which is what `xrandr --fb` was actually
+    // given — parity bump included. Multiplying by the scale factor a second
+    // time here would be off by a pixel on every odd dimension.
+    displaySize: liveDisplaySize,
+    cssViewport: () => {
+      const session = driver.sessionViewportState?.();
+      return session ? { width: session.width, height: session.height } : { ...BROWSERD_OBSERVATION_VIEWPORT };
     }
   });
   let shuttingDown = false;
@@ -4775,6 +10236,8 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     stack.closeStreams();
+    await recorder?.finalize({ graceMs: 2e3 }).catch(() => {
+    });
     video?.dispose();
     stack.server.close();
     await driver.close().catch(() => {

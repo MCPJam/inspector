@@ -20,8 +20,9 @@ import { HandoffLease } from "../daemon/lease";
 import { BROWSERD_PROTOCOL_VERSION } from "../protocol";
 import type {
   BrowserSessionLookup,
-  BrowserSessionRecord,
   BrowserSessionRecordResult,
+  ComputerBrowserSessionRecord,
+  SandboxBrowserSessionRecord,
 } from "../browser-sessions-client";
 import {
   attachBrowserSession,
@@ -29,6 +30,7 @@ import {
   BROWSERD_SCRIPT_PATH,
   BROWSERD_USER_DATA_DIR,
   BrowserSessionInUseError,
+  BrowserSessionTargetError,
   ensureBrowserSession,
   type BrowserSessionDeps,
   type SessionClient,
@@ -38,7 +40,10 @@ import { resetActivityThrottleForTests } from "../../../utils/computers/activity
 
 const COMPUTER = "computer-1";
 const HASH = "bundle-hash-1";
+const SANDBOX_ROW = "sbxrow-1";
+const SANDBOX_ID = "sbx-1";
 const ROW = {
+  target: "computer" as const,
   sessionId: "session-1",
   computerId: COMPUTER,
   bootId: "boot-old",
@@ -51,10 +56,34 @@ const ROW = {
   contextMode: "persistent" as const,
 };
 
+/** The same row on a per-run box: no computer, and no stream at all. */
+const SANDBOX_SESSION = {
+  target: "sandbox" as const,
+  sessionId: "session-sbx",
+  sandboxRowId: SANDBOX_ROW,
+  bootId: "boot-old",
+  browserdToken: "token-old",
+  browserdPort: 8791,
+  publicOrigin: "https://old.example",
+  bundleHash: HASH,
+  contextMode: "ephemeral" as const,
+};
+
 function liveLookup(
-  over?: Partial<BrowserSessionRecord>,
+  over?: Partial<ComputerBrowserSessionRecord>,
 ): BrowserSessionLookup {
   const session = { ...ROW, ...over };
+  return {
+    reachable: true,
+    session,
+    observedSessionId: session.sessionId,
+  };
+}
+
+function liveSandboxLookup(
+  over?: Partial<SandboxBrowserSessionRecord>,
+): BrowserSessionLookup {
+  const session = { ...SANDBOX_SESSION, ...over };
   return {
     reachable: true,
     session,
@@ -86,8 +115,8 @@ function leaseBackedBy(lease: HandoffLease): LeaseActionFn {
       args.action === "acquire"
         ? lease.acquire(args.holder, args.ttlMs, args.kind)
         : args.action === "heartbeat"
-          ? lease.heartbeat(args.holder, args.ttlMs)
-          : lease.resume(args.holder);
+        ? lease.heartbeat(args.holder, args.ttlMs)
+        : lease.resume(args.holder);
     // Mirrors request-handler.ts: only an acquire can fail to take.
     const took =
       args.action !== "acquire" ||
@@ -221,13 +250,16 @@ function makeFakes(over?: {
       sendCommand,
       ...(over?.leaseAction ? { leaseAction: over.leaseAction } : {}),
     })),
+    // Cast: the real store's `lookup`/`record` are OVERLOADED per target, and a
+    // single-signature spy cannot satisfy both arms. The cases below drive the
+    // production entry points, which are where the target types are checked.
     store: {
       lookup,
       record,
       touch,
       claimRelaunch,
       releaseRelaunch,
-    },
+    } as unknown as BrowserSessionDeps["store"],
     touchActivity,
     bundle: () => new Uint8Array([1, 2, 3]),
     bundleHash: () => HASH,
@@ -315,11 +347,11 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     const f = makeFakes({
       lookups: [liveLookup()],
       status: async () => ({
-          kind: "ok",
-          bootId: "boot-someone-else",
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }),
+        kind: "ok",
+        bootId: "boot-someone-else",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
+      }),
     });
     await expectRelaunch(f);
   });
@@ -339,11 +371,11 @@ describe("ensureBrowserSession — relaunch triggers", () => {
         return probes === 1
           ? { kind: "unhealthy", detail: "box is paused" }
           : {
-          kind: "ok",
-          bootId: ROW.bootId,
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        };
+              kind: "ok",
+              bootId: ROW.bootId,
+              protocolVersion: BROWSERD_PROTOCOL_VERSION,
+              bundleHash: HASH,
+            };
       },
     });
 
@@ -693,8 +725,14 @@ describe("ensureBrowserSession — relaunch triggers", () => {
       leaseAction: leaseBackedBy(lease),
     });
 
+    // Driven through the ATTACH, which is the surface that still names an
+    // ephemeral mode on a computer: `ensureBrowserSession` now refuses one
+    // outright, and the ownership question this pins is the same either way.
     await expect(
-      ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" }),
+      attachBrowserSession(f.deps, {
+        computerId: COMPUTER,
+        contextMode: "ephemeral",
+      }),
     ).rejects.toThrow(/lease_held/);
     expect(f.lookup).toHaveBeenNthCalledWith(
       1,
@@ -771,8 +809,10 @@ describe("ensureBrowserSession — the record is load-bearing", () => {
         browserdToken: "token-new",
         browserdPort: BROWSERD_PORT,
         publicOrigin: "https://new.example",
-        streamUrl: "https://stream-new.example/vnc.html",
-        streamPassword: "pw-stream",
+        stream: {
+          url: "https://stream-new.example/vnc.html",
+          password: "pw-stream",
+        },
         bundleHash: HASH,
         contextMode: "persistent",
       }),
@@ -829,34 +869,30 @@ describe("ensureBrowserSession — the record is load-bearing", () => {
 });
 
 describe("ensureBrowserSession — contextMode", () => {
-  it("boots an ephemeral session with no persistent profile (W6)", async () => {
+  it("REFUSES ephemeral on a computer target, before reserving anything", async () => {
+    // There is one hosted computer per (project, member), so an ephemeral
+    // session on it would be shared by every unattended run in the project —
+    // one profile, one cookie jar — and the mode mismatch against a persistent
+    // daemon relaunches it, pkilling the Chromium a person may be using. The
+    // refusal lands BEFORE `reserveDesktop`, so nothing is provisioned on the
+    // way to the error.
     const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
-    const handle = await ensureBrowserSession(f.deps, {
-      ...ARGS,
-      contextMode: "ephemeral",
-    });
-    expect(handle.contextMode).toBe("ephemeral");
-    // The daemon is told, so it launches with no user-data-dir at all: an
-    // eval's isolation is a property of the browser, not of remembering to
-    // clear cookies.
-    expect(f.boot).toHaveBeenCalledWith(
-      f.sandbox.browserd,
-      expect.objectContaining({ contextMode: "ephemeral" }),
-    );
-    expect(f.record).toHaveBeenCalledWith(
-      expect.objectContaining({ contextMode: "ephemeral" }),
-    );
+    await expect(
+      ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" }),
+    ).rejects.toMatchObject({ code: "ephemeral_requires_sandbox" });
+
+    expect(f.deps.reserveDesktop).not.toHaveBeenCalled();
+    expect(f.lookup).not.toHaveBeenCalled();
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
   });
 
-  it("asks the store for the ephemeral mode, so a persistent row is never reused", async () => {
-    const f = makeFakes({ lookups: [liveLookup()] });
-    await ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" });
-    expect(f.lookup).toHaveBeenCalledWith(
-      expect.objectContaining({ expectedContextMode: "ephemeral" }),
-    );
-    // The live persistent row is NOT verified or reused for an eval.
-    expect(f.status).not.toHaveBeenCalled();
-    expect(f.boot).toHaveBeenCalled();
+  it("throws BrowserSessionTargetError, not a bare Error", async () => {
+    const f = makeFakes();
+    await expect(
+      ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" }),
+    ).rejects.toBeInstanceOf(BrowserSessionTargetError);
   });
 
   it("asks the store for the mode it intends to run in", async () => {
@@ -1062,11 +1098,11 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
       ],
       recordResult: { status: "conflict" },
       status: async () => ({
-          kind: "ok",
-          bootId: "boot-winner",
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }),
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
+      }),
     });
     const handle = await ensureBrowserSession(f.deps, ARGS);
 
@@ -1101,11 +1137,11 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
       ],
       bootError: new Error("port already in use"),
       status: async () => ({
-          kind: "ok",
-          bootId: "boot-winner",
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }),
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
+      }),
     });
     const handle = await ensureBrowserSession(f.deps, ARGS);
     expect(handle.reused).toBe(true);
@@ -1130,11 +1166,11 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
         liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
       ],
       status: async () => ({
-          kind: "ok",
-          bootId: "boot-winner",
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }),
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
+      }),
     });
 
     const handle = await ensureBrowserSession(f.deps, ARGS);
@@ -1158,11 +1194,11 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
         liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
       ],
       status: async () => ({
-          kind: "ok",
-          bootId: "boot-winner",
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }),
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
+      }),
       leaseAction: leaseBackedBy(lease),
     });
 
@@ -1180,6 +1216,278 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
       "port already in use",
     );
     expect(f.sandbox.disconnect).toHaveBeenCalled();
+  });
+});
+
+describe("ensureBrowserSession — sandbox target", () => {
+  const SANDBOX_ARGS = {
+    ...ARGS,
+    contextMode: "ephemeral" as const,
+    target: {
+      kind: "sandbox" as const,
+      sandboxRowId: SANDBOX_ROW,
+      sandboxId: SANDBOX_ID,
+    },
+  };
+
+  it("boots on the run's OWN box: no reserve, no lease, no stream", async () => {
+    // Everything this path skips is a decision, not an omission. The box is
+    // already provisioned (so nothing reserves or bills), one run owns it (so
+    // there is no relaunch claim and no lease to fence), and nobody is
+    // watching (so no stream is started and none is recorded).
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+
+    expect(handle.target).toBe("sandbox");
+    expect(handle.sandboxRowId).toBe(SANDBOX_ROW);
+    expect(handle.sandboxId).toBe(SANDBOX_ID);
+    expect(handle.contextMode).toBe("ephemeral");
+    expect(handle.reused).toBe(false);
+
+    expect(f.deps.reserveDesktop).not.toHaveBeenCalled();
+    expect(f.deps.resolveSandboxId).not.toHaveBeenCalled();
+    expect(f.sandbox.ensureStream).not.toHaveBeenCalled();
+    expect(f.claimRelaunch).not.toHaveBeenCalled();
+    // The vendor id came straight from the caller.
+    expect(f.connect).toHaveBeenCalledWith(SANDBOX_ID);
+    expect(f.boot).toHaveBeenCalledWith(
+      f.sandbox.browserd,
+      expect.objectContaining({ contextMode: "ephemeral" }),
+    );
+    // Recorded against the ROW, with no stream fields at all.
+    const recorded = f.record.mock.calls[0]![0];
+    expect(recorded).toMatchObject({
+      sandboxRowId: SANDBOX_ROW,
+      contextMode: "ephemeral",
+    });
+    expect(recorded).not.toHaveProperty("computerId");
+    expect(recorded).not.toHaveProperty("stream");
+  });
+
+  it("protects a watched Playground sandbox with the relaunch claim and stream", async () => {
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    const handle = await ensureBrowserSession(f.deps, {
+      ...SANDBOX_ARGS,
+      contextMode: "persistent",
+      target: { ...SANDBOX_ARGS.target, watched: true },
+    });
+
+    expect(handle.target).toBe("sandbox");
+    expect(handle.watched).toBe(true);
+    expect(f.claimRelaunch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxRowId: SANDBOX_ROW,
+        watched: true,
+        claimId: expect.any(String),
+      }),
+    );
+    expect(f.releaseRelaunch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxRowId: SANDBOX_ROW,
+        watched: true,
+        claimId: f.claimRelaunch.mock.calls[0]![0].claimId,
+      }),
+    );
+    expect(f.sandbox.ensureStream).toHaveBeenCalledTimes(1);
+    expect(f.record.mock.calls[0]![0]).toMatchObject({
+      sandboxRowId: SANDBOX_ROW,
+      watched: true,
+      stream: { url: expect.any(String), password: expect.any(String) },
+    });
+  });
+
+  it("reuses a verified daemon with zero sandbox I/O", async () => {
+    const f = makeFakes({
+      lookups: [liveSandboxLookup()],
+      status: async () => ({ kind: "ok", bootId: SANDBOX_SESSION.bootId }),
+    });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe(SANDBOX_SESSION.bootId);
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.lookup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxRowId: SANDBOX_ROW,
+        expectedContextMode: "ephemeral",
+      }),
+    );
+  });
+
+  it("never boots or kills while attaching a missing watched boot", async () => {
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    await expect(
+      ensureBrowserSession(f.deps, {
+        ...SANDBOX_ARGS,
+        contextMode: "persistent",
+        target: { ...SANDBOX_ARGS.target, watched: true },
+        expectedExistingBootId: "saved-boot",
+      }),
+    ).rejects.toThrow(/not ready/);
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.deps.reserveDesktop).not.toHaveBeenCalled();
+  });
+
+  it("does NOT reuse a daemon whose bootId has moved", async () => {
+    const f = makeFakes({
+      lookups: [liveSandboxLookup()],
+      status: async () => ({ kind: "ok", bootId: "boot-somebody-else" }),
+    });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+    expect(handle.reused).toBe(false);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("REFUSES a persistent profile on a box that dies with the run", async () => {
+    const f = makeFakes();
+    await expect(
+      ensureBrowserSession(f.deps, {
+        ...SANDBOX_ARGS,
+        contextMode: "persistent",
+      } as never),
+    ).rejects.toMatchObject({ code: "persistent_requires_computer" });
+    expect(f.connect).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unsupported target BEFORE connecting or booting", async () => {
+    // A backend that predates sandbox-target sessions will refuse the record
+    // too, so booting first would pay a cold DESKTOP boot — the most expensive
+    // thing on this path — on every attempt, to reach the same failure.
+    const f = makeFakes({
+      lookups: [{ reachable: true, unsupportedTarget: true, session: null }],
+    });
+    await expect(
+      ensureBrowserSession(f.deps, SANDBOX_ARGS),
+    ).rejects.toMatchObject({ code: "unsupported_target" });
+
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.record).not.toHaveBeenCalled();
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+  });
+
+  it("stops its own daemon when the control plane refuses the record shape", async () => {
+    // The same refusal arriving at RECORD time (a backend that answers the
+    // lookup but not the write). A daemon nothing can address must not be left
+    // running on a box that will be billed until the run ends.
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      recordResult: { status: "unsupported_target" },
+    });
+    await expect(
+      ensureBrowserSession(f.deps, SANDBOX_ARGS),
+    ).rejects.toMatchObject({ code: "unsupported_target" });
+    expect(f.bootHandle.stop).toHaveBeenCalled();
+    expect(f.sandbox.disconnect).toHaveBeenCalled();
+  });
+
+  it("adopts a winner that appeared while we were connecting, WITHOUT killing it", async () => {
+    // `killBrowserd` is a pkill on the box, so it would reap a daemon somebody
+    // booted during our connect and leave their row addressing nothing — and
+    // the record CAS cannot repair that, because it fires after the kill and
+    // the damage IS the kill. Hence the re-read immediately before it.
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner" }),
+      ],
+      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+    });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe("boot-winner");
+    // The whole point: their daemon survives, and we never paid the boot.
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+  });
+
+  it("adopts the winner when its record loses the compare-and-swap", async () => {
+    // The record CAS is the cross-replica backstop of last resort on this path
+    // — there is no claim and no fence — so it has to still work when the
+    // winner appears too late for the pre-kill re-read to see it.
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner" }),
+      ],
+      recordResult: { status: "conflict" },
+      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+    });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe("boot-winner");
+    expect(f.bootHandle.stop).toHaveBeenCalled();
+  });
+
+  it("serializes two ensures of ONE row, and runs two rows concurrently", async () => {
+    const order: string[] = [];
+    const slowStatus = (label: string) =>
+      vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          order.push(`${label}-start`);
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          order.push(`${label}-end`);
+          return { kind: "ok", bootId: SANDBOX_SESSION.bootId };
+        })
+        .mockImplementation(async () => {
+          order.push(`${label}-second`);
+          return { kind: "ok", bootId: SANDBOX_SESSION.bootId };
+        });
+
+    const statusA = slowStatus("row-a");
+    const one = makeFakes({ lookups: [liveSandboxLookup()] });
+    (one.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ status: statusA, sendCommand: vi.fn() }),
+    );
+    await Promise.all([
+      ensureBrowserSession(one.deps, SANDBOX_ARGS),
+      ensureBrowserSession(one.deps, SANDBOX_ARGS),
+    ]);
+    // Same row ⇒ strictly in sequence (one fixed port, one daemon per box).
+    expect(order).toEqual(["row-a-start", "row-a-end", "row-a-second"]);
+
+    // A DIFFERENT row must not wait behind it: two iterations of one eval run
+    // concurrently, which is the whole point of a box per run.
+    //
+    // Row A gets a FRESH slow status here. Reusing the one above would leave
+    // its `mockImplementationOnce` already spent, so row A would resolve
+    // instantly and the interleaving this half exists to prove would look
+    // identical under a single global lock.
+    order.length = 0;
+    const statusA2 = slowStatus("row-a");
+    const oneAgain = makeFakes({ lookups: [liveSandboxLookup()] });
+    (oneAgain.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ status: statusA2, sendCommand: vi.fn() }),
+    );
+    const statusB = slowStatus("row-b");
+    const two = makeFakes({
+      lookups: [liveSandboxLookup({ sandboxRowId: "sbxrow-2" })],
+    });
+    (two.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ status: statusB, sendCommand: vi.fn() }),
+    );
+    await Promise.all([
+      ensureBrowserSession(oneAgain.deps, SANDBOX_ARGS),
+      ensureBrowserSession(two.deps, {
+        ...SANDBOX_ARGS,
+        target: {
+          kind: "sandbox" as const,
+          sandboxRowId: "sbxrow-2",
+          sandboxId: "sbx-2",
+        },
+      }),
+    ]);
+    // THE assertion that separates a keyed lock from a global one: row B got
+    // in while row A was still holding. A single lock would order these
+    // ["row-a-start", "row-a-end", "row-b-start", "row-b-end"].
+    expect(order.indexOf("row-b-start")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("row-b-start")).toBeLessThan(
+      order.indexOf("row-a-end"),
+    );
   });
 });
 
@@ -1250,7 +1558,6 @@ describe("ensureBrowserSession — the caller went away (review follow-up)", () 
     expect(f.boot).toHaveBeenCalledOnce();
   });
 });
-
 
 /**
  * V-4a. The bundle hash used to be an admission test, and every daemon edit
@@ -1409,7 +1716,6 @@ describe("ensureBrowserSession — compatibility and the lazy upgrade", () => {
   });
 });
 
-
 /**
  * V-8. The desktop image starts browserd itself, so on a fresh box there is a
  * healthy daemon listening before any inspector has done anything — and the
@@ -1530,5 +1836,117 @@ describe("ensureBrowserSession — adopting a daemon the box started", () => {
     f.record.mockResolvedValue({ status: "conflict" } as never);
     await ensureBrowserSession(f.deps, ARGS).catch(() => {});
     expect(f.boot).toHaveBeenCalled();
+  });
+});
+
+/**
+ * R-3. Capabilities survive the client rebuild.
+ *
+ * `withActivityTouches` wraps every hosted client and rebuilds it METHOD BY
+ * METHOD — a `BrowserdClient` instance keeps its methods on the prototype, so
+ * a spread would drop all of them. That makes the wrapper a place where a
+ * capability added to the client and not added there silently stops existing
+ * at every hosted call site, with nothing in a log to say so. For recording
+ * that is a run that quietly leaves no evidence.
+ */
+describe("ensureBrowserSession — the activity wrapper forwards every capability", () => {
+  const recordingClient = () => {
+    const record = vi.fn(async () => ({ ok: true as const }));
+    const recordStatus = vi.fn(async () => ({ active: false }));
+    return { record, recordStatus };
+  };
+
+  it("forwards record and recordStatus to the wrapped client", async () => {
+    const spies = recordingClient();
+    const f = makeFakes({ lookups: [liveLookup()] });
+    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({
+        status: async () =>
+          ({
+            kind: "ok",
+            bootId: ROW.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+            bundleHash: HASH,
+          } as BrowserdStatus),
+        sendCommand: async () => ({ kind: "ok" } as never),
+        ...spies,
+      }),
+    );
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.client.record).toBeTypeOf("function");
+    expect(handle.client.recordStatus).toBeTypeOf("function");
+    await handle.client.record!({ action: "start", id: "run-1", fps: 15 });
+    await handle.client.recordStatus!();
+    // Delegated, not reimplemented: the wrapper adds touches, not behaviour.
+    expect(spies.record).toHaveBeenCalledWith({
+      action: "start",
+      id: "run-1",
+      fps: 15,
+    });
+    expect(spies.recordStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards exportProfile too", async () => {
+    // The capability this describe block exists to protect, and the one that
+    // was actually dropped: without forwarding, a daemon that CAN export a
+    // profile reaches the panel looking like one that cannot, and the route
+    // answers `profile_export_unavailable` on a perfectly good browser.
+    const exportProfile = vi.fn(async () => new Uint8Array([7, 8, 9]));
+    const f = makeFakes({ lookups: [liveLookup()] });
+    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({
+        status: async () =>
+          ({
+            kind: "ok",
+            bootId: ROW.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+            bundleHash: HASH,
+          } as BrowserdStatus),
+        sendCommand: async () => ({ kind: "ok" } as never),
+        exportProfile,
+      }),
+    );
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.client.exportProfile).toBeTypeOf("function");
+    await expect(handle.client.exportProfile!()).resolves.toEqual(
+      new Uint8Array([7, 8, 9]),
+    );
+    expect(exportProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not invent a capability the client lacks", async () => {
+    // The other half of the contract: forwarding is conditional, so a daemon
+    // that genuinely cannot export must still report that honestly rather than
+    // get a wrapper method that throws when called.
+    const f = makeFakes({ lookups: [liveLookup()] });
+    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({
+        status: async () =>
+          ({
+            kind: "ok",
+            bootId: ROW.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+            bundleHash: HASH,
+          } as BrowserdStatus),
+        sendCommand: async () => ({ kind: "ok" } as never),
+      }),
+    );
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.client.exportProfile).toBeUndefined();
+  });
+
+  it("omits them entirely for a client that has neither", async () => {
+    // Absent, not present-and-throwing: the caller gates on the method
+    // existing, exactly as it does for `lease`.
+    const f = makeFakes({ lookups: [liveLookup()] });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    expect(handle.client.record).toBeUndefined();
+    expect(handle.client.recordStatus).toBeUndefined();
   });
 });

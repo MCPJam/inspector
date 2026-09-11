@@ -1,3 +1,7 @@
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
+import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
+import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
+import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 /**
  * useChatSession
  *
@@ -21,6 +25,10 @@ import {
   useLayoutEffect,
   useSyncExternalStore,
 } from "react";
+import {
+  pageToolRowsFromRecords,
+  type MintedPageToolRecord,
+} from "@/shared/declared-tools";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { toast } from "sonner";
 import {
@@ -78,7 +86,10 @@ import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
+import {
+  withBuiltInToolDefinitions,
+  type SerializedModelRequestTool,
+} from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { authFetch } from "@/lib/session-token";
 import {
@@ -167,8 +178,10 @@ import {
 import {} from "@/state/oauth-orchestrator";
 import {
   deferPageToolCallForApproval,
+  fulfillApprovedPageToolCall,
   snapshotPageToolsForTurn,
 } from "@/lib/webmcp-inspector/chat-dispatch";
+import { pageToolCallNeedsApproval } from "@/shared/client-fulfilled-tools";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
@@ -206,6 +219,7 @@ import {
 } from "@/shared/hosted-task-created";
 import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type {
@@ -345,6 +359,11 @@ export interface UseChatSessionOptions {
   hostedContext?: HostedRuntimeContext;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
+  /** Browser location and Browser-only capability, independent of shell. */
+  personalBrowserEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
   /**
    * Resolved Local⇄Cloud engine for this project's personal computer, provided
    * by the caller (Playground) so the CENTRAL hook stays free of the config
@@ -423,6 +442,19 @@ export interface UseChatSessionOptions {
    */
   builtInToolIds?: string[];
   /**
+   * Definitions for those built-in tools, as the model is shown them — used by
+   * the RAW view of a reopened session and nowhere else.
+   *
+   * A live turn streams a `request_payload` carrying the real advertised set,
+   * so this is never consulted then. A rehydrated session replays no such
+   * event, so Raw synthesizes one from the currently-resolved tool schemas —
+   * and those come from connected MCP servers only. A host whose whole
+   * capability is the browser therefore rendered `"tools": {}` next to a
+   * conversation in which the model had just driven one. These are merged into
+   * the synthesized entry so it says what would actually be sent next.
+   */
+  builtInToolDefinitions?: SerializedModelRequestTool[];
+  /**
    * Offer this turn the WebMCP tools of the page the inspector currently has
    * open. Off unless the caller opts in: a chat that silently gained tools from
    * a browser session opened in another tab would be a surprise, and page tools
@@ -434,11 +466,7 @@ export interface UseChatSessionOptions {
 }
 
 export type ChatSessionResetReason =
-  | "auth-bootstrap"
-  | "hydrate"
-  | "fork"
-  | "servers-changed"
-  | "reset";
+  "auth-bootstrap" | "hydrate" | "fork" | "servers-changed" | "reset";
 
 /**
  * Shown when `detachToLocalFork` could not confirm its fork went live. The
@@ -682,6 +710,7 @@ export interface UseChatSessionReturn {
         usage?: LiveChatTraceUsage;
         spansBlobUrl?: string | null;
         modelId?: string;
+        pageToolsAtTurn?: MintedPageToolRecord[];
       }>;
     },
     options?: {
@@ -786,6 +815,14 @@ interface LiveTraceTurnState {
    * when the spans blob fails to load or is genuinely empty.
    */
   endedAtMs?: number;
+  /**
+   * The page tools this turn advertised (rehydration only).
+   *
+   * Kept on the TURN rather than in a store keyed by browser: a store answers
+   * for the browser as it is now, and this has to answer for the turn as it
+   * was.
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
   /** Persisted finish reason (rehydration only). */
   finishReason?: string;
   /** Persisted model id (rehydration only). */
@@ -851,6 +888,19 @@ export interface HydratedTurnTrace {
   usage?: LiveChatTraceUsage;
   spans: EvalTraceSpan[];
   modelId?: string;
+  /**
+   * The page's own WebMCP tools this turn advertised, as it advertised them.
+   *
+   * The reason it is persisted rather than re-read: the live browser describes
+   * the page it is on NOW. Reopened tomorrow, a card for `webmcp_bookSlot`
+   * would be attributed to whatever tool happens to carry that name then, and
+   * the Raw view would show a request that was never sent.
+   *
+   * Absent means "we do not know" — every historical turn, and every turn
+   * whose claim the backend could not parse. It is NOT the same as an empty
+   * array, which means "this turn advertised none".
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 interface PersistedWidgetSnapshot {
@@ -879,6 +929,7 @@ async function resolveHydratedTurnTraces(
         usage?: LiveChatTraceUsage;
         spansBlobUrl?: string | null;
         modelId?: string;
+        pageToolsAtTurn?: MintedPageToolRecord[];
       }>
     | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
@@ -934,6 +985,9 @@ async function resolveHydratedTurnTraces(
         usage: trace.usage,
         spans,
         modelId: trace.modelId,
+        ...(trace.pageToolsAtTurn !== undefined
+          ? { pageToolsAtTurn: trace.pageToolsAtTurn }
+          : {}),
       };
     }),
   );
@@ -1001,6 +1055,9 @@ function buildLiveTraceStateFromTurnTraces(
       endedAtMs: trace.endedAt,
       finishReason: trace.finishReason,
       modelId: trace.modelId,
+      ...(trace.pageToolsAtTurn !== undefined
+        ? { pageToolsAtTurn: trace.pageToolsAtTurn }
+        : {}),
     };
   }
 
@@ -1656,6 +1713,7 @@ export function useChatSession(
     executionConfig,
     hostStyle,
     personalComputerEngine,
+    personalBrowserEngine,
     localHarnessExecution,
     onReset,
   } = options;
@@ -1663,6 +1721,13 @@ export function useChatSession(
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
   const resolvedLocalEngine = personalComputerEngine?.engine === "local";
   const localConsentToken = personalComputerEngine?.consentToken ?? null;
+  const localBrowserRequested =
+    !HOSTED_MODE &&
+    personalBrowserEngine?.engine === "local" &&
+    (options.builtInToolIds ?? executionConfig?.builtInToolIds)?.includes(
+      "browser",
+    ) === true;
+  const browserConsentToken = personalBrowserEngine?.consentToken ?? null;
   // Surfaces that omit `executionConfig` entirely (e.g. Playground) own their
   // chat-execution state imperatively and must not be re-synced from prop
   // defaults. Surfaces that pass `executionConfig` are in controlled mode and
@@ -1925,6 +1990,16 @@ export function useChatSession(
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+  /**
+   * The approval value the IN-FLIGHT turn was sent with.
+   *
+   * Stamped once per send, in the transport's `body` closure, beside
+   * `turnTaskScopeRef`. Everything that has to agree with the SERVER's view of
+   * this turn reads this rather than the live setting: the server declared
+   * every tool's `needsApproval` from the value in that request, and a user is
+   * free to flip the switch while the response streams.
+   */
+  const turnRequireToolApprovalRef = useRef(requireToolApproval);
 
   // Host-level progressive tool discovery toggle. The value comes from the
   // caller — each useChatSession site knows which host config row applies
@@ -2092,6 +2167,25 @@ export function useChatSession(
 
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (
+        part &&
+        typeof part === "object" &&
+        "type" in part &&
+        part.type === "data-browser-readiness" &&
+        "data" in part
+      ) {
+        const data = part.data as { reason?: unknown } | null;
+        if (!data || typeof data !== "object") return;
+        if (data.reason === null || typeof data.reason === "string") {
+          useBrowserReadinessStore
+            .getState()
+            .setReason(
+              `${hostedProjectId}:${chatSessionIdRef.current}`,
+              data.reason,
+            );
+        }
+        return;
+      }
       if (!isTraceEventDataPart(part)) {
         if (isScopeStepUpFinishedDataPart(part)) {
           const event = part.data;
@@ -2248,8 +2342,8 @@ export function useChatSession(
               ];
             const server =
               (log.serverName
-                ? appState?.servers?.[log.serverName] ??
-                  activeProject?.servers?.[log.serverName]
+                ? (appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName])
                 : undefined) ??
               appState?.servers?.[log.serverId] ??
               activeProject?.servers?.[log.serverId];
@@ -2635,7 +2729,7 @@ export function useChatSession(
     !HOSTED_MODE &&
     !hostedRequiresWebChatApi &&
     selectedModelUsesOrgRuntime &&
-    hasLocalOnlySelectedServer;
+    (hasLocalOnlySelectedServer || localBrowserRequested);
   /**
    * Does THIS send explicitly ask to run Claude Code on this machine?
    *
@@ -2721,9 +2815,8 @@ export function useChatSession(
               body: patchBodyAccessVersion(init.body, recovery.accessVersion),
             });
             if (!response.ok) {
-              const replayError = await classifyScenarioAccessResponse(
-                response,
-              );
+              const replayError =
+                await classifyScenarioAccessResponse(response);
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
               }
@@ -2858,6 +2951,10 @@ export function useChatSession(
       !hostedScenarioId &&
       Boolean(localConsentToken) &&
       authIsMemberRef.current;
+    const sendLocalBrowser =
+      !shouldUseOrgAwareChatApi && localBrowserRequested && !hostedScenarioId;
+    if (sendLocalBrowser && browserConsentToken)
+      mergedHeaders[BROWSER_CONSENT_HEADER] = browserConsentToken;
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
@@ -2913,6 +3010,9 @@ export function useChatSession(
         selectedServerIds: resolvedServerIds,
         selectedServerNames: resolvedServerNames,
         chatSessionId,
+        ...(isHostedDirectChat
+          ? { browserScope: "conversation" as const }
+          : {}),
         // Handshake: tells the server this bundle can render an elicitation
         // prompt. Catalog hosts already declare the capability, so without
         // this a stale bundle would leave the turn blocked for a full TTL on
@@ -2950,13 +3050,13 @@ export function useChatSession(
                 : {}),
             }
           : // Host-bound direct preview: forward the saved host id so the server
-          // re-resolves the host's authoritative runtime config (harness /
-          // computer included). Only on the direct path — scenario sessions own
-          // their host via scenarioId and the server ignores hostId when
-          // scenarioId is set.
-          isHostedDirectChat && hostedHostId
-          ? { hostId: hostedHostId }
-          : {}),
+            // re-resolves the host's authoritative runtime config (harness /
+            // computer included). Only on the direct path — scenario sessions own
+            // their host via scenarioId and the server ignores hostId when
+            // scenarioId is set.
+            isHostedDirectChat && hostedHostId
+            ? { hostId: hostedHostId }
+            : {}),
         ...(hostedScenarioId && hostedScenarioSurface
           ? { surface: hostedScenarioSurface }
           : {}),
@@ -2974,8 +3074,16 @@ export function useChatSession(
         // the data-part handler, whose closure is recreated on a project
         // switch and would stamp the NEW project on a late part.
         turnTaskScopeRef.current = shouldUseOrgAwareChatApi
-          ? hostedProjectId ?? undefined
+          ? (hostedProjectId ?? undefined)
           : getTrackedTaskScope();
+        // And the approval value this turn is SENT with, for the same reason.
+        // The server declares each tool's `needsApproval` from the value in
+        // THIS request; a client that later read the live setting would answer
+        // a different question than the one the server answered. Flipping the
+        // switch mid-stream then either runs a page tool the server is about
+        // to request approval for, or defers one nothing will ever ask about
+        // — and that second one stalls the turn.
+        turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
         const rewind =
@@ -2998,6 +3106,9 @@ export function useChatSession(
             : {
                 selectedServers,
                 chatSessionId,
+                ...(!hostedScenarioId
+                  ? { browserScope: "conversation" as const }
+                  : {}),
                 // `directVisibility` only applies to direct chat. The
                 // /mcp/chat-v2 route gates it off when scenarioId is present
                 // (owner-preview persists as `sourceType: "scenario"`), but
@@ -3023,6 +3134,13 @@ export function useChatSession(
                 // engine. The consent capability rides the header above; the
                 // server ignores this without it (and off the /mcp direct
                 // path). Absent ⇒ the legacy cloud-family resolution.
+                ...(!hostedScenarioId && personalBrowserEngine
+                  ? {
+                      browserEngine: sendLocalBrowser
+                        ? ("local" as const)
+                        : ("cloud" as const),
+                    }
+                  : {}),
                 ...(sendLocalEngine
                   ? { computerEngine: "local" as const }
                   : {}),
@@ -3098,11 +3216,8 @@ export function useChatSession(
             ? { expectedVersion: resumedVersionRef.current }
             : {}),
           ...(rewind ? { rewind } : {}),
-          // Host-managed built-in tools (e.g. ["web_search"]). Forwarded only
-          // when non-empty so pre-feature traces stay byte-identical. The
-          // scenario path overrides this with the persisted host config server-
-          // side; playground trusts this value (same as systemPrompt etc.).
-          ...(builtInToolIdsRef.current && builtInToolIdsRef.current.length > 0
+          // Preserve []: it explicitly disables the client's built-in tools.
+          ...(builtInToolIdsRef.current !== undefined
             ? { builtInToolIds: builtInToolIdsRef.current }
             : {}),
           // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
@@ -3205,6 +3320,9 @@ export function useChatSession(
     // the very next turn.
     resolvedLocalEngine,
     localConsentToken,
+    localBrowserRequested,
+    browserConsentToken,
+    personalBrowserEngine,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
@@ -3213,12 +3331,13 @@ export function useChatSession(
   const latestTransportRef = useRef<ChatTransport<UIMessage>>(transport);
   latestTransportRef.current = transport;
   const proxyTransport = useMemo<ChatTransport<UIMessage>>(
-    () => ({
-      sendMessages: (options) =>
-        latestTransportRef.current.sendMessages(options),
-      reconnectToStream: (options) =>
-        latestTransportRef.current.reconnectToStream(options),
-    }),
+    () =>
+      withWebMcpTraffic({
+        sendMessages: (options) =>
+          latestTransportRef.current.sendMessages(options),
+        reconnectToStream: (options) =>
+          latestTransportRef.current.reconnectToStream(options),
+      }),
     [],
   );
 
@@ -3264,16 +3383,37 @@ export function useChatSession(
 
       // WebMCP page tools: the model asked for a tool a real web page
       // registered, and the browser session that owns that page lives in this
-      // app. Claim it synchronously and wait for the approval pill to fulfill
-      // it. AI SDK delivers tool-input-available before tool-approval-request,
-      // so invoking here would bypass the user's decision.
+      // app. Claim it synchronously — the AI SDK delivers
+      // tool-input-available before tool-approval-request, so a claim is the
+      // only way to hold the call until the user's decision arrives.
+      const pageToolCallId = (toolCall as { toolCallId: string }).toolCallId;
+      const pageToolInput = (toolCall as { input: unknown }).input;
       if (
         deferPageToolCallForApproval({
           toolName,
-          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
-          input: (toolCall as { input: unknown }).input,
+          toolCallId: pageToolCallId,
+          input: pageToolInput,
         })
       ) {
+        // AND RUN IT, when nothing is going to ask. The server emits an
+        // approval request only when the tool it built declared one, so with
+        // the switch off there is no pill coming and a call left deferred
+        // waits for a decision nobody will make — the turn stalls on a tool
+        // that was never gated in the first place.
+        //
+        // The SAME predicate the server built the tool from, AND the same
+        // value: `turnRequireToolApprovalRef` is what this turn was sent with,
+        // not what the switch says now. A client that guessed differently
+        // either strands the turn or runs something the user was meant to see
+        // first, and flipping the switch mid-stream is enough to cause it.
+        if (!pageToolCallNeedsApproval(turnRequireToolApprovalRef.current)) {
+          void fulfillApprovedPageToolCall({
+            toolCallId: pageToolCallId,
+            alias: toolName,
+            input: pageToolInput,
+            addToolOutput,
+          });
+        }
         return;
       }
 
@@ -3585,6 +3725,10 @@ export function useChatSession(
   statusRef.current = status;
   const hostedProjectIdRef = useRef(hostedProjectId);
   hostedProjectIdRef.current = hostedProjectId;
+  const browserProjectIdRef = useRef(
+    hostedProjectId ?? appState?.activeProjectId,
+  );
+  browserProjectIdRef.current = hostedProjectId ?? appState?.activeProjectId;
 
   // Bounded wait for the turn to land server-side. There is no "persisted"
   // event on the wire, so this polls the same detail row the post-stream
@@ -3822,6 +3966,41 @@ export function useChatSession(
     if (!traceTranscriptFromUi || traceTranscriptFromUi.length === 0) {
       return live;
     }
+    // Host-executed built-ins (today: the six `browser_*` tools) are advertised
+    // by the SERVER from the host's config, so they never appear in the
+    // client's server-derived schemas. See `withBuiltInToolDefinitions` for why
+    // an MCP tool of the same name still wins here.
+    // The page's own tools, from the turn that actually advertised them.
+    //
+    // PERSISTED, not re-read. Asking the live browser would answer for the page
+    // it is on now, which is a confident answer to a question about the past —
+    // and for a closed session there is no browser to ask at all. The rows
+    // carry identity and origin but no schema, because the turn record stores a
+    // digest rather than the schema itself; see `pageToolRowsFromRecords`.
+    // THE NEWEST TURN'S ANSWER, including when that answer is "we do not know".
+    //
+    // Filtering before picking would walk back to an older turn whose record
+    // happens to exist — and `undefined` here means the newest turn did not
+    // record one, not that its tools were the previous turn's. Showing a
+    // stale set for the current turn is a more confident wrong answer than
+    // showing none.
+    const lastTurnPageTools = [...Object.values(liveTraceState.turns)]
+      .sort((left, right) => left.promptIndex - right.promptIndex)
+      .at(-1)?.pageToolsAtTurn;
+    const tools = withBuiltInToolDefinitions(
+      {
+        ...(lastTurnPageTools
+          ? Object.fromEntries(
+              pageToolRowsFromRecords(lastTurnPageTools).map((row) => [
+                row.name,
+                row,
+              ]),
+            )
+          : {}),
+        ...serializedTools,
+      },
+      options.builtInToolDefinitions,
+    );
     return [
       {
         turnId: "rehydrated",
@@ -3829,16 +4008,18 @@ export function useChatSession(
         stepIndex: 0,
         payload: {
           system: systemPrompt ?? "",
-          tools: serializedTools,
+          tools,
           messages: traceTranscriptFromUi,
         },
       },
     ];
   }, [
     liveTraceState.requestPayloadHistory,
+    liveTraceState.turns,
     traceTranscriptFromUi,
     systemPrompt,
     serializedTools,
+    options.builtInToolDefinitions,
   ]);
 
   // useLayoutEffect (not useEffect) so the trace state is swapped out
@@ -3986,6 +4167,7 @@ export function useChatSession(
         // during the preflight below would post this turn under an unrelated
         // session and ingest it into that transcript.
         const sessionAtSend = chatSessionIdRef.current;
+        const browserProjectAtSend = browserProjectIdRef.current;
         // NEVER for an environment target. The environment's servers already
         // carry authoritative Convex ids and are re-resolved server-side; some
         // of them are plugin-contributed and deliberately absent from
@@ -4040,6 +4222,26 @@ export function useChatSession(
             );
             return false; // fail closed — do not send with unresolved servers
           }
+        }
+        try {
+          await releaseBrowserForChat(browserProjectAtSend, sessionAtSend);
+          if (
+            chatSessionIdRef.current !== sessionAtSend ||
+            browserProjectIdRef.current !== browserProjectAtSend
+          ) {
+            throw new Error(
+              "The chat changed while returning browser control. Send your message again.",
+            );
+          }
+        } catch (error) {
+          pendingWidgetModelContextRef.current = undefined;
+          resolvedHostedServersRef.current = null;
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Couldn't return browser control.",
+          );
+          return false;
         }
         try {
           const timestampedMetadata = withMessageTimestampMetadata(
@@ -4230,9 +4432,28 @@ export function useChatSession(
       // superseding session change — is the one that actually went live.
       // Existing callers that ignore the return value are unaffected.
       const nextSessionId = generateId();
+      const previousSessionHadBrowser =
+        useActiveChatSessionStore.getState().browserSessionId ===
+        chatSessionIdRef.current;
+      const branchMessages = previousSessionHadBrowser
+        ? [
+            {
+              id: `browser-fork-note-${nextSessionId}`,
+              role: "system" as const,
+              parts: [
+                {
+                  type: "text" as const,
+                  text: "Browser state was not copied to this thread.",
+                },
+              ],
+              metadata: { source: "browser-fork-note" },
+            },
+            ...messages,
+          ]
+        : messages;
       const hydrationPromise = queueSessionHydration({
         sessionId: nextSessionId,
-        messages,
+        messages: branchMessages,
         resumedVersion: null,
         toolRenderOverrides: options?.toolRenderOverrides,
         persistedSnapshotToolCallIds: [],
@@ -4490,6 +4711,37 @@ export function useChatSession(
         shouldApply?: () => boolean;
       },
     ) => {
+      // The resume pointer is only a destination hint. Read the existing
+      // authenticated logical-session binding before selecting its location.
+      if (!HOSTED_MODE && hostedContext?.projectId && personalBrowserEngine) {
+        try {
+          const response = await authFetch(
+            "/api/mcp/computers/browser-location",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                projectId: hostedContext.projectId,
+                conversationId: session.chatSessionId,
+              }),
+            },
+          );
+          if (response.ok) {
+            const location = await response.json();
+            if (
+              (!options?.shouldApply || options.shouldApply()) &&
+              (location.engine === "local" || location.engine === "cloud")
+            )
+              useActiveChatSessionStore.getState().setBrowserLocation({
+                projectId: hostedContext.projectId,
+                sessionId: session.chatSessionId,
+                engine: location.engine,
+              });
+          }
+        } catch {
+          /* A failed lookup grants nothing; the turn/open boundary still refuses a mismatch. */
+        }
+      }
       let uiMessages: UIMessage[] = [];
 
       if (session.messagesBlobUrl) {
@@ -4567,7 +4819,12 @@ export function useChatSession(
       });
       onResetRef.current?.("hydrate");
     },
-    [queueSessionHydration, setSystemPrompt],
+    [
+      queueSessionHydration,
+      setSystemPrompt,
+      hostedContext?.projectId,
+      personalBrowserEngine,
+    ],
   );
 
   // When controlled, mirror `executionConfig` fields into local state; when
@@ -5066,7 +5323,14 @@ export function useChatSession(
     isAuthLoading,
     authHeaders,
     isAuthReady,
-    isSessionBootstrapComplete,
+    // A target change is unready in the first render, before the auth effect
+    // can reset its state. History restoration must not hydrate in that gap.
+    isSessionBootstrapComplete:
+      isSessionBootstrapComplete &&
+      areHostedSessionScopesEqual(lastResolvedHostedScopeRef.current, {
+        projectId: hostedProjectId,
+        targetKey: hostedTargetKeyValue,
+      }),
 
     // Config
     systemPrompt,

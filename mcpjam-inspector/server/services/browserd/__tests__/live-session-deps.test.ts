@@ -11,6 +11,7 @@ import {
   browserdBundleHash,
   ensureStreamOn,
   loadBrowserdBundle,
+  readBinaryFileFrom,
   writeBundleInto,
 } from "../live-session-deps";
 
@@ -173,5 +174,61 @@ describe("live-session-deps — desktop stream", () => {
     await expect(ensureStreamOn(sandbox)).rejects.toThrow(
       /desktop stream API unavailable/,
     );
+  });
+});
+
+/**
+ * R-3. Reading a recording off the box.
+ *
+ * THROWS where `readTextFileFrom` swallows, and the difference is what the
+ * caller does with the answer: a missing token means "boot a daemon yourself",
+ * a missing recording means a run has lost its evidence. Swallowing the second
+ * into `undefined` would make it indistinguishable from a run that was never
+ * recorded.
+ */
+describe("live-session-deps — binary reads", () => {
+  const sandboxWith = (files: Record<string, unknown>) =>
+    ({
+      commands: { run: vi.fn() },
+      files: { write: vi.fn(), makeDir: vi.fn(), ...files },
+      getHost: () => "host",
+    }) as never;
+
+  it("asks for BYTES, not text", async () => {
+    // Without the format the SDK decodes as text, and an MP4 through a UTF-8
+    // decoder is a corrupt file that still looks like a successful read.
+    const read = vi.fn(async () => new Uint8Array([0, 1, 2]));
+
+    const bytes = await readBinaryFileFrom(
+      sandboxWith({ read }),
+      "/rec/run-1.mp4",
+    );
+
+    expect(read).toHaveBeenCalledWith("/rec/run-1.mp4", { format: "bytes" });
+    expect(Array.from(bytes)).toEqual([0, 1, 2]);
+  });
+
+  it("raises a missing file instead of answering with nothing", async () => {
+    const read = vi.fn(async () => {
+      throw new Error("ENOENT");
+    });
+    await expect(
+      readBinaryFileFrom(sandboxWith({ read }), "/rec/run-1.mp4"),
+    ).rejects.toThrow(/ENOENT/);
+  });
+
+  it("refuses an SDK that ignored the format rather than re-encoding", async () => {
+    // Guessing an encoding for video bytes produces a plausible-looking file
+    // that will not play, which is worse than no file at all.
+    const read = vi.fn(async () => "not-bytes");
+    await expect(
+      readBinaryFileFrom(sandboxWith({ read }), "/rec/run-1.mp4"),
+    ).rejects.toThrow(/returned text/);
+  });
+
+  it("refuses an adapter with no read at all", async () => {
+    await expect(
+      readBinaryFileFrom(sandboxWith({}), "/rec/run-1.mp4"),
+    ).rejects.toThrow(/cannot read/);
   });
 });

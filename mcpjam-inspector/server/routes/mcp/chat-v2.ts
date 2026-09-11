@@ -1,3 +1,28 @@
+import { BrowserSessionService } from "../../services/browserd/session-service.js";
+import { resolveLocalBrowserTools } from "../../../shared/local-browser-settings.js";
+import { readLocalBrowserSetting } from "../../utils/computers/local-browser-settings.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { isChromiumInstalled } from "../../utils/browser-rendering-setup.js";
+import { resolveLocalBrowserRuntime } from "../../services/browserd/local/local-browser-session.js";
+import { resolveBrowserEngine } from "../../utils/computers/browser-engine.js";
+import {
+  BROWSER_CONSENT_HEADER,
+  verifyLocalBrowserConsent,
+} from "../../utils/computers/browser-consent.js";
+import {
+  withoutLegacyWebmcpVerbs,
+  type BrowserPageToolsSnapshot,
+} from "../../utils/built-in-tools/browser.js";
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../../services/browserd/page-tools-peek.js";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
+import { webmcpPageToolsMode } from "../../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import {
   createUIMessageStream,
@@ -65,6 +90,8 @@ import {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   buildWidgetModelContextSystemPrompt,
+  advertisedPageToolsOnly,
+  guardPageToolRefresh,
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
@@ -110,6 +137,10 @@ import {
 } from "../../utils/computers/local-consent.js";
 import { isGuestChatRequest } from "../../utils/computers/local-engine-request.js";
 import {
+  resolveBrowserRollout,
+  guestBrowserProject,
+} from "../../utils/computers/browser-rollout.js";
+import {
   LOCAL_HARNESS_GRANT_HEADER,
   parseHarnessExecutionTarget,
   type RawHarnessTargetInput,
@@ -143,11 +174,6 @@ import {
   markLocalScopeStepUpWireStarted,
 } from "../../utils/scope-step-up-continuation.js";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
-import {
-  classifyPageToolApprovals,
-  mergeUiToolApprovalClassifications,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
 import type {
   MrtrChatResumeResolution,
   MrtrEngineResume,
@@ -537,7 +563,8 @@ function streamDirectChatWithLiveTrace(options: {
   // chain — cheaper than widening the engine's signature for every headless
   // caller that will never emit a receipt.
   let persistReceipt:
-    { outcome: PersistChatOutcome; turnId: string } | undefined;
+    | { outcome: PersistChatOutcome; turnId: string }
+    | undefined;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -686,6 +713,7 @@ chatV2.post("/", async (c) => {
       // (computer still comes only from the server-resolved runtime config).
       // "local" additionally requires the consent capability header.
       computerEngine?: "local" | "cloud";
+      browserEngine?: "local" | "cloud";
       // Run a CLAUDE CODE HARNESS turn on this machine rather than in a cloud
       // computer. Opaque ids only; the consent capability rides the
       // `x-mcpjam-local-harness-grant` header, never the body, so it cannot
@@ -753,7 +781,7 @@ chatV2.post("/", async (c) => {
       ? "scenario"
       : "playground";
     const chatSessionSurface: "preview" | "share_link" | undefined =
-      isScenarioSession ? (bodySurface ?? "preview") : undefined;
+      isScenarioSession ? bodySurface ?? "preview" : undefined;
 
     // Scenario-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
@@ -891,12 +919,27 @@ chatV2.post("/", async (c) => {
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
         hostStyle:
           body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
-        builtInToolIds: body.builtInToolIds,
+        builtInToolIds: isScenarioSession ? undefined : body.builtInToolIds,
       },
       // Scenario: published host wins. Host preview: owner's body tweaks win,
       // harness/computer stay host-only (not overridable). See web/chat-v2.ts.
       precedence: isScenarioSession ? "host-wins" : "override-wins",
     });
+    let localBrowserSettingsUnavailable = false;
+    if (!HOSTED_MODE && !isScenarioSession && body.browserEngine === "local") {
+      let enabled = typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
+        ? hostRuntimeConfig.localBrowserEnabled : undefined;
+      if (!hostRuntimeConfig && typeof body.projectId === "string" && body.projectId && c.req.header("authorization") && !isGuestChatRequest(c.req.header("authorization"))) {
+        try {
+          enabled = await readLocalBrowserSetting(await getConvexBearerForRequest(c), body.projectId);
+        } catch {
+          localBrowserSettingsUnavailable = true;
+        }
+      }
+      resolvedExecution.builtInToolIds = resolveLocalBrowserTools(
+        resolvedExecution.builtInToolIds, enabled, true,
+      );
+    }
     // Preserve the per-field warnings the inline code emitted — the
     // resolver returns drift as data so the call site can keep its
     // existing log shape unchanged.
@@ -1062,7 +1105,7 @@ chatV2.post("/", async (c) => {
     // org/BYOK below even after they passed the harness preflight.
     const isMcpJamProvidedModel = Boolean(
       modelDefinition.id &&
-      isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
+        isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
     );
     // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
     // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
@@ -1203,7 +1246,10 @@ chatV2.post("/", async (c) => {
         // AuthKit at all is a 503 the operator fixes. Collapsing both into
         // "your target is malformed" is what sends a signed-out user to
         // re-pick a folder.
-        return c.json({ error: actor.message, reason: actor.reason }, actor.status);
+        return c.json(
+          { error: actor.message, reason: actor.reason },
+          actor.status,
+        );
       }
       localHarnessActingUserId = actor.actor.userId;
     }
@@ -1275,7 +1321,9 @@ chatV2.post("/", async (c) => {
     // access (per-swarm isolation/caps). Absent ⇒ legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        { executionScope?: ExecutionScope } | null | undefined
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
     )?.executionScope;
 
     // Local⇄Cloud engine preference — a LOCAL-ROUTE-ONLY channel (this route
@@ -1314,15 +1362,175 @@ chatV2.post("/", async (c) => {
       ...(localPrefEligible
         ? { preference: "local" as const }
         : enginePref === "cloud"
-          ? { preference: "cloud" as const }
-          : {}),
+        ? { preference: "cloud" as const }
+        : {}),
       localConsentValid,
     });
 
+    const localBrowserRequested = body.browserEngine === "local";
+    const browserRollout = !localBrowserSettingsUnavailable && resolvedExecution.builtInToolIds?.includes(
+      BROWSER_BUILT_IN_TOOL_ID,
+    )
+      ? await resolveBrowserRollout(c, localBrowserRequested)
+      : { enabled: false, actor: null };
+    const localBrowserGuestId =
+      localBrowserRequested &&
+      browserRollout.enabled &&
+      browserRollout.actor?.guest
+        ? browserRollout.actor.id
+        : undefined;
+    const browserConsentToken = c.req.header(BROWSER_CONSENT_HEADER);
+    const browserConsentValid =
+      browserRollout.enabled &&
+      (!requestIsGuest || Boolean(localBrowserGuestId)) &&
+      !isScenarioSession &&
+      (await verifyLocalBrowserConsent(browserConsentToken));
+    let browserEngine = resolveBrowserEngine({
+      preference: localBrowserRequested ? "local" : "cloud",
+      localConsentValid: browserConsentValid,
+    });
+    if (!browserRollout.enabled) browserEngine = "unavailable";
+    let browserUnavailableReason = localBrowserSettingsUnavailable
+      ? "browser_runtime_unavailable: Could not load local Browser settings. Retry your request."
+      : !browserRollout.enabled
+      ? "browser_rollout_unavailable: Browser is not available for this location."
+      : localBrowserRequested && browserEngine !== "local"
+      ? browserConsentValid
+        ? "browser_runtime_unavailable: Browser on this machine is unavailable. Check Browser settings."
+        : "browser_consent_required: Allow Browser in the Browser panel."
+      : undefined;
 
-    // Filled by the resolver when browser tools are advertised; merged into
-    // the engines' single `uiToolApprovals` slot below.
-    let browserToolApprovals: UiToolApprovalClassification | undefined;
+    if (
+      browserEngine === "local" &&
+      resolveLocalBrowserRuntime() !== "electron" &&
+      !(await isChromiumInstalled())
+    ) {
+      browserEngine = "unavailable";
+      browserUnavailableReason =
+        "browser_runtime_unavailable: Install Chromium in the Browser panel.";
+    }
+    if (
+      !localBrowserGuestId &&
+      body.browserEngine &&
+      body.chatSessionId &&
+      body.projectId &&
+      builtInAuthHeader &&
+      resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID) &&
+      !browserUnavailableReason
+    ) {
+      try {
+        const browserSessions = new BrowserSessionService();
+        const location = await browserSessions.conversationLocation({
+          conversationId: body.chatSessionId,
+          projectId: body.projectId,
+          bearer: builtInAuthHeader,
+        });
+        if (
+          location &&
+          location !== (localBrowserRequested ? "local" : "cloud")
+        )
+          throw new Error("browser_location_mismatch");
+      } catch (error) {
+        browserEngine = "unavailable";
+        browserUnavailableReason =
+          error instanceof Error &&
+          error.message.includes("browser_location_mismatch")
+            ? "browser_location_mismatch: Start a new chat to change Browser location."
+            : "browser_runtime_unavailable: Browser session could not be reached. Retry from the Browser panel.";
+      }
+    }
+
+    const emitBrowserReadiness = (writer: {
+      write: (chunk: UIMessageChunk) => void;
+    }) => {
+      if (
+        !body.browserEngine ||
+        !resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+      )
+        return;
+      writer.write({
+        type: "data-browser-readiness",
+        data: { reason: browserUnavailableReason ?? null },
+      });
+    };
+
+    // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built. See
+    // the twin block in `routes/web/chat-v2.ts`: read-only, fail-empty, and
+    // skipped entirely for a turn that has no browser capability.
+    // One owner for discovery AND execution; never infer it from the visible pane.
+    const browserSessionScope =
+      body.browserScope === "conversation" &&
+      body.chatSessionId &&
+      !isScenarioSession
+        ? {
+            kind: "conversation" as const,
+            sessionId: body.chatSessionId,
+            ...(bodyHostId ? { hostId: bodyHostId } : {}),
+          }
+        : undefined;
+    const pageToolsPeek = await peekPageToolsForChatTurn({
+      ...(browserSessionScope
+        ? { conversationId: browserSessionScope.sessionId }
+        : {}),
+      builtInToolIds: browserUnavailableReason
+        ? []
+        : resolvedExecution.builtInToolIds,
+      browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+      firstClass: webmcpPageToolsMode() === "first_class",
+      isHarnessTurn: Boolean(resolvedExecution.harness),
+      hasV1PageTools: validatedPageTools.length > 0,
+      engine: browserEngine === "local" ? "local" : "hosted",
+      projectId:
+        typeof body.projectId === "string"
+          ? localBrowserGuestId
+            ? guestBrowserProject(body.projectId, localBrowserGuestId)
+            : body.projectId
+          : undefined,
+      ...(builtInAuthHeader ? { bearer: builtInAuthHeader } : {}),
+    });
+    const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
+    /**
+     * Record what this turn advertised from the page.
+     *
+     * Written down rather than re-derived: the live browser describes the page
+     * it is on NOW, so a conversation reopened tomorrow would attribute its
+     * cards to whatever tool happens to carry that name then.
+     */
+    const withPageToolsAtTurn = (
+      trace: PersistedTurnTrace,
+    ): PersistedTurnTrace =>
+      // A turn that started with no snapshot but grew tools mid-turn has a
+      // record worth keeping too — the refresher's, read at persist time.
+      pageToolsSnapshot || pageToolRefresh
+        ? {
+            ...trace,
+            // Filtered by the same collision policy the model's own set was,
+            // so the record cannot name a tool the model never got.
+            pageToolsAtTurn: toMintedPageToolRecords(
+              reservedAgainstPageTools
+                ? advertisedPageToolsOnly(
+                    advertisedPageTools,
+                    reservedAgainstPageTools,
+                  )
+                : advertisedPageTools,
+              advertisedPageToolsBinding ?? pageToolsSnapshot,
+            ),
+          }
+        : trace;
+
+    let advertisedPageTools: MintedDeclaredTool[] = [];
+    // The generation those tools belong to; moves with them on each refresh.
+    let advertisedPageToolsBinding = pageToolsSnapshot;
+    // The mid-turn refresher, when the browser capability built one. Kept in a
+    // mutable slot because `resolveHostTools` is synchronous and fills it by
+    // callback, exactly as it does the approval classification.
+    let pageToolRefresh:
+      | {
+          refreshPageTools: (ctx: { signal?: AbortSignal }) => Promise<unknown>;
+          currentPageTools: () => MintedDeclaredTool[];
+          currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
+        }
+      | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1341,7 +1549,7 @@ chatV2.post("/", async (c) => {
             // resolver withholds bash on the personal-project path — matching
             // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
             // only for a host-funded swarm executionScope.
-            isGuest: !requestAuthHeader,
+            isGuest: requestIsGuest,
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
@@ -1352,13 +1560,40 @@ chatV2.post("/", async (c) => {
             // requires approval regardless (see bash.ts).
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
+            browserEngine,
+            localBrowserGuestId,
+            browserConsentToken,
+            localBrowserRequested,
+            browserUnavailableReason,
             localComputerRequested: localPrefEligible,
-            // This route THREADS the classification below, so it may advertise
-            // interactive browser tools; surfaces that thread nothing get none
-            // (see built-in-tools/browser.ts).
+            // A person is watching this route, so browser tools may be
+            // advertised and keep a signed-in profile; surfaces that attest
+            // nothing get none (see built-in-tools/browser.ts).
             browserApprovalDelivery: { kind: "attested" },
-            onBrowserApprovals: (approvals) => {
-              browserToolApprovals = approvals;
+            ...(resolvedExecution.browserProfileId
+              ? { browserProfileId: resolvedExecution.browserProfileId }
+              : {}),
+            ...(browserSessionScope ? { browserSessionScope } : {}),
+            ...(pageToolsSnapshot
+              ? { browserPageTools: pageToolsSnapshot }
+              : {}),
+            // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset
+            // as a constructor argument and never re-reads it, so claiming it
+            // here would build a refresher nothing consumes. NOT gated on the
+            // snapshot: the ordinary turn starts on a blank tab or with no
+            // browser at all, and is exactly the one whose set has to grow.
+            browserDynamicPageTools: !resolvedExecution.harness,
+            // KEPT HERE, dropped later. Two of the engines this route can hand
+            // the set to consume `refreshTools` and two (BYOK direct, harness)
+            // do not; retiring the verbs at build time took the page away from
+            // the ones that cannot re-advertise. The two refreshing call sites
+            // below strip them with `withoutLegacyWebmcpVerbs`.
+            browserRetireInvokeVerb: false as const,
+            onBrowserPageTools: ({ minted }) => {
+              advertisedPageTools = minted;
+            },
+            onBrowserToolsRefresh: (refresh) => {
+              pageToolRefresh = refresh;
             },
           }
         : null,
@@ -1371,7 +1606,25 @@ chatV2.post("/", async (c) => {
     // persisted direct-chat/resume configs keep the RAW user prompt; the env
     // block is turn-injected, not user configuration.
     const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
-      systemPrompt,
+      systemPrompt:
+        browserUnavailableReason &&
+        resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
+          ? [
+              systemPrompt,
+              "Browser is configured for this conversation but is temporarily unavailable for this turn. " +
+                (browserUnavailableReason.startsWith(
+                  "browser_consent_required:",
+                )
+                  ? "The user must click Allow in the Browser panel, then retry their request."
+                  : browserUnavailableReason.replace(
+                      /^browser_[a-z_]+:\s*/,
+                      "",
+                    )),
+              "If the request needs browsing, explain this setup step briefly. Do not claim that this assistant cannot browse in general. Do not claim navigation succeeded or switch browser locations.",
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+          : systemPrompt,
       // The environment context describes the pinned E2B image — the WRONG
       // machine when this turn's bash runs on the user's own computer.
       hasBashTool:
@@ -1511,7 +1764,7 @@ chatV2.post("/", async (c) => {
           ? {
               toolCallCancellation:
                 toolCallCancellationFromMcpProfile(
-                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
                 ) ?? {},
             }
           : {}),
@@ -1528,6 +1781,9 @@ chatV2.post("/", async (c) => {
           : {}),
         ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(builtInTools ? { builtInTools } : {}),
+        // The prompt section that explains `webmcp_*` tools has to be there
+        // BEFORE a navigation adds them; the refresher's presence is the fact.
+        pageToolsMayGrow: Boolean(pageToolRefresh),
         // A harness turn takes its skills on-box and must be handed none here —
         // the two delivery channels are deliberately disjoint.
         skillsSource: resolvedExecution.harness
@@ -1578,26 +1834,32 @@ chatV2.post("/", async (c) => {
       scrubMessages,
       progressivePlan,
       discoveryState,
+      reservedAgainstPageTools,
     } = prepared;
-    // The hosted engines (MCPJam-free and hosted-org) classify tool approval by
-    // NAME and never read a tool's own `needsApproval`, so page tools reach them
-    // approval-less unless we hand over their classification here. Page tools
-    // always gate; an empty set (no page tools, incl. every hosted-mode turn
-    // where WEBMCP_INSPECTOR_ENABLED is off) leaves all other tools on the
-    // existing `requireToolApproval` path unchanged. Without this the turn
-    // strands — the client defers the call awaiting an approval pill the server
-    // never sends. `uiTools` are ignored on this route (see above), so the page
-    // classification is the whole of this turn's `uiToolApprovals`.
-    const pageToolApprovals = classifyPageToolApprovals(
-      validatedPageTools.map((entry) => entry.alias),
-    );
-    // Browser tools are name-classified for the same reason page tools are,
-    // and the engines have ONE `uiToolApprovals` slot — so the two are merged
-    // rather than one overwriting the other.
-    const uiToolApprovals = mergeUiToolApprovalClassifications(
-      pageToolApprovals,
-      browserToolApprovals,
-    );
+
+    /**
+     * The mid-turn refresher, under the SAME collision policy `prepareChatV2`
+     * applied to the turn's opening set.
+     *
+     * The refresher reserves only the browser's own verb names; every MCP, app,
+     * UI and skill name beside them is decided here, and a page tool minted
+     * after a navigation has to lose to those exactly as one minted at turn
+     * start does.
+     */
+    const guardedRefreshTools = async (ctx: { signal?: AbortSignal }) => {
+      const refresh = await pageToolRefresh!.refreshPageTools(ctx);
+      // The persisted record is re-read here rather than captured at turn
+      // start, so a reopened conversation shows the set the turn ENDED with —
+      // the one its last steps actually used.
+      advertisedPageTools = advertisedPageToolsOnly(
+        pageToolRefresh!.currentPageTools(),
+        reservedAgainstPageTools,
+      );
+      advertisedPageToolsBinding = pageToolRefresh!.currentPageToolsBinding();
+      return refresh
+        ? (guardPageToolRefresh(refresh, reservedAgainstPageTools) as never)
+        : undefined;
+    };
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
     const scopeStepUpBindingKey = JSON.stringify([
       authenticatedUserId ?? "local-anonymous",
@@ -1650,6 +1912,22 @@ chatV2.post("/", async (c) => {
           }),
       },
     );
+    /**
+     * The tool set for an engine that CAN grow it mid-turn.
+     *
+     * The two by-name WebMCP verbs were kept at build time
+     * (`browserRetireInvokeVerb: false` above) because which engine runs is
+     * only known here. Two of them — local-org and direct BYOK — never consume
+     * `refreshTools`, so the verbs are their only way to reach a page the model
+     * navigated to after the turn started. Dropped ONLY on the two hosted paths
+     * that pass `refreshTools` below, which is the safe direction: an extra
+     * tool costs a line in the list, a missing one costs the page. Both go
+     * together (see `withoutLegacyWebmcpVerbs`). Mirrors `web-chat-turn.ts`.
+     */
+    const refreshingEngineTools = (): ToolSet =>
+      pageToolRefresh
+        ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
+        : (allTools as ToolSet);
     const scopeStepUpEngineResume = scopeStepUpResumeRequest
       ? buildLocalScopeStepUpResume({
           request: scopeStepUpResumeRequest,
@@ -1658,11 +1936,11 @@ chatV2.post("/", async (c) => {
           modelVisibleMcpToolResults,
         })
       : scopeStepUpCancelRequest
-        ? buildLocalScopeStepUpCancellation({
-            request: scopeStepUpCancelRequest,
-            bindingKey: scopeStepUpBindingKey,
-          })
-        : undefined;
+      ? buildLocalScopeStepUpCancellation({
+          request: scopeStepUpCancelRequest,
+          bindingKey: scopeStepUpBindingKey,
+        })
+      : undefined;
     const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
       validatedWidgetModelContext,
     );
@@ -1738,7 +2016,7 @@ chatV2.post("/", async (c) => {
         provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
         authHeader,
@@ -1746,8 +2024,10 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
+        // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+        // step and the tools it needs exist only from the next.
+        ...(pageToolRefresh ? { refreshTools: guardedRefreshTools } : {}),
         // Harness engine only: it builds its own MCP tool set (host-executed
         // delivery) rather than consuming `allTools`, so the host's
         // tool-construction policies have to reach it separately. Inert on the
@@ -1768,6 +2048,7 @@ chatV2.post("/", async (c) => {
         }) => {
           scopeChallengeWriter = writer;
           taskCreatedBridge?.attachStreamWriter(writer);
+          emitBrowserReadiness(writer);
         },
         ...(resolvedExecution.harness
           ? {
@@ -1847,6 +2128,9 @@ chatV2.post("/", async (c) => {
                   : {
                       directVisibility: body.directVisibility,
                       resumeConfig: {
+                        executionTarget: bodyHostId
+                          ? { kind: "host", hostId: bodyHostId }
+                          : { kind: "adhoc" },
                         systemPrompt,
                         temperature,
                         requireToolApproval,
@@ -1860,7 +2144,7 @@ chatV2.post("/", async (c) => {
                         : {}),
                     }),
                 expectedVersion: body.expectedVersion,
-                turnTrace,
+                turnTrace: withPageToolsAtTurn(turnTrace),
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
             }
@@ -1901,7 +2185,8 @@ chatV2.post("/", async (c) => {
       // still executes locally against the local MCP connection. Without this,
       // a local-eligible provider would resolve to the "local" runtime and pull
       // the org key onto this machine, which org BYOK must never do.
-      const localMcpRuntimeRequired = body.localMcpRuntimeRequired === true;
+      const localMcpRuntimeRequired =
+        body.localMcpRuntimeRequired === true || localBrowserRequested;
       const runtime: OrgProviderRuntime =
         !localMcpRuntimeRequired && isLocalRuntimeEligible(providerKey)
           ? await resolveOrgProviderRuntime(
@@ -1948,6 +2233,9 @@ chatV2.post("/", async (c) => {
                 : {
                     directVisibility: body.directVisibility,
                     resumeConfig: {
+                      executionTarget: bodyHostId
+                        ? { kind: "host", hostId: bodyHostId }
+                        : { kind: "adhoc" },
                       systemPrompt,
                       temperature,
                       requireToolApproval,
@@ -1961,7 +2249,7 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace,
+              turnTrace: withPageToolsAtTurn(turnTrace),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }
@@ -2003,6 +2291,7 @@ chatV2.post("/", async (c) => {
           }) => {
             scopeChallengeWriter = writer;
             taskCreatedBridge?.attachStreamWriter(writer);
+            emitBrowserReadiness(writer);
           },
         });
       }
@@ -2015,7 +2304,7 @@ chatV2.post("/", async (c) => {
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
         authHeader: requestAuthHeader,
@@ -2024,8 +2313,10 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
+        // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+        // step and the tools it needs exist only from the next.
+        ...(pageToolRefresh ? { refreshTools: guardedRefreshTools } : {}),
         scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
@@ -2036,6 +2327,7 @@ chatV2.post("/", async (c) => {
         }) => {
           scopeChallengeWriter = writer;
           taskCreatedBridge?.attachStreamWriter(writer);
+          emitBrowserReadiness(writer);
         },
       });
     }
@@ -2086,7 +2378,8 @@ chatV2.post("/", async (c) => {
     const authHeader = c.req.header("authorization");
     const chatSessionId = body.chatSessionId;
     const inboundAbortSignalDirect = c.req.raw.signal as
-      AbortSignal | undefined;
+      | AbortSignal
+      | undefined;
     warnIfChatAbortSignalMissing(inboundAbortSignalDirect, "mcp/chat-v2");
 
     const scrubbedModelMessages = scrubMessages(
@@ -2118,6 +2411,7 @@ chatV2.post("/", async (c) => {
       }) => {
         scopeChallengeWriter = writer;
         taskCreatedBridge?.attachStreamWriter(writer);
+        emitBrowserReadiness(writer);
       },
       onPersist: chatSessionId
         ? async ({
@@ -2163,6 +2457,9 @@ chatV2.post("/", async (c) => {
                 : {
                     directVisibility: body.directVisibility,
                     resumeConfig: {
+                      executionTarget: bodyHostId
+                        ? { kind: "host", hostId: bodyHostId }
+                        : { kind: "adhoc" },
                       systemPrompt,
                       temperature,
                       requireToolApproval,
@@ -2176,7 +2473,7 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace,
+              turnTrace: withPageToolsAtTurn(turnTrace),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }

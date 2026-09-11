@@ -1,7 +1,20 @@
+import { apiSessionWriteAllowed } from "./api-session-write-guard";
+import { BrowserSessionService } from "../../services/browserd/session-service";
+import { toResumeExecutionTarget } from "@/shared/execution-target";
+import type { BrowserPageToolsSnapshot } from "../../utils/built-in-tools/browser.js";
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../../services/browserd/page-tools-peek.js";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
+import { webmcpPageToolsMode } from "../../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
-import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import {
   listCloudRuntimeSkills,
@@ -42,6 +55,7 @@ import {
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   validateAppToolEntries,
+  advertisedPageToolsOnly,
   validatePageToolEntries,
   PageToolValidationError,
   type PageToolEntry,
@@ -203,10 +217,31 @@ chatV2.post("/", async (c) => {
   try {
     const bearerToken = assertBearerToken(c);
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
+    if (
+      rawBody.browserEngine === "local" ||
+      c.req.header("x-mcpjam-browser-consent")
+    ) {
+      return c.json(
+        {
+          error: "Local Browser must use the local Inspector chat route",
+          code: "browser_location_mismatch",
+        },
+        409,
+      );
+    }
     rpcCollector = createHostedRpcLogCollector(rawBody);
 
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
+    if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
+      const allowed = await apiSessionWriteAllowed(rawBody.origin, async (signal) => {
+        const service = new BrowserSessionService();
+        if (!service.enabled) return { writable: true };
+        return service.agentRequest<{ writable: boolean }>("assert_web_writable", { bearer: bearerToken, projectId: hostedBody.projectId!, body: { conversationId: hostedBody.chatSessionId }, signal: AbortSignal.any([signal, c.req.raw.signal]) });
+      });
+      if (!allowed) return c.json({ code: "API_SESSION_READ_ONLY", error: "This API session is view-only in Playground. Continue it through the session API." }, 409);
+    }
+
     const { initializePins, mcpProtocolVersionsByServerId } =
       extractMcpInitializeOptions(rawBody);
     const body = rawBody as unknown as ChatV2Request & {
@@ -613,8 +648,8 @@ chatV2.post("/", async (c) => {
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
       : scenarioEnvironment
-      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
-      : undefined;
+        ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
+        : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (scenario / host-bound turns above — the
@@ -670,7 +705,10 @@ chatV2.post("/", async (c) => {
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
         hostStyle:
           body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
-        builtInToolIds: body.builtInToolIds,
+        builtInToolIds:
+          isScenarioSession || environmentSpec
+            ? undefined
+            : body.builtInToolIds,
       },
       // Scenario: the published host wins (a share-link client can't override).
       // Host preview (Playground): the owner's in-session tweaks win, while
@@ -698,19 +736,19 @@ chatV2.post("/", async (c) => {
       !resolvedExecution.harness
         ? "emulated"
         : harnessSupportsSkills(resolvedExecution.harness)
-        ? "harness"
-        : "unsupported";
+          ? "harness"
+          : "unsupported";
     const turnProvenance = environmentSpec
       ? turnSkillProvenance(environmentSpec, { delivery: skillDeliveryMode })
       : scenarioEnvironment
-      ? turnSkillProvenance(
-          {
-            environmentRef: scenarioEnvironment.environmentRef,
-            skills: scenarioEnvironment.skills ?? [],
-          },
-          { delivery: skillDeliveryMode },
-        )
-      : undefined;
+        ? turnSkillProvenance(
+            {
+              environmentRef: scenarioEnvironment.environmentRef,
+              skills: scenarioEnvironment.skills ?? [],
+            },
+            { delivery: skillDeliveryMode },
+          )
+        : undefined;
 
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
@@ -786,7 +824,7 @@ chatV2.post("/", async (c) => {
     // standing if the refusal were ever moved.
     const externalAccountHarnessTurn = Boolean(
       resolvedExecution.harness &&
-        harnessUsesExternalAccount(resolvedExecution.harness),
+      harnessUsesExternalAccount(resolvedExecution.harness),
     );
     // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
     // below resolves anything. `resolveHostModelDefinition` asks the org's
@@ -1639,9 +1677,63 @@ chatV2.post("/", async (c) => {
       sandboxNotices = [...(sandboxNotices ?? []), "secrets_undelivered"];
     }
 
-    // Filled by the resolver when browser tools are advertised; forwarded to
-    // the turn runner, which merges it into the engines' one approval slot.
-    let browserToolApprovals: UiToolApprovalClassification | undefined;
+    // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built.
+    //
+    // Read-only: this never starts, attaches or reserves a browser (see
+    // `peekPageTools`). A turn that was not going to drive one pays nothing,
+    // and a failure of any kind means "no page tools this turn" rather than a
+    // failed conversation.
+    // One owner for discovery AND execution; never infer it from the visible pane.
+    const browserSessionScope =
+      body.browserScope === "conversation" &&
+      body.chatSessionId &&
+      !isScenarioSession
+        ? {
+            kind: "conversation" as const,
+            sessionId: body.chatSessionId,
+            ...(hostId ? { hostId } : {}),
+          }
+        : undefined;
+    const pageToolsPeek = await peekPageToolsForChatTurn({
+      ...(browserSessionScope
+        ? { conversationId: browserSessionScope.sessionId }
+        : {}),
+      builtInToolIds: resolvedExecution.builtInToolIds,
+      browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+      firstClass: webmcpPageToolsMode() === "first_class",
+      isHarnessTurn: Boolean(resolvedExecution.harness),
+      // TRANSITIONAL: this client fulfils page tools itself through `page_*`.
+      // Advertising the same page's tools twice, under two namespaces with two
+      // fulfilment paths, is how a model calls one of each.
+      hasV1PageTools: validatedPageTools.length > 0,
+      engine: "hosted",
+      projectId: hostedBody.projectId,
+      bearer: bearerToken,
+      ...(sandboxBinding?.sandboxRowId
+        ? { sandboxRowId: sandboxBinding.sandboxRowId }
+        : {}),
+    });
+    const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
+
+    let advertisedPageTools: MintedDeclaredTool[] = [];
+    // Filled by `runWebChatTurn` once `prepareChatV2` has decided which names
+    // are spoken for. Only the persisted record reads it — the model's own set
+    // is filtered inside the turn, where the decision is made.
+    let reservedAgainstPageTools: ReadonlySet<string> | undefined;
+    // The generation `advertisedPageTools` belongs to. Starts as the turn's own
+    // peek and moves with each refresh: pairing refreshed tools with the
+    // turn-start tab and navCounter would persist an identity that never was.
+    let advertisedPageToolsBinding = pageToolsSnapshot;
+    // The mid-turn refresher, when the browser capability built one. Kept in a
+    // mutable slot because `resolveHostTools` is synchronous and fills it by
+    // callback, exactly as it does the approval classification.
+    let pageToolRefresh:
+      | {
+          refreshPageTools: (ctx: { signal?: AbortSignal }) => Promise<unknown>;
+          currentPageTools: () => MintedDeclaredTool[];
+          currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
+        }
+      | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1679,11 +1771,34 @@ chatV2.post("/", async (c) => {
           ? { onSecretEnvDelivered: markSecretsDelivered }
           : {}),
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
-        // This surface threads the classification (below), so it may advertise
-        // interactive browser tools.
+        // A person is watching this surface, so it may advertise interactive
+        // browser tools and keep a signed-in profile.
         browserApprovalDelivery: { kind: "attested" },
-        onBrowserApprovals: (approvals) => {
-          browserToolApprovals = approvals;
+        ...(resolvedExecution.browserProfileId
+          ? { browserProfileId: resolvedExecution.browserProfileId }
+          : {}),
+        // A Playground conversation owns one durable browser identity. It is
+        // resolved lazily by the browser tool on first use, so merely opening
+        // the chat does not provision a paid desktop.
+        ...(browserSessionScope ? { browserSessionScope } : {}),
+        ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
+        // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset as
+        // a constructor argument and never re-reads it, so claiming it here
+        // would build a refresher nothing consumes. NOT gated on the snapshot:
+        // the ordinary turn starts on a blank tab or with no browser at all,
+        // and is exactly the one whose set has to grow.
+        browserDynamicPageTools: !resolvedExecution.harness,
+        // KEPT HERE, dropped later. Which engine runs this turn depends on a
+        // Convex-backed runtime resolution that has not happened yet, and one
+        // of them — local BYOK — does not consume refreshes; retiring the
+        // verbs from here took the page away from it. `runWebChatTurn` drops
+        // them on the paths that do refresh.
+        browserRetireInvokeVerb: false as const,
+        onBrowserPageTools: ({ minted }) => {
+          advertisedPageTools = minted;
+        },
+        onBrowserToolsRefresh: (refresh) => {
+          pageToolRefresh = refresh;
         },
       },
     );
@@ -1833,7 +1948,7 @@ chatV2.post("/", async (c) => {
             ? {
                 toolCallCancellation:
                   toolCallCancellationFromMcpProfile(
-                    (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+                    (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
                   ) ?? {},
               }
             : {}),
@@ -1854,7 +1969,27 @@ chatV2.post("/", async (c) => {
           pageTools: validatedPageTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
-          ...(browserToolApprovals ? { browserToolApprovals } : {}),
+          // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+          // step and the tools it needs exist only from the next; a
+          // turn-start-only set would mean a turn per page.
+          //
+          // The persisted record is re-read here rather than captured at turn
+          // start, so a reopened conversation shows the set the turn ENDED
+          // with — which is the one the last steps actually used.
+          onPageToolNamesReserved: (reserved) => {
+            reservedAgainstPageTools = reserved;
+          },
+          ...(pageToolRefresh
+            ? {
+                refreshTools: async (ctx: { signal?: AbortSignal }) => {
+                  const refresh = await pageToolRefresh!.refreshPageTools(ctx);
+                  advertisedPageTools = pageToolRefresh!.currentPageTools();
+                  advertisedPageToolsBinding =
+                    pageToolRefresh!.currentPageToolsBinding();
+                  return refresh as never;
+                },
+              }
+            : {}),
           // COMP-16: root the harness Shell at the host-configured working
           // directory — the same `computer.workdir` the bash tool runs in.
           ...(harnessComputerWorkdir
@@ -1884,6 +2019,7 @@ chatV2.post("/", async (c) => {
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
         },
         persist: {
+          executionTarget: toResumeExecutionTarget(executionTarget),
           chatSessionId: body.chatSessionId,
           projectId: hostedBody.projectId,
           sourceType,
@@ -1905,6 +2041,31 @@ chatV2.post("/", async (c) => {
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
           ...(turnProvenance ? { turnProvenance } : {}),
+          // WHAT THIS TURN ACTUALLY ADVERTISED from the page. Written down
+          // rather than re-derived, so a reopened conversation shows the tools
+          // the model really had rather than the ones the browser has now.
+          // A THUNK: the set is read when the turn is persisted, not when
+          // these options are built. On a turn that navigated the two differ,
+          // and the later one is the one its last steps actually used.
+          // A turn that started with no snapshot but grew tools mid-turn has
+          // a record worth keeping too — the refresher's, read at persist time.
+          ...(pageToolsSnapshot || pageToolRefresh
+            ? {
+                pageToolsAtTurn: () =>
+                  toMintedPageToolRecords(
+                    // Filtered by the same collision policy the model's set
+                    // was, so the record cannot name a tool the model was
+                    // never actually offered.
+                    reservedAgainstPageTools
+                      ? advertisedPageToolsOnly(
+                          advertisedPageTools,
+                          reservedAgainstPageTools,
+                        )
+                      : advertisedPageTools,
+                    advertisedPageToolsBinding ?? pageToolsSnapshot,
+                  ),
+              }
+            : {}),
           // INS-7: the same resolution, unflattened, for Computer delivery —
           // supporting files (the flat list drops them, and the project-wide
           // file query cannot return a plugin skill's) and the pinned plugin

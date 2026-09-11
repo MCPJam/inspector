@@ -61,6 +61,39 @@ export const LOCAL_HARNESS_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
 
 /**
+ * Scheduled eval runs — the deployment switch over ENABLING one, enforced on
+ * the write path rather than on the screen.
+ *
+ * Default OFF. Schedule has not been thoroughly tested, and the PostHog flag
+ * `scheduled-evals-enabled` only hides the UI: `PATCH .../eval-suites/:id/
+ * schedule` is reachable by any API-key holder, and the SDK client, the
+ * `set_eval_suite_schedule` MCP tool, `mcpjam cloud eval schedule` and
+ * proposal execution all self-dispatch through it. One switch here is what
+ * makes "not yet tested" true for every writer instead of only the screen.
+ *
+ * GATES ENABLING ONLY, ON THE ROUTE — `enabled: false` passes through
+ * untouched. Precedent is the `trace-destinations` flag: delete, pause and
+ * disable stay ungated so an org that loses the feature can still switch a
+ * live one off. A gate that strands a running schedule with no way to stop it
+ * is the worse failure.
+ *
+ * THE AGENT IS STRICTER, and it is worth being plain about the asymmetry: the
+ * org policy withholds `set_eval_suite_schedule` outright (see
+ * `org-agent-policy.ts`), so the agent loses DISABLE as well as enable. That
+ * set gates by operation name and cannot read an argument, so the choice there
+ * is between an agent that can still enable and one that can do neither. The
+ * route above is what keeps a live schedule stoppable — by a person, through
+ * the API or the CLI.
+ *
+ * NOT the only gate, and not the one that stops a schedule already running:
+ * `SCHEDULED_EVALS_ENABLED` on the Convex deployment refuses every writer
+ * including the UI's direct mutation, and `SCHEDULED_EVALS_WORKER_ENABLED`
+ * stops execution.
+ */
+export const SCHEDULED_EVALS_WRITE_ENABLED =
+  process.env.MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED === "true";
+
+/**
  * WebMCP Inspector (a managed browser the user points at a page, so its WebMCP
  * tools can be listed and invoked) — server-side kill switch, in BOTH modes.
  * `MCPJAM_WEBMCP_INSPECTOR_ENABLED=false` is the emergency/managed-install off
@@ -76,8 +109,8 @@ export const LOCAL_HARNESS_ENABLED =
  * unreachable.
  *
  * Hosted reachability is a second, independent gate — see
- * `webmcpInspectorHostedEnabled` — and the client-side gate is still the
- * `webmcp-inspector-enabled` PostHog flag.
+ * `webmcpInspectorHostedEnabled` — and client visibility follows the
+ * deployment's `local-browser-enabled` / `hosted-browser-enabled` rollout.
  */
 export const WEBMCP_INSPECTOR_ENABLED =
   process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
@@ -144,6 +177,39 @@ export function hostedBrowserEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return env.HOSTED_BROWSER_TOOLS_ENABLED === "1";
+}
+
+/**
+ * How a page's WebMCP tools reach the model.
+ *
+ *   - `first_class` (default) — each page tool is its own server-executed
+ *     `webmcp_*` model tool: the page's schema advertised verbatim, arguments
+ *     validated before any command leaves this process, an ordinary approval
+ *     pill, and a binding that names the exact registration on the exact
+ *     document generation it was listed from.
+ *   - `verbs` — the pre-first-class behaviour, for a deployment that needs to
+ *     go back: the model calls `browser_webmcp_invoke` by name with an untyped
+ *     `input`, and nothing validates it (Chrome does not check an invocation
+ *     against the registered `inputSchema` either).
+ *
+ * A MODE rather than a boolean because the rollback has to be exact, and
+ * because the two positions are no longer "new thing on/off" — `verbs` is a
+ * named behaviour somebody may deliberately choose, not merely an absence.
+ *
+ * READ AT CALL TIME, like `hostedBrowserEnabled` beside it: flipped
+ * per-process in staging and per-test, and a module constant would freeze
+ * whatever the environment said when this module first loaded.
+ */
+export type WebmcpPageToolsMode = "verbs" | "first_class";
+
+export function webmcpPageToolsMode(
+  env: NodeJS.ProcessEnv = process.env,
+): WebmcpPageToolsMode {
+  // DEFAULTS ON. The dark period is over: a page's tools reach the model as
+  // real tools unless a deployment says otherwise, and `verbs` is the rollback
+  // — one environment variable, no deploy, and the six `browser_*` tools come
+  // back exactly as they were.
+  return env.MCPJAM_WEBMCP_PAGE_TOOLS === "verbs" ? "verbs" : "first_class";
 }
 
 /**

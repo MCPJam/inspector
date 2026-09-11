@@ -62,9 +62,7 @@ function renderTable(
   );
   const nextPredicates = () => {
     const arg = onPredicatesChange.mock.calls.at(-1)?.[0];
-    return typeof arg === "function"
-      ? arg(overrides.predicates ?? [])
-      : arg;
+    return typeof arg === "function" ? arg(overrides.predicates ?? []) : arg;
   };
   return { ...result, onPredicatesChange, onJudgeConfigChange, nextPredicates };
 }
@@ -283,9 +281,9 @@ describe("SuiteScorerTable", () => {
         revisionNumber: 1,
       },
     });
-    const gate = screen.getAllByRole("button", { name: "Gate" }).find(
-      (button) => button.closest('[aria-label="Judge role"]'),
-    );
+    const gate = screen
+      .getAllByRole("button", { name: "Gate" })
+      .find((button) => button.closest('[aria-label="Judge role"]'));
     expect(gate).toBeDisabled();
     expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
       "Not available on this deployment",
@@ -296,19 +294,15 @@ describe("SuiteScorerTable", () => {
     const user = userEvent.setup();
     renderTable();
     await user.click(screen.getByRole("button", { name: "Add scorer" }));
-    const library = screen.getByTestId("scorer-library");
-    expect(
-      library.querySelector('[data-library-category="selection"]'),
-    ).toBeTruthy();
-    expect(
-      library.querySelector('[data-library-category="userValue"]'),
-    ).toBeTruthy();
-    expect(
-      library.querySelector('[data-library-category="budget"]'),
-    ).toBeTruthy();
-    expect(
-      library.querySelector('[data-library-category="response"]'),
-    ).toBeNull();
+    for (const name of [
+      "Assertions · Tool selection",
+      "Assertions · Answer and outcome",
+      "Limits · Time and usage",
+      "Assertions · Tool inputs and results",
+    ]) {
+      expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("region", { name: "Actions" })).toBeNull();
   });
 
   it("has no Last run or Trend column", () => {
@@ -321,7 +315,7 @@ describe("SuiteScorerTable", () => {
     expect(container.textContent).not.toMatch(/Trend/i);
   });
 
-  it("degrades predicate Role to a Gate chip without checkPolicy", () => {
+  it("degrades predicate Role to a read-only chip without checkPolicy", () => {
     const { container } = renderTable({
       predicates: [{ type: "noToolErrors" }],
     });
@@ -330,5 +324,45 @@ describe("SuiteScorerTable", () => {
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
     expect(within(row).getByText("Gate")).toBeTruthy();
+  });
+
+  it("still reports an advisory check honestly when it cannot be edited", () => {
+    // A suite file or the CLI can author `role: "advisory"` on a backend that
+    // does not advertise check policy. Rendering that as "Gate" tells a reader
+    // the check will fail their trial when it cannot. Not being able to EDIT a
+    // role is not a reason to misreport it.
+    const { container } = renderTable({
+      predicates: [
+        { type: "noToolErrors", role: "advisory", severity: "warn" } as never,
+      ],
+    });
+    expect(screen.queryByRole("group", { name: "Check role" })).toBeNull();
+    const row = container.querySelector(
+      '[data-scorer-id="predicate:0"]',
+    ) as HTMLElement;
+    expect(within(row).getByText("Warn")).toBeTruthy();
+    expect(within(row).queryByText("Gate")).toBeNull();
+  });
+});
+
+describe("SuiteScorerTable — role colour", () => {
+  it("gives Warn the one colour, because it is the role that must catch the eye", () => {
+    // Gate is the default and reads as ordinary; Report is muted because
+    // "recorded, changes nothing" is what muted means. Warn is the role whose
+    // whole job is to be noticed without failing anything.
+    const { container } = renderTable({
+      predicates: [
+        { type: "noToolErrors", role: "advisory", severity: "warn" } as never,
+        { type: "noToolErrors", role: "advisory" } as never,
+      ],
+    });
+    const warn = within(
+      container.querySelector('[data-scorer-id="predicate:0"]') as HTMLElement,
+    ).getByText("Warn");
+    const report = within(
+      container.querySelector('[data-scorer-id="predicate:1"]') as HTMLElement,
+    ).getByText("Report");
+    expect(warn.className).not.toBe(report.className);
+    expect(warn.className).toMatch(/amber|warn/i);
   });
 });

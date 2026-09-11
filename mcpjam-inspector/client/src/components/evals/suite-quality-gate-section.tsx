@@ -27,7 +27,8 @@ export const QUALITY_GATE_ALLOWED_DROP_HINT =
 export const QUALITY_GATE_ROLE_LEGEND =
   "Gate, Warn, and Report describe how a scorer is configured, not a run result.";
 
-export const QUALITY_GATE_CLI_ENFORCEMENT = "Applied by mcpjam cloud eval gate.";
+export const QUALITY_GATE_CLI_ENFORCEMENT =
+  "Applied by mcpjam cloud eval gate.";
 
 export const QUALITY_GATE_GITHUB_ENFORCEMENT =
   "Applied by mcpjam cloud eval gate and GitHub checks.";
@@ -65,7 +66,9 @@ function qualityGateDisabledReason(
   return undefined;
 }
 
-function enforcementCopy(capabilities: SuiteCapabilities | null | undefined): string {
+function enforcementCopy(
+  capabilities: SuiteCapabilities | null | undefined,
+): string {
   return capabilities?.qualityGate?.githubEnforcement === true
     ? QUALITY_GATE_GITHUB_ENFORCEMENT
     : QUALITY_GATE_CLI_ENFORCEMENT;
@@ -173,11 +176,14 @@ export function SuiteQualityGateSection({
   onChange,
   capabilities,
   capabilitiesState,
+  simplified = false,
 }: {
   policy: SuiteGatePolicyV1 | undefined;
   onChange: (next: SuiteGatePolicyV1 | undefined) => void;
   capabilities?: SuiteCapabilities | null;
   capabilitiesState: "loading" | "ready" | "unavailable";
+  /** Settings only exposes baseline comparison; retain other stored policy fields. */
+  simplified?: boolean;
 }) {
   const baselineId = useId();
   const runIdInputId = useId();
@@ -187,12 +193,22 @@ export function SuiteQualityGateSection({
     capabilitiesState,
   );
   const disabled = disabledReason !== undefined;
-  const allowPrevious =
-    capabilities?.qualityGate?.previousRunBaseline === true;
+  const allowPrevious = capabilities?.qualityGate?.previousRunBaseline === true;
   const comparativeEnabled = !disabled && hasCompleteBaseline(policy);
-  const [pendingKind, setPendingKind] = useState<
-    "run" | "commit_sha" | null
-  >(null);
+  // Conditions the simplified sheet does not show but "None" would clear.
+  // Named next to the select so the discard is a choice, not a surprise.
+  const hiddenComparativeConditions = simplified
+    ? [
+        policy?.maximumPassRateDrop != null ? "pass-rate drop" : null,
+        policy?.noDeterministicRegressions ? "deterministic regressions" : null,
+        policy?.maximumP95LatencyIncreaseMs != null
+          ? "p95 latency increase"
+          : null,
+      ].filter((label): label is string => label !== null)
+    : [];
+  const [pendingKind, setPendingKind] = useState<"run" | "commit_sha" | null>(
+    null,
+  );
   const [runIdText, setRunIdText] = useState(
     policy?.baseline?.kind === "run" ? policy.baseline.runId : "",
   );
@@ -301,24 +317,65 @@ export function SuiteQualityGateSection({
     return "None";
   })();
 
+  /**
+   * The conditions the simplified page does not edit, listed only when this
+   * suite actually carries one. Absent means absent: an empty list renders
+   * nothing rather than three rows of "off", which would read as a policy.
+   */
+  const storedAdvancedConditions: {
+    key: string;
+    label: string;
+    value: string;
+  }[] = [
+    policy?.noDeterministicRegressions === true
+      ? {
+          key: "qualityGateNoDeterministicRegressions",
+          label: "Deterministic regressions",
+          value: "Fail",
+        }
+      : null,
+    typeof policy?.maximumP95LatencyIncreaseMs === "number"
+      ? {
+          key: "qualityGateMaximumP95LatencyIncreaseMs",
+          label: "p95 latency increase",
+          value: `${policy.maximumP95LatencyIncreaseMs} ms`,
+        }
+      : null,
+    policy?.noGatingScoreErrors === true
+      ? {
+          key: "qualityGateNoGatingScoreErrors",
+          label: "Any gating scorer errored",
+          value: "Fail",
+        }
+      : null,
+  ].filter((row): row is { key: string; label: string; value: string } =>
+    Boolean(row),
+  );
+
   const controls = (
     <div className="space-y-3">
-      <p className="text-[11px] text-muted-foreground/60">
-        {QUALITY_GATE_ROLE_LEGEND}
-      </p>
-      <p className="text-[11px] text-muted-foreground/60">
-        {enforcementCopy(capabilities)}
-      </p>
+      {!simplified && (
+        <p className="text-[11px] text-muted-foreground/60">
+          {QUALITY_GATE_ROLE_LEGEND}
+        </p>
+      )}
+      {!simplified && (
+        <p className="text-[11px] text-muted-foreground/60">
+          {enforcementCopy(capabilities)}
+        </p>
+      )}
 
       <GateRow
         settingKey="qualityGateBaseline"
         label="Baseline"
         hint={QUALITY_GATE_BASELINE_HINT}
       >
-        <div className="space-y-1">
+        <div className={simplified ? "w-40 space-y-1" : "space-y-1"}>
           <select
             id={baselineId}
-            className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+            className={`h-8 ${
+              simplified ? "w-full" : ""
+            } rounded-md border border-input bg-background px-2 text-xs text-foreground`}
             value={choice}
             disabled={disabled}
             aria-label="Quality gate baseline"
@@ -333,9 +390,20 @@ export function SuiteQualityGateSection({
               <option value="previous_completed">Previous run</option>
             ) : null}
           </select>
-          <p className="text-right text-[11px] text-muted-foreground/60">
+          <p className="break-all text-right text-[11px] text-muted-foreground/60">
             {baselineResolvedLabel}
           </p>
+          {hiddenComparativeConditions.length > 0 && choice !== "none" ? (
+            <p
+              className="text-[11px] text-muted-foreground"
+              data-testid="quality-gate-none-clears"
+            >
+              Choosing None also clears the{" "}
+              {hiddenComparativeConditions.join(", ")} condition
+              {hiddenComparativeConditions.length > 1 ? "s" : ""} set on this
+              suite, which cannot run without a baseline.
+            </p>
+          ) : null}
         </div>
       </GateRow>
 
@@ -347,7 +415,9 @@ export function SuiteQualityGateSection({
           <span>Run id</span>
           <input
             id={runIdInputId}
-            className="h-8 w-48 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+            className={`h-8 ${
+              simplified ? "w-40" : "w-48"
+            } rounded-md border border-input bg-background px-2 text-xs text-foreground`}
             value={runIdText}
             disabled={disabled}
             aria-label="Baseline run id"
@@ -376,7 +446,9 @@ export function SuiteQualityGateSection({
           <span>Commit</span>
           <input
             id={commitInputId}
-            className="h-8 w-48 rounded-md border border-input bg-background px-2 font-mono text-xs text-foreground"
+            className={`h-8 ${
+              simplified ? "w-40" : "w-48"
+            } rounded-md border border-input bg-background px-2 font-mono text-xs text-foreground`}
             value={commitText}
             disabled={disabled}
             aria-label="Baseline commit SHA"
@@ -403,6 +475,7 @@ export function SuiteQualityGateSection({
         hint={QUALITY_GATE_ALLOWED_DROP_HINT}
       >
         <PercentInput
+          aligned={simplified}
           value={policy?.maximumPassRateDrop}
           disabled={disabled || !comparativeEnabled}
           ariaLabel="Maximum gating scorer pass-rate drop"
@@ -415,59 +488,95 @@ export function SuiteQualityGateSection({
         />
       </GateRow>
 
-      <GateRow
-        settingKey="qualityGateNoDeterministicRegressions"
-        label="Deterministic regressions"
-        hint="Fail when a deterministic gating scorer flips against the baseline."
-      >
-        <Switch
-          checked={policy?.noDeterministicRegressions === true}
-          disabled={disabled || !comparativeEnabled}
-          aria-label="No deterministic regressions"
-          onCheckedChange={(checked) =>
-            commitPolicy({
-              ...policy,
-              noDeterministicRegressions: checked === true ? true : undefined,
-            })
-          }
-        />
-      </GateRow>
+      {/*
+        Under `simplified` these three are not editable here — but a policy set
+        through CI is still THIS suite's policy, and a page that shows only the
+        conditions it can edit reports a weaker gate than the one that runs.
+        Each renders read-only when it carries a stored value, so the reader
+        sees what will actually be enforced; the baseline warning above is what
+        clears them.
+      */}
+      {simplified && storedAdvancedConditions.length > 0 && (
+        <div className="space-y-1 border-t border-border/60 pt-3">
+          <p className="text-[11px] text-muted-foreground/60">
+            Also enforced, set outside this page:
+          </p>
+          <ul className="space-y-0.5">
+            {storedAdvancedConditions.map((condition) => (
+              <li
+                key={condition.key}
+                data-setting-key={condition.key}
+                data-readonly="true"
+                className="flex items-center justify-between gap-4 text-[11px] text-muted-foreground"
+              >
+                <span>{condition.label}</span>
+                <span className="tabular-nums text-foreground">
+                  {condition.value}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
-      <GateRow
-        settingKey="qualityGateMaximumP95LatencyIncreaseMs"
-        label="p95 latency increase"
-        hint="Maximum p95 end-to-end latency growth, in milliseconds."
-      >
-        <MillisecondsInput
-          value={policy?.maximumP95LatencyIncreaseMs}
-          disabled={disabled || !comparativeEnabled}
-          ariaLabel="Maximum p95 latency increase in milliseconds"
-          onCommit={(ms) =>
-            commitPolicy({
-              ...policy,
-              maximumP95LatencyIncreaseMs: ms,
-            })
-          }
-        />
-      </GateRow>
+      {!simplified && (
+        <>
+          <GateRow
+            settingKey="qualityGateNoDeterministicRegressions"
+            label="Deterministic regressions"
+            hint="Fail when a deterministic gating scorer flips against the baseline."
+          >
+            <Switch
+              checked={policy?.noDeterministicRegressions === true}
+              disabled={disabled || !comparativeEnabled}
+              aria-label="No deterministic regressions"
+              onCheckedChange={(checked) =>
+                commitPolicy({
+                  ...policy,
+                  noDeterministicRegressions:
+                    checked === true ? true : undefined,
+                })
+              }
+            />
+          </GateRow>
 
-      <GateRow
-        settingKey="qualityGateNoGatingScoreErrors"
-        label="Any gating scorer errored"
-        hint="Fails when a gating scorer errors. Does not need a baseline."
-      >
-        <Switch
-          checked={policy?.noGatingScoreErrors === true}
-          disabled={disabled}
-          aria-label="Any gating scorer errored"
-          onCheckedChange={(checked) =>
-            commitPolicy({
-              ...policy,
-              noGatingScoreErrors: checked === true ? true : undefined,
-            })
-          }
-        />
-      </GateRow>
+          <GateRow
+            settingKey="qualityGateMaximumP95LatencyIncreaseMs"
+            label="p95 latency increase"
+            hint="Maximum p95 end-to-end latency growth, in milliseconds."
+          >
+            <MillisecondsInput
+              value={policy?.maximumP95LatencyIncreaseMs}
+              disabled={disabled || !comparativeEnabled}
+              ariaLabel="Maximum p95 latency increase in milliseconds"
+              onCommit={(ms) =>
+                commitPolicy({
+                  ...policy,
+                  maximumP95LatencyIncreaseMs: ms,
+                })
+              }
+            />
+          </GateRow>
+
+          <GateRow
+            settingKey="qualityGateNoGatingScoreErrors"
+            label="Any gating scorer errored"
+            hint="Fails when a gating scorer errors. Does not need a baseline."
+          >
+            <Switch
+              checked={policy?.noGatingScoreErrors === true}
+              disabled={disabled}
+              aria-label="Any gating scorer errored"
+              onCheckedChange={(checked) =>
+                commitPolicy({
+                  ...policy,
+                  noGatingScoreErrors: checked === true ? true : undefined,
+                })
+              }
+            />
+          </GateRow>
+        </>
+      )}
     </div>
   );
 

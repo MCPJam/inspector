@@ -40,6 +40,8 @@ import {
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
   getEvalDescriptionExperimentOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   getScenarioOperation,
@@ -51,6 +53,7 @@ import {
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -67,6 +70,8 @@ import {
   listChatSessionsOperation,
   searchSessionsOperation,
   sendChatMessageOperation,
+  driveChatSessionBrowserOperation,
+  observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
   listEvalCasesOperation,
@@ -274,6 +279,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   // The waiver READ, beside the run read it explains. `get_eval_run` already
@@ -294,6 +300,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
   getEvalDescriptionExperimentOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
+  // The pre-rename spellings of the two above, still advertised so an agent
+  // already calling one keeps its tool. `check` in these names is a GITHUB
+  // check, never a case's grading check; the new names say so out loud.
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   listEnvironmentsOperation,
@@ -335,6 +346,8 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // remain deliberately narrow elsewhere, because taking an id the caller
   // produced is not the same claim as enumerating an org's conversations.
   sendChatMessageOperation,
+  driveChatSessionBrowserOperation,
+  observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
 
@@ -839,6 +852,20 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     baseUrl: context.runtimeEnv.PLATFORM_API_URL,
     getAuth: () => token,
     userAgent: "mcpjam-mcp-worker/0.2.0",
+    // Declared on every eval-run launch this call may make, so a run started
+    // by an agent reads as MCP rather than as the generic API badge every
+    // hosted launch used to show. `client` names WHICH agent, when the request
+    // said; see `PlatformToolContext.callerUserAgent` on why it is the
+    // request's user-agent and not the `initialize` handshake's `clientInfo`.
+    //
+    // Set on the CLIENT rather than on the operation's input, deliberately: an
+    // operation's `inputSchema` is exposed verbatim as the MCP tool's own
+    // input, so a launcher field there would let the agent whose run it is
+    // choose its own badge.
+    launcher: {
+      kind: "mcp",
+      ...(context.callerUserAgent ? { client: context.callerUserAgent } : {}),
+    },
   });
 
   try {

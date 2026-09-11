@@ -1,3 +1,4 @@
+import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 /**
  * The Playground rail's half of the local agent browser.
  *
@@ -9,7 +10,12 @@
  * coordinate space.
  */
 import { authFetch } from "@/lib/session-token";
-import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
+import {
+  BROWSER_CONSENT_HEADER,
+  clearStoredLocalBrowserConsent,
+  loadStoredLocalBrowserConsent,
+} from "@/lib/local-browser-consent";
+import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
 
 /**
  * Refuse to hand the device-consent capability to a page that is not on this
@@ -49,6 +55,18 @@ function assertSecureLocalOrigin(): void {
 
 /** What the pane knows about this machine's browser. */
 import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
+import type { BrowserStateSnapshot } from "../../../../shared/browser-session-state";
+import type {
+  BrowserPaneCommand,
+  InteractionAnchor,
+} from "../../../../shared/browser-pane-command";
+import type { SessionViewport } from "../../../../shared/browser-viewport";
+import {
+  decodeSessionViewport,
+  decodeStateSnapshot,
+  paneCommandFromStatus,
+  type PaneCommandResult,
+} from "../../../../shared/browser-pane-wire";
 
 export interface LocalBrowserStatus {
   /**
@@ -107,20 +125,44 @@ async function post<T>(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(consentToken ? { [LOCAL_CONSENT_HEADER]: consentToken } : {}),
+      ...(consentToken ? { [BROWSER_CONSENT_HEADER]: consentToken } : {}),
     },
     body: JSON.stringify(body),
     ...(options?.keepalive ? { keepalive: true } : {}),
   });
   const json = (await response.json().catch(() => null)) as
-    (T & { error?: string }) | null;
+    | (T & { error?: string; code?: string })
+    | null;
   if (!response.ok) {
+    // A stored grant is only a UI projection; the server can reject it after
+    // revocation or a runtime change. Reopen the consent gate, but never let
+    // a late failure erase a newer grant minted while this request was flying.
+    if (
+      response.status === 403 &&
+      json?.code === "browser_consent_required" &&
+      consentToken &&
+      loadStoredLocalBrowserConsent()?.token === consentToken
+    ) {
+      clearStoredLocalBrowserConsent();
+    }
     throw new LocalBrowserRequestError(
       typeof json?.error === "string"
         ? json.error
         : "The local browser could not be reached.",
       response.status,
+      json as Record<string, unknown> | null,
     );
+  }
+  if (
+    path === "ensure" &&
+    body &&
+    typeof body === "object" &&
+    "projectId" in body
+  ) {
+    const request = body as { projectId: string; sessionId?: string };
+    useBrowserReadinessStore
+      .getState()
+      .setReason(`${request.projectId}:${request.sessionId ?? null}`, null);
   }
   return json as T;
 }
@@ -138,6 +180,17 @@ export class LocalBrowserRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /**
+     * The parsed response body, when there was one.
+     *
+     * Carried because a refusal's body is not decoration: a 423 names the
+     * holder, and an error that kept only `message` left the shared mapper
+     * with nothing to decode — so a browser held by a SCRIPT was announced to
+     * the person as one held by another person. The hosted client passes its
+     * whole body and got this right, which made the two engines disagree about
+     * the same refusal.
+     */
+    readonly body?: Record<string, unknown> | null,
   ) {
     super(message);
     this.name = "LocalBrowserRequestError";
@@ -161,8 +214,27 @@ export function startLocalBrowserInstall(
 export function ensureLocalBrowser(
   projectId: string,
   consentToken: string | null,
+  sessionId?: string,
 ): Promise<LocalBrowserSession> {
-  return post("ensure", { projectId }, consentToken);
+  return post(
+    "ensure",
+    { projectId, ...(sessionId ? { sessionId } : {}) },
+    consentToken,
+  );
+}
+
+/** Read a conversation's live browser without creating a new one. */
+export async function fetchLocalBrowserSession(
+  projectId: string,
+  consentToken: string | null,
+  sessionId: string,
+): Promise<LocalBrowserSession | null> {
+  const result = await post<{ session: LocalBrowserSession | null }>(
+    "lookup",
+    { projectId, sessionId },
+    consentToken,
+  );
+  return result.session;
 }
 
 export function mintLocalBrowserFrameNonce(
@@ -202,11 +274,159 @@ export function noteLocalBrowserWatch(
   return post("watch", args, consentToken);
 }
 
+/**
+ * The sessions an agent has opened for this project, newest first.
+ *
+ * The rail knows a project; an agent's session was opened elsewhere. Without
+ * this the Activity list has nothing to read, and asking a person to paste a
+ * session id into a side panel is not a side panel anybody would use.
+ */
+export function listLocalBrowserSessions(
+  projectId: string,
+  consentToken: string | null,
+): Promise<{ sessions: LocalAgentSession[] }> {
+  return post("sessions", { projectId }, consentToken);
+}
+
+/**
+ * This session's command history, read forward from a cursor.
+ *
+ * INCREMENTAL by design: the pane polls with the last `seq` it saw, so a long
+ * session costs one small response per tick rather than re-sending its whole
+ * history. The server mirrors the daemon's bounded ring on every read, which is
+ * also how a command the MODEL issued — one that never went through the agent
+ * door — reaches this list.
+ */
+export function readLocalBrowserTrace(
+  args: {
+    projectId: string;
+    sessionId: string;
+    afterSeq?: number;
+    limit?: number;
+  },
+  consentToken: string | null,
+): Promise<LocalBrowserTracePage> {
+  return post("trace", args, consentToken);
+}
+
+export interface LocalAgentSession {
+  sessionId: string;
+  projectId: string;
+  profile: "persistent" | "ephemeral";
+  createdAt: number;
+  closedAt?: number;
+  participants: Array<{ actorId: string; kind: string; joinedAt: number }>;
+}
+
+/** One row of the session trace, as the pane needs to read it. */
+export interface LocalBrowserTraceRow {
+  kind: "command";
+  seq: number;
+  commandId: string;
+  ts: number;
+  durationMs: number;
+  source: string;
+  actor: { kind: string; id: string; label?: string };
+  command: {
+    kind: string;
+    verb?: string;
+    mode?: string;
+    url?: string;
+    value?: string;
+    redactedValue?: { redacted: true; chars: number };
+    target?: { selector?: string; a11yRef?: string; coordinates?: number[] };
+  };
+  outcome: "executed" | "refused" | "unknown";
+  ok?: boolean;
+  errorCode?: string;
+  url?: string;
+  title?: string;
+  artifacts?: {
+    screenshot?: {
+      id: string;
+      bytes: number;
+      mediaType: string;
+      evicted?: boolean;
+    };
+  };
+}
+
+/** A stretch of history the ledger knows it does not have. */
+export interface LocalBrowserTraceGap {
+  kind: "gap";
+  seq: number;
+  ts: number;
+  fromSeq: number;
+  toSeq: number;
+  reason: "ring_overflow" | "daemon_restart" | "sink_unavailable";
+}
+
+export type LocalBrowserTraceEntry =
+  | LocalBrowserTraceRow
+  | LocalBrowserTraceGap;
+
+export interface LocalBrowserTracePage {
+  entries: LocalBrowserTraceEntry[];
+  headSeq: number;
+  /** Set when the newest rows could not be written. Never silent. */
+  historyWarning?: string;
+}
+
 export function sendLocalBrowserInput(
-  args: { bootId: string; holder: string; events: BrowserInputEvent[] },
+  args: {
+    bootId: string;
+    tabId?: string;
+    holder: string;
+    events: BrowserInputEvent[];
+    anchor?: import("../../../../shared/browser-pane-command").InteractionAnchor;
+  },
   consentToken: string | null,
 ): Promise<{ ok: true }> {
   return post("input", args, consentToken);
+}
+
+/** Export one persistent local browser profile after closing its session. */
+export async function fetchLocalBrowserProfileArchive(args: {
+  bootId: string;
+  projectId?: string;
+  sessionId?: string;
+  consentToken: string | null;
+}): Promise<{ archive: Blob; savedFrom?: string }> {
+  assertSecureLocalOrigin();
+  const response = await authFetch(
+    "/api/mcp/computers/local-browser/profile/export",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(args.consentToken
+          ? { [BROWSER_CONSENT_HEADER]: args.consentToken }
+          : {}),
+      },
+      body: JSON.stringify({
+        bootId: args.bootId,
+        ...(args.projectId ? { projectId: args.projectId } : {}),
+        ...(args.sessionId ? { sessionId: args.sessionId } : {}),
+      }),
+    },
+  );
+  if (!response.ok) {
+    const json = (await response.json().catch(() => null)) as {
+      error?: unknown;
+    } | null;
+    throw new LocalBrowserRequestError(
+      typeof json?.error === "string"
+        ? json.error
+        : "The local browser profile could not be exported.",
+      response.status,
+    );
+  }
+  const savedFrom =
+    response.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
+  return {
+    archive: await response.blob(),
+    ...(savedFrom ? { savedFrom } : {}),
+  };
 }
 
 /**
@@ -242,10 +462,12 @@ export interface FrameStreamHandlers {
  */
 export function openLocalBrowserFrameStream(args: {
   bootId: string;
+  tabId?: string;
   holder: string;
   nonce: string;
   /** `"binary"` asks for the daemon's frame records; omitted keeps JSON. */
   wire?: "binary" | "json";
+  sharp?: boolean;
 }): { socket: WebSocket; close(): void } {
   // The nonce is a bearer capability and the frames are pictures of a
   // signed-in browser; neither goes over an unencrypted non-loopback hop.
@@ -255,6 +477,8 @@ export function openLocalBrowserFrameStream(args: {
     args.bootId,
   )}&holder=${encodeURIComponent(args.holder)}${
     args.wire === "binary" ? "&wire=binary" : ""
+  }${args.sharp ? "&sharp=1" : ""}${
+    args.tabId ? `&tabId=${encodeURIComponent(args.tabId)}` : ""
   }`;
   const socket = new WebSocket(url, [args.nonce]);
   // See the hosted opener: `blob` would make binary messages arrive
@@ -270,4 +494,75 @@ export function openLocalBrowserFrameStream(args: {
       }
     },
   };
+}
+
+/**
+ * The browser shell's three calls, on the local engine.
+ *
+ * All POSTs, like every other local-browser route: the project id and the
+ * bootId travel in the body beside the consent capability, and `post` above is
+ * what attaches that header.
+ *
+ * None of them THROWS for a refusal. Every caller is a shell drawing chrome,
+ * and the useful answer to "somebody else has the browser" is a banner rather
+ * than an exception — so a refusal comes back as a value and only a genuine
+ * transport failure is absent.
+ */
+export async function fetchLocalBrowserState(args: {
+  bootId: string;
+  holder: string;
+  consentToken: string | null;
+}): Promise<BrowserStateSnapshot | null> {
+  const { consentToken, ...body } = args;
+  const answer = await post<{ state?: unknown }>(
+    "state",
+    body,
+    consentToken,
+  ).catch(() => null);
+  return answer ? decodeStateSnapshot(answer.state) : null;
+}
+
+export async function sendLocalPaneCommand(args: {
+  bootId: string;
+  holder: string;
+  command: BrowserPaneCommand;
+  commandId?: string;
+  anchor?: InteractionAnchor;
+  consentToken: string | null;
+}): Promise<PaneCommandResult> {
+  const { consentToken, ...body } = args;
+  try {
+    const answer = await post<Record<string, unknown>>(
+      "pane-command",
+      body,
+      consentToken,
+    );
+    return paneCommandFromStatus(200, answer);
+  } catch (error) {
+    // `post` throws with the status still attached, which is exactly what the
+    // shared mapper reads. Anything else is a transport failure with no status
+    // to interpret.
+    return error instanceof LocalBrowserRequestError
+      ? paneCommandFromStatus(
+          error.status,
+          error.body ?? { error: error.message },
+        )
+      : { ok: false, reason: "failed" };
+  }
+}
+
+export async function reportLocalPaneViewport(args: {
+  bootId: string;
+  width: number;
+  policy?: "fixed" | "followPane";
+  height: number;
+  consentToken: string | null;
+}): Promise<SessionViewport | null> {
+  const { consentToken, ...body } = args;
+  const answer = await post<{ viewport?: unknown }>(
+    "viewport",
+    body,
+    consentToken,
+  ).catch(() => null);
+  return answer ? decodeSessionViewport(answer.viewport) : null;
 }

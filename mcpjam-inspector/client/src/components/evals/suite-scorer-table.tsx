@@ -28,14 +28,16 @@ import {
   type GroundednessRunEvidence,
 } from "./suite-judge-card";
 import {
-  ROLE_LEGEND,
+  authorablePredicateKinds,
   buildScorerTable,
   withGoalCompletionRole,
   withPredicateRole,
   type ScorerTableRow,
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
+import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
 import { groupGradersByStage } from "./suite-grading-model";
+import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { EvalJudgeConfig } from "./types";
 
 export function SuiteScorerTable({
@@ -95,6 +97,9 @@ export function SuiteScorerTable({
   );
   const [matchEditorOpen, setMatchEditorOpen] = useState(false);
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
+  const authorableKinds = authorablePredicateKinds(
+    capabilities?.scorers?.predicateKinds,
+  );
   const judgeDisabledReason = gateSwitchDisabledReason(
     capabilities?.judge,
     unavailableReason,
@@ -139,6 +144,7 @@ export function SuiteScorerTable({
             <p className="text-sm text-muted-foreground">{passOrFailHint}</p>
           </div>
           <SuiteScorerLibraryMenu
+            authorableKinds={authorableKinds}
             onAdd={(kind) =>
               onPredicatesChange((previous) => [
                 ...previous,
@@ -513,6 +519,55 @@ function ThresholdCell({
         />
       );
     }
+    if (
+      predicate.type === "toolLatencyUnder" ||
+      predicate.type === "toolResultSizeUnder" ||
+      predicate.type === "toolCallCountUnder"
+    ) {
+      const { field, value, label } =
+        predicate.type === "toolLatencyUnder"
+          ? {
+              field: "ms" as const,
+              value: predicate.ms,
+              label: "Tool latency budget in ms",
+            }
+          : predicate.type === "toolResultSizeUnder"
+            ? {
+                field: "maxBytes" as const,
+                value: predicate.maxBytes,
+                label: "Tool result size budget in bytes",
+              }
+            : {
+                field: "count" as const,
+                value: predicate.count,
+                label: "Tool call budget",
+              };
+      return (
+        <Input
+          type="number"
+          min={1}
+          step={1}
+          value={value}
+          aria-label={label}
+          className="h-7 w-24 text-xs"
+          onChange={(event) => {
+            // An empty field is `Number("") === 0`, and a budget of 0 is a
+            // check nothing can pass — the same reason the backend now
+            // refuses a non-positive `tokens` or `minCount` at the write
+            // boundary. Leave the predicate alone until the field holds a
+            // usable number, exactly as the token and turn budgets do.
+            const raw = event.target.value.trim();
+            if (raw === "") return;
+            const next = Number(raw);
+            if (!Number.isFinite(next) || next < 1) return;
+            onPredicateChange(row.predicateIndex!, {
+              ...predicate,
+              [field]: Math.floor(next),
+            } as Predicate);
+          }}
+        />
+      );
+    }
     if (predicate.type === "turnCountUnder") {
       return (
         <Input
@@ -570,22 +625,13 @@ function RoleCell({
       : ["gate", "report"];
     return (
       <div className="space-y-1">
-        <div
-          role="group"
-          aria-label="Judge role"
-          className="inline-flex rounded-md border border-border/60"
-        >
-          {roles.map((role) => (
-            <RoleSegment
-              key={role}
-              pressed={row.role === role}
-              disabled={role === "gate" && !gateEnabled}
-              onClick={() => onJudgeRoleChange(role)}
-            >
-              {ROLE_LEGEND[role].label}
-            </RoleSegment>
-          ))}
-        </div>
+        <RoleSegmentGroup
+          value={row.role}
+          roles={roles}
+          disabledRoles={gateEnabled ? undefined : ["gate"]}
+          ariaLabel="Judge role"
+          onChange={onJudgeRoleChange}
+        />
         {judgeDisabledReason ? (
           <p
             className="text-[11px] text-muted-foreground"
@@ -599,73 +645,30 @@ function RoleCell({
   }
   if (row.kind === "predicate" && predicate && row.predicateIndex !== undefined) {
     if (!checkPolicy) {
-      return <RoleChip role="gate" />;
+      // Read-only, but honest: an SDK- or CLI-authored advisory check still
+      // reads Warn/Report here rather than being relabelled Gate.
+      return <RoleChip role={row.role} />;
     }
+    // Observations get two segments, the same way groundedness does: a
+    // heuristic must not decide a release, and offering a Gate the schema is
+    // going to refuse is a control that lies.
     return (
-      <div
-        role="group"
-        aria-label="Check role"
-        className="inline-flex rounded-md border border-border/60"
-      >
-        {(["gate", "warn", "report"] as const).map((role) => (
-          <RoleSegment
-            key={role}
-            pressed={row.role === role}
-            onClick={() =>
-              onPredicateChange(
-                row.predicateIndex!,
-                withPredicateRole(predicate, role),
-              )
-            }
-          >
-            {ROLE_LEGEND[role].label}
-          </RoleSegment>
-        ))}
-      </div>
+      <RoleSegmentGroup
+        value={row.role}
+        // An observation is a heuristic, so it is offered as Warn or Report
+        // and never as a Gate — the same rule the Zod schema enforces at the
+        // save, surfaced as an absent segment rather than a refused save.
+        roles={rolesForPredicateKind(predicate.type)}
+        ariaLabel="Check role"
+        onChange={(role) =>
+          onPredicateChange(
+            row.predicateIndex!,
+            withPredicateRole(predicate, role),
+          )
+        }
+      />
     );
   }
   return <RoleChip role={row.role} />;
 }
 
-function RoleChip({ role }: { role: ScorerUiRole }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex rounded-sm border border-border/60 px-1.5 py-px text-[10px] uppercase tracking-[0.06em]",
-        role === "gate" ? "text-foreground" : STAGE_CHIP_TONE_CLASS.unmeasured,
-      )}
-    >
-      {ROLE_LEGEND[role].label}
-    </span>
-  );
-}
-
-function RoleSegment({
-  pressed,
-  disabled,
-  onClick,
-  children,
-}: {
-  pressed: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={pressed}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "px-2 py-1 text-[10px] uppercase tracking-[0.06em] first:rounded-l-[5px] last:rounded-r-[5px]",
-        pressed
-          ? "bg-muted text-foreground"
-          : "text-muted-foreground hover:text-foreground",
-        disabled && "cursor-not-allowed opacity-50",
-      )}
-    >
-      {children}
-    </button>
-  );
-}

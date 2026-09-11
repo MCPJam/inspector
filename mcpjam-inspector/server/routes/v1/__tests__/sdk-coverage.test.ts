@@ -48,6 +48,22 @@ function appInventory(): Set<string> {
 
 /** Route -> the `PlatformApiClient` method that calls it. */
 const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
+  "post /chat-sessions/browser": "createChatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/open": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/command": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/note": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/trace": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/artifact": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/close": "chatSessionBrowser",
+  // The browser operation transport is shared by all agent-session routes.
+  "post /browser-sessions/session": "browserSession",
+  "post /browser-sessions/sessions": "browserSession",
+  "post /browser-sessions/command": "browserSession",
+  "post /browser-sessions/trace": "browserSession",
+  "post /browser-sessions/note": "browserSession",
+  "post /browser-sessions/artifact": "browserSession",
+  "post /browser-sessions/close": "browserSession",
+
   // Identity and catalogs
   // Spend budget — the organization's ceiling on MCPJam-billed spend.
   "get /organizations/{organizationId}/spend-budget": "getSpendBudget",
@@ -223,6 +239,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/eval-runs/{runId}/gate": "getEvalRunGate",
   "get /projects/{projectId}/eval-runs/{runId}/route-facts":
     "getEvalRunRouteFacts",
+  "get /projects/{projectId}/eval-runs/{runId}/server-facts":
+    "getEvalRunServerFacts",
   "post /projects/{projectId}/eval-runs/{runId}/description-experiments":
     "proposeEvalDescriptionRewrite",
   "get /projects/{projectId}/eval-runs/{runId}/description-experiments":
@@ -424,6 +442,8 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "The agent's own operation registry, serialized for the org-settings Capabilities page. It describes the tools THIS build offers its agent — an implementation detail whose shape changes with every tool added, not a contract to program against.",
   "get /harness/{harnessId}/builtin-tools":
     "Static published-package metadata about a harness's NATIVE tools, which are not callable through MCPJam. Display-only for the UI; an SDK method would imply they can be invoked.",
+  "get /built-in-tools/{builtInToolId}/definitions":
+    "The `browser_*` tool definitions as the MODEL is shown them, read by the Tools pane and the Raw request preview so neither has to keep a hand-written copy of schemas that are built at turn time. They describe an in-turn capability rather than anything an SDK caller can invoke, and their wording changes with the prompt engineering — an SDK method would publish that as a contract.",
   "get /harness/{harnessId}/capabilities":
     "Which runtime surfaces THIS build's harness adapter can pause on, read by the host editor so the approval switch reflects the transport actually installed. It moves with a server flag rather than a release, so an SDK method would publish a value no caller could pin.",
   "get /host-catalog":

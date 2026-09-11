@@ -13,6 +13,20 @@
  * can, because a pane that had to branch on more than that would be two panes.
  */
 
+import type { BrowserStateSnapshot } from "../../../../shared/browser-session-state";
+import type {
+  BrowserPaneCommand,
+  InteractionAnchor,
+} from "../../../../shared/browser-pane-command";
+import type { SessionViewport } from "../../../../shared/browser-viewport";
+import {
+  decodeSessionViewport,
+  decodeStateSnapshot,
+  paneCommandFromStatus,
+  type PaneCommandResult,
+} from "../../../../shared/browser-pane-wire";
+import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
+
 export const HOSTED_BROWSER_BASE = "/api/web/computers/browser";
 
 /** Loopback is fine unencrypted; nothing leaves the machine. */
@@ -167,7 +181,8 @@ async function authorized(
 
 async function decode<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => null)) as
-    (T & { error?: string; detail?: string }) | null;
+    | (T & { error?: string; detail?: string })
+    | null;
   if (!res.ok) {
     throw new HostedBrowserError(
       body?.detail ?? body?.error ?? "The browser could not be reached.",
@@ -246,7 +261,11 @@ export async function actOnHostedBrowserLease(
 /** Forward a batch of the person's pointer and key events. */
 export async function sendHostedBrowserInput(
   tokens: BrowserTokenCache,
-  args: { events: unknown[]; tabId?: string },
+  args: {
+    events: unknown[];
+    tabId?: string;
+    anchor?: import("../../../../shared/browser-pane-command").InteractionAnchor;
+  },
 ): Promise<{ ok: true }> {
   const res = await authorized(tokens, "/input", {
     method: "POST",
@@ -255,12 +274,88 @@ export async function sendHostedBrowserInput(
   return decode<{ ok: true }>(res);
 }
 
+/**
+ * The browser shell's three calls, on the hosted engine.
+ *
+ * None of them throws for a refusal, unlike the calls above. Every caller is a
+ * shell drawing chrome, and the useful answer to "somebody else has the
+ * browser" is a banner rather than an exception — so a refusal comes back as a
+ * value, and only a genuine transport failure is absent.
+ *
+ * No `holder` on any of them. The server derives it from the token's claims,
+ * exactly as `/input` and `/lease` do: a holder the client could name would
+ * let anyone who echoed the right id read the tab titles of a session somebody
+ * else is signing into, or drive it.
+ */
+export async function fetchHostedBrowserState(
+  tokens: BrowserTokenCache,
+): Promise<BrowserStateSnapshot | null> {
+  const res = await authorized(tokens, "/state", { method: "GET" }).catch(
+    () => null,
+  );
+  if (!res) return null;
+  const body = (await res.json().catch(() => null)) as {
+    state?: unknown;
+  } | null;
+  return res.ok && body ? decodeStateSnapshot(body.state) : null;
+}
+
+export async function sendHostedPaneCommand(
+  tokens: BrowserTokenCache,
+  args: {
+    command: BrowserPaneCommand;
+    commandId?: string;
+    anchor?: InteractionAnchor;
+  },
+): Promise<PaneCommandResult> {
+  const res = await authorized(tokens, "/pane-command", {
+    method: "POST",
+    body: JSON.stringify(args),
+  }).catch(() => null);
+  if (!res) return { ok: false, reason: "failed" };
+  const body = (await res.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null;
+  return paneCommandFromStatus(res.status, body);
+}
+
+export async function reportHostedPaneViewport(
+  tokens: BrowserTokenCache,
+  size: { width: number; policy?: "fixed" | "followPane"; height: number },
+): Promise<SessionViewport | null> {
+  const res = await authorized(tokens, "/viewport", {
+    method: "POST",
+    body: JSON.stringify(size),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  const body = (await res.json().catch(() => null)) as {
+    viewport?: unknown;
+  } | null;
+  return body ? decodeSessionViewport(body.viewport) : null;
+}
+
 /** "This pane is still open." Keeps the box from hibernating underneath it. */
 export async function touchHostedBrowser(
   tokens: BrowserTokenCache,
 ): Promise<{ counted: boolean }> {
   const res = await authorized(tokens, "/keepalive", { method: "POST" });
   return decode<{ counted: boolean }>(res);
+}
+
+/** Export the hosted persistent profile after the daemon queue is drained. */
+export async function fetchHostedBrowserProfileArchive(
+  tokens: BrowserTokenCache,
+): Promise<{ archive: Blob; savedFrom?: string }> {
+  const res = await authorized(tokens, "/profile/export", { method: "POST" });
+  if (!res.ok) {
+    throw new HostedBrowserError(
+      "The hosted browser profile could not be exported.",
+      res.status,
+    );
+  }
+  const savedFrom = res.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
+  return { archive: await res.blob(), ...(savedFrom ? { savedFrom } : {}) };
 }
 
 /**
@@ -280,6 +375,7 @@ export function openHostedBrowserFrameStream(args: {
   tabId?: string;
   /** `"binary"` asks for the daemon's frame records; omitted keeps JSON. */
   wire?: "binary" | "json";
+  sharp?: boolean;
   /**
    * Ask for H.264 instead of JPEG stills.
    *
@@ -305,6 +401,7 @@ export function openHostedBrowserFrameStream(args: {
   // old to negotiate this ignores the param and keeps sending JSON, which is
   // why the pane branches on the message type rather than assuming.
   if (args.wire === "binary") url.searchParams.set("wire", "binary");
+  if (args.sharp) url.searchParams.set("sharp", "1");
   // WITHOUT THIS THE ROUTE NEVER OFFERS VIDEO. The hosted relay enables H.264
   // only when the URL carries it, so a pane that asked in its own options and
   // not on the wire negotiated JPEG every time and the whole video path was

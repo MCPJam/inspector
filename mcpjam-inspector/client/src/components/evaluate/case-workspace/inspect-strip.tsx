@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, Copy, History } from "lucide-react";
+import { AlertTriangle, Check, Copy, History } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -30,7 +30,7 @@ function IterationIdChip({ id }: { id: string }) {
         setTimeout(() => setCopied(false), 1200);
       }}
       className="inline-flex shrink-0 items-center gap-1 rounded-sm font-mono text-[10px] text-muted-foreground/70 transition-colors hover:text-foreground"
-      title={`Iteration ${id} — click to copy`}
+      title={`Iteration ${id}. Click to copy`}
       aria-label={`Copy iteration id ${id}`}
     >
       {copied ? (
@@ -64,7 +64,7 @@ export function InspectStrip({
           Viewing run
         </span>
         <span className="truncate">
-          Iter #{iteration.iterationNumber}
+          Iteration #{iteration.iterationNumber}
           <span aria-hidden> · </span>
           {formatTimeAgo(ranAt)}
         </span>
@@ -107,7 +107,6 @@ export function InspectStrip({
         className="h-6 shrink-0 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
         onClick={onEditCase}
       >
-        <ChevronLeft className="h-3 w-3" aria-hidden />
         Edit case
       </Button>
     </div>

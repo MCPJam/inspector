@@ -17,6 +17,8 @@ const {
   mockSetRepoSuite,
   mockSetRepoOutagePolicy,
   mockSetRepoConformance,
+  mockSetRepoForkCredentials,
+  mockSetRepoPrServerOAuth,
   mockSetRepoFeedbackComments,
   mockDisconnectRepo,
   mockConnectRepo,
@@ -29,6 +31,7 @@ const {
   mockRedirectToGithub,
   mockOrgsLoading,
   mockAuthLoading,
+  mockMyRole,
 } = vi.hoisted(() => ({
   mockAvailability: {
     value: undefined as { state: "enabled" | "disabled" } | undefined,
@@ -38,6 +41,12 @@ const {
   mockSetRepoEnabled: vi.fn(async () => ({ changed: true })),
   mockSetRepoSuite: vi.fn(async () => ({ changed: true })),
   mockSetRepoOutagePolicy: vi.fn(async () => ({ changed: true })),
+  mockSetRepoForkCredentials: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
+  mockSetRepoPrServerOAuth: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
   mockSetRepoConformance: vi.fn(async () => ({ changed: true })),
   mockSetRepoFeedbackComments: vi.fn(async () => ({ changed: true })),
   mockDisconnectRepo: vi.fn(async () => ({ removed: true })),
@@ -52,14 +61,16 @@ const {
   mockConnectVerifiedRepo: vi.fn(async (_args?: Record<string, unknown>) => ({
     configId: "cfg-new",
   })),
-  mockListInstallationRepos: vi.fn(async (): Promise<unknown[]> => [
-    {
-      repositoryId: 2,
-      fullName: "mcpjam/other-repo",
-      installationRef: "bind-1",
-      accountLogin: "mcpjam",
-    },
-  ]),
+  mockListInstallationRepos: vi.fn(
+    async (): Promise<unknown[]> => [
+      {
+        repositoryId: 2,
+        fullName: "mcpjam/other-repo",
+        installationRef: "bind-1",
+        accountLogin: "mcpjam",
+      },
+    ],
+  ),
   mockBindings: { value: undefined as unknown[] | undefined },
   mockStartInstallation: vi.fn(async () => ({
     installUrl: "https://github.com/apps/mcpjam/installations/new?state=abc",
@@ -74,6 +85,9 @@ const {
   mockRedirectToGithub: vi.fn(),
   mockOrgsLoading: { value: false },
   mockAuthLoading: { value: false },
+  // The viewer's org role. Admin by default: every case below that is not
+  // about the permission gate is written from an admin's seat.
+  mockMyRole: { value: "admin" as string | undefined },
 }));
 
 // The availability gate is the unit under test; the data layer is stubbed.
@@ -90,6 +104,8 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     setRepoSuite: mockSetRepoSuite,
     setRepoOutagePolicy: mockSetRepoOutagePolicy,
     setRepoConformance: mockSetRepoConformance,
+    setRepoForkCredentials: mockSetRepoForkCredentials,
+    setRepoPrServerOAuth: mockSetRepoPrServerOAuth,
     setRepoFeedbackComments: mockSetRepoFeedbackComments,
     disconnectRepo: mockDisconnectRepo,
     listInstallationRepos: mockListInstallationRepos,
@@ -115,7 +131,24 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
-  useOrganizationQueries: () => ({ isLoading: mockOrgsLoading.value }),
+  useOrganizationQueries: () => ({
+    isLoading: mockOrgsLoading.value,
+    // `[]` while loading, exactly as the real hook does — it returns an empty
+    // array until the query resolves. Handing back a populated list mid-load
+    // would make the unresolved window untestable.
+    // Both ids the switching cases below render with, so an org switch stays a
+    // switch rather than a silent drop out of the list.
+    sortedOrganizations: mockOrgsLoading.value
+      ? []
+      : [
+          { _id: "org-1", myRole: mockMyRole.value },
+          { _id: "org-2", myRole: mockMyRole.value },
+        ],
+  }),
+  // The real predicate, not a stub: what is under test here is that the page
+  // asks it and honours the answer.
+  canManageGithubChecks: (org?: { myRole?: string } | null) =>
+    org?.myRole === "owner" || org?.myRole === "admin",
 }));
 
 // The nav resolves availability itself now; it is not what this file tests.
@@ -136,6 +169,10 @@ const ROW = {
   // Backend-DERIVED. The page never computes this, and in particular never
   // infers it from a missing visibility badge.
   connectionStatus: "verified" as const,
+  prServerOAuth: {
+    status: "not_configured" as const,
+    sources: [],
+  },
   createdAt: 1,
   updatedAt: 1,
 };
@@ -250,7 +287,9 @@ async function fillConnectForm(
   await chooseOption(user, "Outage policy", policyLabel);
 }
 
-const connectButton = () => screen.getByRole("button", { name: /Connect/ });
+// EXACT. The accounts section has a "Connect a GitHub account" button, and a
+// loose /Connect/ matches both — this one is the repository form's.
+const connectButton = () => screen.getByRole("button", { name: /^Connect$/ });
 
 describe("GithubChecksRoute availability gate", () => {
   beforeEach(() => {
@@ -262,6 +301,7 @@ describe("GithubChecksRoute availability gate", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     vi.clearAllMocks();
   });
@@ -291,6 +331,10 @@ describe("GithubChecksRoute availability gate", () => {
     mockRepos.value = [ROW];
     renderRoute();
     expect(screen.getByText("mcpjam/mcp-check-fixture")).toBeInTheDocument();
+    expect(screen.getByText("mcpjam.yaml")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Read the recipe docs" }),
+    ).toHaveAttribute("href", "https://docs.mcpjam.com/github-checks");
   });
 
   it("shows the install-App empty state when there are no repos", () => {
@@ -316,6 +360,81 @@ describe("GithubChecksRoute availability gate", () => {
       configId: "cfg-1",
       enabled: false,
     });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // THE SWITCHES SAY WHICH IS WHICH
+  // ═════════════════════════════════════════════════════════════════════════
+  //
+  // Three bare switches sat in a row with no visible names — only a sighted
+  // user who already knew the order could tell checks from conformance from
+  // comments, on a page that decides what runs on other people's pull
+  // requests.
+
+  it("names every switch on screen, not just for a screen reader", () => {
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    // `toBeVisible`, not `toBeInTheDocument`: the claim is that a sighted user
+    // can READ these. `aria-hidden` does not affect it — that hides them from
+    // the accessibility tree, not from the screen.
+    //
+    // Its reach is narrower than it looks, though, and worth knowing before
+    // trusting it: jsdom loads no stylesheet, so a caption hidden by a utility
+    // class still passes here. It catches an inline `display: none` or the
+    // `hidden` attribute, and nothing a class could do. Verified both ways.
+    expect(screen.getByText("Checks")).toBeVisible();
+    expect(screen.getByText("Conformance")).toBeVisible();
+    expect(screen.getByText("Comments")).toBeVisible();
+  });
+
+  it("keeps each caption inside its switch's accessible name", () => {
+    // WCAG 2.5.3. A visible label that is not part of the accessible name
+    // leaves a speech-input user saying a word the control does not answer
+    // to — which is why the third caption is "Comments" and not "PR
+    // comments". Renaming a caption without renaming its `aria-label` breaks
+    // this and nothing else would catch it.
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    const pairs: Array<[string, string]> = [
+      ["Checks", "Enable checks for mcpjam/mcp-check-fixture"],
+      ["Conformance", "Enable conformance check for mcpjam/mcp-check-fixture"],
+      [
+        "Comments",
+        "Post feedback comments on pull requests for mcpjam/mcp-check-fixture",
+      ],
+    ];
+
+    for (const [caption, accessibleName] of pairs) {
+      expect(screen.getByLabelText(accessibleName)).toBeInTheDocument();
+      expect(accessibleName.toLowerCase()).toContain(caption.toLowerCase());
+    }
+  });
+
+  it("dims the conformance caption with the switch it belongs to", () => {
+    // Conformance is a SUB-SETTING of checks: its switch has always been
+    // disabled while checks are off. A caption at full strength beside a dead
+    // control reads as a bug rather than a rule.
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [{ ...ROW, enabled: false }];
+    renderRoute();
+
+    expect(
+      screen.getByLabelText(
+        "Enable conformance check for mcpjam/mcp-check-fixture",
+      ),
+    ).toBeDisabled();
+    expect(screen.getByText("Conformance").className).toContain(
+      "text-muted-foreground/50",
+    );
+    // Comments is NOT gated on `enabled` — it decides what MCPJam may write,
+    // not whether it runs — so it must stay at full strength here.
+    expect(screen.getByText("Comments").className).not.toContain(
+      "text-muted-foreground/50",
+    );
   });
 
   it("the conformance switch is off by default and opt-in", () => {
@@ -450,6 +569,7 @@ describe("GithubChecksRoute connect flow", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([
@@ -663,6 +783,7 @@ describe("GithubChecksRoute row outage policy", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([]);
@@ -804,6 +925,7 @@ describe("GithubChecksRoute pull-request comments", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([]);
@@ -992,6 +1114,7 @@ describe("GithubChecksRoute repository visibility", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockRepos.value = [ROW];
     mockListInstallationRepos.mockReset();
@@ -1075,6 +1198,7 @@ describe("GithubChecksRoute organization switching", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockConnectVerifiedRepo.mockReset();
@@ -1153,6 +1277,43 @@ describe("GithubChecksRoute organization switching", () => {
       "Fail open",
     );
   });
+
+  it("drops an OAuth failure that arrives after the organization changed", async () => {
+    mockRepos.value = [
+      {
+        ...ROW,
+        prServerOAuth: {
+          status: "selection_required",
+          sources: [
+            {
+              serverId: "server-oauth",
+              name: "Test OAuth server",
+              authorized: true,
+            },
+          ],
+        },
+      },
+    ];
+    mockListInstallationRepos.mockResolvedValue([]);
+    let rejectStaleWrite: ((error: unknown) => void) | undefined;
+    mockSetRepoPrServerOAuth.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectStaleWrite = reject;
+        }),
+    );
+
+    const { rerender } = render(routeTree("org-1"));
+    await chooseOption(
+      userEvent.setup(),
+      `Server authorization for ${ROW.repoFullName}`,
+      "Test OAuth server",
+    );
+    rerender(routeTree("org-2"));
+    await act(async () => rejectStaleWrite?.(new Error("stale failure")));
+
+    expect(toast.error).not.toHaveBeenCalled();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1179,6 +1340,7 @@ describe("GithubChecksRoute binding changes", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [];
     mockListInstallationRepos.mockReset();
     mockConnectVerifiedRepo.mockReset();
@@ -1371,6 +1533,7 @@ describe("GithubChecksRoute installations", () => {
     mockSuites.value = [];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([]);
@@ -1387,67 +1550,63 @@ describe("GithubChecksRoute installations", () => {
     mockRedirectToGithub.mockReset();
   });
 
-  it("offers both an install and a claim, and explains why claiming needs GitHub", async () => {
+  it("offers ONE way in, and explains why it goes through GitHub", async () => {
     renderRoute();
     expect(
       await screen.findByRole("button", {
-        name: /Install on a GitHub account/,
+        name: /Connect a GitHub account/,
       }),
     ).toBeInTheDocument();
+    // The second button is GONE. It sent the browser to GitHub's install URL,
+    // which GitHub redirects into an existing installation whenever the user
+    // administers one — so it dead-ended for exactly the people it was for,
+    // and could never reach a second account.
     expect(
-      screen.getByRole("button", { name: /Claim an existing installation/ }),
-    ).toBeInTheDocument();
-    // The whole reason the claim path needs an OAuth leg, in one sentence: the
-    // App JWT can read every installation it has, so installing is not proof
-    // that an installation is yours to connect here.
+      screen.queryByRole("button", { name: /Claim an existing installation/ }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Install on a GitHub account/ }),
+    ).toBeNull();
+    // The whole reason this path has an OAuth leg, in one sentence: the App JWT
+    // can read every installation it has, so installing is not proof that an
+    // installation is yours to connect here. Losing the second button must not
+    // lose that.
     expect(
       screen.getByText(/is not on its own proof that it is yours to connect/i),
     ).toBeInTheDocument();
   });
 
-  it("sends the admin to the server-built install URL", async () => {
+  it("sends the admin to GitHub to sign in, not to the install URL", async () => {
     const user = userEvent.setup();
     renderRoute();
     await user.click(
       await screen.findByRole("button", {
-        name: /Install on a GitHub account/,
-      }),
-    );
-
-    await waitFor(() => expect(mockStartInstallation).toHaveBeenCalledTimes(1));
-    // The URL carries a one-time state the BACKEND minted and hashed. The page
-    // only follows it.
-    expect(mockRedirectToGithub).toHaveBeenCalledWith(
-      "https://github.com/apps/mcpjam/installations/new?state=abc",
-    );
-  });
-
-  it("sends the admin to the OAuth URL for a claim", async () => {
-    const user = userEvent.setup();
-    renderRoute();
-    await user.click(
-      await screen.findByRole("button", {
-        name: /Claim an existing installation/,
+        name: /Connect a GitHub account/,
       }),
     );
 
     await waitFor(() => expect(mockStartDirectClaim).toHaveBeenCalledTimes(1));
+    // The URL carries a one-time state the BACKEND minted and hashed. The page
+    // only follows it.
     expect(mockRedirectToGithub).toHaveBeenCalledWith(
       "https://github.com/login/oauth/authorize?client_id=x",
     );
+    // Installing is now driven from the picker, using a URL that arrives with
+    // it — this page never asks for one.
+    expect(mockStartInstallation).not.toHaveBeenCalled();
   });
 
   it("shows the backend's conflict wording verbatim, naming no other workspace", async () => {
     const conflict = Object.assign(new Error("Server Error"), {
       data: "That GitHub installation is already connected to a workspace. This is not a problem with your repositories — ask whoever set it up to disconnect it first, or install the app on a different account.",
     });
-    mockStartInstallation.mockRejectedValue(conflict);
+    mockStartDirectClaim.mockRejectedValue(conflict);
     const user = userEvent.setup();
     renderRoute();
 
     await user.click(
       await screen.findByRole("button", {
-        name: /Install on a GitHub account/,
+        name: /Connect a GitHub account/,
       }),
     );
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
@@ -1572,6 +1731,7 @@ describe("GithubChecksRoute connection status", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([]);
@@ -1666,9 +1826,251 @@ describe("GithubChecksRoute connection status", () => {
     renderRoute();
     await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
     expect(
-      await screen.findByText(/No repositories available\./)
+      await screen.findByText(/No repositories available\./),
     ).toBeInTheDocument();
     await waitFor(() => expect(connectButton()).toBeDisabled());
     expect(mockConnectVerifiedRepo).not.toHaveBeenCalled();
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WHO MAY CHANGE ANY OF THIS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Every write on this page is org-ADMIN-only server-side, while the
+// availability query it renders behind needs only MEMBER — deliberately, so a
+// member is told the integration exists rather than that the org does not.
+// A member therefore reaches this page legitimately, and used to find every
+// control live: clicking one produced `OrgAccessDeniedError`, which Convex
+// masks to `Server Error` on a production deployment. The member got a crash
+// where a refusal belonged, and the error tracker got paged for it (Sentry
+// CONVEX-24N / CONVEX-24P).
+//
+// The gate is a RENDER concern only. It is not a substitute for the backend
+// check, which stays exactly where it was.
+
+describe("GithubChecksRoute permissions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [ROW];
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
+    mockBindings.value = [binding("mcpjam")];
+    mockListInstallationRepos.mockReset();
+    mockListInstallationRepos.mockResolvedValue([]);
+  });
+
+  it("leaves every write control dead for a member, and says why", async () => {
+    mockMyRole.value = "member";
+    renderRoute();
+
+    expect(
+      await screen.findByRole("button", { name: /Connect a GitHub account/ }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Disconnect mcpjam$/ }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("switch", {
+        name: /Enable checks for mcpjam\/mcp-check-fixture/,
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", {
+        name: /Disconnect mcpjam\/mcp-check-fixture/,
+      }),
+    ).toBeDisabled();
+    // The row's suite picker is a write too — `setRepoSuite` — and is the one
+    // control on this page that had no `disabled` of its own to extend.
+    expect(
+      screen.getByRole("combobox", {
+        name: /Suite for mcpjam\/mcp-check-fixture/,
+      }),
+    ).toBeDisabled();
+    // Nothing to fill in either, when the Connect it feeds is dead.
+    expect(screen.getByRole("combobox", { name: "Repository" })).toBeDisabled();
+
+    // The greyed page has to explain itself, or it reads as broken.
+    expect(
+      screen.getByText(/only an organization owner or admin can change it/i),
+    ).toBeInTheDocument();
+  });
+
+  it.each(["admin", "owner"])("leaves them live for an %s", async (role) => {
+    mockMyRole.value = role;
+    renderRoute();
+
+    expect(
+      await screen.findByRole("button", { name: /Connect a GitHub account/ }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("switch", {
+        name: /Enable checks for mcpjam\/mcp-check-fixture/,
+      }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByText(/only an organization owner or admin can change it/i),
+    ).not.toBeInTheDocument();
+  });
+
+  // Unresolved is not "allowed". The org list settling after the page mounts
+  // would otherwise flash live controls at somebody about to be refused — and
+  // the notice must not flash either, since we do not yet know it applies.
+  it("stays closed, and silent, while the org list is still loading", async () => {
+    mockMyRole.value = "admin";
+    mockOrgsLoading.value = true;
+    renderRoute();
+
+    // Closed: the role is not known yet, so the page may not act on it.
+    expect(
+      await screen.findByRole("button", { name: /Connect a GitHub account/ }),
+    ).toBeDisabled();
+    // Silent: we do not yet know the notice applies, so it must not flash.
+    expect(
+      screen.queryByText(/only an organization owner or admin can change it/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
+it("Settings opts in only the selected repository", async () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [ROW];
+  renderRoute();
+  const toggle = screen.getByRole("switch", {
+    name: /Allow suite credentials in approved forks/,
+  });
+  expect(toggle).not.toBeChecked();
+  await userEvent.setup().click(toggle);
+  expect(mockSetRepoForkCredentials).toHaveBeenCalledWith({
+    configId: ROW._id,
+    enabled: true,
+  });
+});
+
+it("Settings asks only when several suite OAuth sources need a choice", async () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [
+    {
+      ...ROW,
+      prServerOAuth: {
+        status: "selection_required",
+        sources: [
+          {
+            serverId: "server-oauth",
+            name: "Test OAuth server",
+            authorized: true,
+          },
+          {
+            serverId: "server-other",
+            name: "Other OAuth server",
+            authorized: true,
+          },
+        ],
+      },
+    },
+  ];
+  renderRoute();
+
+  await chooseOption(
+    userEvent.setup(),
+    `Server authorization for ${ROW.repoFullName}`,
+    "Test OAuth server",
+  );
+
+  expect(mockSetRepoPrServerOAuth).toHaveBeenCalledWith({
+    configId: ROW._id,
+    sourceServerId: "server-oauth",
+  });
+});
+
+it("hides server authorization when the suite connection is ready", () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [
+    {
+      ...ROW,
+      prServerOAuth: {
+        status: "ready",
+        sourceServerId: "server-oauth",
+        sourceName: "Test OAuth server",
+        sources: [],
+      },
+    },
+  ];
+  renderRoute();
+
+  expect(screen.queryByText("Server authentication")).not.toBeInTheDocument();
+  expect(screen.queryByText("Authorize or reconnect")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("combobox", {
+      name: `Server authorization for ${ROW.repoFullName}`,
+    }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Authorize" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Reconnect" }),
+  ).not.toBeInTheDocument();
+});
+
+it("shows Authorize only when the suite OAuth connection needs it", () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [
+    {
+      ...ROW,
+      prServerOAuth: {
+        status: "authorization_required",
+        sourceServerId: "server-oauth",
+        sourceName: "Test OAuth server",
+        sources: [],
+      },
+    },
+  ];
+  renderRoute();
+
+  expect(
+    screen.getByText("Authorize Test OAuth server for PR checks."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Authorize" })).toBeInTheDocument();
+});
+
+it("shows Reconnect after runtime authorization is rejected", () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [
+    {
+      ...ROW,
+      prServerOAuth: {
+        status: "reauthorization_required",
+        sourceServerId: "server-oauth",
+        sourceName: "Test OAuth server",
+        sources: [],
+      },
+    },
+  ];
+  renderRoute();
+
+  expect(
+    screen.getByText("Reconnect Test OAuth server for PR checks."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
 });

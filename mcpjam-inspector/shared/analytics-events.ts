@@ -179,6 +179,9 @@ export const ANALYTICS_EVENTS = {
   // local_terminal_unavailable: the local terminal could not be offered
   //   {reason} — an enum, never a node-pty error string.
   computer_engine_selected: { source: "client" },
+  local_browser_consent_denied: { source: "client" },
+  local_browser_consent_gate_shown: { source: "client" },
+  local_browser_consent_granted: { source: "client" },
   local_computer_consent_denied: { source: "client" },
   local_computer_consent_gate_shown: { source: "client" },
   local_computer_consent_granted: { source: "client" },
@@ -243,6 +246,10 @@ export const ANALYTICS_EVENTS = {
   eval_suite_duplicated: { source: "client" },
   eval_suite_run_start_requests_completed: { source: "client" },
   eval_suite_server_changed: { source: "client" },
+  eval_case_run_test: { source: "client" },
+  eval_suggestion_accepted: { source: "client" },
+  eval_suggestion_dismissed: { source: "client" },
+  eval_suggestion_shown: { source: "client" },
   eval_test_case_created: { source: "client" },
   eval_test_case_deleted: { source: "client" },
   eval_test_case_duplicated: { source: "client" },
@@ -271,6 +278,12 @@ export const ANALYTICS_EVENTS = {
   host_toolbar_timezone_changed: { source: "client" },
   import_json_button_clicked: { source: "client" },
   interactive_signin_required: { source: "client" },
+  // Guest "Invite team members" nudge (sidebar CTA shown to signed-out users
+  // on hosted): shown/dismissed measure the gate's conversion funnel; the
+  // sign-up/sign-in clicks themselves reuse `sign_up_button_clicked` /
+  // `login_button_clicked` with location "invite_signup_nudge".
+  invite_signup_nudge_shown: { source: "client" },
+  invite_signup_nudge_dismissed: { source: "client" },
   logger_cleared: { source: "client" },
   logger_collapsed: { source: "client" },
   logger_copy_clicked: { source: "client" },
@@ -336,6 +349,9 @@ export const ANALYTICS_EVENTS = {
   plan_limit_sign_in_clicked: { source: "client" },
   plan_limit_buy_credits_clicked: { source: "client" },
   plan_limit_byok_clicked: { source: "client" },
+  // The swarm variant's tertiary link. `surface` on the impression says which
+  // variant was on screen, so it needs no wall_kind of its own.
+  plan_limit_explore_plans_clicked: { source: "client" },
   plan_limit_interval_selected: { source: "client" },
   plan_limit_upgrade_clicked: { source: "client" },
   plan_limit_upgrade_failed: { source: "client" },

@@ -7,10 +7,14 @@ import {
   randomBytes,
 } from "crypto";
 import { getOrCreateLocalSecret } from "../utils/local-secret-store.js";
+import { resolveWorkosApiBaseUrl } from "../services/workos-api-base.js";
 
-const WORKOS_AUTHENTICATE_URL =
-  "https://api.workos.com/user_management/authenticate";
-const WORKOS_BASE_URL = "https://api.workos.com";
+// Resolved per call, not captured at module load: a test stubs
+// `WORKOS_API_BASE_URL` long after this module is imported. Unset, both are
+// exactly the api.workos.com URLs they were before.
+const workosBaseUrl = () => resolveWorkosApiBaseUrl(process.env).baseUrl;
+const workosAuthenticateUrl = () =>
+  `${workosBaseUrl()}/user_management/authenticate`;
 const WORKOS_SESSION_COOKIE = "__Host-mcpjam_workos_session";
 const LOCAL_WORKOS_SESSION_COOKIE = "mcpjam_workos_sessions";
 const LEGACY_LOCAL_WORKOS_SESSION_COOKIE = "mcpjam_workos_session";
@@ -279,7 +283,7 @@ function getStoredSession(c: Context) {
 }
 
 async function postToWorkos(body: Record<string, unknown>) {
-  return fetch(WORKOS_AUTHENTICATE_URL, {
+  return fetch(workosAuthenticateUrl(), {
     method: "POST",
     headers: {
       Accept: "application/json, text/plain, */*",
@@ -315,7 +319,7 @@ function isTransientWorkosFailure(status: number): boolean {
 
 function redirectToWorkos(c: Context, path: string) {
   const source = new URL(c.req.url);
-  const target = new URL(path, WORKOS_BASE_URL);
+  const target = new URL(path, workosBaseUrl());
   target.search = source.search;
   return c.redirect(target.toString(), 302);
 }

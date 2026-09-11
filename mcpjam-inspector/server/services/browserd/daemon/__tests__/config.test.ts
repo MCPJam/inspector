@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  announcedFeatures,
   DEFAULT_BROWSERD_HOST,
   DEFAULT_BROWSERD_PORT,
+  DEFAULT_BROWSERD_RECORD_MAX_BYTES,
   DEFAULT_BROWSERD_USER_DATA_DIR,
   extraArgsFor,
   formatReadyLine,
@@ -30,6 +32,10 @@ describe("readBrowserdConfig", () => {
       port: DEFAULT_BROWSERD_PORT,
       host: DEFAULT_BROWSERD_HOST,
       userDataDir: DEFAULT_BROWSERD_USER_DATA_DIR,
+      // FIXED unless a deployment says otherwise: every existing opener — an
+      // eval, a swarm, a CLI run — keeps the 1024x768 session it has always
+      // had, and only a box configured for it moves off.
+      viewportPolicy: "fixed",
       headless: false,
       windowSize: undefined,
       contextMode: "persistent",
@@ -40,9 +46,64 @@ describe("readBrowserdConfig", () => {
       // 1 unless the box says otherwise. Raising it is a MEASUREMENT, not a
       // promise — see the wave's DPR gate.
       deviceScaleFactor: 1,
+      // Recordings live beside the profile, capped below the evidence pipe's
+      // own 64 MiB limit: a file past it can only be dropped at upload time,
+      // which is the one moment the evidence cannot be re-made.
+      recordDir: `${DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
+      recordMaxBytes: DEFAULT_BROWSERD_RECORD_MAX_BYTES,
+      recordingEnabled: true,
       // An inspector replica handed us a token; nothing was minted here.
       startedBy: "inspector",
     });
+  });
+
+  it("puts recordings under a user data dir the box chose", () => {
+    const c = readBrowserdConfig(
+      withToken({ MCPJAM_BROWSERD_USER_DATA_DIR: "/data/profile" }),
+    );
+    expect(c.recordDir).toBe("/data/profile/recordings");
+    expect(
+      readBrowserdConfig(
+        withToken({ MCPJAM_BROWSERD_RECORD_DIR: "/evidence" }),
+      ).recordDir,
+    ).toBe("/evidence");
+  });
+
+  it("only the exact string turns recording off", () => {
+    // A typo must not silently cost a run its evidence — the same rule every
+    // other switch here follows.
+    expect(readBrowserdConfig(withToken()).recordingEnabled).toBe(true);
+    expect(
+      readBrowserdConfig(withToken({ MCPJAM_BROWSERD_RECORD: "0" }))
+        .recordingEnabled,
+    ).toBe(false);
+    expect(
+      readBrowserdConfig(withToken({ MCPJAM_BROWSERD_RECORD: "false" }))
+        .recordingEnabled,
+    ).toBe(true);
+  });
+
+  it("never lets the size cap exceed what the evidence pipe can accept", () => {
+    // Lenient about nonsense (a mistyped variable must not cost the run its
+    // browser) and strict about the ceiling (a value past it produces a file
+    // nothing can accept).
+    expect(
+      readBrowserdConfig(
+        withToken({ MCPJAM_BROWSERD_RECORD_MAX_BYTES: "1048576" }),
+      ).recordMaxBytes,
+    ).toBe(1_048_576);
+    // `0.5` is the one that mattered: it is positive, so a `<= 0` guard let it
+    // through, and `Math.floor` then made it `0` — `-fs 0` tells ffmpeg to
+    // stop at the first byte, so a switch meant to BOUND a recording would
+    // have silently abolished it.
+    for (const raw of ["", "lots", "-5", "0", "0.5", String(1024 ** 4)]) {
+      expect(
+        readBrowserdConfig(
+          withToken({ MCPJAM_BROWSERD_RECORD_MAX_BYTES: raw }),
+        ).recordMaxBytes,
+        `raw=${raw}`,
+      ).toBe(DEFAULT_BROWSERD_RECORD_MAX_BYTES);
+    }
   });
 
   it("mints a token into a file when the box started this daemon", () => {
@@ -226,5 +287,68 @@ describe("extraArgsFor / formatReadyLine", () => {
       port: 8791,
       bootId: "boot-xyz",
     });
+  });
+});
+
+describe("announcedFeatures", () => {
+  it("announces both when kiosk is on and recording is enabled", () => {
+    expect(
+      announcedFeatures({ kiosk: true, recordingEnabled: true }, {}),
+    ).toEqual(["h264", "record"]);
+  });
+
+  it("needs kiosk for the live stream, not for a recording", () => {
+    // A pane maps clicks onto what it shows; a recording is watched afterwards
+    // and never clicked, so a desktop with a browser on it is still evidence.
+    expect(
+      announcedFeatures({ kiosk: false, recordingEnabled: true }, {}),
+    ).toEqual(["record"]);
+  });
+
+  it("turning off live video does NOT turn off recording", () => {
+    // The two switches were nested once: an operator disabling live video to
+    // exercise the JPEG fallback silently stopped every unattended run from
+    // leaving evidence. Verified by reverting: nesting them again fails here.
+    expect(
+      announcedFeatures(
+        { kiosk: true, recordingEnabled: true },
+        { MCPJAM_BROWSER_VIDEO: "false" },
+      ),
+    ).toEqual(["record"]);
+  });
+
+  it("only the exact string turns live video off", () => {
+    expect(
+      announcedFeatures(
+        { kiosk: true, recordingEnabled: false },
+        { MCPJAM_BROWSER_VIDEO: "0" },
+      ),
+    ).toEqual(["h264"]);
+  });
+
+  it("announces nothing when both are off", () => {
+    expect(
+      announcedFeatures(
+        { kiosk: false, recordingEnabled: false },
+        { MCPJAM_BROWSER_VIDEO: "false" },
+      ),
+    ).toEqual([]);
+  });
+
+  it("reads the responsive opt-in, and treats anything else as fixed", () => {
+    // Absent and misspelt are indistinguishable to a reader, and both must
+    // land on the conservative side — the session that never changes size.
+    expect(
+      readBrowserdConfig({
+        MCPJAM_BROWSERD_TOKEN: "tok",
+        MCPJAM_BROWSERD_VIEWPORT_POLICY: "followPane",
+      }).viewportPolicy,
+    ).toBe("followPane");
+    expect(
+      readBrowserdConfig({
+        MCPJAM_BROWSERD_TOKEN: "tok",
+        MCPJAM_BROWSERD_VIEWPORT_POLICY: "followpane",
+      }).viewportPolicy,
+    ).toBe("fixed");
   });
 });

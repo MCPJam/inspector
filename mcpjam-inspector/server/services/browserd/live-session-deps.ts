@@ -44,11 +44,15 @@ import {
 import {
   ensureBrowserSession,
   type BrowserSessionDeps,
+  type ComputerHostedBrowserSessionHandle,
   type HostedBrowserSessionHandle,
+  type SandboxHostedBrowserSessionHandle,
   type EnsureBrowserSessionArgs,
   type SessionSandbox,
 } from "./browser-session.js";
+import { BrowserSessionService } from "./session-service.js";
 import { MCPJAM_BROWSERD_BUNDLE_BASE64 } from "./dist/mcpjam-browserd-bundle.generated.js";
+import { startHostedRecording } from "./hosted-recording.js";
 
 /**
  * The daemon bundle bytes. Decoded from the const the bundler embeds INTO the
@@ -100,6 +104,14 @@ export interface ConnectedSandboxLike {
      * yourself.
      */
     read?(path: string): Promise<string | Uint8Array>;
+    /**
+     * The BYTES overload (SDK 2.39). Declared as a second signature rather
+     * than folded into the one above so a caller asking for bytes cannot be
+     * handed a string it would then have to guess the encoding of — a
+     * recording read as UTF-8 is a corrupt file, and nothing downstream can
+     * tell that apart from a corrupt recording.
+     */
+    read?(path: string, options: { format: "bytes" }): Promise<Uint8Array>;
   };
   getHost(port: number): string;
 }
@@ -164,6 +176,38 @@ export async function readTextFileFrom(
     // every one of them means the same thing to the caller.
     return undefined;
   }
+}
+
+/**
+ * Read a BINARY file out of the sandbox — a recording, today.
+ *
+ * THROWS, unlike `readTextFileFrom` above, and the difference is what the
+ * caller does with the answer. A missing token file means "boot a daemon
+ * yourself", a fine outcome the caller handles. A recording that cannot be
+ * read is a run that has lost its evidence, and swallowing that into
+ * `undefined` would make it indistinguishable from a run that was never
+ * recorded — so it is raised, and the ONE caller decides (it logs, returns
+ * null, and releases the box regardless).
+ *
+ * `format: "bytes"` is not optional-in-practice: without it the SDK decodes as
+ * text, and an MP4 through a UTF-8 decoder is a corrupt file that still looks
+ * like a successful read.
+ */
+export async function readBinaryFileFrom(
+  sandbox: ConnectedSandboxLike,
+  path: string,
+): Promise<Uint8Array> {
+  if (!sandbox.files.read) {
+    throw new Error("sandbox files API cannot read");
+  }
+  const raw = await sandbox.files.read(path, { format: "bytes" });
+  if (typeof raw === "string") {
+    // An older SDK that ignored the format. Refused rather than re-encoded:
+    // guessing an encoding for video bytes produces a plausible-looking file
+    // that will not play, which is worse than no file at all.
+    throw new Error("sandbox files API returned text for a binary read");
+  }
+  return raw;
 }
 
 /** Write `content` at `path`, creating the parent directory idempotently. */
@@ -301,6 +345,7 @@ export function connectSessionSandbox(
   return {
     writeBundle: (path, content) => writeBundleInto(sandbox, path, content),
     readTextFile: (path) => readTextFileFrom(sandbox, path),
+    readBinaryFile: (path) => readBinaryFileFrom(sandbox, path),
     browserd: adaptSandbox(sandbox),
     killBrowserd: () => killBrowserdIn(sandbox),
     ensureStream: () => ensureStreamOn(sandbox),
@@ -325,6 +370,7 @@ async function connectDesktopSandbox(
 /** The production deps for `ensureBrowserSession`. */
 export function liveBrowserSessionDeps(): BrowserSessionDeps {
   return {
+    sessionService: new BrowserSessionService(),
     reserveDesktop: async ({ bearer, projectId, signal }) => {
       const reserved = await ensureComputerReady({
         bearer,
@@ -393,8 +439,48 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
  * local handle that cannot arrive — and cost the WebMCP inspector, which needs
  * the hosted fields, the type that says so.
  */
+// OVERLOADED, so the three computer callers (the WebMCP inspector route, the
+// Browser Panel, the hosted session resolver) keep the COMPUTER type and stay
+// unedited: they read `computerId` and `streamUrl` straight off the handle,
+// and none of them should have to narrow a union to say "yes, the member's own
+// machine is the member's own machine".
+export function ensureLiveBrowserSession(
+  args: EnsureBrowserSessionArgs & { target?: { kind: "computer" } },
+): Promise<ComputerHostedBrowserSessionHandle>;
+export function ensureLiveBrowserSession(
+  args: EnsureBrowserSessionArgs & {
+    target: {
+      kind: "sandbox";
+      sandboxRowId: string;
+      sandboxId: string;
+      watched?: boolean;
+    };
+  },
+): Promise<SandboxHostedBrowserSessionHandle>;
 export function ensureLiveBrowserSession(
   args: EnsureBrowserSessionArgs,
 ): Promise<HostedBrowserSessionHandle> {
-  return ensureBrowserSession(liveBrowserSessionDeps(), args);
+  // Dispatched rather than cast: the two overloads above are the checked
+  // surface, and narrowing here is what makes the implementation satisfy both
+  // without an `as` that a later edit could quietly widen.
+  const { target, ...rest } = args;
+  if (target?.kind === "sandbox") {
+    return ensureBrowserSession(liveBrowserSessionDeps(), {
+      ...rest,
+      target,
+    }).then(async (handle) => {
+      // Recording is explicit: conversation-owned sandbox browsers are watched
+      // and must not inherit an eval's ffmpeg capture merely by sharing a target type.
+      if (target.record === true)
+        await startHostedRecording(handle, {
+          connect: async (sandboxId) =>
+            connectSessionSandbox(await connectDesktopSandbox(sandboxId)),
+        });
+      return handle;
+    });
+  }
+  return ensureBrowserSession(liveBrowserSessionDeps(), {
+    ...rest,
+    ...(target ? { target } : {}),
+  });
 }

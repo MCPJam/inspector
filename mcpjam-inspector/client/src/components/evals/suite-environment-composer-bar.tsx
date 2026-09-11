@@ -376,6 +376,7 @@ function EnvironmentModeBar({
           value={state}
           onChange={(next) => void commit(next)}
           maxTargets={MAX_SUITE_ENVIRONMENTS}
+          environmentsVocabulary="client"
           slots={
             omitComputers
               ? EVALS_COMPOSER_SLOTS.filter((slot) => slot !== "computers")
@@ -401,16 +402,16 @@ function EnvironmentModeBar({
           data-testid="suite-env-unresolved-hint"
         >
           {unresolvedCount === 1
-            ? "One attached environment is archived or unavailable."
-            : `${unresolvedCount} attached environments are archived or unavailable.`}{" "}
-          Detach it from the Environments pill before changing other slots.
+            ? "One attached client is archived or unavailable."
+            : `${unresolvedCount} attached clients are archived or unavailable.`}{" "}
+          Detach it from the Clients pill before changing other slots.
         </p>
       ) : collapsesByHost ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid="suite-env-attachments-collapse-hint"
         >
-          This suite&apos;s environments don&apos;t fit one editable setup —
+          This suite&apos;s clients don&apos;t fit one editable setup —
           they differ by client, server group, skills, model or image, or pin
           plugin versions — so this strip can&apos;t change them without changing
           what some of them run. Edit them individually on the Environments

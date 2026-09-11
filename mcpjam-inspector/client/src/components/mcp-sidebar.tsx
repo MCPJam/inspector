@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Hammer,
   House,
@@ -47,6 +47,8 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
+import { InviteTeamSignUpDialog } from "@/components/auth/InviteTeamSignUpDialog";
+import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { SidebarCredits } from "@/components/sidebar/sidebar-credits";
@@ -124,7 +126,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "project-environments-enabled",
   "unified-sessions-enabled",
   "evaluate-enabled",
-  "webmcp-inspector-enabled",
+  WEBMCP_INSPECTOR_FEATURE_FLAG,
 ] as const;
 
 /**
@@ -273,7 +275,7 @@ export const navigationSections: NavSection[] = [
         // is dogfooded — the point of a second tab is being able to compare
         // them. When the redesign wins, this item takes the "Evaluate" name
         // and the one above is deleted.
-        title: "Evaluate (New)",
+        title: "Ding Dong",
         url: "/evaluate",
         icon: FlaskConical,
         featureFlag: "evaluate-enabled",
@@ -359,7 +361,7 @@ export const navigationSections: NavSection[] = [
         title: "WebMCP",
         url: "/webmcp",
         icon: Globe,
-        featureFlag: "webmcp-inspector-enabled",
+        featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
       },
     ],
   },
@@ -533,17 +535,27 @@ export function MCPSidebar({
     HOSTED_MODE && !user && (isWorkOsAuthLoading || isConvexAuthLoading);
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const { status: updateStatus, restartAndInstall } = useUpdateNotification();
+  const {
+    status: updateStatus,
+    restartRequested,
+    restartAndInstall,
+  } = useUpdateNotification();
   const showUpdateButton =
     updateStatus.kind === "pending" || updateStatus.kind === "downloaded";
+  // Two ways to be mid-install, and both must disable the button: waiting on a
+  // download that was asked to install when it finishes, and waiting on the
+  // app to quit for one already downloaded. The second is the one a repeat
+  // click used to get through.
   const updateInstalling =
-    updateStatus.kind === "pending" && updateStatus.installRequested;
+    restartRequested ||
+    (updateStatus.kind === "pending" && updateStatus.installRequested);
   const handleUpdateClick = () => {
     if (!updateInstalling) {
       restartAndInstall();
     }
   };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
+  const [showInviteSignUpNudge, setShowInviteSignUpNudge] = useState(false);
   const learnMore = useLearnMore();
   const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
@@ -560,7 +572,22 @@ export function MCPSidebar({
       ),
     );
   }, [activeProject?.organizationId, projects]);
-  const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
+  const canOpenInviteDialog = isAuthenticated && !!user && !!activeProject;
+  // Guests get the CTA too (hosted only — a local/self-hosted install has no
+  // WorkOS to sign up through). The click opens a sign-up nudge instead of the
+  // share dialog, and the nudge's marker reopens it after the round trip.
+  // Hidden while auth resolves so signed-in users never see a guest control.
+  const showGuestInviteCta = HOSTED_MODE && !user && !authResolving;
+  const shouldShowInviteCta = canOpenInviteDialog || showGuestInviteCta;
+  // Reopen the invite dialog for a guest who left through the sign-up nudge:
+  // the marker outlives the WorkOS page reload in sessionStorage, and this
+  // effect holds off consuming it until everything the dialog needs (authed
+  // user + active project) has actually resolved.
+  useEffect(() => {
+    if (!canOpenInviteDialog) return;
+    if (!consumePendingInviteDialog()) return;
+    setShowInviteDialog(true);
+  }, [canOpenInviteDialog]);
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
     { enabled: billingUiEnabled && !!activeProject?.organizationId },
@@ -607,11 +634,9 @@ export function MCPSidebar({
       // Project-scoped like the rows above: every screen behind it needs a
       // project to resolve suites against.
       "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
-      // Not auth-scoped, unlike the rows above: the browser and the page run
-      // on this machine, so a signed-out local user has everything the surface
-      // needs. It is hostedBlocked, so hosted builds drop it before this map
-      // is consulted.
-      "webmcp-inspector-enabled": webmcpInspectorEnabled === true,
+      // Deployment-specific Browser rollout; local guests are eligible too.
+      // Hosted execution retains its server-side sign-in/entitlement checks.
+      [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
     }),
     [
       learningEnabled,
@@ -837,7 +862,11 @@ export function MCPSidebar({
               <SidebarMenuItem>
                 <SidebarMenuButton
                   tooltip="Invite team members"
-                  onClick={() => setShowInviteDialog(true)}
+                  onClick={() =>
+                    showGuestInviteCta
+                      ? setShowInviteSignUpNudge(true)
+                      : setShowInviteDialog(true)
+                  }
                 >
                   <UserPlus className="h-4 w-4" />
                   <span className="group-data-[collapsible=icon]:hidden">
@@ -847,7 +876,7 @@ export function MCPSidebar({
               </SidebarMenuItem>
             </SidebarMenu>
           ) : null}
-          {shouldShowInviteCta && trialActive && trialBilling?.trialEndsAt ? (
+          {canOpenInviteDialog && trialActive && trialBilling?.trialEndsAt ? (
             <SidebarTrialCountdown
               trialEndsAt={trialBilling.trialEndsAt}
               trialStartedAt={trialBilling.trialStartedAt}
@@ -869,7 +898,7 @@ export function MCPSidebar({
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
-      {shouldShowInviteCta && user && activeProject ? (
+      {canOpenInviteDialog && user && activeProject ? (
         <ShareProjectDialog
           isOpen={showInviteDialog}
           onClose={() => setShowInviteDialog(false)}
@@ -883,6 +912,12 @@ export function MCPSidebar({
           onProjectShared={onProjectShared}
           availableProjects={inviteableProjects}
           activeProjectId={activeProjectId}
+        />
+      ) : null}
+      {showGuestInviteCta ? (
+        <InviteTeamSignUpDialog
+          isOpen={showInviteSignUpNudge}
+          onClose={() => setShowInviteSignUpNudge(false)}
         />
       ) : null}
       {learnMoreEnabled && (

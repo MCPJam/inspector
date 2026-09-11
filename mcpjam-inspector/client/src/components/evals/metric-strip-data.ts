@@ -79,16 +79,16 @@ function metricPointFromCellTrend(
 ): MetricStripPoint {
   const hasCounts = point.total != null && point.total > 0;
   const passed = hasCounts
-    ? (point.passed ?? 0)
+    ? point.passed ?? 0
     : point.result === "passed"
-      ? 1
-      : 0;
+    ? 1
+    : 0;
   const failed = hasCounts
-    ? (point.failed ?? 0)
+    ? point.failed ?? 0
     : point.result === "failed"
-      ? 1
-      : 0;
-  const total = hasCounts ? (point.total ?? 1) : 1;
+    ? 1
+    : 0;
+  const total = hasCounts ? point.total ?? 1 : 1;
   return {
     passRate: hasCounts
       ? Math.round((passed / total) * 100)
@@ -277,6 +277,7 @@ function measuredRuns(runs: EvalSuiteRun[]): EvalSuiteRun[] {
 export function buildSuiteMetricStripData(
   allRuns: EvalSuiteRun[],
   allIterations: EvalIteration[],
+  labelRun?: (run: EvalSuiteRun) => string,
 ): MetricStripData | null {
   const runs = measuredRuns(allRuns);
   if (runs.length === 0) return null;
@@ -291,9 +292,16 @@ export function buildSuiteMetricStripData(
 
   const chronological = [...runs].sort((a, b) => a.createdAt - b.createdAt);
   const series: MetricStripPoint[] = [];
+  const runLabels: string[] = [];
   for (const run of chronological) {
     const its = itsByRun.get(run._id);
     if (!its || its.length === 0) continue;
+    const runName = labelRun
+      ? labelRun(run)
+      : run.runNumber
+      ? `#${run.runNumber}`
+      : `Run ${run._id.slice(0, 8)}`;
+    runLabels.push(`${runName} · ${new Date(run.createdAt).toLocaleString()}`);
     const summary = computeIterationSummary(its);
     const total = run.summary?.total ?? summary.runs;
     const passed = run.summary?.passed ?? summary.passed;
@@ -307,7 +315,8 @@ export function buildSuiteMetricStripData(
     );
   }
 
-  return finalizeMetricStripData(series);
+  const data = finalizeMetricStripData(series);
+  return data ? { ...data, runLabels } : null;
 }
 
 /**

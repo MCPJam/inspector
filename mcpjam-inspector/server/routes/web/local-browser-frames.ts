@@ -1,3 +1,8 @@
+import { createBrowserConsentLifetime } from "../../services/browserd/local/consent-lifetime.js";
+import {
+  jpegFrameLimit,
+  SHARP_STREAM_FEATURE,
+} from "@/shared/browser-viewport-policy";
 /**
  * The live picture of the local agent browser — `/api/web/computers/local-browser/frames`.
  *
@@ -24,7 +29,7 @@ import type { MiddlewareHandler } from "hono";
 import type { UpgradeWebSocket, WSContext } from "hono/ws";
 import { logger } from "../../utils/logger.js";
 import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
-import { getLocalConsentFingerprint } from "../../utils/computers/local-consent.js";
+import { getBrowserConsentFingerprint } from "../../utils/computers/browser-consent.js";
 import { consumeLocalNonce } from "../../utils/computers/local-terminal-auth.js";
 import {
   findLocalBrowserSession,
@@ -110,6 +115,7 @@ export function createLocalBrowserFramesWsHandler(
     const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
     const nonce = protocolHeader.split(",")[0]?.trim() ?? "";
     const bootId = c.req.query("bootId") ?? "";
+    const tabId = c.req.query("tabId") || undefined;
     const holder = c.req.query("holder") ?? undefined;
     /**
      * The daemon's own bytes instead of a JSON envelope.
@@ -120,6 +126,7 @@ export function createLocalBrowserFramesWsHandler(
      * rather than only on staging.
      */
     const binaryWire = c.req.query("wire") === "binary";
+    const sharp = c.req.query("sharp") === "1";
     const origin = c.req.header("Origin");
 
     // Everything resolvable before the socket opens is resolved here; a
@@ -139,6 +146,9 @@ export function createLocalBrowserFramesWsHandler(
      * where the session is resolved.
      */
     let nonceProject: string | undefined;
+    let fingerprint: string | undefined;
+    let lifetime:
+      Awaited<ReturnType<typeof createBrowserConsentLifetime>> | undefined;
 
     if (shuttingDown) {
       rejectCode = CLOSE_UNAVAILABLE;
@@ -154,12 +164,13 @@ export function createLocalBrowserFramesWsHandler(
         rejectCode = CLOSE_UNAUTHORIZED;
         rejectMessage = "Invalid or expired browser token.";
       } else if (
-        claim.consentFingerprint !== (await getLocalConsentFingerprint())
+        claim.consentFingerprint !== (await getBrowserConsentFingerprint())
       ) {
         rejectCode = CLOSE_UNAUTHORIZED;
         rejectMessage = "Local computer consent changed; reconnect.";
       } else {
         nonceProject = claim.projectId;
+        fingerprint = claim.consentFingerprint;
       }
     }
 
@@ -180,6 +191,7 @@ export function createLocalBrowserFramesWsHandler(
     const cleanups: Array<() => void> = [];
     const detach = () => {
       closed = true;
+      lifetime?.dispose();
       for (const stop of cleanups.splice(0)) {
         try {
           stop();
@@ -214,6 +226,19 @@ export function createLocalBrowserFramesWsHandler(
           ws.close(CLOSE_UNAVAILABLE, "The inspector is shutting down.");
           return;
         }
+        try {
+          lifetime = await createBrowserConsentLifetime(
+            fingerprint,
+            getBrowserConsentFingerprint,
+          );
+          lifetime.onRevoked(() => {
+            ws.close(CLOSE_UNAUTHORIZED, "Browser permission changed.");
+            detach();
+          });
+        } catch {
+          ws.close(CLOSE_UNAUTHORIZED, "Browser permission changed.");
+          return;
+        }
         const openedAt = killGeneration;
         const session = findLocalBrowserSession(bootId);
         if (!session) {
@@ -232,6 +257,8 @@ export function createLocalBrowserFramesWsHandler(
         }
 
         const subscription = await session.handler.subscribeFrames({
+          maxFrameBytes: jpegFrameLimit(sharp),
+          tabId,
           ...(holder ? { holder } : {}),
           onRevoked: (reason) => {
             // The lease moved to somebody else while this pane was watching.
@@ -245,7 +272,12 @@ export function createLocalBrowserFramesWsHandler(
             }
             detach();
           },
-          listener: (frame: ViewportFrame) => {
+          listener: async (frame: ViewportFrame) => {
+            try {
+              await lifetime?.assertActive();
+            } catch {
+              return;
+            }
             // JSON rather than the binary header the WebMCP stream uses. This
             // socket is loopback on the user's own machine, where the base64
             // overhead costs a memcpy and buys one obvious wire format; the
@@ -270,7 +302,9 @@ export function createLocalBrowserFramesWsHandler(
                   jpeg: new Uint8Array(Buffer.from(frame.data, "base64")),
                 }),
               );
-              stats?.offer(bytes.byteLength, () => ws.send(bytes));
+              stats?.offerJpeg(bytes.byteLength, () => {
+                if (!closed && lifetime?.isActive()) ws.send(bytes);
+              });
               return;
             }
             // `relayTs` even on loopback, where it equals `ts` to within a
@@ -278,7 +312,9 @@ export function createLocalBrowserFramesWsHandler(
             // frame to know which field it may subtract from its own clock.
             const stamped = { ...frame, relayTs: Date.now() };
             const payload = JSON.stringify({ type: "frame", frame: stamped });
-            stats?.offer(payload.length, () => ws.send(payload));
+            stats?.offerJpeg(payload.length, () => {
+              if (!closed && lifetime?.isActive()) ws.send(payload);
+            });
           },
         });
 
@@ -300,6 +336,13 @@ export function createLocalBrowserFramesWsHandler(
         // last window) — the last of which `shuttingDown` cannot see, which is
         // what the generation is for. Registering now would leave this socket
         // attached after the cleanup that was meant to take it.
+        try {
+          await lifetime?.assertActive();
+        } catch {
+          subscription.unsubscribe();
+          detach();
+          return;
+        }
         if (closed || shuttingDown || killGeneration !== openedAt) {
           subscription.unsubscribe();
           if (!closed) ws.close(CLOSE_UNAVAILABLE, "closed");
@@ -325,11 +368,27 @@ export function createLocalBrowserFramesWsHandler(
           if (closed || !subscription.ok) return;
           try {
             const counters = subscription.counters();
+            // The page-tool change signal, synthesized for the same reason the
+            // drop counters are: in-process there is no heartbeat to ride, so
+            // without this the Tools pane would be live on the hosted engine
+            // and permanently stale on the one a developer debugs against.
+            const webmcp = session.handler.webmcpSnapshot?.();
             stats?.mergeDaemon({
+              jpeg: counters.jpeg,
               framesIn: counters.framesIn,
               framesOut: counters.framesOut,
               bytesOut: counters.bytesOut,
               dropped: counters.dropped,
+              ...(webmcp
+                ? {
+                    webmcp: {
+                      revision: webmcp.revision,
+                      hash: webmcp.hash,
+                      count: webmcp.count,
+                      ...(webmcp.url ? { url: webmcp.url } : {}),
+                    },
+                  }
+                : {}),
             });
           } catch {
             // Telemetry. A subscription that cannot answer is not a reason to
@@ -342,6 +401,12 @@ export function createLocalBrowserFramesWsHandler(
 
         input = createRelayInputForwarder({
           dispatch: async ({ tabId, events }) => {
+            try {
+              await lifetime?.assertActive();
+            } catch {
+              return { ok: false, refused: "no_browser_session" };
+            }
+            if (closed) return { ok: false, refused: "no_browser_session" };
             // Resolved per batch rather than captured: the browser can be
             // relaunched under a live pane, and the handle this socket opened
             // with would then dispatch into a session that is gone.
@@ -382,7 +447,7 @@ export function createLocalBrowserFramesWsHandler(
           ws.send(
             JSON.stringify({
               type: "hello",
-              features: ["input"],
+              features: ["input", ...(sharp ? [SHARP_STREAM_FEATURE] : [])],
               codecs: ["jpeg"],
               wire: binaryWire ? "binary" : "json",
             }),
@@ -395,7 +460,12 @@ export function createLocalBrowserFramesWsHandler(
         // clock — a CSS spinner would keep a browser alive forever.
         touchLocalBrowserSession(session.handle);
       },
-      onMessage(event, ws: WSContext) {
+      async onMessage(event, ws: WSContext) {
+        try {
+          await lifetime?.assertActive();
+        } catch {
+          return;
+        }
         // The only inbound message is a heartbeat, sent while the tab is
         // visible. It is what tells us somebody is still there.
         try {

@@ -7,6 +7,10 @@ import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
+import {
+  useBrowserTools,
+  type BrowserToolsState,
+} from "@/hooks/useBrowserTools";
 import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { EnvironmentToolsPane } from "./panes/EnvironmentToolsPane";
@@ -127,7 +131,9 @@ function SessionsBody() {
       refreshSignal={bridge.refreshSignal}
       onSelectThread={bridge.onSelectThread}
       onPrefetchThread={bridge.onPrefetchThread}
-      onNewChat={bridge.onNewChat}
+      onNewChat={(options) => {
+        void bridge.onNewChat(options);
+      }}
       beforeResetChatAfterArchiveAll={bridge.beforeResetChatAfterArchiveAll}
       onArchiveAllComplete={bridge.onArchiveAllComplete}
       onSessionAction={bridge.onSessionAction}
@@ -143,6 +149,16 @@ function ToolsBody({
   projectId: string | null;
 }) {
   const state = usePlaygroundStateContext();
+  // The agent browser the previewed host attaches, if any: the six `browser_*`
+  // tools plus whatever the page it has open offers. Resolved HERE, beside the
+  // harness built-ins, and fed into both panes below for the same reason they
+  // are — the zero-server pane is exactly where a browser-only host lands, and
+  // that is the case where the panel used to say "No server connected yet"
+  // about a host driving a real Chromium.
+  const browserTools = useBrowserTools({
+    projectId,
+    hostId: previewedHostId,
+  });
   // When the previewed host runs a harness (e.g. Claude Code), surface its
   // native built-in tools so the panel isn't empty/tool-less. Resolved once
   // here and fed into BOTH the multi-server pane and the zero-server fallback.
@@ -186,6 +202,7 @@ function ToolsBody({
         activeServerNames={state.activeServerNames}
         builtinTools={harnessBuiltinTools}
         builtinToolsRunLocally={builtinToolsRunLocally}
+        browserTools={browserTools}
       />
     );
   }
@@ -196,6 +213,7 @@ function ToolsBody({
     <ZeroServerToolsBody
       builtinTools={harnessBuiltinTools}
       builtinToolsRunLocally={builtinToolsRunLocally}
+      browserTools={browserTools}
     />
   );
 }
@@ -210,9 +228,11 @@ function ToolsBody({
 function ZeroServerToolsBody({
   builtinTools,
   builtinToolsRunLocally,
+  browserTools,
 }: {
   builtinTools: HarnessBuiltinToolInfo[];
   builtinToolsRunLocally: boolean;
+  browserTools: BrowserToolsState;
 }) {
   const state = usePlaygroundStateContext();
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
@@ -241,6 +261,7 @@ function ZeroServerToolsBody({
         showLogger={false}
         builtinTools={builtinTools}
         builtinToolsRunLocally={builtinToolsRunLocally}
+        browserTools={browserTools}
         hasConnectedServer={false}
         // The Evals embedded chat provides no connect handler; there the
         // button keeps its Servers navigation.

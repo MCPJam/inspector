@@ -128,11 +128,7 @@ export function useSuiteSettingsCommit() {
                 : {}),
             } as never)) as { revisionNumber?: number | null } | null;
             const revisionNumber = result?.revisionNumber ?? null;
-            toast.success(
-              revisionNumber === null
-                ? "Settings saved"
-                : `Settings saved · r${revisionNumber}`,
-            );
+            toast.success("Settings saved");
             return { status: "saved", revisionNumber, droppedKeys: [] };
           } catch (error) {
             if (readConvexErrorCode(error) === EVAL_SUITE_REVISION_CONFLICT) {

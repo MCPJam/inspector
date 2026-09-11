@@ -21,7 +21,10 @@ import {
   checkSeverity,
   type Predicate,
 } from "@mcpjam/sdk/predicates";
-import { formatCriterion, PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
+import {
+  formatCriterion,
+  PREDICATE_KIND_LABELS,
+} from "@/shared/predicate-kinds";
 import {
   STAGE_CHIP_TONE_CLASS,
   type StageCardView,
@@ -38,7 +41,57 @@ import {
 } from "./suite-grading-model";
 
 /** Kinds the library may advertise as new. Empty until a later release. */
-export const NEW_SCORER_KINDS: readonly PredicateKind[] = [];
+/**
+ * Kinds a "New" chip marks in the scorer library.
+ *
+ * Not a changelog — the chip earns its place only while a kind is new enough
+ * that an author who knows the library would not expect it. Prune it.
+ */
+export const NEW_SCORER_KINDS: readonly PredicateKind[] = ["noEndingQuestion"];
+
+/**
+ * The kinds every deployment has accepted since before `scorers.predicateKinds`
+ * existed.
+ *
+ * The fallback when a backend does not advertise its accepted set: offering a
+ * kind an older validator rejects turns "Add scorer" into a save that fails,
+ * and offering one an older RUNNER cannot evaluate is worse — it fails closed
+ * as "unknown predicate type" on every trial of the run.
+ *
+ * Frozen by definition. New kinds are advertised, never added here.
+ */
+export const LEGACY_PREDICATE_KINDS: readonly PredicateKind[] = [
+  "toolCalledWith",
+  "toolCalledAtLeastOnce",
+  "toolNeverCalled",
+  "firstToolWas",
+  "responseContains",
+  "responseMatches",
+  "noToolErrors",
+  "finalAssistantMessageNonEmpty",
+  "tokenBudgetUnder",
+  "turnCountUnder",
+  "widgetRendered",
+  "widgetRenderLatencyUnder",
+  "widgetNoConsoleErrors",
+];
+
+/**
+ * The kinds to offer, given what the backend said it accepts.
+ *
+ * `undefined` (an older deployment, or capabilities that failed to load) ⇒ the
+ * legacy set. A kind the client does not know is dropped: advertising it does
+ * not teach this build how to author it.
+ */
+export function authorablePredicateKinds(
+  advertised: readonly string[] | undefined,
+): readonly PredicateKind[] {
+  if (!advertised) return LEGACY_PREDICATE_KINDS;
+  const accepted = new Set(advertised);
+  return (PREDICATE_KINDS as readonly PredicateKind[]).filter((kind) =>
+    accepted.has(kind),
+  );
+}
 
 export type ScorerUiRole = "gate" | "warn" | "report";
 
@@ -48,15 +101,17 @@ export const ROLE_LEGEND: Record<
 > = {
   gate: {
     label: "Gate",
-    meaning: "A miss fails the trial.",
+    meaning: "If this check fails, the iteration fails.",
   },
   warn: {
     label: "Warn",
-    meaning: "A miss is highlighted and does not fail the trial.",
+    meaning:
+      "If this check fails, a warning is shown without failing the iteration.",
   },
   report: {
     label: "Report",
-    meaning: "Recorded beside the verdict and never changes it.",
+    meaning:
+      "Records the result for reference without changing the iteration verdict.",
   },
 };
 
@@ -112,11 +167,7 @@ export function withGoalCompletionRole(
 }
 
 export type ScorerLibraryCategoryId =
-  | "selection"
-  | "call"
-  | "userValue"
-  | "budget"
-  | "response";
+  "selection" | "call" | "userValue" | "budget" | "response";
 
 export const SCORER_LIBRARY_CATEGORY_LABELS: Record<
   ScorerLibraryCategoryId,
@@ -168,8 +219,26 @@ export type ScorerLibraryCategory = {
  * person to pick from nothing. Categories are listed only when they have
  * at least one kind.
  */
+/**
+ * Kinds no surface offers unless it asks for them by name.
+ *
+ * `onlyToolsCalled` generalizes the tool-call matcher's exclusivity option and
+ * the case-level negative flag into one check. Both of those still exist and
+ * still work, so offering this beside them on the suite settings page or the
+ * pre-spine case page would give a reader two controls for one claim with no
+ * way to tell which wins. It is offered only where it REPLACES them — the
+ * Evaluate spine, via {@link spineLibraryKinds}.
+ *
+ * The kind is readable and editable everywhere regardless; this governs where
+ * it can be ADDED.
+ */
+export const LIBRARY_OPT_IN_KINDS: ReadonlySet<PredicateKind> =
+  new Set<PredicateKind>(["onlyToolsCalled"]);
+
 export function scorerLibraryCategories(
-  kinds: readonly PredicateKind[] = PREDICATE_KINDS,
+  kinds: readonly PredicateKind[] = PREDICATE_KINDS.filter(
+    (kind) => !LIBRARY_OPT_IN_KINDS.has(kind),
+  ),
 ): ScorerLibraryCategory[] {
   const buckets: Record<ScorerLibraryCategoryId, PredicateKind[]> = {
     selection: [],
@@ -190,11 +259,7 @@ export function scorerLibraryCategories(
   );
 }
 
-export type ScorerTableRowKind =
-  | "observed"
-  | "match"
-  | "predicate"
-  | "judge";
+export type ScorerTableRowKind = "observed" | "match" | "predicate" | "judge";
 
 export type ScorerTableRow = {
   id: string;
@@ -267,21 +332,45 @@ function predicateKindLabel(predicate: Predicate): string {
   );
 }
 
+/**
+ * The number the Threshold cell shows for a ceiling-shaped check.
+ *
+ * `"1"` is the fixed pass for everything else: a check either holds or it does
+ * not, and showing "1" says so without pretending there is a knob.
+ */
 function budgetThreshold(predicate: Predicate): string {
   if (predicate.type === "tokenBudgetUnder") return String(predicate.tokens);
   if (predicate.type === "turnCountUnder") return String(predicate.turns);
+  if (predicate.type === "toolLatencyUnder") return String(predicate.ms);
+  if (predicate.type === "toolResultSizeUnder")
+    return String(predicate.maxBytes);
+  if (predicate.type === "toolCallCountUnder") return String(predicate.count);
   return "1";
+}
+
+/**
+ * True when the row's verdict turns on a number the author set.
+ *
+ * NOT the same question as the Budgets presentation GROUP. `toolLatencyUnder`
+ * and `toolResultSizeUnder` are ceilings, so their Threshold cell shows the
+ * ceiling — but they are filed at `response` and belong under Response on the
+ * page, where an author reads them next to the other facts about what the
+ * server answered with. Conflating the two would move them into Budgets.
+ */
+function hasAuthoredThreshold(predicate: Predicate): boolean {
+  return (
+    predicate.type === "tokenBudgetUnder" ||
+    predicate.type === "turnCountUnder" ||
+    predicate.type === "toolLatencyUnder" ||
+    predicate.type === "toolResultSizeUnder" ||
+    predicate.type === "toolCallCountUnder"
+  );
 }
 
 function isBudgetRow(row: GraderRow, predicates: Predicate[]): boolean {
   if (row.predicateIndex === undefined) return false;
   const predicate = predicates[row.predicateIndex];
-  return (
-    predicate !== undefined &&
-    GRADER_PRESENTATION_GROUP[
-      predicate.type as keyof typeof GRADER_PRESENTATION_GROUP
-    ] === "budget"
-  );
+  return predicate !== undefined && hasAuthoredThreshold(predicate);
 }
 
 function observedRow(stage: UserValueStage): ScorerTableRow {
@@ -451,12 +540,7 @@ export function buildScorerTable(input: {
     ordinal: String(index + 1).padStart(2, "0"),
     label: USER_VALUE_STAGE_LABELS[stage],
     question: USER_VALUE_STAGE_QUESTIONS[stage],
-    rows: rowsForStage(
-      stage,
-      input.model,
-      input.predicates,
-      input.judgeConfig,
-    ),
+    rows: rowsForStage(stage, input.model, input.predicates, input.judgeConfig),
   }));
   const states = stageConfigStates(input.model, judgeMode(input.judgeConfig));
   const cards = states.map((state, index) => configCard(state, index));

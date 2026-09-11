@@ -51,10 +51,23 @@ import {
   type PredicateScope,
 } from "@mcpjam/sdk/predicates";
 
-/** Stable id of the hosted tool-call matcher projection. */
-export const HOSTED_TOOL_MATCH_SCORER_ID = "toolCalls:match";
-/** Stable id of the hosted advisory judge projection. */
-export const HOSTED_JUDGE_SCORER_ID = "judge:goalCompletion";
+/**
+ * Scorer identity lives in `shared/` so the client can mint the same ids it
+ * has to join against. Re-exported here because this module is where every
+ * server caller already looks for them.
+ */
+import {
+  hostedCriterionId,
+  HOSTED_JUDGE_SCORER_ID,
+  HOSTED_TOOL_MATCH_SCORER_ID,
+} from "@/shared/hosted-criterion-id";
+
+export {
+  hostedCriterionId,
+  hostedPredicateScorerId,
+  HOSTED_TOOL_MATCH_SCORER_ID,
+  HOSTED_JUDGE_SCORER_ID,
+} from "@/shared/hosted-criterion-id";
 
 /**
  * Version of the hosted predicate projection — the "predicate evaluator
@@ -89,26 +102,6 @@ export const HOSTED_JUDGE_PROJECTION_VERSION = "1";
  * Callers may override it with the value a historical row was graded under.
  */
 export const HOSTED_JUDGE_OBJECTIVE_SCORE_CAP = 0.85;
-
-/**
- * The criterion identity of one hosted predicate.
- *
- * Hosted cases author predicates, not named criteria, so the id is derived
- * from the predicate's CONTENT (plus its turn scope, which is part of what is
- * being asserted) rather than from its position. Content-derived means stable
- * across an edit elsewhere in the list — `idSource: "platform"` records that
- * the platform minted it, so a report never claims an author chose this name.
- */
-export function hostedCriterionId(
-  predicate: Predicate,
-  scope?: PredicateScope
-): string {
-  const criterion = stripCheckPolicy(predicate);
-  const digest = canonicalDigest(
-    scope ? { predicate: criterion, scope } : { predicate: criterion }
-  ).slice(0, 12);
-  return `${predicate.type}-${digest}`;
-}
 
 /** `predicate:<criterionId>` — deterministic; role from the check policy. */
 export function hostedPredicateScoreDefinition(args: {

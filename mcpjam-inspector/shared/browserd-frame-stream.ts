@@ -22,14 +22,13 @@
  * already does for the local engine. So: a chunked response, read back through
  * the `fetch` the client already has.
  *
- * THE LAYOUT IS `shared/webmcp-inspector-protocol.ts`'s, byte for byte, so the
- * two can be diffed side by side. What it is NOT is that module: its decoder
- * validates `jpegLength === byteLength - 24`, a MESSAGE-level invariant that
- * means nothing in a byte stream, and it answers `undefined` on an unknown
- * kind — which would silently swallow the `end` record below, the one record a
- * reader must never miss. (It is also imported by twenty-odd modules and edited
- * constantly; in this bundle's graph, every one of those edits would rotate
- * `bundleHash` and relaunch every live hosted session.)
+ * Protocol edits rotate the daemon bundleHash and relaunch hosted sessions.
+ *
+ * The inspection socket's single-message adapter delegates to this codec.
+ * That adapter additionally requires one complete JPEG per message; this byte
+ * stream also supports heartbeat, end and negotiated video records. Keeping
+ * the codec here lets the daemon bundle depend on the small wire contract
+ * without depending on the inspector's full product protocol.
  *
  *   offset  type  field
  *   0       u8    version (1)
@@ -61,6 +60,8 @@
  * ask can never be handed one — which is what keeps "unknown kind is fatal"
  * safe as the wave adds kinds.
  */
+import { jpegFrameLimit } from "./browser-viewport-policy";
+
 export const FRAME_STREAM_VERSION = 1;
 
 /**
@@ -195,6 +196,12 @@ export interface FrameStreamHeartbeat {
 
 /** What the daemon says about its own side of the stream. */
 export interface FrameStreamStats {
+  jpeg?: {
+    requestedQuality: number;
+    quality: number;
+    maxFrameBytes: number;
+    reason: string;
+  };
   framesIn?: number;
   framesOut?: number;
   bytesOut?: number;
@@ -221,6 +228,25 @@ export interface FrameStreamStats {
    * the picture would say so.
    */
   tabs?: { active?: string; list?: Array<{ id: string; url: string }> };
+  /**
+   * The page's WebMCP tools, as a CHANGE SIGNAL rather than a list.
+   *
+   * `{revision, hash, count}` and nothing else: the definitions are big
+   * (a declarative `<select>` becomes an `anyOf` branch per option) and this
+   * rides an 8 KiB heartbeat several times a second. The pane fetches the real
+   * list once, when the revision moves — which turns a poll into an event and
+   * is the only reason the Tools pane can be live at all without a second
+   * stream.
+   *
+   * Additive, like `tabs` beside it: an older reader slices this payload by its
+   * length and discards what it does not know.
+   */
+  webmcp?: {
+    revision: number;
+    hash: string;
+    count: number;
+    url?: string;
+  };
 }
 
 export interface FrameStreamEnd {
@@ -241,7 +267,9 @@ export interface FrameStreamEnd {
  * viewport, so a click maps through exactly as it does for a JPEG.
  */
 export interface FrameStreamVideo {
-  kind: typeof FRAME_STREAM_KIND.video_key | typeof FRAME_STREAM_KIND.video_delta;
+  kind:
+    | typeof FRAME_STREAM_KIND.video_key
+    | typeof FRAME_STREAM_KIND.video_delta;
   deviceWidth: number;
   deviceHeight: number;
   scale: number;
@@ -271,12 +299,12 @@ export function encodeFrameStreamRecord(record: FrameStreamRecord): Uint8Array {
     record.kind === FRAME_STREAM_KIND.frame
       ? record.jpeg
       : video
-        ? record.au
-        : record.kind === FRAME_STREAM_KIND.end
-          ? new TextEncoder().encode(record.reason)
-          : record.stats
-            ? new TextEncoder().encode(JSON.stringify(record.stats))
-            : new Uint8Array(0);
+      ? record.au
+      : record.kind === FRAME_STREAM_KIND.end
+      ? new TextEncoder().encode(record.reason)
+      : record.stats
+      ? new TextEncoder().encode(JSON.stringify(record.stats))
+      : new Uint8Array(0);
 
   const bytes = new Uint8Array(FRAME_STREAM_HEADER_BYTES + payload.byteLength);
   const view = new DataView(bytes.buffer);
@@ -311,7 +339,8 @@ function clampU16(value: number): number {
 }
 
 export type FrameStreamDecodeResult =
-  { ok: true; records: FrameStreamRecord[] } | { ok: false; error: string };
+  | { ok: true; records: FrameStreamRecord[] }
+  | { ok: false; error: string };
 
 /**
  * A reader that survives chunk boundaries.
@@ -338,6 +367,7 @@ export function createFrameStreamDecoder(
      * the stream behind.
      */
     video?: boolean;
+    sharp?: boolean;
   } = {},
 ): {
   push(chunk: Uint8Array): FrameStreamDecodeResult;
@@ -387,8 +417,10 @@ export function createFrameStreamDecoder(
         }
         const payloadLength = view.getUint32(20, true);
         const maxPayload =
-          FRAME_STREAM_MAX_PAYLOAD_BY_KIND[kind] ??
-          FRAME_STREAM_MAX_PAYLOAD_BYTES;
+          kind === FRAME_STREAM_KIND.frame
+            ? jpegFrameLimit(options.sharp === true)
+            : FRAME_STREAM_MAX_PAYLOAD_BY_KIND[kind] ??
+              FRAME_STREAM_MAX_PAYLOAD_BYTES;
         if (payloadLength > maxPayload) {
           return { ok: false, error: `record too large (${payloadLength})` };
         }
@@ -457,9 +489,9 @@ export function createFrameStreamDecoder(
 }
 
 /** `{ stats }` when the payload is readable, `{}` otherwise. */
-function decodeHeartbeatStats(
-  payload: Uint8Array,
-): { stats?: FrameStreamStats } {
+function decodeHeartbeatStats(payload: Uint8Array): {
+  stats?: FrameStreamStats;
+} {
   if (payload.byteLength === 0) return {};
   try {
     const parsed: unknown = JSON.parse(new TextDecoder().decode(payload));

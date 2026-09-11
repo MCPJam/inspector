@@ -38,6 +38,16 @@
 export type EvalSuiteSettingRow = {
   /** Stable identifier, stamped as `data-setting-key` on the rendered row. */
   key: string;
+  /**
+   * This row is NOT on the suite settings page — it is reached from another
+   * surface (the suite header, org settings), and its `api`/`op` claim is how
+   * an agent reaches it.
+   *
+   * It is not a general escape hatch. `SETTINGS_PAGE_HIDDEN_KEYS` below is the
+   * closed list, pinned by a test, precisely because "hidden" was once how a
+   * row left the page without anything noticing.
+   */
+  settingsPage?: "hidden";
   /** The row's visible label, so a reader can match manifest to screen. */
   label: string;
 } & (
@@ -69,7 +79,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "environments",
-    label: "Environments",
+    label: "Clients",
     api: "environmentIds",
   },
   {
@@ -162,6 +172,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "schedule",
+    settingsPage: "hidden",
     label: "Schedule",
     // Its own route (`PATCH …/eval-suites/{id}/schedule`) because enabling a
     // schedule has to reject a multi-environment suite that names no
@@ -171,16 +182,18 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "githubChecks",
+    settingsPage: "hidden",
     label: "GitHub Checks",
     // ORG-scoped, not suite-scoped: connecting a repository configures the
     // organization's GitHub App installation, and the suite only decides which
     // suite that repository answers for. So it has its own route family and its
     // own operations rather than a field on `update_eval_suite`. The op named
-    // here is the WRITE this row performs; `list_eval_check_repos` is its read.
-    op: "connect_eval_check_repo",
+    // here is the WRITE this row performs; `list_eval_github_repos` is its read.
+    op: "connect_eval_github_repo",
   },
   {
     key: "deleteSuite",
+    settingsPage: "hidden",
     label: "Delete suite",
     op: "delete_eval_suite",
   },
@@ -189,6 +202,21 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
 /** The key of every declared settings row. */
 export type EvalSuiteSettingKey =
   (typeof EVAL_SUITE_SETTINGS_MANIFEST)[number]["key"];
+
+/**
+ * The CLOSED list of rows that are not on the suite settings page, each with
+ * where it actually lives.
+ *
+ * Frozen and pinned by a test. `settingsPage: "hidden"` began as a way to note
+ * that a row had moved and became the reason twelve rows could leave the page
+ * without a single ratchet noticing — the render-parity check skipped anything
+ * carrying it. Adding a key here is now a deliberate test change.
+ */
+export const SETTINGS_PAGE_HIDDEN_KEYS = {
+  schedule: "Triggers group, gated on the scheduled-evals feature flag",
+  githubChecks: "Organization settings → GitHub Checks, per repository",
+  deleteSuite: "Suite overview header",
+} as const satisfies Record<string, string>;
 
 export const EVAL_SUITE_SETTING_KEYS: readonly EvalSuiteSettingKey[] =
   EVAL_SUITE_SETTINGS_MANIFEST.map((row) => row.key);

@@ -1,3 +1,84 @@
+import type {
+  BrowserAgentCommand,
+  BrowserAgentResult,
+} from "./browser-agent-contract.js";
+import type { PlatformBrowserToolPolicy } from "./browser-policy.js";
+export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
+export type PlatformSessionBrowserInput = {
+  policy?: PlatformBrowserToolPolicy;
+  profileId?: string;
+};
+export type PlatformBrowserScreenshot = {
+  turnId?: string;
+  toolCallId: string;
+  toolName?: string;
+  stepIndex: number;
+  status?: "ready" | "not_captured" | "unavailable";
+  url?: string;
+  mediaType?: "image/png" | "image/jpeg";
+  bytes?: number;
+  ts?: number;
+};
+export type PlatformSessionBrowser = {
+  browserSessionId: string;
+  state: "active" | "sleeping" | "closed";
+  policy?: PlatformBrowserToolPolicy;
+  profileId?: string;
+  bootId?: string;
+  controlledBy?: "human" | null;
+  box?: string | null;
+  lastActiveAt?: number;
+};
+export type PlatformSessionBrowserOpened = {
+  sessionId: string;
+  chatSessionId: string;
+  projectId: string;
+  browser: PlatformSessionBrowser;
+};
+export type PlatformSessionBrowserCommand = BrowserAgentCommand;
+export type PlatformSessionBrowserResult = BrowserAgentResult & {
+  screenshots?: PlatformBrowserScreenshot[];
+};
+export type PlatformSessionBrowserTrace = {
+  sessionId: string;
+  chatSessionId: string;
+  entries: Array<{
+    commandId: string;
+    seq: number;
+    result?: PlatformSessionBrowserResult;
+  }>;
+  screenshots: PlatformBrowserScreenshot[];
+};
+export type PlatformSessionBrowserOperation =
+  | "open"
+  | "command"
+  | "note"
+  | "trace"
+  | "artifact"
+  | "close";
+export interface PlatformSessionBrowserBodies {
+  open: PlatformSessionBrowserInput;
+  command: { command: BrowserAgentCommand; commandId?: string; tabId?: string };
+  note: { text: string; commandId?: string };
+  trace: { afterSeq?: number; limit?: number };
+  artifact: { commandId: string };
+  close: Record<string, never>;
+}
+export interface PlatformSessionBrowserResults {
+  open: PlatformSessionBrowserOpened;
+  command: PlatformSessionBrowserResult;
+  note: PlatformSessionBrowserResult;
+  trace: PlatformSessionBrowserTrace;
+  artifact: { url: string; mediaType?: string };
+  close: { ok: boolean };
+}
+export type PlatformSessionBrowserOperationResult =
+  | PlatformSessionBrowserOpened
+  | PlatformSessionBrowserResult
+  | PlatformSessionBrowserTrace
+  | { url: string; mediaType?: string }
+  | { ok: boolean };
+import type { CaseSource } from "../contract/case-source.js";
 /**
  * Wire DTOs for the MCPJam Platform API (`/api/v1`).
  *
@@ -17,8 +98,11 @@ import type {
   DescriptionExperimentReport,
   EvalRunDecisionSummary,
   EvalRunRouteFacts,
+  EvalRunServerFactsV1,
   EvalStageAnalyticsV1,
   EvalSuiteFileCaseImport,
+  EvalTrialFrictionSignals,
+  SuspectedConditionVerdict,
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
@@ -72,6 +156,22 @@ export type PlatformEvalStageAnalytics = EvalStageAnalyticsV1;
  * field is added.
  */
 export type PlatformEvalRouteFacts = EvalRunRouteFacts;
+
+/**
+ * Response of
+ * `GET /projects/{p}/eval-runs/{runId}/server-facts` — one RUN's server-facts
+ * document: what the snapshot it ran against looked like, and what the setup
+ * phase observed.
+ *
+ * An ALIAS, same reasoning as the three above: the shape is owned by
+ * `@mcpjam/sdk/contract` (`evalRunServerFactsSchema`).
+ *
+ * UNLIKE the others, this one is computed on read and therefore never
+ * "absent" for a visible run: a run with no snapshot answers
+ * `state: "unavailable"` with a reason, which is a measured fact about the run
+ * rather than a missing document.
+ */
+export type PlatformEvalServerFacts = EvalRunServerFactsV1;
 
 /**
  * Response of the description-experiment routes:
@@ -343,6 +443,22 @@ export interface PlatformEvalRunSummary {
   passed: number | null;
   failed: number | null;
   createdAt: number | null;
+  /**
+   * The run's VERDICT, as distinct from its lifecycle `status` — the same
+   * field {@link PlatformEvalRun.result} carries, projected onto the
+   * latest-run summary.
+   *
+   * Worth reading even though `passed`/`failed` are right here: under
+   * `verdictPolicyVersion: 2` a run can finish `completed` and still be
+   * `"inconclusive"`, and NO derivation over the counts can produce that. A
+   * consumer that re-derives a verdict from `passed`/`failed` turns "we could
+   * not measure this" into a pass or a failure the platform explicitly
+   * declined to declare.
+   *
+   * Absent on API deployments that predate the field; `null` on a run that
+   * predates it.
+   */
+  result?: string | null;
 }
 
 export interface PlatformEvalSuite {
@@ -423,6 +539,8 @@ export interface PlatformTurnUsage {
  * "nothing happened", because the turn already spent.
  */
 export interface PlatformChatTurn {
+  chatSessionId?: string;
+  browser?: Partial<PlatformSessionBrowser> & { attached: boolean; effectivePolicy?: { tools: readonly string[] | null; origins: readonly string[] | null }; reason?: string; screenshots?: PlatformBrowserScreenshot[]; notices?: string[]; handoff?: { waited: boolean; resumed: boolean } };
   sessionId: string | null;
   turnId: string;
   /**
@@ -479,6 +597,10 @@ export interface PlatformChatMessage {
 
 /** Session metadata plus a bounded window of raw messages. */
 export interface PlatformChatSessionDetail {
+  chatSessionId?: string;
+  apiConfigState?: "unconfigured" | "configured";
+  browser?: PlatformSessionBrowser | null;
+  usage?: { cumulativeInputTokens?: number; cumulativeOutputTokens?: number };
   sessionId: string;
   projectId: string | null;
   origin: string | null;
@@ -497,6 +619,8 @@ export interface PlatformChatSessionDetail {
 
 /** One turn's entry in a trace read. */
 export interface PlatformChatSessionTraceTurn {
+  browser?: { browserSessionId: string; bootId?: string; box?: { sandboxRowId: string } | { computerId: string } };
+  screenshots?: PlatformBrowserScreenshot[];
   turnId: string;
   promptIndex: number;
   startedAt: number;
@@ -517,6 +641,8 @@ export interface PlatformChatSessionTraceTurn {
 }
 
 export interface PlatformChatSessionTrace {
+  projectId?: string | null;
+  chatSessionId?: string;
   sessionId: string;
   origin: string | null;
   traceVersion: number;
@@ -740,6 +866,28 @@ export interface PlatformGateWaiverRead {
 }
 
 /**
+ * The DECLARED launcher on a run — see `PlatformEvalRun.launcher`.
+ *
+ * `kind` is allowlisted to the three origins the platform cannot observe for
+ * itself. The stamped origins (`ui`, `api`, `sdk`, `schedule`, `github_check`,
+ * `benchmark`) are deliberately NOT declarable: a client that could restate one
+ * could paint a `ui` badge on an API run.
+ */
+export interface PlatformEvalRunLauncher {
+  kind: "cli" | "mcp" | "github_action";
+  /** The launching program, e.g. `"mcpjam-cli"` or an MCP client's user-agent. */
+  client?: string;
+  version?: string;
+}
+
+/** The VERIFIED attribution on a run — see `PlatformEvalRun.attribution`. */
+export interface PlatformEvalRunAttribution {
+  surface: "rest" | "cli" | "mcp" | "slack" | "discord" | "workspace";
+  /** The API key id the request authenticated with. The KEY, never the secret. */
+  apiKeyId?: string;
+}
+
+/**
  * Full eval run record, as returned by `GET /projects/{p}/eval-runs/{runId}`
  * and the suite run-history listing. Distinct from `PlatformEvalRunSummary`,
  * the condensed latest-run projection embedded in `PlatformEvalSuite`.
@@ -775,8 +923,36 @@ export interface PlatformEvalRun {
     failed?: number;
     passRate?: number;
   } | null;
-  /** Run origin: "ui" | "api" | "sdk". */
+  /**
+   * Run origin, STAMPED BY THE PLATFORM: `"ui" | "api" | "sdk" | "schedule" |
+   * "github_check" | "benchmark"`.
+   *
+   * Everything created through the public API is `"api"` — including a run
+   * launched by the CLI, by a GitHub Actions job, or by an MCP agent, because
+   * from the server's side all three are API calls. That is what makes this
+   * field usable as audit truth and what makes it useless as a badge; read
+   * `launcher` for the caller's own claim about which of the three it was.
+   */
   source: string;
+  /**
+   * The run's DECLARED launcher — what the launching process said it was, sent
+   * as `x-mcpjam-launcher` at launch time.
+   *
+   * A LABEL, never an authorization input. ABSENT when the launcher declared
+   * nothing, which is NOT the same as `"ui"`: a run with no launcher was not
+   * launched by any of the three declarable origins, and reading absence as
+   * "the app did it" would invent a claim nobody made.
+   */
+  launcher?: PlatformEvalRunLauncher;
+  /**
+   * VERIFIED agent attribution, minted by the platform from the credential the
+   * run authenticated with — never from anything the caller sent.
+   *
+   * The audit-grade half of the pair: `launcher` says what the client called
+   * itself, `attribution.surface` says what the credential proved. Absent when
+   * the credential carried no attribution claims.
+   */
+  attribution?: PlatformEvalRunAttribution;
   notes: string | null;
   /**
    * The project environment this run executed against, read from the run's
@@ -1412,7 +1588,16 @@ export type PlatformEvalSuiteGroundednessJudge = {
 };
 
 export interface PlatformEvalSuiteSettings {
-  /** Minimum pass rate as a percentage, 0–100. */
+  /**
+   * The LEGACY suite-wide floor, as a percentage in [0, 100].
+   *
+   * ALWAYS `null` when {@link policy} is `"v2"`, whatever the suite's storage
+   * still holds: a v2 suite is decided by
+   * `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column
+   * an upgrade leaves behind is read by nothing. Read the threshold from
+   * `verdictPolicyDefaults` for a v2 suite — converting this one would be a
+   * threshold no run uses.
+   */
   minimumAccuracy: number | null;
   /**
    * Suite-level FLOOR on per-case iterations, 1–10: every case runs at least
@@ -1559,6 +1744,27 @@ export interface PlatformEvalSuiteDetail {
    * declared id and cannot be claimed by `eval run --file`.
    */
   declaredId?: string;
+  /**
+   * Where this suite's configuration lives.
+   *
+   * `"ci"` means it is owned by a committed suite file or by SDK ingest, and
+   * the platform REFUSES configuration writes to it — name, settings,
+   * environments, schedule, models, skills, execution config and cases — with
+   * `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`. Running, replaying
+   * and comparing are unaffected.
+   *
+   * To change one: edit its file and send that file's `suite.id` as
+   * `declaredSuiteId` on the write, or duplicate the suite for an editable
+   * copy. `declaredId` alone is not this answer — a suite created by SDK
+   * ingest is CI-owned and has no declared id.
+   *
+   * OPTIONAL because it is additive: this package is versioned independently
+   * of the Inspector deployment it talks to, and one that predates the suite
+   * lock omits the field entirely. `undefined` means "this deployment does not
+   * say", which is not the same as `"app"` — a reader that needs the
+   * distinction should treat it as unknown rather than as editable.
+   */
+  managedBy?: "ci" | "app";
   name: string | null;
   description: string | null;
   projectId: string | null;
@@ -1729,6 +1935,8 @@ export interface PlatformEvalCase {
    * once the two are conflated.
    */
   import?: PlatformEvalCaseImportClaim;
+  /** Source of an AI-assisted Markdown case. */
+  source?: CaseSource;
   createdAt: number | null;
   updatedAt: number | null;
 }
@@ -2865,6 +3073,68 @@ export interface PlatformEvalIteration {
   stageAnalyzerVersion?: number;
   /** The server returned stage rows that failed D1 validation. */
   stageResultsUnverified?: true;
+  /**
+   * Observable patterns in this trial's tool calls — an identifier a result
+   * surfaced that no later call carried, a repeat of the same search, a retry,
+   * a pagination continuation.
+   *
+   * REPORT-ONLY. Nothing here decided this trial's `result`, and every pattern
+   * has a benign reading: an unused identifier can mean the search already
+   * answered the question, and a repeat can be a sensible refinement. Read
+   * `identifierSignals.state` before reading the identifier kinds — a trial
+   * whose results were not retained never looked for them.
+   *
+   * ABSENT means the trial PREDATES the measurement, or its producer could not
+   * derive one. Never render an absent block as zero.
+   */
+  frictionSignals?: EvalTrialFrictionSignals;
+  /** The server returned a friction document that failed validation. */
+  frictionSignalsUnverified?: true;
+  /**
+   * Which server-controlled condition is SUSPECTED of contributing to one of
+   * the patterns above, from an advisory per-trial judge.
+   *
+   * SUSPECTED, and the word is load-bearing: the judge saw one window of one
+   * trial and named a plausible contributor. It is not evidence of cause —
+   * only a controlled rewrite that changes the suspected response and holds
+   * the rest comparable could be that — and nothing here entered this trial's
+   * `result`, its chain, or its `failureCategory`.
+   *
+   * `status` is `scored`, `skipped` or `error`. ABSENT means no judge ran:
+   * the trial predates it, nothing was flagged, or the deployment has it off.
+   */
+  suspectedConditionVerdict?: SuspectedConditionVerdict;
+  /** The server returned a verdict that failed validation. */
+  suspectedConditionUnverified?: true;
+}
+
+/**
+ * What an iteration's replay recording says about itself.
+ *
+ * `source` names the recorder, because the two differ in ways a reader can
+ * see: `"widget"` is the local harness recording one Chromium context with
+ * Playwright (a `.webm`, and it reports nothing else), `"hosted"` is an
+ * unattended run on a hosted browser, recorded off the whole display to an
+ * `.mp4` at a fixed rate.
+ *
+ * `distinctFrames` is the count AFTER identical frames were dropped, so a
+ * static ten-minute run holds a handful against six hundred seconds. That is
+ * the honest number; do not read it as a frame rate or as evidence of a fault.
+ */
+export interface PlatformEvalReplayVideoMeta {
+  source: "hosted" | "widget";
+  /** The rate the recorder was asked for, not the rate it wrote. */
+  fps?: number;
+  durationMs?: number;
+  /** Frames actually written, after identical ones were dropped. */
+  distinctFrames?: number;
+  /**
+   * The recording stopped at its size limit before the run ended.
+   *
+   * The file is a complete, playable PREFIX — not a corrupt file, and not the
+   * whole run. Report it as such rather than as the run's full duration.
+   */
+  truncated?: boolean;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
@@ -2880,8 +3150,22 @@ export interface PlatformEvalStepEvidence {
   }>;
   /** Resolved screenshot URL for the step's render/interaction. */
   screenshotUrl?: string;
-  /** Resolved iteration replay `.webm` URL (same on every step of the run). */
+  /** Resolved iteration replay video URL (same on every step of the run). */
   videoUrl?: string;
+  /**
+   * What that recording says about itself. Present only beside `videoUrl`.
+   *
+   * `truncated` is the field a caller cannot work out from the file: a run on
+   * a hosted browser is recorded at a fixed rate and the recorder stops itself
+   * at a size limit, so what lands is a complete, playable PREFIX of the run.
+   * Seeking to a `videoOffsetMs` past that cut gets silence and no reason for
+   * it unless this is read first.
+   *
+   * Every field but `source` is optional, and the local widget harness reports
+   * none of them: it records with Playwright, which says nothing about the
+   * file it wrote. Absent metadata means "not reported", never "zero".
+   */
+  videoMeta?: PlatformEvalReplayVideoMeta;
   /** Playback offset of this step within the replay video, when known. */
   videoOffsetMs?: number;
   /** "scripted" (authored) vs "computer_use" (model-driven) interaction. */

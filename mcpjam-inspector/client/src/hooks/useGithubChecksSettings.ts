@@ -47,7 +47,8 @@ import { useIsMemberActor } from "@/hooks/use-is-member-actor";
  * would bounce a legitimately-flagged user who cold-loads the URL directly.
  */
 export type GithubChecksAvailability =
-  { state: "enabled" | "disabled" } | undefined;
+  | { state: "enabled" | "disabled"; canManage?: boolean }
+  | undefined;
 
 /**
  * What the check concludes when MCPJam cannot run the suite — an outage, or a
@@ -104,7 +105,10 @@ export type GithubCheckConnectionStatus =
 
 export type GithubInstallationAccountType = "Organization" | "User";
 export type GithubInstallationBindingStatus =
-  "active" | "suspended" | "removed" | "unbound";
+  | "active"
+  | "suspended"
+  | "removed"
+  | "unbound";
 
 /**
  * One GitHub App installation this organization holds.
@@ -127,6 +131,16 @@ export type ClaimableInstallation = {
   installationId: number;
   accountLogin: string;
   accountType: GithubInstallationAccountType;
+  /**
+   * Present when this installation is already connected to another MCPJam
+   * organization, so the row can say so instead of offering a click the
+   * backend will refuse. Absent means connectable.
+   *
+   * `organizationName` is present ONLY when the signed-in user is a member of
+   * the organization holding it. Its absence is the backend's answer, not a
+   * missing lookup — do not retry for it, and do not imply one exists to name.
+   */
+  conflict?: { organizationName?: string };
 };
 
 /**
@@ -143,6 +157,18 @@ export type GithubInstallCallbackResult =
       status: "pick_required";
       linkSessionId: string;
       installations: ClaimableInstallation[];
+      /**
+       * Where to send the browser to install on an account that is not in
+       * `installations` — including when that list is EMPTY, which is a
+       * complete answer (this GitHub user administers no account with the app)
+       * and the case where installing is the only move left.
+       *
+       * Optional because a deployment running the older backend does not send
+       * it. Every use of it must degrade to something the user can still act
+       * on, since the settings page no longer carries an install button of its
+       * own.
+       */
+      installUrl?: string;
     };
 
 export type GithubCheckRepoConfigRow = {
@@ -166,6 +192,24 @@ export type GithubCheckRepoConfigRow = {
    * not silently add a required MCPJam Conformance check.
    */
   conformanceEnabled?: boolean;
+  allowSuiteCredentialsInForks?: boolean;
+  prServerOAuthSourceServerId?: string;
+  prServerOAuthPolicyRevision?: number;
+  prServerOAuth: {
+    status:
+      | "not_configured"
+      | "ready"
+      | "authorization_required"
+      | "reauthorization_required"
+      | "selection_required";
+    sourceServerId?: string;
+    sourceName?: string;
+    sources: Array<{
+      serverId: string;
+      name: string;
+      authorized: boolean;
+    }>;
+  };
   conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
   /**
    * ABSENT IS `on`, NOT `off`. See {@link GithubCheckFeedbackComments}: an
@@ -301,6 +345,26 @@ export function useGithubChecksSettings(
   const setRepoOutagePolicyMutation = useMutation(
     "github/checkRepoConfigs:setRepoOutagePolicy" as any,
   );
+  const setRepoForkCredentialsMutation = useMutation(
+    "github/checkRepoConfigs:setRepoForkCredentials" as any,
+  );
+  const setRepoPrServerOAuthMutation = useMutation(
+    "github/checkRepoConfigs:setRepoPrServerOAuth" as any,
+  );
+  const setRepoPrServerOAuth = useCallback(
+    (args: { configId: string; sourceServerId: string | null }) =>
+      setRepoPrServerOAuthMutation({ organizationId, ...args }) as Promise<{
+        changed: boolean;
+      }>,
+    [organizationId, setRepoPrServerOAuthMutation],
+  );
+  const setRepoForkCredentials = useCallback(
+    (args: { configId: string; enabled: boolean }) =>
+      setRepoForkCredentialsMutation({ organizationId, ...args }) as Promise<{
+        changed: boolean;
+      }>,
+    [organizationId, setRepoForkCredentialsMutation],
+  );
   const setRepoConformanceMutation = useMutation(
     "github/checkRepoConfigs:setRepoConformance" as any,
   );
@@ -321,9 +385,6 @@ export function useGithubChecksSettings(
   // that drifts or a required argument that is forgotten fails at RUNTIME, on
   // the click, in production — not at build time. Treat these call shapes as
   // part of the backend's signature and change them together.
-  const startInstallationAction = useAction(
-    "github/appInstallLinkNode:startInstallation" as any,
-  );
   const startDirectClaimAction = useAction(
     "github/appInstallLinkNode:startDirectClaim" as any,
   );
@@ -339,25 +400,21 @@ export function useGithubChecksSettings(
   ) as GithubInstallationBinding[] | undefined;
 
   /**
-   * Begin installing the App for this organization. Returns GitHub's install
-   * URL; the caller navigates to it.
+   * Begin connecting a GitHub account — THE only way in, for every case.
+   *
+   * Goes to the OAuth leg first and lets the callback's pick answer "which of
+   * your accounts", because GitHub's install URL cannot be relied on to ask
+   * that: it redirects into an existing installation whenever the signed-in
+   * user administers one. Asking GitHub who the user is, then reading their
+   * installation list, is the only approach that does not depend on GitHub's
+   * redirect behaviour.
+   *
+   * Installing, when the answer is "none of these", is driven from the pick
+   * using the `installUrl` the backend sends with it — not from here.
    *
    * The URL carries a one-time state whose HASH is what the backend stored, so
    * it is not a credential the browser has to protect beyond the session's
    * ten-minute life.
-   */
-  const startInstallation = useCallback(
-    () =>
-      startInstallationAction({ organizationId } as any) as Promise<{
-        installUrl: string;
-      }>,
-    [startInstallationAction, organizationId],
-  );
-
-  /**
-   * Begin CLAIMING an installation somebody created from GitHub's side, where
-   * there was never a setup redirect for us to catch. Goes straight to the
-   * OAuth leg; the pick comes back from the callback.
    */
   const startDirectClaim = useCallback(
     () =>
@@ -488,10 +545,11 @@ export function useGithubChecksSettings(
     setRepoSuite,
     setRepoOutagePolicy,
     setRepoConformance,
+    setRepoForkCredentials,
+    setRepoPrServerOAuth,
     setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
-    startInstallation,
     startDirectClaim,
     unbindInstallation,
   };
