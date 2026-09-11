@@ -95,7 +95,7 @@ export function announcementFor(outcome, userId) {
     return `:white_check_mark: Approved by <@${userId}>, and it's away.`;
   }
   if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
-  return `:white_check_mark: Approved by <@${userId}>`.concat('.');
+  return `:white_check_mark: Approved by <@${userId}>.`;
 }
 
 /**

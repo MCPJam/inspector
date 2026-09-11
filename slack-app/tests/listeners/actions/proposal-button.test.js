@@ -277,10 +277,7 @@ describe('announcementFor', () => {
     // Without this fix, a legacy server returning cancel_eval_run + resource.url
     // would be announced as "Approved — follow it here" because the URL fallback
     // ran before the operation-name check.
-    const text = announcementFor(
-      { operation: 'cancel_eval_run', resource: { url: 'https://app/run/1' } },
-      'U1',
-    );
+    const text = announcementFor({ operation: 'cancel_eval_run', resource: { url: 'https://app/run/1' } }, 'U1');
     assert.match(text, /Cancelled by <@U1>/);
     assert.ok(!/Approved/.test(text), 'cancellation must not say Approved');
     assert.ok(!/follow it here/.test(text), 'cancellation must not show the run URL');
