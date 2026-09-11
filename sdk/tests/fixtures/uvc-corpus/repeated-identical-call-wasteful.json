@@ -1,0 +1,125 @@
+{
+  "id": "repeated-identical-call-wasteful",
+  "title": "The same search, twice, back to back, for nothing",
+  "rationale": "The positive case for `noRepeatedIdenticalCall`: identical name and identical arguments, adjacent, with a successful first result already in hand.",
+  "transcript": {
+    "toolCalls": [
+      {
+        "toolCallId": "c1",
+        "toolName": "search_docs",
+        "arguments": {
+          "query": "retention policy"
+        }
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "search_docs",
+        "arguments": {
+          "query": "retention policy"
+        }
+      }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "Retention defaults to 30 days and is configurable per project.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "search_docs",
+        "description": "Full-text search over the documentation.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": true
+        }
+      }
+    ],
+    "toolResults": [
+      {
+        "toolCallId": "c1",
+        "toolName": "search_docs",
+        "text": "Retention defaults to 30 days.",
+        "isError": false,
+        "size": {
+          "bytes": 30,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "search_docs",
+        "text": "Retention defaults to 30 days.",
+        "isError": false,
+        "size": {
+          "bytes": 30,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      }
+    ],
+    "toolCallTimings": [
+      {
+        "toolCallId": "c1",
+        "toolName": "search_docs",
+        "durationMs": 310,
+        "provenance": "span"
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "search_docs",
+        "durationMs": 298,
+        "provenance": "span"
+      }
+    ],
+    "capture": {
+      "toolResults": "complete",
+      "toolCallTimings": "complete",
+      "toolInventory": "complete"
+    }
+  },
+  "expect": [
+    {
+      "predicate": {
+        "type": "noRepeatedIdenticalCall",
+        "role": "advisory"
+      },
+      "observation": "fail",
+      "relevance": "useful",
+      "note": "the first call succeeded; the second bought nothing"
+    },
+    {
+      "predicate": {
+        "type": "noRepeatedIdenticalCall",
+        "toolName": "search_docs",
+        "role": "advisory"
+      },
+      "observation": "fail",
+      "relevance": "useful"
+    },
+    {
+      "predicate": {
+        "type": "toolCallCountUnder",
+        "count": 2
+      },
+      "observation": "fail",
+      "relevance": "useful"
+    },
+    {
+      "predicate": {
+        "type": "noEndingQuestion",
+        "role": "advisory"
+      },
+      "observation": "pass",
+      "relevance": "neutral"
+    }
+  ]
+}

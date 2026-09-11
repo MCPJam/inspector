@@ -492,7 +492,11 @@ export function useAppState({
       ?.sharedProjectId;
   const activeProjectDefaultHostConfig = useQuery(
     "hostConfigsV2:getProjectDefault" as any,
-    isUserReady && activeSharedProjectId
+    // `shouldQueryProjectId`, not a bare truthiness check: the sentinel and
+    // local/placeholder ids this app uses for a project that is not a Convex
+    // row are all truthy, and `v.id("projects")` rejects them before the
+    // handler runs, where nothing downstream can catch it.
+    isUserReady && shouldQueryProjectId(activeSharedProjectId)
       ? { projectId: activeSharedProjectId as any }
       : "skip",
   ) as HostConfigDtoV2 | null | undefined;

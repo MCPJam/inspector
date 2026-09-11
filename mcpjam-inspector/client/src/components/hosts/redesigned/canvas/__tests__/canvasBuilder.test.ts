@@ -5,6 +5,7 @@ import {
   ADD_SERVER_NODE_ID,
   BUILTIN_TOOLS_NODE_ID,
   COMPUTER_NODE_ID,
+  BROWSER_NODE_ID,
   HOST_MATRIX_NODE_ID,
   SERVERS_HUB_NODE_ID,
   focusTabForNodeId,
@@ -730,5 +731,24 @@ describe("focusTabForNodeId — Project Computers islands", () => {
       tab: "computer",
       selectedServerId: null,
     });
+  });
+});
+
+
+describe("Browser island", () => {
+  it("is independent of Computer and links to Browser settings", () => {
+    const vm = buildVm({ browsersEnabled: true });
+    expect(vm.nodes.find((n) => n.id === BROWSER_NODE_ID)?.data.enabled).toBe(false);
+    expect(vm.nodes.find((n) => n.id === COMPUTER_NODE_ID)).toBeUndefined();
+    expect(focusTabForNodeId(BROWSER_NODE_ID)?.tab).toBe("browser");
+  });
+  it("keeps configured browsers inspectable with rollout disabled", () => {
+    const vm = buildVm({ draft: emptyHostConfigInputV2({ builtInToolIds: ["browser", "web_search"] }), computersEnabled: true });
+    expect(vm.nodes.find((n) => n.id === BROWSER_NODE_ID)?.data.enabled).toBe(true);
+    const tools = vm.nodes.find((n) => n.type === "redesignBuiltinTools");
+    expect(tools?.data.tools.map((t) => t.id)).toEqual(["web_search"]);
+  });
+  it("hides an unconfigured browser when rollout is disabled", () => {
+    expect(buildVm().nodes.find((n) => n.id === BROWSER_NODE_ID)).toBeUndefined();
   });
 });

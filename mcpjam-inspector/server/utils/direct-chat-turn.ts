@@ -42,7 +42,11 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
-import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import {
+  mergeMcpToolOriginMetadata,
+  mergePageToolBindingMetadata,
+} from "@/shared/mcp-tool-origin-metadata";
+import { pageToolBindingOf } from "./built-in-tools/page-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { logger } from "./logger";
 import {
@@ -388,6 +392,12 @@ export interface RunDirectChatTurnHandle {
   cleanup: () => void;
   /** True once the abort signal has fired (mirrors chat's local flag). */
   isAborted: () => boolean;
+  /**
+   * The stream's own fatal error, once `onError` has seen one — `undefined` on
+   * an abort. Headless consumers throw it instead of the SDK's
+   * `NoOutputGeneratedError`, which names neither provider nor status.
+   */
+  lastStreamError: () => unknown;
 }
 
 export function stampMcpToolOriginProviderOptions(
@@ -416,9 +426,15 @@ export function stampMcpToolOriginProviderOptions(
         const toolName = record.toolName;
         if (typeof toolName !== "string") return part;
         const serverId = readToolServerId(tools, toolName);
-        const providerOptions = mergeMcpToolOriginMetadata(
-          record.providerOptions,
-          serverId
+        // The page tool's binding too, on tool CALLS only. `merge…Binding`
+        // leaves a part that already carries one alone — that is the binding
+        // an earlier request's approval was granted against, and the very
+        // thing the tool's `execute` compares itself to on resume.
+        const providerOptions = mergePageToolBindingMetadata(
+          mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+          record.type === "tool-call"
+            ? pageToolBindingOf(tools[toolName])
+            : undefined
         );
         if (!providerOptions) return part;
         messageChanged = true;
@@ -446,9 +462,9 @@ export function withMcpToolOriginChunkMetadata<
   }
   if (typeof chunk.toolName !== "string") return chunk;
   const serverId = readToolServerId(tools, chunk.toolName);
-  const providerMetadata = mergeMcpToolOriginMetadata(
-    chunk.providerMetadata,
-    serverId
+  const providerMetadata = mergePageToolBindingMetadata(
+    mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+    pageToolBindingOf(tools[chunk.toolName])
   );
   return providerMetadata ? { ...chunk, providerMetadata } : chunk;
 }
@@ -572,6 +588,10 @@ export function runDirectChatTurn(
   const stepFirstChunkAt = new Map<number, number>();
   let turnFinished = false;
   let aborted = abortSignal?.aborted === true;
+  // The stream's own fatal error. `consumeStream` reports nothing and the
+  // awaited accessors reject with the SDK's `NoOutputGeneratedError`, so
+  // `onError` is the only place the provider's sentence exists.
+  let streamError: unknown;
   let listenerAttached = false;
   const markAborted = () => {
     aborted = true;
@@ -943,6 +963,7 @@ export function runDirectChatTurn(
         turnFinished = true;
         return;
       }
+      streamError = error;
 
       const failAt = Date.now();
       finalizeAiSdkTraceOnFailure(traceContext, failAt, {
@@ -1066,6 +1087,7 @@ export function runDirectChatTurn(
     modelId,
     cleanup,
     isAborted: () => aborted || abortSignal?.aborted === true,
+    lastStreamError: () => streamError,
   };
 }
 
@@ -1127,6 +1149,13 @@ export async function consumeDirectChatTurnHeadless(
       turnTrace,
       aborted: handle.isAborted(),
     };
+  } catch (error) {
+    // Every accessor above rejects with `NoOutputGeneratedError` once the
+    // stream errored, so prefer the error that actually stopped the turn —
+    // it is all a caller's failure classification has to read.
+    const streamError = handle.lastStreamError();
+    if (streamError !== undefined) throw streamError;
+    throw error;
   } finally {
     handle.cleanup();
   }
