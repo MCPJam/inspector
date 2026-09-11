@@ -258,7 +258,7 @@ export function RunDescriptionExperimentCard({
                 ) : null}
                 <FrozenPill>
                   {report.frozen.environmentReset === "per_trial_sandbox"
-                    ? "fresh computer per trial"
+                    ? "fresh computer per iteration"
                     : "no reset"}
                 </FrozenPill>
                 {armsDiffer ? (
@@ -293,7 +293,7 @@ export function RunDescriptionExperimentCard({
                 onClick={() => setConfirmOpen(true)}
               >
                 {plannedTrials != null
-                  ? `Run experiment (${plannedTrials} trials)`
+                  ? `Run experiment (${plannedTrials} iterations)`
                   : "Run experiment"}
               </Button>
             </div>
@@ -315,10 +315,10 @@ export function RunDescriptionExperimentCard({
               Run this description experiment?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This launches two replay runs — original catalog and rewritten
+              This launches two replay runs: original catalog and rewritten
               description
               {plannedTrials != null
-                ? ` — ${plannedTrials} trials in total`
+                ? `. ${plannedTrials} iterations in total`
                 : ""}
               , refused over a cap of {maxTrials} (hard cap 400).
               {experiment.plan?.judgeAutoRun

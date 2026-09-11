@@ -40,13 +40,14 @@
  */
 
 import type { z } from "zod";
-import type { Predicate } from "@mcpjam/sdk/predicates";
+import { checkRole, type Predicate } from "@mcpjam/sdk/predicates";
 import {
   isAssertStep,
   isPromptStep,
   isToolCallStep,
   isWidgetAssertion,
   testStepSchema,
+  type AssertStep,
   type InteractAction,
   type TestStep,
   type ToolCallStep,
@@ -279,7 +280,9 @@ export function deriveExpectedToolCalls(
     .map((s) => s.assertion)
     .filter(
       (a): a is Extract<Predicate, { type: "toolCalledWith" }> =>
-        !isWidgetAssertion(a) && a.type === "toolCalledWith"
+        !isWidgetAssertion(a) &&
+        a.type === "toolCalledWith" &&
+        checkRole(a) !== "advisory"
     )
     .map((a) => ({ toolName: a.toolName, arguments: a.args.args ?? {} }));
 }
@@ -927,15 +930,18 @@ export function stepsToPromptTurns(steps: TestStep[]): PromptTurn[] {
           assertion: widgetAssertionToStepAssertion(a),
         });
         widgetGroups.set(a.toolName, g);
-      } else if (a.type === "toolCalledWith") {
-        // A tool-call assert is represented as an expected tool call so it's
-        // evaluated by the matcher (`evaluateMultiTurnResults`), which runs on
-        // BOTH the local and hosted/free run paths. (Routing it to `turn.checks`
-        // would defeat the hosted path, which does not yet evaluate per-turn
-        // checks — see the runner — so the assertion would silently stop gating.
-        // Matching is order-agnostic, so this bucket choice doesn't change the
-        // result; the authored display position is preserved separately below
-        // via `childOrder`.)
+      } else if (
+        a.type === "toolCalledWith" &&
+        checkRole(a) !== "advisory"
+      ) {
+        // A gating tool-call assert is represented as an expected tool call so
+        // it's evaluated by the matcher (`evaluateMultiTurnResults`), which
+        // runs on BOTH the local and hosted/free run paths. An advisory
+        // `toolCalledWith` stays a predicate row — promoting it would mint a
+        // matcher expectation that can fail the trial. Matching is
+        // order-agnostic, so this bucket choice doesn't change the result; the
+        // authored display position is preserved separately below via
+        // `childOrder`.
         turn.expectedToolCalls.push({
           toolName: a.toolName,
           arguments: a.args.args ?? {},
@@ -982,4 +988,177 @@ export function stepTurnIndices(steps: TestStep[]): number[] {
     }
   }
   return out;
+}
+
+// ── the spine: one id minter, one splice, one action projection ──────────────
+
+/**
+ * The ONE step-id minter.
+ *
+ * Five copies of this function existed before the spine: one in
+ * `StepListEditor`, one in `simple-case-model`, one in the editor for recorder
+ * appends, one inline in `SimpleCaseForm.addTool`, and two in
+ * `predicate-migration` that minted `migrated-assert-${i}` — that pair COLLIDES
+ * when a case is migrated twice, because the index restarts while the earlier
+ * ids remain on the case. The format below is the one three of those five
+ * already used, so ids keep their `${kind}-` prefix and existing tests that
+ * match `/^assert-\d+-\d+$/` keep passing.
+ *
+ * Module-level counter, not a `crypto.randomUUID()`: these ids are React keys
+ * and step handles inside one editing session, and a monotonic suffix makes a
+ * test's expectation readable. Uniqueness only has to hold within a document.
+ */
+let stepIdCounter = 0;
+export function newStepId(kind: string): string {
+  stepIdCounter += 1;
+  return `${kind}-${Date.now()}-${stepIdCounter}`;
+}
+
+/** The turn a step belongs to, or `undefined` when the id is not in the list. */
+export function turnOfStep(
+  steps: TestStep[],
+  stepId: string,
+): number | undefined {
+  const index = steps.findIndex((step) => step.id === stepId);
+  if (index === -1) return undefined;
+  return stepTurnIndices(steps)[index];
+}
+
+/** The id of the LAST step of `turnIndex`, or `undefined` when it has none. */
+export function lastStepIdOfTurn(
+  steps: TestStep[],
+  turnIndex: number,
+): string | undefined {
+  const turns = stepTurnIndices(steps);
+  for (let i = steps.length - 1; i >= 0; i -= 1) {
+    if (turns[i] === turnIndex) return steps[i]!.id;
+  }
+  return undefined;
+}
+
+/** An assert step and where it sits in the flat list. */
+export type SpineChild = { step: AssertStep; index: number };
+
+/**
+ * One action and the checks nested under it.
+ *
+ * `ordinal` is 1-based among ACTIONS, which is the number the spine shows —
+ * deliberately not the turn index. An `interact` is its own action but not its
+ * own turn, and a check that follows a click has to be numbered under that
+ * click or the author cannot tell which action it grades.
+ */
+export type SpineAction = {
+  step: TestStep;
+  index: number;
+  ordinal: number;
+  turnIndex: number;
+  checks: SpineChild[];
+  /** Index of the block's last step — the action itself when it has no checks. */
+  lastIndex: number;
+};
+
+export type SpineRows = {
+  /** Asserts before any action (CLI-authored). They run before any prompt. */
+  leading: SpineChild[];
+  actions: SpineAction[];
+};
+
+/** True for the three step kinds the spine numbers. */
+function isSpineAction(step: TestStep): boolean {
+  return step.kind !== "assert";
+}
+
+/**
+ * Project a flat step list into actions with their checks nested underneath.
+ *
+ * The rule is positional and total: a `prompt`/`toolCall`/`interact` opens a
+ * block, and every `assert` that immediately follows joins it. Asserts before
+ * the first action land in `leading` rather than vanishing.
+ *
+ * INVARIANT (pinned by test): concatenating `leading` and each action with its
+ * checks reproduces `steps` exactly, in order. Nothing is dropped, nothing is
+ * reordered — the projection is a view, never a rewrite.
+ */
+export function actionRows(steps: TestStep[]): SpineRows {
+  const turns = stepTurnIndices(steps);
+  const leading: SpineChild[] = [];
+  const actions: SpineAction[] = [];
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index]!;
+    if (isSpineAction(step)) {
+      actions.push({
+        step,
+        index,
+        ordinal: actions.length + 1,
+        turnIndex: turns[index]!,
+        checks: [],
+        lastIndex: index,
+      });
+      continue;
+    }
+    const open = actions[actions.length - 1];
+    if (!open) {
+      leading.push({ step: step as AssertStep, index });
+      continue;
+    }
+    open.checks.push({ step: step as AssertStep, index });
+    open.lastIndex = index;
+  }
+  return { leading, actions };
+}
+
+/**
+ * The ONE splice. Insert `step` after `afterStepId`, by these four rules:
+ *
+ *   1. `null` anchor          → index 0 (before everything).
+ *   2. anchor not in the list → append. TOTAL ON PURPOSE: a suggestion carries
+ *      a step id from the trial's frozen snapshot, and a draft edited since can
+ *      no longer contain it. Throwing there would turn a stale anchor into a
+ *      crash; appending keeps the check.
+ *   3. anchor is an ACTION    → after that action's whole block, i.e. after the
+ *      checks already nested under it.
+ *   4. anchor is an ASSERT    → immediately after it.
+ *
+ * Why rule 3 ends the block rather than sitting flush against the action: new
+ * checks then read in the order they were added and never jump ahead of an
+ * older gate. The executor stops a trial at the first failed gating assert, so
+ * inserting in front of one would change WHICH check reports the failure.
+ *
+ * Why rule 3 is the action's block and not the whole TURN: with
+ * `[prompt, a1, interact, a2]`, "add a check after this" pressed under the
+ * prompt must land under the prompt. A turn-end rule would put it after `a2`,
+ * visibly under the interact — a different action than the button the author
+ * pressed.
+ *
+ * Why rule 4 exists at all: an assert id names an exact slot, which is what
+ * `writeSimpleCase` needs to keep placing route tools byte-identically (a
+ * `toolCalledWith` is graded WHERE IT SITS, and a later position sees
+ * widget-initiated calls) and what the recorder needs to keep appending at the
+ * end of a turn.
+ */
+export function insertStepAfter(
+  steps: TestStep[],
+  afterStepId: string | null,
+  step: TestStep,
+): TestStep[] {
+  const next = [...steps];
+  if (afterStepId === null) {
+    next.unshift(step);
+    return next;
+  }
+  const anchor = steps.findIndex((s) => s.id === afterStepId);
+  if (anchor === -1) {
+    next.push(step);
+    return next;
+  }
+  if (!isSpineAction(steps[anchor]!)) {
+    next.splice(anchor + 1, 0, step);
+    return next;
+  }
+  let end = anchor;
+  while (end + 1 < steps.length && !isSpineAction(steps[end + 1]!)) {
+    end += 1;
+  }
+  next.splice(end + 1, 0, step);
+  return next;
 }

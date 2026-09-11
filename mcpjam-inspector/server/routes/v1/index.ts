@@ -14,6 +14,7 @@ import { Hono } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
+import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
 // The guest allowlist lives in its own module so `requireVerifiedAuth` can
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
@@ -28,6 +29,7 @@ import exporter from "./export.js";
 import evals from "./evals.js";
 import clients from "./clients.js";
 import harness from "./harness.js";
+import builtInTools from "./built-in-tools.js";
 import environments from "./environments.js";
 import plugins from "./plugins.js";
 import skills from "./skills.js";
@@ -53,11 +55,13 @@ import widgets from "./widgets.js";
 import registry from "./registry.js";
 import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
+import spendBudget from "./spend-budget.js";
 import projects from "./projects.js";
 import capabilities from "./capabilities.js";
 import evalDisclosure from "./eval-disclosure.js";
 import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
+import browserSessions from "./browser-sessions.js";
 import tunnels from "./tunnels.js";
 import readiness from "./readiness.js";
 import conformanceRuns from "./conformance-runs.js";
@@ -100,6 +104,21 @@ v1.use(
   guestRateLimitMiddleware,
 );
 
+// The two v1 routes that dial a caller-named MCP server share the egress-shaped
+// per-credential ceiling with their `/api/web` twins — they reuse the same
+// `runHostedDoctor` / `validateServerCore` cores, so metering only one surface
+// would leave the other as the way around it. This is narrower than the
+// `passthroughRateLimitMiddleware` above in what it covers and tighter in what
+// it allows: that one meters the single unverified credential class at 120/min
+// for the whole API, this one meters every class on the routes that spend a
+// connection. See `middleware/mcp-egress-rate-limit.ts` (MJ-001).
+for (const spendsEgress of [
+  "/projects/:projectId/servers/:serverId/doctor",
+  "/projects/:projectId/servers/:serverId/validate",
+]) {
+  v1.use(spendsEgress, mcpEgressRateLimitMiddleware);
+}
+
 v1.use("*", async (c, next) => {
   // Authed (non-guest) callers are unaffected. Guests are admitted only on the
   // allowlisted platform-tool routes; everything else is rejected at the
@@ -127,6 +146,11 @@ v1.route("/", readiness);
 v1.route("/", conformanceRuns);
 v1.route("/", clients);
 v1.route("/", harness);
+// MCPJam's own built-in tool definitions — static, and the same text for every
+// caller. Guest-DENIED by default (they are not on the allowlist): the browser
+// capability is never advertised to a guest turn, so a guest reading its
+// schemas would be reading about something they cannot be given.
+v1.route("/", builtInTools);
 // Project Environments (named execution bundles for suites and journeys) stay
 // OFF the guest allowlist — reads need project membership and every write needs
 // project admin. Distinct from the Computer sandbox images below.
@@ -228,6 +252,7 @@ v1.route("/", registry);
 // Guest-DENIED by default (no GUEST_ALLOWED_V1_RULES entry), like `/me`.
 v1.route("/", organizations);
 v1.route("/", evalChecks);
+v1.route("/", spendBudget);
 v1.route("/", projects);
 // What the caller may do here, asked before they try. A planning read for
 // agents on the static surfaces (MCP catalog, CLI tree, agent registry), which
@@ -241,6 +266,7 @@ v1.route("/", capabilities);
 // would actually matter.
 v1.route("/", evalDisclosure);
 v1.route("/", tunnels);
+v1.route("/", browserSessions);
 
 v1.onError((error, c) => v1OnError(error, c));
 

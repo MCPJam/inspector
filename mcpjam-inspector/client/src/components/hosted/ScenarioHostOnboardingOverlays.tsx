@@ -2,24 +2,33 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { getScenarioOAuthRowCopy } from "@/components/hosted/scenario-oauth-copy";
 import { Button } from "@mcpjam/design-system/button";
+import { ScenarioRecordingConsentDialog } from "@/components/hosted/ScenarioRecordingConsentDialog";
 import type { HostedOAuthServerDescriptor } from "@/hooks/hosted/use-hosted-oauth-gate";
 import type { HostedOAuthState } from "@/lib/hosted-oauth-resume";
 
 const FINISHING_TIMEOUT_MS = 10_000;
 
 export function ScenarioHostOnboardingOverlays({
-  showWelcome,
-  onGetStarted,
-  welcomeBody,
+  showConsent,
+  hasTasks,
+  onAcceptConsent,
+  onDeclineConsent,
   showAuthPanel,
   pendingOAuthServers,
   authorizeServer,
   isFinishingOAuth,
   onSkipAuthorization,
 }: {
-  showWelcome: boolean;
-  onGetStarted: () => void;
-  welcomeBody?: string | null;
+  /**
+   * The recording notice. Unconditional on first land and asked BEFORE
+   * authorization — see `useScenarioHostIntroGate`. It replaced the
+   * creator-authored welcome overlay this component used to render, which is
+   * why nothing here reads `chatUi.surfaces.welcome` any more.
+   */
+  showConsent: boolean;
+  hasTasks: boolean;
+  onAcceptConsent: () => void;
+  onDeclineConsent: () => void;
   showAuthPanel: boolean;
   pendingOAuthServers: Array<{
     server: HostedOAuthServerDescriptor;
@@ -58,9 +67,6 @@ export function ScenarioHostOnboardingOverlays({
     return () => window.clearTimeout(timer);
   }, [isFinishingOAuth, finishingOAuthSignature]);
 
-  const welcomeText = welcomeBody?.trim() ?? "";
-  const shouldRenderWelcome = showWelcome && welcomeText.length > 0;
-
   const showFinishingLayer = showAuthPanel && isFinishingOAuth;
   const showAuthListLayer = showAuthPanel && !isFinishingOAuth;
 
@@ -73,34 +79,20 @@ export function ScenarioHostOnboardingOverlays({
     : "Authorize the required servers to continue.";
 
   const hasFailedAuthorization = pendingOAuthServers.some(
-    ({ state }) => state.status === "error"
+    ({ state }) => state.status === "error",
   );
 
   return (
     <>
-      {shouldRenderWelcome ? (
-        <div
-          className="pointer-events-auto absolute inset-0 z-30 flex cursor-pointer items-center justify-center bg-background/20 p-4 dark:bg-background/30"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Welcome"
-          onClick={onGetStarted}
-        >
-          <div
-            className="w-full max-w-lg cursor-auto rounded-2xl border border-border/80 bg-card/95 p-6 shadow-2xl ring-1 ring-black/5 backdrop-blur-sm dark:ring-white/10"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <p className="whitespace-pre-wrap text-center text-sm text-muted-foreground">
-              {welcomeText}
-            </p>
-            <div className="mt-6 flex justify-center">
-              <Button type="button" onClick={onGetStarted}>
-                Get Started
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {/* A real AlertDialog, not a click-anywhere scrim. The overlay it
+          replaces dismissed itself on a backdrop click, so "I read the
+          notice" and "I clicked past something" were the same gesture. */}
+      <ScenarioRecordingConsentDialog
+        open={showConsent}
+        hasTasks={hasTasks}
+        onContinue={onAcceptConsent}
+        onLeave={onDeclineConsent}
+      />
 
       {showFinishingLayer ? (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/25 p-4 dark:bg-background/35">

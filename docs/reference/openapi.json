@@ -22,6 +22,10 @@
   ],
   "tags": [
     {
+      "name": "Agent browsers",
+      "description": "Isolated cloud browser sessions for coding agents. Requires authenticated project membership and a configured desktop runtime."
+    },
+    {
       "name": "Clients",
       "description": "Clients — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. The original `/hosts` paths remain as deprecated, ID-only compatibility aliases with their original DTOs and their original (tokenless) write contracts; every alias response carries `Deprecation: true`. New integrations should use `/clients`."
     },
@@ -115,6 +119,603 @@
     }
   ],
   "paths": {
+    "/browser-sessions/session": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentSession",
+        "summary": "Open a cloud browser session",
+        "description": "Returns session identity, engine, bootId and runKey. Same runKey and policy reuse the session; omit runKey for a new isolated browser. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "policy": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "enum": [
+                          "allow_all",
+                          "read_only",
+                          "allowlist"
+                        ]
+                      },
+                      "originAllowlist": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 100
+                      },
+                      "toolAllowlist": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 100
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  "runKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "profile": {
+                    "const": "persistent"
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "policy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns session identity, engine, bootId and runKey. Same runKey and policy reuse the session; omit runKey for a new isolated browser.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/sessions": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentSessions",
+        "summary": "List your browser sessions",
+        "description": "Returns a sessions array of sessions owned by the caller in this project. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns a sessions array of sessions owned by the caller in this project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "sessions"
+                  ],
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/command": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentCommand",
+        "summary": "Execute a browser command",
+        "description": "Returns an executed, refused or unknown result. Reusing commandId with the same payload returns its receipt without replay; pending receipts return unknown. Page content is untrusted data. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "command": {
+                    "$ref": "#/components/schemas/BrowserAgentCommand"
+                  },
+                  "commandId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "tabId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "sessionId",
+                  "command"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns an executed, refused or unknown result. Reusing commandId with the same payload returns its receipt without replay; pending receipts return unknown. Page content is untrusted data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/note": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentNote",
+        "summary": "Append a session note",
+        "description": "Records a note without driving the browser. commandId provides idempotency. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "commandId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "tabId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "sessionId",
+                  "text"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Records a note without driving the browser. commandId provides idempotency.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/trace": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentTrace",
+        "summary": "Read command receipts",
+        "description": "Returns entries ordered by sequence, optionally filtered by commandId. Screenshot payloads are fetched separately. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "afterSeq": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "commandId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "sessionId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns entries ordered by sequence, optionally filtered by commandId. Screenshot payloads are fetched separately.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "entries"
+                  ],
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/artifact": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentArtifact",
+        "summary": "Fetch a browser screenshot",
+        "description": "Returns screenshot as base64 PNG, or null when absent. artifactId is the command ID from the result. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "artifactId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "sessionId",
+                  "artifactId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns screenshot as base64 PNG, or null when absent. artifactId is the command ID from the result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "screenshot"
+                  ],
+                  "properties": {
+                    "screenshot": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Base64-encoded PNG when present."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
+    "/browser-sessions/close": {
+      "post": {
+        "tags": [
+          "Agent browsers"
+        ],
+        "operationId": "browserAgentClose",
+        "summary": "Close a browser session",
+        "description": "Closes the durable session and releases its desktop. Use a new runKey for another browser. Request bodies are limited to 64,000 characters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "sessionId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closes the durable session and releases its desktop. Use a new runKey for another browser.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
+    },
     "/host-catalog": {
       "get": {
         "operationId": "getHostCompatCatalog",
@@ -1752,10 +2353,16 @@
         "operationId": "createEvalRun",
         "tags": ["Eval runs"],
         "summary": "Create an eval run (async)",
-        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.",
+        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.\n\nTo make the run readable as something more specific than `API` in the Runs table, send `x-mcpjam-launcher` (and `x-mcpjam-ci` from a CI job). Both are labels: `source` is stamped `api` either way.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          },
+          {
+            "$ref": "#/components/parameters/ciHeader"
           }
         ],
         "requestBody": {
@@ -2534,6 +3141,59 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/gate": {
+      "get": {
+        "operationId": "getEvalRunGate",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get one run's suite quality-gate report",
+        "description": "ONE run's stored suite quality-gate report (`SuiteGateReportV1`): passed, failed, non_gateable, or not_configured.\n\n`not_configured` is a 200 report — the suite has no active conditions — never a missing route. A 404 means the run is not visible. A deployment that predates the evaluator answers 501 FEATURE_NOT_SUPPORTED; that is a fact about the deployment, not proof the suite has no policy. A run waiver never covers this report.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run's suite quality-gate report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "description": "SuiteGateReportV1"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "501": {
+            "description": "This deployment does not serve quality-gate evaluation."
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/schedule": {
       "patch": {
         "operationId": "updateEvalSuiteSchedule",
@@ -2546,6 +3206,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -2704,6 +3367,122 @@
           },
           "502": {
             "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/organizations/{organizationId}/spend-budget": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/organizationId"
+        }
+      ],
+      "get": {
+        "operationId": "getSpendBudget",
+        "tags": ["Catalog"],
+        "summary": "Read the organization's spend budget",
+        "description": "The ceiling on what this organization may spend on MCPJam-billed work — chat, evals, judges and computer time — in the current billing window, and how much of it has been spent.\n\nAny member may read it: a member who cannot raise the ceiling still needs to know it exists, because it is what refused their run. `capUsd: null` means the organization is uncapped, which is the default.\n\nRuns that use your own provider keys are never counted against the budget and never blocked by it. Neither is the free daily allowance — it is not credits.",
+        "responses": {
+          "200": {
+            "description": "The organization's spend budget.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendBudget"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "put": {
+        "operationId": "setSpendBudget",
+        "tags": ["Catalog"],
+        "summary": "Set the organization's spend budget",
+        "description": "Set or replace the ceiling. **Requires organization owner or admin.**\n\nWhen the budget is reached, new MCPJam-billed work — chat turns, eval runs, computer starts — is refused for the whole organization until the window resets or an owner or admin raises the cap. Work already in flight finishes, and running computers keep going until they hibernate.\n\n`capUsd` is stored as whole credits (1 credit = 1 cent), so it is rounded to the cent; the response reports what was kept. Changing the cap mid-window does not reset the spend counter, and does not re-announce a threshold the organization was already told about.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpendBudgetInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored spend budget.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendBudget"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearSpendBudget",
+        "tags": ["Catalog"],
+        "summary": "Remove the organization's spend budget",
+        "description": "Leave the organization uncapped. **Requires organization owner or admin.**\n\nThe window's spend counter survives: it is a record of spend, not of the budget, and a budget set again later measures against the spend already made this period.",
+        "responses": {
+          "200": {
+            "description": "The spend budget, now uncapped.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendBudget"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
@@ -3201,10 +3980,16 @@
         "operationId": "createEvalRunGroup",
         "tags": ["Eval runs"],
         "summary": "Launch one run per target as a group (async)",
-        "description": "Launches ONE run per target — attached project environments, or attached named hosts — under a single **server-minted** `runGroupId`, then detaches execution and responds `202` with a per-target receipt.\n\nThis is the only endpoint with grouped-launch semantics. `POST /eval-runs` also accepts a `runGroupId`, but purely as a display label: it groups sibling rows in the UI and gives N separate launches no group treatment. Here the server bounds the fan-out (max 10 targets), validates EVERY target before launching any of them (an unattached target, a heterogeneous target list, or a target whose host selects an unavailable harness returns `400` with zero runs started), and holds exactly ONE organization concurrency slot for the whole group — released only when the last sibling finishes.\n\nTargets fan out along ONE axis: all `environmentId` or all `namedHostId`, never a mix. Duplicates are deduplicated by id, preserving order.\n\nA per-target failure does NOT abort its siblings, so read `outcome` rather than treating the `202` as \"everything started\": `started` means every target launched, `partial` means some did, `failed` means none did.\n\nSend `Idempotency-Key` (or `idempotencyKey`) to make the launch replayable: the group id is DERIVED from the key, and each target carries a run key derived from that, so a retry after a crash mid-launch returns the original run ids instead of double-launching the targets that already started.",
+        "description": "Launches ONE run per target — attached project environments, or attached named hosts — under a single **server-minted** `runGroupId`, then detaches execution and responds `202` with a per-target receipt.\n\nThis is the only endpoint with grouped-launch semantics. `POST /eval-runs` also accepts a `runGroupId`, but purely as a display label: it groups sibling rows in the UI and gives N separate launches no group treatment. Here the server bounds the fan-out (max 10 targets), validates EVERY target before launching any of them (an unattached target, a heterogeneous target list, or a target whose host selects an unavailable harness returns `400` with zero runs started), and holds exactly ONE organization concurrency slot for the whole group — released only when the last sibling finishes.\n\nTargets fan out along ONE axis: all `environmentId` or all `namedHostId`, never a mix. Duplicates are deduplicated by id, preserving order.\n\nA per-target failure does NOT abort its siblings, so read `outcome` rather than treating the `202` as \"everything started\": `started` means every target launched, `partial` means some did, `failed` means none did.\n\nSend `Idempotency-Key` (or `idempotencyKey`) to make the launch replayable: the group id is DERIVED from the key, and each target carries a run key derived from that, so a retry after a crash mid-launch returns the original run ids instead of double-launching the targets that already started.\n\n`x-mcpjam-launcher` and `x-mcpjam-ci` are read once and applied to EVERY sibling: one fan-out is one launch by one process, so the targets badge identically.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          },
+          {
+            "$ref": "#/components/parameters/ciHeader"
           }
         ],
         "requestBody": {
@@ -3548,6 +4333,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -3601,13 +4389,16 @@
         "operationId": "deleteEvalSuite",
         "tags": ["Eval runs"],
         "summary": "Delete an eval suite",
-        "description": "Deletes the suite and its cases. Past runs are not deleted.",
+        "description": "Deletes the suite and its cases. Past runs are not deleted.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses this with `409`; send its file's `suite.id` as `declaredSuiteId` to delete as the file.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "responses": {
@@ -3793,6 +4584,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -3886,6 +4680,9 @@
               "type": "string",
               "maxLength": 256
             }
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -4128,6 +4925,9 @@
               "type": "string"
             },
             "description": "Eval case id."
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -4181,7 +4981,7 @@
         "operationId": "deleteEvalCase",
         "tags": ["Eval runs"],
         "summary": "Delete an eval case",
-        "description": "Removes the case from the suite. Past runs that executed it are not affected.",
+        "description": "Removes the case from the suite. Past runs that executed it are not affected.\n\nA case in a CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses this with `409`; send the suite file's `suite.id` as `declaredSuiteId` to delete as the file.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -4197,6 +4997,9 @@
               "type": "string"
             },
             "description": "Eval case id."
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "responses": {
@@ -11445,6 +12248,519 @@
           }
         }
       }
+    },
+    "/chat-sessions/{sessionId}/browser/open": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserOpen",
+        "summary": "Open the API session browser",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "policy": {
+                    "$ref": "#/components/schemas/BrowserToolPolicy"
+                  },
+                  "profileId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionBrowserOpened"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/{sessionId}/browser/command": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserCommand",
+        "summary": "Command the API session browser",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "commandId": {
+                    "type": "string"
+                  },
+                  "tabId": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "$ref": "#/components/schemas/BrowserAgentCommand"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/{sessionId}/browser/note": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserNote",
+        "summary": "Add a note to the API session browser",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "commandId": {
+                    "type": "string"
+                  },
+                  "tabId": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "text"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/{sessionId}/browser/trace": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserTrace",
+        "summary": "Read the API session browser command trace",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "afterSeq": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/{sessionId}/browser/artifact": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserArtifact",
+        "summary": "Read an API session browser screenshot URL",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "commandId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "commandId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/{sessionId}/browser/close": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "chatSessionBrowserClose",
+        "summary": "Close the API session browser",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/chat-sessions/browser": {
+      "post": {
+        "tags": [
+          "Chat sessions"
+        ],
+        "operationId": "createChatSessionBrowser",
+        "summary": "Create an API session shell and open its browser",
+        "description": "Same-user, API-origin session browser operation. sessionId is the public chatSessions id. Screenshot evidence is returned as URLs; browser identity persists across turns.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string"
+                  },
+                  "policy": {
+                    "$ref": "#/components/schemas/BrowserToolPolicy"
+                  },
+                  "profileId": {
+                    "type": "string"
+                  },
+                  "idempotencyKey": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "policy",
+                  "idempotencyKey"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session browser result. Unknown command outcomes must be inspected before retrying with a different command ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionBrowserOpened"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or policy"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Session not found or not owned by caller"
+          },
+          "409": {
+            "description": "Session closed or conflicting command ID"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "Browser control plane unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -11456,6 +12772,36 @@
       }
     },
     "parameters": {
+      "declaredSuiteIdQuery": {
+        "name": "declaredSuiteId",
+        "in": "query",
+        "required": false,
+        "description": "The suite file's own `suite.id`, when this request is that file syncing itself. A CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`; naming the suite's own declared id is how the file writing itself is allowed through. Naming any other id refuses exactly as loudly as naming none, so it is not a capability — omit it for an ordinary edit.\n\nA QUERY PARAMETER on every route that takes it, never a body field. These request bodies are strict, here and on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment — which would break `mcpjam cloud eval run --file` for anyone whose CLI is newer than their Inspector. A query parameter is read by the deployments that know it and ignored by those that do not, which is the right degradation: an Inspector with no lock has no exception to make.",
+        "schema": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "launcherHeader": {
+        "name": "x-mcpjam-launcher",
+        "in": "header",
+        "required": false,
+        "description": "The launching process's own DECLARED identity, as compact JSON: `{\"kind\":\"cli\"|\"mcp\"|\"github_action\",\"client\":\"…\",\"version\":\"…\"}`. Stored on the run as `launcher` and used only as a display label — `source` stays `api` and the audit trail reads the platform-minted `attribution` instead.\n\nA header rather than a body field so that sending it never breaks against an older deployment: both eval-run bodies reject unknown properties, while an unknown header is ignored everywhere. For the same reason a malformed value, or a `kind` outside the three above, is DROPPED rather than rejected — a label must never fail a launch. Max 512 bytes.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "{\"kind\":\"github_action\",\"client\":\"mcpjam-cli\",\"version\":\"8.2.0\"}"
+      },
+      "ciHeader": {
+        "name": "x-mcpjam-ci",
+        "in": "header",
+        "required": false,
+        "description": "The CI job this run was launched from, as compact JSON. Recognized keys: `provider`, `pipelineId` (or `runId`), `jobId` (or `job`), `runUrl`, `branch`, `commitSha`. Stored on the run as `ciMetadata`, which is what makes a run resolvable by commit for baseline comparison. Unrecognized keys are dropped.\n\nA header for the same compatibility reason as `x-mcpjam-launcher`, and dropped rather than rejected when malformed. Max 2048 bytes.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "{\"provider\":\"github_actions\",\"commitSha\":\"a1b2c3d\",\"branch\":\"main\",\"runId\":\"1234.1\",\"job\":\"evals\"}"
+      },
       "organizationId": {
         "name": "organizationId",
         "in": "path",
@@ -11689,6 +13035,264 @@
       }
     },
     "schemas": {
+      "BrowserAgentCommand": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "back"
+              },
+              "observeAfter": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "forward"
+              },
+              "observeAfter": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "reload"
+              },
+              "observeAfter": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "navigate"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "maxLength": 8192
+              },
+              "newTab": {
+                "type": "boolean"
+              },
+              "observeAfter": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op",
+              "url"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "observe"
+              },
+              "mode": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "text",
+                  "dom",
+                  "console",
+                  "network",
+                  "dialog",
+                  "url",
+                  "page_tools"
+                ]
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "rootRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "rootSelector": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "filter": {
+                "enum": [
+                  "interactive",
+                  "all"
+                ]
+              }
+            },
+            "required": [
+              "op",
+              "mode"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "act"
+              },
+              "verb": {
+                "enum": [
+                  "click",
+                  "type",
+                  "press",
+                  "scroll",
+                  "hover",
+                  "drag",
+                  "select",
+                  "close_tab",
+                  "activate_tab",
+                  "accept_dialog",
+                  "dismiss_dialog"
+                ]
+              },
+              "target": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "ref": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      }
+                    },
+                    "required": [
+                      "ref"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "selector": {
+                        "type": "string",
+                        "maxLength": 4096
+                      }
+                    },
+                    "required": [
+                      "selector"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "coordinates": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      }
+                    },
+                    "required": [
+                      "coordinates"
+                    ]
+                  }
+                ]
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 16000
+              },
+              "expectedState": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "observeAfter": {
+                "enum": [
+                  "a11y",
+                  "screenshot",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op",
+              "verb"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "invoke_page_tool"
+              },
+              "toolKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "frameId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "input": {}
+            },
+            "required": [
+              "op",
+              "toolKey",
+              "input"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "cancel_page_tool"
+              },
+              "invocationId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "op",
+              "invocationId"
+            ]
+          }
+        ]
+      },
       "Error": {
         "type": "object",
         "required": ["code", "message"],
@@ -11827,12 +13431,57 @@
           "import": {
             "$ref": "#/components/schemas/EvalCaseImportClaim"
           },
+          "source": {
+            "$ref": "#/components/schemas/EvalCaseSource"
+          },
           "createdAt": {
             "type": ["number", "null"]
           },
           "updatedAt": {
             "type": ["number", "null"]
           }
+        }
+      },
+      "EvalCaseSource": {
+        "type": "object",
+        "description": "Where an AI-assisted Markdown case was authored from. Provenance only: the file, its hash, and the line range the extractor read, so a reader can trace a case back to its source document. It is not an import claim (see `EvalCaseImportClaim`) and carries no approval semantics.",
+        "required": [
+          "format",
+          "method",
+          "fileName",
+          "fileHash",
+          "excerpt",
+          "startLine",
+          "endLine",
+          "extractorVersion"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "format": { "type": "string", "enum": ["markdown"] },
+          "method": {
+            "type": "string",
+            "enum": ["ai"],
+            "description": "How the case was derived from the document. `ai`: an extractor model proposed it and a person reviewed it before it was saved."
+          },
+          "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "fileHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 of the source document, lowercase hex."
+          },
+          "excerpt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 102400,
+            "description": "The passage the case was extracted from."
+          },
+          "startLine": { "type": "integer", "minimum": 1 },
+          "endLine": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Inclusive; never less than `startLine`."
+          },
+          "extractorVersion": { "type": "string", "minLength": 1, "maxLength": 100 }
         }
       },
       "EvalCaseImportClaim": {
@@ -11963,6 +13612,11 @@
         "required": ["title", "steps"],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
           "title": {
             "type": "string",
             "minLength": 1
@@ -11991,14 +13645,14 @@
           "repetitions": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100,
-            "description": "Per-case repetitions under verdict policy 2; omitted cases inherit the suite default."
+            "maximum": 10,
+            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
           },
           "passThreshold": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction under verdict policy 2."
+            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
           },
           "isNegative": {
             "type": "boolean"
@@ -12056,6 +13710,9 @@
           },
           "import": {
             "$ref": "#/components/schemas/EvalCaseImportClaim"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EvalCaseSource"
           }
         },
         "additionalProperties": false
@@ -12078,6 +13735,11 @@
         "required": ["cases"],
         "description": "Author several cases in one call. Each entry takes the same fields as a single create. The 100-case cap is deliberately smaller than a suite file's 500-case limit, so a maximal file uploads in several calls.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
           "cases": {
             "type": "array",
             "minItems": 1,
@@ -12334,6 +13996,11 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
           "title": {
             "type": "string",
             "minLength": 1
@@ -12357,14 +14024,14 @@
           "repetitions": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100,
-            "description": "Per-case repetitions under verdict policy 2; omitted cases inherit the suite default."
+            "maximum": 10,
+            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
           },
           "passThreshold": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction under verdict policy 2."
+            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
           },
           "isNegative": {
             "type": "boolean"
@@ -12877,7 +14544,7 @@
           },
           "assertion": {
             "type": "object",
-            "description": "Predicate or widget assertion (`kind: assert`).",
+            "description": "The rule an `assert` step checks (`kind: assert`). NOT a narrower spelling of a case's `checks`: this is `WidgetAssertion | Predicate`, and that union is why the field is called an assertion rather than a check. A `Predicate` is evaluated against the PERSISTED transcript, so a stored run can be re-graded against it months later; a `WidgetAssertion` is evaluated against a LIVE DOM and can never be replayed. Calling this a check would promise the replayability only one half of it has.",
             "additionalProperties": true
           }
         },
@@ -12885,8 +14552,13 @@
       },
       "EvalTestCase": {
         "type": "object",
-        "description": "Inline eval test case. The case body is an ordered `steps` array (the unified test model).",
-        "required": ["title", "runs", "model", "provider", "steps"],
+        "description": "Inline eval test case. The case body is an ordered `steps` array (the unified test model). Exactly one of `runs` / `iterations` is required — an inline test on a run has no suite default to inherit. The object is CLOSED: an unknown key is a VALIDATION_ERROR, never a silently dropped field. `repetitions`, `passThreshold` and `kind` are per-case policy fields this surface cannot author — set them through `POST /v1/projects/{projectId}/eval-suites/{suiteId}/cases`.",
+        "required": ["title", "model", "provider", "steps"],
+        "oneOf": [{ "required": ["runs"] }, { "required": ["iterations"] }],
+        "allOf": [
+          { "not": { "required": ["isNegative", "isNegativeTest"] } },
+          { "not": { "required": ["checks", "predicates"] } }
+        ],
         "properties": {
           "title": {
             "type": "string"
@@ -12924,9 +14596,66 @@
             "type": "object",
             "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
             "additionalProperties": true
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional authored analytics grouping label."
+          },
+          "matchOptions": {
+            "type": "object",
+            "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+            "additionalProperties": true
+          },
+          "predicates": {
+            "type": "object",
+            "deprecated": true,
+            "description": "DEPRECATED spelling of `checks`, which means exactly this. It was accepted here all along and never written down, passing only because this schema allowed unknown properties; documented rather than removed so no caller already sending it breaks. Send one or the other, never both.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["inherit", "replace", "extend"]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "isNegative": {
+            "type": "boolean",
+            "description": "Alias for `isNegativeTest` — the public case-authoring spelling this API returns on a read. Send one or the other, never both."
+          },
+          "iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Alias for `runs`. Send one or the other, never both."
+          },
+          "checks": {
+            "type": "object",
+            "description": "Per-case CHECK gate \u2014 the grading rules this case is scored against. `mode` says how they combine with the suite's own: `inherit` uses the suite's, `replace` uses only `list`, `extend` appends `list` to the suite's. Same field, same shape and same name as `checks` on the eval-case routes, so authoring a suite and then editing one of its cases is one word for one concept. Send this or the deprecated `predicates`, never both.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["inherit", "replace", "extend"]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
           }
         },
-        "additionalProperties": true
+        "additionalProperties": false
       },
       "EvalSuiteCreateRequest": {
         "type": "object",
@@ -12956,6 +14685,31 @@
               "type": "string"
             }
           },
+          "hosts": {
+            "type": "array",
+            "description": "Clients (hosts) to attach the suite to, in attach order. A suite with no attached client reports none wherever it is listed, and a run has no host to select. Same shape as the PATCH `hosts` field.",
+            "items": {
+              "type": "object",
+              "required": [
+                "host"
+              ],
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Host name or id."
+                },
+                "servers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": "Server names (as bound in the suite's environment) or project-server ids."
+                }
+              }
+            }
+          },
           "model": {
             "type": "string",
             "minLength": 1,
@@ -12967,11 +14721,28 @@
           },
           "passCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
-            }
+            },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
+            "additionalProperties": false
           },
           "tags": {
             "type": "array",
@@ -12984,10 +14755,15 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 100,
-            "description": "Test cases to create in the suite.",
+            "description": "Test cases to create in the suite. The object is CLOSED: an unknown key is a VALIDATION_ERROR, never a silently dropped field. `repetitions`, `passThreshold` and `kind` are per-case policy fields this surface cannot author — set them through `POST /v1/projects/{projectId}/eval-suites/{suiteId}/cases`.",
             "items": {
               "type": "object",
               "required": ["title", "steps"],
+              "allOf": [
+                { "not": { "required": ["runs", "iterations"] } },
+                { "not": { "required": ["isNegative", "isNegativeTest"] } },
+                { "not": { "required": ["checks", "predicates"] } }
+              ],
               "properties": {
                 "title": {
                   "type": "string",
@@ -13029,9 +14805,63 @@
                   "type": "object",
                   "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
                   "additionalProperties": true
+                },
+                "intent": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "description": "Optional authored analytics grouping label."
+                },
+                "matchOptions": {
+                  "type": "object",
+                  "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+                  "additionalProperties": true
+                },
+                "predicates": {
+                  "type": "object",
+                  "deprecated": true,
+                  "description": "DEPRECATED spelling of `checks`, which means exactly this. It was accepted here all along and never written down, passing only because this schema allowed unknown properties; documented rather than removed so no caller already sending it breaks. Send one or the other, never both.",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": ["inherit", "replace", "extend"]
+                    },
+                    "list": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                },
+                "isNegative": {
+                  "type": "boolean",
+                  "description": "Alias for `isNegativeTest` — the public case-authoring spelling this API returns on a read. Send one or the other, never both."
+                },
+                "iterations": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10,
+                  "description": "Alias for `runs`. Send one or the other, never both."
+                },
+                "checks": {
+                  "type": "object",
+                  "description": "Per-case CHECK gate \u2014 the grading rules this case is scored against. `mode` says how they combine with the suite's own: `inherit` uses the suite's, `replace` uses only `list`, `extend` appends `list` to the suite's. Same field, same shape and same name as `checks` on the eval-case routes, so authoring a suite and then editing one of its cases is one word for one concept. Send this or the deprecated `predicates`, never both.",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": ["inherit", "replace", "extend"]
+                    },
+                    "list": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           }
         },
@@ -13050,6 +14880,22 @@
           "servers": {
             "type": "array",
             "description": "The servers attached to the suite. `name` is present when supplied.",
+            "items": {
+              "type": "object",
+              "required": ["id"],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "hosts": {
+            "type": "array",
+            "description": "The clients (hosts) attached to the suite at create time. Empty when none were named.",
             "items": {
               "type": "object",
               "required": ["id"],
@@ -13246,11 +15092,28 @@
           },
           "defaultPassCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
-            }
+            },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
+            "additionalProperties": false
           }
         }
       },
@@ -13398,7 +15261,13 @@
       },
       "EvalSuiteDetail": {
         "type": "object",
-        "required": ["id", "environment", "hosts", "settings", "schedule"],
+        "required": [
+          "id",
+          "environment",
+          "hosts",
+          "settings",
+          "schedule"
+        ],
         "description": "One eval suite's full configuration. Distinct from the `EvalSuite` summary returned by the list route, which carries run rollups instead of settings.",
         "properties": {
           "id": {
@@ -13407,6 +15276,11 @@
           "declaredId": {
             "type": "string",
             "description": "The suite's declared file identity (`suite.id` in a suite file). Present on file-owned suites; absent on UI-authored suites, which have no declared id and cannot be claimed by `eval run --file`."
+          },
+          "managedBy": {
+            "type": "string",
+            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it — name, settings, environments, schedule, models, skills, execution config and cases — from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying and comparing are unaffected. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
+            "enum": ["ci", "app"]
           },
           "name": {
             "type": ["string", "null"]
@@ -13487,7 +15361,7 @@
             "properties": {
               "minimumAccuracy": {
                 "type": ["number", "null"],
-                "description": "Minimum pass rate for the suite to count as passing."
+                "description": "The legacy suite-wide floor, as a PERCENT in [0, 100]. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: a v2 suite is decided by `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column an upgrade left behind is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
               },
               "minimumIterations": {
                 "type": ["number", "null"],
@@ -13521,6 +15395,31 @@
                   "threshold": {
                     "type": "number",
                     "description": "Advisory pass threshold, 0–1 (`passed = score >= threshold`)."
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": ["warn"],
+                    "description": "Presentation severity on the goal-completion slot. Legal only with an advisory role."
+                  },
+                  "groundedness": {
+                    "type": "object",
+                    "description": "Stored groundedness slot, when present. Read-only while execution is unwired; PATCH refuses this key.",
+                    "properties": {
+                      "role": {
+                        "type": "string",
+                        "enum": ["advisory"]
+                      },
+                      "model": {
+                        "type": ["string", "null"]
+                      },
+                      "threshold": {
+                        "type": ["number", "null"]
+                      },
+                      "severity": {
+                        "type": "string",
+                        "enum": ["warn"]
+                      }
+                    }
                   },
                   "rubric": {
                     "type": ["object", "null"],
@@ -13685,11 +15584,28 @@
           },
           "passCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
-            }
+            },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
+            "additionalProperties": false
           },
           "iterationOverride": {
             "type": "integer",
@@ -13906,11 +15822,28 @@
           },
           "passCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
-            }
+            },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
+            "additionalProperties": false
           },
           "idempotencyKey": {
             "type": "string",
@@ -14240,8 +16173,55 @@
           },
           "source": {
             "type": "string",
-            "description": "Run origin. API-created runs are `api`.",
-            "enum": ["ui", "api", "sdk"]
+            "description": "Run origin, STAMPED BY THE SERVER and not settable by a caller. Every run created through this API is `api` — including one launched by the CLI, by a GitHub Actions job, or by an MCP agent, because from the server's side all three are API calls. The caller's own claim about which of those it is rides on `launcher`. `schedule` and `github_check` are written by the platform's scheduled-eval and PR-check workers; `benchmark` marks a Connector Bench matrix cell and is hidden from project run lists.",
+            "enum": [
+              "ui",
+              "api",
+              "sdk",
+              "schedule",
+              "github_check",
+              "benchmark"
+            ]
+          },
+          "launcher": {
+            "type": "object",
+            "description": "The run's DECLARED launcher — what the launching process says it is, sent as the `x-mcpjam-launcher` request header at launch. A LABEL, never an authorization input: `source` above is the stamped, unforgeable answer and `attribution` below is the verified one. Allowlisted to the three origins the server cannot observe for itself. ABSENT when the launcher declared nothing, which is not the same as `ui`.",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["cli", "mcp", "github_action"]
+              },
+              "client": {
+                "type": "string",
+                "description": "Name of the launching program, e.g. `mcpjam-cli`, or an MCP client's user-agent."
+              },
+              "version": {
+                "type": "string"
+              }
+            }
+          },
+          "attribution": {
+            "type": "object",
+            "description": "VERIFIED agent attribution, minted by the platform from the credential this run authenticated with — never from anything the caller sent. The audit-grade half of the pair: `launcher` says what the client called itself, `surface` says what the credential proved. Descriptive only; nothing reads it to decide access. ABSENT when the credential carried no attribution claims.",
+            "required": ["surface"],
+            "properties": {
+              "surface": {
+                "type": "string",
+                "enum": [
+                  "rest",
+                  "cli",
+                  "mcp",
+                  "slack",
+                  "discord",
+                  "workspace"
+                ]
+              },
+              "apiKeyId": {
+                "type": "string",
+                "description": "The API key id the request authenticated with. The KEY, never the secret."
+              }
+            }
           },
           "notes": {
             "type": ["string", "null"]
@@ -14602,6 +16582,29 @@
           }
         }
       },
+      "CostCoverage": {
+        "type": "object",
+        "description": "How many iterations on each side of a comparison actually contributed a cost. Cost is stamped per iteration and is absent whenever the model was not MCPJam-billed (your own API key), the run used a harness (which mixes models within a turn), or the trial reported no tokens. Summing the priced iterations and skipping the rest yields a figure indistinguishable from a complete one — so a drop in `estimatedCostUsd` is only a cost signal when coverage is full on both sides. A CI gate should treat partial coverage as non-gateable rather than as a pass or a fail.",
+        "required": ["base", "compare"],
+        "properties": {
+          "base": { "$ref": "#/components/schemas/CostCoverageSide" },
+          "compare": { "$ref": "#/components/schemas/CostCoverageSide" }
+        }
+      },
+      "CostCoverageSide": {
+        "type": "object",
+        "required": ["costed", "total"],
+        "properties": {
+          "costed": {
+            "type": "integer",
+            "description": "Iterations that contributed a cost."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Iterations on this side."
+          }
+        }
+      },
       "NumericDiff": {
         "description": "A base/compare pair with its delta. Rate-valued instances are FRACTIONS unless the field name ends in `Percent`.",
         "type": "object",
@@ -14824,6 +16827,19 @@
           },
           "compare": {
             "$ref": "#/components/schemas/EvalRunCompareCaseSide"
+          },
+          "metrics": {
+            "type": "object",
+            "description": "Per-case cost, with the coverage that produced it. `costCoverage` is absent when the platform does not report coverage; absence means no opinion, never full coverage, and a cost gate refuses to judge on it.",
+            "required": ["estimatedCostUsd"],
+            "properties": {
+              "estimatedCostUsd": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "costCoverage": {
+                "$ref": "#/components/schemas/CostCoverage"
+              }
+            }
           }
         },
         "required": [
@@ -15070,6 +17086,9 @@
               },
               "estimatedCostUsd": {
                 "$ref": "#/components/schemas/NumericDiff"
+              },
+              "costCoverage": {
+                "$ref": "#/components/schemas/CostCoverage"
               }
             },
             "required": ["wallDurationMs", "totalTokens", "estimatedCostUsd"]
@@ -15304,7 +17323,7 @@
           },
           "usage": {
             "type": ["object", "null"],
-            "description": "Structured token usage (input/output/cached/reasoning) when available.",
+            "description": "Structured token usage (input/output/cached/reasoning) when available, plus `estimatedCostUsd` and the `costBasis` it was priced from.\n\n`estimatedCostUsd` ABSENT means no cost was observed — never that the trial was free. `costBasis.reason` says which: `no_pricing` (not an MCPJam-billed model, e.g. your own API key), `harness_mixed_models` (a harness turn mixes models and carries no per-model split, so its cost arrives with billed attribution instead), or `no_tokens`.\n\n`costBasis.source` is `gateway_pricing` when MCPJam priced its own token counts, and `sdk_runner` when the figure came from your runner — real, but neither computed nor verified by MCPJam.",
             "additionalProperties": true
           },
           "actualToolCalls": {
@@ -15386,6 +17405,288 @@
           "stageResultsUnverified": {
             "type": "boolean",
             "enum": [true]
+          },
+          "frictionSignals": {
+            "$ref": "#/components/schemas/EvalTrialFrictionSignals"
+          },
+          "frictionSignalsUnverified": {
+            "type": "boolean",
+            "enum": [true],
+            "description": "The server stored a friction document that failed validation. The signals themselves are withheld rather than partially trusted."
+          },
+          "suspectedConditionVerdict": {
+            "$ref": "#/components/schemas/EvalSuspectedConditionVerdict"
+          },
+          "suspectedConditionUnverified": {
+            "type": "boolean",
+            "enum": [true],
+            "description": "The server stored a suspected-condition verdict that failed validation. The verdict is withheld rather than partially trusted."
+          }
+        }
+      },
+      "EvalSuspectedConditionVerdict": {
+        "type": "object",
+        "description": "Which server-controlled condition is SUSPECTED of contributing to one observed friction pattern, from an advisory per-trial judge. REPORT-ONLY and NEVER a claim about cause: nothing here entered the trial\u2019s `result`, its stage chain or its `failureCategory`, and only a controlled rewrite that changes the suspected response and holds the rest comparable could establish causation. ABSENT means no judge ran \u2014 the trial predates it, nothing was flagged, or the deployment has it off.",
+        "required": [
+          "status",
+          "gradingKey",
+          "signalKind",
+          "informationCallIndex",
+          "observedAtCallIndex",
+          "judgeTemplateVersion",
+          "judgeTemplateHash",
+          "model",
+          "generatedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["scored", "skipped", "error"],
+            "description": "`scored` \u2014 a verdict was produced. `skipped` \u2014 the judge did not reach this trial; `reason` says why. `error` \u2014 the pass threw for this trial. A skipped or errored trial carries NO condition, so \u201cwe never looked\u201d is never rendered as \u201cwe looked and could not say\u201d."
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["spendBlocked", "traceIncomplete", "noEvidence", "cap"],
+            "description": "Present only when `status` is `skipped`. `spendBlocked` \u2014 the internal-LLM spend gate refused the call. `traceIncomplete` \u2014 a referenced trace blob could not be read. `noEvidence` \u2014 the judge\u2019s window could not be built, most often because the information call\u2019s result never reached the trace. `cap` \u2014 the run had more flagged trials than the per-run cap."
+          },
+          "condition": {
+            "type": "string",
+            "enum": [
+              "unclear",
+              "idBuriedInPayload",
+              "idNameCollision",
+              "missingQueryEcho",
+              "silentTruncation",
+              "ambiguousErrorSemantics",
+              "missingUnits",
+              "responseWasClear",
+              "descriptionMisleading"
+            ],
+            "description": "Which server-controlled condition is SUSPECTED of contributing. A CLOSED vocabulary. SUSPECTED, not established: the judge saw one window of one trial and named a plausible contributor, and only a controlled rewrite could turn that into a claim about cause. `unclear` — could not attribute: the judge could not identify a condition from what it was shown, which is also where a low-confidence or unsupported verdict is demoted to. `idBuriedInPayload` — identifier buried in payload: the identifier a later call needed was not where a caller would look for it. `idNameCollision` — identifier name collision: two different identifiers share a name, or one name means different things across tools. `missingQueryEcho` — response does not echo the query: a caller cannot tell a narrowed result from a fresh one. `silentTruncation` — response truncated without saying so. `ambiguousErrorSemantics` — error text does not say whether to retry. `missingUnits` — value has no stated unit. `responseWasClear` — the response was clear: the server's output does not explain the pattern. This is the honest negative and a real answer. `descriptionMisleading` — tool description points the wrong way."
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+            "description": "How sure the judge was. `low` — low confidence: never reaches a reader as a named condition, because a low-confidence verdict is demoted to `unclear` before it is persisted. `medium` — medium confidence. `high` — high confidence."
+          },
+          "remediation": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "ONE sentence naming a lever the SERVER OWNER controls. Absent for `unclear` and `responseWasClear`, which name no server problem to remediate, and absent from any verdict whose remediation named no server lever \u2014 that verdict is demoted to `unclear`."
+          },
+          "evidence": {
+            "type": "object",
+            "description": "Where in the window the judge was pointing. Dropped rather than guessed when it fell outside the window or named the wrong tool; the verdict survives, the pointer does not.",
+            "required": ["callIndex", "toolName"],
+            "properties": {
+              "callIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "fieldPath": {
+                "type": "string",
+                "maxLength": 120
+              }
+            }
+          },
+          "gradingKey": {
+            "type": "string"
+          },
+          "signalKind": {
+            "type": "string",
+            "description": "The friction signal that triggered the judge."
+          },
+          "informationCallIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Where the information was surfaced. The judge saw calls 0 through `observedAtCallIndex` and nothing after."
+          },
+          "observedAtCallIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The call that made the pattern observable, and the judge\u2019s evidence bound."
+          },
+          "judgeTemplateVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "judgeTemplateHash": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "EvalFrictionSignal": {
+        "type": "object",
+        "description": "One observed pattern in a trial's tool calls. Identifier kinds carry `informationCallIndex` (where the identifiers appeared) and `observedAtCallIndex` (the later call that made the pattern visible); adjacency kinds carry `callIndex` and `priorCallIndex`. Every index addresses `actualToolCalls` on the same iteration.",
+        "required": ["kind", "toolName"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "identifierSurfacedUnused",
+              "searchRepeatedAfterIdentifier",
+              "identicalRetry",
+              "changedRetry",
+              "paginationContinuation"
+            ],
+            "description": "Which observable pattern this is. A CLOSED vocabulary; a reader that does not know a member must not guess at it. Every member has a benign reading, so none of them is a verdict about the trial. `identifierSurfacedUnused` — Identifiers surfaced, none used later: a result carried identifiers and no later call passed one, which is also what a search that already answered the question looks like. `searchRepeatedAfterIdentifier` — Same tool searched again after identifiers: the tool that surfaced them was called again with a different question, which is also what a sensible refinement looks like. `identicalRetry` — Repeated with identical arguments: the same call ran twice byte for byte, which is what recovery after a transient error looks like. `changedRetry` — Same tool called again with changed arguments: ordinary exploration, and most useful work looks like this. `paginationContinuation` — Pagination continued: only the pagination keys changed, which is a cursor doing its job and is never counted as a repeat."
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "informationCallIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "observedAtCallIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "callIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "priorCallIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "afterError": {
+            "type": "boolean",
+            "description": "Whether the call this one repeats returned an error."
+          },
+          "identifierKeyPaths": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            },
+            "description": "Where in the result the identifiers were found (`results[].id`). KEY PATHS ONLY — an identifier VALUE never leaves the deployment."
+          },
+          "identifierCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "laterCallCount": {
+            "type": "integer",
+            "minimum": 2
+          },
+          "repeatCallIndexes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "paginationKeys": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": {
+              "type": "string",
+              "enum": [
+                "cursor",
+                "nextCursor",
+                "page",
+                "pageToken",
+                "offset",
+                "after",
+                "before",
+                "start",
+                "limit"
+              ]
+            }
+          }
+        }
+      },
+      "EvalTrialFrictionSignals": {
+        "type": "object",
+        "description": "Observable patterns in one trial's tool calls. REPORT-ONLY: nothing here decided the trial's `result`, and every pattern has a benign reading. `state` is `notMeasured` when the trial could not be looked at at all; `identifierSignals.state` is separate because a trial whose tool results were not retained still has measurable retries but cannot be asked whether an identifier went unused. An ABSENT document means the trial predates the measurement — never read it as zero.",
+        "required": [
+          "version",
+          "state",
+          "callCount",
+          "resultAvailableCount",
+          "timedCallCount",
+          "identifierSignals",
+          "signals"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [1],
+            "description": "Derivation semantics version. Bumped when a counting RULE changes, even if the shape does not."
+          },
+          "state": {
+            "type": "string",
+            "enum": ["measured", "notMeasured"]
+          },
+          "notMeasuredReason": {
+            "type": "string",
+            "enum": [
+              "noToolCalls",
+              "resultsUnavailable",
+              "orderingUnknown",
+              "evidenceIncomplete",
+              "truncated"
+            ],
+            "description": "Present only when `state` is `notMeasured`. `noToolCalls` — no tool calls to look at. `resultsUnavailable` — tool results were not retained. `orderingUnknown` — the calls cannot be placed in a causal order. `evidenceIncomplete` — the evidence for this trial has a known hole. `truncated` — too many tool calls to measure."
+          },
+          "callCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resultAvailableCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timedCallCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "identifierSignals": {
+            "type": "object",
+            "description": "Whether the two identifier-dependent kinds were measured at all. `notMeasured` here beside `state: measured` above is the normal shape for a run whose tool results were not retained: the retries were measured, the identifiers were never looked for.",
+            "required": ["state"],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": ["measured", "notMeasured"]
+              },
+              "reason": {
+                "type": "string",
+                "description": "Why the identifier kinds were not measured. `noToolCalls` — no tool calls to look at. `resultsUnavailable` — tool results were not retained. `orderingUnknown` — the calls cannot be placed in a causal order. `evidenceIncomplete` — the evidence for this trial has a known hole. `truncated` — too many tool calls to measure.",
+                "enum": [
+                  "noToolCalls",
+                  "resultsUnavailable",
+                  "orderingUnknown",
+                  "evidenceIncomplete",
+                  "truncated"
+                ]
+              }
+            }
+          },
+          "signals": {
+            "type": "array",
+            "maxItems": 24,
+            "items": {
+              "$ref": "#/components/schemas/EvalFrictionSignal"
+            },
+            "description": "Ordered by the call that made each pattern observable. Empty on a `measured` document means nothing fired; empty on a `notMeasured` one means nothing was looked for."
           }
         }
       },
@@ -16254,6 +18555,106 @@
           }
         }
       },
+      "SpendBudget": {
+        "type": "object",
+        "description": "An organization's ceiling on MCPJam-billed spend for the current billing window. Amounts appear in both USD and credits (1 credit = 1 cent); the credit figures are what the ledger actually stores.",
+        "required": [
+          "capUsd",
+          "capCredits",
+          "alertPercents",
+          "spentUsd",
+          "spentCredits",
+          "windowStartAt",
+          "windowEndsAt",
+          "alertedPercents",
+          "capReachedAt",
+          "updatedAt",
+          "minCapUsd",
+          "maxCapUsd",
+          "supported"
+        ],
+        "properties": {
+          "capUsd": {
+            "type": ["number", "null"],
+            "description": "The ceiling in USD. `null` means uncapped."
+          },
+          "capCredits": {
+            "type": ["integer", "null"],
+            "description": "The same ceiling as the ledger stores it."
+          },
+          "alertPercents": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Whole percents of the cap that notify owners and admins. Reaching the cap always notifies, whether or not 100 is listed."
+          },
+          "spentUsd": {
+            "type": "number",
+            "description": "MCPJam-billed spend so far in this window, in USD."
+          },
+          "spentCredits": {
+            "type": "integer",
+            "description": "The same spend as the ledger counted it."
+          },
+          "windowStartAt": {
+            "type": "integer",
+            "description": "Start of the current billing window (epoch ms). Team and enterprise organizations run on their own subscription cycle; everyone else on the UTC month."
+          },
+          "windowEndsAt": {
+            "type": "integer",
+            "description": "When the window resets and the counter returns to zero (epoch ms)."
+          },
+          "alertedPercents": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Thresholds already announced this window. Each fires once per window."
+          },
+          "capReachedAt": {
+            "type": ["integer", "null"],
+            "description": "When the cap was reached this window, or `null`."
+          },
+          "updatedAt": {
+            "type": ["integer", "null"],
+            "description": "When the budget was last changed (epoch ms)."
+          },
+          "minCapUsd": {
+            "type": "number",
+            "description": "The smallest budget the platform accepts."
+          },
+          "maxCapUsd": {
+            "type": "number",
+            "description": "The largest budget the platform accepts."
+          },
+          "supported": {
+            "type": "boolean",
+            "description": "False for a personal organization, which cannot have a budget."
+          }
+        }
+      },
+      "SpendBudgetInput": {
+        "type": "object",
+        "required": ["capUsd"],
+        "additionalProperties": false,
+        "properties": {
+          "capUsd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "The ceiling in USD, rounded to the cent."
+          },
+          "alertPercents": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 99
+            },
+            "description": "Whole percents of the cap to notify at. Defaults to `[80]`. 100 is not accepted: reaching the cap always notifies, so listing it would show the same threshold twice."
+          }
+        }
+      },
       "OrganizationPage": {
         "type": "object",
         "required": ["items"],
@@ -16740,6 +19141,11 @@
         "required": ["enabled"],
         "description": "Enable, repoint, or disable a suite's recurring runs. Disabling PRESERVES the existing environment pin — send `enabled: true` with a new `environmentId` to repoint it.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -16761,6 +19167,11 @@
         "description": "Partial update of a suite's settings. Omitted fields are left as they are.",
         "additionalProperties": false,
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
           "name": {
             "type": "string",
             "minLength": 1
@@ -16874,6 +19285,11 @@
                     "type": "number",
                     "minimum": 0,
                     "maximum": 1
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": ["warn"],
+                    "description": "Presentation severity on the goal-completion slot. Legal only with an advisory role."
                   },
                   "rubric": {
                     "type": ["object", "null"],
@@ -23302,7 +25718,10 @@
       },
       "SendChatMessageRequest": {
         "type": "object",
-        "required": ["idempotencyKey", "message"],
+        "required": [
+          "idempotencyKey",
+          "message"
+        ],
         "additionalProperties": false,
         "properties": {
           "idempotencyKey": {
@@ -23363,7 +25782,10 @@
           },
           "toolMode": {
             "type": "string",
-            "enum": ["read_only", "auto"],
+            "enum": [
+              "read_only",
+              "auto"
+            ],
             "default": "read_only",
             "description": "`read_only` advertises only tools annotated `readOnlyHint: true`. `auto` advertises everything and MAY CAUSE REAL EXTERNAL SIDE EFFECTS. First turn only."
           },
@@ -23388,6 +25810,9 @@
             "minimum": 0,
             "maximum": 16,
             "description": "Cap the tool calls this turn may make, enforced at DISPATCH rather than by bounding steps (one step can emit several parallel calls). `0` advertises no tools at all."
+          },
+          "browser": {
+            "$ref": "#/components/schemas/SessionBrowserInput"
           }
         }
       },
@@ -23436,10 +25861,19 @@
       },
       "ChatTurn": {
         "type": "object",
-        "required": ["sessionId", "turnId", "projectId", "persisted", "origin"],
+        "required": [
+          "sessionId",
+          "turnId",
+          "projectId",
+          "persisted",
+          "origin"
+        ],
         "properties": {
           "sessionId": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "The one public session id. Pass it back to continue, and to the trace/detail reads. NULL only when the turn ran but its transcript did not persist — which `persisted.outcome` reports, and which must not be read as \"nothing happened\": the turn already spent."
           },
           "turnId": {
@@ -23454,7 +25888,10 @@
             "type": "string"
           },
           "finishReason": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "toolCalls": {
             "type": "array",
@@ -23496,7 +25933,10 @@
           },
           "toolMode": {
             "type": "string",
-            "enum": ["read_only", "auto"]
+            "enum": [
+              "read_only",
+              "auto"
+            ]
           },
           "engine": {
             "type": "string",
@@ -23527,7 +25967,9 @@
           },
           "origin": {
             "type": "string",
-            "enum": ["api"]
+            "enum": [
+              "api"
+            ]
           },
           "replay": {
             "type": "boolean",
@@ -23535,6 +25977,117 @@
           },
           "message": {
             "type": "string"
+          },
+          "chatSessionId": {
+            "type": "string"
+          },
+          "browser": {
+            "type": "object",
+            "properties": {
+            "effectivePolicy": {
+              "type": "object",
+              "description": "Permissions after intersecting the stored grant, current host ceiling, and read-only tool mode. Null is unrestricted; an empty list denies all.",
+              "properties": {
+                "tools": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "origins": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "tools",
+                "origins"
+              ]
+            },
+              "browserSessionId": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "sleeping",
+                  "closed"
+                ]
+              },
+              "policy": {
+                "$ref": "#/components/schemas/BrowserToolPolicy"
+              },
+              "profileId": {
+                "type": "string"
+              },
+              "bootId": {
+                "type": "string"
+              },
+              "controlledBy": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "human",
+                  null
+                ]
+              },
+              "box": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lastActiveAt": {
+                "type": "number"
+              },
+              "attached": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "screenshots": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BrowserScreenshot"
+                }
+              },
+              "notices": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "handoff": {
+                "type": "object",
+                "properties": {
+                  "waited": {
+                    "type": "boolean"
+                  },
+                  "resumed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "waited",
+                  "resumed"
+                ]
+              }
+            },
+            "required": [
+              "attached"
+            ]
           }
         }
       },
@@ -23577,32 +26130,63 @@
             "type": "string"
           },
           "projectId": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "origin": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "modelId": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "version": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "startedAt": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "lastActivityAt": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "toolMode": {
-            "type": ["string", "null"],
-            "enum": ["read_only", "auto", null]
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "read_only",
+              "auto",
+              null
+            ]
           },
           "environmentId": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "messageCount": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "description": "NULL — never 0 — when the transcript could not be read. Zero would claim the conversation is empty."
           },
           "transcriptUnavailable": {
@@ -23616,6 +26200,33 @@
           },
           "nextMessageIndex": {
             "type": "integer"
+          },
+          "chatSessionId": {
+            "type": "string"
+          },
+          "apiConfigState": {
+            "type": "string",
+            "enum": [
+              "unconfigured",
+              "configured"
+            ]
+          },
+          "browser": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/SessionBrowser" },
+              { "type": "null" }
+            ]
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "cumulativeInputTokens": {
+                "type": "number"
+              },
+              "cumulativeOutputTokens": {
+                "type": "number"
+              }
+            }
           }
         }
       },
@@ -23667,6 +26278,32 @@
           "spansTruncated": {
             "type": "boolean",
             "description": "Fewer spans came back than the turn recorded."
+          },
+          "browser": {
+            "type": "object",
+            "properties": {
+              "browserSessionId": {
+                "type": "string"
+              },
+              "bootId": {
+                "type": "string"
+              },
+              "box": {
+                  "oneOf": [
+                    { "type": "object", "properties": { "sandboxRowId": { "type": "string" } }, "required": ["sandboxRowId"], "additionalProperties": false },
+                    { "type": "object", "properties": { "computerId": { "type": "string" } }, "required": ["computerId"], "additionalProperties": false }
+                  ]
+                }
+            },
+            "required": [
+              "browserSessionId"
+            ]
+          },
+          "screenshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserScreenshot"
+            }
           }
         }
       },
@@ -23680,15 +26317,21 @@
           "turns"
         ],
         "properties": {
+          "projectId": { "type": ["string", "null"] },
           "sessionId": {
             "type": "string"
           },
           "origin": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "traceVersion": {
             "type": "integer",
-            "enum": [1]
+            "enum": [
+              1
+            ]
           },
           "turnCount": {
             "type": "integer",
@@ -23702,6 +26345,9 @@
           },
           "latestPromptIndex": {
             "type": "integer"
+          },
+          "chatSessionId": {
+            "type": "string"
           }
         }
       },
@@ -24650,6 +27296,168 @@
             "$ref": "#/components/schemas/ServerSkillRefusal"
           }
         }
+      },
+      "BrowserToolPolicy": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "allow_all",
+              "read_only",
+              "allowlist"
+            ]
+          },
+          "originAllowlist": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "string"
+            }
+          },
+          "toolAllowlist": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "SessionBrowserInput": {
+        "type": "object",
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/BrowserToolPolicy"
+          },
+          "profileId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserScreenshot": {
+        "type": "object",
+        "properties": {
+          "turnId": {
+            "type": "string"
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "stepIndex": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_captured",
+              "unavailable"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "mediaType": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/jpeg"
+            ]
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "ts": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "toolCallId",
+          "stepIndex"
+        ]
+      },
+      "SessionBrowser": {
+        "type": "object",
+        "properties": {
+          "browserSessionId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "sleeping",
+              "closed"
+            ]
+          },
+          "policy": {
+            "$ref": "#/components/schemas/BrowserToolPolicy"
+          },
+          "profileId": {
+            "type": "string"
+          },
+          "bootId": {
+            "type": "string"
+          },
+          "controlledBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "human",
+              null
+            ]
+          },
+          "box": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastActiveAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "browserSessionId",
+          "state"
+        ]
+      },
+      "SessionBrowserOpened": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "chatSessionId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "browser": {
+            "$ref": "#/components/schemas/SessionBrowser"
+          }
+        },
+        "required": [
+          "sessionId",
+          "chatSessionId",
+          "projectId",
+          "browser"
+        ]
       }
     },
     "responses": {

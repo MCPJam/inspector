@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "../../hooks/useWebmcpInspectorEnabled";
 import {
   applyBillingGateNavState,
   filterByFeatureFlags,
@@ -217,6 +218,21 @@ describe("filterByFeatureFlags", () => {
 });
 
 describe("declared nav flags are actually resolved", () => {
+  it("WebMCP uses the deployment Browser flag, not the legacy flag", () => {
+    const titles = (flags: Record<string, boolean>) =>
+      filterByFeatureFlags(navigationSections, flags)
+        .flatMap((section) => section.items)
+        .map((item) => item.title);
+    expect(titles({ "webmcp-inspector-enabled": true })).not.toContain(
+      "WebMCP",
+    );
+    expect(titles({ [WEBMCP_INSPECTOR_FEATURE_FLAG]: true })).toContain(
+      "WebMCP",
+    );
+    expect(titles({ [WEBMCP_INSPECTOR_FEATURE_FLAG]: false })).not.toContain(
+      "WebMCP",
+    );
+  });
   // The bug this guards: a nav item can declare `featureFlag: "x"` while the
   // sidebar's `featureFlags` map never sets `x`. `filterByFeatureFlags` then
   // reads `undefined`, hides the item permanently, and — because nothing ever
@@ -261,7 +277,7 @@ describe("declared nav flags are actually resolved", () => {
     expect(on).toContain("Sessions");
   });
 
-  it("Evaluate (New) is gated by evaluate-enabled and sits beside Evaluate", () => {
+  it("Ding Dong is gated by evaluate-enabled and sits beside Evaluate", () => {
     // The redesigned tab ships ALONGSIDE the shipped one so the two can be
     // compared, so a flag-off user must see exactly the nav they see today —
     // this is the assertion that a mis-wired flag would break.
@@ -270,7 +286,7 @@ describe("declared nav flags are actually resolved", () => {
       .find((item) => item.url === "/evaluate");
 
     expect(evaluateItem).toMatchObject({
-      title: "Evaluate (New)",
+      title: "Ding Dong",
       featureFlag: "evaluate-enabled",
       billingFeature: "evals",
     });
@@ -278,16 +294,16 @@ describe("declared nav flags are actually resolved", () => {
     const off = filterByFeatureFlags(navigationSections, {})
       .flatMap((section) => section.items)
       .map((item) => item.title);
-    expect(off).not.toContain("Evaluate (New)");
+    expect(off).not.toContain("Ding Dong");
     expect(off).toContain("Evaluate");
 
     const measure = filterByFeatureFlags(navigationSections, {
       "evaluate-enabled": true,
     }).find((section) => section.id === "measure");
     const titles = measure?.items.map((item) => item.title) ?? [];
-    expect(titles).toContain("Evaluate (New)");
+    expect(titles).toContain("Ding Dong");
     const evaluateIndex = titles.indexOf("Evaluate");
-    expect(titles.indexOf("Evaluate (New)")).toBe(evaluateIndex + 1);
+    expect(titles.indexOf("Ding Dong")).toBe(evaluateIndex + 1);
   });
 });
 
