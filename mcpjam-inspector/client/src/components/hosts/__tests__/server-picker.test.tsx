@@ -2025,3 +2025,56 @@ describe("ServerPicker — the clear control beside a full-width field", () => {
     expect(box?.className).not.toMatch(/\bflex\b|\bw-full\b/);
   });
 });
+
+describe("ServerPicker — when the parent's commit rejects", () => {
+  /**
+   * Both select paths await `onChange` and report a failure the same way, and
+   * the only thing that differs is the name in the message: the SERVER for a
+   * reused stand-in, the GROUP for a group. Nothing pinned that, so a shared
+   * helper could have said either one everywhere.
+   */
+  it("names the SERVER when reusing its stand-in fails", async () => {
+    mockState.attachments = [
+      {
+        _id: "att_alpha",
+        name: "alpha",
+        serverIds: ["srv_1"],
+        resolvedServerNames: ["alpha"],
+      },
+    ];
+    const onChange = vi.fn(() => Promise.reject(new Error("")));
+    render(<ServerPicker projectId="p_1" value={null} onChange={onChange} />);
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+
+    fireEvent.click(await serverRow("srv_1"));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Couldn't select alpha"),
+    );
+  });
+
+  it("names the GROUP when picking one fails, and passes the backend's words through", async () => {
+    mockState.attachments = [
+      {
+        _id: "att_p",
+        name: "prod pair",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
+    ];
+    const onChange = vi.fn(() =>
+      Promise.reject(new Error("suite still uses it")),
+    );
+    render(<ServerPicker projectId="p_1" value={null} onChange={onChange} />);
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(await screen.findByText("prod pair"));
+
+    // The backend's message, not ours — it says which suite.
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("suite still uses it"),
+    );
+  });
+});

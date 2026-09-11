@@ -103,6 +103,9 @@ export type ServerPickerPanelProps = {
 
 const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left";
 
+/** The wrapper a row shares with its trailing actions, which reveal on hover. */
+const ROW_WRAP = "group flex items-center gap-1 rounded pr-1 hover:bg-accent";
+
 /**
  * A group's member chip. `muted` rather than the Badge's `secondary`: both are
  * near-white in this theme, but `muted` is the lighter of the two, which is the
@@ -193,22 +196,14 @@ export function ServerPickerPanel({
     [servers, draftIds],
   );
 
-  // Read off `draftServers` rather than filtering again: two copies of the
-  // same rule is how the count, the derived name and the submitted ids came
-  // to be able to disagree in the first place.
-  const draftNames = useMemo(
-    () => draftServers.map((s) => s.name),
-    [draftServers],
-  );
-
   // Follows the picked servers until the user writes their own name.
   useEffect(() => {
     // Not while a submit is pending: the caller's write changes the names
     // already taken, which would re-derive this field past the row it just
     // wrote — and a kept draft carrying that name writes a duplicate.
     if (!showForm || nameEdited || submitting || !deriveName) return;
-    setDraftName(deriveName(draftNames));
-  }, [showForm, nameEdited, submitting, deriveName, draftNames]);
+    setDraftName(deriveName(draftServers.map((s) => s.name)));
+  }, [showForm, nameEdited, submitting, deriveName, draftServers]);
 
   const resetForm = () => {
     setShowForm(false);
@@ -250,10 +245,7 @@ export function ServerPickerPanel({
         {servers.map((server) => {
           const selected = server.id === selectedServerId;
           return (
-            <div
-              key={server.id}
-              className="group flex items-center gap-1 rounded pr-1 hover:bg-accent"
-            >
+            <div key={server.id} className={ROW_WRAP}>
               <button
                 type="button"
                 onClick={() => onSelectServer(server.id)}
@@ -436,10 +428,7 @@ export function ServerPickerPanel({
               }
               const hidden = group.serverNames.length - shown.length;
               return (
-                <div
-                  key={group.id}
-                  className="group flex items-center gap-1 rounded pr-1 hover:bg-accent"
-                >
+                <div key={group.id} className={ROW_WRAP}>
                   <button
                     type="button"
                     onClick={() => onSelectGroup(group.id)}

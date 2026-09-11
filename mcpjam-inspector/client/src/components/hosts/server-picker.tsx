@@ -48,6 +48,7 @@ import {
   listGroupsForTab,
   resolvePickerSelection,
   resolveServerConnection,
+  type PickerGroup,
   type PickerTab,
 } from "./server-picker-model";
 import {
@@ -511,6 +512,31 @@ export function ServerPicker({
    * failure to report, but it must not RESOLVE either, or the panel reads it
    * as success and clears a draft that now belongs to another project.
    */
+  /**
+   * Report an existing row as the selection and close.
+   *
+   * Awaited because `onChange` is typed `=> void` but bivariance lets a caller
+   * pass an async commit; returning early would release the latch while the
+   * parent is still writing. `creating` goes up for the wait so `busy` does
+   * too — the ref alone left every control enabled while it refused them.
+   */
+  const selectExisting = useCallback(
+    async (row: PickerGroup) => {
+      setCreating(true);
+      const isCurrent = sinceNow();
+      try {
+        await onChange(row._id, row as EvalServerAttachment);
+        if (isCurrent()) setOpen(false);
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : "";
+        toast.error(raw || `Couldn't select ${row.name}`);
+      } finally {
+        setCreating(false);
+      }
+    },
+    [onChange],
+  );
+
   const mintAndSelect = useCallback(
     async (mint: {
       name: string;
@@ -586,28 +612,7 @@ export function ServerPicker({
       try {
         const existing = findSoloGroup(attachments, serverId);
         if (existing) {
-          // AWAITED, like both mint paths. `onChange` is typed `=> void`, but
-          // bivariance lets a caller pass an async commit, and returning here
-          // before it settles releases the latch in the `finally` below while
-          // the parent is still writing — reopening the very window the latch
-          // was taken to close.
-          //
-          // And `creating` goes up for the wait, so `busy` does too. Holding
-          // only the ref left every control enabled while the latch refused
-          // them: a dead control, which is the thing `busy` exists to prevent.
-          // It also arms `onInteractOutside`, so a click away cannot dismiss
-          // the popover out from under a commit in flight.
-          setCreating(true);
-          const isCurrent = sinceNow();
-          try {
-            await onChange(existing._id, existing as EvalServerAttachment);
-            if (isCurrent()) setOpen(false);
-          } catch (err) {
-            const raw = err instanceof Error ? err.message : "";
-            toast.error(raw || `Couldn't select ${existing.name}`);
-          } finally {
-            setCreating(false);
-          }
+          await selectExisting(existing);
           return;
         }
 
@@ -792,22 +797,13 @@ export function ServerPicker({
       const group = attachments.find((row) => row._id === groupId);
       if (!group) return;
       writing.current = true;
-      // Visible for the same reason as the bare-server reuse path: the wait
-      // belongs on screen, not only in a ref nobody can see.
-      setCreating(true);
-      const isCurrent = sinceNow();
       try {
-        await onChange(group._id, group as EvalServerAttachment);
-        if (isCurrent()) setOpen(false);
-      } catch (err) {
-        const raw = err instanceof Error ? err.message : "";
-        toast.error(raw || `Couldn't select ${group.name}`);
+        await selectExisting(group);
       } finally {
-        setCreating(false);
         writing.current = false;
       }
     },
-    [attachments, creating, onChange],
+    [attachments, creating, selectExisting],
   );
 
   // A dangling selection (its row was deleted) still reads as the empty label
