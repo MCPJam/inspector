@@ -68,6 +68,16 @@ export function StageChainCards({
             >
               {card.chip.label}
             </span>
+            {card.detail ? (
+              <span
+                className={cn(
+                  "text-[10px] leading-snug",
+                  card.detail.toneClass,
+                )}
+              >
+                {card.detail.label}
+              </span>
+            ) : null}
           </button>
           {index < cards.length - 1 ? (
             // DECORATION. The order is already carried by the DOM order and by

@@ -1,3 +1,5 @@
+import type { ConnectionStatus } from "@/state/app-types";
+
 /**
  * Default name for a new server group, derived from its contents.
  *
@@ -51,3 +53,13 @@ export function deriveServerGroupName(
   return `${base} ${suffix}`;
 }
 
+/**
+ * Is a status a reading, or just the default? `disconnected` is what every
+ * server reads on a fresh load and after a project switch, so drawing it would
+ * mark every row before anything was tried.
+ */
+export function isObservedStatus(
+  status: ConnectionStatus | undefined,
+): status is Exclude<ConnectionStatus, "disconnected"> {
+  return status !== undefined && status !== "disconnected";
+}

@@ -387,7 +387,7 @@ describe("SwarmTargetComposer — multi-environment seeding", () => {
     // Both clients, not just the one added last.
     const clients = screen.getByTestId("new-swarm-clients-picker");
     expect(clients).toHaveTextContent(/claude/i);
-    expect(clients).toHaveTextContent(/\+1/);
+    expect(clients).toHaveTextContent(/cursor/i);
   });
 
   it("drops a removed environment's client from the stack", () => {

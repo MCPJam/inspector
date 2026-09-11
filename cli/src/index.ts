@@ -20,6 +20,7 @@ import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerTasksCommands } from "./commands/tasks.js";
 import { registerToolsCommands } from "./commands/tools.js";
 import { registerInspectorCommands } from "./commands/inspector.js";
+import { registerBrowserCommands } from "./commands/browser.js";
 import { registerRegistryCommands } from "./commands/registry.js";
 import {
   detectOutputFormatFromArgv,
@@ -103,6 +104,7 @@ export async function main(
 
   program.commandsGroup("CLI:");
   registerInspectorCommands(program);
+  registerBrowserCommands(program);
   registerMcpCommands(program);
   registerTelemetryCommands(program, dependencies.telemetry);
 

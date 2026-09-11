@@ -1,3 +1,4 @@
+import { GithubForkCredentialsToggle } from "@/components/settings/github-fork-credentials-toggle";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Github, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -12,6 +13,7 @@ import {
 import { useAppNavigate } from "@/lib/app-navigation";
 import { githubChecksWriteErrorMessage } from "@/lib/github-checks-errors";
 import {
+  isSelectableGithubRepo,
   findRepoByPickerValue,
   installationBindingsKey,
   pickerLabelFor,
@@ -64,7 +66,10 @@ export function SuiteGithubChecksSection({
     availability,
     repos,
     bindings,
+    prServerOAuthSources,
     connectVerifiedRepo,
+    setRepoForkCredentials,
+    setRepoPrServerOAuth,
     listInstallationRepos,
   } = useGithubChecksSettings(organizationId);
 
@@ -77,6 +82,9 @@ export function SuiteGithubChecksSection({
     GithubCheckOutagePolicy | ""
   >("");
   const [connecting, setConnecting] = useState(false);
+  const [pendingOAuth, setPendingOAuth] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   // Whether this instance is still on screen. The `ErrorBoundary` wrapping this
   // section in `suite-iterations-view` is KEYED BY organizationId, so switching
@@ -103,7 +111,7 @@ export function SuiteGithubChecksSection({
   // to offer, whatever it read when the page opened.
   const bindingsKey = useMemo(
     () => installationBindingsKey(bindings),
-    [bindings]
+    [bindings],
   );
 
   // The bindings key the listing on screen (or in flight) was fetched under.
@@ -125,7 +133,7 @@ export function SuiteGithubChecksSection({
       hasListedRef.current = false;
       listedBindingsKeyRef.current = null;
     },
-    []
+    [],
   );
 
   useEffect(() => {
@@ -173,7 +181,7 @@ export function SuiteGithubChecksSection({
     void listInstallationRepos()
       .then((repositories) => {
         if (listingGenerationRef.current !== generation) return;
-        setInstallationRepos(repositories);
+        setInstallationRepos(repositories.filter(isSelectableGithubRepo));
       })
       .catch(() => {
         // Silent here, unlike the settings page. This section is incidental to
@@ -189,19 +197,19 @@ export function SuiteGithubChecksSection({
 
   const allRepos = repos ?? [];
   const connectedToThisSuite = allRepos.filter(
-    (row) => row.suiteId === suiteId
+    (row) => row.suiteId === suiteId,
   );
   // Every repo already connected to ANY suite is excluded: a repo runs exactly
   // one suite, so offering one that is spoken for would produce a rejected
   // write, or silently retarget it away from the suite it is on today.
   const alreadyConnected = new Set(
-    allRepos.map((row) => row.repoFullName.toLowerCase())
+    allRepos.map((row) => row.repoFullName.toLowerCase()),
   );
   const connectableRepos =
     repos === undefined
       ? []
       : (installationRepos ?? []).filter(
-          (repo) => !alreadyConnected.has(repo.fullName.toLowerCase())
+          (repo) => !alreadyConnected.has(repo.fullName.toLowerCase()),
         );
 
   // Selection, labelling and the connect payload are shared with the settings
@@ -222,7 +230,7 @@ export function SuiteGithubChecksSection({
           projectId,
           suiteId,
           outagePolicy: pickerPolicy,
-        })
+        }),
       );
       if (!mountedRef.current) return;
       setPickerRepo("");
@@ -245,14 +253,89 @@ export function SuiteGithubChecksSection({
           {connectedToThisSuite.map((row) => (
             <div
               key={row._id}
-              className="flex items-center gap-2 text-sm"
+              className="space-y-2 text-sm"
               data-testid={`suite-github-repo-${row.repoFullName}`}
             >
-              <Github className="size-3.5 text-muted-foreground" aria-hidden />
-              <span className="truncate">{row.repoFullName}</span>
-              {!row.enabled ? (
-                <span className="text-xs text-muted-foreground">(paused)</span>
-              ) : null}
+              <div className="flex items-center gap-2">
+                <Github
+                  className="size-3.5 text-muted-foreground"
+                  aria-hidden
+                />
+                <span className="truncate">{row.repoFullName}</span>
+                {!row.enabled ? (
+                  <span className="text-xs text-muted-foreground">
+                    (paused)
+                  </span>
+                ) : null}
+              </div>
+              <GithubForkCredentialsToggle
+                key={`${organizationId}:${row._id}`}
+                row={row}
+                canManage={availability?.canManage === true}
+                onChange={setRepoForkCredentials}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  Server authentication
+                </span>
+                <Select
+                  value={row.prServerOAuthSourceServerId ?? "none"}
+                  disabled={
+                    pendingOAuth.has(row._id) ||
+                    availability?.canManage !== true
+                  }
+                  onValueChange={(value) => {
+                    if (pendingOAuth.has(row._id)) return;
+                    setPendingOAuth((current) => new Set(current).add(row._id));
+                    void setRepoPrServerOAuth({
+                      configId: row._id,
+                      sourceServerId: value === "none" ? null : value,
+                    })
+                      .catch((error) => {
+                        if (mountedRef.current) {
+                          toast.error(githubChecksWriteErrorMessage(error));
+                        }
+                      })
+                      .finally(() => {
+                        if (!mountedRef.current) return;
+                        setPendingOAuth((current) => {
+                          const next = new Set(current);
+                          next.delete(row._id);
+                          return next;
+                        });
+                      });
+                  }}
+                >
+                  <SelectTrigger
+                    className="w-60"
+                    aria-label={`Server authentication for ${row.repoFullName}`}
+                  >
+                    <SelectValue placeholder="No saved authorization" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No saved authorization</SelectItem>
+                    {(prServerOAuthSources ?? [])
+                      .filter((source) => source.projectId === row.projectId)
+                      .map((source) => (
+                        <SelectItem
+                          key={source.serverId}
+                          value={source.serverId}
+                          disabled={!source.authorized}
+                        >
+                          {source.name}
+                          {source.authorized ? "" : " — authorize first"}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={() => appNavigate(`/p/${row.projectId}/servers`)}
+                >
+                  Authorize or reconnect
+                </Button>
+              </div>
             </div>
           ))}
         </div>

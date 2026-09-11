@@ -15,6 +15,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
+import { SwarmGenerateError } from "@/lib/swarm-api";
 
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
@@ -431,7 +432,7 @@ beforeEach(() => {
 });
 
 describe("SwarmsTab — New swarm create flow", () => {
-  it("reaches the create flow by its own route, and Cancel leaves it", () => {
+  it("reaches the create flow by its own route, and Cancel leaves it with a confirming toast", () => {
     // A linkable route rather than in-page state, so the browser back button
     // exits the flow and a reload doesn't drop the user back on the list.
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
@@ -461,9 +462,30 @@ describe("SwarmsTab — New swarm create flow", () => {
       screen.queryByTestId("swarms-tab-header-chrome"),
     ).not.toBeInTheDocument();
 
+    // Type something so there is a real draft to discard — the toast is gated
+    // on that (the untouched-exit case is pinned in its own test below).
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
+      target: { value: "Support agents answering refunds" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
 
     expect(navigateMock).toHaveBeenCalledWith("/swarms");
+    // BB-64: leaving silently read as "did my click register?" — the toast is
+    // the acknowledgement. It promises only the draft (info, not success). The
+    // back-link exit is the other call site; the launch test pins that it never
+    // fires when a run actually launches.
+    expect(toast.info).toHaveBeenCalledWith("New swarm draft discarded");
+  });
+
+  it("says nothing when an untouched flow is cancelled — no draft, no discard notice", () => {
+    openDescribe();
+    // Straight to the exit, nothing typed or picked: there is no draft, so a
+    // "discarded" notice would announce something that never happened. Same
+    // dirtiness gate the sibling discard toast uses in new-swarm-confirm-step.
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    expect(navigateMock).toHaveBeenCalledWith("/swarms");
+    expect(toast.info).not.toHaveBeenCalled();
   });
 
   it("keeps the action disabled until there is something to act on, and says why", () => {
@@ -853,14 +875,35 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByText(/1 existing · 3 new on next step/i)).toBeVisible();
   });
 
-  it("shows clients and servers after the user description", () => {
+  it("shows one Lapis golem beside the heading, not the four-golem row", () => {
+    openDescribe();
+    // BB-160: the V2 frame gives the graphic a 68px slot — one `lg` avatar is
+    // 44px wide against 188 for the row — and its PNG carries the Lapis
+    // palette, `MINERALS[3]`, which none of the row's four characters use.
+    const golems = screen
+      .getByTestId("swarm-hero-characters")
+      .querySelectorAll("[data-testid='persona-pixel-avatar']");
+    expect(golems).toHaveLength(1);
+    expect(golems[0]).toHaveAttribute("data-palette", "3");
+  });
+
+  it("shows clients and servers before the user description", () => {
     openDescribe();
     expect(
       screen.getByText(
         /choose the clients and servers your users will interact with/i,
       ),
     ).toBeVisible();
-    expect(screen.getByTestId("new-swarm-target-composer")).toBeInTheDocument();
+    // BB-160: the picker grounds the goals the description generates, so it
+    // comes first. jsdom has no layout, so node order is all this can assert.
+    const step = screen.getByTestId("new-swarm-describe-step");
+    expect(
+      Array.from(
+        step.querySelectorAll(
+          "[data-testid='new-swarm-target-composer'],[data-testid='new-swarm-describe-input']",
+        ),
+      ).map((node) => node.getAttribute("data-testid")),
+    ).toEqual(["new-swarm-target-composer", "new-swarm-describe-input"]);
   });
 
   it("shows the grounding hint for the auto-seeded environment", () => {
@@ -960,6 +1003,12 @@ describe("SwarmsTab — New swarm create flow", () => {
     await waitFor(() =>
       expect(navigateMock).toHaveBeenCalledWith(`/swarms/${swarmRunGroupId}`),
     );
+    // BB-64: a launched run leaves via onDone, and neither leaveFlow exit (the
+    // Cancel button or the ← Swarms link) is rendered on Running. This guards
+    // that the discard toast lives in leaveFlow, not in clearNewSwarmFlowDraft
+    // or an unmount effect — either of which would fire it on this successful
+    // exit.
+    expect(toast.info).not.toHaveBeenCalledWith("New swarm draft discarded");
   });
 
   it("removing a persona on Confirm drops its journeys from the launch", async () => {
@@ -1153,6 +1202,39 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.queryByTestId("new-swarm-proposed-personas"),
     ).not.toBeInTheDocument();
+  });
+
+  it("leaves a model limit to its dialog instead of also carding it", async () => {
+    let rejectGenerate: (err: unknown) => void = () => {};
+    generateSwarmPersonaBatchMock.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectGenerate = reject;
+        })
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
+        /generating/i
+      )
+    );
+
+    rejectGenerate(
+      // `limitDialogRaised` is what `postGenerate` sets once the dialog has
+      // taken the error over.
+      new SwarmGenerateError(429, "Daily MCPJam model limit reached.", true)
+    );
+
+    // Back to idle, so the catch has run and had its chance to set a message.
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
+        "Continue"
+      )
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("launches a reused persona's journeys, re-stamped onto the selected environment", async () => {
@@ -1928,8 +2010,99 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
       ),
     ).toBeVisible();
 
+    // A real draft so the discard toast is due on this exit too.
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
+      target: { value: "Support agents answering refunds" },
+    });
     fireEvent.click(screen.getByTestId("new-swarm-back-to-swarms"));
     expect(navigateMock).toHaveBeenCalledWith("/swarms");
+    // BB-64: the back link is leaveFlow's second exit, so it discards the
+    // draft and acknowledges it just like Cancel does.
+    expect(toast.info).toHaveBeenCalledWith("New swarm draft discarded");
+  });
+
+  it("disables the ← Swarms exit while a launch is in flight, and clicking it fires no toast", async () => {
+    // Hold the launch open so `launching` stays true and the header link sits
+    // in its disabled window — the exact state the guard exists for. This is
+    // the behaviour the PR description promises.
+    launchJourneyRunMock.mockImplementation(() => new Promise(() => {}));
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    const back = await screen.findByTestId("new-swarm-back-to-swarms");
+    await waitFor(() => expect(back).toBeDisabled());
+    // A disabled control ignores the click: no discard toast over a live launch.
+    fireEvent.click(back);
+    expect(toast.info).not.toHaveBeenCalledWith("New swarm draft discarded");
+  });
+
+  it("blocks BOTH exits while generation is in flight, and neither fires a toast", async () => {
+    // The footer Cancel and the ← Swarms link both run leaveFlow. Generation
+    // awaits resolveTargets (which can mint rows) and then writes personas, so
+    // leaving mid-generation would announce a discard over a live batch. Hold
+    // generation open to sit in that window.
+    generateSwarmPersonaBatchMock.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-generate-progress");
+
+    const cancel = screen.getByRole("button", { name: /^cancel$/i });
+    const back = screen.getByTestId("new-swarm-back-to-swarms");
+    expect(cancel).toBeDisabled();
+    expect(back).toBeDisabled();
+    // Even if a click slips past the disabled state, leaveFlow refuses while a
+    // batch is running — no discard toast, no navigation away from the flow.
+    fireEvent.click(cancel);
+    fireEvent.click(back);
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/swarms");
+  });
+
+  it("re-enables the ← Swarms exit when the launch preflight fails", async () => {
+    // Reused persona so Continue skips generation; the launch preflight is then
+    // the resolveTargets call that fails. No saved env → the target is a client
+    // (ad-hoc), so a generic ensureAdhoc rejection (not the "old backend"
+    // adhoc-unavailable signal) throws all the way to the preflight catch.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
+    ];
+    environmentsRef.current = [];
+    environments = environmentsRef.current;
+    ensureAdhocEnvironmentsMock.mockRejectedValue(new Error("resolve failed"));
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled(),
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    // Assert the COPY, not just "an alert": it states out loud that the failure
+    // came through the resolveTargets throw (the mock's message), and would
+    // fail if a later change skipped resolveTargets or routed to the other
+    // bail-out. The ensureAdhoc call confirms the ad-hoc resolve path ran at all
+    // rather than the preflight guard short-circuiting it.
+    expect(await screen.findByRole("alert")).toHaveTextContent("resolve failed");
+    expect(ensureAdhocEnvironmentsMock).toHaveBeenCalled();
+    expect(
+      screen.queryByTestId("new-swarm-running-step"),
+    ).not.toBeInTheDocument();
+    // The whole point of moving the latch ahead of the await: the finally
+    // re-enabled the exit instead of stranding it disabled with no way out.
+    expect(
+      screen.getByTestId("new-swarm-back-to-swarms"),
+    ).not.toBeDisabled();
   });
 
   it("names the swarm from the date suggestion, not from the description paragraph", async () => {

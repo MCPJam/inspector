@@ -77,6 +77,12 @@ const ALLOWED: Record<string, string> = {
     "Authorization prompts. Each row is one server waiting on consent with an " +
     "Authorize action; nothing is being chosen from among them.",
 
+  "components/mcpjam-agent/DescribeContextStatus.tsx":
+    "Recovery actions, not a choice. Each row is one server whose tools failed " +
+    "to load, with a Reconnect/Retry button that re-runs the handshake and " +
+    "leaves the list as it was. Nothing is selected and no serverAttachmentId " +
+    "is written.",
+
   "components/plugins/PluginGroupCard.tsx":
     "A plugin version's declared components, listed with their setup state. " +
     "The rows open a requirement editor, they do not attach a server.",

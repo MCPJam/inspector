@@ -33,6 +33,18 @@ export interface StateTokenInputs {
    * only needs it to change when the structure the model targeted changes.
    */
   domSignal: string;
+  /**
+   * The session viewport's revision at the moment of the observation.
+   *
+   * Carried through unhashed, unlike the URL and the DOM: it is a small
+   * integer with no privacy weight, and a comparison that has to un-hash to
+   * say "you were two revisions behind" cannot say it at all.
+   *
+   * Omitted for a session that has no viewport policy to speak of — a unit
+   * fake, an engine that does not resize — and `stateTokensMatch` then skips
+   * the comparison rather than defaulting it to 0.
+   */
+  viewportRevision?: number;
 }
 
 export function computeStateToken(inputs: StateTokenInputs): ObservationStateToken {
@@ -41,5 +53,8 @@ export function computeStateToken(inputs: StateTokenInputs): ObservationStateTok
     navCounter: inputs.navCounter,
     urlHash: shortHash(inputs.url),
     domHash: shortHash(inputs.domSignal),
+    ...(inputs.viewportRevision !== undefined
+      ? { viewportRevision: inputs.viewportRevision }
+      : {}),
   };
 }

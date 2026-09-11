@@ -103,6 +103,25 @@ export type ServerPickerProps = {
    */
   inModal?: boolean;
   triggerTestId?: string;
+  /**
+   * `id` for the trigger, so a sibling `<Label htmlFor>` names the control.
+   * Without it the accessible name is only the selected group — "Stripe",
+   * never "Server".
+   */
+  triggerId?: string;
+  /**
+   * Trigger shape. `pill` (default) is the compact chip the bars and
+   * lego-strips use. `field` renders a full-width, `h-9` form control that
+   * lines up with an `<Input>`/`<Select>` in a labelled form column — used by
+   * the promote-to-test-case modal, where Client and Server sit side by side
+   * and a chip next to a select reads as a different kind of control.
+   *
+   * Shape only: the popover, the tabs, and the inline create form are
+   * identical in both. The empty LABEL is too — the old picker keyed that off
+   * the variant because its chip copy read as a broken placeholder in a form,
+   * and BB-142 deleted that copy.
+   */
+  variant?: "pill" | "field";
 };
 
 export function ServerPicker({
@@ -114,6 +133,8 @@ export function ServerPicker({
   onClearSelection,
   inModal = false,
   triggerTestId,
+  triggerId,
+  variant = "pill",
 }: ServerPickerProps) {
   const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
   /**
@@ -829,18 +850,36 @@ export function ServerPicker({
           // `creating` too: clicking the trigger mid-write closed the popover
           // out from under the very write `busy` freezes everything else for.
           disabled={disabled || creating}
+          id={triggerId}
           data-testid={triggerTestId ?? "server-picker-trigger"}
           className={cn(
-            "flex h-8 max-w-[260px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-foreground",
+            "flex items-center gap-1.5 border text-foreground",
             "outline-none transition-colors",
-            resolved
-              ? "border-border/60 bg-muted/40 hover:bg-muted/60"
-              : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
+            variant === "field"
+              ? "h-9 w-full rounded-md px-3 shadow-xs focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              : "h-8 max-w-[260px] shrink-0 rounded-full px-2.5",
+            variant === "field"
+              ? "border-input bg-transparent hover:bg-muted/30"
+              : resolved
+                ? "border-border/60 bg-muted/40 hover:bg-muted/60"
+                : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
             disabled && "cursor-not-allowed opacity-50",
           )}
         >
-          <Server className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+          <Server
+            className={cn(
+              "shrink-0 text-muted-foreground",
+              variant === "field" ? "size-4" : "size-3.5",
+            )}
+          />
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate",
+              variant === "field"
+                ? cn("text-left text-sm", !resolved && "text-muted-foreground")
+                : "text-xs font-medium",
+            )}
+          >
             {triggerLabel}
           </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />

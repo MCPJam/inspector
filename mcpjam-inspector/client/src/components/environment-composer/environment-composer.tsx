@@ -50,12 +50,7 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
 
 export type ComposerSlot =
-  | "environments"
-  | "clients"
-  | "servers"
-  | "skills"
-  | "computers"
-  | "models";
+  "environments" | "clients" | "servers" | "skills" | "computers" | "models";
 
 /** Default strip: no models slot. Evals opt in via `slots`. */
 export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
@@ -86,6 +81,8 @@ export function EnvironmentComposer({
   clientDefaultLabel,
   emptyServerLabel = "Servers · client default",
   serverOptional = true,
+  environmentsVocabulary = "environment",
+  showTargetCount = true,
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -121,6 +118,13 @@ export function EnvironmentComposer({
    */
   serverOptional?: boolean;
   /**
+   * Evaluate calls the saved-target picker Clients. Other surfaces keep
+   * Environments so Swarms and the Environments page stay unchanged.
+   */
+  environmentsVocabulary?: "environment" | "client";
+  /** A caller rendering its own execution plan can hide the inline count. */
+  showTargetCount?: boolean;
+  /**
    * Prefix for this surface's test ids. The suffixes are historical (Swarms was
    * the first surface, hence "target"/"lego") — they are not composer concepts.
    */
@@ -143,7 +147,7 @@ export function EnvironmentComposer({
   const { isAuthenticated } = useConvexAuth();
   const modelsOptedIn = slots.includes("models");
   const modelMatrix = useModelMatrixCapability(
-    modelsOptedIn ? projectId : null
+    modelsOptedIn ? projectId : null,
   );
   const modelsEnabled = modelsOptedIn && modelMatrix === true;
   const { hosts } = useHostList({
@@ -162,7 +166,7 @@ export function EnvironmentComposer({
 
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
-    [environments]
+    [environments],
   );
   /**
    * The selection cannot be round-tripped through a stack, so slot edits are
@@ -213,7 +217,7 @@ export function EnvironmentComposer({
       ...new Set(
         hosts
           .filter((host) => selected.has(host.hostId) && host.modelId)
-          .map((host) => host.modelId)
+          .map((host) => host.modelId),
       ),
     ];
     return modelIds.length === 1 ? modelIds[0] : null;
@@ -233,7 +237,7 @@ export function EnvironmentComposer({
         stack: { ...value.stack, ...patch },
       });
     },
-    [onChange, value]
+    [onChange, value],
   );
 
   const handleEnvironmentsChange = useCallback(
@@ -302,15 +306,15 @@ export function EnvironmentComposer({
       const keptHosts = new Set(remaining.map((e) => e.hostId));
       const removedHosts = new Set(
         resolve(value.environmentIds.filter((id) => !ids.includes(id))).map(
-          (e) => e.hostId
-        )
+          (e) => e.hostId,
+        ),
       );
       onChange({
         environmentIds: ids,
         stack: {
           ...value.stack,
           hostIds: value.stack.hostIds.filter(
-            (hostId) => !removedHosts.has(hostId) || keptHosts.has(hostId)
+            (hostId) => !removedHosts.has(hostId) || keptHosts.has(hostId),
           ),
         },
         customized: true,
@@ -326,7 +330,7 @@ export function EnvironmentComposer({
       value.environmentIds,
       value.customized,
       value.stack,
-    ]
+    ],
   );
 
   return (
@@ -345,19 +349,37 @@ export function EnvironmentComposer({
             }
             onChange={(next: string | string[] | null) =>
               handleEnvironmentsChange(
-                Array.isArray(next) ? next : next ? [next] : []
+                Array.isArray(next) ? next : next ? [next] : [],
               )
             }
             multi={maxTargets > 1}
             max={maxTargets}
             disabled={disabled}
             emptyLabel={
-              maxTargets === 1
-                ? "Select an environment"
-                : "No environments · pick some"
+              environmentsVocabulary === "client"
+                ? maxTargets === 1
+                  ? "Select a client"
+                  : "No clients · pick some"
+                : maxTargets === 1
+                  ? "Select an environment"
+                  : "No environments · pick some"
+            }
+            headingLabel={
+              environmentsVocabulary === "client"
+                ? maxTargets > 1
+                  ? "Clients · run order"
+                  : "Clients"
+                : undefined
+            }
+            emptyProjectLabel={
+              environmentsVocabulary === "client"
+                ? "No clients in this project yet."
+                : undefined
             }
             triggerTestId={testId("environments-picker")}
-            triggerAriaLabel="Environments"
+            triggerAriaLabel={
+              environmentsVocabulary === "client" ? "Clients" : "Environments"
+            }
             inModal={inModal}
             footerSlot={environmentPickerFooter}
           />
@@ -397,7 +419,9 @@ export function EnvironmentComposer({
           <ServerPicker
             projectId={projectId}
             value={value.stack.serverAttachmentId}
-            onChange={(serverAttachmentId) => patchStack({ serverAttachmentId })}
+            onChange={(serverAttachmentId) =>
+              patchStack({ serverAttachmentId })
+            }
             disabled={slotsDisabled}
             emptyTriggerLabel={emptyServerLabel}
             triggerTestId={testId("servers-picker")}
@@ -448,10 +472,13 @@ export function EnvironmentComposer({
             ? "This selection pins plugin versions, which this strip can't carry — editing the stack would run without them. Change the environment selection instead."
             : stackEditBlock === "models"
               ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
-            : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
+              : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
         </p>
       ) : null}
-      {modelsEnabled && !disabled ? (
+      {modelsEnabled &&
+      slots.includes("models") &&
+      showTargetCount &&
+      !disabled ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("target-count")}

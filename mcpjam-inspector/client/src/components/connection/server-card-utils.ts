@@ -40,6 +40,9 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
   },
   "oauth-flow": {
     label: "Authorizing in browser...",
+    // No purple role token. `pending` is the waiting-on-something role, which
+    // is what an in-browser authorization is, and keeps it distinct from
+    // `connecting`'s `info`.
     indicatorClassName: "bg-pending",
     Icon: Loader2,
     iconClassName: "h-3 w-3 text-pending animate-spin",

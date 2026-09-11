@@ -18,7 +18,7 @@ describe("deriveServerGroupName", () => {
 
   it("names a multi-server group after the first, and counts the rest", () => {
     expect(deriveServerGroupName(["draw", "Notion", "Linear"], [])).toBe(
-      "draw + 2"
+      "draw + 2",
     );
   });
 

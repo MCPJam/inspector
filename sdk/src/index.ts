@@ -707,10 +707,12 @@ export type {
   RunConformanceConfig,
 } from "./conformance-run.js";
 export {
+  detectCiMetadata,
   detectConformanceCiMetadata,
+  detectLauncherKind,
   githubActionExternalRunId,
 } from "./conformance-ci.js";
-export type { ConformanceCiMetadata } from "./conformance-ci.js";
+export type { ConformanceCiMetadata, LauncherKind } from "./conformance-ci.js";
 export {
   finalizeConformanceRun,
   heartbeatConformanceRun,

@@ -33,6 +33,17 @@ export const PERMISSION_REASON_COPY =
   "You don't have permission to change this";
 
 /**
+ * The suite's configuration lives in a repository, so nobody edits it here.
+ *
+ * NOT a permission sentence, and it must never be collapsed into one: no role
+ * change makes this row editable, so "you don't have permission" would send the
+ * reader to ask an admin for access they already have. Re-exported from
+ * `lib/evals/is-ci-owned-suite` so the copy sits beside the predicate that
+ * decides when to show it.
+ */
+export { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
+
+/**
  * The disabled reason for a feature gate, or `undefined` when it is usable.
  *
  * A gate that is off with NO reason still produces a sentence: an unexplained
