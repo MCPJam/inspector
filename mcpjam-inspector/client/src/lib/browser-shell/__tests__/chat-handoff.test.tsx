@@ -1,6 +1,51 @@
 import { act, renderHook } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { releaseBrowserForChat, useBrowserChatHandoff } from "../chat-handoff";
+import {
+  releaseBrowserForChat,
+  useBrowserChatHandoff,
+  runBrowserCommandWithHandoff,
+} from "../chat-handoff";
+
+it("retains background commands across renderer mounts and panel closure", async () => {
+  const release = vi.fn(async () => {});
+  await runBrowserCommandWithHandoff({
+    projectId: "background",
+    sessionId: "b",
+    send: async () => {},
+    release,
+  });
+  const view = renderHook(() =>
+    useBrowserChatHandoff({
+      projectId: "background",
+      sessionId: "b",
+      holding: false,
+      release: async () => true,
+    }),
+  );
+  view.unmount();
+  await releaseBrowserForChat("background", "b");
+  await releaseBrowserForChat("background", "b");
+  expect(release).toHaveBeenCalledOnce();
+});
+
+it("shares concurrent background handoffs even when the command response is lost", async () => {
+  const release = vi.fn(async () => {});
+  await expect(
+    runBrowserCommandWithHandoff({
+      projectId: "lost-response",
+      sessionId: "b",
+      send: async () => {
+        throw new Error("offline");
+      },
+      release,
+    }),
+  ).rejects.toThrow("offline");
+  await Promise.all([
+    releaseBrowserForChat("lost-response", "b"),
+    releaseBrowserForChat("lost-response", "b"),
+  ]);
+  expect(release).toHaveBeenCalledOnce();
+});
 
 it("awaits handoff only for the matching conversation", async () => {
   let finish!: (ok: boolean) => void;
