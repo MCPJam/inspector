@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
+import type { EvalTraceVideoMeta } from "@/shared/eval-trace";
 import type {
   EvalTraceSpan,
   EvalTraceWidgetSnapshot,
@@ -18,7 +19,14 @@ import {
   toBrowserStepPayload,
   toObservationPayload,
 } from "./finalize-iteration-browser-artifacts.js";
-import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
+import {
+  buildIterationUsageMetadata,
+  buildIterationUsagePayload,
+} from "./iteration-usage-metadata.js";
+import {
+  extractFinalAssistantMessage,
+  finalMessageEndsWithQuestion,
+} from "@mcpjam/sdk/predicates";
 import { buildIterationMetadata } from "./iteration-metadata.js";
 import {
   buildHostIterationMetadata,
@@ -26,6 +34,8 @@ import {
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  buildResultsByToolCallIdFromMessages,
+  deriveTrialFrictionSignalsFromCalls,
   deriveStageResults,
   attachStageMeasurements,
   stageDerivationToMetadata,
@@ -35,6 +45,7 @@ import {
   type StagePredicateResultLike,
   type StageResultRow,
   type StageSetupSignals,
+  type FrictionResultEntry,
   type IterationStatus as ContractIterationStatus,
   allGatingScorersPassed,
 } from "@mcpjam/sdk/contract";
@@ -707,6 +718,27 @@ export function buildIterationFinishParams(args: {
    * itself — a caller with no live registry cannot say what the model saw.
    */
   selectionTools?: Record<string, SelectionCatalogToolLike>;
+  /**
+   * Where this iteration's TOOL RESULTS come from, for the friction signals.
+   *
+   * ABSENT ⇒ the map is built from `messages`, which is the emulated engine's
+   * whole record and the harness fallback when capture is off. A harness turn
+   * with capture ON supplies `harnessEvidence` instead, because the wire
+   * results — and the per-call timing the identifier rules need to establish
+   * availability — live on the evidence rows and never reach the transcript.
+   * A harness turn whose evidence read came back with a HOLE supplies
+   * `notMeasured`: a partial evidence set would let "no later call used this
+   * identifier" be answered from calls we know we are missing.
+   *
+   * Threaded rather than derived here because only the runner knows which of
+   * the three it is in.
+   */
+  frictionEvidence?:
+    | {
+        kind: "harnessEvidence";
+        resultsByToolCallId: ReadonlyMap<string, FrictionResultEntry>;
+      }
+    | { kind: "notMeasured"; reason: "evidenceIncomplete" };
 }): Omit<FinalizeEvalIterationParams, "convexClient" | "videoBytes"> {
   const {
     iterationId,
@@ -840,6 +872,42 @@ export function buildIterationFinishParams(args: {
   // `"reported"` either way — the inspector is still the thing reporting the
   // verdict, it has changed what it derives it from.
   const effectivePassed = derived ? passed && derived.passed : passed;
+
+  // FRICTION SIGNALS — observable patterns in this trial's tool calls.
+  //
+  // Deliberately computed AFTER the verdict and passed to nothing that
+  // produces one: not `buildEvalIterationVerdict`, not `buildScoreMetadata`,
+  // not `buildStageMetadata`. They are a report beside the verdict, and the
+  // one way that stays true is for the verdict to be finished before they
+  // exist.
+  //
+  // A throw omits the key rather than failing the finalize. The deriver
+  // already turns every EVIDENCE problem into a `notMeasured` document, so a
+  // throw here means a bug in the deriver — and a trial that loses its
+  // report-only signals is a strictly better outcome than a run that loses
+  // its verdict.
+  let frictionSignals: ReturnType<
+    typeof deriveTrialFrictionSignalsFromCalls
+  > | null = null;
+  try {
+    frictionSignals = deriveTrialFrictionSignalsFromCalls({
+      toolsCalled: evaluation.toolsCalled,
+      resultsByToolCallId:
+        args.frictionEvidence?.kind === "harnessEvidence"
+          ? args.frictionEvidence.resultsByToolCallId
+          : buildResultsByToolCallIdFromMessages(messages),
+      ...(args.frictionEvidence?.kind === "notMeasured"
+        ? { evidenceHole: args.frictionEvidence.reason }
+        : {}),
+    });
+  } catch (error) {
+    logger.warn(
+      `[evals] friction signals could not be derived: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
   return {
     iterationId,
     passed: effectivePassed,
@@ -861,6 +929,19 @@ export function buildIterationFinishParams(args: {
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation as never),
+      // Written for EVERY trial, from the same helper the `noEndingQuestion`
+      // check uses — not only when somebody authored that check.
+      //
+      // Route facts have consumed `endedWithQuestion` since they shipped and
+      // have reported `notMeasured` the whole time, because nothing produced
+      // it. A fact that exists only where a check happens to be authored is
+      // not a run-level rate; it is a rate over the suites that opted in. So
+      // the producer is unconditional and the check is optional, and the two
+      // cannot disagree because there is one implementation of "ends with a
+      // question".
+      endedWithQuestion: finalMessageEndsWithQuestion(
+        extractFinalAssistantMessage(messages),
+      ),
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
@@ -873,6 +954,7 @@ export function buildIterationFinishParams(args: {
       ...(policyWarnings?.length ? { policyWarnings } : {}),
       ...(toolPolicy ? { toolPolicy } : {}),
       ...stageMetadata,
+      ...(frictionSignals ? { frictionSignals } : {}),
       ...scoreMetadata,
       ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),
@@ -925,6 +1007,26 @@ export type FinalizeEvalIterationParams = {
    * iteration, so this is iteration-level, not per-turn.
    */
   videoBytes?: Buffer | null;
+  /**
+   * The container `videoBytes` is in.
+   *
+   * EXPLICIT rather than sniffed, and defaulted to `video/webm` by the
+   * uploader so every existing caller is unchanged. It matters because Convex
+   * serves back exactly the content type the bytes were posted with: an MP4
+   * announced as `video/webm` is a file a browser refuses to play, and the
+   * only symptom is an empty player on the trace page.
+   */
+  videoMime?: string;
+  /**
+   * What the recording itself reports — duration, rate, how many distinct
+   * frames it actually holds, and whether it was cut short at the size cap.
+   *
+   * Beside the bytes rather than derived from them: the daemon is the only
+   * thing that knows a take stopped early, and re-deriving a duration by
+   * demuxing the file here would be work that answers a question already
+   * answered.
+   */
+  videoMeta?: EvalTraceVideoMeta;
   /** Explicit harness lifecycle status; never infer it from the verdict. */
   status: IterationStatus;
   startedAt?: number;
@@ -986,6 +1088,8 @@ export async function finalizeEvalIteration(
     widgetRenderObservations,
     browserInteractionSteps,
     videoBytes,
+    videoMime,
+    videoMeta,
     status,
     startedAt,
     error,
@@ -1091,7 +1195,9 @@ export async function finalizeEvalIteration(
   let videoBlobId: string | undefined;
   if (videoBytes && videoBytes.length > 0) {
     try {
-      videoBlobId = await uploadVideoBlob(convexClient, videoBytes);
+      videoBlobId = await uploadVideoBlob(convexClient, videoBytes, {
+        ...(videoMime ? { contentType: videoMime } : {}),
+      });
     } catch (err) {
       logger.warn("[evals] replay video upload failed; finalizing without it", {
         iterationId,
@@ -1113,6 +1219,10 @@ export async function finalizeEvalIteration(
     widgetRenderObservations: serializedWidgetRenderObservations,
     browserInteractionSteps: serializedBrowserInteractionSteps,
     ...(videoBlobId ? { videoBlobId } : {}),
+    // Only alongside a blob that actually landed. Metadata describing a video
+    // nothing uploaded would render a duration and an fps under an empty
+    // player — worse than no metadata, because it asserts a recording exists.
+    ...(videoBlobId && videoMeta ? { videoMeta } : {}),
   });
   // Fall back to the W1 single-call path ONLY when the fanout failed
   // before any turn landed. With turns already written, re-sending
@@ -1137,6 +1247,7 @@ export async function finalizeEvalIteration(
   // call on a deleted session, AND so the lock fires even when
   // the iteration update threw a transient error.
   let iterationGoneOrCancelled = false;
+  const usagePayload = buildIterationUsagePayload(usage);
   try {
     await convexClient.action("testSuites:updateTestIteration" as any, {
       iterationId,
@@ -1144,6 +1255,12 @@ export async function finalizeEvalIteration(
       result,
       actualToolCalls: sanitizeForConvexTransport(toolsCalled),
       tokensUsed: usage.totalTokens ?? 0,
+      // The structured token field, beside (not instead of) `tokensUsed` and
+      // the metadata breakdown — old readers keep working unchanged. Without
+      // it `testIteration.usage` stayed undefined on every hosted iteration,
+      // so the run-vs-run diff fell back to trace tokens and could not cost
+      // the run at all. It is also what the backend prices from.
+      ...(usagePayload ? { usage: usagePayload } : {}),
       ...(useW1Fallback
         ? {
             messages: sanitizeForConvexTransport(messages),
@@ -1187,7 +1304,14 @@ export async function finalizeEvalIteration(
               : {}),
             // Iteration replay video already uploaded above; carry the storageId
             // onto the W1 fallback so the replay survives the fanout-failed path.
-            ...(videoBlobId ? { videoBlobId } : {}),
+            ...(videoBlobId
+              ? {
+                  videoBlobId,
+                  // ...and what it says about itself, on the same call. On its
+                  // own it would render a duration under an empty player.
+                  ...(videoMeta ? { videoMeta } : {}),
+                }
+              : {}),
           }
         : {}),
       error,

@@ -11,7 +11,10 @@ import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { JOURNEY_STAGES, type JourneyStageId } from "./journey-stages";
 import type { GoalFindingsModel, StageState } from "./findings-derivation";
-import { FindingsGoalSessions } from "./findings-goal-sessions";
+import {
+  FindingsGoalSessions,
+  type FindingsSessionScope,
+} from "./findings-goal-sessions";
 
 export const EMPTY_STAGE_COPY =
   "No finding landed on this stage. This is not evidence that the stage passed.";
@@ -31,10 +34,10 @@ const STAGE_DOT_CLASSES: Record<StageState, string> = {
 };
 
 function stageStateLabel(state: StageState): string {
-  if (state === "fail") return "failed";
-  if (state === "warn") return "warning";
-  if (state === "ok") return "held";
-  return "no finding";
+  if (state === "fail") return "Failed";
+  if (state === "warn") return "Warning";
+  if (state === "ok") return "Pass";
+  return "No finding";
 }
 
 export function FindingsGoalInspect({
@@ -42,20 +45,30 @@ export function FindingsGoalInspect({
   selectedStage,
   onSelectStage,
   onOpenSession,
-  projectId,
+  sessionScope,
 }: {
   goal: GoalFindingsModel;
   selectedStage: JourneyStageId;
   onSelectStage: (stage: JourneyStageId) => void;
   onOpenSession?: (sessionId: string) => void;
-  /** When set, the inspect panel pages this goal's sessions for click-through. */
-  projectId?: string;
+  /**
+   * When set, the inspect panel pages this goal's sessions for click-through.
+   * The surface owns how a goal is keyed, so it hands the scope in rather than
+   * this panel assuming a swarm.
+   */
+  sessionScope?: FindingsSessionScope;
 }) {
   const stageMeta = JOURNEY_STAGES.find((s) => s.id === selectedStage)!;
   const stageModel = goal.stages[selectedStage];
   const evidencePanelId = `findings-stage-evidence-${goal.runId}`;
-  const canListSessions = Boolean(projectId && onOpenSession);
+  const canListSessions = Boolean(sessionScope && onOpenSession);
   const [openEvidence, setOpenEvidence] = useState(canListSessions ? 0 : -1);
+
+  // Footer rules: no sessions means no control at all, and a single session is
+  // a link rather than something to expand. Only a real list earns the toggle.
+  const sessionCount = goal.sessions;
+  const canShowSessions = canListSessions && sessionCount > 0;
+  const sessionsAreExpandable = canShowSessions && sessionCount > 1;
 
   useEffect(() => {
     setOpenEvidence(canListSessions ? 0 : -1);
@@ -191,7 +204,7 @@ export function FindingsGoalInspect({
                       <p className="text-sm font-semibold leading-relaxed text-zinc-50">
                         {evidence.observation}
                       </p>
-                      {canListSessions ? (
+                      {sessionsAreExpandable ? (
                         <button
                           type="button"
                           className="mt-1.5 inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
@@ -225,11 +238,14 @@ export function FindingsGoalInspect({
                           Open source session →
                         </button>
                       ) : null}
-                      {canListSessions && expanded && projectId && onOpenSession ? (
+                      {canShowSessions &&
+                      sessionScope &&
+                      onOpenSession &&
+                      (sessionsAreExpandable ? expanded : i === 0) ? (
                         <FindingsGoalSessions
                           key={goal.runId}
-                          projectId={projectId}
-                          runId={goal.runId}
+                          scope={sessionScope}
+                          goalId={goal.runId}
                           expectedCount={goal.sessions}
                           onOpenSession={onOpenSession}
                         />
@@ -246,31 +262,33 @@ export function FindingsGoalInspect({
                 >
                   {EMPTY_STAGE_COPY}
                 </p>
-                {canListSessions && projectId && onOpenSession ? (
+                {canShowSessions && sessionScope && onOpenSession ? (
                   <>
-                    <button
-                      type="button"
-                      className="mt-3 inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
-                      aria-expanded={openEvidence === 0}
-                      onClick={() =>
-                        setOpenEvidence(openEvidence === 0 ? -1 : 0)
-                      }
-                      data-testid="findings-evidence-sessions-toggle"
-                    >
-                      {goal.sessions} session{goal.sessions === 1 ? "" : "s"}
-                      <ChevronDown
-                        className={cn(
-                          "h-3.5 w-3.5 text-zinc-500 transition-transform",
-                          openEvidence === 0 && "rotate-180"
-                        )}
-                        aria-hidden
-                      />
-                    </button>
-                    {openEvidence === 0 ? (
+                    {sessionsAreExpandable ? (
+                      <button
+                        type="button"
+                        className="mt-3 inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
+                        aria-expanded={openEvidence === 0}
+                        onClick={() =>
+                          setOpenEvidence(openEvidence === 0 ? -1 : 0)
+                        }
+                        data-testid="findings-evidence-sessions-toggle"
+                      >
+                        {goal.sessions} sessions
+                        <ChevronDown
+                          className={cn(
+                            "h-3.5 w-3.5 text-zinc-500 transition-transform",
+                            openEvidence === 0 && "rotate-180"
+                          )}
+                          aria-hidden
+                        />
+                      </button>
+                    ) : null}
+                    {(sessionsAreExpandable ? openEvidence === 0 : true) ? (
                       <FindingsGoalSessions
                         key={goal.runId}
-                        projectId={projectId}
-                        runId={goal.runId}
+                        scope={sessionScope}
+                        goalId={goal.runId}
                         expectedCount={goal.sessions}
                         onOpenSession={onOpenSession}
                       />

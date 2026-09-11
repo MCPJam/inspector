@@ -153,3 +153,38 @@ describe("a complete, eligible ask", () => {
     ).toBe("token-with-space");
   });
 });
+
+describe("a call site that forgets the acting user refuses rather than throws", () => {
+  // The shipped bug: `/api/mcp/chat-v2` called this parser without
+  // `actingUserId` at all, so `undefined` reached a `.length` read and the
+  // whole turn died with a TypeError instead of being refused. The type says
+  // `string | null`; a JavaScript caller is not bound by that, and the one
+  // gate that decides whether a vendor agent may touch a filesystem should not
+  // depend on a call site's compile step having been run.
+  it.each([
+    ["an omitted argument", undefined],
+    ["a non-string id", 42 as unknown],
+    ["an empty id", ""],
+  ])("refuses for %s", (_label, actingUserId) => {
+    const result = parseHarnessExecutionTarget({
+      ...BASE,
+      body: { harnessTarget: VALID },
+      actingUserId: actingUserId as never,
+    });
+    expect(result.kind).toBe("refused");
+    expect((result as { reason: string }).reason).toMatch(/signed-in member/);
+  });
+
+  it("says 'sign in', not 'incomplete target', when only the user is missing", () => {
+    // The two refusals send a user to different places. A complete target with
+    // no resolved user needs authentication, not a re-picked folder.
+    const result = parseHarnessExecutionTarget({
+      ...BASE,
+      body: { harnessTarget: VALID },
+      actingUserId: null,
+    });
+    expect((result as { reason: string }).reason).toMatch(
+      /carries no resolved user/,
+    );
+  });
+});
