@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   parseLLMString,
+  type ParsedLLMString,
   createModelFromString,
   buildOrgModelFromResolvedConfig,
   assertOrgModelAllowed,
@@ -201,14 +204,201 @@ describe("model-factory", () => {
       );
     });
 
-    it("should throw error for unknown provider", () => {
-      expect(() => parseLLMString("unknown/model")).toThrow(
-        'Unknown LLM provider: "unknown"'
+    it("should name openrouter in the bare-id error, because that is where a hosted id routes", () => {
+      // A customer holding a catalog id has been told to paste it somewhere.
+      // The one error left tells them what shape it must have and why a vendor
+      // they do not recognise as a provider is still accepted.
+      expect(() => parseLLMString("claude-haiku-4.5")).toThrow(/openrouter/);
+      expect(() => parseLLMString("claude-haiku-4.5")).toThrow(
+        /anthropic\/claude-haiku-4\.5/
       );
     });
 
     it("should throw error for empty string", () => {
       expect(() => parseLLMString("")).toThrow("Invalid LLM string format");
+    });
+
+    // ── Hosted-catalog ids ──────────────────────────────────────────────────
+    //
+    // `list_models` and the model picker hand out canonical OpenRouter-style
+    // ids whose first segment is a VENDOR, not an MCPJam provider. Every row
+    // below with a non-builtin vendor threw `Unknown LLM provider` before, so
+    // this table is strictly widening: the two rows that parsed then still
+    // parse to exactly the same thing.
+    describe("hosted catalog ids", () => {
+      const cases: Array<{
+        label: string;
+        id: string;
+        expected: ParsedLLMString;
+      }> = [
+        {
+          label: "a built-in vendor is untouched",
+          id: "anthropic/claude-haiku-4.5",
+          expected: {
+            type: "builtin",
+            provider: "anthropic",
+            model: "claude-haiku-4.5",
+          },
+        },
+        {
+          label: "an explicit openrouter prefix is untouched",
+          id: "openrouter/anthropic/claude-haiku-4.5",
+          expected: {
+            type: "builtin",
+            provider: "openrouter",
+            model: "anthropic/claude-haiku-4.5",
+          },
+        },
+        {
+          label: "an unknown vendor is an openrouter path, id and all",
+          id: "qwen/qwen3-max",
+          expected: {
+            type: "builtin",
+            provider: "openrouter",
+            model: "qwen/qwen3-max",
+          },
+        },
+        {
+          label: "a vendor path keeps its own slashes",
+          id: "z-ai/glm-4.6/thinking",
+          expected: {
+            type: "builtin",
+            provider: "openrouter",
+            model: "z-ai/glm-4.6/thinking",
+          },
+        },
+        {
+          label: "x-ai resolves through the alias table",
+          id: "x-ai/grok-4-fast",
+          expected: {
+            type: "builtin",
+            provider: "xai",
+            model: "grok-4-fast",
+          },
+        },
+        {
+          label: "mistralai resolves through the alias table",
+          id: "mistralai/mistral-large-2411",
+          expected: {
+            type: "builtin",
+            provider: "mistral",
+            model: "mistral-large-2411",
+          },
+        },
+        {
+          label:
+            "meta-llama aliases to a non-builtin, so it stays an openrouter path",
+          id: "meta-llama/llama-3.3-70b-instruct",
+          expected: {
+            type: "builtin",
+            provider: "openrouter",
+            model: "meta-llama/llama-3.3-70b-instruct",
+          },
+        },
+      ];
+
+      for (const { label, id, expected } of cases) {
+        it(label, () => {
+          expect(parseLLMString(id)).toEqual(expected);
+        });
+      }
+
+      it("still throws for an EMPTY segment ANYWHERE, doubled slashes too", () => {
+        // `parseLLMString` is exported, so a caller can hand it these. Passing
+        // them through to OpenRouter would turn an obvious local mistake into
+        // a remote API error. The middle cases are why the guard reads the raw
+        // segments: a doubled slash leaves the provider and the re-joined
+        // model both non-empty.
+        //
+        // The last two are ALIAS prefixes, and they are the reason the guard
+        // sits above the alias table rather than below it: resolved first,
+        // `x-ai/` would be an xai model with no name and `mistralai//model` a
+        // Mistral model called `/model`.
+        for (const malformed of [
+          "/qwen3-max",
+          "qwen/",
+          "qwen//qwen3-max",
+          "qwen//",
+          "x-ai/",
+          "mistralai//model",
+        ]) {
+          expect(() => parseLLMString(malformed), malformed).toThrow(
+            "Invalid LLM string format"
+          );
+        }
+      });
+
+      it("leaves a BUILT-IN prefix alone, empty tail and all", () => {
+        // The boundary, stated so it is a decision rather than an oversight:
+        // the guard sits below the built-in and custom-provider checks. Those
+        // two are the paths that existed before this parser learned the hosted
+        // catalog, and they keep the shape they have always had — tightening
+        // them would change a string that parses today, which this change
+        // deliberately never does. Everything the guard does cover used to
+        // throw.
+        expect(parseLLMString("openai/")).toEqual({
+          type: "builtin",
+          provider: "openai",
+          model: "",
+        });
+        expect(parseLLMString("openrouter//anthropic/claude-haiku-4.5")).toEqual(
+          {
+            type: "builtin",
+            provider: "openrouter",
+            model: "/anthropic/claude-haiku-4.5",
+          }
+        );
+      });
+
+      it("still throws for a bare id with no vendor segment", () => {
+        expect(() => parseLLMString("qwen3-max")).toThrow(
+          "Invalid LLM string format"
+        );
+      });
+
+      it("does not let an alias shadow a registered custom provider", () => {
+        // Someone who registered a custom provider called `mistralai` was
+        // getting a custom provider before this change and must keep getting
+        // one: the alias only fires where the parser used to throw.
+        expect(
+          parseLLMString("mistralai/whatever", new Set(["mistralai"]))
+        ).toEqual({
+          type: "custom",
+          providerName: "mistralai",
+          model: "whatever",
+        });
+      });
+    });
+
+    // The ratchet. The hosted catalog grows on every backend deploy that widens
+    // it; this walks the committed snapshot of it so a newly added vendor
+    // cannot reintroduce the construction-time throw this change removed.
+    it("parses every id in the hosted model catalog snapshot", () => {
+      const snapshotPath = fileURLToPath(
+        new URL(
+          "../../mcpjam-inspector/shared/hosted-model-ids.generated.ts",
+          import.meta.url
+        )
+      );
+      const source = readFileSync(snapshotPath, "utf8");
+      const ids = [...source.matchAll(/"([^"\n]+)"/g)]
+        .map((match) => match[1])
+        .filter((id) => id.includes("/"));
+
+      expect(ids.length).toBeGreaterThan(100);
+
+      // Parsing at all is the whole assertion: no custom providers are
+      // registered here, so the only outcomes are a builtin/OpenRouter
+      // resolution or the throw this change exists to remove.
+      const failures: string[] = [];
+      for (const id of ids) {
+        try {
+          parseLLMString(id);
+        } catch (error) {
+          failures.push(`${id}: ${(error as Error).message}`);
+        }
+      }
+      expect(failures).toEqual([]);
     });
   });
 
@@ -495,13 +685,17 @@ describe("model-factory", () => {
       });
     });
 
-    describe("error handling", () => {
-      it("should throw for unknown provider", () => {
-        expect(() =>
-          createModelFromString("unknown/model", defaultOptions)
-        ).toThrow('Unknown LLM provider: "unknown"');
-      });
+    describe("hosted catalog vendor paths", () => {
+      it("should build an openrouter model from a vendor path", () => {
+        createModelFromString("qwen/qwen3-max", defaultOptions);
 
+        expect(createOpenRouter).toHaveBeenCalledWith({
+          apiKey: "test-api-key",
+        });
+      });
+    });
+
+    describe("error handling", () => {
       it("should throw for invalid format", () => {
         expect(() =>
           createModelFromString("invalid-format", defaultOptions)

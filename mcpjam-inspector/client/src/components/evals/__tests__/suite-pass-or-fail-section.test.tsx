@@ -1,5 +1,5 @@
 /**
- * The "Pass or fail" section, and the policy controls beside it.
+ * The "Scorers and judges" section, and the policy controls beside it.
  *
  * Two properties are worth a test rather than a reading:
  *
@@ -33,6 +33,7 @@ function renderSection(
     judgeConfig?: Parameters<typeof SuitePassOrFailSection>[0]["judgeConfig"];
     judgeAccessory?: React.ReactNode;
     rubricEditor?: React.ReactNode;
+    stageFacts?: Parameters<typeof SuitePassOrFailSection>[0]["stageFacts"];
   } = {},
 ) {
   const onPredicatesChange = vi.fn();
@@ -49,6 +50,7 @@ function renderSection(
       availableModels={[]}
       judgeAccessory={overrides.judgeAccessory}
       rubricEditor={overrides.rubricEditor}
+      stageFacts={overrides.stageFacts}
     />,
   );
   return { ...result, onPredicatesChange, onJudgeConfigChange };
@@ -63,10 +65,23 @@ function emptyCopy(container: HTMLElement, stage: string): string | null {
 }
 
 describe("SuitePassOrFailSection", () => {
-  it("says 'No grader' for an unconfigured selection stage", () => {
-    // A suite with no checks still has the tool-call matcher, which files at
-    // selection — so the empty state only appears once the matcher rows are
-    // gone. Read the response stage instead, which has neither.
+  it("mounts config facts under the stages the runner measures", () => {
+    const { container } = renderSection({
+      stageFacts: {
+        connection: <div data-testid="connection-facts">connection facts</div>,
+        discovery: <div data-testid="discovery-facts">discovery facts</div>,
+      },
+    });
+    for (const stage of ["connection", "discovery"] as const) {
+      const group = container.querySelector(`[data-stage-group="${stage}"]`);
+      expect(
+        group?.querySelector(`[data-testid="${stage}-facts"]`),
+        stage,
+      ).toBeTruthy();
+    }
+  });
+
+  it("says 'No grader' for an unconfigured response stage", () => {
     const { container } = renderSection();
     expect(emptyCopy(container, "response")).toBe("No grader");
   });
@@ -75,7 +90,7 @@ describe("SuitePassOrFailSection", () => {
     const { container } = renderSection();
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
-      expect(copy, stage).toContain("Measured by the runner");
+      expect(copy, stage).toContain("Observed by the runner");
       expect(copy.toLowerCase(), stage).not.toContain("no grader");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.
@@ -86,21 +101,26 @@ describe("SuitePassOrFailSection", () => {
   it("marks the judge advisory by default and gating when the role says so", () => {
     const advisory = renderSection();
     expect(
-      within(
-        advisory.container.querySelector(
-          '[data-stage-group="userValue"]',
-        ) as HTMLElement,
-      ).getByText("Advisory"),
-    ).toBeTruthy();
+      advisory.container.querySelector(
+        '[data-testid="stage-chain-card-userValue"]',
+      )?.textContent,
+    ).toContain("Judge on request");
     advisory.unmount();
 
     const gating = renderSection({
       judgeConfig: { goalCompletion: { role: "gating" } },
     });
+    const card = gating.container.querySelector(
+      '[data-testid="stage-chain-card-userValue"]',
+    );
+    expect(card?.textContent).toContain("Gated");
     const group = gating.container.querySelector(
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
-    expect(within(group).getByText("Gate")).toBeTruthy();
+    const judgeRole = group.querySelector('[aria-label="Judge role"]');
+    expect(
+      within(judgeRole as HTMLElement).getByRole("button", { name: "Gate" }),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 
   it("mounts the judge's gate panel and rubric editor under user value", () => {
@@ -123,7 +143,7 @@ describe("SuitePassOrFailSection", () => {
     expect(rubricRow?.textContent).toContain("Judge criteria");
   });
 
-  it("keeps one Add-check affordance for the whole section", () => {
+  it("keeps one Add-scorer affordance for the whole section", () => {
     // Per-stage Add menus would ask a person to know which stage their check
     // files under before they can write it, which is the page's job.
     const { container } = renderSection();
@@ -144,7 +164,7 @@ describe("VerdictPolicyV2Controls", () => {
       />,
     );
     const input = screen.getByLabelText(
-      /fraction of a case's trials that must pass/i,
+      /fraction of a case's iterations that must pass/i,
     ) as HTMLInputElement;
     expect(input.value).toBe("50");
 
@@ -159,6 +179,18 @@ describe("VerdictPolicyV2Controls", () => {
     });
   });
 
+  it("shows how many passes the case decision rule needs", () => {
+    render(
+      <VerdictPolicyV2Controls
+        defaults={{ repetitions: 3, passThreshold: 0.8 }}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(/A case with 3 iterations needs 3 passes/),
+    ).toBeTruthy();
+  });
+
   it("clamps a typed percent into the unit interval", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -169,7 +201,7 @@ describe("VerdictPolicyV2Controls", () => {
       />,
     );
     const input = screen.getByLabelText(
-      /fraction of a case's trials that must pass/i,
+      /fraction of a case's iterations that must pass/i,
     );
     await user.clear(input);
     await user.type(input, "140");

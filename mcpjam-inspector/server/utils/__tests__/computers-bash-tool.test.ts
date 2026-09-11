@@ -235,7 +235,7 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
     expect(result.error).toMatch(/local computer engine/i);
   });
 
-  it("approval: cloud honors the host policy; local is ALWAYS on", () => {
+  it("approval: both engines honor the host policy", () => {
     const cloudOff = buildBashTool(
       { ...toolOpts, engine: "e2b", requireToolApproval: false },
       vi.fn()
@@ -248,10 +248,16 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
       { ...toolOpts, engine: "local", requireToolApproval: false },
       vi.fn()
     ) as any;
+    const localOn = buildBashTool(
+      { ...toolOpts, engine: "local", requireToolApproval: true },
+      vi.fn()
+    ) as any;
     expect(cloudOff.needsApproval).toBe(false);
     expect(cloudOn.needsApproval).toBe(true);
-    // v1: no auto-approve for a model-driven shell on the user's machine.
-    expect(localOff.needsApproval).toBe(true);
+    // Local used to ask unconditionally. It is the sharpest tool here and the
+    // weakest case for overruling the person whose machine it is.
+    expect(localOff.needsApproval).toBe(false);
+    expect(localOn.needsApproval).toBe(true);
   });
 
   it("surfaces reserve denials (e.g. non-member) as tool errors", async () => {

@@ -12,7 +12,10 @@ import {
   extractTesterLinkToken,
   TESTER_LINK_PATH_SEGMENT,
 } from "@/lib/tester-link-path";
-import type { ScenarioPerTurnFeedbackStyle } from "@/types/chatUi";
+import type {
+  ScenarioPerTurnFeedbackStyle,
+  ScenarioTaskItem,
+} from "@/types/chatUi";
 
 const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
 
@@ -42,9 +45,7 @@ export function getShareableAppOrigin(): string {
  * Scenario access modes. Mirrors the backend `scenarioModeValidator`.
  */
 export type ScenarioShareMode =
-  | "project_members"
-  | "invited_only"
-  | "anyone_with_link";
+  "project_members" | "invited_only" | "anyone_with_link";
 
 export interface ScenarioBootstrapServer {
   serverId: string;
@@ -96,10 +97,26 @@ export interface ScenarioPerTurnFeedbackPayload {
   thanksMessage?: string;
 }
 
+/**
+ * The study's "what to try" list, as the tester's session receives it.
+ *
+ * Absent on a backend predating BB-176, and `items: []` for a study whose
+ * creator authored none — both mean the header control is not rendered, so
+ * every reader must treat absent and empty the same way.
+ *
+ * `ScenarioTaskItem` is aliased from the settings type rather than restated,
+ * so the bootstrap payload and the editor cannot drift apart on what a task
+ * is.
+ */
+export interface ScenarioTasksPayload {
+  items?: ScenarioTaskItem[];
+}
+
 export interface ChatUiPayload {
   surfaces?: {
     welcome?: ScenarioWelcomeDialogPayload | null;
     perTurnFeedback?: ScenarioPerTurnFeedbackPayload | null;
+    tasks?: ScenarioTasksPayload | null;
   } | null;
 }
 
@@ -188,9 +205,16 @@ export function scenarioEnabledOptionalStorageKey(scenarioId: string): string {
 
 // Defensive normalizer for the chatUi envelope in /web/scenario/redeem
 // responses. Returns `undefined` when no recognized surface is present. The
-// hosted runtime consumes `welcome` and `perTurnFeedback`; the deprecated
+// hosted runtime consumes `perTurnFeedback` and `tasks`; the deprecated
 // session-level `feedback` dialog is dropped on purpose (its write path is
-// gone — see the backend's `sessionScores` design note).
+// gone — see the backend's `sessionScores` design note), and `welcome` is
+// parsed only so an older stored session still round-trips — the recording
+// notice replaced it, and nothing renders creator welcome copy any more
+// (BB-176).
+//
+// EVERY surface has to be listed here. This is an allowlist, so a surface the
+// backend sends and this function does not name reaches the runtime as
+// `undefined` — which is how a new one silently does nothing.
 /** A plain object whose every value is a string — the shape of custom headers. */
 function isStringRecord(input: unknown): input is Record<string, string> {
   return (
@@ -239,29 +263,74 @@ function normalizeChatUiPayload(input: unknown): ChatUiPayload | undefined {
           ...optionalString(perTurnRaw, "thanksMessage"),
         }
       : undefined;
-  // EITHER surface is enough. Returning undefined unless `welcome` parsed
-  // (the old behavior) would have silently dropped a per-turn-feedback config
-  // on every scenario with no welcome dialog — which is most of them.
-  if (!welcome && !perTurnFeedback) return undefined;
+  const tasksRaw = (surfaces as { tasks?: unknown }).tasks;
+  const tasksItems =
+    tasksRaw && typeof tasksRaw === "object"
+      ? (tasksRaw as { items?: unknown }).items
+      : undefined;
+  // A row is kept only if it has both an id to key the tester's local check
+  // state and a title to show. A titleless checkbox is not a task, and an
+  // id-less one would collide with its neighbours the moment a task is
+  // removed. The backend normalizer repairs both; this is the boundary that
+  // holds when the response did not come from it.
+  const tasks = Array.isArray(tasksItems)
+    ? { items: normalizeScenarioTaskItems(tasksItems) }
+    : undefined;
+  // ANY surface is enough. Returning undefined unless `welcome` parsed (the
+  // old behavior) would have silently dropped a per-turn-feedback config on
+  // every scenario with no welcome dialog — which is most of them. An EMPTY
+  // task list is still a parsed surface: "this study has no tasks" is the
+  // ordinary answer, and it reads the same as absent downstream.
+  if (!welcome && !perTurnFeedback && !tasks) return undefined;
   return {
     surfaces: {
       ...(welcome ? { welcome } : {}),
       ...(perTurnFeedback ? { perTurnFeedback } : {}),
+      ...(tasks ? { tasks } : {}),
     },
   };
+}
+
+/**
+ * The tester's task rows, kept only where they can actually work.
+ *
+ * A row needs both an id to key the tester's local check state and a title to
+ * show. A titleless checkbox is not a task, and an id-less one would collide
+ * with its neighbours the moment a task is removed.
+ *
+ * DUPLICATE IDS ARE DROPPED (first wins). The checklist keys both its checked
+ * set and its remaining count on `task.id`, so two rows sharing an id would
+ * tick together on one click and leave the "N left" count wrong. The backend
+ * normalizer already repairs collisions — this boundary is for the responses
+ * that did not come from it, which is the only reason it exists.
+ */
+function normalizeScenarioTaskItems(items: unknown[]): ScenarioTaskItem[] {
+  const seen = new Set<string>();
+  const kept: ScenarioTaskItem[] = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const id = (item as { id?: unknown }).id;
+    const title = (item as { title?: unknown }).title;
+    if (typeof id !== "string" || id.length === 0) continue;
+    if (typeof title !== "string" || title.trim().length === 0) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    kept.push({ id, title, ...optionalString(item, "hint") });
+  }
+  return kept;
 }
 
 /** Copy `key` through only when it is a real string; never null-punch it. */
 function optionalString(
   source: unknown,
-  key: string
+  key: string,
 ): Record<string, string> | Record<string, never> {
   const value = (source as Record<string, unknown>)[key];
   return typeof value === "string" ? { [key]: value } : {};
 }
 
 function normalizeHostCapabilitiesOverride(
-  input: unknown
+  input: unknown,
 ): Record<string, unknown> | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined;
@@ -270,7 +339,7 @@ function normalizeHostCapabilitiesOverride(
 }
 
 function normalizeModelVisibleMcpToolResults(
-  input: unknown
+  input: unknown,
 ): ModelVisibleMcpToolResults | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined;
@@ -279,7 +348,7 @@ function normalizeModelVisibleMcpToolResults(
 }
 
 function normalizeMcpToolResultImageRendering(
-  input: unknown
+  input: unknown,
 ): McpToolResultImageRenderingPolicy | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined;
@@ -304,7 +373,7 @@ function normalizeChatUiOverride(input: unknown): ChatUiOverride | undefined {
 }
 
 function normalizeMcpProfile(
-  input: unknown
+  input: unknown,
 ): HostConfigMcpProfileV1 | undefined {
   // Same untrusted-shape gate as normalizeHostCapabilitiesOverride: this
   // is the boundary between the redeem-response JSON and the typed
@@ -342,7 +411,7 @@ export function hasActiveScenarioSession(): boolean {
 }
 
 export function normalizeScenarioSession(
-  parsed: Partial<ScenarioSession> | null
+  parsed: Partial<ScenarioSession> | null,
 ): ScenarioSession | null {
   if (!parsed || typeof parsed !== "object") {
     return null;
@@ -399,10 +468,10 @@ export function normalizeScenarioSession(
       temperature: payload.temperature,
       requireToolApproval: payload.requireToolApproval,
       modelVisibleMcpToolResults: normalizeModelVisibleMcpToolResults(
-        payload.modelVisibleMcpToolResults
+        payload.modelVisibleMcpToolResults,
       ),
       mcpToolResultImageRendering: normalizeMcpToolResultImageRendering(
-        payload.mcpToolResultImageRendering
+        payload.mcpToolResultImageRendering,
       ),
       servers: payload.servers
         .filter(
@@ -410,7 +479,7 @@ export function normalizeScenarioSession(
             !!server &&
             typeof server === "object" &&
             typeof server.serverId === "string" &&
-            typeof server.serverName === "string"
+            typeof server.serverName === "string",
         )
         .map((server) => ({
           serverId: server.serverId,
@@ -457,13 +526,13 @@ export function normalizeScenarioSession(
       chatUi: normalizeChatUiPayload(payload.chatUi),
       hostCapabilitiesOverride: normalizeHostCapabilitiesOverride(
         (payload as { hostCapabilitiesOverride?: unknown })
-          .hostCapabilitiesOverride
+          .hostCapabilitiesOverride,
       ),
       chatUiOverride: normalizeChatUiOverride(
-        (payload as { chatUiOverride?: unknown }).chatUiOverride
+        (payload as { chatUiOverride?: unknown }).chatUiOverride,
       ),
       mcpProfile: normalizeMcpProfile(
-        (payload as { mcpProfile?: unknown }).mcpProfile
+        (payload as { mcpProfile?: unknown }).mcpProfile,
       ),
     },
     surface: parsed.surface === "preview" ? "preview" : "share_link",
@@ -480,7 +549,7 @@ function readStoredScenarioSession(storageKey: string): ScenarioSession | null {
     if (!raw) return null;
 
     return normalizeScenarioSession(
-      JSON.parse(raw) as Partial<ScenarioSession> | null
+      JSON.parse(raw) as Partial<ScenarioSession> | null,
     );
   } catch {
     return null;
@@ -493,7 +562,7 @@ export function readScenarioSession(): ScenarioSession | null {
 
 function writeStoredScenarioSession(
   storageKey: string,
-  session: ScenarioSession
+  session: ScenarioSession,
 ): void {
   sessionStorage.setItem(storageKey, JSON.stringify(session));
 }
@@ -502,8 +571,32 @@ export function writeScenarioSession(session: ScenarioSession): void {
   writeStoredScenarioSession(SCENARIO_SESSION_STORAGE_KEY, session);
 }
 
+/**
+ * Tag a tester link as PREVIEW traffic — the write side of
+ * `readScenarioSurfaceFromUrl`.
+ *
+ * A creator opening their own study still starts a real guest session, so
+ * without this marker their look-around lands in the study's own Sessions list
+ * as if a tester had run it. The docked preview pane used to set it on the
+ * iframe src; now that the pane is gone and "Open preview" is the only preview
+ * path, the header link has to carry it or every creator visit pollutes the
+ * data the study exists to collect (BB-176).
+ *
+ * Returns the link UNCHANGED when it cannot be parsed: an untagged preview is
+ * a labelling problem, a broken href is a dead button.
+ */
+export function withScenarioPreviewSurface(link: string): string {
+  try {
+    const url = new URL(link, window.location.href);
+    url.searchParams.set("surface", "preview");
+    return url.toString();
+  } catch {
+    return link;
+  }
+}
+
 export function readScenarioSurfaceFromUrl(
-  search: string
+  search: string,
 ): "preview" | "share_link" {
   try {
     const surface = new URLSearchParams(search).get("surface");
@@ -526,7 +619,7 @@ export function writeScenarioSignInReturnPath(path: string): void {
   try {
     localStorage.setItem(
       SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY,
-      normalizedPath
+      normalizedPath,
     );
   } catch {
     // Ignore storage failures.
@@ -554,6 +647,6 @@ export function clearScenarioSignInReturnPath(): void {
 export function buildScenarioLink(token: string, scenarioName: string): string {
   const origin = getShareableAppOrigin();
   return `${origin}/${TESTER_LINK_PATH_SEGMENT}/${slugify(
-    scenarioName
+    scenarioName,
   )}/${encodeURIComponent(token)}`;
 }

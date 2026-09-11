@@ -70,6 +70,21 @@ describe("pruneEmpty keeps a config that still means something", () => {
     expect(pruneEmpty({ goalCompletion: { judgeModel: "" } })).toBeUndefined();
   });
 
+  it("KEEPS a config whose only field is presentation severity", () => {
+    expect(pruneEmpty({ goalCompletion: { severity: "warn" } })).toEqual({
+      goalCompletion: { severity: "warn" },
+    });
+  });
+
+  it("keeps a stored groundedness slot when goal completion is empty", () => {
+    expect(
+      pruneEmpty({
+        goalCompletion: {},
+        groundedness: { role: "advisory" },
+      }),
+    ).toEqual({ groundedness: { role: "advisory" } });
+  });
+
   it("KEEPS a config whose only field is the gating role", () => {
     // The case that matters. `enabled` may legitimately be absent — the
     // backend resolves an absent one to on — so a gating suite can carry

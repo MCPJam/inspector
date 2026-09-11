@@ -14,7 +14,7 @@ import {
 } from "../client-config-v2";
 
 function makeInput(
-  overrides: Partial<HostConfigInputV2> = {}
+  overrides: Partial<HostConfigInputV2> = {},
 ): HostConfigInputV2 {
   return emptyHostConfigInputV2({
     hostStyle: "claude",
@@ -32,6 +32,12 @@ function makeInput(
 }
 
 describe("hostConfigInputsEqual", () => {
+  it("marks a local Browser override dirty and clears it on revert", () => {
+    const saved = { ...makeInput(), localBrowserEnabled: true };
+    const edited = { ...saved, localBrowserEnabled: false };
+    expect(hostConfigInputsEqual(saved, edited)).toBe(false);
+    expect(hostConfigInputsEqual(saved, { ...edited, localBrowserEnabled: true })).toBe(true);
+  });
   it("returns true for identical inputs", () => {
     expect(hostConfigInputsEqual(makeInput(), makeInput())).toBe(true);
   });
@@ -40,8 +46,8 @@ describe("hostConfigInputsEqual", () => {
     expect(
       hostConfigInputsEqual(
         makeInput({ modelId: "a" }),
-        makeInput({ modelId: "b" })
-      )
+        makeInput({ modelId: "b" }),
+      ),
     ).toBe(false);
   });
 
@@ -101,8 +107,8 @@ describe("hostConfigInputsEqual", () => {
     expect(
       hostConfigInputsEqual(
         makeInput({ hostCapabilitiesOverride: undefined }),
-        makeInput({ hostCapabilitiesOverride: undefined })
-      )
+        makeInput({ hostCapabilitiesOverride: undefined }),
+      ),
     ).toBe(true);
   });
 
@@ -126,16 +132,16 @@ describe("hostConfigInputsEqual", () => {
     expect(
       hostConfigInputsEqual(
         makeInput({ modelVisibleMcpToolResults: undefined }),
-        makeInput({ modelVisibleMcpToolResults: undefined })
-      )
+        makeInput({ modelVisibleMcpToolResults: undefined }),
+      ),
     ).toBe(true);
     expect(
       hostConfigInputsEqual(
         makeInput({ modelVisibleMcpToolResults: undefined }),
         makeInput({
           modelVisibleMcpToolResults: { directContent: { image: true } },
-        })
-      )
+        }),
+      ),
     ).toBe(false);
     expect(
       hostConfigInputsEqual(
@@ -144,8 +150,8 @@ describe("hostConfigInputsEqual", () => {
         }),
         makeInput({
           modelVisibleMcpToolResults: { directContent: { image: false } },
-        })
-      )
+        }),
+      ),
     ).toBe(false);
   });
 
@@ -153,22 +159,22 @@ describe("hostConfigInputsEqual", () => {
     expect(
       hostConfigInputsEqual(
         makeInput({ mcpToolResultImageRendering: undefined }),
-        makeInput({ mcpToolResultImageRendering: undefined })
-      )
+        makeInput({ mcpToolResultImageRendering: undefined }),
+      ),
     ).toBe(true);
     expect(
       hostConfigInputsEqual(
         makeInput({ mcpToolResultImageRendering: undefined }),
-        makeInput({ mcpToolResultImageRendering: { placement: "inline" } })
-      )
+        makeInput({ mcpToolResultImageRendering: { placement: "inline" } }),
+      ),
     ).toBe(false);
     expect(
       hostConfigInputsEqual(
         makeInput({
           mcpToolResultImageRendering: { placement: "collapsed" },
         }),
-        makeInput({ mcpToolResultImageRendering: { placement: "none" } })
-      )
+        makeInput({ mcpToolResultImageRendering: { placement: "none" } }),
+      ),
     ).toBe(false);
     expect(
       hostConfigInputsEqual(
@@ -177,8 +183,8 @@ describe("hostConfigInputsEqual", () => {
         }),
         makeInput({
           mcpToolResultImageRendering: { directContent: { image: false } },
-        })
-      )
+        }),
+      ),
     ).toBe(false);
   });
 
@@ -195,8 +201,8 @@ describe("hostConfigInputsEqual", () => {
           directContent: { image: false },
           embeddedResources: { blob: { image: false } },
           linkedResources: { blob: { image: true } },
-        }
-      )
+        },
+      ),
     ).toEqual({
       placement: "inline",
       directContent: { image: false },
@@ -266,8 +272,8 @@ describe("computer (personal cloud workstation)", () => {
     expect(
       hostConfigInputsEqual(
         makeInput({ computer: { kind: "personal" } }),
-        makeInput({ computer: { kind: "personal" } })
-      )
+        makeInput({ computer: { kind: "personal" } }),
+      ),
     ).toBe(true);
     expect(hostConfigInputsEqual(none, makeInput())).toBe(true);
   });
@@ -277,9 +283,20 @@ describe("computer (personal cloud workstation)", () => {
       // Backend may carry the legacy `toolset` key on the wire while pinned
       // to the published SDK; the client model omits it.
       computer: { kind: "personal", toolset: "bash", workdir: "/home/u" },
+      browserProfileId: "profile-1",
     });
     const input = hostConfigDtoToInput(dto);
     expect(input.computer).toEqual({ kind: "personal", workdir: "/home/u" });
+    expect(input.browserProfileId).toBe("profile-1");
+  });
+
+  it("treats a browser profile change as a meaningful draft change", () => {
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ browserProfileId: "profile-1" }),
+        makeInput({ browserProfileId: "profile-2" }),
+      ),
+    ).toBe(false);
   });
 
   it("hostConfigDtoToInput yields undefined when no computer is attached", () => {
@@ -295,14 +312,14 @@ describe("harness (real agent runtime)", () => {
     expect(
       hostConfigInputsEqual(
         makeInput({ harness: "claude-code" }),
-        makeInput({ harness: "claude-code" })
-      )
+        makeInput({ harness: "claude-code" }),
+      ),
     ).toBe(true);
   });
 
   it("hostConfigDtoToInput round-trips the harness selector", () => {
     expect(
-      hostConfigDtoToInput(makeDto({ harness: "claude-code" })).harness
+      hostConfigDtoToInput(makeDto({ harness: "claude-code" })).harness,
     ).toBe("claude-code");
     expect(hostConfigDtoToInput(makeDto({})).harness).toBeUndefined();
   });
@@ -374,13 +391,13 @@ describe("hostConfigDtoToInput", () => {
     ).value = 999;
 
     expect(
-      (dto.clientCapabilities.extensions as Record<string, unknown>).mimeTypes
+      (dto.clientCapabilities.extensions as Record<string, unknown>).mimeTypes,
     ).toEqual(["a", "b"]);
     expect(
       (dto.hostContext.nested as Record<string, unknown>).deep as Record<
         string,
         unknown
-      >
+      >,
     ).toEqual({ value: 1 });
   });
 
@@ -409,7 +426,7 @@ describe("hostConfigDtoToInput", () => {
 
     expect(
       (dto.hostCapabilitiesOverride!.serverTools as Record<string, unknown>)
-        .listChanged
+        .listChanged,
     ).toBe(true);
   });
 
@@ -445,7 +462,7 @@ describe("hostConfigDtoToInput", () => {
           directContent: { image: false },
         },
         hostContext: { other: "keep" },
-      })
+      }),
     );
 
     expect(input.modelVisibleMcpToolResults).toEqual({
@@ -640,7 +657,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("replaces availableDisplayModes (not unioned)", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { availableDisplayModes: ["fullscreen"] }
+      { availableDisplayModes: ["fullscreen"] },
     );
     expect(merged.availableDisplayModes).toEqual(["fullscreen"]);
   });
@@ -648,7 +665,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("coerces empty availableDisplayModes to ['inline'] (spec default)", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { availableDisplayModes: [] }
+      { availableDisplayModes: [] },
     );
     expect(merged.availableDisplayModes).toEqual(["inline"]);
   });
@@ -657,7 +674,7 @@ describe("mergeMcpAppsCapabilities", () => {
     // `?? base.x` semantics: false replaces, undefined falls through.
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { serverResources: false, logging: false }
+      { serverResources: false, logging: false },
     );
     expect(merged.serverResources).toBe(false);
     expect(merged.logging).toBe(false);
@@ -674,7 +691,7 @@ describe("mergeMcpAppsCapabilities", () => {
       {
         cspConnectDomains: { xhr: true },
         cspResourceDomains: { image: true, font: false },
-      }
+      },
     );
     expect(merged.cspConnectDomains).toEqual({ fetch: false, xhr: true });
     expect(merged.cspConnectDomains).not.toHaveProperty("websocket");
@@ -688,7 +705,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("replaces widgetDisplayModeRequests tri-state when override is set", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { widgetDisplayModeRequests: "decline" }
+      { widgetDisplayModeRequests: "decline" },
     );
     expect(merged.widgetDisplayModeRequests).toBe("decline");
   });
@@ -696,7 +713,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("falls through to base widgetDisplayModeRequests when override absent", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { serverResources: false }
+      { serverResources: false },
     );
     expect(merged.widgetDisplayModeRequests).toBe("accept");
   });
@@ -704,7 +721,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("applies downloadFile and requestTeardown overrides when set", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { downloadFile: false, requestTeardown: false }
+      { downloadFile: false, requestTeardown: false },
     );
     expect(merged.downloadFile).toBe(false);
     expect(merged.requestTeardown).toBe(false);
@@ -713,7 +730,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("falls through to base downloadFile and requestTeardown when override absent", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { serverResources: false }
+      { serverResources: false },
     );
     expect(merged.downloadFile).toBe(true);
     expect(merged.requestTeardown).toBe(true);
@@ -774,7 +791,7 @@ describe("setMcpAppsOverridesOnDraft", () => {
     });
     const next = setMcpAppsOverridesOnDraft(
       { ...draft, hostCapabilitiesOverride: undefined },
-      { serverTools: true, logging: false }
+      { serverTools: true, logging: false },
     );
     expect(next.hostCapabilitiesOverride).toBeUndefined();
     expect(next.mcpProfile?.initialize?.clientInfo).toEqual({
@@ -798,7 +815,7 @@ describe("setMcpAppsOverridesOnDraft", () => {
       },
     });
     expect(
-      setMcpAppsOverridesOnDraft(draft, undefined).mcpProfile
+      setMcpAppsOverridesOnDraft(draft, undefined).mcpProfile,
     ).toBeUndefined();
   });
 
@@ -824,9 +841,7 @@ describe("setMcpAppsOverridesOnDraft", () => {
 // specific import path that might shift around during the migration.
 const MCP_APPS_FULL_SURFACE_FOR_TEST = {
   availableDisplayModes: ["inline", "fullscreen", "pip"] as (
-    | "inline"
-    | "fullscreen"
-    | "pip"
+    "inline" | "fullscreen" | "pip"
   )[],
   toolInputPartial: true,
   toolCancelled: true,
