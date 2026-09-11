@@ -9,8 +9,12 @@
  * across goals.
  */
 
-import { useEffect, useState } from "react";
-import type { UsageFilterState } from "@/hooks/scenario-usage-filters";
+import { useEffect, useMemo, useState } from "react";
+import {
+  stageChipValue,
+  type UsageFilterChip,
+  type UsageFilterState,
+} from "@/hooks/scenario-usage-filters";
 import { useGoalOutcomeDrilldown } from "@/hooks/useUsageInsights";
 
 const PAGE_SIZE = 25;
@@ -27,18 +31,55 @@ export type FindingsSessionScope =
   | { kind: "swarm"; projectId: string }
   | { kind: "scenario"; scenarioId: string; filters?: UsageFilterState };
 
+/**
+ * Narrowing the list to the sessions ONE stage is about.
+ *
+ * `state` follows what the stage's row actually says: a failing stage is about
+ * its failures, a passing one about its passes. A stage with no verdict has
+ * nothing to narrow to and passes `null`, which leaves the goal's whole list
+ * in place rather than showing an empty one.
+ */
+export type FindingsStageNarrowing = {
+  /** The CHAIN's stage id (`userValue`), not the panel's (`value`). */
+  chainStage: string;
+  state: "passed" | "failed";
+};
+
 export function FindingsGoalSessions({
   scope,
   goalId,
   expectedCount: _expectedCount,
+  stage,
   onOpenSession,
 }: {
   scope: FindingsSessionScope;
   /** The swarm's run id, or the scenario's goal cluster id. */
   goalId: string;
   expectedCount: number;
+  /**
+   * Narrow to one stage's sessions. Scenario scope only — a swarm goal pages
+   * by run id and its backend reader takes no chips.
+   */
+  stage?: FindingsStageNarrowing | null;
   onOpenSession: (sessionId: string) => void;
 }) {
+  // The stage chip rides ON TOP of the scope's own filters rather than
+  // replacing them: the hide-synthetic policy and the persona's sentiment are
+  // what make this list agree with the count that opened it, and dropping
+  // either to add a stage would trade one disagreement for another.
+  const stageFilters = useMemo(() => {
+    const base = scope.kind === "scenario" ? scope.filters : undefined;
+    if (!stage) return base;
+    const chip: UsageFilterChip = {
+      kind: "dimension",
+      key: "stage",
+      value: stageChipValue(stage.chainStage, stage.state),
+    };
+    return base
+      ? { ...base, chips: [...base.chips, chip] }
+      : { preset: "all" as const, chips: [chip] };
+  }, [scope, stage]);
+
   const [before, setBefore] = useState<number | undefined>(undefined);
   const [rows, setRows] = useState<
     Array<{
@@ -66,11 +107,11 @@ export function FindingsGoalSessions({
           scope: { kind: "scenario", scenarioId: scope.scenarioId },
           clusterId: goalId,
           outcome: undefined,
-          filters: scope.filters,
+          filters: stageFilters,
           limit: PAGE_SIZE,
           before,
           enabled: true,
-        }
+        },
   );
 
   useEffect(() => {
