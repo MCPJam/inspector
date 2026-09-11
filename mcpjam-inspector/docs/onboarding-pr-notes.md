@@ -38,6 +38,18 @@
 - Interactive preview confirms the approved Welcome styling over Home, refresh resumes at `Point MCPJam at a server`, and no invalid-project error occurs.
 - The broader repository suite was also sampled; unrelated socket, subprocess, DNS, and headless-browser tests cannot run in the restricted sandbox and time out there.
 
+## Pre-PR review quick fixes
+
+- Reformatted only `App.tsx` and `App.hosted-oauth.test.tsx` with the package's pinned Prettier 3.9.6.
+- Split first-run stdio input into an executable and argument list before using the existing connection path.
+- Made the post-refresh onboarding server selection restore one-shot, so later Playground server choices remain user-controlled.
+- Removed the unreachable rejection handler from `ensureServersReady`, which reports failures in its resolved result buckets.
+- Replaced the stale hardcoded Excalidraw tool count with `No setup · nothing to install`; the success screen still reports the live count.
+- Removed Bearer-token and custom-header controls from onboarding because the form did not collect or submit their credential values. OAuth, automatic authentication, and no-auth remain available.
+- Added regressions for stdio parsing, user-controlled selection after restore, and the supported credential choices.
+- Verification on `feature/onboarding-quick-fixes`: 1,676 focused tests pass with 6 existing skips; client type-check and targeted Prettier check pass.
+- Kept `onboarding-review-followups.md` unchanged. The unrelated developer onboarding and repository-flow guides moved to the separate `small-doc-fixes` branch.
+
 ## Remaining before integration
 
 - None. The user approved the personal and demo paths, failure presentation, refresh behavior, and final Welcome styling.

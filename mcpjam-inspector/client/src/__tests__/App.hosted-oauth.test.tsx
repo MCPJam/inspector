@@ -149,10 +149,7 @@ const {
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
-        | "ready"
-        | "auth-loading"
-        | "project-loading"
-        | "logged-out",
+        "ready" | "auth-loading" | "project-loading" | "logged-out",
     },
     mockListTools: vi.fn().mockResolvedValue({ tools: [] }),
     mockMCPSidebar: vi.fn(() => <div />),
@@ -644,7 +641,7 @@ describe("App hosted OAuth callback handling", () => {
   });
 
   it("shows loading before any hosted authorize CTA can render", async () => {
-    render(<App />);
+    const view = render(<App />);
 
     expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
     expect(
@@ -3440,7 +3437,7 @@ describe("App hosted OAuth callback handling", () => {
     };
     mockUseAppState.mockReturnValue(appState);
 
-    render(<App />);
+    const view = render(<App />);
 
     await waitFor(() => {
       expect(appState.setSelectedServer).toHaveBeenCalledWith(
@@ -3458,6 +3455,18 @@ describe("App hosted OAuth callback handling", () => {
         firstRunPrompt: "What can this server do?",
       }),
     );
+
+    appState.setSelectedServer.mockClear();
+    appState.setSelectedMCPConfigs.mockClear();
+    appState.appState.selectedServer = "Another server";
+    appState.appState.selectedMultipleServers = ["Another server"];
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(mockPlaygroundTabProps).toHaveBeenCalled();
+    });
+    expect(appState.setSelectedServer).not.toHaveBeenCalled();
+    expect(appState.setSelectedMCPConfigs).not.toHaveBeenCalled();
   });
 
   it("keeps onboarding open when a saved server hydrates after Welcome", async () => {
@@ -3639,6 +3648,38 @@ describe("App hosted OAuth callback handling", () => {
       ).toBeInTheDocument();
       expect(screen.getByRole("alert")).toHaveTextContent(
         "Failed to connect to MCP server",
+      );
+    });
+  });
+
+  it("splits a first-run stdio command into its executable and arguments", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "npx -y some-mcp-server" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => {
+      expect(appState.handleConnect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "stdio",
+          command: "npx",
+          args: ["-y", "some-mcp-server"],
+        }),
+        { suppressErrorToast: true },
       );
     });
   });
@@ -4363,18 +4404,18 @@ describe("App hosted OAuth callback handling", () => {
       ref === "users:getCurrentUser"
         ? existingConvexUser
         : ref === "hosts:listHosts"
-        ? [
-            {
-              hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
-              name: "Slack",
-              hostConfigId: "host-config-slack",
-              modelId: "claude-sonnet-4",
-              serverCount: 0,
-              createdAt: 0,
-              updatedAt: 0,
-            },
-          ]
-        : undefined,
+          ? [
+              {
+                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+                name: "Slack",
+                hostConfigId: "host-config-slack",
+                modelId: "claude-sonnet-4",
+                serverCount: 0,
+                createdAt: 0,
+                updatedAt: 0,
+              },
+            ]
+          : undefined,
     );
     localStorage.setItem(
       "mcp-previewed-host-id",
