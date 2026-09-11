@@ -38,6 +38,12 @@
 - Interactive preview confirms the approved Welcome styling over Home, refresh resumes at `Point MCPJam at a server`, and no invalid-project error occurs.
 - The broader repository suite was also sampled; unrelated socket, subprocess, DNS, and headless-browser tests cannot run in the restricted sandbox and time out there.
 
+## Local preview setup note
+
+- Before treating a missing Home screen or failures across both personal and demo servers as an onboarding regression, verify that the selected Inspector worktree's `VITE_CONVEX_URL`, `CONVEX_URL`, and `CONVEX_HTTP_URL` point to the same deployment used by the backend repo's `CONVEX_DEPLOYMENT` and `CONVEX_URL`.
+- Switching Inspector branches or worktrees does not automatically realign ignored `.env.local` files. A stale deployment can make the preview look like an older app state even when the frontend branch is correct.
+- Run the frontend, API, and worker from the same Inspector checkout, use `localhost` consistently, and test with one active browser subscriber.
+
 ## Pre-PR review quick fixes
 
 - Reformatted only `App.tsx` and `App.hosted-oauth.test.tsx` with the package's pinned Prettier 3.9.6.
