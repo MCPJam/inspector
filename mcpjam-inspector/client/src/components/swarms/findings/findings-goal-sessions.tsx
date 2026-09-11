@@ -1,27 +1,41 @@
 /**
  * Clickable sessions for one expanded findings goal — the same list
- * interaction as Insights' GoalOutcomeDrilldown, scoped to this run.
+ * interaction as Insights' GoalOutcomeDrilldown, scoped to that goal.
  *
  * Renders the list only (no card). The parent mounts this under
  * "What happened" so the sessions sit with the evidence they explain.
  *
- * Remount on `runId` (parent keys this) so paging state never leaks across
- * goals.
+ * Remount on the goal id (parent keys this) so paging state never leaks
+ * across goals.
  */
 
 import { useEffect, useState } from "react";
+import type { UsageFilterState } from "@/hooks/scenario-usage-filters";
 import { useGoalOutcomeDrilldown } from "@/hooks/useUsageInsights";
 
 const PAGE_SIZE = 25;
 
+/**
+ * How a surface pages one goal's sessions.
+ *
+ * The two surfaces key a goal differently: a swarm goal IS a run, so it pages
+ * by `journeyRunIds`; a User Testing goal is a goal-axis cluster, so it pages
+ * by `clusterId`. User Testing also has to carry its hide-synthetic policy
+ * here, or this list quietly disagrees with the count that opened it.
+ */
+export type FindingsSessionScope =
+  | { kind: "swarm"; projectId: string }
+  | { kind: "scenario"; scenarioId: string; filters?: UsageFilterState };
+
 export function FindingsGoalSessions({
-  projectId,
-  runId,
+  scope,
+  goalId,
   expectedCount: _expectedCount,
   onOpenSession,
 }: {
-  projectId: string;
-  runId: string;
+  scope: FindingsSessionScope;
+  /** The swarm's run id, or the scenario's goal cluster id. */
+  goalId: string;
   expectedCount: number;
   onOpenSession: (sessionId: string) => void;
 }) {
@@ -34,14 +48,30 @@ export function FindingsGoalSessions({
     }>
   >([]);
 
-  const { drilldown, isLoading } = useGoalOutcomeDrilldown({
-    scope: { kind: "swarm", projectId, journeyRunIds: [runId] },
-    clusterId: null,
-    outcome: undefined,
-    limit: PAGE_SIZE,
-    before,
-    enabled: true,
-  });
+  const { drilldown, isLoading } = useGoalOutcomeDrilldown(
+    scope.kind === "swarm"
+      ? {
+          scope: {
+            kind: "swarm",
+            projectId: scope.projectId,
+            journeyRunIds: [goalId],
+          },
+          clusterId: null,
+          outcome: undefined,
+          limit: PAGE_SIZE,
+          before,
+          enabled: true,
+        }
+      : {
+          scope: { kind: "scenario", scenarioId: scope.scenarioId },
+          clusterId: goalId,
+          outcome: undefined,
+          filters: scope.filters,
+          limit: PAGE_SIZE,
+          before,
+          enabled: true,
+        }
+  );
 
   useEffect(() => {
     if (!drilldown) return;

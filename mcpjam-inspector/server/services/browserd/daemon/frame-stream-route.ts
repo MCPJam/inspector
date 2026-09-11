@@ -1,3 +1,4 @@
+import { jpegFrameLimit } from "@/shared/browser-viewport-policy";
 /**
  * `GET /v1/frames` — the daemon's way of getting screencast frames out of its
  * sandbox.
@@ -31,9 +32,12 @@ import {
   encodeFrameStreamRecord,
   FRAME_STREAM_KIND,
   type FrameStreamEndReason,
+  type FrameStreamStats,
 } from "../frame-stream";
 import { createFramePacer } from "../../webmcp-inspector/frame-pacer";
 import type { BrowserdRequestHandler, DaemonRequest } from "./request-handler";
+import type { VideoEncoder } from "./video-encoder";
+import { BROWSERD_OBSERVATION_VIEWPORT } from "../protocol";
 
 /** How often to prove liveness, re-check the lease, and re-check the tab. */
 const HEARTBEAT_MS = 10_000;
@@ -43,7 +47,8 @@ const WRITE_STALL_MS = 15_000;
  * How many streams one daemon will serve.
  *
  * Each holds a viewport subscription (keeping the screencast and its encoder
- * alive) plus an in-flight write of up to 256 KiB. The cap is what stops an
+ * alive) plus one in-flight and one pending JPEG (each up to the negotiated
+ * 2 MiB ceiling). The cap is what stops an
  * abandoned pane from taxing a box the agent is still driving.
  */
 const MAX_CONCURRENT_STREAMS = 4;
@@ -71,6 +76,34 @@ interface Timers {
 
 export interface FrameStreamOptions {
   /**
+   * The display encoder, when this box has one.
+   *
+   * Absent means `?codec=h264` answers `video_unavailable` — which is a
+   * SUPPORTED state, not a failure: the watcher falls back to the JPEG
+   * screencast, exactly as a client without `VideoDecoder` does.
+   */
+  video?: VideoEncoder;
+  /**
+   * The captured display's size, for the video records' geometry.
+   *
+   * A FUNCTION rather than a value, because on a responsive session it moves:
+   * the display, the kiosk browser, the page viewport and the capture geometry
+   * are resized as one coordinated transition, and a stream that had captured
+   * the boot-time number would keep stamping it on frames of a differently
+   * shaped picture. A client scales its click coordinates by what these
+   * records say, so a stale number is a mis-aimed click rather than a cosmetic
+   * error.
+   */
+  displaySize?: () => { width: number; height: number };
+  /**
+   * The session's CSS viewport, for the capture-to-page scale.
+   *
+   * Also a function, and for the same reason. The two move TOGETHER — that is
+   * what makes the transition coordinated — but they are read at different
+   * moments by different code, so each has to be able to say what it is now.
+   */
+  cssViewport?: () => { width: number; height: number };
+  /**
    * How often to prove liveness and re-ask the two questions a one-way stream
    * cannot answer by itself. Injectable because the behaviour it drives — a
    * lease taken over a STATIC page, a tab that went away — is otherwise only
@@ -82,8 +115,38 @@ export interface FrameStreamOptions {
   timers?: Timers;
 }
 
+/**
+ * The page-tool signal, reduced to what a heartbeat can carry.
+ *
+ * A CHANGE SIGNAL, not a list: the definitions are big (a declarative
+ * `<select>` becomes an `anyOf` branch per option) and this rides an 8 KiB
+ * record several times a second. `supported` is dropped for the same reason —
+ * a pane that sees a revision at all is on an engine that has WebMCP, and
+ * `count` already says whether the page offers anything.
+ */
+function statsWebmcp(revision: {
+  revision: number;
+  hash: string;
+  count: number;
+  url?: string;
+}): { revision: number; hash: string; count: number; url?: string } {
+  return {
+    revision: revision.revision,
+    hash: revision.hash,
+    count: revision.count,
+    ...(revision.url ? { url: revision.url } : {}),
+  };
+}
+
 export function createFrameStreamHost(
-  handler: Pick<BrowserdRequestHandler, "authorize" | "subscribeFrames">,
+  handler: Pick<
+    BrowserdRequestHandler,
+    | "authorize"
+    | "subscribeFrames"
+    | "watchLease"
+    | "tabsSnapshot"
+    | "webmcpSnapshot"
+  >,
   options: FrameStreamOptions = {},
 ): FrameStreamHost {
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
@@ -135,6 +198,21 @@ export function createFrameStreamHost(
       return true;
     }
 
+    // VIDEO IS THE ACTIVE TAB, so `tabId` is ignored for it. The encoder grabs
+    // the X display, which has no concept of a tab — per-tab watching stays
+    // JPEG, and the pane draws its own tab strip because kiosk hides
+    // Chromium's.
+    if (query?.get("codec") === "h264") {
+      void startVideoSubscription({
+        res,
+        holder,
+        sharp: query?.get("sharp") === "1",
+      }).catch(() => {
+        writeEndAndClose(res, "video_unavailable");
+      });
+      return true;
+    }
+
     // The SAME hazard as the heartbeat's, one await earlier: `subscribeFrames`
     // resolves a viewport, and resolving one opens a tab and attaches a CDP
     // session — either of which throws on a closing context or a crashed
@@ -142,10 +220,232 @@ export function createFrameStreamHost(
     // later caller inherits it. Unhandled, that ends the daemon process. Left
     // merely unfinished it is nearly as bad: the response never ends and its
     // entry holds one of four cap slots until the client gives up.
-    void startSubscription({ res, tabId, holder }).catch(() => {
+    void startSubscription({
+      res,
+      tabId,
+      holder,
+      sharp: query?.get("sharp") === "1",
+    }).catch(() => {
       writeEndAndClose(res, "tab_gone");
     });
     return true;
+  }
+
+  /**
+   * The video path.
+   *
+   * Structurally the JPEG one with two swaps: the pixels come from the shared
+   * display encoder instead of this subscriber's own viewport, and the lease
+   * question is asked through `watchLease` rather than by subscribing to a tab
+   * — subscribing would start a screencast and a JPEG encoder nobody reads,
+   * purely to borrow the check.
+   *
+   * One encoder, a gate PER subscriber. A person taking the browser ends every
+   * other watcher's stream with its own `lease_held` while the encoder keeps
+   * running for the holder's own pane: an end reason is about who may look, not
+   * about who is encoding.
+   */
+  async function startVideoSubscription(args: {
+    sharp: boolean;
+    res: ServerResponse;
+    holder: string | undefined;
+  }): Promise<void> {
+    const { res, holder } = args;
+    const encoder = options.video;
+    if (!encoder) {
+      // No encoder on this box: no ffmpeg on the image, or the operator turned
+      // it off. The watcher falls back to JPEG.
+      writeEndAndClose(res, "video_unavailable");
+      return;
+    }
+
+    let ended = false;
+    let stallTimer: unknown;
+    let beatTimer: unknown;
+    let unsubscribe: (() => void) | undefined;
+    let release: (() => void) | undefined;
+    let seq = 0;
+    // Read PER RECORD, not once per subscription.
+    //
+    // A resize does not end the stream: `encoder.resize()` restarts ffmpeg but
+    // keeps its listeners, so this subscription goes on emitting across the
+    // transition. Geometry captured at connect time therefore describes the
+    // display the pane joined at, and every frame after a resize carries the
+    // old numbers — which is not a cosmetic error, because the watcher divides
+    // by exactly these to map a click back into the page. A stale scale is a
+    // mis-aimed click, silently.
+    const geometry = (): {
+      size: { width: number; height: number };
+      css: { width: number; height: number };
+      scale: number;
+    } => {
+      const size = options.displaySize?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height,
+      };
+      const css = options.cssViewport?.() ?? {
+        width: BROWSERD_OBSERVATION_VIEWPORT.width,
+        height: BROWSERD_OBSERVATION_VIEWPORT.height,
+      };
+      // Capture pixels per CSS pixel, so a click maps through exactly as it
+      // does for a JPEG. The pane never has to know which codec drew the
+      // picture.
+      return { size, css, scale: size.width / css.width };
+    };
+
+    const entry = { end: (reason: FrameStreamEndReason) => end(reason) };
+    const end = (reason: FrameStreamEndReason): void => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      release?.();
+      open.delete(entry);
+      pacer.close();
+      try {
+        res.write(
+          encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }),
+        );
+        res.end();
+      } catch {
+        // Already gone.
+      }
+    };
+
+    const pacer = createFramePacer({
+      send: (data, cb) => {
+        stallTimer = timers.setTimer(() => {
+          if (ended) return;
+          ended = true;
+          timers.clearTimer(beatTimer);
+          unsubscribe?.();
+          release?.();
+          open.delete(entry);
+          pacer.close();
+          res.destroy();
+        }, stallMs);
+        res.write(data, (error) => {
+          timers.clearTimer(stallTimer);
+          cb(error ?? undefined);
+        });
+      },
+    });
+
+    open.add(entry);
+    res.on("close", () => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      release?.();
+      open.delete(entry);
+      pacer.close();
+    });
+
+    const gate = handler.watchLease({
+      ...(holder ? { holder } : {}),
+      onRevoked: (reason) =>
+        end(reason === "lease_parked" ? "lease_parked" : "lease_held"),
+    });
+    if (!gate.ok) {
+      end(gate.error === "lease_parked" ? "lease_parked" : "lease_held");
+      return;
+    }
+    if (ended) {
+      gate.release();
+      return;
+    }
+    release = gate.release;
+
+    unsubscribe = encoder.subscribe((unit) => {
+      if (ended) return;
+      // BEFORE EVERY UNIT, not only on the heartbeat. A lease acquired between
+      // beats left the previous watcher receiving pictures of a page somebody
+      // else had taken — for up to ten seconds, while they typed into it. That
+      // is the exact observation the lease exists to prevent, and a ten-second
+      // window is not a smaller version of it.
+      gate.revalidate();
+      if (ended) return; // revalidate may have revoked us
+      const geo = geometry();
+      pacer.push(
+        encodeFrameStreamRecord({
+          kind: unit.key
+            ? FRAME_STREAM_KIND.video_key
+            : FRAME_STREAM_KIND.video_delta,
+          deviceWidth: geo.size.width,
+          deviceHeight: geo.size.height,
+          scale: geo.scale,
+          ts: Date.now(),
+          seq: (seq += 1),
+          au: unit.bytes,
+        }),
+        // A KEYFRAME is the one record a decoder cannot proceed without: give
+        // its slot to the delta behind it and the pane sits frozen until the
+        // next GOP, four seconds later, being sent units it cannot decode.
+        unit.key ? { essential: true } : {},
+      );
+    }, args.sharp);
+
+    // Checked AFTER subscribing: a spawn that fails does so synchronously
+    // inside `subscribe`, and asking first would race the answer.
+    const failure = encoder.failure();
+    if (failure) {
+      end("video_unavailable");
+      return;
+    }
+
+    /** What the encoder had published at this stream's last heartbeat. */
+    let lastEmitted = encoder.emitted();
+    const beat = (): void => {
+      if (ended) return;
+      const tabs = handler.tabsSnapshot?.();
+      // THE ACTIVE TAB, named explicitly. This is the video stream, which grabs
+      // the X display and therefore always shows whichever tab is active — but
+      // an unargued `webmcpSnapshot()` answers for `DEFAULT_TAB`, and after an
+      // `activate_tab` those are two different pages. Reporting one tab's tool
+      // revision beside a picture of another is the mismatch the JPEG path
+      // threads its own tabId to avoid; this is the same bug wearing the
+      // opposite mistake.
+      const webmcp = handler.webmcpSnapshot?.(tabs?.active);
+      const emitted = encoder.emitted();
+      const idle = emitted === lastEmitted;
+      lastEmitted = emitted;
+      pacer.push(
+        encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          stats: {
+            subscribers: encoder.subscriberCount(),
+            // What a person is actually looking at. The video stream grabs the
+            // X display, so a model `activate_tab` changes the picture out from
+            // under them — and kiosk hides Chromium's own tab strip, so nothing
+            // else here would say so.
+            ...(tabs ? { tabs } : {}),
+            ...(webmcp ? { webmcp: statsWebmcp(webmcp) } : {}),
+            // `mpdecimate` means an idle page produces NO frames at all, so
+            // silence here is a quiet page rather than a stall. Saying which
+            // is what stops an adaptive client stepping the quality down on a
+            // page that is simply not moving.
+            encoderIdle: idle,
+          },
+        }),
+        // Liveness and counters, not a picture: another arrives in ten
+        // seconds, and counting its overwrite made `dropped.pacer` describe a
+        // link that had dropped nothing at all.
+        { counts: false },
+      );
+      gate.revalidate();
+      if (ended) return;
+      // An encoder that died mid-stream is a stream that will never paint
+      // again. Said in-band, so the watcher falls back rather than waiting.
+      if (encoder.failure()) {
+        end("video_unavailable");
+        return;
+      }
+      beatTimer = timers.setTimer(beat, heartbeatMs);
+    };
+    beatTimer = timers.setTimer(beat, heartbeatMs);
   }
 
   /**
@@ -161,7 +461,9 @@ export function createFrameStreamHost(
     reason: FrameStreamEndReason,
   ): void {
     try {
-      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }));
+      res.write(
+        encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }),
+      );
       res.end();
     } catch {
       // Already gone.
@@ -232,6 +534,7 @@ export function createFrameStreamHost(
   }
 
   async function startSubscription(args: {
+    sharp: boolean;
     res: ServerResponse;
     tabId: string | undefined;
     holder: string | undefined;
@@ -241,6 +544,17 @@ export function createFrameStreamHost(
     let stallTimer: unknown;
     let beatTimer: unknown;
     let unsubscribe: (() => void) | undefined;
+    /**
+     * The subscription, declared before the pacer that reports drops to it.
+     *
+     * The pacer is built first because `subscribeFrames` needs somewhere to
+     * push, so the drop callback closes over this rather than over a value:
+     * a drop before the subscription resolves has no viewport to attribute
+     * itself to, and is skipped rather than guessed at.
+     */
+    let subscription:
+      | Awaited<ReturnType<typeof handler.subscribeFrames>>
+      | undefined;
 
     const entry = {
       end: (reason: FrameStreamEndReason) => end(reason),
@@ -269,33 +583,39 @@ export function createFrameStreamHost(
       }
     };
 
-    const pacer = createFramePacer({
-      send: (data, cb) => {
-        // Armed per write and cleared by the acknowledgement: a peer that stops
-        // reading never acknowledges, and without this the in-flight slot — and
-        // the screencast behind it — would stay busy for the daemon's lifetime.
-        stallTimer = timers.setTimer(() => {
-          if (ended) return;
-          ended = true;
-          timers.clearTimer(beatTimer);
-          unsubscribe?.();
-          open.delete(entry);
-          // Closed HERE as well as in `end()`, because this path does not go
-          // through it: setting `ended` makes the close handler return early,
-          // so without this the pacer keeps its held frame and ships it into a
-          // destroyed socket the moment the write callback fires — arming one
-          // more stall timer on the way.
-          pacer.close();
-          // Destroy rather than end: a peer that is not reading will not read a
-          // reason either, and a graceful close would wait on the same buffer.
-          res.destroy();
-        }, stallMs);
-        res.write(data, (error) => {
-          timers.clearTimer(stallTimer);
-          cb(error ?? undefined);
-        });
+    const pacer = createFramePacer(
+      {
+        send: (data, cb) => {
+          // Armed per write and cleared by the acknowledgement: a peer that stops
+          // reading never acknowledges, and without this the in-flight slot — and
+          // the screencast behind it — would stay busy for the daemon's lifetime.
+          stallTimer = timers.setTimer(() => {
+            if (ended) return;
+            ended = true;
+            timers.clearTimer(beatTimer);
+            unsubscribe?.();
+            open.delete(entry);
+            // Closed HERE as well as in `end()`, because this path does not go
+            // through it: setting `ended` makes the close handler return early,
+            // so without this the pacer keeps its held frame and ships it into a
+            // destroyed socket the moment the write callback fires — arming one
+            // more stall timer on the way.
+            pacer.close();
+            // Destroy rather than end: a peer that is not reading will not read a
+            // reason either, and a graceful close would wait on the same buffer.
+            res.destroy();
+          }, stallMs);
+          res.write(data, (error) => {
+            timers.clearTimer(stallTimer);
+            cb(error ?? undefined);
+          });
+        },
       },
-    });
+      // The pacer's overwrite is the third silent drop path (the viewport owns
+      // the other two). Counting it HERE, on the viewport that produced the
+      // frame, is what makes one number describe the whole way out of the box.
+      () => subscription?.ok && subscription.noteTransportDrop(),
+    );
 
     // Registered BEFORE the await: a client that hangs up while we are still
     // resolving a viewport must still be cleaned up.
@@ -310,7 +630,8 @@ export function createFrameStreamHost(
       pacer.close();
     });
 
-    const subscription = await handler.subscribeFrames({
+    subscription = await handler.subscribeFrames({
+      maxFrameBytes: jpegFrameLimit(args.sharp),
       ...(tabId ? { tabId } : {}),
       ...(holder ? { holder } : {}),
       listener: (frame) => {
@@ -342,16 +663,50 @@ export function createFrameStreamHost(
       return;
     }
     unsubscribe = subscription.unsubscribe;
+    // Narrowed once, so the tick below reads a value TypeScript can see is
+    // subscribed rather than re-narrowing a mutable binding on every beat.
+    const live = subscription;
+    /**
+     * `framesIn` at the previous beat.
+     *
+     * How "the encoder has nothing to send" is told from "the stream broke".
+     * Undefined on the first beat, where there is no previous count to compare
+     * against and claiming either answer would be a guess.
+     */
+    let lastFramesIn: number | undefined;
 
     const beat = () => {
       if (ended) return;
       // Order matters: prove liveness first, so a reader distinguishes a slow
       // check from a dead stream, then ask the two questions a one-way stream
       // cannot answer by itself.
-      pacer.push(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
-      subscription.revalidate();
+      pacer.push(
+        encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          // Additive by construction: a v1 reader slices this payload by its
+          // length and discards it, so an old inspector against a new daemon
+          // sees exactly the heartbeat it always did.
+          stats: (() => {
+            const stats = statsFor(live, lastFramesIn);
+            lastFramesIn = stats.framesIn;
+            const tabs = handler.tabsSnapshot?.();
+            // THE TAB THIS STREAM WATCHES, not the default one. A JPEG
+            // subscriber names its tab, and reporting the default tab's
+            // revision to a watcher of another page would make the Tools pane
+            // miss that page's changes and then read definitions for a
+            // document nobody is looking at.
+            const webmcp = handler.webmcpSnapshot?.(tabId);
+            return {
+              ...stats,
+              ...(tabs ? { tabs } : {}),
+              ...(webmcp ? { webmcp: statsWebmcp(webmcp) } : {}),
+            };
+          })(),
+        }),
+      );
+      live.revalidate();
       if (ended) return; // revalidate may have revoked us
-      void subscription.stillCurrent().then(
+      void live.stillCurrent().then(
         (current) => {
           if (!current && !ended) end("tab_gone");
           else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
@@ -390,5 +745,42 @@ export function createFrameStreamHost(
       for (const entry of [...open]) entry.end(reason);
     },
     count: () => open.size,
+  };
+}
+
+/**
+ * The daemon's own numbers, as the heartbeat carries them.
+ *
+ * `encoderIdle` is derived rather than reported: this transport's encoder is
+ * Chromium's screencast, and "nothing came in since the last beat" is exactly
+ * what a quiet page looks like. Saying so is what stops an adaptive client
+ * reading silence as loss and stepping the quality down on a page that is
+ * simply not moving.
+ */
+function statsFor(
+  subscription: {
+    counters: () => {
+      jpeg?: FrameStreamStats["jpeg"];
+      framesIn: number;
+      framesOut: number;
+      bytesOut: number;
+      dropped: { dedupe: number; oversize: number; pacer: number };
+    };
+    subscriberCount: () => number;
+  },
+  /** `framesIn` at the previous beat, or undefined on the first one. */
+  previousFramesIn: number | undefined,
+): FrameStreamStats {
+  const counters = subscription.counters();
+  return {
+    jpeg: counters.jpeg,
+    framesIn: counters.framesIn,
+    framesOut: counters.framesOut,
+    bytesOut: counters.bytesOut,
+    dropped: counters.dropped,
+    subscribers: subscription.subscriberCount(),
+    ...(previousFramesIn === undefined
+      ? {}
+      : { encoderIdle: counters.framesIn === previousFramesIn }),
   };
 }

@@ -57,7 +57,7 @@ describe("StageDetailCard", () => {
     // The reason in WORDS, with the wire spelling only as an attribute.
     const reasons = within(card).getByTestId("stage-detail-reasons");
     expect(reasons.textContent).toContain(
-      "1 — the server reported a tool error",
+      "1. the server reported a tool error",
     );
     expect(reasons.textContent).not.toContain("toolError");
     expect(reasons.querySelector("li")?.dataset.reason).toBe("toolError");
@@ -125,7 +125,7 @@ describe("StageDetailCard", () => {
         stage={rowFor()}
         findings={
           <p data-testid="stage-findings-unavailable">
-            Couldn&apos;t load the trial evidence
+            Couldn&apos;t load the iteration evidence
           </p>
         }
       />,
@@ -134,7 +134,7 @@ describe("StageDetailCard", () => {
     const card = screen.getByTestId("stage-detail-card");
     expect(
       within(card).getByTestId("stage-findings-unavailable").textContent,
-    ).toContain("Couldn't load the trial evidence");
+    ).toContain("Couldn't load the iteration evidence");
     // The rates stay beside it — the slot never replaces the measurement.
     expect(card.textContent).toContain("75% (3/4)");
   });
