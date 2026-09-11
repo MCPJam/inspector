@@ -878,6 +878,7 @@ export function useAppState({
     persistRuntimeServerToProjectIfNeeded:
       serverState.persistRuntimeServerToProjectIfNeeded,
     ensureHostedServerIdsForNames: serverState.ensureHostedServerIdsForNames,
+    isConnectionPreflightPending: serverState.isConnectionPreflightPending,
 
     handleSwitchProject,
     handleCreateProject: projectState.handleCreateProject,

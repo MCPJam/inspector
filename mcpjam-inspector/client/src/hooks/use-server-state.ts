@@ -6069,5 +6069,7 @@ export function useServerState({
     handleRefreshTokensFromOAuthFlow,
     persistRuntimeServerToProjectIfNeeded,
     ensureHostedServerIdsForNames,
+    isConnectionPreflightPending:
+      isClientConfigSyncPending || Boolean(getProjectNotProvisionedError()),
   };
 }

@@ -26,21 +26,13 @@ Worse variant, also CONFIRMED: if the page was reloaded mid-attempt (so the stor
 (`App.tsx:3573`) call `markFirstRunServerChoiceCompleted()` and dismiss the overlay — onboarding
 completes even though the user cancelled.
 
-### 2. `handleConnect` preflight guards strand the overlay (LIKELY, three independent traces)
-`use-server-state.ts:3308-3313`. `notifyIfClientConfigSyncPending()` and
-`notifyIfProjectNotProvisioned()` call `toast.error` directly (L1312, L1337) rather than the new
-`showConnectionError`, so `suppressErrorToast: true` does not silence them, and both return
-*before* `dispatch({type:"CONNECT_REQUEST"})`. No server record is ever created, so the App effect's
-`if (!server) return` never advances and the overlay spins on "Connecting to …" with only Cancel.
-
-Trigger gap: App's `isFirstRunProjectReady` (L3454) short-circuits on `!HOSTED_MODE`, but the hook's
-guard keys off `isAuthenticated && !sharedProjectId`, and nothing in the new flow waits on
-`isClientConfigSyncPending` — which the legacy path explicitly did (`use-onboarding.ts:247-249`).
-
-Right-depth fix: have `handleConnect` return a discriminated result (the shape
-`reconnectServerInternal` already returns) instead of `Promise<void>`, and move toasting to a thin
-default wrapper. That also deletes the `lastError` polling effect, which is a second mechanism for
-learning an outcome `handleConnect` already knew.
+### 2. `handleConnect` preflight and local-preview readiness mismatch (CONFIRMED)
+Both personal and demo onboarding connections can fail with `Finishing setup.` before the MCP
+handshake. The original missing client-config wait was reproduced and a shared preflight-readiness
+signal is implemented as a checkpoint, but the mixed-worktree local preview still reproduced a
+later `guardedTestConnection` failure when the optional Convex save produced no project/server
+mapping. Resume by running frontend, API, and worker from one checkout and testing with exactly one
+browser subscriber before deciding whether more code is required.
 
 ### 3. "Auto" authentication cannot reach the OAuth offer (CONFIRMED)
 `App.tsx:3412` sets `useOAuth: draft.authentication === "oauth"`, but the overlay's initial Connect
