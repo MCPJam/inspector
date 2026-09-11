@@ -40,6 +40,23 @@ const {
   };
 });
 
+/**
+ * The deployment switch over scheduled-eval writes.
+ *
+ * ON for this file: the cases below assert the WHOLE offered surface, and the
+ * switch subtracts `set_eval_suite_schedule` from it. Its own case flips it
+ * off. Spread over the real module rather than replaced — the route graph
+ * reads a dozen other config exports, and a bare factory would have to
+ * restate every one of them.
+ */
+const configState = vi.hoisted(() => ({ scheduledEvalsWrite: true }));
+vi.mock("../../../config.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  get SCHEDULED_EVALS_WRITE_ENABLED() {
+    return configState.scheduledEvalsWrite;
+  },
+}));
+
 // `GET /agent-ops` mounts `requireVerifiedAuth` — it never calls Convex, so
 // nothing downstream would re-check the bearer. Tokens here are placeholder
 // strings; the middleware's own branches are covered in
@@ -1577,6 +1594,23 @@ describe("org capability policy", () => {
       ...AGENT_API_GATED_OPERATIONS,
     ]) {
       expect(tools[operation.name], operation.name).toBeDefined();
+    }
+  });
+
+  // The DEPLOYMENT's own tightening, riding the same seam as the org's. The
+  // op is omitted rather than offered-and-refused, for the same reason a
+  // disabled op is: a tool the model can see is a tool it plans around.
+  it("omits set_eval_suite_schedule when the deployment switch is off", async () => {
+    configState.scheduledEvalsWrite = false;
+    try {
+      const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+      expect(tools[setEvalSuiteScheduleOperation.name]).toBeUndefined();
+      // Every other gated op is untouched — one op, not a kill switch on the
+      // whole gated tier.
+      expect(tools[runEvalSuiteOperation.name]).toBeDefined();
+      expect(tools[cancelEvalRunOperation.name]).toBeDefined();
+    } finally {
+      configState.scheduledEvalsWrite = true;
     }
   });
 

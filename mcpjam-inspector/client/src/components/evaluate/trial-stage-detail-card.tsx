@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 /**
  * "What happened" for the one stage a reader selected, on ONE TRIAL.
  *
@@ -40,8 +41,10 @@ import { UNRECOGNIZED_STATE_LABEL } from "./stage-trial-model";
 export function TrialStageDetailCard({
   row,
   nextAction,
+  children,
 }: {
   row: StageResultRow;
+  children?: ReactNode;
   /**
    * The operator's next step, when the caller has one for THIS stage.
    *
@@ -96,6 +99,18 @@ export function TrialStageDetailCard({
           {reasonLabel}
         </p>
       ) : null}
+
+      {(row.stage === "connection" || row.stage === "discovery") && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {row.reason === "impliedByLaterEvidence"
+            ? row.stage === "connection"
+              ? "Later tool or discovery evidence confirms the server was reached. No separate connection assertion was recorded."
+              : "A recorded tool call provides evidence of discovery. No separate discovery assertion was recorded."
+            : "This stage reports the runner’s setup observations, rather than an authored assertion."}
+        </p>
+      )}
+
+      {children}
 
       {predicateReasons.length > 0 ? (
         <ul

@@ -21,6 +21,12 @@
 import { useEffect } from "react";
 import { useQuery } from "convex/react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { isConvexQueryUnavailable } from "@/lib/convex-error";
+
+// Lives in `@/lib/convex-error` now, beside the other Convex error shapes, so
+// `ServerUrlChangeHistory` can share it without importing this panel.
+// Re-exported so the tests and any caller here keep their import.
+export { isConvexQueryUnavailable };
 import { StageFunnel } from "./StageFunnel";
 import type {
   ChatSessionStageFunnel,
@@ -189,16 +195,6 @@ export function SuiteRunStageFunnelPanel({
  * fails for any OTHER reason is a real failure and still reports. Anyone
  * widening this list is turning off an alarm, and should have to say so here.
  */
-export function isConvexQueryUnavailable(error: Error): boolean {
-  const message = typeof error?.message === "string" ? error.message : "";
-  return (
-    // The function is not deployed (dark ship, or a browser outliving a rollback).
-    message.includes("Could not find public function") ||
-    // No ConvexProvider above this tree.
-    message.includes("Could not find Convex client")
-  );
-}
-
 export function SuiteRunStageFunnelAvailability({
   suiteRunId,
   onChange,
