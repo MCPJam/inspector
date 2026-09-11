@@ -217,8 +217,12 @@ export function useProjectServers({
 
   const isLoading = enableQuery && servers === undefined;
   /** Told apart by the hook that owns the skip, not by every caller. */
-  const isBootstrapping =
-    queryWillRunLater(isAuthenticated, authLoading, isUserReady, projectId);
+  const isBootstrapping = queryWillRunLater(
+    isAuthenticated,
+    authLoading,
+    isUserReady,
+    projectId,
+  );
 
   // Create a map for quick lookup by name
   const serversByName = useMemo(() => {
@@ -278,8 +282,12 @@ export function useProjectServerAttachments({
 
   const isLoading = enableQuery && serverAttachments === undefined;
   /** See `useProjectServers`: a skipped query is not an answer. */
-  const isBootstrapping =
-    queryWillRunLater(isAuthenticated, authLoading, isUserReady, projectId);
+  const isBootstrapping = queryWillRunLater(
+    isAuthenticated,
+    authLoading,
+    isUserReady,
+    projectId,
+  );
 
   return {
     serverAttachments: serverAttachments ?? [],

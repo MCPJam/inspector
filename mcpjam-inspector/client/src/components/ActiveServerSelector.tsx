@@ -262,9 +262,7 @@ export function ActiveServerSelector({
              * this" and "this is not connected" are different claims, and only
              * the first one is true here.
              */
-            const statusMeta = isConnectionStatus(
-              serverConfig.connectionStatus,
-            )
+            const statusMeta = isConnectionStatus(serverConfig.connectionStatus)
               ? getConnectionStatusMeta(serverConfig.connectionStatus)
               : UNKNOWN_CONNECTION_STATUS;
             // The pulse stays local to the strip. The shared helper carries the
@@ -274,7 +272,6 @@ export function ActiveServerSelector({
             const isHandshaking =
               serverConfig.connectionStatus === "connecting" ||
               serverConfig.connectionStatus === "oauth-flow";
-
 
             return (
               <button
