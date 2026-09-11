@@ -23,7 +23,7 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { toast } from "@/lib/toast";
 import {
@@ -36,7 +36,7 @@ export type CreateSuitePayload = {
   name: string;
   /**
    * Hosts the suite runs against. Each attachment fans out into its own
-   * run on "Run all hosts" — the host's snapshotted config is the source
+   * run on "Run all clients" — the client's snapshotted config is the source
    * of truth for model, system prompt, temperature, and servers. There is
    * no longer a suite-level flat server list or model override.
    */
@@ -88,13 +88,19 @@ export function CreateSuiteDialog({
     emptyComposerState,
   );
 
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
   /**
    * Born in environment mode. A suite created legacy can be converted from the
-   * header later, but starting there means the axes the dialog offers are the
-   * ones its runs will actually read.
+   * header later, but starting there means the axes the dialog offers are the ones
+   * its runs will actually read.
+   *
+   * Keyed on the CAPABILITY, not the named-environments flag: composing cells
+   * is ungated launch-path substrate (see `useEvalComposeCapable`). While the
+   * probe is in flight the composer renders disabled rather than the legacy
+   * form, so the form does not change shape after mount.
    */
-  const composeMode = Boolean(projectId) && environmentsEnabled;
+  const { capable: composeCapable, pending: composePending } =
+    useEvalComposeCapable(projectId);
+  const composeMode = composeCapable || composePending;
   // Only used when `composeMode`; `projectId` is non-null in that case.
   const resolveTargets = useComposerResolver(projectId ?? "");
   const composerEnvironments = useProjectEnvironments(
@@ -201,9 +207,9 @@ export function CreateSuiteDialog({
     if (canSubmit || isSaving) return null;
     if (name.trim().length === 0) return "Add a suite name first.";
     if (composeMode && !composeHasTarget) {
-      return "Pick an environment or at least one client first.";
+      return "Pick at least one client first.";
     }
-    if (!composerReady) return "Loading this project's environments…";
+    if (!composerReady) return "Loading this project's clients…";
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
         ? "Attach a server and at least one client first."
@@ -314,7 +320,7 @@ export function CreateSuiteDialog({
             <Input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Customer support workflows"
+              placeholder="Suite 1"
             />
           </div>
 
@@ -325,7 +331,7 @@ export function CreateSuiteDialog({
                   Where it runs
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Start from an environment, or build one here. Each client fans
+                  Start from a client, or build one here. Each client fans
                   out into its own run.
                 </p>
               </div>
@@ -339,6 +345,7 @@ export function CreateSuiteDialog({
                 testIdPrefix="create-suite"
                 inModal
                 slots={EVALS_COMPOSER_SLOTS}
+                environmentsVocabulary="client"
                 clientDefaultLabel={
                   (() => {
                     const previewed =
@@ -357,7 +364,7 @@ export function CreateSuiteDialog({
                     Servers
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Server group all hosts run against.
+                    Server group all clients run against.
                   </p>
                 </div>
                 <div className="shrink-0">

@@ -23,7 +23,7 @@ colors:
   muted-foreground: "oklch(0.6059 0.0075 97.4233)"
   accent: "oklch(0.9245 0.0138 92.9892)"
   accent-foreground: "oklch(0.2671 0.0196 98.939)"
-  destructive: "oklch(0.627 0.208 25.331)"
+  destructive: "oklch(0.6261 0.2077 25.2698)"
   destructive-foreground: "oklch(1 0 0)"
   border: "oklch(0.8847 0.0069 97.3627)"
   chrome-control: "oklch(0.8995 0.0191 83.0632)"
@@ -47,6 +47,10 @@ colors:
   diagram-sandbox-foreground: "oklch(0.99 0.01 75)"
   diagram-view: "oklch(0.6 0.1 290)"
   diagram-view-foreground: "oklch(0.99 0.01 290)"
+  run-origin-cli-border: "oklch(0.65 0.11 195 / 0.5)"
+  run-origin-cli-bg: "oklch(0.65 0.11 195 / 0.1)"
+  run-origin-agent-border: "oklch(0.62 0.21 330 / 0.5)"
+  run-origin-agent-bg: "oklch(0.62 0.21 330 / 0.1)"
   overlay: "oklch(0 0 0 / 0.5)"
   json-key: "oklch(0.55 0.2 255)"
   json-string: "oklch(0.5 0.1 55)"
@@ -109,6 +113,10 @@ colors:
   diagram-sandbox-foreground-dark: "oklch(0.2 0.04 75)"
   diagram-view-dark: "oklch(0.8 0.09 290)"
   diagram-view-foreground-dark: "oklch(0.2 0.04 290)"
+  run-origin-cli-border-dark: "oklch(0.78 0.1 195 / 0.5)"
+  run-origin-cli-bg-dark: "oklch(0.78 0.1 195 / 0.15)"
+  run-origin-agent-border-dark: "oklch(0.74 0.18 330 / 0.5)"
+  run-origin-agent-bg-dark: "oklch(0.74 0.18 330 / 0.15)"
   overlay-dark: "oklch(0 0 0 / 0.5)"
   json-key-dark: "oklch(0.7 0.18 255)"
   json-string-dark: "oklch(0.7 0.1 55)"
@@ -261,7 +269,7 @@ solid fill.
 | `diagram-sandbox` | 3.19 — Large text only | 10.27 — AA, any text |
 | `diagram-server` | 3.39 — Large text only | 9.99 — AA, any text |
 | `info` | 3.75 — Large text only | 3.75 — Large text only |
-| `destructive` | 3.92 — Large text only | 3.76 — Large text only |
+| `destructive` | 3.93 — Large text only | 3.76 — Large text only |
 | `diagram-view` | 3.94 — Large text only | 9.55 — AA, any text |
 | `secondary` | 6.39 — AA, any text | 12.55 — AA, any text |
 | `background` | 10.98 — AA, any text | 8.33 — AA, any text |

@@ -1,3 +1,10 @@
+import { logger } from "../../utils/logger.js";
+import { localBrowserAdmission } from "../browserd/local/browser-admission.js";
+import { withKeyedLock } from "../browserd/probe-lock.js";
+import type { LocalInspectionScope } from "./local-authorization.js";
+import { createBrowserConsentLifetime } from "../browserd/local/consent-lifetime.js";
+import { createLocalBrowserSecurityPolicy } from "../browserd/local/security-policy.js";
+import { localBrowserdWebMcpProvider } from "./local-browserd-provider";
 /**
  * Lifecycle for WebMCP Inspector sessions: capacity, expiry, teardown.
  *
@@ -21,10 +28,6 @@ import type {
   WebMcpSessionPublic,
   WebMcpToolDescriptor,
 } from "@/shared/webmcp-inspector-protocol";
-import {
-  playwrightWebMcpProvider,
-  type PlaywrightWebMcpProvider,
-} from "./playwright-provider";
 import {
   WebMcpUnsupportedError,
   type WebMcpBrowserProvider,
@@ -165,6 +168,12 @@ export class WebMcpSessionRegistry {
     this.now = options.now ?? Date.now;
   }
 
+  localRuntimes(): WebMcpSessionRuntime[] {
+    return [...this.sessions.values()].filter(
+      (runtime) => !!runtime.localAuthorization,
+    );
+  }
+
   size(): number {
     return this.sessions.size;
   }
@@ -207,7 +216,9 @@ export class WebMcpSessionRegistry {
     const kind = kindOf(sessionId);
     if (this.activeCount(kind) >= this.ceilingFor(kind)) {
       throw new WebMcpSessionCapacityError(
-        `Only ${this.ceilingFor(kind)} WebMCP browser sessions can run at once. Close one and try again.`,
+        `Only ${this.ceilingFor(
+          kind,
+        )} WebMCP browser sessions can run at once. Close one and try again.`,
       );
     }
     const reservation: WebMcpSessionReservation = {
@@ -246,7 +257,9 @@ export class WebMcpSessionRegistry {
       this.ceilingFor(kindOf(runtime.sessionId))
     ) {
       throw new WebMcpSessionCapacityError(
-        `Only ${this.ceilingFor(kindOf(runtime.sessionId))} WebMCP browser sessions can run at once.`,
+        `Only ${this.ceilingFor(
+          kindOf(runtime.sessionId),
+        )} WebMCP browser sessions can run at once.`,
       );
     }
     // Close whatever held this id first. Ids used to be random per runtime, so
@@ -476,8 +489,9 @@ export class WebMcpSessionRegistry {
 export const webMcpSessions = new WebMcpSessionRegistry();
 
 export interface StartWebMcpSessionOptions {
+  localScope?: LocalInspectionScope;
   url: string;
-  provider?: WebMcpBrowserProvider | PlaywrightWebMcpProvider;
+  provider?: WebMcpBrowserProvider;
   registry?: WebMcpSessionRegistry;
   headless?: boolean;
   /** Omitted means `window` — exactly what every existing caller gets. */
@@ -500,18 +514,70 @@ export interface StartWebMcpSessionOptions {
 export async function startWebMcpSession(
   options: StartWebMcpSessionOptions,
 ): Promise<WebMcpSessionPublic> {
+  return options.localScope
+    ? withKeyedLock(`webmcp-profile:${options.localScope.profileKey}`, () =>
+        startAuthorizedSession(options),
+      )
+    : startAuthorizedSession(options);
+}
+async function startAuthorizedSession(
+  options: StartWebMcpSessionOptions,
+): Promise<WebMcpSessionPublic> {
   const registry = options.registry ?? webMcpSessions;
-  const provider = options.provider ?? playwrightWebMcpProvider;
-  const reservation = registry.reserve(options.sessionId);
+  const provider = options.provider ?? localBrowserdWebMcpProvider;
+  const lifetime = options.localScope
+    ? await createBrowserConsentLifetime(
+        options.localScope.consentFingerprint,
+        undefined,
+        options.localScope.actorId
+          ? localBrowserAdmission(options.localScope.actorId)
+          : undefined,
+      )
+    : undefined;
+  let reservation: WebMcpSessionReservation;
+  try {
+    reservation = registry.reserve(options.sessionId);
+  } catch (error) {
+    lifetime?.dispose();
+    throw error;
+  }
+  const securityPolicy = lifetime
+    ? createLocalBrowserSecurityPolicy({
+        ...lifetime,
+        onAudit: (counts) => logger.info("Local WebMCP policy summary", counts),
+      })
+    : undefined;
   const runtime = new WebMcpSessionRuntime(options.url, {
+    ...(options.localScope && lifetime
+      ? {
+          localAuthorization: {
+            scope: options.localScope,
+            lifetime,
+            disposePolicy: () => securityPolicy?.dispose?.(),
+          },
+        }
+      : {}),
     now: () => registry.clock(),
     onActivity: () => registry.touch(runtime),
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     ...(options.ownerId ? { ownerId: options.ownerId } : {}),
   });
 
+  lifetime?.onRevoked(async () => {
+    try {
+      await registry.close(runtime.sessionId);
+    } catch {
+      await runtime.close();
+    }
+  });
   try {
     const session = await provider.createSession({
+      ...(options.localScope && lifetime
+        ? {
+            localScope: options.localScope,
+            securityPolicy,
+          }
+        : {}),
       url: options.url,
       headless: options.headless,
       ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
@@ -522,6 +588,14 @@ export async function startWebMcpSession(
         : {}),
       callbacks: runtime.callbacks(),
     });
+    if (lifetime) {
+      try {
+        await lifetime.assertActive();
+      } catch (error) {
+        await session.dispose();
+        throw error;
+      }
+    }
     runtime.attach(session);
     return registry.register(runtime, reservation);
   } catch (error) {

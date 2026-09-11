@@ -44,6 +44,14 @@ import type {
 
 const INVITE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * "Anyone with the link" in both preset vocabularies: resource shares pass the
+ * `ShareMode` through as the preset value, scenarios pass their own names.
+ */
+function isAnyoneWithLinkPreset(preset: string): boolean {
+  return preset === "link_guests" || preset === "anyone_with_link";
+}
+
 export type ShareSectionProps<TEnvelope> = {
   envelope: TEnvelope;
   onUpdated?: (next: TEnvelope) => void;
@@ -224,11 +232,11 @@ export function ShareSection<TEnvelope>({
   };
 
   const currentOption = presets.find((p) => p.value === currentPreset);
+  const anyoneWithLink = isAnyoneWithLinkPreset(currentPreset);
   const AccessIcon =
     currentPreset === "project" || currentPreset === "project_members"
       ? Users
-      : currentPreset === "link_guests" ||
-          currentPreset === "anyone_with_link"
+      : anyoneWithLink
         ? Globe
         : Lock;
 
@@ -315,6 +323,10 @@ export function ShareSection<TEnvelope>({
         ) : null}
       </div>
 
+      {/* Not while anyone with the link can open it: the invite grants the
+          recipient nothing the link already gives them, and asking for an
+          email after that choice reads as a step still owed (BB-205). */}
+      {anyoneWithLink ? null : (
       <div className="space-y-2">
         <label className="text-sm font-medium" htmlFor={testIds.email}>
           {copy.inviteLabel ?? "Invite with email"}
@@ -354,6 +366,7 @@ export function ShareSection<TEnvelope>({
           <p className="text-sm text-destructive">{emailValidationError}</p>
         ) : null}
       </div>
+      )}
 
       <div className="space-y-2">
         <label className="text-sm font-medium">
@@ -393,8 +406,7 @@ export function ShareSection<TEnvelope>({
                       {option.value === "project" ||
                       option.value === "project_members" ? (
                         <Users className="size-4" />
-                      ) : option.value === "link_guests" ||
-                        option.value === "anyone_with_link" ? (
+                      ) : isAnyoneWithLinkPreset(option.value) ? (
                         <Globe className="size-4" />
                       ) : (
                         <Lock className="size-4" />
