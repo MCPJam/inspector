@@ -123,15 +123,17 @@ export function markFirstRunServerChoiceStarted(
   attemptedServerName?: string,
 ): void {
   const current = readFirstRunServerChoiceState();
-  if (current?.status === "completed" || current?.status === "dismissed") {
+  if (
+    (current?.status === "completed" && current.shownAt) ||
+    current?.status === "dismissed"
+  ) {
     return;
   }
   writeFirstRunServerChoiceState({
     status: "started",
     startedAt: current?.startedAt ?? Date.now(),
     shownAt: current?.shownAt,
-    attemptedServerName:
-      attemptedServerName ?? current?.attemptedServerName,
+    attemptedServerName: attemptedServerName ?? current?.attemptedServerName,
     playgroundPromptPending: current?.playgroundPromptPending,
   });
 }
@@ -143,7 +145,10 @@ export function markFirstRunServerChoiceStarted(
  */
 export function markFirstRunServerChoiceWelcomeShown(): void {
   const current = readFirstRunServerChoiceState();
-  if (current?.status === "completed" || current?.status === "dismissed") {
+  if (
+    (current?.status === "completed" && current.shownAt) ||
+    current?.status === "dismissed"
+  ) {
     return;
   }
   writeFirstRunServerChoiceState({
@@ -155,13 +160,9 @@ export function markFirstRunServerChoiceWelcomeShown(): void {
   });
 }
 
-/** Kept as the semantic action used when Continue or the timer advances. */
-export function markFirstRunServerChoiceWelcomeAcknowledged(): void {
-  markFirstRunServerChoiceWelcomeShown();
-}
-
 export function markFirstRunServerChoiceDismissed(): void {
-  if (readFirstRunServerChoiceState()?.status === "completed") return;
+  const current = readFirstRunServerChoiceState();
+  if (current?.status === "completed" && current.shownAt) return;
   writeFirstRunServerChoiceState({ status: "dismissed" });
 }
 
@@ -170,7 +171,7 @@ export function markFirstRunServerChoiceCompleted(): void {
   writeFirstRunServerChoiceState({
     status: "completed",
     completedAt: Date.now(),
-    shownAt: current?.shownAt,
+    shownAt: current?.shownAt ?? Date.now(),
     attemptedServerName: current?.attemptedServerName,
     playgroundPromptPending: current?.playgroundPromptPending,
   });
@@ -182,7 +183,7 @@ export function markFirstRunPlaygroundPromptPending(): void {
   writeFirstRunServerChoiceState({
     status: "completed",
     completedAt: current?.completedAt ?? Date.now(),
-    shownAt: current?.shownAt,
+    shownAt: current?.shownAt ?? Date.now(),
     attemptedServerName: current?.attemptedServerName,
     playgroundPromptPending: true,
   });
@@ -200,6 +201,7 @@ export function markFirstRunPlaygroundPromptConsumed(): void {
 export function isFirstRunServerChoiceEligible(
   hasAnyBlockingServers: boolean,
   currentRouteTab: string,
+  persisted: OnboardingPersistedState | null,
   isSignedInWithWorkOs = false,
   isNewSignedInAccount = false,
 ): boolean {
@@ -220,7 +222,6 @@ export function isFirstRunServerChoiceEligible(
     return false;
   }
 
-  const persisted = readFirstRunServerChoiceState();
   if (persisted?.status === "dismissed") return false;
 
   // A completion written before the explicit welcome existed (or before the

@@ -62,9 +62,9 @@ interface FirstRunOnboardingOverlayProps {
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
   onConnectDemo: () => void;
   onCancelConnection: () => void;
+  onReturnToChoice: () => void;
   onOpenPlayground: () => void;
   onWelcomeShown: () => void;
-  onWelcomeAcknowledged: () => void;
   onSkip: () => void;
 }
 
@@ -82,9 +82,9 @@ export function FirstRunOnboardingOverlay({
   onConnectOwnServer,
   onConnectDemo,
   onCancelConnection,
+  onReturnToChoice,
   onOpenPlayground,
   onWelcomeShown,
-  onWelcomeAcknowledged,
   onSkip,
 }: FirstRunOnboardingOverlayProps) {
   const prefersReducedMotion = useReducedMotion();
@@ -111,9 +111,13 @@ export function FirstRunOnboardingOverlay({
   }, [onWelcomeShown, open, step]);
 
   const continueToChoice = useCallback(() => {
-    onWelcomeAcknowledged();
     setStep("choose");
-  }, [onWelcomeAcknowledged]);
+  }, []);
+
+  const returnToChoice = useCallback(() => {
+    onReturnToChoice();
+    setStep("choose");
+  }, [onReturnToChoice]);
 
   const connectWithInitialDefaults = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -467,7 +471,7 @@ export function FirstRunOnboardingOverlay({
                   type="button"
                   variant="link"
                   className="mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
-                  onClick={() => setStep("choose")}
+                  onClick={returnToChoice}
                 >
                   Connect my own server
                 </Button>
@@ -574,7 +578,7 @@ export function FirstRunOnboardingOverlay({
                 type="button"
                 variant="link"
                 className="mx-auto mt-3 h-auto p-1 text-[11px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
-                onClick={() => setStep("choose")}
+                onClick={returnToChoice}
               >
                 Back
               </Button>

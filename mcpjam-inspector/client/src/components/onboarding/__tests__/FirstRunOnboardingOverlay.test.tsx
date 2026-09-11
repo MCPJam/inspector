@@ -26,9 +26,9 @@ function renderOverlay(
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
   const onCancelConnection = vi.fn();
+  const onReturnToChoice = vi.fn();
   const onOpenPlayground = vi.fn();
   const onWelcomeShown = vi.fn();
-  const onWelcomeAcknowledged = vi.fn();
   const onSkip = vi.fn();
   const view = render(
     <FirstRunOnboardingOverlay
@@ -38,9 +38,9 @@ function renderOverlay(
       onConnectOwnServer={onConnectOwnServer}
       onConnectDemo={onConnectDemo}
       onCancelConnection={onCancelConnection}
+      onReturnToChoice={onReturnToChoice}
       onOpenPlayground={onOpenPlayground}
       onWelcomeShown={onWelcomeShown}
-      onWelcomeAcknowledged={onWelcomeAcknowledged}
       onSkip={onSkip}
     />,
   );
@@ -48,9 +48,9 @@ function renderOverlay(
     onConnectOwnServer,
     onConnectDemo,
     onCancelConnection,
+    onReturnToChoice,
     onOpenPlayground,
     onWelcomeShown,
-    onWelcomeAcknowledged,
     onSkip,
     rerenderWithConnectionState: (
       nextConnectionState: FirstRunConnectionState,
@@ -63,9 +63,9 @@ function renderOverlay(
           onConnectOwnServer={onConnectOwnServer}
           onConnectDemo={onConnectDemo}
           onCancelConnection={onCancelConnection}
+          onReturnToChoice={onReturnToChoice}
           onOpenPlayground={onOpenPlayground}
           onWelcomeShown={onWelcomeShown}
-          onWelcomeAcknowledged={onWelcomeAcknowledged}
           onSkip={onSkip}
         />,
       ),
@@ -94,7 +94,7 @@ describe("FirstRunOnboardingOverlay", () => {
   });
 
   it("advances from the welcome card with Continue", () => {
-    const { onWelcomeAcknowledged } = renderOverlay();
+    renderOverlay();
 
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
       "backdrop-blur-[32px]",
@@ -112,7 +112,6 @@ describe("FirstRunOnboardingOverlay", () => {
     );
 
     fireEvent.click(continueButton);
-    expect(onWelcomeAcknowledged).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("heading", { name: "Point MCPJam at a server" }),
     ).toBeInTheDocument();
@@ -122,9 +121,8 @@ describe("FirstRunOnboardingOverlay", () => {
   });
 
   it("advances from the welcome card with Enter", () => {
-    const { onWelcomeAcknowledged } = renderOverlay();
+    renderOverlay();
     fireEvent.keyDown(window, { key: "Enter" });
-    expect(onWelcomeAcknowledged).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("heading", { name: "Point MCPJam at a server" }),
     ).toBeInTheDocument();
@@ -162,6 +160,7 @@ describe("FirstRunOnboardingOverlay", () => {
     const {
       onConnectOwnServer,
       onConnectDemo,
+      onReturnToChoice,
       onSkip,
       rerenderWithConnectionState,
     } = renderOverlay();
@@ -208,6 +207,7 @@ describe("FirstRunOnboardingOverlay", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(onReturnToChoice).toHaveBeenCalledOnce();
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -299,7 +299,8 @@ describe("FirstRunOnboardingOverlay", () => {
   });
 
   it("keeps demo failures out of the personal-server credential form", () => {
-    const { onConnectDemo, rerenderWithConnectionState } = renderOverlay();
+    const { onConnectDemo, onReturnToChoice, rerenderWithConnectionState } =
+      renderOverlay();
     rerenderWithConnectionState({
       status: "failed",
       serverName: "Excalidraw (App)",
@@ -330,6 +331,10 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(screen.getByText("Service unavailable")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try demo again" }));
     expect(onConnectDemo).toHaveBeenCalledOnce();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Connect my own server" }),
+    );
+    expect(onReturnToChoice).toHaveBeenCalledOnce();
   });
 
   it("uses the prototype's welcome and server-choice copy", () => {
