@@ -630,6 +630,19 @@ describe("useServerState hosted OAuth callback guards", () => {
     });
   });
 
+  it("opens the known server's OAuth flow when a user action requests readiness", async () => {
+    mockReconnectServer.mockResolvedValueOnce({ success: false, error: 'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.' });
+    mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({ kind: "redirect" });
+    const { result } = renderHostedServerState(vi.fn());
+    await act(async () => {
+      await result.current.ensureServersReady(["asana"], { allowInteractiveOAuthFlow: true });
+    });
+    expect(mockEnsureAuthorizedForReconnect).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "asana", useOAuth: true }),
+      expect.objectContaining({ allowInteractiveOAuthFlow: true, beforeRedirect: expect.any(Function) }),
+    );
+  });
+
   it("reports reauth instead of launching interactive OAuth during automatic readiness checks", async () => {
     mockReconnectServer.mockResolvedValueOnce({
       success: false,

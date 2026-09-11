@@ -5,7 +5,13 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, CircleSlash, Clock3, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  CircleSlash,
+  Clock3,
+  HelpCircle,
+  XCircle,
+} from "lucide-react";
 import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
 import { suitePassCriteriaCompactBadgeClassNames } from "./iteration-result-presentation";
 import { EvalSuiteRun } from "./types";
@@ -55,6 +61,41 @@ export function PassCriteriaBadge({
       >
         Grading
       </span>
+    );
+  }
+
+  // `inconclusive` is a VERDICT — the run finished and could not be measured
+  // well enough to decide either way (too few gradeable trials, too many
+  // evaluator errors). It is NOT a failure, and the `passed === false`
+  // fall-through below would have rendered it as a red "Suite Failed": a defect
+  // claimed about a customer's server that this run never observed. Amber, like
+  // grading, and never the two verdict words.
+  //
+  // Deliberately no pass-criteria tooltip: the threshold was never applied to
+  // this run, so quoting "Required 80%, actual 40%" would dress an unmeasured
+  // run up as a measured one that missed.
+  if (result === "inconclusive") {
+    if (variant === "compact") {
+      return (
+        <span
+          className="inline-flex items-center rounded bg-warning/50 px-1.5 py-0.5 text-[11px] font-medium text-foreground"
+          aria-label="Suite inconclusive"
+        >
+          Inconclusive
+        </span>
+      );
+    }
+    return (
+      <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
+        <div className="flex items-center gap-2">
+          <HelpCircle className="h-5 w-5 text-warning" />
+          <h3 className="text-sm font-medium">Suite Inconclusive</h3>
+        </div>
+        <div className="space-y-2 text-xs text-muted-foreground">
+          Not enough of this run could be measured to decide it either way. The{" "}
+          {metricLabel.toLowerCase()} threshold was never applied to it.
+        </div>
+      </div>
     );
   }
 

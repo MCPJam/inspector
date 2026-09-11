@@ -1,3 +1,13 @@
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../browserd/page-tools-peek.js";
+import { webmcpPageToolsMode } from "../../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
@@ -246,6 +256,8 @@ export interface SyntheticHostRuntime {
    * malformed ⇒ they are not advertised (fail-closed).
    */
   browserToolPolicy?: unknown;
+  /** Explicit profile pin for this unattended synthetic session. */
+  browserProfileId?: string;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: HostComputerResource;
@@ -432,6 +444,7 @@ export async function runSyntheticHostSession(
     progressiveToolDiscovery,
     builtInToolIds,
     browserToolPolicy,
+    browserProfileId,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     computer,
@@ -622,6 +635,33 @@ export async function runSyntheticHostSession(
       browserToolPolicy,
       { source: "sessionSimulation" },
     );
+    // WHAT THE RUN'S OWN PAGE OFFERS, from the box this session provisioned.
+    // Read-only and fail-empty, and skipped entirely unless this session
+    // declared a browser policy AND brought a desktop box — a journey session
+    // with neither must not pay a daemon round trip to learn it has no browser.
+    // What this run advertised from the page, for the turn trace. A synthetic
+    // session's transcript is read back like any other, and a card in it wants
+    // the same answer: which tool on which page, as it was then.
+    let advertisedPageTools: MintedDeclaredTool[] = [];
+    const pageToolsSnapshot = pageToolsSnapshotFrom(
+      sandboxBinding?.runtimeKind === "desktop-browser" &&
+        browserApprovalDelivery
+        ? await peekPageToolsForChatTurn({
+            builtInToolIds,
+            browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+            firstClass: webmcpPageToolsMode() === "first_class",
+            // A harness takes its toolset as a constructor argument and never
+            // re-reads it, so page tools it could not use are latency spent on
+            // definitions nothing will call.
+            isHarnessTurn: Boolean(harness),
+            hasV1PageTools: false,
+            engine: "hosted",
+            projectId,
+            bearer: authHeader,
+            sandboxRowId: sandboxBinding.sandboxRowId,
+          })
+        : undefined,
+    );
     const builtInTools = resolveHostTools(
       { builtInToolIds, computer },
       {
@@ -637,10 +677,20 @@ export async function runSyntheticHostSession(
         // Unattended: the run's declared policy is the only authorization
         // browser tools can have here, since nothing can pause to ask.
         ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+        ...(browserProfileId ? { browserProfileId } : {}),
+        browserSessionScope: {
+          kind:
+            persist.sourceType === "swarm" ? "swarm_attempt" : "eval_iteration",
+          sessionId: chatSessionId,
+        },
         // …and WITH one, bash binds to this session's own disposable box. The
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.
         ...(sandboxBinding ? { sandboxBinding } : {}),
+        ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
+        onBrowserPageTools: ({ minted }) => {
+          advertisedPageTools = minted;
+        },
         requireToolApproval,
         // Surface the suppression in the run instead of letting the tool go
         // quietly missing (which reads as a host-config bug).
@@ -1107,7 +1157,18 @@ export async function runSyntheticHostSession(
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         ...(persist.targetId ? { targetId: persist.targetId } : {}),
-        turnTrace,
+        // An EMPTY array is meaningful and is written: "this turn advertised no
+        // page tools" is a different fact from "we do not know", and only the
+        // second is what an absent field means.
+        turnTrace: pageToolsSnapshot
+          ? {
+              ...turnTrace,
+              pageToolsAtTurn: toMintedPageToolRecords(
+                advertisedPageTools,
+                pageToolsSnapshot,
+              ),
+            }
+          : turnTrace,
         resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
         // §3: ride this turn's harness resume-state commit into /ingest-chat

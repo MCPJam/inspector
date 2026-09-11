@@ -347,7 +347,7 @@ export function toRunHeaderView(row: EvalStageAnalyticsV1): RunHeaderView {
     // A truncated slice array that looked complete would read as "these are
     // all the models" — the false comparison the cap record exists to prevent.
     disclosures.push(
-      `Showing ${truncation.retained} of ${truncation.distinctValues} ${truncation.dimension} values — this is not the complete set.`,
+      `Showing ${truncation.retained} of ${truncation.distinctValues} ${truncation.dimension} values. This is not the complete set.`,
     );
   }
   const excluded = describeExclusions(row.excludedTrials);
@@ -359,11 +359,11 @@ export function toRunHeaderView(row: EvalStageAnalyticsV1): RunHeaderView {
     runId: row.runId,
     provisional,
     materializationLabel: provisional
-      ? "provisional — a judge pass is still landing, so these numbers may change"
+      ? "provisional. A judge pass is still landing, so these numbers may change"
       : "final",
     includedTrials: row.includedTrials,
     totalTrials: row.totalTrials,
-    populationLabel: `${row.includedTrials} of ${row.totalTrials} trials in this run`,
+    populationLabel: `${row.includedTrials} of ${row.totalTrials} iterations in this run`,
     completedAt: row.runCompletedAt ?? null,
     disclosures,
     excludedDetail: describeExcludedTrialDetail(row.excludedTrialDetail),
@@ -380,5 +380,5 @@ export function toRunHeaderView(row: EvalStageAnalyticsV1): RunHeaderView {
  */
 export function excludedDetailSummary(header: RunHeaderView): string {
   const excluded = header.totalTrials - header.includedTrials;
-  return `${excluded} of ${header.totalTrials} trials excluded — why`;
+  return `${excluded} of ${header.totalTrials} iterations excluded. Why`;
 }
