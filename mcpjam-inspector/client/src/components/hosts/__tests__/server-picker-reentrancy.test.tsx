@@ -2,25 +2,17 @@
  * The `writing` latch, at the only level it is reachable.
  *
  * Every control that reaches these handlers carries `disabled={busy}`, and
- * React flushes a discrete event synchronously — so by the time a second
- * `fireEvent` runs, the DOM already refuses it and jsdom fires nothing. That
- * is why the sibling suite's four "freezes the rows" tests pass with the latch
- * deleted: they prove the freeze, which is a different mechanism.
+ * React flushes a discrete event synchronously — so the sibling suite's
+ * "freezes the rows" tests prove the FREEZE, and pass with the latch deleted.
  *
- * The latch guards the other side of the same door. `ServerPicker` hands three
- * async callbacks to a component in ANOTHER package; nothing in its own types
- * says that component will freeze its controls, and a panel that stopped doing
- * so would reopen the window in silence. So the panel is replaced here with
- * one that does not freeze anything, and the callbacks are invoked the way a
- * careless panel would — twice, before the first write lands.
+ * The latch guards the other side of that door: `ServerPicker` hands three
+ * async callbacks to a component in another package, and nothing in its types
+ * says that component will freeze anything. So the panel is replaced with one
+ * that does not, and the callbacks are called twice before the write lands.
  *
- * Mocking the panel is the whole point rather than a shortcut: it is the
- * boundary the latch defends, and it cannot be crossed through the real one.
- *
- * It is also why this file repeats the sibling suite's mocks instead of
- * sharing them: `vi.mock` is hoisted per FILE, and the panel mock below would
- * reach the 80-odd tests next door that need the real panel. The duplication
- * is the cheaper of the two.
+ * This file repeats the sibling's mocks because `vi.mock` is hoisted per FILE:
+ * the panel mock below would reach the 80-odd tests next door that need the
+ * real panel.
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -72,9 +64,8 @@ vi.mock("@/lib/app-navigation", () => ({
   routePaths: { servers: "/servers" },
 }));
 
-// A panel that freezes NOTHING. It renders no controls at all — the test
-// calls the callbacks directly, which is precisely what a panel with a broken
-// `disabled` would end up doing.
+// A panel that freezes nothing, and renders nothing: the test calls the
+// callbacks directly, as a panel with a broken `disabled` would.
 vi.mock("@mcpjam/design-system/server-picker-panel", () => ({
   ServerPickerPanel: (props: Record<string, any>) => {
     mockState.panel = props;
@@ -95,8 +86,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockState.attachments = [];
   mockState.panel = null;
-  // Never settles, so the first call is still in flight when the second
-  // arrives — the window the latch exists to close.
+  // Never settles: the first call is still in flight when the second arrives.
   mockState.createSpy = vi.fn(() => new Promise(() => {}));
   mockState.deleteSpy = vi.fn(() => new Promise(() => {}));
 });
@@ -139,8 +129,7 @@ describe("ServerPicker — a panel that does not freeze its own controls", () =>
       onSelectGroup("att_2");
     });
 
-    // The second `onChange` would land last and overwrite the first — the
-    // picker would show a group the user's second click never settled on.
+    // The second would land last and overwrite the first.
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith("att_1", expect.anything());
   });
@@ -167,8 +156,7 @@ describe("ServerPicker — a panel that does not freeze its own controls", () =>
 
     await act(async () => {
       p.onSelectGroup("att_1");
-      // A different handler, so `busy` is the only thing between them in the
-      // real panel — and here there is no `busy`.
+      // A different handler: in the real panel only `busy` separates them.
       p.onSelectServer("srv_1");
     });
 

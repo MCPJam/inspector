@@ -1,12 +1,8 @@
 /**
- * The two-tab server picker panel.
- *
- * Servers and groups are SIBLING tabs, Servers first, and a group shows its
- * members as static chips: nothing here expands, which the tests assert.
- *
- * Purely presentational and fully controlled. It is handed a resolved
- * `{ label, indicatorClassName }` per server rather than a connection status,
- * so it imports nothing from the app and needs no Convex mock to test.
+ * The two-tab server picker panel. Servers and groups are SIBLING tabs,
+ * Servers first, and a group shows its members as static chips — nothing here
+ * expands. Presentational and fully controlled: it takes a resolved
+ * `{ label, indicatorClassName }`, so it imports nothing from the app.
  */
 import { useEffect, useId, useMemo, useState } from "react";
 import { Loader2, Plus, Trash2 } from "lucide-react";
@@ -24,17 +20,9 @@ export type PickerTab = "servers" | "groups";
 export type ServerPickerServerRow = {
   id: string;
   name: string;
-  /**
-   * Resolved by the caller — the panel never maps a ConnectionStatus itself.
-   * The dot's colour arrives as a role-token class (`bg-success`,
-   * `bg-destructive`, …) so it follows the theme; an inline colour cannot.
-   */
+  /** A role-token class, so the dot follows the theme; a hex cannot. */
   status: { label: string; indicatorClassName: string };
-  /**
-   * Present only when connecting is offered for this row. Absence is how the
-   * caller says "nothing to do here", so the panel needs no status rules of
-   * its own to decide whether to show the action.
-   */
+  /** Absent means "nothing to do here" — the panel owns no status rules. */
   onConnect?: () => void;
 };
 
@@ -58,17 +46,11 @@ export type ServerPickerPanelProps = {
    * rejection does not cost the user the servers they picked.
    */
   onCreateGroup: (name: string, serverIds: string[]) => void | Promise<void>;
-  /**
-   * Name to suggest for a draft holding these servers. Injected because the
-   * rule depends on the project's existing names, which the panel does not
-   * see — the caller passes `deriveServerGroupName` bound to them.
-   */
+  /** Injected: the rule depends on project names the panel cannot see. */
   deriveName?: (pickedServerNames: string[]) => string;
   /**
-   * Whether the server catalog has ANSWERED. `false` means unknown, which is
-   * not the same as empty — claiming a project has no servers while its query
-   * is still in flight is the defect this carries over from the picker it
-   * replaces. Defaults true so a caller that already has rows says nothing.
+   * Has the catalog ANSWERED. `false` is unknown, not empty. Defaults true so
+   * a caller that already has rows says nothing.
    */
   catalogKnown?: boolean;
   /**
@@ -91,12 +73,9 @@ export type ServerPickerPanelProps = {
    */
   canDeleteSelected?: boolean;
   /**
-   * How much room the chips get, in pixels. Defaults to the lane a `w-72`
-   * popover leaves them, measured in the app.
-   *
-   * Spent against `chipWidth`, an estimate rather than a measurement: real
-   * width is not observable in jsdom, so the budget is what a test can pin.
-   * The visual pass in a browser owns the rest.
+   * Room for the chips, in pixels — the lane a `w-72` popover leaves them.
+   * Spent against `chipWidth`, an estimate: real width is not observable in
+   * jsdom, so the budget is what a test can pin.
    */
   chipRoomPx?: number;
 };
@@ -106,29 +85,18 @@ const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left";
 /** The wrapper a row shares with its trailing actions, which reveal on hover. */
 const ROW_WRAP = "group flex items-center gap-1 rounded pr-1 hover:bg-accent";
 
-/**
- * A group's member chip. `muted` rather than the Badge's `secondary`: both are
- * near-white in this theme, but `muted` is the lighter of the two, which is the
- * weight the design gives them. Fully rounded, also per the design.
- */
+/** `muted`, not the Badge's `secondary`: the lighter of two near-whites. */
 const CHIP =
   "rounded-full border-transparent bg-muted px-2 py-0 text-[11px] font-normal text-muted-foreground";
 
 /**
- * Roughly what a chip occupies in the row, in pixels.
+ * Roughly what a chip occupies, in pixels. Measured in the app at 11px: the
+ * flat 22 is padding plus gap, then 5.2px a latin character and 11.5px a wide
+ * one. Counting characters alone cut a two-chip row with 42px free; charging
+ * them equally let two CJK names in and wrapped it.
  *
- * Measured in the app at 11px: 16px of padding plus 4px of gap — rounded to
- * the flat 22 below — then 5.2px a latin character and 11.5px a wide one.
- * Characters alone dropped the padding and cut a two-chip row to one with 42px
- * still free; treating every character as equal let two CJK names in and
- * wrapped it.
- *
- * `[...text]` so a surrogate pair counts once, not twice. Emoji are wide, so
- * they are charged the CJK rate, which under-reads them slightly — the flat 22
- * and the summary reserve absorb it.
- *
- * A formula, not a measurement. Swap in a real one only if a font change makes
- * it wrong enough to wrap.
+ * `[...text]` so a surrogate pair counts once. A formula, not a measurement —
+ * swap in a real one only if a font change makes it wrong enough to wrap.
  */
 const WIDE =
   /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]|[\u{1F300}-\u{1FAFF}]|[\u{20000}-\u{3FFFD}]/u;
@@ -137,12 +105,9 @@ const chipWidth = (text: string) =>
   22 + [...text].reduce((w, ch) => w + (WIDE.test(ch) ? 11.5 : 5.2), 0);
 
 /**
- * Tabs as the design draws them: no container strip, the two split evenly
- * across the popover with their labels centred, and the ACTIVE one filled with
- * `accent` (the light neutral) while the other is plain text. The design
- * system's default is the inverse — a muted strip with the active tab in white,
- * packed left — so both halves are overridden here rather than in the shared
- * primitive, which other surfaces still use as-is.
+ * Tabs as the design draws them: no strip, split evenly, active one filled
+ * with `accent`. The shared primitive's default is the inverse, and other
+ * surfaces still use it as-is — hence the override here, not there.
  */
 const TAB =
   "w-full justify-center rounded-md border-0 px-3 py-1.5 text-sm font-medium text-muted-foreground shadow-none " +
@@ -186,10 +151,8 @@ export function ServerPickerPanel({
   const [nameEdited, setNameEdited] = useState(false);
 
   /**
-   * The picked servers that the caller still offers. `draftIds` can outlive
-   * them — nothing closes the form when `servers` changes — so the count, the
-   * derived name, the Create gate and the submission all read this, or they
-   * disagree with each other and with what gets written.
+   * `draftIds` can outlive the rows it names — nothing closes the form when
+   * `servers` changes — so every reader goes through this, or they disagree.
    */
   const draftServers = useMemo(
     () => servers.filter((s) => draftIds.has(s.id)),
@@ -403,13 +366,9 @@ export function ServerPickerPanel({
           ? null
           : groups.map((group) => {
               const selected = group.id === selectedGroupId;
-              // As many as FIT, which is what the design does: `Group 1` shows two
-              // `excalidraw` chips and `+4`, while a group of three short names
-              // shows all three. A fixed count rendered three wide names and wrapped
-              // the row. Characters stand in for width — no measuring, no
-              // ResizeObserver, and the row is one line either way.
-              // A character budget, not a measurement: measure for real if a
-              // name's glyph width ever diverges enough to wrap.
+              // As many as FIT, per the design: two `excalidraw` chips and
+              // `+4`, but three short names all show. A fixed count wrapped
+              // the row. No ResizeObserver — the row is one line either way.
               const shown: string[] = [];
               let used = 0;
               for (const [i, name] of group.serverNames.entries()) {

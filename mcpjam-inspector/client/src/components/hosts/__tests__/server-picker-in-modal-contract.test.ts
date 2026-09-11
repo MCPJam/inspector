@@ -5,33 +5,22 @@ import { appTsxFiles, parseTsx, readAppFile } from "./support/client-tsx";
 /**
  * `inModal` inside a Dialog, guarded by the compiler.
  *
- * The picker portals its popover by default. A modal Dialog's overlay then
- * swallows every click on it, so the picker opens and cannot be used — and
- * nothing throws. Surfaces that mock the picker in their own tests cannot see
- * this at all, which is how two call sites carried the bug for as long as they
- * did. A missing prop is invisible to type checking and to every DOM test that
- * does not click through the real popover; only reading the source catches it.
+ * The picker portals its popover by default; a modal Dialog's overlay then
+ * swallows every click on it, and nothing throws. A missing prop is invisible
+ * to type checking and to every DOM test that does not click through the real
+ * popover — only reading the source catches it.
  *
- * Read through `typescript`, which the package already depends on, rather than
- * by matching text. The hand-written version counted braces and quotes to find
- * where an element ended, and got it wrong three times: a prop holding its own
- * JSX closed the element early, the children form was never matched at all,
- * and a template literal in a prop desynced the depth. None of that is a
- * question worth answering twice — the parser answers it.
+ * Read through `typescript`: the hand-written version counted braces to find
+ * where an element ended and got it wrong three times.
  *
- * SCOPE, because a ratchet that overstates itself is worse than none: a
- * picker whose overlay comes from a wrapper in ANOTHER file passes
- * unexamined. Closing that needs the render tree, not the syntax tree. What
- * is checked is nesting inside a `<DialogContent>` written in the same file —
- * the shape that actually regressed.
+ * SCOPE: nesting inside a `<DialogContent>` written in the SAME file, which is
+ * the shape that actually regressed. A picker whose overlay comes from a
+ * wrapper elsewhere passes unexamined — closing that needs the render tree.
  */
 /**
- * Whether this element hands portalling off.
- *
- * Bare `inModal`, `={true}`, and the forward `={inModal}` all count — the
- * environment composer passes its own prop through, and refusing that left
- * most pickers in the app unvouched for. Anything else is an expression whose
- * runtime value the source does not settle, so it does not get to vouch.
+ * Bare `inModal`, `={true}` and the forward `={inModal}` count — refusing the
+ * forward left most pickers in the app unvouched for. Anything else is an
+ * expression the source does not settle.
  */
 function portalOff(element: ts.JsxOpeningLikeElement): boolean {
   const attr = element.attributes.properties.find(
@@ -80,17 +69,8 @@ export function serverPickers(
 }
 
 describe("ServerPicker inside a modal Dialog written in the same file", () => {
-  /**
-   * Two things this does NOT prove, so the name does not claim them:
-   *
-   * - A forwarded `inModal={inModal}` is taken at its word. The variable's
-   *   runtime value is not knowable from the syntax, and refusing the forward
-   *   left most pickers in the app unvouched for — so the looser reading is
-   *   deliberate.
-   * - A composer that renders a picker and is itself placed inside a
-   *   `<DialogContent>` in ANOTHER file passes unexamined. That needs the
-   *   render tree.
-   */
+  // Does NOT prove: that a forwarded `inModal={inModal}` is really true, or
+  // that a composer placed in a dialog elsewhere is covered.
   it("receives inModal wherever the dialog is written beside it", () => {
     const offenders: string[] = [];
 
@@ -122,8 +102,7 @@ describe("what the scan above actually matches", () => {
     `;
     const [inside, outside] = serverPickers(src);
     expect(inside.inDialog).toBe(true);
-    // Shares the file with a Dialog, but is not in it — portalling is correct
-    // here, and flagging it would fail a suite over working code.
+    // Shares the file with a Dialog but is not in it: portalling is correct.
     expect(outside.inDialog).toBe(false);
     expect(outside.portalOff).toBe(false);
   });
@@ -148,8 +127,7 @@ describe("what the scan above actually matches", () => {
   });
 
   it("counts the shorthand, the explicit true, and a forwarded prop", () => {
-    // The composer passes `inModal={inModal}`; refusing that left every picker
-    // reached through it unvouched for by a ratchet whose job is to vouch.
+    // The composer forwards its own prop; refusing that vouches for nothing.
     expect(first("<ServerPicker inModal />").portalOff).toBe(true);
     expect(first("<ServerPicker inModal={true} />").portalOff).toBe(true);
     expect(first("<ServerPicker inModal={inModal} />").portalOff).toBe(true);
@@ -163,8 +141,7 @@ describe("what the scan above actually matches", () => {
   });
 
   it("is not fooled by a prop whose name merely contains it", () => {
-    // The text version anchored on `\b`, which a hyphen satisfies, so
-    // `data-inModal` vouched for a picker holding no such prop.
+    // `\b` is satisfied by a hyphen, so `data-inModal` used to vouch.
     for (const prop of ["xinModal", "data-notinModal", "data-inModal"]) {
       expect(first(`<ServerPicker ${prop} />`).portalOff, prop).toBe(false);
     }
@@ -172,9 +149,7 @@ describe("what the scan above actually matches", () => {
   });
 
   it("reads shapes the text scan got wrong", () => {
-    // A prop holding its own JSX, the children form, and a template literal in
-    // a prop: three separate defects in the hand-written scanner, none of them
-    // a question the parser has to be told about.
+    // Three separate defects in the hand-written scanner.
     expect(
       first("<ServerPicker renderItem={(s) => <Row />} inModal />").portalOff,
     ).toBe(true);

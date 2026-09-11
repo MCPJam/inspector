@@ -5,39 +5,22 @@ import { appTsxFiles, parseTsx, readAppFile } from "./support/client-tsx";
 /**
  * One picker, guarded by the compiler.
  *
- * BB-142 did not start as a design problem. It started with three components
- * that all let a user choose a server — `ServerGroupPicker`, an alias of it
- * re-exported under a second name, and `ServerSelectionCard` — and no rule
- * about which one a new surface should reach for. Which one you got was an
- * accident of when your screen was written. Deleting the three and writing
- * `ServerPicker` fixes today; it does not stop a fourth being written next
- * month, and nothing about writing one is difficult enough to be its own
- * deterrent.
+ * BB-142 started with three components that all let a user choose a server and
+ * no rule about which a new surface should reach for. Deleting them fixes
+ * today; it does not stop a fourth next month. So this is an INVENTORY LOCK,
+ * not a proof: it finds every file that renders a clickable list of servers
+ * and asserts the set is exactly the one below. A new one fails with a pointer
+ * to `ServerPicker`; a listed one that stops matching fails too, so the list
+ * cannot become a record of what was once true.
  *
- * So this is an INVENTORY LOCK, not a proof. It finds every file that renders
- * a clickable list of servers and asserts the set is exactly the one declared
- * below. A new one fails with a pointer to `ServerPicker`; a listed one that
- * stops matching fails too, so the list cannot quietly accumulate entries for
- * surfaces that already migrated.
+ * Read through `typescript` rather than by scanning text — the hand-written
+ * version balanced parentheses over raw source, and a `)` in a comment, a
+ * nested template literal and a `//` in JSX each made it MISS a picker.
  *
- * Read through `typescript`, already a dependency here, rather than by
- * scanning text. The hand-written version balanced parentheses over raw
- * source, and every construct that can hold one lied to it: a `)` in a
- * comment or a string ended the callback early, a nested template literal
- * ended it at the wrong backtick and blanked the rest of the file, a `//` in
- * JSX text ate the row below it, and regex literals were documented as
- * unfixable. Each of those was a silent MISS — a picker the lock reported as
- * clean. The parser has no such cases.
- *
- * SCOPE, stated rather than implied:
- *
- * - It sees `client/src/**` only. The design system's own panel lives in
- *   another package and is not scanned.
- * - It matches on SHAPE: a `.map(` whose receiver mentions "server", holding
- *   a click or checkbox affordance. A list built some other way — a `for`
- *   loop, a child component handed pre-rendered rows — passes unexamined.
- * - It cannot tell a picker from a list that merely happens to be clickable.
- *   That judgement is why each entry below carries a reason, not just a path.
+ * SCOPE: `client/src` only, and it matches on SHAPE — a `.map(` whose receiver
+ * mentions "server", holding a click or checkbox. A list built some other way
+ * passes unexamined, and it cannot tell a picker from a list that merely
+ * happens to be clickable. That judgement is why each entry carries a reason.
  */
 const ALLOWED: Record<string, string> = {
   "components/hosts/server-selection-list.tsx":
@@ -85,13 +68,7 @@ const ALLOWED: Record<string, string> = {
     "The rows open a requirement editor, they do not attach a server.",
 };
 
-/**
- * Does this file map a server-ish collection into something clickable?
- *
- * Walked as a tree: the `.map(` call node has an exact extent, so there is
- * nothing to balance and nothing for a comment or a string to lie about.
- * Commented-out code is not in the tree at all, which is the right answer.
- */
+/** Walked as a tree: a `.map(` node has an exact extent, so nothing lies. */
 export function rendersClickableServerList(source: string): boolean {
   const tree = parseTsx(source);
   let found = false;
@@ -141,9 +118,7 @@ describe("one server picker", () => {
   });
 
   it("declares nothing that has already stopped matching", () => {
-    // A surface that migrates to ServerPicker stops matching, and its entry
-    // has to go with it — otherwise the list slowly becomes a record of what
-    // was once true, which is the state the three pickers were discovered in.
+    // An entry has to leave with the surface it describes.
     const stale = Object.keys(ALLOWED)
       .filter((path) => !found.includes(path))
       .sort();
@@ -159,8 +134,7 @@ describe("one server picker", () => {
   });
 
   it("is looking at a real tree, and finding the surfaces we know exist", () => {
-    // Without this the two assertions above both pass on an empty scan — a
-    // broken path would read as a clean repo.
+    // Without this a broken path reads as a clean repo.
     expect(allTsx.length).toBeGreaterThan(100);
     expect(found).toContain("components/ActiveServerSelector.tsx");
   });

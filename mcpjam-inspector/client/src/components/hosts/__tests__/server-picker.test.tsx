@@ -1213,17 +1213,10 @@ describe("ServerPicker — a catalog query that never runs", () => {
 
 describe("ServerPicker — before either query has RUN", () => {
   /**
-   * The other half of BB-182, and the half `isLoading` cannot express.
-   *
-   * Both hooks skip until the DB user is ready, and a skipped Convex query
-   * reports `isLoading: false` with an empty list — indistinguishable from
-   * "answered, and empty" unless `isBootstrapping` is read. That is the state
-   * the user is in for the first renders of a signed-in session, and reading
-   * it as an answer is what told them the project had no servers.
-   *
-   * Every case here holds `*Loading` FALSE on purpose: flip it true and the
-   * `isLoading` half of each guard covers the assertion, and these stop
-   * saying anything about the bootstrap.
+   * The half of BB-182 `isLoading` cannot express: a skipped query reports
+   * `isLoading: false` and an empty list, which is the first renders of a
+   * signed-in session. Every case holds `*Loading` FALSE on purpose — flip it
+   * and the `isLoading` half of each guard covers the assertion.
    */
   it("says the catalog is loading, not that the project is empty", async () => {
     mockState.servers = undefined;
@@ -1891,19 +1884,10 @@ describe("ServerPicker — a create that fails", () => {
 });
 
 /**
- * The trigger's SHAPE, ported from BB-163.
- *
- * The promote-to-test-case modal puts Client and Server side by side in a
- * labelled form column. A pill next to a `<Select>` reads as a different kind
- * of control, so BB-163 gave the old picker a `field` variant: full width,
- * `h-9`, square, the same box an `<Input>` draws. That caller survives
- * BB-142's merge, so the variant has to survive with it.
- *
- * What did NOT come across is the variant-keyed empty LABEL. The old picker
- * needed one because its chip copy read as a broken placeholder under a
- * `Label`. BB-142 deleted that copy; "Select server" prompts in both places,
- * and a second vocabulary is what this ticket removed. One test pins that, so
- * the old copy cannot come back.
+ * The trigger's SHAPE, ported from BB-163: the promote modal needs a control
+ * that lines up with an `<Input>`, not a pill. The variant-keyed empty LABEL
+ * did NOT come across — one vocabulary is what BB-142 was for, and a test
+ * below pins that so the old copy cannot return.
  */
 describe("ServerPicker — the field variant", () => {
   const trigger = (props: Record<string, unknown> = {}) => {
@@ -1967,15 +1951,9 @@ describe("ServerPicker — the field variant", () => {
 
 describe("ServerPicker — the clear control beside a full-width field", () => {
   /**
-   * The picker renders two siblings: the trigger and, when the caller can
-   * clear, an X beside it. In the pill that works — the trigger is
-   * `shrink-0 max-w-[260px]`, so whatever flex row the caller provides holds
-   * both. In `field` the trigger is `w-full`, and the only caller puts it in
-   * a `space-y-2` COLUMN: the X wrapped onto its own line under the field.
-   *
-   * So the spec is about who owns the arrangement. In `field` the picker
-   * hands back one box and arranges its own contents; in `pill` it stays two
-   * loose children, because every existing caller already lays those out.
+   * Who arranges the trigger and its clear X. The pill is `shrink-0`, so the
+   * caller's flex row holds both; a `field` trigger is `w-full` and its only
+   * caller stacks it in a column, where the X wrapped onto its own line.
    */
   function column(props: Record<string, unknown>) {
     mockState.attachments = [

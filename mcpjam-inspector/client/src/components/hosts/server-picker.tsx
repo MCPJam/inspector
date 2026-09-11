@@ -1,10 +1,9 @@
 /**
- * The data-bound server picker: trigger + popover + `ServerPickerPanel`.
+ * The data-bound picker: trigger + popover + `ServerPickerPanel`.
  *
- * Joins two worlds the panel is kept innocent of — the Convex catalog (by id)
- * and the runtime connection state (by name). Both providers are read through
- * their OPTIONAL hooks: several surfaces mount this outside them, and
- * `useServerActions` throws.
+ * Joins the Convex catalog (by id) to the runtime connection state (by name).
+ * Both read through their OPTIONAL hooks — several surfaces mount this outside
+ * those providers, and `useServerActions` throws.
  *
  * Storage has no column for a bare server, so picking one resolves to the row
  * holding exactly it — reused when it exists, minted otherwise.
@@ -56,19 +55,12 @@ import {
   type ServerPickerServerRow,
 } from "@mcpjam/design-system/server-picker-panel";
 
-/**
- * Local writes the `serverAttachments` query has not reflected yet.
- *
- * `added` are rows written here and not yet listed; `removed` are rows deleted
- * here and still listed. Nothing else is needed: the query itself says when an
- * entry can go.
- */
+/** Local writes the `serverAttachments` query has not reflected yet. */
 type PendingWrites = {
   /**
-   * The project these writes were made against. Carried WITH them so a render
-   * for another project discards the overlay by DERIVATION — an effect clears
-   * it one render too late, and that render is the one offering the old
-   * project's rows.
+   * Carried WITH the writes so another project's render discards them by
+   * DERIVATION: an effect clears one render too late, and that render is the
+   * one offering the old project's rows.
    */
   projectId: string;
   added: EvalServerAttachment[];
@@ -77,7 +69,7 @@ type PendingWrites = {
 
 const NO_PENDING: PendingWrites = { projectId: "", added: [], removed: [] };
 
-/** How `mintAndSelect` reports a write that failed, or one the project left behind. */
+/** How `mintAndSelect` reports a failed write, or one the project left behind. */
 type MintFailure = { wrote: boolean; stale?: true };
 
 export type ServerPickerProps = {
@@ -91,36 +83,17 @@ export type ServerPickerProps = {
   disabled?: boolean;
   /** Trigger label when nothing is selected. */
   emptyTriggerLabel?: string;
-  /**
-   * Return to no selection. Only surfaces where the server is optional pass
-   * this, and only they get the control — the picker itself cannot tell an
-   * optional field from a required one.
-   */
+  /** Passed only where the server is optional — the picker cannot tell. */
   onClearSelection?: () => void;
-  /**
-   * Render the popover in place instead of portaling it. Set inside a modal
-   * Dialog, whose overlay swallows clicks on portaled content. Same escape
-   * hatch, same name, as `EnvironmentPicker`.
-   */
+  /** Render in place: a modal Dialog's overlay swallows clicks on a portal. */
   inModal?: boolean;
   triggerTestId?: string;
-  /**
-   * `id` for the trigger, so a sibling `<Label htmlFor>` names the control.
-   * Without it the accessible name is only the selected group — "Stripe",
-   * never "Server".
-   */
+  /** So a sibling `<Label htmlFor>` names it "Server", not "Stripe". */
   triggerId?: string;
   /**
-   * Trigger shape. `pill` (default) is the compact chip the bars and
-   * lego-strips use. `field` renders a full-width, `h-9` form control that
-   * lines up with an `<Input>`/`<Select>` in a labelled form column — used by
-   * the promote-to-test-case modal, where Client and Server sit side by side
-   * and a chip next to a select reads as a different kind of control.
-   *
-   * Shape only: the popover, the tabs, and the inline create form are
-   * identical in both. The empty LABEL is too — the old picker keyed that off
-   * the variant because its chip copy read as a broken placeholder in a form,
-   * and BB-142 deleted that copy.
+   * Shape only. `field` lines up with an `<Input>` in a labelled column; a
+   * pill beside a select reads as a different kind of control. The empty
+   * label does NOT vary — one vocabulary is what BB-142 was for.
    */
   variant?: "pill" | "field";
 };
@@ -139,7 +112,7 @@ export function ServerPicker({
 }: ServerPickerProps) {
   const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
   /**
-   * Trimmed ONCE, and used for everything downstream. The hooks query on the
+   * Trimmed once, used everywhere downstream. The hooks query on the
    * trimmed id, so an overlay keyed on the raw prop is discarded by a caller
    * that only changed the padding — hiding the selected row and letting a
    * duplicate be minted against a project the query never left.
@@ -171,24 +144,16 @@ export function ServerPicker({
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   /**
-   * Servers whose handshake this picker started and has not seen settle.
-   *
-   * `canConnect` reads the RUNTIME status, which does not flip to `connecting`
-   * until the provider says so — and until then every click starts another
-   * `ensureServersReady` for the same server. A set, not one name: connecting
-   * two different servers at once is a thing a user may reasonably do.
+   * Handshakes started here and not yet settled. The runtime status does not
+   * flip to `connecting` until the provider says so, and until then every
+   * click starts another one. A list, because two at once is reasonable.
    */
   const [connecting, setConnecting] = useState<readonly string[]>([]);
 
   /**
-   * The writes this picker has made that the query has not caught up with.
-   *
-   * ONE overlay, not two bridges. Both halves exist for the same reason — a
-   * Convex query lags the mutation that changed it — and they release on the
-   * same rule: an entry lives exactly as long as the query still disagrees
-   * with it. Splitting that into a row-shaped "just created" and a list-shaped
-   * "just deleted" meant two release effects, two ideas of when a write has
-   * landed, and a third one waiting to be written for the next write kind.
+   * ONE overlay, not a bridge per write kind: both halves exist because a
+   * Convex query lags its mutation, and both release on the same rule — an
+   * entry lives as long as the query still disagrees with it.
    */
   const [storedPending, setPending] = useState<PendingWrites>(NO_PENDING);
 
@@ -197,37 +162,23 @@ export function ServerPicker({
     storedPending.projectId === project ? storedPending : NO_PENDING;
 
   /**
-   * What a completing write must still be looking at.
-   *
-   * A GENERATION, not the project id: leaving A for B and coming back makes a
-   * stale completion's id match again, and it would then report a selection
-   * the user made two screens ago. The counter only ever goes up, so a write
-   * that started in an earlier visit can never look current.
+   * A GENERATION, not the project id: leaving A for B and back makes a stale
+   * completion's id match again. This only goes up.
    */
   const generation = useRef(0);
-  // Advanced from a COMMITTED effect, never during render: React can discard
-  // an interrupted render, and a bump from one would strand a write started
-  // by the tree that actually committed. Each handler reads the counter when
-  // it begins and compares after every await.
-  // LAYOUT effect: a passive one runs after paint, and a mutation resolving in
-  // that gap would still read the old generation as current — accepting a
-  // completion for the project the user just left.
+  // Bumped from a COMMITTED effect, never during render: React discards
+  // interrupted renders, and a bump from one strands the write the committed
+  // tree started. LAYOUT, because a passive effect runs after paint and a
+  // mutation resolving in that gap still reads the old generation as current.
   useLayoutEffect(() => {
     generation.current += 1;
-    // Handshakes belong to the project they were started in. Keyed by NAME,
-    // so carrying them across would withhold Connect from a same-named server
-    // in the next project. The in-flight one still settles; its `finally`
-    // filters a list that no longer holds it, which is a no-op.
+    // Handshakes are keyed by NAME, so carrying them over would withhold
+    // Connect from a same-named server in the next project.
     setConnecting([]);
   }, [project]);
-  // Unmount is a project change too, as far as a write in flight is concerned:
-  // LAYOUT, so the bump lands in the unmount commit — a passive cleanup runs
-  // after it, and a promise settling in that gap still read the generation as
-  // current.
-  // without this, a handshake completing after the user navigated away still
-  // toasted and still wrote state. Its own effect, because a cleanup on the
-  // one above would also fire on every project change — where the body has
-  // already done the bump.
+  // Unmount is a project change too. Its own effect: a cleanup on the one
+  // above would also fire on every project change, where the body already
+  // bumped.
   useLayoutEffect(
     () => () => {
       generation.current += 1;
@@ -241,32 +192,20 @@ export function ServerPicker({
   };
 
   /**
-   * A SAME-TICK backstop for `busy`, and deliberately nothing more.
-   *
-   * `busy` disables every control that could start a write, but it is React
-   * state: two events dispatched before that disable commits both read the
-   * pre-write render, and both start a mutation. Closed silently, because the
-   * second event is the same choice arriving twice, not one to explain.
-   *
-   * No DOM test can reach it — jsdom flushes a discrete event synchronously,
-   * so the control is already disabled. `server-picker-reentrancy.test.tsx`
-   * covers it at the boundary that can: a panel that freezes nothing.
+   * A same-tick backstop for `busy`, which is React state: two events
+   * dispatched before its disable commits both read the pre-write render.
+   * Covered by `server-picker-reentrancy.test.tsx` — no DOM test can reach it.
    */
   const writing = useRef(false);
 
   /**
-   * One list for every reader: the query, corrected by what we know it has not
-   * seen. Without the `added` half the trigger falls back to the empty label
-   * right after a pick and a second pick mints a duplicate; without `removed`
-   * a deleted row sits on the Groups tab, still clickable.
-   *
-   * Sets, not `includes`: this runs on every render until the query settles.
+   * The query, corrected by what we know it has not seen yet. Without `added`
+   * a fresh pick reads as empty and the next one mints a duplicate; without
+   * `removed` a deleted row stays on the Groups tab, still clickable.
    */
   const attachments = useMemo(() => {
-    // Rows written before `resolvedServerNames` existed arrive without it, and
-    // the model treats a row it cannot judge as a group — so a legacy
-    // stand-in was never reused and every pick of that server minted another.
-    // The catalog holds the names; use them.
+    // Legacy rows lack `resolvedServerNames`, and the model reads a row it
+    // cannot judge as a group — so every pick of that server minted another.
     const nameById = new Map(
       (catalogRows ?? []).map((row) => [row._id, row.name]),
     );
@@ -293,18 +232,15 @@ export function ServerPicker({
   }, [serverAttachments, pending, catalogRows]);
 
   /**
-   * `ensureServersReady` runs with `allowInteractiveOAuthFlow: false`, so a
-   * server needing consent returns in `reauthServerNames` rather than popping
-   * a window. Success needs no toast — the dot turns green on its own.
+   * `allowInteractiveOAuthFlow: false`, so a server needing consent comes back
+   * in `reauthServerNames` instead of popping a window. Success says nothing —
+   * the dot turns green on its own.
    */
   const handleConnect = useCallback(
     async (serverName: string) => {
       if (!actions) return;
-      // Fenced like every other awaited path. Clearing `connecting` on the
-      // switch re-exposes the row, but this handshake still settles — and its
-      // cleanup would then drop the NEW project's entry for a same-named
-      // server, re-offering Connect while that one is still pending. Its
-      // toasts belong to a screen the user has left, too.
+      // Fenced: this handshake still settles after a project switch, and its
+      // cleanup would drop the NEW project's entry for a same-named server.
       const isCurrent = sinceNow();
       setConnecting((names) =>
         names.includes(serverName) ? names : [...names, serverName],
@@ -346,24 +282,12 @@ export function ServerPicker({
   );
 
   /**
-   * Both hooks flatten `undefined` to an empty list, so "in flight" and
-   * "answered, and empty" arrive identically. `isLoading` is the only thing
-   * that separates them — and it is false for a SKIPPED query, which
-   * `catalogRows === undefined` is not: `useProjectServers` skips for a local
-   * or UUID project id, where reading undefined as in-flight would leave the
-   * tab loading for ever.
-   */
-  /**
-   * …and a query that never RAN is not an answer either. Both hooks skip until
-   * `isUserReady`, and a skipped query reports `isLoading: false` with an empty
-   * list — so during the DB-user bootstrap this read "answered, and empty",
-   * marked a live selection dangling and told the user the project has no
-   * servers. That is the BB-182 defect one layer up.
-   *
-   * Answered by the hooks that own the skip, not re-derived here: the picker
-   * has no business knowing WHY a query did not run, and reaching for the
-   * bootstrap context directly made this component break every test that
-   * mocks that module without the new export.
+   * "In flight" and "answered, and empty" arrive identically — both hooks
+   * flatten `undefined` to an empty list. `isLoading` separates them, except
+   * for a SKIPPED query, which reports `isLoading: false` and an empty list:
+   * during the DB-user bootstrap that read as "no servers" and marked a live
+   * selection dangling (BB-182). `isBootstrapping` is answered by the hooks
+   * that own the skip, not re-derived here.
    */
   const catalogKnown = !catalogBootstrapping && !catalogLoading;
   const attachmentsKnown = !attachmentsBootstrapping && !attachmentsLoading;
@@ -381,10 +305,8 @@ export function ServerPicker({
    * The one release rule: an entry goes when the query stops disagreeing with
    * it. A written row is listed; a deleted row is not.
    *
-   * Only once the query has ANSWERED — it flattens `undefined` to `[]` while
-   * in flight, and reading that as "the write landed" would drop both halves a
-   * render before the real list arrives, blanking a fresh selection and
-   * resurrecting a deleted row in the same tick.
+   * Only once the query has ANSWERED: `[]` while in flight would read as "the
+   * write landed", blanking a fresh selection a render before the list lands.
    */
   useEffect(() => {
     if (!attachmentsKnown) return;
@@ -393,9 +315,8 @@ export function ServerPicker({
     setPending((prev) => {
       const added = prev.added.filter((row) => !listed.has(row._id));
       const removed = prev.removed.filter((id) => listed.has(id));
-      // Same identity when nothing changed, so React bails out of the render
-      // rather than looping on `serverAttachments`, which is a fresh array
-      // every time until the query settles.
+      // Same identity when nothing changed: `serverAttachments` is a fresh
+      // array every render until the query settles, so this would loop.
       if (prev.projectId !== project) return prev;
       return added.length === prev.added.length &&
         removed.length === prev.removed.length
@@ -405,14 +326,10 @@ export function ServerPicker({
   }, [serverAttachments, attachmentsKnown, pending, project]);
 
   /**
-   * The one deadline, and only for a written row the query never lists.
-   *
-   * That is the NORMAL state for a caller which commits through its own
-   * mutation before echoing the id back — the suite bar awaits `updateSuite`.
-   * A row that is still what `value` points at is exempt: it is the only thing
-   * that can name the trigger, so dropping it on a timer would blank a live
-   * selection. Everything else just stops being held for the life of the
-   * mount. It has to outlast a round trip; at 3s it fired mid-flight.
+   * The one deadline, for a written row the query never lists — the normal
+   * state for a caller that commits through its own mutation first. The row
+   * `value` points at is exempt: dropping it would blank a live selection.
+   * 60s because it must outlast a round trip; at 3s it fired mid-flight.
    */
   useEffect(() => {
     const orphan = pending.added.find((row) => row._id !== value);
@@ -499,26 +416,17 @@ export function ServerPicker({
   );
 
   /**
-   * Write a `serverAttachments` row, record it locally, and report it as the
-   * selection.
+   * Write a row, record it locally, report it as the selection.
    *
-   * Both write paths did this identically — the same pending merge, the same
-   * awaited commit, the same close, the same `wrote`-gated collision wording —
-   * so a fix to one was easy to miss in the other.
-   *
-   * Throws `{ wrote }` on failure, after saying so: `wrote` tells the caller
-   * whether the row landed, which is what decides if a retry would duplicate
-   * it. Throws `{ stale: true }` when the project changed mid-flight — not a
-   * failure to report, but it must not RESOLVE either, or the panel reads it
-   * as success and clears a draft that now belongs to another project.
+   * Throws after reporting: `wrote` tells the caller whether the row landed,
+   * which decides whether a retry would duplicate it. `stale: true` means the
+   * project changed mid-flight — nothing to report, but it must not resolve
+   * either, or the panel clears a draft that now belongs elsewhere.
    */
   /**
-   * Report an existing row as the selection and close.
-   *
    * Awaited because `onChange` is typed `=> void` but bivariance lets a caller
-   * pass an async commit; returning early would release the latch while the
-   * parent is still writing. `creating` goes up for the wait so `busy` does
-   * too — the ref alone left every control enabled while it refused them.
+   * pass an async commit — returning early releases the latch mid-write.
+   * `creating` rises for the wait so the controls show it.
    */
   const selectExisting = useCallback(
     async (row: PickerGroup) => {
@@ -664,15 +572,9 @@ export function ServerPicker({
         throw new Error("Attachments not loaded");
       }
       /**
-       * THROWN, not returned: the panel reads a rejection as "keep the draft"
-       * and a resolution as "it landed, clear the form". Resolving here would
-       * throw away the servers the user picked while the first submit — the
-       * one that owns this draft — is still in flight.
-       *
-       * And SAID, because the panel's catch deliberately reports nothing: its
-       * comment reads "The caller reports the reason", so a bare throw leaves
-       * the spinner stopping over a full form with no explanation — the dead
-       * control `busy` exists to avoid.
+       * THROWN, so the panel keeps the draft; resolving would discard what the
+       * user picked while the submit that owns it is still in flight. And SAID
+       * first, because the panel's catch reports nothing.
        */
       if (writing.current) {
         toast.error("Still saving the last change — try again in a moment.");
@@ -693,9 +595,8 @@ export function ServerPicker({
         });
       } catch (err) {
         const fail = err as MintFailure;
-        // The panel reads a rejection as "keep the draft". Keep it when the
-        // row did NOT land (a retry is the fix) and when the project moved on
-        // (resolving would clear a draft that is now someone else's). Not
+        // A rejection tells the panel to keep the draft: right when the row
+        // did not land, and when the project moved on. Not
         // when the row landed: the next Create would mint a duplicate.
         if (fail?.stale || !fail?.wrote) throw err;
       } finally {
@@ -706,26 +607,14 @@ export function ServerPicker({
     [attachmentsKnown, catalog, createServerAttachment, onChange, project],
   );
 
-  /**
-   * Bound to the names already taken in this project — the panel supplies the
-   * picked servers, this supplies the rule.
-   *
-   * For ONE server the shared deriver returns that server's own name, which is
-   * exactly what `isServerStandIn` reads as "not a group": suggesting it here
-   * would hide the group off the Groups tab the moment it was created. The
-   * bare-server mint still wants that name, and calls the deriver directly.
-   */
+  /** The panel supplies the picked servers; this supplies the taken names. */
   const deriveName = useCallback(
     (pickedServerNames: string[]) =>
       /**
-       * One server derives the NUMBERED name, not the server's own — that one
-       * IS the stand-in shape, so suggesting it would hide the group being
-       * made. Hence the empty list rather than a second function.
-       *
-       * Known gap, and not closable by naming: for a server called literally
-       * `group`, every `Group N` reads as ITS stand-in, because the rule
-       * infers kind from the name and the numbering stem is that name. Closing
-       * it wants the storage column, the same one the rename case wants.
+       * One server takes the NUMBERED name: its own IS the stand-in shape, so
+       * suggesting it would hide the group being made. Hence the empty list.
+       * Unclosable gap: a server literally called `group` makes every
+       * `Group N` read as its stand-in. That wants the storage column.
        */
       deriveServerGroupName(
         pickedServerNames.length === 1 ? [] : pickedServerNames,
@@ -735,9 +624,8 @@ export function ServerPicker({
   );
 
   /**
-   * Remove a group. The picker this replaced owned the only call to this
-   * mutation in the app; without it a project accumulates rows — including
-   * the stand-ins every bare-server pick mints — that nothing can clear.
+   * Remove a group. The only caller of this mutation in the app: without it a
+   * project accumulates stand-ins nothing can clear.
    *
    * The backend refuses a group a suite still uses and says which; that
    * message is worth more than anything phrased here, so it is passed through.
@@ -745,9 +633,8 @@ export function ServerPicker({
   const handleDeleteGroup = useCallback(
     async (groupId: string) => {
       if (writing.current || creating) return;
-      // Removing what the parent is storing, with no way to tell it, would
-      // leave that id pointing at nothing — the picker would read as empty
-      // while the surface kept launching against a row that is gone.
+      // Deleting what the parent stores, with no way to tell it, leaves that
+      // id pointing at nothing while the surface keeps launching against it.
       if (value === groupId && !onClearSelection) {
         toast.error("Pick a different server first — this one is in use here.");
         return;
@@ -757,10 +644,8 @@ export function ServerPicker({
       const isCurrent = sinceNow();
       try {
         await deleteServerAttachment({ serverAttachmentId: groupId });
-        // Both halves, in one move: drop it from `added` (a row minted and
-        // deleted in one sitting was never in the query to begin with) and
-        // record it in `removed` (a row the query still returns would
-        // otherwise sit on the tab, and stay clickable, until the refetch).
+        // Both halves: minted-and-deleted in one sitting was never in the
+        // query, and one the query still returns stays clickable until refetch.
         if (!isCurrent()) return;
         setPending((prev) => {
           const mine = prev.projectId === project;
@@ -806,14 +691,9 @@ export function ServerPicker({
     [attachments, creating, selectExisting],
   );
 
-  // A dangling selection (its row was deleted) still reads as the empty label
-  // here. The model distinguishes it; surfacing that is deliberately left to
-  // its own change rather than folded into this one.
-  /**
-   * While the list is unknown EVERY selection resolves as dangling, so falling
-   * back to the empty label would assert "nothing picked" over a live one —
-   * the same claim BB-182 was about, one query over.
-   */
+  // A dangling selection still reads as the empty label; surfacing it is its
+  // own change. While the list is UNKNOWN every selection resolves as
+  // dangling, so the empty label would assert "nothing picked" over a live one.
   const triggerLabel = resolved
     ? resolved.label
     : !attachmentsKnown && value

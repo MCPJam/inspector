@@ -1,22 +1,12 @@
 /**
- * The two-tab picker panel — what the popover shows.
- *
- * Purely presentational: it receives rows and calls back. It does NOT know
- * what a connection is (it is handed a resolved dot colour and label), does
- * not fetch, and does not persist. That is what makes it testable without
- * Convex, and what will let it move into `@mcpjam/design-system` once that
- * package can render React in tests — it has no vitest config, no jsdom and
- * no Testing Library today.
- *
- * The load-bearing assertion in here is "renders no expandable control":
- * the nesting BB-142 exists to remove must not come back.
+ * The two-tab picker panel — what the popover shows. Presentational: it takes
+ * rows and calls back, so it tests without Convex. The load-bearing assertion
+ * is "renders no expandable control" — the nesting BB-142 exists to remove.
  */
 // @vitest-environment jsdom
 //
-// Per FILE, not per package: this package's `tokens-parity` test reads
-// `tokens.css` off disk through `import.meta.url`, and under jsdom that URL
-// becomes http:, which `readFileSync` rejects. Switching the whole package
-// would break it; this directive leaves it on node, untouched.
+// Per FILE: this package's `tokens-parity` test reads `tokens.css` through
+// `import.meta.url`, which jsdom turns into http: and `readFileSync` rejects.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
