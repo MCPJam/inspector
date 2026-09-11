@@ -23,8 +23,11 @@ describe("extractToolErrors — classification", () => {
     const trace = {
       messages: [toolResult({ toolName: "book", error: "connection reset" })],
     };
+    // The server's own words ride along: `toolErrorNamesInput` reads them, and
+    // a record without them reports "carried no message at all" — a finding
+    // about the server manufactured out of our own omission.
     expect(extractToolErrors(trace)).toEqual([
-      { kind: "protocol-error", toolName: "book" },
+      { kind: "protocol-error", toolName: "book", message: "connection reset" },
     ]);
   });
 

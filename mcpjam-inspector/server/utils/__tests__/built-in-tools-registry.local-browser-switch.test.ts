@@ -17,8 +17,9 @@ import { describe, expect, it, vi } from "vitest";
 
 const configState = vi.hoisted(() => ({ localBrowser: true }));
 vi.mock("../../config.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../config.js")>("../../config.js");
+  const actual = await vi.importActual<typeof import("../../config.js")>(
+    "../../config.js",
+  );
   return {
     ...actual,
     get LOCAL_BROWSER_ENABLED() {
@@ -35,10 +36,40 @@ const localCtx = {
   projectId: "project-1",
   chatSessionId: "session-1",
   browserApprovalDelivery: { kind: "attested" as const },
-  computerEngine: "local" as const,
+  browserEngine: "local" as const,
 };
 
 describe("resolveHostTools — the local browser kill switch", () => {
+  it("admits a verified local guest without Computer, but never Bash", () => {
+    configState.localBrowser = true;
+    const tools = resolveHostTools(
+      { builtInToolIds: ["browser", "bash"], computer },
+      { ...localCtx, isGuest: true, localBrowserGuestId: "guest-1" },
+    );
+    expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+    expect(Object.keys(tools ?? {})).not.toContain("bash");
+    const browserOnly = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      { ...localCtx, isGuest: true, localBrowserGuestId: "guest-1" },
+    );
+    expect(Object.keys(browserOnly ?? {})).toContain("browser_navigate");
+  });
+
+  it.each([
+    { isGuest: true },
+    { isGuest: true, localBrowserGuestId: "guest-1", isScenarioSession: true },
+    { isGuest: true, localBrowserGuestId: "guest-1", isJourneySession: true },
+  ])(
+    "does not treat guest-local authorization as a general grant: %j",
+    (actor) => {
+      configState.localBrowser = true;
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"] },
+        { ...localCtx, ...actor },
+      );
+      expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
+    },
+  );
   it("advertises the six tools while the switch is on", () => {
     configState.localBrowser = true;
     const tools = resolveHostTools(

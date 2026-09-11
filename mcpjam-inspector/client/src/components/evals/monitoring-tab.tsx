@@ -5,8 +5,16 @@
  * excluded — this surface answers "has the widget kept working unattended",
  * not "what did my last manual run do" (the Runs tab owns that).
  *
- * Visible only when the synthetic-monitors flag is on AND the suite has a
- * schedule or a widget-probe case (gating lives in `suite-dashboard.tsx`).
+ * TWO FEATURES SHARE THIS PANE, and each answers to its own flag: the
+ * scheduled-run sections (uptime strip, last-failure card, and the empty state
+ * that tells you to enable a schedule) to `scheduled-evals-enabled`, the
+ * render-latency trend to `synthetic-monitors`. `suite-dashboard.tsx` decides
+ * whether the pane is reachable; the props below decide what it may show.
+ *
+ * Gating only the rail item is not enough. A suite with BOTH a schedule and a
+ * probe case earns the pane from either flag, so a deployment with only
+ * `synthetic-monitors` on would open a pane headed "Scheduled runs" — the exact
+ * surface the schedule flag exists to keep dark.
  */
 
 import { useMemo } from "react";
@@ -74,9 +82,15 @@ function segmentClass(stat: ScheduledRunStat): string {
 export function MonitoringTab({
   suiteId,
   onRunClick,
+  showScheduledRuns = true,
+  showProbeLatency = true,
 }: {
   suiteId: string;
   onRunClick: (runId: string) => void;
+  /** `scheduled-evals-enabled` — uptime strip, last failure, empty state. */
+  showScheduledRuns?: boolean;
+  /** `synthetic-monitors` — the render-latency trend. */
+  showProbeLatency?: boolean;
 }) {
   const stats = useQuery("testSuites:listScheduledRunStats" as any, {
     suiteId,
@@ -116,6 +130,11 @@ export function MonitoringTab({
   }
 
   if (stats.length === 0) {
+    // Schedule UI even though it renders no run data: the copy names the
+    // schedule and points at the row that enables one. With the schedule flag
+    // off there is nothing honest left here — the probe half has no stats of
+    // its own to show.
+    if (!showScheduledRuns) return null;
     return (
       <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-8 text-center">
         <p className="text-sm font-medium text-foreground">
@@ -142,47 +161,49 @@ export function MonitoringTab({
   return (
     <div className="flex flex-col gap-5">
       {/* ── pass/fail strip ─────────────────────────────────────────── */}
-      <section className="space-y-2">
-        <div className="flex items-baseline justify-between gap-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Scheduled runs
-          </h3>
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {passRatePct !== null
-              ? `${passRatePct}% passing · last ${stats.length} run${stats.length === 1 ? "" : "s"}`
-              : `${stats.length} run${stats.length === 1 ? "" : "s"}`}
-          </span>
-        </div>
-        <div
-          className="flex h-8 items-stretch gap-[3px]"
-          role="list"
-          aria-label="Scheduled run results, oldest to newest"
-        >
-          {chronological.map((stat) => (
-            <button
-              key={stat.runId}
-              type="button"
-              role="listitem"
-              onClick={() => onRunClick(stat.runId)}
-              className={cn(
-                "min-w-[6px] flex-1 rounded-[3px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
-                segmentClass(stat),
-              )}
-              title={`${formatTimestamp(stat.completedAt ?? stat.createdAt)} — ${
-                stat.result === "pending" ? stat.status : stat.result
-              }${
-                stat.summary
-                  ? ` (${stat.summary.passed}/${stat.summary.total} iterations)`
-                  : ""
-              }`}
-              aria-label={`Run ${formatRunId(stat.runId)}: ${stat.result}`}
-            />
-          ))}
-        </div>
-      </section>
+      {showScheduledRuns ? (
+        <section className="space-y-2">
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Scheduled runs
+            </h3>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {passRatePct !== null
+                ? `${passRatePct}% passing · last ${stats.length} run${stats.length === 1 ? "" : "s"}`
+                : `${stats.length} run${stats.length === 1 ? "" : "s"}`}
+            </span>
+          </div>
+          <div
+            className="flex h-8 items-stretch gap-[3px]"
+            role="list"
+            aria-label="Scheduled run results, oldest to newest"
+          >
+            {chronological.map((stat) => (
+              <button
+                key={stat.runId}
+                type="button"
+                role="listitem"
+                onClick={() => onRunClick(stat.runId)}
+                className={cn(
+                  "min-w-[6px] flex-1 rounded-[3px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+                  segmentClass(stat),
+                )}
+                title={`${formatTimestamp(stat.completedAt ?? stat.createdAt)} — ${
+                  stat.result === "pending" ? stat.status : stat.result
+                }${
+                  stat.summary
+                    ? ` (${stat.summary.passed}/${stat.summary.total} iterations)`
+                    : ""
+                }`}
+                aria-label={`Run ${formatRunId(stat.runId)}: ${stat.result}`}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {/* ── probe latency trend ─────────────────────────────────────── */}
-      {latencyTrend.length > 1 ? (
+      {!showProbeLatency ? null : latencyTrend.length > 1 ? (
         <section className="space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Render latency
@@ -232,7 +253,7 @@ export function MonitoringTab({
       ) : null}
 
       {/* ── last failure ────────────────────────────────────────────── */}
-      {lastFailure ? (
+      {showScheduledRuns && lastFailure ? (
         <section className="space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Last failure

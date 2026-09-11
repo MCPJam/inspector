@@ -225,3 +225,170 @@ describe("StepReplayView", () => {
     });
   });
 });
+
+describe("StepReplayView — scorecard presentation", () => {
+  const advisory: TestStep = {
+    id: "a3",
+    kind: "assert",
+    assertion: { type: "noToolErrors", role: "advisory", severity: "warn" },
+  } as TestStep;
+  const gating: TestStep = {
+    id: "a4",
+    kind: "assert",
+    assertion: { type: "noToolErrors" },
+  } as TestStep;
+
+  it("keeps every existing mount byte-identical by default", () => {
+    // This component is also every /evals Steps tab. The fixes below are
+    // opt-in for exactly that reason.
+    const legacy = render(<StepReplayView steps={steps} />).container.innerHTML;
+    const explicit = render(
+      <StepReplayView steps={steps} presentation="legacy" />,
+    ).container.innerHTML;
+    expect(explicit).toBe(legacy);
+  });
+
+  it("names a check the way the rest of the product names it", () => {
+    // The wire discriminator is what this tab has always printed, and the one
+    // surface still speaking it: the authoring form, the checks list and the
+    // scorecard all say "Tool was called with…".
+    const { container } = render(
+      <StepReplayView steps={steps} presentation="scorecard" />,
+    );
+    expect(container.textContent).toContain("Tool was called with… clear-cart");
+    expect(container.textContent).not.toContain("toolCalledWith:");
+  });
+
+  it("says where a step-authored check runs", () => {
+    const { container } = render(
+      <StepReplayView
+        steps={[steps[0], gating]}
+        presentation="scorecard"
+      />,
+    );
+    expect(container.textContent).toContain("No tool errors so far");
+  });
+
+  it("says why a step failed", () => {
+    // `parseStepStatusById` keeps only {stepId → status} and drops the
+    // runner's reason, so a failed row was a red mark and nothing else.
+    const { container } = render(
+      <StepReplayView
+        steps={[steps[0], gating]}
+        presentation="scorecard"
+        stepStatusById={new Map([["a4", "fail" as const]])}
+        stepResults={[
+          {
+            stepId: "a4",
+            stepIndex: 1,
+            kind: "assert",
+            status: "fail",
+            reason: "search-products returned isError",
+          },
+        ]}
+      />,
+    );
+    expect(
+      screen.getByTestId("step-replay-reason").textContent,
+    ).toBe("search-products returned isError");
+    expect(container.textContent).toContain("search-products returned isError");
+  });
+
+  it("does not count an advisory miss as a failed check", () => {
+    // An advisory miss does not fail the trial, so counting it here would
+    // report a failure the verdict itself does not agree with.
+    render(
+      <StepReplayView
+        steps={[steps[0], gating, advisory]}
+        presentation="scorecard"
+        verdict="passed"
+        stepStatusById={
+          new Map([
+            ["a4", "ok" as const],
+            ["a3", "fail" as const],
+          ])
+        }
+      />,
+    );
+    const header = screen.getByTestId("steps-verdict-header");
+    expect(header.textContent).toContain("1 of 1 check passed");
+    expect(header.textContent).toContain("· 1 warn");
+    expect(header.textContent).not.toContain("failed");
+  });
+
+  it("marks the advisory row itself as a warning", () => {
+    const { container } = render(
+      <StepReplayView
+        steps={[steps[0], advisory]}
+        presentation="scorecard"
+        stepStatusById={new Map([["a3", "fail" as const]])}
+      />,
+    );
+    const row = container.querySelector(
+      '[data-step-id="a3"]',
+    ) as HTMLElement;
+    expect(within(row).getByText("Warn")).toBeTruthy();
+  });
+
+  it("uses the page's verdict word rather than deriving a second one", () => {
+    // This header reads raw `iteration.result` while the trial header runs
+    // `computeIterationResult`; on the same screen they can disagree.
+    render(
+      <StepReplayView
+        steps={[steps[0], gating]}
+        presentation="scorecard"
+        verdict="passed"
+        verdictWord="No verdict"
+      />,
+    );
+    const header = screen.getByTestId("steps-verdict-header");
+    expect(header.textContent).toContain("No verdict");
+    expect(header.textContent).not.toContain("Passed");
+  });
+
+  it("still counts every check in legacy mode, advisory included", () => {
+    render(
+      <StepReplayView
+        steps={[steps[0], gating, advisory]}
+        verdict="failed"
+        stepStatusById={
+          new Map([
+            ["a4", "ok" as const],
+            ["a3", "fail" as const],
+          ])
+        }
+      />,
+    );
+    expect(
+      screen.getByTestId("steps-verdict-header").textContent,
+    ).toContain("1 of 2 checks passed");
+  });
+});
+
+it("reports advisory misses when the trial has no gating checks", () => {
+  render(
+    <StepReplayView
+      steps={[
+        steps[0],
+        {
+          id: "warn",
+          kind: "assert",
+          assertion: {
+            type: "noToolErrors",
+            role: "advisory",
+            severity: "warn",
+          },
+        },
+      ]}
+      presentation="scorecard"
+      verdict="passed"
+      stepStatusById={new Map([["warn", "fail"]])}
+    />,
+  );
+  expect(screen.getByTestId("steps-verdict-header")).toHaveTextContent(
+    "1 warn",
+  );
+  expect(screen.getByTestId("steps-verdict-header")).not.toHaveTextContent(
+    "check passed",
+  );
+});

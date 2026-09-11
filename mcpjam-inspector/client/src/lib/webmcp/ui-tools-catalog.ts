@@ -40,6 +40,7 @@
  * the same turn can use it).
  */
 
+import { buildEvalAuthoringTools } from "./groups/eval-authoring";
 import type { UiToolDefinition } from "./ui-tools-registry";
 import { buildCoreUiTools } from "./groups/core";
 import { buildServersUiTools } from "./groups/servers";
@@ -47,6 +48,7 @@ import { buildPlaygroundUiTools } from "./groups/playground";
 
 export function buildUiToolsCatalog(): UiToolDefinition[] {
   return [
+    ...buildEvalAuthoringTools(),
     ...buildCoreUiTools(),
     ...buildServersUiTools(),
     ...buildPlaygroundUiTools(),

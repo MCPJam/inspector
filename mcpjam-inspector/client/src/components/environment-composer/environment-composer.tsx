@@ -86,6 +86,8 @@ export function EnvironmentComposer({
   clientDefaultLabel,
   emptyServerLabel = "Server group · client default",
   serverInfoText = "Optional shared server group for every client in this setup.",
+  environmentsVocabulary = "environment",
+  showTargetCount = true,
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -115,6 +117,13 @@ export function EnvironmentComposer({
    */
   emptyServerLabel?: string;
   serverInfoText?: string;
+  /**
+   * Evaluate calls the saved-target picker Clients. Other surfaces keep
+   * Environments so Swarms and the Environments page stay unchanged.
+   */
+  environmentsVocabulary?: "environment" | "client";
+  /** A caller rendering its own execution plan can hide the inline count. */
+  showTargetCount?: boolean;
   /**
    * Prefix for this surface's test ids. The suffixes are historical (Swarms was
    * the first surface, hence "target"/"lego") — they are not composer concepts.
@@ -347,12 +356,30 @@ export function EnvironmentComposer({
             max={maxTargets}
             disabled={disabled}
             emptyLabel={
-              maxTargets === 1
-                ? "Select an environment"
-                : "No environments · pick some"
+              environmentsVocabulary === "client"
+                ? maxTargets === 1
+                  ? "Select a client"
+                  : "No clients · pick some"
+                : maxTargets === 1
+                  ? "Select an environment"
+                  : "No environments · pick some"
+            }
+            headingLabel={
+              environmentsVocabulary === "client"
+                ? maxTargets > 1
+                  ? "Clients · run order"
+                  : "Clients"
+                : undefined
+            }
+            emptyProjectLabel={
+              environmentsVocabulary === "client"
+                ? "No clients in this project yet."
+                : undefined
             }
             triggerTestId={testId("environments-picker")}
-            triggerAriaLabel="Environments"
+            triggerAriaLabel={
+              environmentsVocabulary === "client" ? "Clients" : "Environments"
+            }
             inModal={inModal}
             footerSlot={environmentPickerFooter}
           />
@@ -443,7 +470,7 @@ export function EnvironmentComposer({
             : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
         </p>
       ) : null}
-      {modelsEnabled && !disabled ? (
+      {modelsEnabled && slots.includes("models") && showTargetCount && !disabled ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("target-count")}

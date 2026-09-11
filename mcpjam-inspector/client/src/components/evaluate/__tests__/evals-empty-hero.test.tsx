@@ -23,9 +23,13 @@ describe("EvalsEmptyHero", () => {
     );
 
     expect(screen.getByTestId("evals-empty-hero")).toBeTruthy();
-    expect(screen.getByText("Create your first eval suite")).toBeTruthy();
     expect(
-      screen.getByText("Start from a server you've already connected."),
+      screen.getByText("Automate the checks you'd run by hand"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "We generate cases from a server you already use, then keep running them in CI.",
+      ),
     ).toBeTruthy();
     expect(screen.queryByText("What a suite looks like")).toBeNull();
 
@@ -54,12 +58,12 @@ describe("EvalsEmptyHero", () => {
     ).toBeTruthy();
   });
 
-  it("keeps Create suite and Try sample suite alongside project server cards", () => {
-    const onCreateSuiteFromServer = vi.fn();
+  it("starts Create suite from Eval my server with that server, not the blank form", () => {
+    const onEvalServer = vi.fn();
     render(
       <EvalsEmptyHero
         {...defaultProps}
-        onCreateSuiteFromServer={onCreateSuiteFromServer}
+        onEvalServer={onEvalServer}
         servers={[
           { id: "srv-1", name: "checkout-server" },
           { id: "srv-2", name: "payments-server" },
@@ -68,25 +72,23 @@ describe("EvalsEmptyHero", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Create suite from checkout-server" }),
+      screen.getByRole("button", { name: "Eval my server: checkout-server" }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Create suite from payments-server" }),
+      screen.getByRole("button", { name: "Eval my server: payments-server" }),
     ).toBeTruthy();
-    // The quickstart has no other entry point in the product, so a project
-    // that already has servers must not lose it.
     expect(
       screen.getByRole("button", { name: /^try sample suite$/i }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /^create suite$/i }),
-    ).toBeTruthy();
+      screen.queryByRole("button", { name: /^create suite$/i }),
+    ).toBeNull();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Create suite from checkout-server" }),
+      screen.getByRole("button", { name: "Eval my server: checkout-server" }),
     );
-    expect(onCreateSuiteFromServer).toHaveBeenCalledTimes(1);
-    expect(onCreateSuiteFromServer).toHaveBeenCalledWith({
+    expect(onEvalServer).toHaveBeenCalledTimes(1);
+    expect(onEvalServer).toHaveBeenCalledWith({
       id: "srv-1",
       name: "checkout-server",
     });
@@ -97,19 +99,21 @@ describe("EvalsEmptyHero", () => {
       id: `srv-${i}`,
       name: `server-${i}`,
     }));
-    render(<EvalsEmptyHero {...defaultProps} servers={servers} />);
+    render(
+      <EvalsEmptyHero {...defaultProps} servers={servers} onEvalServer={vi.fn()} />,
+    );
 
     expect(
-      screen.getByRole("button", { name: "Create suite from server-0" }),
+      screen.getByRole("button", { name: "Eval my server: server-0" }),
     ).toBeTruthy();
     expect(
       screen.getByRole("button", {
-        name: `Create suite from server-${EVALS_EMPTY_HERO_MAX_SERVERS - 1}`,
+        name: `Eval my server: server-${EVALS_EMPTY_HERO_MAX_SERVERS - 1}`,
       }),
     ).toBeTruthy();
     expect(
       screen.queryByRole("button", {
-        name: `Create suite from server-${EVALS_EMPTY_HERO_MAX_SERVERS}`,
+        name: `Eval my server: server-${EVALS_EMPTY_HERO_MAX_SERVERS}`,
       }),
     ).toBeNull();
   });

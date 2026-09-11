@@ -121,13 +121,21 @@ export async function seedAttachmentsIntoSandbox(args: {
  * The COMP-14 note appended to the case's first user turn so the model reaches
  * the seeded files the same way it would in chat. `null` when there's nothing to
  * announce.
+ *
+ * `readWith` names the tool the READER actually holds, because that is not
+ * always `bash`: an unattended run on a DESKTOP box has no shell — a browser
+ * and a shell do not share an image unless the deployment has accepted the
+ * co-tenancy boundary — and reaches its files through the harness's own file
+ * tools. Naming a tool the model was never given is worse than naming none:
+ * it spends a turn calling something that does not exist.
  */
 export function buildAttachmentsNote(
-  attachments: ResolvedEvalAttachment[]
+  attachments: ResolvedEvalAttachment[],
+  readWith = "the bash tool"
 ): string | null {
   if (attachments.length === 0) return null;
   const lines = attachments.map((att) => `- ${att.name}: ${att.path}`);
-  return `[Attachments uploaded to the computer — use the bash tool to read them]\n${lines.join(
+  return `[Attachments uploaded to the computer — use ${readWith} to read them]\n${lines.join(
     "\n"
   )}`;
 }
@@ -145,6 +153,8 @@ export async function seedEvalCaseAttachments(args: {
   runId: string;
   testCaseId: string | undefined;
   sandboxId: string;
+  /** See `buildAttachmentsNote`: the tool THIS iteration's reader holds. */
+  readWith?: string;
   signal?: AbortSignal;
   resolver?: typeof resolveEvalRunAttachments;
   writer?: AttachmentSeedWriter;
@@ -191,5 +201,5 @@ export async function seedEvalCaseAttachments(args: {
     ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
   });
 
-  return { note: buildAttachmentsNote(attachments) };
+  return { note: buildAttachmentsNote(attachments, args.readWith) };
 }

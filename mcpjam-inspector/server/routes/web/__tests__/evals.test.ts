@@ -60,6 +60,26 @@ vi.mock("../../../utils/oauth-proxy.js", () => ({
   }),
 }));
 
+// The eval routes resolve the host a run executes under before connecting, so
+// the manager negotiates as THAT host rather than as whichever one the browser
+// had active. `prepareEvalRun` is mocked below, so this loader — which the real
+// prepare would also call — has to be stubbed here for the route to get past it.
+const loadSuiteHostConfigMock = vi.fn(
+  async () => ({}) as Record<string, unknown>,
+);
+vi.mock("../../../services/evals/compat-runtime.js", () => ({
+  loadSuiteHostConfig: (...args: unknown[]) => loadSuiteHostConfigMock(...args),
+}));
+// …and the read client it takes. There is no Convex in this suite, so the real
+// one throws "CONVEX_URL is not set" before the route reaches anything it is
+// actually asserting.
+vi.mock("../../../services/evals/route-helpers.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/evals/route-helpers.js")
+  >("../../../services/evals/route-helpers.js");
+  return { ...actual, createConvexClient: vi.fn(() => ({}) as never) };
+});
+
 vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
     "../../shared/evals.js",
@@ -383,7 +403,63 @@ describe("web routes — evals", () => {
     },
   );
 
+  it("enforces the RUN host's enterprise-managed authorization, not the body's", async () => {
+    // The one connection fact where losing the host's word is a security
+    // question rather than a fidelity one: a browser pointed at a different
+    // client must not be able to downgrade this run onto the discover/OAuth
+    // ladder. Observable because a policy makes the manager advertise the XAA
+    // extension on every server it connects.
+    loadSuiteHostConfigMock.mockResolvedValueOnce({
+      mcpProfile: {
+        profileVersion: 1,
+        extensions: { "com.mcpjam/enterprise-managed-auth": { idp: "mcpjam" } },
+      },
+    });
+    prepareEvalRunMock.mockResolvedValueOnce({
+      suiteId: "suite-1",
+      runId: "run-1",
+      caseUpsert: { committed: [], failed: [] },
+      recorder: { finalize: vi.fn() },
+      execute: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const { app, token } = createEvalsTestApp();
+    await postJson(app, "/api/web/evals/run", runSuiteBody, token);
+
+    const connected = (
+      managerConfigsMock.mock.calls[0]?.[0] as Record<
+        string,
+        { clientCapabilities?: { extensions?: Record<string, unknown> } }
+      >
+    )["server-1"];
+    expect(
+      connected.clientCapabilities?.extensions?.[
+        "io.modelcontextprotocol/enterprise-managed-authorization"
+      ],
+    ).toBeDefined();
+  });
+
   it("starts hosted suite runs asynchronously and keeps MCP connections until execution settles", async () => {
+    // The host this suite runs under. Every connection fact below comes from
+    // here rather than from the request body: the browser derives its pins from
+    // whichever host it has ACTIVE, which is not necessarily the one an
+    // environment or attachment pins for the run.
+    loadSuiteHostConfigMock.mockResolvedValueOnce({
+      clientCapabilities: { roots: {} },
+      connectionDefaults: { requestTimeout: 12_000 },
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "2026-07-28",
+        initialize: {
+          clientInfo: { name: "Suite Host", version: "9.9.9" },
+          supportedProtocolVersions: ["2026-07-28"],
+        },
+        paginationTraversal: "firstPageOnly",
+        mrtrSupport: "none",
+        toolListChanged: { listens: false },
+        toolCallCancellation: { modern: false },
+      },
+    });
     const execution = deferred();
     const execute = vi.fn(() => execution.promise);
     const finalize = vi.fn().mockResolvedValue(undefined);
@@ -410,6 +486,11 @@ describe("web routes — evals", () => {
         // pins off it, so a schema that does not name them strips them and
         // the eval runs as a fully conforming client — silently, against a
         // host configured to be anything but.
+        //
+        // The RUN'S HOST decides them, though, so the assertions below are
+        // about the host set on `loadSuiteHostConfigMock`, not about these.
+        // `dropToolListChanged` is here and NOT on that host precisely to pin
+        // that: a body knob the host does not ask for is dropped.
         suppressListenChannel: true,
         dropToolListChanged: true,
         firstPageOnly: true,
@@ -450,20 +531,32 @@ describe("web routes — evals", () => {
         convexAuthToken: token,
       }),
     );
-    expect(managerConfigsMock.mock.calls[0]?.[0]).toEqual(
+    const connectedConfig = (
+      managerConfigsMock.mock.calls[0]?.[0] as Record<
+        string,
+        Record<string, unknown>
+      >
+    )["server-1"];
+    expect(connectedConfig).toEqual(
       expect.objectContaining({
-        "server-1": expect.objectContaining({
-          clientInfo: { name: "Pinned Client", version: "1.0.0" },
-          supportedProtocolVersions: ["2025-11-25"],
-          mcpProtocolVersion: "2025-11-25",
-          suppressListenChannel: true,
-          dropToolListChanged: true,
-          firstPageOnly: true,
-          supportsMrtr: false,
-          toolCallCancellation: { legacy: false, modern: false },
-        }),
+        // From the HOST, overriding what the body sent.
+        clientInfo: { name: "Suite Host", version: "9.9.9" },
+        supportedProtocolVersions: ["2026-07-28"],
+        mcpProtocolVersion: "2026-07-28",
+        firstPageOnly: true,
+        supportsMrtr: false,
+        suppressListenChannel: true,
+        toolCallCancellation: { modern: false },
+        // The host's per-server timeout override, not the route's 30s default.
+        timeout: 12_000,
       }),
     );
+    // A knob the body asked for and the host did not: dropped. These are
+    // suppression switches, so honoring the body here would let a stale
+    // browser make a conforming host non-conforming.
+    expect(connectedConfig.dropToolListChanged).toBeUndefined();
+    // The host's advertised capabilities, not the body's.
+    expect(connectedConfig.clientCapabilities).toEqual({ roots: {} });
     expect(disconnectAllServersMock).not.toHaveBeenCalled();
 
     execution.resolve(undefined);
@@ -514,9 +607,10 @@ describe("web routes — evals", () => {
       runSuiteBody,
       token,
     );
-    const { status, data } = await expectJson<{ code: string; message: string }>(
-      response,
-    );
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(response);
 
     expect(status).toBe(500);
     expect(data.message).toContain("quota exceeded");
