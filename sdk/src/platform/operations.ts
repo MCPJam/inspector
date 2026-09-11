@@ -1,3 +1,6 @@
+import { platformBrowserToolPolicySchema } from "./browser-policy.js";
+import type { PlatformSessionBrowserCommand } from "./types.js";
+import type { PlatformSessionBrowserOperationResult } from "./types.js";
 /**
  * Curated, task-shaped operations over the Platform API. Each operation is
  * defined once and adapted per surface: MCP worker tools, CLI commands, and
@@ -83,6 +86,7 @@ import type {
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
   PlatformEvalRouteFacts,
+  PlatformEvalServerFacts,
   PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
   PlatformEvalRunGate,
@@ -7184,7 +7188,7 @@ const ROUTE_FACTS_READING_RULES =
   "Population is the TRIAL. Substitution is named only for the one-to-one in-catalog shape: exactly one expected name missing and exactly one unexpected in-catalog name observed. Cosine similarity is not a diagnostic. " +
   "`catalogState` is `loaded` or `notLoaded`; catalog-not-loaded forbids substitution and unexpected tools read as `catalogNotLoaded`, never as in- or outside-catalog. " +
   "A ZERO DENOMINATOR MEANS NOT MEASURED — never 0% and never 100%: `notMeasured` is not zero. " +
-  "`endedWithQuestion` stays `notMeasured` until a producer exists; it is not a zero and it is not a pass. " +
+  "`endedWithQuestion` is measured GOING FORWARD: the runner records it on every trial it finalizes from now on, and there is no backfill — a run that finished before that shipped stays `notMeasured`, which is not a zero and not a pass. " +
   "This document is REPORT-ONLY and never a verdict: nothing here writes `result`, feeds a gate, or changes a pass/fail. " +
   "There is NO BACKFILL: a run that terminalized before route-facts measurement shipped has no document and never will, and that absence is unmeasured, never zeros.";
 
@@ -7270,6 +7274,77 @@ export const getEvalRunRouteFactsOperation: PlatformOperation<
           routeFactsState: "unmeasured",
           routeFacts: null,
         };
+      }
+      throw error;
+    }
+  },
+};
+
+const SERVER_FACTS_READING_RULES =
+  "Everything here is a FACT ABOUT THE SERVER, and none of it is a verdict: a 57-tool surface is not a defect, a three-second connect is not a failure, and a precheck is a signal. Nothing in this document feeds a gate or changes a pass/fail. " +
+  "PAYLOAD SIZE IS THREE DIFFERENT NUMBERS and this document keeps two of them apart by name. `payload.basis` is `aggregated_catalog_json` (the catalog as the client assembled it, measured at capture) or `normalized_snapshot` (the bytes we retained, which is smaller whenever redaction dropped fields — `payload.complete` says so). The third — what the model actually saw — is a per-run HOST fact and is NOT in this document. Never compare numbers across bases and never report either as context consumption. " +
+  "TOKENS ARE AN ESTIMATE. `tokenEstimate.method` is `json_chars_div_4`; there is no tokenizer. `referenceWindowShare` is a share of a REFERENCE window (`tokenEstimate.referenceWindowTokens`), not of any model's real context. Quote the estimate with its caveat or not at all. " +
+  "A PRECHECK IS NOT AUTOMATICALLY A VIOLATION. Only `class: \"spec_required\"` names one. A row with `protocolDependent: true` is a rule we could not tell applied — the protocol version was unknown — and reporting it as a defect accuses a server that may be correct. " +
+  "RELATED ASSESSMENTS ARE LINKED, NEVER GRADED. The join is by server id ALONE (`comparability: \"sameServerId\"`): a different server version, environment or auth context is not excluded by it. Each carries its own `createdAt`. None of them is this run's verdict. " +
+  "AN UNOBSERVED SETUP PHASE IS NOT A FAILED ONE: an absent `setup.connection` means nothing was recorded, and `durationMs` is measured ONCE PER RUN — a run with 200 trials did not connect 200 times.";
+
+export type GetEvalRunServerFactsResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  suiteId: string;
+  serverFacts: PlatformEvalServerFacts;
+};
+
+function serverFactsRouteUnavailableError(): PlatformApiError {
+  return new PlatformApiError(
+    "This MCPJam deployment does not serve eval run server facts. That is a fact about the deployment, not about the run — do not report the run as having no server snapshot.",
+    "FEATURE_NOT_SUPPORTED",
+    { status: 501 }
+  );
+}
+
+export const getEvalRunServerFactsOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalRunServerFactsResult
+> = {
+  name: "get_eval_run_server_facts",
+  title: "Get MCPJam eval run server facts",
+  description:
+    "Get ONE run's SERVER FACTS: the tool snapshot it ran against — per server, the tool count, the catalog's measured size, annotation and output-schema coverage, and the deterministic tool-metadata prechecks — plus what the setup phase observed (connect and discovery outcome, attribution and wall time) and any conformance or readiness runs for the same servers. This is the SERVER half of the run story: `get_eval_run`'s `decisionSummary` says where trials stopped and `get_eval_run_route_facts` says which paths they walked; this says what they were walking through. " +
+    SERVER_FACTS_READING_RULES +
+    ' ABSENCE IS NOT A STATE OF THIS DOCUMENT, unlike route facts. Server facts are COMPUTED ON READ, so there is no materializer and no backfill window: a run that finished years ago still answers. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error, and a deployment that does not serve this route fails as an explicit deployment error. A run with nothing to describe answers INSIDE the document, with `state: "unavailable"` and a `reason` — `snapshotMissing` (no snapshot was stored), `snapshotPartial` (some servers did not answer; the ones that did are still listed and their numbers are real), or `setupNotObserved` (no setup audit was recorded, which means unmeasured and NOT failed).',
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    // THE RUN FIRST, same reason as route facts: the route answers 404 for
+    // "not visible to you" without distinguishing it from anything else, so
+    // retrieving the run separately is what turns that into a run-not-found
+    // error rather than a silence the caller has to interpret.
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    try {
+      const serverFacts = await client.getEvalRunServerFacts(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      );
+      return {
+        project: toSelectedProjectInfo(project),
+        runId: run.id,
+        suiteId: run.suiteId,
+        serverFacts,
+      };
+    } catch (error) {
+      if (isStageAnalyticsRouteUnavailable(error)) {
+        throw serverFactsRouteUnavailableError();
       }
       throw error;
     }
@@ -8538,6 +8613,7 @@ export const listChatSessionsOperation: PlatformOperation<
 // everyone in this org has been talking about".
 
 const sendChatMessageInput = z.object({
+  browser: z.object({ policy: platformBrowserToolPolicySchema.optional(), profileId: z.string().min(1).optional() }).optional().describe("Attach the session browser for this turn. The first attachment requires a policy; later turns can send {} to reuse it."),
   idempotencyKey: z
     .string()
     .trim()
@@ -8673,6 +8749,7 @@ export const sendChatMessageOperation: PlatformOperation<
             id: result.sessionId,
             projectId: result.projectId,
           },
+          ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: !!result.browser?.attached, projectId: result.projectId }] : []),
         ]
       : []
   ),
@@ -8695,6 +8772,7 @@ export const sendChatMessageOperation: PlatformOperation<
       {
         idempotencyKey: input.idempotencyKey,
         message: input.message,
+        ...(input.browser !== undefined ? { browser: input.browser } : {}),
         ...(projectId ? { projectId } : {}),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         ...(input.modelId ? { modelId: input.modelId } : {}),
@@ -8718,6 +8796,234 @@ export const sendChatMessageOperation: PlatformOperation<
           ? { maxToolCalls: input.maxToolCalls }
           : {}),
       },
+      { signal }
+    );
+  },
+};
+
+const sessionBrowserInput = z.object({
+  sessionId: z.string().min(1).optional(),
+  project: z.string().min(1).optional(),
+  policy: platformBrowserToolPolicySchema.optional(),
+  profileId: z.string().min(1).optional(),
+  commandId: z.string().min(1).optional(),
+  idempotencyKey: z.string().min(1).optional(),
+  tabId: z.string().min(1).optional(),
+});
+const driveSessionBrowserInput = sessionBrowserInput
+  .extend({
+    op: z.enum(["open", "navigate", "act", "invoke", "note", "close"]),
+    url: z
+      .string()
+      .url()
+      .max(8192)
+      .refine(
+        (url) => ["http:", "https:"].includes(new URL(url).protocol),
+        "Expected an HTTP(S) URL"
+      )
+      .optional(),
+    command: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "For act: BrowserAgentCommand fields, including verb, target, value, and expectedState."
+      ),
+    toolKey: z.string().min(1).optional(),
+    input: z.unknown().optional(),
+    text: z.string().min(1).optional(),
+  })
+  .superRefine((input, ctx) => {
+    const require = (field: string, valid: boolean) => {
+      if (!valid)
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} is required for ${input.op}`,
+        });
+    };
+    if (input.op !== "open") require("sessionId", !!input.sessionId);
+    if (input.op === "open" && !input.sessionId) {
+      require("policy", !!input.policy);
+      require("idempotencyKey", !!input.idempotencyKey);
+    }
+    if (input.op === "navigate") require("url", !!input.url);
+    if (input.op === "act")
+      require("command.verb", !!input.command &&
+        [
+          "click",
+          "type",
+          "press",
+          "scroll",
+          "hover",
+          "drag",
+          "select",
+          "close_tab",
+          "activate_tab",
+          "accept_dialog",
+          "dismiss_dialog",
+        ].includes(String(input.command.verb)));
+    if (input.op === "invoke") {
+      require("toolKey", !!input.toolKey);
+      require("input", Object.hasOwn(input, "input"));
+    }
+    if (input.op === "note") require("text", !!input.text);
+  });
+const observeSessionBrowserInput = z.object({
+  sessionId: z.string().min(1),
+  op: z.enum(["observe", "trace", "artifact"]),
+  mode: z
+    .enum([
+      "a11y",
+      "screenshot",
+      "text",
+      "dom",
+      "console",
+      "network",
+      "dialog",
+      "url",
+      "page_tools",
+    ])
+    .optional(),
+  commandId: z.string().optional(),
+  tabId: z.string().optional(),
+  afterSeq: z.number().int().nonnegative().optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+export type DriveChatSessionBrowserInput = z.infer<
+  typeof driveSessionBrowserInput
+>;
+export type ObserveChatSessionBrowserInput = z.infer<typeof observeSessionBrowserInput>;
+export const driveChatSessionBrowserOperation: PlatformOperation<
+  DriveChatSessionBrowserInput,
+  PlatformSessionBrowserOperationResult
+> = {
+  name: "drive_chat_session_browser",
+  title: "Drive a Playground session browser",
+  description:
+    "Open, navigate, act, invoke a page tool, add a note, or close the browser owned by an API Playground session. Uses metered desktop time. Same-user control only; sessionId is the public chat session ID. Opening without sessionId requires project, policy and a stable idempotencyKey.",
+  readOnly: false,
+  mayBeDestructive: true,
+  risk: "spend",
+  permalink: derivePermalinks((result) => {
+    const row = result as {
+      sessionId?: string;
+      chatSessionId?: string;
+      projectId?: string;
+    };
+    return row.chatSessionId
+      ? [
+          {
+            type: "playground_conversation",
+            id: row.chatSessionId,
+            browser: true,
+            projectId: row.projectId,
+          },
+        ]
+      : [];
+  }),
+  inputSchema: driveSessionBrowserInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const validated = driveSessionBrowserInput.safeParse(input);
+    if (!validated.success) throw operationInputError(validated.error.message);
+
+    if (!input.sessionId) {
+      if (input.op !== "open" || !input.policy || !input.idempotencyKey)
+        throw operationInputError(
+          "Opening without a session requires policy and idempotencyKey"
+        );
+      const scope = await resolveProjectOrThrow(
+        { client, signal, onScopeResolved },
+        input.project
+      );
+      return client.createChatSessionBrowser(
+        {
+          projectId: scope.project.id,
+          policy: input.policy,
+          ...(input.profileId ? { profileId: input.profileId } : {}),
+          idempotencyKey: input.idempotencyKey,
+        },
+        { signal }
+      );
+    }
+    const common = {
+      ...(input.commandId ? { commandId: input.commandId } : {}),
+      ...(input.tabId ? { tabId: input.tabId } : {}),
+    };
+    if (input.op === "open")
+      return client.chatSessionBrowser(
+        input.sessionId,
+        "open",
+        {
+          ...(input.policy ? { policy: input.policy } : {}),
+          ...(input.profileId ? { profileId: input.profileId } : {}),
+        },
+        { signal }
+      );
+    if (input.op === "close")
+      return client.chatSessionBrowser(
+        input.sessionId,
+        "close",
+        {},
+        { signal }
+      );
+    if (input.op === "note")
+      return client.chatSessionBrowser(
+        input.sessionId,
+        "note",
+        { ...common, text: input.text! },
+        { signal }
+      );
+    const command =
+      input.op === "navigate"
+        ? { op: "navigate", url: input.url }
+        : input.op === "invoke"
+        ? { op: "invoke_page_tool", toolKey: input.toolKey, input: input.input }
+        : { ...input.command, op: "act" };
+    return client.chatSessionBrowser(
+      input.sessionId,
+      "command",
+      { ...common, command: command as PlatformSessionBrowserCommand },
+      { signal }
+    );
+  },
+};
+export const observeChatSessionBrowserOperation: PlatformOperation<
+  ObserveChatSessionBrowserInput,
+  PlatformSessionBrowserOperationResult
+> = {
+  name: "observe_chat_session_browser",
+  title: "Observe a Playground session browser",
+  description:
+    "Observe, read command history, or obtain a screenshot URL for an API session browser. Observation wakes a sleeping desktop and uses metered desktop time. Trace and artifact reads do not wake it. No image blocks are returned.",
+  // Observation can provision a metered desktop, so this tool is not a pure read.
+  readOnly: false,
+  risk: "spend",
+  permalink: derivePermalinks((result) => {
+    const row = result as { chatSessionId?: string; projectId?: string };
+    return row.chatSessionId
+      ? [
+          {
+            type: "playground_conversation",
+            id: row.chatSessionId,
+            browser: true,
+            projectId: row.projectId,
+          },
+        ]
+      : [];
+  }),
+  inputSchema: observeSessionBrowserInput,
+  async execute(input, { client, signal }) {
+    const { sessionId, op, ...body } = input;
+    return client.chatSessionBrowser(
+      sessionId,
+      op === "observe" ? "command" : op,
+      op === "observe"
+        ? {
+            ...(body.commandId ? { commandId: body.commandId } : {}),
+            ...(body.tabId ? { tabId: body.tabId } : {}),
+            command: { op: "observe", mode: body.mode ?? "screenshot" },
+          }
+        : body,
       { signal }
     );
   },
@@ -8763,6 +9069,7 @@ export const getChatSessionOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) => [
     { type: "chat_session", id: result.sessionId, ...projectIdOf(result) },
+    ...(result.chatSessionId && result.origin === "api" ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: !!result.browser, ...projectIdOf(result) }] : []),
   ]),
   inputSchema: getChatSessionInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -8834,10 +9141,14 @@ export const getChatSessionTraceOperation: PlatformOperation<
   description:
     "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions.",
   readOnly: true,
-  permalink: noPermalink(
-    "no-addressable-resource",
-    "A span-level trace projection; the response names turns, not the session id the Sessions feed opens on."
-  ),
+  permalink: derivePermalinks((result, _input, context) => {
+    const projectId = projectIdOf(result).projectId ?? context.resolvedScope?.projectId;
+    if (!projectId) return [];
+    return [
+      { type: "chat_session", id: result.sessionId, projectId },
+      ...(result.chatSessionId ? [{ type: "playground_conversation" as const, id: result.chatSessionId, browser: result.turns.some(turn => !!turn.browser), projectId }] : []),
+    ];
+  }),
   inputSchema: getChatSessionTraceInput,
   async execute(input, { client, signal, onScopeResolved }) {
     const projectSelector = input.project?.trim();
@@ -15861,6 +16172,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
   getEvalDescriptionExperimentOperation,
@@ -15885,6 +16197,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listChatSessionsOperation,
   searchSessionsOperation,
   sendChatMessageOperation,
+  driveChatSessionBrowserOperation,
+  observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
   listJourneysOperation,

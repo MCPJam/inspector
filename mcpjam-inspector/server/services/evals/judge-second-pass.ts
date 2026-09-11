@@ -405,6 +405,16 @@ type StoredPredicateRow = {
    * beside the original, or an `EVAL_RUN_CONFIG_CONFLICT` outright.
    */
   scope?: PredicateScope;
+  /**
+   * `"error"` ⇒ the check could not be scored, and the row carries no verdict.
+   *
+   * LOAD-BEARING for the same reason as `scope`, in the opposite direction:
+   * dropping it does not mint a new scorer, it silently CONVERTS an
+   * unscorable row into a scored 0 — a defect attributed to the server on a
+   * measurement nobody took, appearing only on the iterations a judge
+   * happened to rewrite.
+   */
+  status?: string;
 };
 
 function isPredicateRow(value: unknown): value is StoredPredicateRow {
@@ -566,6 +576,8 @@ export function deriveIterationPayload(args: {
             // Forwarded so a turn-scoped predicate rebuilds under the SAME
             // scorer identity the first pass wrote. See `StoredPredicateRow`.
             ...(row.scope ? { scope: row.scope } : {}),
+            // …and so a row the first pass could not score stays unscored.
+            ...(typeof row.status === "string" ? { status: row.status } : {}),
           })),
         }
       : {}),

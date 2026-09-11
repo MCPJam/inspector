@@ -1,3 +1,4 @@
+import { fetchArtifactBytes } from "../lib/download-screenshot.js";
 import {
   existsSync,
   mkdirSync,
@@ -20,6 +21,7 @@ import {
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -1143,36 +1145,6 @@ type ScreenshotItem = RenderedScreenshot & { savedTo?: string };
  * Fetch raw artifact bytes (screenshot PNG or replay `.webm`) for a resolved
  * URL, bounded by the request timeout. `kind` only shapes the error wording.
  */
-async function fetchArtifactBytes(
-  url: string,
-  timeoutMs: number,
-  kind = "screenshot"
-): Promise<Uint8Array> {
-  const controller = new AbortController();
-  const handle = setTimeout(() => controller.abort(), timeoutMs);
-  handle.unref?.();
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) {
-      throw operationalError(
-        `Failed to download ${kind} (HTTP ${response.status}).`,
-        { url }
-      );
-    }
-    return new Uint8Array(await response.arrayBuffer());
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw operationalError(
-        `Timed out downloading ${kind} after ${timeoutMs}ms.`,
-        { url }
-      );
-    }
-    throw error;
-  } finally {
-    clearTimeout(handle);
-  }
-}
-
 /** Fetch raw image bytes for a screenshot URL, bounded by the request timeout. */
 function fetchScreenshotBytes(
   url: string,
@@ -4323,6 +4295,43 @@ export function registerEvalCommands(program: Command): void {
       );
       await executeOp(
         getEvalRunRouteFactsOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
+        input,
+        options,
+        command
+      );
+    }
+  );
+
+  addProjectOption(
+    evals
+      .command("server-facts")
+      .description(
+        "Read the server a run was taken against — tool surface, catalog size, annotation coverage, tool-metadata signals, and what connect and discovery observed"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+  ).action(
+    async (
+      options: PlatformOptions & { project?: string; run: string },
+      command
+    ) => {
+      const input = validateOpInput(
+        getEvalRunServerFactsOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
+        {
+          runId: options.run,
+          ...(options.project === undefined
+            ? {}
+            : { project: options.project }),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        getEvalRunServerFactsOperation as PlatformOperation<
           Record<string, unknown>,
           unknown
         >,

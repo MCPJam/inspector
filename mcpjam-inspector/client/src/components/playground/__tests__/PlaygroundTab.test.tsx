@@ -1,11 +1,15 @@
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ComponentProps, ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 
 // PlaygroundTab pulls in a large hook + provider graph. We only care about the
 // `loadingState` branch that decides whether the branded first-run loading
 // screen shows, so neutralize everything else and drive `loadingState`.
 
+vi.mock("@/hooks/useComputersEnabled", () => ({ useBrowserWorkspaceEnabledState: () => true, useBrowserEnabledState: () => true }));
 const mockLoadingScreen = vi.hoisted(() => vi.fn());
 const mockLoadingState = vi.hoisted(() => ({
   current: { kind: "skeleton" } as { kind: string },
@@ -38,6 +42,22 @@ vi.mock("@/hooks/use-previewed-client-id", () => ({
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({ servers: [] }),
 }));
+// The engine hook subscribes to environment and chat-session stores that
+// re-render the tab once they settle; the loading branch under test renders
+// before any of that matters.
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    engine: "cloud",
+    selectedEngine: "cloud",
+    setEngine: () => {},
+    resolved: true,
+    localAvailable: false,
+    cloudAvailable: false,
+    toggleVisible: false,
+    environmentMode: false,
+    consent: null,
+  }),
+}));
 vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
   useAutoConnectProjectServers: () => {},
 }));
@@ -66,7 +86,8 @@ vi.mock("@/contexts/scenario-client-capabilities-override-context", () => ({
   }) => children,
 }));
 vi.mock("@/contexts/active-mcp-profile-context", () => ({
-  ActiveMcpProfileProvider: ({ children }: { children?: ReactNode }) => children,
+  ActiveMcpProfileProvider: ({ children }: { children?: ReactNode }) =>
+    children,
 }));
 vi.mock("@/contexts/active-host-client-capabilities-context", () => ({
   ActiveHostCapsResolverScope: ({ children }: { children?: ReactNode }) =>
@@ -104,10 +125,20 @@ const baseProps: ComponentProps<typeof PlaygroundTab> = {
 
 describe("PlaygroundTab loading branch", () => {
   beforeEach(() => {
+    useActiveChatSessionStore.setState({ sessionId: null, restoredSession: null, restorationPending: false });
+    useBrowserWorkspaceStore.setState({ conversations: {} });
     mockLoadingScreen.mockClear();
     mockLoadingState.current = { kind: "skeleton" };
   });
 
+  it("does not close a persisted panel while conversation metadata is restoring", () => {
+    useActiveChatSessionStore.setState({ sessionId: "wire", restorationPending: true });
+    useBrowserWorkspaceStore.getState().openBrowser("wire");
+    render(<PlaygroundTab {...baseProps} />);
+    expect(useBrowserWorkspaceStore.getState().conversations.wire.open).toBe(true);
+    act(() => useActiveChatSessionStore.getState().setRestorationPending(false));
+    expect(useBrowserWorkspaceStore.getState().conversations.wire.open).toBe(false);
+  });
   it("shows the branded 'Setting things up...' screen during the first-run skeleton", () => {
     mockLoadingState.current = { kind: "skeleton" };
 
@@ -115,10 +146,10 @@ describe("PlaygroundTab loading branch", () => {
 
     expect(mockLoadingScreen).toHaveBeenCalledTimes(1);
     expect(mockLoadingScreen).toHaveBeenCalledWith(
-      expect.objectContaining({ message: "Setting things up..." })
+      expect.objectContaining({ message: "Setting things up..." }),
     );
     expect(screen.getByTestId("loading-screen")).toHaveTextContent(
-      "Setting things up..."
+      "Setting things up...",
     );
   });
 

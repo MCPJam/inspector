@@ -32,6 +32,10 @@ describe("readBrowserdConfig", () => {
       port: DEFAULT_BROWSERD_PORT,
       host: DEFAULT_BROWSERD_HOST,
       userDataDir: DEFAULT_BROWSERD_USER_DATA_DIR,
+      // FIXED unless a deployment says otherwise: every existing opener — an
+      // eval, a swarm, a CLI run — keeps the 1024x768 session it has always
+      // had, and only a box configured for it moves off.
+      viewportPolicy: "fixed",
       headless: false,
       windowSize: undefined,
       contextMode: "persistent",
@@ -329,5 +333,22 @@ describe("announcedFeatures", () => {
         { MCPJAM_BROWSER_VIDEO: "false" },
       ),
     ).toEqual([]);
+  });
+
+  it("reads the responsive opt-in, and treats anything else as fixed", () => {
+    // Absent and misspelt are indistinguishable to a reader, and both must
+    // land on the conservative side — the session that never changes size.
+    expect(
+      readBrowserdConfig({
+        MCPJAM_BROWSERD_TOKEN: "tok",
+        MCPJAM_BROWSERD_VIEWPORT_POLICY: "followPane",
+      }).viewportPolicy,
+    ).toBe("followPane");
+    expect(
+      readBrowserdConfig({
+        MCPJAM_BROWSERD_TOKEN: "tok",
+        MCPJAM_BROWSERD_VIEWPORT_POLICY: "followpane",
+      }).viewportPolicy,
+    ).toBe("fixed");
   });
 });

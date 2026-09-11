@@ -22,7 +22,7 @@ calls.
 model ──► browser_* tools ──► SessionClient ──► browserd stack ──► ChromiumDriver
                  ▲ engine chosen        HTTP (hosted)      queue · lease · budgets
                  │ in the registry      or a function
-                 │ exactly like bash    call (local)
+                 │ independently of bash    call (local)
           hostConfig.builtInToolIds
 ```
 
@@ -43,8 +43,8 @@ model ──► browser_* tools ──► SessionClient ──► browserd stack
 
 ## Trust model
 
-Read this before changing anything here. It extends the shell's, and differs
-from it in one direction that matters: a browser holds **logins**.
+Browser and shell have independent consent scopes. Browser permission covers
+control of Chromium and its **signed-in websites**; it never authorizes Bash.
 
 - **This is not a sandbox.** Chromium runs as the OS user, in a profile that
   persists their sessions. The boundaries are device _consent_, _per-action
@@ -62,6 +62,48 @@ from it in one direction that matters: a browser holds **logins**.
   person holding the browser blocks every model-driven command _and every
   observation_, including one already queued or mid-flight.
 
+## Location and Browser permission
+
+The Browser panel owns **This machine / Cloud**, grant/revoke, and Chromium
+installation in both layouts. Node-local and Electron default to This machine within the local Browser
+cohort, otherwise Cloud. Hosted and environment mode select Cloud. Browser selection is stored separately from Computer
+selection. Local candidacy uses `local-browser-enabled` and
+`engines.local.browserAvailable`; neither Bash availability nor
+`local-computer-enabled` enables or disables Browser.
+
+A new explicit Browser grant is required after upgrading from the shared-grant
+implementation. The server stores only its hash in
+`~/.mcpjam/browser/consent.json`. The client sends the capability in
+`X-MCPJam-Browser-Consent`. Shell grants retain their existing file and header;
+shell, Browser, and harness capabilities are not interchangeable. Revoking
+Browser invalidates frame nonces, active streams and Electron input without
+revoking shell permission or deleting profiles.
+
+Enable Browser alone, Bash alone, or both. Each retains its own authorization
+and destination. Local Browser and local Bash share this machine. Two Cloud
+selections do not by themselves guarantee the same box: conversation Browser
+uses its watched desktop, while personal Bash uses its configured computer.
+A run with an explicit shared desktop binding uses that box for both and
+must use a blank profile. A saved-profile pin with both tools is rejected
+before unattended launch and at the runtime boundary. Unattended sessions
+never inherit the interactive default profile. Never
+assume `localhost` or files are shared across different boxes.
+
+A conversation's existing logical-session `box` determines Browser location;
+changing it requires **Start new chat**. Resume keeps the binding in
+conversation UI state without rewriting the project preference. That binding
+never grants execution access. Explicit local requests that cannot run suppress
+Browser with a readiness data part and panel remedy; unrelated chat remains usable.
+Runtime diagnostics never become assistant text. The pre-turn location check is
+read-only; the first Browser use opens and binds the logical session.
+Open/control requests instead return `browser_consent_required` (403),
+`browser_runtime_unavailable` (503), or `browser_location_mismatch` (409).
+A disabled deployment can return 404 with a structured reason.
+
+Org-managed models requesting local Browser use Inspector's local tool loop
+with `/stream/org` as the model broker; the org key remains in Convex. Hosted
+web chat rejects local Browser selection and Browser consent headers.
+
 ## Profiles
 
 | Surface                 | Mode                                                       | Why                                                                                           |
@@ -71,6 +113,54 @@ from it in one direction that matters: a browser holds **logins**.
 
 Derived from the approval delivery, never configured: a surface that can ask a
 person is interactive and keeps its logins; one that cannot starts blank.
+
+## Durable browser sessions
+
+Hosted Playground conversations use a durable logical session owned by the
+conversation, rather than treating a browser daemon boot as the identity. The
+first browser command lazily provisions a watched desktop sandbox; reloads and
+replica changes resolve the same session and reattach to its current box. An
+idle watched box can sleep after its activity window and wakes on the next
+explicit panel or browser touch. A cross-replica relaunch claim and the
+browserd handoff lease protect a person from a concurrent restart.
+
+Evals and swarm attempts use the same owner contract with an ephemeral,
+per-iteration or per-attempt desktop sandbox. They never fall back to the
+project computer and never inherit the user's default profile. Local sessions
+use the same logical identity when the hosted control plane is configured, and
+degrade to the existing local ledger when it is not.
+
+The backend also persists project-scoped browser-profile archives with a
+256 MB cap and default-profile selection. Interactive chats honor an explicit
+host pin before the user's default; unattended targets use only an explicit
+pin, and reject that pin when Bash is also attached. From the browser pane, a
+person can save a drained persistent profile; the archive is filtered to omit
+Chromium caches and singleton locks, uploaded to Convex storage, and imported
+only on the next fresh boot. Computer settings lists the saved profiles and
+lets the owner choose the default for new chats or delete one.
+
+### Returning to a chat
+
+The local Playground pane reads `POST /local-browser/lookup` with the project
+and conversation IDs when it becomes visible or switches chats. The route
+returns the existing live browser's boot ID and lease, or `session: null`.
+It never launches a browser or falls back to the project's legacy browser.
+An empty visible pane checks again every two seconds so it can attach when the
+agent starts browsing. Hidden panes stop checking; request failures leave the
+explicit Open action available.
+
+The browser runtime owns the tabs independently of the React pane. Reattaching
+shows the same live pages, including their document state and WebMCP tool
+registrations. The shell clears the previous browser's tab metadata on a boot
+change and ignores late command replies from that browser. Electron shows the
+existing native view; Node reconnects its frame stream. Hosted panes already
+resolve their existing conversation browser through the hosted session read.
+
+This is live reattachment, not restoration after browser termination. Local
+browsers still expire after ten minutes idle or one hour total unless a human
+holds the lease. Profile storage preserves supported site data; it does not
+serialize a page's DOM, JavaScript heap, scroll position, or WebMCP callbacks.
+Restoring closed tabs would need saved tab metadata and a fresh navigation.
 
 ## The browser is a full Chromium, headless
 
@@ -84,6 +174,15 @@ pinned real UA, the hover/pointer media pins).
 
 `MCPJAM_BROWSER_HEADED=1` opens a real window where a display exists. The pane
 streams either way.
+
+## Node-local frame presentation
+
+The local Playground pane opts into bounded JPEG decoding: one decode in flight
+and one replaceable pending frame. Older queued frames are skipped before
+starting another decode, and teardown releases pending work. The decoder's
+existing sequence guard still prevents backwards presentation. Electron and
+hosted consumers retain their existing policies; H.264 frames are not subjected
+to JPEG frame dropping.
 
 ## The profile singleton
 
@@ -106,7 +205,7 @@ A live owner is a typed `profile_in_use`; only a dead lock is cleared.
   Closing the context is also what releases the profile lock, so a skipped
   teardown is a browser the next run cannot start.
 
-## Chromium is installed at consent time
+## Install Chromium from the Browser panel
 
 Never inside a chat turn: the download is hundreds of megabytes and a model
 sitting in a tool call for minutes has no way to say why.
@@ -116,16 +215,16 @@ points at it.
 
 ## Routes and their gates
 
-| Entry point                                      | Gates                                                                                                                                                          |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chat `browser_*` (playground)                    | non-hosted + kill switch + signed-in non-guest + server-verified consent + per-action approval                                                                 |
-| Chat `browser_*` (guest / scenario / journey)    | **never local** — coerced to the cloud family at the registry chokepoint                                                                                       |
-| `GET /local-browser/status`                      | session + verified sign-in + non-guest + kill switch. No consent: the consent screen needs it to describe itself.                                              |
-| `POST /local-browser/install`                    | the above **+ consent**                                                                                                                                        |
-| `POST /local-browser/{ensure,token,lease,input}` | the above **+ consent**                                                                                                                                        |
-| `POST /local-browser/{session,command,note,trace,artifact,close,sessions}` | the above **+ consent**. The agent surface; see below.                                                                              |
-| `GET /api/web/computers/local-browser/frames`    | allowed `Origin` (**absent Origin rejected**) + single-use, 60 s, kind-bound nonce + the nonce's consent fingerprint must still match + **the daemon's lease** |
-| Hosted build                                     | `/api/mcp` unmounted, kill switch forced off, WS route not mounted                                                                                             |
+| Entry point                                                                | Gates                                                                                                                                                          |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat `browser_*` (playground)                                              | non-hosted + kill switch + signed-in non-guest + server-verified consent + per-action approval                                                                 |
+| Chat `browser_*` (guest / scenario / journey)                              | **never local** — an explicit local request is refused, never moved to Cloud                                                                                   |
+| `GET /local-browser/status`                                                | session + verified sign-in + non-guest + kill switch. No consent: the consent screen needs it to describe itself.                                              |
+| `POST /local-browser/install`                                              | the above **+ consent**                                                                                                                                        |
+| `POST /local-browser/{ensure,token,lease,input}`                           | the above **+ consent**                                                                                                                                        |
+| `POST /local-browser/{session,command,note,trace,artifact,close,sessions}` | the above **+ consent**. The agent surface; see below.                                                                                                         |
+| `GET /api/web/computers/local-browser/frames`                              | allowed `Origin` (**absent Origin rejected**) + single-use, 60 s, kind-bound nonce + the nonce's consent fingerprint must still match + **the daemon's lease** |
+| Hosted build                                                               | `/api/mcp` unmounted, kill switch forced off, WS route not mounted                                                                                             |
 
 Nonces are typed by what they open, so a terminal nonce cannot start a frame
 stream and a frames nonce cannot open a shell.
@@ -138,15 +237,15 @@ already uses. It is not a second way in: every command goes through the
 in-process client, so the auth check, the handoff lease, the bootId check and
 the idempotent queue apply exactly as they do to a model's tool call.
 
-| Concern                              | Where                                                        |
-| ------------------------------------ | ------------------------------------------------------------ |
-| The public contract (v1)             | `shared/browser-agent-contract.ts`                           |
-| Contract ⇄ daemon, exhaustive        | `server/services/browserd/agent-contract-mapper.ts`          |
-| The door: policy, actor, outcomes    | `server/services/browserd/local/agent-door.ts`               |
-| Logical session + durable ledger     | `server/services/browserd/local/agent-session-store.ts`       |
-| The ledger itself                    | `server/services/browserd/daemon/command-ledger.ts`          |
-| CLI                                  | `../cli/src/commands/browser.ts`                             |
-| The rail's Activity list             | `client/src/components/browser/BrowserActivityList.tsx`      |
+| Concern                           | Where                                                   |
+| --------------------------------- | ------------------------------------------------------- |
+| The public contract (v1)          | `shared/browser-agent-contract.ts`                      |
+| Contract ⇄ daemon, exhaustive     | `server/services/browserd/agent-contract-mapper.ts`     |
+| The door: policy, actor, outcomes | `server/services/browserd/local/agent-door.ts`          |
+| Logical session + durable ledger  | `server/services/browserd/local/agent-session-store.ts` |
+| The ledger itself                 | `server/services/browserd/daemon/command-ledger.ts`     |
+| CLI                               | `../cli/src/commands/browser.ts`                        |
+| The rail's Activity list          | `client/src/components/browser/BrowserActivityList.tsx` |
 
 Four things about it are load-bearing.
 
@@ -195,13 +294,19 @@ the same unclaimed command and the daemon holds one copy of its screenshot;
 what a session may fetch is still decided by its own ledger.
 
 ```bash
-mcpjam browser consent --token <capability>   # granted once, in the UI
+mcpjam browser consent --token <browser-capability>  # granted in Browser panel
 mcpjam browser open --mode allow_all --profile persistent
 mcpjam browser navigate https://example.test  # returns the a11y tree
 mcpjam browser act --verb click --ref e7      # …and the tree after the click
 mcpjam browser trace                          # who did what, in order
 mcpjam browser close                          # detaches; --terminate closes it
 ```
+
+The CLI requires `capabilities.browserConsent: true` from Inspector; an older
+server produces an update-required error. Token precedence is `--consent`,
+`MCPJAM_BROWSER_CONSENT`, then Browser-scoped CLI state. `MCPJAM_LOCAL_CONSENT`
+and the legacy unscoped state field are ignored. `browser consent` verifies the
+supplied token before storing it; cloud commands use cloud credentials only.
 
 The CLI never grants its own consent: the Inspector's consent screen is where
 a person authorizes the agent browser, and a CLI able to mint the capability
@@ -251,7 +356,7 @@ box still leaves a playable file — the case where the evidence matters most.
 An idle page emits nothing while timestamps stay on the wall clock, so the
 player holds the last frame across a gap and the duration still matches the
 run. `-fs` stops ffmpeg at the size cap and the take is reported `truncated`,
-never dropped: what lands is a complete, playable *beginning* of the run.
+never dropped: what lands is a complete, playable _beginning_ of the run.
 
 The inspector starts a take when the browser tools first ensure a hosted
 session (so a run that never calls `browser_*` never records) and collects it
@@ -380,10 +485,9 @@ PAGE, at the daemon's own observation viewport.
   hidden `BrowserWindow` + `webContents.debugger` rather than launching
   Playwright, so it no longer needs a browser the app does not ship — but that
   path has only been exercised in development.
-- **Unattended runs** cannot reach a hosted browser at all: no ephemeral box
-  carries a desktop runtime kind. Locally they get an ephemeral profile, but
-  the registry coerces those actors to the cloud family, so in practice
-  unattended browsing waits on the backend work.
+- **Save / use profile archives** are implemented for persistent browser panes
+  and project settings. The archive path still needs staging validation with
+  real Chromium logins and the hosted storage deployment before broad release.
 - **One upstream stream per pane.** Two panes on one hosted session open two
   daemon streams. Fine at the daemon's cap of four, but `viewport.ts`'s
   byte-identical dedupe keys off a `lastData` shared across subscribers, so a
@@ -392,7 +496,7 @@ PAGE, at the daemon's own observation viewport.
 - **No `browser_*` artifacts** are recorded for evals — no screenshots, no step
   replay. (The AGENT surface records its own: screenshots and trees land beside
   the session's ledger. A hosted unattended run also leaves a video; see
-  *Recording an unattended run* — per-step offsets into it still need the
+  _Recording an unattended run_ — per-step offsets into it still need the
   hosted tool path to emit `browserInteractionSteps` through the artifact
   outbox, which only the local widget harness does today. The eval trace
   is separate from both and still has none.)
@@ -405,7 +509,7 @@ PAGE, at the daemon's own observation viewport.
   an agent's access from the rail are M1.5 — to be built when two drivers
   actually collide in dogfood, not before.
 - **No network, HAR or diff.** Video has left this list — a hosted
-  unattended run records one, per *Recording an unattended run*. The console
+  unattended run records one, per _Recording an unattended run_. The console
   ring is the only page telemetry, and it is ephemeral.
   `consoleSeqAfter`/`errorsSeqAfter` on a ledger row already bracket a
   command's console output; nothing reads them yet.
@@ -454,3 +558,42 @@ loads and runs, (c) reparenting into a visible window keeps the page, (d)
 lets `window-all-closed` still fire with agent tabs open. Each is a claim about
 Electron's own implementation, which is exactly the class of thing a fake in a
 unit test cannot answer.
+
+## Browser workspace integration
+
+`browser-workspace-enabled` gates the shared browser shell, automatic takeover,
+and responsive pane measurements, including Electron's native surface. With the
+flag off, the pane keeps explicit Take control / Hand back controls and requests
+a fixed 1024 × 768 viewport.
+
+Sessions begin fixed. An enabled pane sends `policy: "followPane"` with its
+measurement; persistent local sessions and hosted sessions with a TigerVNC
+`VNC-0` output can opt in without a restart. Evals and older display images
+remain fixed. Browser tool commands declare `responsiveViewport: true`; callers
+without that capability receive `responsive_viewport_required` before acting on
+a responsive session. Pane-first and agent-first launches use the same path.
+
+Resize requests coalesce and wait for active commands and pointer drags to end.
+Hosted resizing switches both the active output mode and framebuffer, verifies
+the output geometry, and uses the same operation for rollback. A newer pane
+measurement supersedes a pending fixed-mode reset.
+
+The initiating streamed takeover gesture carries the daemon boot, active tab,
+URL, navigation counter, and viewport revision. The input boundary rechecks them
+after acquisition and before each event. If they changed, or an older daemon
+cannot supply an anchor, control is acquired but the gesture is discarded and
+the pane asks the user to try again.
+
+Profile export reserves an exclusive lease, closes Chromium to flush its
+persistent storage, and holds the reservation until archiving finishes. Local
+export also holds the session's creation lock, so reopening cannot race the
+archive. Export closes the live browser; the next ensure call relaunches it.
+
+### Ensure refusal compatibility
+
+The Browser cutover changes runtime refusals from HTTP 409 with a specific
+runtime `code` to HTTP 503 with `code: "browser_runtime_unavailable"` and the
+specific value (for example `chromium_not_installed` or `profile_in_use`) in
+`reason`. Location mismatches remain 409 and consent refusals remain 403.
+No first-party consumer of the old runtime codes was found. CLI/script clients
+that branch on those fields must update their status/code checks.

@@ -1,3 +1,6 @@
+import {
+  githubExecutionPolicy,
+} from "../../services/github-checks/credential-policy.js";
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
@@ -644,6 +647,46 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
   launchContext?: LaunchContext;
 } & EvalRunProvenance;
 
+export type GithubCheckServerOverride = Array<{
+  serverName: string;
+  projectServerId: string;
+}>;
+
+/** Pair the temporary PR server's display name with its project server row. */
+export function buildGithubCheckServerOverride(args: {
+  source: RunEvalsWithManagerRequest["source"];
+  persistedServerRefs: string[];
+  serverNames?: string[];
+}): GithubCheckServerOverride | undefined {
+  if (args.source !== "github_check") return undefined;
+  if (
+    !args.serverNames?.length ||
+    args.serverNames.length !== args.persistedServerRefs.length
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "GitHub checks require one name for each temporary PR server",
+    );
+  }
+  const names = new Set(args.serverNames.map((name) => name.toLowerCase()));
+  const ids = new Set(args.persistedServerRefs);
+  if (
+    names.size !== args.serverNames.length ||
+    ids.size !== args.persistedServerRefs.length
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "GitHub checks require unique temporary PR server names and ids",
+    );
+  }
+  return args.serverNames.map((serverName, index) => ({
+    serverName,
+    projectServerId: args.persistedServerRefs[index],
+  }));
+}
+
 export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
   model: z.string(),
@@ -956,6 +999,8 @@ export const CaseMixSchema = z.object({
 
 // Optional generation knobs forwarded to the backend generate endpoint.
 export const GenerationOptionsSchema = z.object({
+  testSet: z.enum(["quick", "comprehensive"]).optional(),
+  toolCoverage: z.enum(["read-only", "read-write"]).optional(),
   caseMix: CaseMixSchema.optional(),
   varyUserStyles: z.boolean().optional(),
   refinement: z.string().trim().min(1).max(2_000).optional(),
@@ -2334,12 +2379,19 @@ export async function prepareEvalRun(
   const committedCases = authoredCaseUpsert.committed;
   const failedCases = authoredCaseUpsert.failed;
 
+  const githubCheckServerOverride = buildGithubCheckServerOverride({
+    source: request.source,
+    persistedServerRefs,
+    serverNames,
+  });
+
   const {
     runId,
     config,
     recorder,
     deduped: runWasDeduped,
     status: existingRunStatus,
+    githubCredentialPolicy,
     hostConfig: runHostConfigSnapshot,
     pluginVersions: runEnvironmentPluginVersions = [],
     gradingEngine: runGradingEngine,
@@ -2358,6 +2410,7 @@ export async function prepareEvalRun(
     namedHostId,
     runGroupId,
     environmentId,
+    ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
     // All three preconditions come from the SAME resolution the tool snapshot
     // was captured against. The revision alone is not enough: an environment
     // pins a `hostId` and optionally an attachment, both dereferenced live, so
@@ -2395,6 +2448,43 @@ export async function prepareEvalRun(
       ? { ciMetadata: launchContext.ciMetadata }
       : {}),
   });
+  if (
+    githubExecutionPolicy() &&
+    githubCredentialPolicy !== githubExecutionPolicy()
+  ) {
+    await failRunBeforeExecution(convexClient, recorder, runId, {
+      reason: "credential_policy_blocked",
+    });
+    throw new Error("credential_policy_blocked");
+  }
+  // This policy comes from the authenticated backend run snapshot, never
+  // from MCP output or a client-supplied flag. A fork gets only MCP tools.
+  if (githubCredentialPolicy === "no_customer_credentials") {
+    const unsafe = (value: unknown, depth = 0): boolean => {
+      if (!value || typeof value !== "object") return false;
+      const row = value as Record<string, unknown>;
+      if (
+        depth > 20 ||
+        row.harness ||
+        row.computerEnvironmentId ||
+        (Array.isArray(row.builtInToolIds) && row.builtInToolIds.length) ||
+        (Array.isArray(row.pluginVersionIds) && row.pluginVersionIds.length)
+      )
+        return true;
+      return Object.values(row).some((v) => unsafe(v, depth + 1));
+    };
+    if (
+      unsafe(config) ||
+      unsafe(runHostConfigSnapshot) ||
+      modelApiKeys ||
+      orgModelConfig
+    ) {
+      await failRunBeforeExecution(convexClient, recorder, runId, {
+        reason: "credential_policy_blocked",
+      });
+      throw new Error("credential_policy_blocked");
+    }
+  }
   const suiteHostConfig =
     runHostConfigSnapshot ??
     (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
@@ -2596,14 +2686,19 @@ export async function prepareEvalRun(
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
   const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
-  let resolvedOrgModelConfig = orgModelConfig;
+  let resolvedOrgModelConfig =
+    githubCredentialPolicy === "no_customer_credentials"
+      ? { providers: [] }
+      : orgModelConfig;
   let resolvedOrgModelConfigTarget: { projectId: string } | undefined;
   // `projectIdForOrgConfig` is resolved ABOVE, before the admission gates —
   // the harness gate needs it to refuse an org-level suite before a box is
   // booted, and resolving it twice could disagree.
-  const orgConfigTarget = projectIdForOrgConfig
-    ? { projectId: projectIdForOrgConfig }
-    : undefined;
+  const orgConfigTarget =
+    githubCredentialPolicy !== "no_customer_credentials" &&
+    projectIdForOrgConfig
+      ? { projectId: projectIdForOrgConfig }
+      : undefined;
   resolvedOrgModelConfigTarget = orgConfigTarget;
 
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
@@ -2617,6 +2712,12 @@ export async function prepareEvalRun(
         });
         resolvedOrgModelConfig = orgConfig;
       } catch (error) {
+        if (githubExecutionPolicy()) {
+          await failRunBeforeExecution(convexClient, recorder, runId, {
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
         logger.warn("[evals] Failed to resolve org model config", {
           projectId: projectIdForOrgConfig,
           error: error instanceof Error ? error.message : String(error),

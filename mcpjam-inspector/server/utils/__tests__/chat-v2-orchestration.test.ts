@@ -1491,7 +1491,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     ).toBeFalsy();
   });
 
-  it("promises a destructive gate in default mode ONLY when the snapshot is annotation-aware", () => {
+  it("describes the switch's actual state, and never promises a pause it cannot deliver", () => {
     const annotated: UiToolEntry[] = [
       {
         name: "ui_navigate",
@@ -1507,41 +1507,53 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       },
     ];
 
-    // The families that pause whatever the settings say are stated in every
-    // mode — they are the ones the model should know about before it commits
-    // to a plan, and none of them depends on the ui snapshot.
+    // NOTHING pauses whatever the settings say any more, so nothing may claim
+    // to. A model told a browser action will be checked by a human plans as if
+    // someone is reading along — the expensive direction of this mistake.
     for (const prompt of [
-      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true }),
       buildUiToolsSystemPrompt(annotated),
       buildUiToolsSystemPrompt(uiTools),
+      buildUiToolsSystemPrompt(annotated, { requireToolApproval: false }),
     ]) {
-      expect(prompt).toContain("always pause");
+      expect(prompt).not.toContain("always pause");
+      expect(prompt).not.toContain("whatever the settings say");
+      expect(prompt).toContain("Tool approval is OFF");
+      expect(prompt).toContain("apply immediately");
+      // The families it names as running unchecked are the ones a model is
+      // most likely to assume are gated.
       expect(prompt).toContain("driving a browser");
       expect(prompt).toContain("on the user's own machine");
-      expect(prompt).toContain("A denial is final");
     }
 
-    // Strict mode: most other calls pause too, and the model is told which
-    // families the switch does NOT cover — promising it covers everything
-    // would have the model narrate a pause that never comes.
+    // Switch ON: every family that acts pauses, named so the model can plan
+    // around the checkpoint rather than guess at it.
     const strict = buildUiToolsSystemPrompt(annotated, {
       requireToolApproval: true,
     });
-    expect(strict).toContain("most other tool calls pause too");
-    expect(strict).toContain("still run without asking");
+    expect(strict).toContain("Tool approval is ON");
+    expect(strict).toContain("every tool call that ACTS pauses");
+    expect(strict).toContain("driving a browser");
+    expect(strict).toContain("A denial is final");
 
-    // Default mode, annotation-aware: the destructive-`ui_*` promise holds.
-    const annotatedDefault = buildUiToolsSystemPrompt(annotated);
-    expect(annotatedDefault).toContain("destructive `ui_*` actions");
-    expect(annotatedDefault).toContain("Everything else applies immediately");
+    // What never pauses is stated in BOTH modes: it does not change with the
+    // switch, and it is the half a model most often gets wrong.
+    for (const prompt of [strict, buildUiToolsSystemPrompt(annotated)]) {
+      expect(prompt).toContain("never pause");
+      expect(prompt).toContain("`app_*`");
+      expect(prompt).toContain("discovery meta-tools");
+    }
 
-    // Default mode, LEGACY snapshot (the fixture has no annotations): a bare
-    // `readOnly` entry sits at the `setting` floor, so with the switch off
-    // NOTHING in that namespace pauses. The prompt must not promise a
-    // destructive gate that isn't enforced.
-    const legacyDefault = buildUiToolsSystemPrompt(uiTools);
-    expect(legacyDefault).not.toContain("destructive `ui_*` actions");
-    expect(legacyDefault).toContain("applies immediately");
+    // And so is the ONE thing that still asks whatever the switch says. This
+    // is the opposite mistake and the worse one: a server-origin skill ref
+    // pauses in either setting, so an approval-off prompt that claimed nothing
+    // would stop the model has it plan straight past a real checkpoint.
+    for (const prompt of [strict, buildUiToolsSystemPrompt(annotated)]) {
+      expect(prompt).toContain("skill that a connected MCP server provides");
+      expect(prompt).toContain("always asks");
+    }
+    expect(buildUiToolsSystemPrompt(annotated)).not.toContain(
+      "Nothing will stop you",
+    );
   });
 });
 
@@ -1720,5 +1732,117 @@ describe("prepareChatV2 — a live resolved source", () => {
       (result.allTools as Record<string, { needsApproval?: unknown }>).loadSkill
         .needsApproval
     ).toBe(true);
+  });
+});
+
+describe("first-class page tools in prepareChatV2", () => {
+  function pageTool(name: string) {
+    return {
+      description: `[WebMCP page tool — https://pizza.test] ${name}`,
+      inputSchema: { jsonSchema: { type: "object", properties: {} } },
+      execute: async () => ({ ok: true }),
+    } as any;
+  }
+
+  const base = () => ({
+    selectedServers: [],
+    modelDefinition: { id: "gpt-4.1-mini", provider: "openai" } as any,
+    systemPrompt: "Base prompt.",
+  });
+
+  it("RESERVES the webmcp_ namespace against an MCP server, and never throws", async () => {
+    // The concern this settles is real: letting a web page shadow a tool the
+    // host configured would have the model call `webmcp_deploy` believing it
+    // was the one it was told about. Arbitrating each collision in the page's
+    // disfavour was one answer; reserving the namespace is the better one,
+    // because the name means something to more than the model.
+    //
+    // A tool card reads a result's `pageTool` block and renders the page's own
+    // name and origin beside it, and it decides whether to from the prefix. A
+    // server free to call its tool `webmcp_pay` would be free to put an origin
+    // chip of its choosing on its own card. So `webmcp_` has exactly one
+    // meaning — "the open page declared this" — and a server that claims it
+    // loses the name rather than the page losing its tool.
+    //
+    // Still never throws: a name collision must not be able to fail a turn.
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({
+        webmcp_deploy: {
+          description: "the host's own deploy tool",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+        ordinary_tool: {
+          description: "unaffected",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      }),
+      builtInTools: {
+        webmcp_deploy: pageTool("deploy"),
+        webmcp_safe: pageTool("safe"),
+      },
+    } as any);
+    expect((result.allTools.webmcp_deploy as any)?.description).not.toContain(
+      "the host's own",
+    );
+    expect(result.allTools.webmcp_safe).toBeDefined();
+    // Only the reserved name goes; the server keeps everything else.
+    expect(result.allTools.ordinary_tool).toBeDefined();
+  });
+
+  it("tells the model where the `webmcp_*` tools came from", async () => {
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      builtInTools: { webmcp_pay: pageTool("pay") },
+    } as any);
+    // Tool DEFINITIONS are not fenced, so the provenance header on each
+    // description is the model's only in-band cue — and this is what says what
+    // that header means.
+    expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
+    expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
+    expect(result.enhancedSystemPrompt).toContain("MCPJAM_PAGE_CONTENT");
+  });
+
+  it("says nothing about page tools when there are none", async () => {
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      // A NON-PAGE BUILT-IN, so the negative case is about the `webmcp_` names
+      // rather than about an empty built-in set. Without one this would pass
+      // for a regression that keyed the section on "any built-in is present".
+      builtInTools: {
+        browser_navigate: {
+          description: "navigate",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      },
+    } as any);
+    expect(result.enhancedSystemPrompt).not.toContain("Tools this page declares");
+  });
+
+  it("explains page tools AHEAD of their arrival when the set may grow", async () => {
+    // The model navigates on one step and sees `webmcp_*` tools on the next.
+    // A section that appeared only once a tool existed would leave it reading
+    // a `[WebMCP page tool — origin]` header nobody had explained, on the
+    // step it matters most.
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      builtInTools: {
+        browser_navigate: {
+          description: "navigate",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      },
+      pageToolsMayGrow: true,
+    } as any);
+    expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
+    expect(result.enhancedSystemPrompt).toContain("None are available right now");
+    expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
   });
 });

@@ -180,6 +180,42 @@ describe("run results matrix", () => {
     expect(cell.getByText("2K")).toBeVisible();
     expect(cell.queryByText("Cost")).toBeNull();
     expect(cell.getByText("Tool calls")).toBeVisible();
+    expect(screen.getByText("Test case")).toBeVisible();
+    const title = screen.getByRole("heading", { name: /Test cases/ });
+    expect(title).toBeVisible();
+    expect(title.compareDocumentPosition(screen.getByTestId("run-results-toolbar"))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(screen.queryByText("Run results")).toBeNull();
+    expect(
+      screen.queryByText(
+        /Cases down the rows. Clients and models across the columns/,
+      ),
+    ).toBeNull();
+    expect(screen.queryByLabelText(/loaded iterations/)).toBeNull();
+    expect(screen.queryByTestId("result-count-bar")).toBeNull();
+    expect(screen.queryByText("1 passed")).toBeNull();
+    expect(screen.queryByText("1 failed")).toBeNull();
+    expect(screen.queryByText("Failures first")).toBeNull();
+    expect(
+      screen.queryByText(/Showing recorded iterations from this run/),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Clear filters" }),
+    ).toBeNull();
+    const toolbar = screen.getByTestId("run-results-toolbar");
+    const search = within(toolbar).getByRole("textbox", {
+      name: "Find a test case",
+    });
+    const status = within(toolbar).getByRole("combobox", {
+      name: "Filter by status",
+    });
+    expect(search.compareDocumentPosition(status)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(screen.queryByRole("button", { name: "All cases" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "With failures" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "In progress" })).toBeNull();
   });
 
   it("keeps unfinished and cancelled iterations distinct in the result bar", () => {
@@ -216,6 +252,37 @@ describe("run results matrix", () => {
     ).toEqual(["25%", "25%", "25%", "25%"]);
   });
 
+  it("does not treat a whitespace-only search as an active filter", async () => {
+    const user = userEvent.setup();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[
+          iteration("pass", "one", {
+            testCaseSnapshot: {
+              title: "Checkout",
+              model: "sonnet",
+              provider: "anthropic",
+              query: "Checkout",
+              expectedToolCalls: [],
+            },
+          }),
+        ]}
+        hostNamesById={names}
+      />,
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Find a test case" }),
+      " ",
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Inspect Checkout on Claude · sonnet",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  });
+
   it("filters cases and opens the correct evidence when switching client/model in the drawer", async () => {
     const user = userEvent.setup();
     const open = vi.fn();
@@ -235,6 +302,9 @@ describe("run results matrix", () => {
       />,
     );
     expect(screen.getAllByRole("columnheader")).toHaveLength(3);
+    expect(
+      screen.queryByRole("button", { name: "Clear filters" }),
+    ).toBeNull();
     await user.type(
       screen.getByRole("textbox", { name: "Find a test case" }),
       "not present",
@@ -243,7 +313,14 @@ describe("run results matrix", () => {
       screen.getByText("No cases match these filters."),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
-    await user.click(screen.getByRole("button", { name: "With failures" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by status" }),
+    );
+    expect(screen.getByRole("option", { name: "Failures" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Passed" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Pending" })).toBeNull();
+    await user.click(screen.getByRole("option", { name: "Failures" }));
+    expect(screen.getByRole("button", { name: "Clear filters" })).toBeVisible();
     await user.click(
       screen.getByRole("button", {
         name: "Inspect Refund order on Claude · sonnet",
@@ -258,4 +335,73 @@ describe("run results matrix", () => {
       iterationId: "fail",
     });
   });
+
+  it("keeps Pending while a run is live and hides it once every run is terminal", async () => {
+    const user = userEvent.setup();
+    const live = run("one", { status: "running" });
+    const { rerender } = render(
+      <RunResultsMatrix
+        run={live}
+        iterations={[
+          iteration("pass", "one"),
+          iteration("pending", "one", { status: "running", result: "pending" }),
+        ]}
+        hostNamesById={names}
+      />,
+    );
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by status" }),
+    );
+    expect(screen.getByRole("option", { name: "Pending" })).toBeVisible();
+    await user.click(screen.getByRole("option", { name: "Pending" }));
+    expect(
+      screen.getByRole("combobox", { name: "Filter by status" }),
+    ).toHaveTextContent("Pending");
+    expect(screen.getByRole("button", { name: "Clear filters" })).toBeVisible();
+    rerender(
+      <RunResultsMatrix
+        run={run("one", { status: "completed" })}
+        iterations={[
+          iteration("pass", "one"),
+          iteration("fail", "one", { result: "failed" }),
+        ]}
+        hostNamesById={names}
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Filter by status" }),
+    ).toHaveTextContent("Status");
+    expect(
+      screen.queryByRole("button", { name: "Clear filters" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: "Inspect Refund order on Claude · sonnet",
+      }),
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by status" }),
+    );
+    expect(screen.queryByRole("option", { name: "Pending" })).toBeNull();
+    expect(screen.getByRole("option", { name: "Failures" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Passed" })).toBeVisible();
+  });
+
+  it.each(["pending", "running", "grading"] as const)(
+    "offers Pending while status is %s",
+    async (status) => {
+      const user = userEvent.setup();
+      render(
+        <RunResultsMatrix
+          run={run("one", { status })}
+          iterations={[iteration("one", "one")]}
+          hostNamesById={names}
+        />,
+      );
+      await user.click(
+        screen.getByRole("combobox", { name: "Filter by status" }),
+      );
+      expect(screen.getByRole("option", { name: "Pending" })).toBeVisible();
+    },
+  );
 });

@@ -8,10 +8,14 @@ export function SuiteStageChecks({
   disabledChecks = [],
   onChange,
   readOnly = false,
+  suiteDisabledChecks,
+  editableCheckIds,
 }: {
   disabledChecks?: readonly string[];
   onChange: (disabled: string[] | undefined) => void;
   readOnly?: boolean;
+  suiteDisabledChecks?: readonly string[];
+  editableCheckIds?: readonly string[];
 }) {
   return (
     <section
@@ -26,8 +30,9 @@ export function SuiteStageChecks({
           Checks by stage
         </h3>
         <p className="text-sm text-muted-foreground">
-          Choose which checks to run at each stage. All checks are on by
-          default.
+          {suiteDisabledChecks
+            ? "Standard checks inherited from the suite. Changes for this case are marked below."
+            : "Choose which checks to run at each stage. All checks are on by default."}
         </p>
       </div>
       <table className="w-full table-fixed border-collapse text-left text-sm">
@@ -62,29 +67,48 @@ export function SuiteStageChecks({
               </th>
               <td className="py-5 align-top">
                 <ul className="space-y-3 text-foreground">
-                  {checks.map(({ id, label: checkLabel }) => (
-                    <li key={id}>
-                      <label className="flex cursor-pointer items-start gap-2.5 has-[:disabled]:cursor-default has-[:disabled]:opacity-60">
-                        <Checkbox
-                          className="mt-0.5"
-                          checked={!disabledChecks.includes(id)}
-                          disabled={readOnly}
-                          onCheckedChange={(checked) =>
-                            onChange(
-                              normalizeDisabledStageChecks(
-                                checked === true
-                                  ? disabledChecks.filter(
-                                      (checkId) => checkId !== id,
-                                    )
-                                  : [...disabledChecks, id],
-                              ),
-                            )
-                          }
-                        />
-                        <span>{checkLabel}</span>
-                      </label>
-                    </li>
-                  ))}
+                  {checks.map(({ id, label: checkLabel }) => {
+                    const differs =
+                      suiteDisabledChecks !== undefined &&
+                      disabledChecks.includes(id) !==
+                        suiteDisabledChecks.includes(id);
+                    return (
+                      <li key={id}>
+                        <label className="flex cursor-pointer items-start gap-2.5 has-[:disabled]:cursor-default has-[:disabled]:opacity-60">
+                          <Checkbox
+                            className="mt-0.5"
+                            checked={!disabledChecks.includes(id)}
+                            aria-label={checkLabel}
+                            disabled={
+                              readOnly ||
+                              (editableCheckIds !== undefined &&
+                                !editableCheckIds.includes(id))
+                            }
+                            onCheckedChange={(checked) =>
+                              onChange(
+                                normalizeDisabledStageChecks(
+                                  checked === true
+                                    ? disabledChecks.filter(
+                                        (checkId) => checkId !== id,
+                                      )
+                                    : [...disabledChecks, id],
+                                ),
+                              )
+                            }
+                          />
+                          <span>{checkLabel}</span>
+                          {differs ? (
+                            <span
+                              className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                              title="Overrides the suite default"
+                            >
+                              Override
+                            </span>
+                          ) : null}
+                        </label>
+                      </li>
+                    );
+                  })}
                 </ul>
               </td>
             </tr>

@@ -18,6 +18,7 @@ import type {
   XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
   attachHostedRpcLogs,
@@ -1281,6 +1282,12 @@ export async function createAuthorizedManager(
           rpcLogger: options?.rpcLogger,
           httpLogger: options?.httpLogger,
           retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+          // Set even on the empty batch, and not for the sake of the zero
+          // servers it has: `baseFetch` is resolved when a transport is built,
+          // so a caller that later attaches one through `connectToServer` gets
+          // the guard too. Leaving it off here would make this branch the one
+          // way to obtain an unguarded hosted manager.
+          baseFetch: hostedMcpBaseFetch(),
           // Auto-negotiation outcome telemetry (always-on negotiation).
           negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
         },
@@ -1926,6 +1933,13 @@ export async function createAuthorizedManager(
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    // THE FIX FOR MJ-001. Every server in this batch carries a URL a caller
+    // stored, and without this the transport dialled `globalThis.fetch`:
+    // loopback and RFC1918 reachable, redirects followed unchecked. A MANAGER
+    // DEFAULT rather than a per-server field, so it also covers servers
+    // attached later and cannot be dropped by a future `toHttpConfig` branch;
+    // a deliberate per-server `baseFetch` still wins over it.
+    baseFetch: hostedMcpBaseFetch(),
     ...(options?.advertiseSkillsExtension
       ? { defaultCapabilities: withSkillsExtensionCapability({}) }
       : {}),

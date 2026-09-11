@@ -51,6 +51,7 @@ import {
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -187,6 +188,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -380,6 +382,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   // read back a session this toolset cannot create, and the Sessions tab
   // already renders both the transcript and the trace with the context around
   // them.
+  drive_chat_session_browser: "The Browser pane already controls this conversation; external session driving is available on REST/CLI/remote MCP only.",
+  observe_chat_session_browser: "Use the conversation browser tools in app. External session evidence is available on REST/CLI/remote MCP only.",
   send_chat_message:
     "An assistant turn that starts assistant turns — recursive spend with no floor. Available on REST/CLI/MCP, where the caller is not already inside a turn.",
   get_chat_session:

@@ -387,3 +387,97 @@ describe("browserd CommandQueue — reads are not rationed", () => {
     expect(await first).toMatchObject({ status: "ok" });
   });
 });
+
+describe("cancellation does not wait its turn", () => {
+  it("reaches the driver while the invocation it cancels is still running", async () => {
+    // THE WHOLE POINT OF STOP. A page tool that hangs is exactly when somebody
+    // presses it, and a cancellation chained behind that tool in the tab's FIFO
+    // could only arrive once the thing it was meant to stop had already
+    // finished or timed out.
+    let releaseInvoke: (() => void) | undefined;
+    const seen: string[] = [];
+    const queue = new CommandQueue(async (command) => {
+      seen.push(command.action.kind);
+      if (command.action.kind === "webmcp_invoke") {
+        await new Promise<void>((resolve) => {
+          releaseInvoke = resolve;
+        });
+      }
+      return { ok: true, output: command.action.kind };
+    }, "boot-1");
+
+    const invoking = queue.submit({
+      commandId: "c-invoke",
+      source: "model",
+      tabId: "tab-1",
+      action: {
+        kind: "webmcp_invoke",
+        toolName: "slow",
+        input: {},
+      },
+    } as never);
+    // Let the invoke actually start before the cancellation is submitted.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(seen).toEqual(["webmcp_invoke"]);
+
+    const cancelled = await queue.submit({
+      commandId: "c-cancel",
+      source: "model",
+      tabId: "tab-1",
+      action: { kind: "webmcp_cancel", commandId: "c-invoke" },
+    } as never);
+
+    // Answered while the invoke is STILL blocked — the assertion the FIFO
+    // version of this cannot make.
+    expect(cancelled.status).toBe("ok");
+    expect(seen).toEqual(["webmcp_invoke", "webmcp_cancel"]);
+
+    releaseInvoke!();
+    expect((await invoking).status).toBe("ok");
+  });
+
+  it("still answers when the tab's queue is saturated", async () => {
+    // The depth cap exists to stop a caller stampeding the browser with work.
+    // A cancellation is not work, and refusing one because the tab is busy
+    // would refuse it in precisely the situation it is for.
+    const release: Array<() => void> = [];
+    const queue = new CommandQueue(
+      async (command) => {
+        if (command.action.kind === "webmcp_cancel") {
+          return { ok: true, output: "cancelled" };
+        }
+        await new Promise<void>((resolve) => release.push(resolve));
+        return { ok: true, output: "done" };
+      },
+      "boot-1",
+      { perQueueDepthCap: 2 },
+    );
+
+    const busy = [0, 1].map((index) =>
+      queue.submit({
+        commandId: `c-${index}`,
+        source: "model",
+        tabId: "tab-1",
+        action: { kind: "webmcp_invoke", toolName: "slow", input: {} },
+      } as never),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const cancelled = await queue.submit({
+      commandId: "c-cancel",
+      source: "model",
+      tabId: "tab-1",
+      action: { kind: "webmcp_cancel", commandId: "c-0" },
+    } as never);
+    expect(cancelled.status).toBe("ok");
+
+    // Drain: the two invokes are chained, so the second only starts (and only
+    // registers its release) once the first has been let go.
+    while (release.length > 0) {
+      release.shift()!();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await Promise.all(busy);
+  });
+});
+

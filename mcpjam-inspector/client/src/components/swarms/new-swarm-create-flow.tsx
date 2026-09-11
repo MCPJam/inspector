@@ -68,7 +68,10 @@ import {
   SWARM_INTENSITY_PRESETS,
   type SwarmPushIntensity,
 } from "@/components/swarms/swarm-intensity";
-import { SwarmHeroCharacters } from "@/components/swarms/swarm-hero-characters";
+import {
+  SOLO_HERO_CHARACTERS,
+  SwarmHeroCharacters,
+} from "@/components/swarms/swarm-hero-characters";
 import {
   SWARM_QUERIES,
   LaunchJourneyRunError,
@@ -411,13 +414,6 @@ export function NewSwarmCreateFlow({
     sessionId: string;
     swarmRunGroupId: string | null;
     runLabels: Map<string, string>;
-    /**
-     * Rubric criterion the finding was about, when the click came from one.
-     * Carried so the destination can STATE what was found: a viewer who
-     * followed a finding and landed on a bare transcript was handed the
-     * evidence with the claim removed.
-     */
-    criterionId?: string;
   }) => void;
   /** Leave create flow and open Personas for an existing persona. */
   /**
@@ -1022,14 +1018,21 @@ export function NewSwarmCreateFlow({
       setStep("confirm");
     } catch (err) {
       setMaterializing(false);
-      setDescribeStepError(err);
+      // A model limit is owned by its dialog, which carries the same sentence
+      // plus the actions that clear it. Repeating it as a card under the form
+      // would say the same thing twice with nothing to act on.
+      const limitDialogRaised =
+        err instanceof SwarmGenerateError && err.limitDialogRaised;
+      setDescribeStepError(limitDialogRaised ? null : err);
       setErrorMessage(
-        err instanceof SwarmTargetMaterializeError ||
-          err instanceof ComposerResolveError ||
-          err instanceof SwarmGenerateError ||
-          err instanceof WebApiError
-          ? err.message
-          : errorMessageOf(err, "Failed to generate personas."),
+        limitDialogRaised
+          ? null
+          : err instanceof SwarmTargetMaterializeError ||
+              err instanceof ComposerResolveError ||
+              err instanceof SwarmGenerateError ||
+              err instanceof WebApiError
+            ? err.message
+            : errorMessageOf(err, "Failed to generate personas."),
       );
     } finally {
       inFlightRef.current = false;
@@ -1636,6 +1639,13 @@ export function NewSwarmCreateFlow({
     onCancel();
   }, [launching, generating, materializing, hasUserDraft, onCancel]);
 
+  /**
+   * Set once the launched runs all reach a terminal state, so the rail can
+   * draw a checkmark on "Run swarm" instead of leaving it mid-flight. Owned
+   * here because the rail is the wizard's, not the running step's.
+   */
+  const [runsComplete, setRunsComplete] = useState(false);
+
   const leaveRunning = useCallback(() => {
     clearNewSwarmFlowDraft();
     onDone(
@@ -1647,12 +1657,11 @@ export function NewSwarmCreateFlow({
   // Labels ride along exactly as they do on `leaveRunning`: this is a leave
   // too, so the Sessions grouping must still be able to name the runs.
   const openRunningSession = useCallback(
-    (sessionId: string, criterionId?: string) => {
+    (sessionId: string) => {
       onOpenSession({
         sessionId,
         swarmRunGroupId: persistedRunGroupIdRef.current,
         runLabels: launchedRunLabelsRef.current,
-        ...(criterionId ? { criterionId } : {}),
       });
     },
     [onOpenSession],
@@ -1778,6 +1787,7 @@ export function NewSwarmCreateFlow({
             <ProgressStepper
               steps={CREATE_STEPS}
               activeIndex={activeStepIndex}
+              activeComplete={runsComplete}
               onStepSelect={goToStep}
               isStepSelectable={canReturnToStep}
               ariaLabel="New swarm progress"
@@ -1815,6 +1825,7 @@ export function NewSwarmCreateFlow({
             hosts={hosts}
             onLeave={leaveRunning}
             onOpenSession={openRunningSession}
+            onRunsComplete={() => setRunsComplete(true)}
           />
         ) : step === "confirm" ? (
           <NewSwarmConfirmStep
@@ -1870,8 +1881,31 @@ export function NewSwarmCreateFlow({
                 </p>
               </div>
               <div className="hidden shrink-0 sm:block">
-                <SwarmHeroCharacters />
+                <SwarmHeroCharacters characters={SOLO_HERO_CHARACTERS} />
               </div>
+            </div>
+
+            {/* Above the description: the target grounds the goals it generates. */}
+            <div className="space-y-2">
+              <SwarmTargetComposer
+                projectId={projectId}
+                environments={envList}
+                environmentsLoading={environments === undefined}
+                value={targetState}
+                onChange={setTargetState}
+                draftNameHint={swarmName.trim() || undefined}
+                disabled={generating || materializing}
+                serverBlock={serverBlock}
+                required
+              />
+              {groundingEnvironmentId ? (
+                <ErrorBoundary fallback={null}>
+                  <EnvironmentGroundingHint
+                    projectId={projectId}
+                    environmentId={groundingEnvironmentId}
+                  />
+                </ErrorBoundary>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -1965,28 +1999,6 @@ export function NewSwarmCreateFlow({
                       ),
                   }}
                 />
-              ) : null}
-            </div>
-
-            <div className="space-y-2">
-              <SwarmTargetComposer
-                projectId={projectId}
-                environments={envList}
-                environmentsLoading={environments === undefined}
-                value={targetState}
-                onChange={setTargetState}
-                draftNameHint={swarmName.trim() || undefined}
-                disabled={generating || materializing}
-                serverBlock={serverBlock}
-                required
-              />
-              {groundingEnvironmentId ? (
-                <ErrorBoundary fallback={null}>
-                  <EnvironmentGroundingHint
-                    projectId={projectId}
-                    environmentId={groundingEnvironmentId}
-                  />
-                </ErrorBoundary>
               ) : null}
             </div>
 

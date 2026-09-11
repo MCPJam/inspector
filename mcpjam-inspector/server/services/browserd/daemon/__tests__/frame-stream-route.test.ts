@@ -20,6 +20,7 @@ import type { TabViewport, ViewportFrame, ViewportListener } from "../viewport";
 import { HandoffLease } from "../lease";
 import {
   createFrameStreamDecoder,
+  encodeFrameStreamRecord,
   FRAME_STREAM_KIND,
   type FrameStreamRecord,
 } from "../../frame-stream";
@@ -818,10 +819,12 @@ describe("GET /v1/frames?codec=h264", () => {
     return new Uint8Array(bytes);
   }
 
-  async function listen(over: { video?: boolean } = {}) {
+  async function listen(
+    over: { video?: boolean; driver?: BrowserDriver } = {},
+  ) {
     lease = new HandoffLease();
     ffmpeg = fakeEncoderProcess();
-    stack = buildBrowserdStack(stubDriver(fakeViewport().viewport), {
+    stack = buildBrowserdStack(over.driver ?? stubDriver(fakeViewport().viewport), {
       token: TOKEN,
       lease,
       frames: { heartbeatMs: 30 },
@@ -834,7 +837,7 @@ describe("GET /v1/frames?codec=h264", () => {
               height: 768,
               spawnProcess: ffmpeg.spawnProcess,
             }),
-            displaySize: { width: 1024, height: 768 },
+            displaySize: () => ({ width: 1024, height: 768 }),
           }),
     });
     server = stack.server;
@@ -950,6 +953,39 @@ describe("GET /v1/frames?codec=h264", () => {
     await cursor.cancel();
   });
 
+  it("reports the ACTIVE tab's WebMCP revision, not the default tab's", async () => {
+    // The video stream grabs the X display, so it shows whichever tab is
+    // active — but an unargued `webmcpSnapshot()` answers for `DEFAULT_TAB`,
+    // and after an `activate_tab` those are two different pages. Reporting one
+    // tab's tool revision beside a picture of another is the same mismatch the
+    // JPEG path threads its own tabId to avoid.
+    const driver: BrowserDriver = {
+      ...stubDriver(fakeViewport().viewport),
+      tabsSnapshot: () => ({
+        active: "tab-2",
+        list: [
+          { id: "@session", url: "https://first.test/" },
+          { id: "tab-2", url: "https://second.test/" },
+        ],
+      }),
+      webmcpToolsSnapshot: (tabId?: string) =>
+        tabId === "tab-2"
+          ? { revision: 9, hash: "second", count: 3, supported: true }
+          : { revision: 1, hash: "first", count: 1, supported: true },
+    };
+    await listen({ driver });
+    const cursor = openCursor(await openVideo(), { video: true });
+    await cursor.next();
+    let seen: { hash?: string } | undefined;
+    for (let beats = 0; beats < 4 && !seen; beats += 1) {
+      const record = await cursor.next();
+      if (record.kind !== FRAME_STREAM_KIND.heartbeat) continue;
+      seen = (record.stats as { webmcp?: { hash?: string } })?.webmcp;
+    }
+    expect(seen?.hash).toBe("second");
+    await cursor.cancel();
+  });
+
   it("ends the stream when the encoder dies mid-watch", async () => {
     await listen();
     const cursor = openCursor(await openVideo(), { video: true });
@@ -958,5 +994,65 @@ describe("GET /v1/frames?codec=h264", () => {
     let record = await cursor.next();
     while (record.kind !== FRAME_STREAM_KIND.end) record = await cursor.next();
     expect(record.reason).toBe("video_unavailable");
+  });
+});
+
+describe("frame stream heartbeat — the WebMCP change signal", () => {
+  /**
+   * The heartbeat's payload cap is a FATAL reader check (8 KiB, see
+   * `FRAME_STREAM_MAX_PAYLOAD_BY_KIND`): a record over it takes the stream
+   * down rather than being truncated. So the question for any new field is not
+   * "is it small" but "is it small on the WORST heartbeat this daemon can
+   * produce" — sixteen tabs with long URLs, plus this.
+   */
+  it("fits the heartbeat budget alongside sixteen long-URL tabs", () => {
+    const tabs = {
+      active: "tab-15",
+      list: Array.from({ length: 16 }, (_, index) => ({
+        id: `tab-${index}`,
+        url: `https://example.test/${"segment/".repeat(20)}${index}?q=${"x".repeat(80)}`,
+      })),
+    };
+    const stats = {
+      framesIn: 1000,
+      framesOut: 999,
+      bytesOut: 12_345_678,
+      dropped: { dedupe: 1, oversize: 2, pacer: 3 },
+      subscribers: 4,
+      encoderIdle: false,
+      tabs,
+      webmcp: {
+        revision: 4_294_967_295,
+        hash: "deadbeef",
+        count: 64,
+        url: `https://example.test/${"segment/".repeat(20)}`,
+      },
+    };
+    const payload = new TextEncoder().encode(JSON.stringify(stats));
+    expect(payload.byteLength).toBeLessThan(8 * 1024);
+  });
+
+  it("is ignored by a reader that has never heard of it", () => {
+    // ADDITIVE ON THE WIRE. An older reader slices this payload by its declared
+    // length and reads the keys it knows; an unknown key is not a framing
+    // error, which is what makes this safe without a protocol bump.
+    const record = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.heartbeat,
+      stats: {
+        subscribers: 1,
+        webmcp: { revision: 2, hash: "abc", count: 3 },
+      },
+    });
+    const decoded = createFrameStreamDecoder().push(record);
+    expect(decoded.ok).toBe(true);
+    const beat = decoded.ok ? decoded.records[0] : undefined;
+    expect(beat?.kind).toBe(FRAME_STREAM_KIND.heartbeat);
+    // An old reader would simply not look at `webmcp`; a new one finds it.
+    expect(
+      (beat as { stats?: { subscribers?: number } }).stats?.subscribers,
+    ).toBe(1);
+    expect(
+      (beat as { stats?: { webmcp?: { count?: number } } }).stats?.webmcp?.count,
+    ).toBe(3);
   });
 });

@@ -1,3 +1,4 @@
+import { negotiateViewport } from "../../../../shared/browser-viewport";
 /**
  * The seam between the daemon's control plane (queue + HTTP) and the real
  * browser. The control plane owns ordering, de-duplication, auth, and boot
@@ -11,16 +12,17 @@ import {
   BrowserCommand,
   BrowserCommandResult,
   ObservationStateToken,
+  WebMcpToolsRevision,
   formatBrowserdError,
   wantsFor,
 } from "../protocol";
 import type { CommandExecutor } from "./command-queue";
 import type { TabViewport } from "./viewport";
-import {
-  leaseRefusalFor,
-  type HandoffLease,
-  type LeaseRefusal,
-} from "./lease";
+import { leaseRefusalFor, type HandoffLease, type LeaseRefusal } from "./lease";
+import type {
+  SessionViewport,
+  SessionViewportPolicy,
+} from "../../../../shared/browser-viewport";
 
 export interface DriverHealth {
   ok: boolean;
@@ -29,6 +31,10 @@ export interface DriverHealth {
 }
 
 export interface BrowserDriver {
+  sessionViewportPolicy?(): SessionViewportPolicy;
+  interactionAnchor?():
+    | import("../../../../shared/browser-pane-command").InteractionAnchor
+    | undefined;
   /**
    * Execute one command against the real browser and return its result. This is
    * exactly the `CommandExecutor` the queue drives; the queue owns idempotency,
@@ -81,7 +87,22 @@ export interface BrowserDriver {
    * `activate_tab` changes what a watching person sees; without this the pane
    * could not say so, and the picture would simply become a different page.
    */
-  tabsSnapshot?(): { active?: string; list: Array<{ id: string; url: string }> };
+  tabsSnapshot?(): {
+    active?: string;
+    list: Array<{ id: string; url: string }>;
+  };
+  /**
+   * A tab's page-tool set as `{revision, hash, count}`, read from the driver's
+   * own cache.
+   *
+   * Optional, like `viewport` and `tabsSnapshot`: a driver with no WebMCP is
+   * still a perfectly good driver, and every caller treats `undefined` as
+   * "this engine cannot tell you" rather than as "no tools".
+   *
+   * TOUCHES NO PAGE, which is the property that lets it ride a heartbeat and
+   * be asked before every model step.
+   */
+  webmcpToolsSnapshot?(tabId?: string): WebMcpToolsRevision | undefined;
   /**
    * Look at a tab WITHOUT acting on it, for a refusal that owes the caller a
    * fresh page (L3's `stale_observation`).
@@ -95,18 +116,78 @@ export interface BrowserDriver {
     command: BrowserCommand,
     wants: { a11y: boolean; screenshot: boolean },
   ): Promise<BrowserCommandResult>;
+  /**
+   * How big this session's page is, and which revision that size is.
+   *
+   * Optional like the rest of this group, and for a slightly different reason:
+   * a driver without one is not a driver that cannot answer, it is a driver
+   * whose answer is necessarily the launch constant — nothing has resized it
+   * because nothing can. Callers fall back to that rather than refusing, so a
+   * fake driver in a unit test keeps behaving exactly as it did.
+   */
+  sessionViewportState?(): SessionViewport;
+  /**
+   * Everything the pane's browser shell draws: tabs with titles and icons,
+   * which one is on screen, whether the history has anywhere to go.
+   *
+   * Optional like the others, and the fallback is a shell that says the
+   * session is unsupported rather than one that draws a plausible-looking
+   * empty strip — a browser with tabs shown as having none is worse than a
+   * browser that admits it cannot say.
+   */
+  stateSnapshot?(): Promise<{
+    seq: number;
+    tabs: Array<{
+      id: string;
+      url: string;
+      title: string;
+      faviconUrl?: string;
+      loading: boolean;
+    }>;
+    activeTabId: string | null;
+    canGoBack: boolean;
+    canGoForward: boolean;
+    viewport: SessionViewport;
+    policy: SessionViewportPolicy;
+  }>;
+  /**
+   * Ask for a new page size, and resolve with the size the session ended at.
+   *
+   * Resolving with the RESULT rather than a boolean is what lets a caller
+   * treat a `fixed` session, a clamped request and a superseded measurement
+   * identically: read the viewport out of the answer and use that.
+   */
+  requestViewport?(size: {
+    policy?: SessionViewportPolicy;
+    width: number;
+    height: number;
+  }): Promise<SessionViewport>;
 }
 
-/** Structural equality of two state tokens (L3). */
+/**
+ * Structural equality of two state tokens (L3).
+ *
+ * The viewport revision is compared only when BOTH sides carry one. An absent
+ * revision means "this side cannot say", and treating that as 0 would refuse
+ * every act on a session that has ever been resized — a token minted before
+ * the field existed, or round-tripped through a caller that dropped it, would
+ * look infinitely stale. The comparison is worth having exactly when both ends
+ * are speaking the current shape.
+ */
 export function stateTokensMatch(
   a: ObservationStateToken,
   b: ObservationStateToken,
 ): boolean {
+  const viewportAgrees =
+    a.viewportRevision === undefined ||
+    b.viewportRevision === undefined ||
+    a.viewportRevision === b.viewportRevision;
   return (
     a.tabId === b.tabId &&
     a.navCounter === b.navCounter &&
     a.urlHash === b.urlHash &&
-    a.domHash === b.domHash
+    a.domHash === b.domHash &&
+    viewportAgrees
   );
 }
 
@@ -130,6 +211,18 @@ export function guardStaleness(
 ): CommandExecutor {
   return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
     const { action } = command;
+    if (
+      command.source !== "manual" &&
+      action.kind !== "webmcp_cancel" &&
+      !negotiateViewport(driver.sessionViewportPolicy?.() ?? "fixed", command)
+        .ok
+    ) {
+      return {
+        ok: false,
+        error:
+          "responsive_viewport_required: this session follows an interactive pane; use a fixed session or declare responsiveViewport support",
+      };
+    }
     if (action.kind !== "act" || action.expectedState === undefined) {
       return driver.execute(command);
     }

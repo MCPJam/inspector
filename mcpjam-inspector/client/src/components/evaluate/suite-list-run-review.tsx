@@ -31,7 +31,6 @@ export function SuiteListRunReview(
   return (
     <SuiteRunReview
       {...props}
-      key={loading ? "loading" : "ready"}
       projectId={projectId}
       cases={details?.testCases ?? []}
       environments={environments}

@@ -15,6 +15,8 @@ const {
   mockHydrateTurnTraceSpans,
   mockTraceViewer,
   mockTurnTracesState,
+  mockHostConfigState,
+  mockCopyToClipboard,
 } = vi.hoisted(() => ({
   mockMessageView: vi.fn(),
   mockReadOnlyTranscript: vi.fn(),
@@ -38,6 +40,13 @@ const {
   mockTurnTracesState: {
     traces: [] as unknown[],
   },
+  // The session's pinned historical host config — what the header's
+  // client/model chip reads the CLIENT from. `null` is the ordinary answer for
+  // a session written before the pin existed.
+  mockCopyToClipboard: vi.fn().mockResolvedValue(true),
+  mockHostConfigState: {
+    config: null as { hostStyle?: string; currentHostName?: string | null; modelId?: string } | null,
+  },
 }));
 
 // `useQuery` is here for SessionChecksSection, which subscribes to
@@ -57,6 +66,8 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       // The chatSessions doc id the checks panel keys on. Distinct field from
       // the `threadId` prop on purpose — the component must read this one.
       _id: "session-doc-1",
+      chatSessionId: "wire-uuid",
+      projectId: "project-1",
       sourceType: mockThreadState.sourceType,
       synthetic: mockThreadState.synthetic,
       readiness: mockThreadState.readiness,
@@ -77,6 +88,30 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   }),
   useSessionBrowserArtifacts: () => ({
     artifacts: mockBrowserArtifactsState.artifacts,
+  }),
+  useSessionHistoricalHostConfig: () => ({
+    config: mockHostConfigState.config,
+  }),
+}));
+
+// The header chip resolves model NAMES through the hosted catalog. Pinned to
+// the static fallback here so the label under test is the component's
+// resolution order and not a live fetch.
+vi.mock("@/lib/clipboard", () => ({
+  copyToClipboard: (...args: unknown[]) => mockCopyToClipboard(...args),
+}));
+
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({
+    hostedCatalog: [
+      {
+        id: "openai/gpt-oss-120b",
+        name: "GPT-OSS 120B",
+        provider: "openai",
+        hosted: true,
+      },
+    ],
+    status: "live",
   }),
 }));
 
@@ -176,6 +211,7 @@ describe("ShareUsageThreadDetail", () => {
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
+    mockHostConfigState.config = null;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ role: "assistant", content: [] }],
@@ -200,6 +236,12 @@ describe("ShareUsageThreadDetail", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+  });
+
+  it("links a direct session to its Playground conversation", async () => {
+    mockThreadState.sourceType = "direct";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    expect(await screen.findByRole("link", { name: "Open in Playground" })).toHaveAttribute("href", "/playground?conversation=wire-uuid&project=project-1");
   });
 
   it("renders formatted share traces with collapsed reasoning", async () => {
@@ -684,6 +726,87 @@ describe("ShareUsageThreadDetail — span load failure", () => {
         traceStartedAtMs: 1_000_000,
         traceEndedAtMs: 1_012_000,
       }),
+    );
+  });
+});
+
+/**
+ * BB-197 — session identity in the header.
+ *
+ * Research (Sep 4): a reader with the transcript open forgot which model
+ * produced it, and share was an icon they did not read as "send this to
+ * someone". Both answers now live in the header of the ONE detail component
+ * Swarm and User Testing share.
+ */
+describe("ShareUsageThreadDetail — session identity header", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockThreadState.sourceType = "scenario";
+    mockThreadState.synthetic = false;
+    mockThreadState.readiness = undefined;
+    mockThreadState.goalScore = undefined;
+    mockBrowserArtifactsState.artifacts = undefined;
+    mockHostConfigState.config = null;
+    mockCopyToClipboard.mockResolvedValue(true);
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ role: "assistant", content: [] }],
+    } as Response);
+    mockAdaptTraceToUiMessages.mockReturnValue({
+      messages: [{ id: "assistant-1", role: "assistant", parts: [] }],
+      toolRenderOverrides: {},
+    });
+  });
+
+  it("names the client and the model in the session header", async () => {
+    // The whole point of the chip: the reader learns which model produced the
+    // transcript without opening Raw or the trace tabs.
+    mockHostConfigState.config = {
+      hostStyle: "chatgpt",
+      currentHostName: "Emmanuel's staging bot",
+      modelId: "openai/gpt-oss-120b",
+    };
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-client-model")).toHaveTextContent(
+        "ChatGPT · GPT-OSS 120B",
+      ),
+    );
+  });
+
+  it("still names the model when the session pinned no client", async () => {
+    // No pinned host config is the ordinary state for older sessions. The
+    // model is still known, and half an answer beats none.
+    mockHostConfigState.config = null;
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-client-model")).toHaveTextContent(
+        "GPT-OSS 120B",
+      ),
+    );
+  });
+
+  it("copies the session link from a labeled share control", async () => {
+    // Labeled, not an icon: readers did not recognize the copy icon as the way
+    // to send a session to a teammate.
+    render(
+      <ShareUsageThreadDetail
+        threadId="thread-1"
+        sessionLink="https://app.test/swarms/session-doc-1"
+      />,
+    );
+
+    const share = await screen.findByRole("button", {
+      name: /share this session/i,
+    });
+    await userEvent.click(share);
+
+    await waitFor(() =>
+      expect(mockCopyToClipboard).toHaveBeenCalledWith(
+        "https://app.test/swarms/session-doc-1",
+      ),
     );
   });
 });

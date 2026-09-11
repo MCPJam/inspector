@@ -2139,7 +2139,7 @@ describe("PlaygroundMain — environment mode", () => {
     render(<PlaygroundMain {...defaultProps} />);
 
     expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
-      undefined
+      undefined,
     );
   });
 

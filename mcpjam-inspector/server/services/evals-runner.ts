@@ -1,3 +1,10 @@
+import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "./browserd/page-tools-peek.js";
+import { webmcpPageToolsMode } from "../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { type ModelMessage } from "ai";
 import {
   extractToolCallsExcludingPolicyBlocks,
@@ -11,6 +18,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { collectToolAnnotations } from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
@@ -2065,6 +2073,7 @@ async function resolveOrgByokEvalRuntime(args: {
     }
   | undefined
 > {
+  if (isCredentialFreeGithubExecution()) return undefined;
   if (hasExplicitModelApiKeys(args.modelApiKeys)) return undefined;
 
   const providerKeyResult = deriveOrgProviderKey(args.modelDefinition);
@@ -3010,6 +3019,46 @@ export const runEvalSuiteWithAiSdk = async ({
     const renderCheckLimit = createConcurrencyLimiter(
       MAX_CONCURRENT_RENDER_CHECKS,
     );
+    if (recorder?.beginExecutionAttempt) {
+      const modelIdentifiers = Array.from(
+        new Map(
+          tests
+            .filter(
+              (test) =>
+                !isPinnedOnly({
+                  caseType: test.caseType,
+                  promptTurns: resolveEvalTestCase(test).promptTurns,
+                }),
+            )
+            .map((test) => {
+              const modelDefinition = resolveEvalCaseModelDefinition({
+                hostConfig: suiteHostConfig,
+                caseModel: buildModelDefinition(test),
+              });
+              const provider = modelDefinition.provider;
+              const model = getCanonicalModelId(
+                String(modelDefinition.id),
+                provider,
+              );
+              return [
+                `${provider}\u0000${model}`,
+                { provider, model },
+              ] as const;
+            }),
+        ).values(),
+      );
+      await recorder.beginExecutionAttempt({
+        caseCount: tests.length,
+        // Cases may configure different repeat counts. This is the total
+        // number of iteration rows expected for the whole attempt.
+        repetitionCount: tests.reduce(
+          (sum, test) => sum + (test.runs || 1),
+          0,
+        ),
+        renderConcurrencyLimit: MAX_CONCURRENT_RENDER_CHECKS,
+        modelIdentifiers,
+      });
+    }
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
@@ -3593,6 +3642,11 @@ const runLocalIteration = async ({
     testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
+    executionType: !caseNeedsModel
+      ? ("model_free" as const)
+      : resolvedExecution.harness
+        ? ("harness" as const)
+        : ("model" as const),
   };
   const shouldOmitSnapshotForPairing =
     !caseNeedsModel &&
@@ -4120,6 +4174,10 @@ const runLocalIteration = async ({
     // only mutates `scriptedCheckFailures`, which no earlier gate reads, so
     // doing it here is equivalent to the former post-finalize position.)
     browser.flushActiveWidgetChecks();
+    const toolAnnotations = collectToolAnnotations(
+      mcpClientManager,
+      selectedServers,
+    );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
     const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
       promptTurns,
@@ -4129,6 +4187,28 @@ const runLocalIteration = async ({
       // Skill-tool calls are exempt from tool-call expectations (a skill load is
       // agent housekeeping); active only when skill tools were advertised.
       skillToolsActive: hasSkillTools(Object.keys(prepared?.allTools ?? {})),
+      // The registry the model actually saw this iteration. Checks that
+      // compare a call against what the server DECLARED (its input schema,
+      // its `destructiveHint`) read it here and report `status: "error"` when
+      // it is absent — so it must be the ADVERTISED set, not the complete
+      // one. `prepared.allTools` is always complete; under progressive
+      // discovery the model was shown a subset, and letting a check read a
+      // declaration for a tool the model never saw is the same mistake D7
+      // narrows against one call below.
+      ...(prepared?.allTools
+        ? {
+            selectionTools: selectionDiscoveryForFinish
+              ? narrowToolsToAdvertised(
+                  prepared.allTools,
+                  selectionDiscoveryForFinish.progressivePlan,
+                  selectionDiscoveryForFinish.discoveryState,
+                )
+              : prepared.allTools,
+          }
+        : {}),
+      // The AI SDK ToolSet above drops the server's `annotations`; they come
+      // from the manager's own tools/list cache instead.
+      ...(toolAnnotations ? { selectionToolAnnotations: toolAnnotations } : {}),
       turnCheckResults,
       effectivePredicates,
       trace: traceForGate,
@@ -4752,6 +4832,9 @@ const runHostedIterationWithBrowser = async (
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
+    executionType: resolvedExecution.harness
+      ? ("harness" as const)
+      : ("model" as const),
   };
 
   const iterationId = precreatedIterationId
@@ -4818,14 +4901,44 @@ const runHostedIterationWithBrowser = async (
   // This used to run here, unconditionally, which is why it is a thunk rather
   // than a value: the one call site below is inside the try that turns a
   // provisioning failure into a cleanly recorded failed iteration.
-  const buildBuiltInTools = (
-    sandboxBinding?: {
-      sandboxId: string;
-      sandboxRowId: string;
-      runtimeKind: "terminal" | "desktop-browser";
-    },
-  ) =>
-    resolveHostTools(
+  const buildBuiltInTools = async (sandboxBinding?: {
+    sandboxId: string;
+    sandboxRowId: string;
+    runtimeKind: "terminal" | "desktop-browser";
+  }) => {
+    // WHAT THE RUN'S OWN PAGE OFFERS. Read from the box this iteration
+    // provisioned, never the project computer: an unattended run drives a
+    // disposable desktop nothing else can reach, and asking about the project's
+    // would answer for a different browser entirely.
+    //
+    // Read-only and fail-empty (see `peekPageTools`), and skipped altogether
+    // unless the run declared a browser policy — an eval with no browser must
+    // not pay a daemon round trip to discover it has no browser.
+    const pageToolsSnapshot = pageToolsSnapshotFrom(
+      sandboxBinding?.runtimeKind === "desktop-browser" &&
+        browserApprovalDelivery
+        ? await peekPageToolsForChatTurn({
+            builtInToolIds: resolvedExecution.builtInToolIds,
+            browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+            firstClass: webmcpPageToolsMode() === "first_class",
+            // An eval is never a harness turn for this purpose: it either has
+            // the hosted loop or it has no page tools at all, and the flag
+            // below decides which.
+            isHarnessTurn: Boolean(resolvedExecution.harness),
+            hasV1PageTools: false,
+            engine: "hosted",
+            ...(builtInTarget && "projectId" in builtInTarget
+              ? { projectId: builtInTarget.projectId }
+              : { projectId: undefined }),
+            bearer: convexAuthToken,
+            sandboxRowId: sandboxBinding.sandboxRowId,
+            // A cancelled run must not sit out the peek's full deadline before
+            // its cancellation takes effect.
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          })
+        : undefined,
+    );
+    return resolveHostTools(
       { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInTarget && "projectId" in builtInTarget
         ? {
@@ -4836,13 +4949,28 @@ const runHostedIterationWithBrowser = async (
             // other iteration of this suite can reach. The suite's project is
             // not enough: iterations run concurrently against it.
             ...(iterationId ? { runKey: iterationId } : {}),
+            ...(resolvedExecution.browserProfileId
+              ? { browserProfileId: resolvedExecution.browserProfileId }
+              : {}),
+            ...(iterationId
+              ? {
+                  browserSessionScope: {
+                    kind: "eval_iteration" as const,
+                    sessionId: String(iterationId),
+                  },
+                }
+              : {}),
             // The trusted binding to THIS iteration's box. It reaches the
             // resolver on `ctx`, never on the host config, so nothing in a
             // member-readable snapshot can forge one.
             ...(sandboxBinding ? { sandboxBinding } : {}),
+            ...(pageToolsSnapshot
+              ? { browserPageTools: pageToolsSnapshot }
+              : {}),
           }
         : null,
     );
+  };
   let builtInTools: ReturnType<typeof resolveHostTools>;
   // ── Harness execution inputs, resolved once per iteration.
   //
@@ -5004,7 +5132,7 @@ const runHostedIterationWithBrowser = async (
           "tool from this host config, or update the deployment.",
       );
     }
-    builtInTools = buildBuiltInTools(sandboxBinding);
+    builtInTools = await buildBuiltInTools(sandboxBinding);
 
     prepared = await prepareChatV2({
       mcpClientManager,
@@ -5526,6 +5654,10 @@ const runHostedIterationWithBrowser = async (
       : undefined;
   // Flush before the shared verdict reads scripted-check failures (see local path).
   browser.flushActiveWidgetChecks();
+  const stepToolAnnotations = collectToolAnnotations(
+    mcpClientManager,
+    selectedServers,
+  );
   const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -5533,6 +5665,19 @@ const runHostedIterationWithBrowser = async (
     matchOptions: test.matchOptions,
     // Skill-tool calls are exempt from tool-call expectations (see local path).
     skillToolsActive: hasSkillTools(Object.keys(prepared.allTools)),
+    // See the local path: the declaration a schema/annotation check reads,
+    // narrowed to what progressive discovery advertised. `prepared` is always
+    // assigned on this runner, so the plan and state are read directly rather
+    // than through a captured copy.
+    selectionTools: narrowToolsToAdvertised(
+      prepared.allTools,
+      prepared.progressivePlan,
+      prepared.discoveryState,
+    ),
+    // See the sibling call site: `annotations` are not on the ToolSet.
+    ...(stepToolAnnotations
+      ? { selectionToolAnnotations: stepToolAnnotations }
+      : {}),
     turnCheckResults,
     effectivePredicates,
     trace: traceForGate,

@@ -76,6 +76,10 @@ export interface BrowserArtifactOutbox {
    * somehow arrives without a `promptIndex` of its own.
    */
   take(browser: BrowserSessionContext, fallbackPromptIndex: number): void;
+  enqueueSteps(
+    steps: RunnerBrowserInteractionStep[],
+    fallbackPromptIndex: number,
+  ): void;
   /**
    * Upload the terminal replay video and hold its blob id for the next flush.
    * Idempotent — a no-op once a video is staged or attached. Never throws.
@@ -269,6 +273,12 @@ export function createBrowserArtifactOutbox(args: {
       return new Set([...raw.keys(), ...wire.keys()]).size;
     },
 
+    enqueueSteps(steps, fallbackPromptIndex) {
+      for (const step of steps)
+        rawBucket(bucketOf(step.promptIndex, fallbackPromptIndex)).steps.push(
+          step,
+        );
+    },
     take(browser, fallbackPromptIndex) {
       const { observations, steps } = browser.drainNewArtifacts();
       for (const obs of observations) {
@@ -325,7 +335,6 @@ export function createBrowserArtifactOutbox(args: {
           videoAttached,
         };
       }
-
 
       await serializePending(convexClient);
 

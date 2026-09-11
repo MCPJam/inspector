@@ -399,7 +399,7 @@ describe("EvaluateTab", () => {
     mocks.getEffectiveSuiteServers.mockReturnValue(["server-a"]);
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await userEvent.click(screen.getByRole("button", { name: "Run Suite suite-a" }));
+    await userEvent.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
     expect(screen.getByRole("dialog", { name: "Run Suite suite-a" })).toBeInTheDocument();
     expect(screen.getByTestId("evals-suites-overview")).toBeInTheDocument();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
@@ -606,7 +606,7 @@ describe("EvaluateTab", () => {
     const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await user.click(screen.getByRole("button", { name: "Run Suite suite-a" }));
+    await user.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
     expect(mocks.handleRerun).not.toHaveBeenCalled();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Start reviewed run" }));
@@ -643,7 +643,7 @@ describe("EvaluateTab", () => {
     );
   });
 
-  it("shows the runs table from the empty landing when Runs is selected", async () => {
+  it("shows the empty hero on Runs when there are no suites", () => {
     mocks.route.current = { type: "list" };
     mocks.useEvalQueries.mockImplementation(() => ({
       ...makeQueryState(null),
@@ -651,17 +651,21 @@ describe("EvaluateTab", () => {
       suiteOverview: [],
     }));
 
-    const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
 
-    await user.click(screen.getByRole("button", { name: /^runs$/i }));
-
-    expect(screen.queryByTestId("evals-empty-hero")).toBeNull();
-    expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
-    expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
+    expect(screen.getByTestId("evals-empty-hero")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Eval my server: server-a" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
+    expect(screen.queryByTestId("project-runs-table")).toBeNull();
+    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
-  it("opens the first-run preview from Eval my server, and Create suite still uses the form", async () => {
+  it("opens Create suite from Eval my server with that server prefilled, and header Create suite stays blank", async () => {
     mocks.route.current = { type: "list" };
     mocks.useEvalQueries.mockImplementation(() => ({
       ...makeQueryState(null),
@@ -677,28 +681,37 @@ describe("EvaluateTab", () => {
       screen.getByRole("button", { name: "Eval my server: server-a" }),
     );
     expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
-      type: "eval-server",
-      serverId: "srv-a",
+      type: "create",
     });
 
+    mocks.route.current = { type: "create" };
+    view.rerender(<EvaluateTab projectId="ws-1" />);
+
+    expect(screen.getByTestId("create-suite-page")).toBeInTheDocument();
+    expect(screen.queryByTestId("evals-empty-hero")).toBeNull();
+    expect(mocks.createSuitePage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialName: "server-a",
+        initialServerId: "srv-a",
+      }),
+    );
+
+    mocks.route.current = { type: "list" };
+    view.rerender(<EvaluateTab projectId="ws-1" />);
+    await user.click(screen.getByRole("button", { name: /^suites$/i }));
     await user.click(screen.getByRole("button", { name: /^create suite$/i }));
     expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
       type: "create",
     });
 
-    mocks.route.current = { type: "eval-server", serverId: "srv-a" };
+    mocks.route.current = { type: "create" };
     view.rerender(<EvaluateTab projectId="ws-1" />);
-
-    expect(
-      screen.getByTestId("suite-case-generation-workspace"),
-    ).toBeInTheDocument();
-    expect(screen.queryByTestId("evals-empty-hero")).toBeNull();
-    expect(screen.queryByTestId("create-suite-page")).toBeNull();
-    expect(
-      screen.getByRole("heading", {
-        name: "Generate test cases",
+    expect(mocks.createSuitePage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialName: null,
+        initialServerId: null,
       }),
-    ).toBeInTheDocument();
+    );
   });
 
   it("opens today's case editor from a first-run case and can return", async () => {

@@ -40,6 +40,17 @@ export type CommandExecutor = (
   command: BrowserCommand,
 ) => Promise<BrowserCommandResult>;
 
+/**
+ * Is this a control message rather than work on the page?
+ *
+ * Only cancellation. It has no side effect of its own, it is idempotent, and
+ * its whole value is arriving while something else is still running — the three
+ * properties that make skipping the queue safe rather than merely convenient.
+ */
+function isOutOfBand(command: BrowserCommand): boolean {
+  return command.action.kind === "webmcp_cancel";
+}
+
 /** Which FIFO a command belongs to: its tab, or the session if tab-less. */
 function queueKeyFor(command: BrowserCommand): string {
   return command.tabId ?? DEFAULT_QUEUE_KEY;
@@ -158,7 +169,27 @@ export class CommandQueue {
     }
   }
 
+  /** Whether every per-tab FIFO is drained. Used for profile snapshots. */
+  isIdle(): boolean {
+    for (const count of this.depth.values()) {
+      if (count > 0) return false;
+    }
+    return true;
+  }
+
   async submit(command: BrowserCommand): Promise<BrowserCommandOutcome> {
+    // A STOP DOES NOT WAIT ITS TURN. Everything else here is ordered against
+    // the tab's other work; a cancellation is ordered against the very command
+    // it cancels, and putting it behind that command in the FIFO means it can
+    // only ever arrive after the thing it was meant to stop has finished. For a
+    // page tool that hangs — the case Stop exists for — the queue would hold
+    // the cancellation for the whole timeout while the page kept working.
+    //
+    // Safe to take out of order because a cancellation is not an action on the
+    // page: it names an invocation, it is idempotent, and a cancellation for
+    // one that already finished (or never existed) is a no-op. The lease gate
+    // upstream has already run, so this bypasses ordering only, not permission.
+    if (isOutOfBand(command)) return this.runOutOfBand(command);
     // Reads run on the FIFO like anything else — ordering still matters, and
     // the depth cap still applies — but they are never tracked by id, so they
     // spend no part of the per-boot budget. See `isReplayable`.
@@ -246,6 +277,26 @@ export class CommandQueue {
       this.depth.set(key, (this.depth.get(key) ?? 1) - 1);
       if (this.tails.get(key) === raw) this.tails.delete(key);
     }
+  }
+
+  /**
+   * Run a command NOW, off the tab's FIFO entirely.
+   *
+   * Not depth-capped either, and deliberately: the depth cap exists to stop a
+   * caller stampeding the browser with work, and this lane carries only
+   * cancellations — refusing one because the tab is busy would refuse it in
+   * exactly the situation it is for. Untracked, like a read: a cancellation is
+   * idempotent, so a retry replaying it costs nothing and a tombstone would buy
+   * nothing.
+   */
+  private async runOutOfBand(
+    command: BrowserCommand,
+  ): Promise<BrowserCommandOutcome> {
+    const result = await this.executor(command).then(
+      (value) => value,
+      normalizeError,
+    );
+    return { status: "ok", result, bootId: this.bootId };
   }
 
   /** Current retained-result count. Exposed for tests. */

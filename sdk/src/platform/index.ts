@@ -389,6 +389,7 @@ export {
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
   getEvalDescriptionExperimentOperation,
@@ -769,6 +770,7 @@ export {
   type GetEvalRunStageAnalyticsResult,
   type GetEvalRunGateResult,
   type GetEvalRunRouteFactsResult,
+  type GetEvalRunServerFactsResult,
   type ProposeEvalDescriptionRewriteInput,
   type ProposeEvalDescriptionRewriteResult,
   type StartEvalDescriptionExperimentInput,
@@ -823,3 +825,11 @@ export {
   type CollectScreenshotsOptions,
   type StepScreenshot,
 } from "./step-evidence.js";
+
+export type { PlatformBrowserToolPolicy, PlatformSessionBrowserInput, PlatformBrowserScreenshot, PlatformSessionBrowser, PlatformSessionBrowserOpened, PlatformSessionBrowserCommand, PlatformSessionBrowserResult, PlatformSessionBrowserTrace, PlatformSessionBrowserOperation, PlatformSessionBrowserOperationResult } from "./types.js";
+
+export { driveChatSessionBrowserOperation, observeChatSessionBrowserOperation, type DriveChatSessionBrowserInput, type ObserveChatSessionBrowserInput } from "./operations.js";
+export { collectSessionScreenshots } from "./browser-evidence.js";
+
+export { platformBrowserToolPolicySchema } from "./browser-policy.js";
+export type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";

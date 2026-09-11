@@ -20,8 +20,15 @@ import { buildRunResultsMatrix } from "./run-results-matrix-model";
 import { RunResultsMatrix } from "./run-results-matrix";
 import {
   buildRunVerdictHero,
+  heroStatsFor,
   type RunVerdictHeroView,
 } from "./run-verdict-hero-model";
+import {
+  buildHeroPairings,
+  buildHeroStatDeltas,
+  previousHeroIterations,
+  previousLaunchRuns,
+} from "./run-verdict-hero-deltas";
 import { RunVerdictHero } from "./run-verdict-hero";
 import type { SingleRunContent } from "./evaluate-run-content";
 
@@ -36,6 +43,9 @@ export function CombinedRunContent({
   runs,
   projectId,
   hostNamesById = new Map(),
+  siblingRuns = [],
+  allIterations,
+  previousRunId,
   decisionSummaryEnabled,
   onOpenIteration,
 }: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRun[] }) {
@@ -77,22 +87,59 @@ export function CombinedRunContent({
   );
   const isFiltered =
     client !== ALL_EVAL_FILTER_VALUES || model !== ALL_EVAL_FILTER_VALUES;
-  const view = combinedReportView(
+  const suiteRuns = siblingRuns.length > 0 ? siblingRuns : hydratedRuns;
+  const previousIterations = previousHeroIterations({
     selectedRuns,
-    selectedIterations,
-    selectedReports.map((report) => report.view),
-    isFiltered,
+    suiteRuns,
+    allIterations,
+    previousRunId,
+    matchSelectedPairings: isFiltered,
+  });
+  const previousLaunch = previousLaunchRuns(
+    selectedRuns,
+    suiteRuns,
+    previousRunId,
   );
+  const pairings = buildHeroPairings({
+    targets,
+    previousLaunch,
+    previousIterations,
+  });
+  const view = {
+    ...combinedReportView(
+      selectedRuns,
+      selectedIterations,
+      selectedReports.map((report) => report.view),
+      isFiltered,
+      previousIterations,
+    ),
+    pairings,
+  };
   const fullVerdict = combinedReportView(
     hydratedRuns,
     iterations,
     hydratedRuns.flatMap((run) => reports.get(run._id)?.view ?? []),
     false,
+    previousIterations,
   ).verdict;
   const diagnostics = selectedReports.flatMap((report) => report.diagnostics);
   const chains = new Map(
     selectedReports.flatMap((report) => [...report.chains]),
   );
+  const clearPairingFilters = () => {
+    setClient(ALL_EVAL_FILTER_VALUES);
+    setModel(ALL_EVAL_FILTER_VALUES);
+  };
+  const pairingFilterProps = {
+    client,
+    model,
+    clientOptions: [...new Set(matrix.targets.map((target) => target.client))],
+    modelOptions: [...new Set(matrix.targets.map((target) => target.modelId))],
+    isFiltered,
+    onClientChange: setClient,
+    onModelChange: setModel,
+    onClear: clearPairingFilters,
+  };
   return (
     <div
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
@@ -111,49 +158,13 @@ export function CombinedRunContent({
           />
         ) : null;
       })}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 px-5 py-3">
-        <p className="text-xs text-muted-foreground">
-          {isFiltered
-            ? `${targets.length} of ${matrix.targets.length}`
-            : `All ${matrix.targets.length}`}{" "}
-          client/model pairings
-        </p>
-        <div className="flex items-center gap-2">
-          <EvalListFilter
-            label="Client"
-            className="w-28"
-            value={client}
-            options={[
-              ...new Set(matrix.targets.map((target) => target.client)),
-            ]}
-            onChange={setClient}
-          />
-          <EvalListFilter
-            label="Model"
-            className="w-40"
-            value={model}
-            options={[
-              ...new Set(matrix.targets.map((target) => target.modelId)),
-            ]}
-            onChange={setModel}
-          />
-          <Button
-            disabled={!isFiltered}
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setClient(ALL_EVAL_FILTER_VALUES);
-              setModel(ALL_EVAL_FILTER_VALUES);
-            }}
-          >
-            Clear filters
-          </Button>
-        </div>
-      </div>
       {history.loading && runs.some((run) => !history.details.has(run._id)) ? (
-        <p role="status" className="p-5 text-sm text-muted-foreground">
-          Loading results for every client and model…
-        </p>
+        <div className="px-5 py-3">
+          <PairingFilters {...pairingFilterProps} showClear />
+          <p role="status" className="pt-2 text-sm text-muted-foreground">
+            Loading results for every client and model…
+          </p>
+        </div>
       ) : history.errorCount ? (
         <div role="alert" className="p-5 text-sm">
           Results unavailable for {history.errorCount} client/model pairings.{" "}
@@ -162,9 +173,12 @@ export function CombinedRunContent({
           </Button>
         </div>
       ) : !targets.length ? (
-        <p className="p-5 text-sm text-muted-foreground">
-          No results match these filters.
-        </p>
+        <div className="px-5 py-3">
+          <PairingFilters {...pairingFilterProps} showClear />
+          <p className="pt-2 text-sm text-muted-foreground">
+            No results match these filters.
+          </p>
+        </div>
       ) : (
         <>
           <RunVerdictHero view={view} headerVerdict={fullVerdict} />
@@ -178,10 +192,64 @@ export function CombinedRunContent({
               chains={chains}
               onOpenIteration={onOpenIteration}
               modelIds={model === ALL_EVAL_FILTER_VALUES ? undefined : [model]}
+              toolbarExtra={<PairingFilters {...pairingFilterProps} />}
+              extraFiltersActive={isFiltered}
+              onClearExtraFilters={clearPairingFilters}
             />
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function PairingFilters({
+  client,
+  model,
+  clientOptions,
+  modelOptions,
+  isFiltered,
+  onClientChange,
+  onModelChange,
+  onClear,
+  showClear = false,
+}: {
+  client: string;
+  model: string;
+  clientOptions: string[];
+  modelOptions: string[];
+  isFiltered: boolean;
+  onClientChange: (value: string) => void;
+  onModelChange: (value: string) => void;
+  onClear: () => void;
+  showClear?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <EvalListFilter
+        label="Client"
+        className="w-28"
+        value={client}
+        options={clientOptions}
+        onChange={onClientChange}
+      />
+      <EvalListFilter
+        label="Model"
+        className="w-40"
+        value={model}
+        options={modelOptions}
+        onChange={onModelChange}
+      />
+      {showClear && isFiltered ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-[11px]"
+          onClick={onClear}
+        >
+          Clear filters
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -241,6 +309,7 @@ export function combinedReportView(
   iterations: EvalIteration[],
   views: RunVerdictHeroView[],
   filtered: boolean,
+  previousIterations?: EvalIteration[] | null,
 ): RunVerdictHeroView {
   const fallback = buildRunVerdictHero({
     run: runs[0] ?? ({ status: "pending" } as EvalSuiteRun),
@@ -257,6 +326,18 @@ export function combinedReportView(
         view.focus &&
         (!filtered || iterationIds.has(view.focus.diagnostic.iterationId)),
     ) ?? (filtered ? undefined : views[0]);
+  const stats = { ...fallback.stats, cases: { kind: "unavailable" as const } };
+  const previousStats =
+    previousIterations && previousIterations.length > 0
+      ? {
+          ...heroStatsFor({
+            run: runs[0] ?? ({ status: "pending" } as EvalSuiteRun),
+            iterations: previousIterations,
+            decision: { status: "disabled", summary: null, diagnostics: [] },
+          }),
+          cases: { kind: "unavailable" as const },
+        }
+      : null;
   return {
     ...fallback,
     pending,
@@ -291,6 +372,8 @@ export function combinedReportView(
         : fallback.sentence),
     // Iteration measurements span precisely the visible population. Do not add
     // canonical case counts from different clients as though they were unique cases.
-    stats: { ...fallback.stats, cases: { kind: "unavailable" } },
+    stats,
+    pairings: fallback.pairings,
+    deltas: previousStats ? buildHeroStatDeltas(stats, previousStats) : null,
   };
 }

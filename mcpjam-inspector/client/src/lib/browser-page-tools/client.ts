@@ -15,8 +15,9 @@
  * to be told apart.
  */
 import { authFetch } from "@/lib/session-token";
-import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
+import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 import type {
+  BrowserPageToolInvokeResponse,
   BrowserPageToolsErrorCode,
   BrowserPageToolsResponse,
 } from "@/shared/browser-page-tools";
@@ -73,9 +74,18 @@ const UNREACHABLE: BrowserPageToolsResponse = {
 export async function fetchHostedPageTools(
   tokens: BrowserTokenCache,
   signal?: AbortSignal,
+  /**
+   * WHICH TAB to read, when the live signal named one.
+   *
+   * Omitted, the route observes `@session` — a literal tab key in the daemon,
+   * not "whichever tab is active" — so a read that follows a signal from a
+   * second tab would answer for the first.
+   */
+  tabId?: string,
 ): Promise<BrowserPageToolsResponse> {
+  const query = tabId ? `?tabId=${encodeURIComponent(tabId)}` : "";
   const send = async (token: string) =>
-    fetch(`${HOSTED_BROWSER_BASE}/page-tools`, {
+    fetch(`${HOSTED_BROWSER_BASE}/page-tools${query}`, {
       headers: { authorization: `Bearer ${token}` },
       ...(signal ? { signal } : {}),
     });
@@ -93,7 +103,13 @@ export async function fetchHostedPageTools(
 
 /** The local browser's page tools, via the device consent capability. */
 export async function fetchLocalPageTools(
-  args: { projectId: string; holder?: string },
+  args: {
+    projectId: string;
+    /** The conversation whose browser the pane is listing. */
+    sessionId?: string;
+    holder?: string;
+    tabId?: string;
+  },
   consentToken: string | null,
   signal?: AbortSignal,
 ): Promise<BrowserPageToolsResponse> {
@@ -101,12 +117,78 @@ export async function fetchLocalPageTools(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(consentToken ? { [LOCAL_CONSENT_HEADER]: consentToken } : {}),
+      ...(consentToken ? { [BROWSER_CONSENT_HEADER]: consentToken } : {}),
     },
     body: JSON.stringify(args),
     ...(signal ? { signal } : {}),
   });
   return decodePageTools(await res.json().catch(() => null));
+}
+
+function decodeInvoke(body: unknown): BrowserPageToolInvokeResponse {
+  if (typeof body === "object" && body !== null && "ok" in body) {
+    return body as BrowserPageToolInvokeResponse;
+  }
+  return { ok: false, error: "unreachable" };
+}
+
+/** Invoke a page tool on the hosted browser, via the panel's signed token. */
+export async function fetchHostedPageToolInvoke(
+  tokens: BrowserTokenCache,
+  args: {
+    toolKey: string;
+    input: Record<string, unknown>;
+    frameId?: string;
+    tabId?: string;
+  },
+  signal?: AbortSignal,
+): Promise<BrowserPageToolInvokeResponse> {
+  const send = async (token: string) =>
+    fetch(`${HOSTED_BROWSER_BASE}/page-tools/invoke`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(args),
+      ...(signal ? { signal } : {}),
+    });
+  const presented = await tokens.get();
+  let res = await send(presented);
+  if (res.status === 401) {
+    tokens.invalidateIf(presented);
+    res = await send(await tokens.get());
+  }
+  return decodeInvoke(await res.json().catch(() => null));
+}
+
+/** Invoke a page tool on this machine's browser, via device consent. */
+export async function fetchLocalPageToolInvoke(
+  args: {
+    projectId: string;
+    toolKey: string;
+    input: Record<string, unknown>;
+    sessionId?: string;
+    holder?: string;
+    frameId?: string;
+    tabId?: string;
+  },
+  consentToken: string | null,
+  signal?: AbortSignal,
+): Promise<BrowserPageToolInvokeResponse> {
+  const res = await authFetch(
+    "/api/mcp/computers/local-browser/page-tools/invoke",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(consentToken ? { [BROWSER_CONSENT_HEADER]: consentToken } : {}),
+      },
+      body: JSON.stringify(args),
+      ...(signal ? { signal } : {}),
+    },
+  );
+  return decodeInvoke(await res.json().catch(() => null));
 }
 
 export { UNREACHABLE as UNREACHABLE_PAGE_TOOLS };

@@ -1,3 +1,4 @@
+import type { LocalDiscoveryBudget } from "../daemon/webmcp-bridge.js";
 /**
  * A `DriverPage` over one Electron `webContents`.
  *
@@ -26,6 +27,8 @@
  */
 
 import type { ConsoleEntry } from "../daemon/observation-budget";
+import type { PendingDialog } from "../daemon/dialogs";
+import { NetworkRing } from "../daemon/network";
 import type { ActPoint, DriverPage } from "../daemon/browser-page";
 import type { CdpLike, WebMcpBridge } from "../daemon/webmcp-bridge";
 import { WebMcpBridge as Bridge } from "../daemon/webmcp-bridge";
@@ -43,6 +46,8 @@ const NETWORK_QUIET_MS = 500;
 /** Same quality as the Playwright engine: reading a page, not printing it. */
 const SCREENSHOT_JPEG_QUALITY = 70;
 /** Newest N console entries kept, matching the Playwright engine's ring. */
+/** Page-authored text that reaches the model, so bounded at capture. */
+const DIALOG_MESSAGE_CHARS = 2_000;
 const CONSOLE_RING_MAX = 200;
 
 /**
@@ -153,14 +158,20 @@ export interface PageWebContents {
   navigationHistory?: {
     canGoBack(): boolean;
     goBack(): void;
+    canGoForward(): boolean;
+    goForward(): void;
   };
 }
 
 export interface ElectronPageDeps {
+  localSecurity?: boolean;
+  localBudget?: LocalDiscoveryBudget;
   /** Called when this page is asked to close, so the context drops its window. */
   onClose(): Promise<void> | void;
   /** Bring the page's window forward — what `activate_tab` means here. */
   onBringToFront?(): void;
+  /** Resize the native view or window when the session barrier accepts it. */
+  onResize?(size: { width: number; height: number }): void;
 }
 
 /**
@@ -279,6 +290,9 @@ export function createElectronPage(
    * never return to zero, so the page would never settle again for the rest of
    * its life — a hang, not a wrong answer.
    */
+  /** The dialog this page is blocked on, if any. See the CDP handlers below. */
+  const network = new NetworkRing();
+  let pendingDialog: PendingDialog | null = null;
   const inFlightRequests = new Set<string>();
   /** Resolvers waiting for the page to go quiet. */
   const quietWaiters = new Set<() => void>();
@@ -292,7 +306,8 @@ export function createElectronPage(
     // (event, level, message). Both shapes appear in the wild depending on
     // which Electron the packaged app was built against, so read either.
     const first = args[0] as
-      { level?: string | number; message?: string } | undefined;
+      | { level?: string | number; message?: string }
+      | undefined;
     const level = first?.level ?? (args[1] as string | number | undefined);
     const message = first?.message ?? (args[2] as string | undefined);
     if (typeof message !== "string") return;
@@ -350,6 +365,79 @@ export function createElectronPage(
           if (id !== undefined) inFlightRequests.delete(id);
           armQuiet();
         };
+        // DIALOGS. `Page.enable` is already sent above, so the events arrive
+        // without another domain enable. Captured and not answered, for the
+        // same reason as the Playwright engine: who answers depends on the
+        // lease, which the driver holds and this file cannot see.
+        // THE NETWORK RING, fed from the events this session already takes for
+        // settle detection. `requestWillBeSent` fires again per redirect hop
+        // under the same id, which the ring folds rather than splitting.
+        adapter.on("Network.requestWillBeSent", (payload) => {
+          const p = payload as {
+            requestId?: string;
+            type?: string;
+            request?: { url?: string; method?: string };
+          };
+          if (!p?.requestId) return;
+          network.started({
+            requestId: p.requestId,
+            method: p.request?.method ?? "GET",
+            url: p.request?.url ?? "",
+            ...(p.type ? { resourceType: p.type } : {}),
+          });
+        });
+        adapter.on("Network.responseReceived", (payload) => {
+          const p = payload as {
+            requestId?: string;
+            response?: {
+              status?: number;
+              statusText?: string;
+              mimeType?: string;
+              headers?: Record<string, string>;
+            };
+          };
+          if (!p?.requestId) return;
+          network.finished({
+            requestId: p.requestId,
+            ...(p.response?.status !== undefined
+              ? { status: p.response.status }
+              : {}),
+            ...(p.response?.statusText
+              ? { statusText: p.response.statusText }
+              : {}),
+            ...(p.response?.mimeType ? { mimeType: p.response.mimeType } : {}),
+            ...(p.response?.headers ? { headers: p.response.headers } : {}),
+          });
+        });
+        adapter.on("Network.loadingFailed", (payload) => {
+          const p = payload as { requestId?: string; errorText?: string };
+          if (!p?.requestId) return;
+          network.finished({
+            requestId: p.requestId,
+            failure: p.errorText ?? "request failed",
+          });
+        });
+        adapter.on("Page.javascriptDialogOpening", (payload) => {
+          const p = payload as {
+            type?: string;
+            message?: string;
+            defaultPrompt?: string;
+          };
+          pendingDialog = {
+            kind: (p?.type ?? "alert") as PendingDialog["kind"],
+            message: (p?.message ?? "").slice(0, DIALOG_MESSAGE_CHARS),
+            ...(p?.defaultPrompt
+              ? {
+                  defaultPrompt: p.defaultPrompt.slice(0, DIALOG_MESSAGE_CHARS),
+                }
+              : {}),
+            at: Date.now(),
+          };
+        });
+        // Closed BY THE PAGE (or by us) — either way there is nothing pending.
+        adapter.on("Page.javascriptDialogClosed", () => {
+          pendingDialog = null;
+        });
         adapter.on("Network.loadingFinished", settled);
         adapter.on("Network.loadingFailed", settled);
         await adapter.send("Network.enable").catch(() => {});
@@ -605,7 +693,9 @@ export function createElectronPage(
     // of a definite `true` refuses.
     const resolved = (await cdp
       .send("DOM.resolveNode", { nodeId })
-      .catch(() => undefined)) as { object?: { objectId?: string } } | undefined;
+      .catch(() => undefined)) as
+      | { object?: { objectId?: string } }
+      | undefined;
     const objectId = resolved?.object?.objectId;
     if (!objectId) return here("OTHER");
     let hostObjectId: string | undefined;
@@ -708,7 +798,7 @@ export function createElectronPage(
       type,
       x: point.x,
       y: point.y,
-      button: type === "mouseMoved" ? "none" : (options.button ?? "left"),
+      button: type === "mouseMoved" ? "none" : options.button ?? "left",
       buttons: options.buttons ?? 0,
       clickCount: options.clickCount ?? (type === "mouseMoved" ? 0 : 1),
     });
@@ -778,6 +868,13 @@ export function createElectronPage(
   }
 
   const page: DriverPage = {
+    ...(deps.onResize
+      ? {
+          async setViewportSize(size: { width: number; height: number }) {
+            deps.onResize!(size);
+          },
+        }
+      : {}),
     async goto(url) {
       // BEFORE the load, not inside the settle that follows it: `Network.enable`
       // does not replay, so a request this navigation starts before the monitor
@@ -822,6 +919,22 @@ export function createElectronPage(
         navigationSettled(wc, () => history.goBack()),
         NAV_TIMEOUT_MS,
         "going back",
+        () => wc.stop?.(),
+      );
+    },
+    async goForward() {
+      await session();
+      const history = wc.navigationHistory;
+      // Electron's `goForward()` on an empty forward history does nothing and
+      // fires no navigation event, so `navigationSettled` would wait out the
+      // full timeout for a commit that is never coming. Returning early is
+      // what makes this a no-op rather than a ten-second stall — the same
+      // outcome Playwright reaches by resolving with a null response.
+      if (!history?.canGoForward()) return;
+      await deadline(
+        navigationSettled(wc, () => history.goForward()),
+        NAV_TIMEOUT_MS,
+        "going forward",
         () => wc.stop?.(),
       );
     },
@@ -914,18 +1027,20 @@ export function createElectronPage(
           // select-all and insert: focus would still be wherever it already
           // was, and the text would land in an element this call never looked
           // at — the same wrong-target write by a longer route.
-          await cdp.send("DOM.focus", { nodeId: focusNodeId }).catch(async () => {
-            // ERROR PROSE IS LOAD-BEARING here, as this file's header says:
-            // an element that left the document has to say `not found`, or
-            // the driver reports a re-render as a daemon fault and the model
-            // stops instead of looking again.
-            throw new Error(
-              (await nodeIsGone(focusNodeId))
-                ? `not found: ${selector} left the document before it could ` +
-                  `be filled`
-                : `${selector}: element could not be focused to fill it`,
-            );
-          });
+          await cdp
+            .send("DOM.focus", { nodeId: focusNodeId })
+            .catch(async () => {
+              // ERROR PROSE IS LOAD-BEARING here, as this file's header says:
+              // an element that left the document has to say `not found`, or
+              // the driver reports a re-render as a daemon fault and the model
+              // stops instead of looking again.
+              throw new Error(
+                (await nodeIsGone(focusNodeId))
+                  ? `not found: ${selector} left the document before it could ` +
+                    `be filled`
+                  : `${selector}: element could not be focused to fill it`,
+              );
+            });
           // AND THEN CHECK THAT THE FOCUS STAYED PUT.
           //
           // `DOM.focus` resolving is not the same as the element being
@@ -1126,6 +1241,28 @@ export function createElectronPage(
         return "";
       }
     },
+    networkEntries: () => network.entries(),
+    dropNetworkSince: (since: number) => network.dropSince(since),
+    networkCursor: () => network.count(),
+    pendingDialog: () => pendingDialog,
+    async resolveDialog(accept: boolean, promptText?: string) {
+      const open = pendingDialog;
+      // Cleared before the answer is sent, for the reason the Playwright
+      // adapter gives: a command arriving while the answer is in flight must
+      // see a page that is running again, not refuse against a dialog on its
+      // way out.
+      pendingDialog = null;
+      if (!open) return false;
+      const cdp = await session();
+      if (!cdp) return false;
+      await cdp
+        .send("Page.handleJavaScriptDialog", {
+          accept,
+          ...(promptText === undefined ? {} : { promptText }),
+        })
+        .catch(() => {});
+      return true;
+    },
     consoleEntries: () => consoleRing,
     dropConsoleSince(since: number) {
       let keep = consoleRing.length;
@@ -1137,15 +1274,25 @@ export function createElectronPage(
         const cdp = await session();
         if (!cdp) return null;
         try {
-          const bridge = new Bridge(cdp);
-          await bridge.start(async () => {
-            // `WebMCP.enable` resolves even where the feature is off; the page
-            // API is the only honest probe. Same rule as every other engine.
-            const supported = await wc
-              .executeJavaScript(`(() => ${PAGE_API_PROBE})()`)
-              .catch(() => false);
-            return supported === true;
+          const bridge = new Bridge(cdp, {
+            localSecurity: deps.localSecurity,
+            localBudget: deps.localBudget,
           });
+          const probe = async () => {
+            // Electron's executeJavaScript waits for the first load. The
+            // driver awaits this bridge BEFORE navigating, so using it here
+            // deadlocks a fresh tab. CDP evaluates the current document
+            // directly while preserving discovery before the first load.
+            const result = (await cdp.send("Runtime.evaluate", {
+              expression: PAGE_API_PROBE,
+              returnByValue: true,
+            })) as { result?: { value?: unknown }; exceptionDetails?: unknown };
+            return !result.exceptionDetails && result.result?.value === true;
+          };
+          // The initial document may lack the API. Recheck each destination
+          // rather than retaining about:blank's answer for the whole session.
+          bridge.resupport(probe);
+          await bridge.start(probe);
           return bridge;
         } catch {
           return null;

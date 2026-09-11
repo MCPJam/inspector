@@ -17,6 +17,8 @@ const {
   mockSetRepoSuite,
   mockSetRepoOutagePolicy,
   mockSetRepoConformance,
+  mockSetRepoForkCredentials,
+  mockSetRepoPrServerOAuth,
   mockSetRepoFeedbackComments,
   mockDisconnectRepo,
   mockConnectRepo,
@@ -39,6 +41,12 @@ const {
   mockSetRepoEnabled: vi.fn(async () => ({ changed: true })),
   mockSetRepoSuite: vi.fn(async () => ({ changed: true })),
   mockSetRepoOutagePolicy: vi.fn(async () => ({ changed: true })),
+  mockSetRepoForkCredentials: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
+  mockSetRepoPrServerOAuth: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
   mockSetRepoConformance: vi.fn(async () => ({ changed: true })),
   mockSetRepoFeedbackComments: vi.fn(async () => ({ changed: true })),
   mockDisconnectRepo: vi.fn(async () => ({ removed: true })),
@@ -53,14 +61,16 @@ const {
   mockConnectVerifiedRepo: vi.fn(async (_args?: Record<string, unknown>) => ({
     configId: "cfg-new",
   })),
-  mockListInstallationRepos: vi.fn(async (): Promise<unknown[]> => [
-    {
-      repositoryId: 2,
-      fullName: "mcpjam/other-repo",
-      installationRef: "bind-1",
-      accountLogin: "mcpjam",
-    },
-  ]),
+  mockListInstallationRepos: vi.fn(
+    async (): Promise<unknown[]> => [
+      {
+        repositoryId: 2,
+        fullName: "mcpjam/other-repo",
+        installationRef: "bind-1",
+        accountLogin: "mcpjam",
+      },
+    ],
+  ),
   mockBindings: { value: undefined as unknown[] | undefined },
   mockStartInstallation: vi.fn(async () => ({
     installUrl: "https://github.com/apps/mcpjam/installations/new?state=abc",
@@ -94,6 +104,8 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     setRepoSuite: mockSetRepoSuite,
     setRepoOutagePolicy: mockSetRepoOutagePolicy,
     setRepoConformance: mockSetRepoConformance,
+    setRepoForkCredentials: mockSetRepoForkCredentials,
+    setRepoPrServerOAuth: mockSetRepoPrServerOAuth,
     setRepoFeedbackComments: mockSetRepoFeedbackComments,
     disconnectRepo: mockDisconnectRepo,
     listInstallationRepos: mockListInstallationRepos,
@@ -157,6 +169,10 @@ const ROW = {
   // Backend-DERIVED. The page never computes this, and in particular never
   // infers it from a missing visibility badge.
   connectionStatus: "verified" as const,
+  prServerOAuth: {
+    status: "not_configured" as const,
+    sources: [],
+  },
   createdAt: 1,
   updatedAt: 1,
 };
@@ -315,6 +331,10 @@ describe("GithubChecksRoute availability gate", () => {
     mockRepos.value = [ROW];
     renderRoute();
     expect(screen.getByText("mcpjam/mcp-check-fixture")).toBeInTheDocument();
+    expect(screen.getByText("mcpjam.yaml")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Read the recipe docs" }),
+    ).toHaveAttribute("href", "https://docs.mcpjam.com/github-checks");
   });
 
   it("shows the install-App empty state when there are no repos", () => {
@@ -381,10 +401,7 @@ describe("GithubChecksRoute availability gate", () => {
 
     const pairs: Array<[string, string]> = [
       ["Checks", "Enable checks for mcpjam/mcp-check-fixture"],
-      [
-        "Conformance",
-        "Enable conformance check for mcpjam/mcp-check-fixture",
-      ],
+      ["Conformance", "Enable conformance check for mcpjam/mcp-check-fixture"],
       [
         "Comments",
         "Post feedback comments on pull requests for mcpjam/mcp-check-fixture",
@@ -1260,6 +1277,43 @@ describe("GithubChecksRoute organization switching", () => {
       "Fail open",
     );
   });
+
+  it("drops an OAuth failure that arrives after the organization changed", async () => {
+    mockRepos.value = [
+      {
+        ...ROW,
+        prServerOAuth: {
+          status: "selection_required",
+          sources: [
+            {
+              serverId: "server-oauth",
+              name: "Test OAuth server",
+              authorized: true,
+            },
+          ],
+        },
+      },
+    ];
+    mockListInstallationRepos.mockResolvedValue([]);
+    let rejectStaleWrite: ((error: unknown) => void) | undefined;
+    mockSetRepoPrServerOAuth.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectStaleWrite = reject;
+        }),
+    );
+
+    const { rerender } = render(routeTree("org-1"));
+    await chooseOption(
+      userEvent.setup(),
+      `Server authorization for ${ROW.repoFullName}`,
+      "Test OAuth server",
+    );
+    rerender(routeTree("org-2"));
+    await act(async () => rejectStaleWrite?.(new Error("stale failure")));
+
+    expect(toast.error).not.toHaveBeenCalled();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1772,7 +1826,7 @@ describe("GithubChecksRoute connection status", () => {
     renderRoute();
     await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
     expect(
-      await screen.findByText(/No repositories available\./)
+      await screen.findByText(/No repositories available\./),
     ).toBeInTheDocument();
     await waitFor(() => expect(connectButton()).toBeDisabled());
     expect(mockConnectVerifiedRepo).not.toHaveBeenCalled();
@@ -1816,34 +1870,34 @@ describe("GithubChecksRoute permissions", () => {
     renderRoute();
 
     expect(
-      await screen.findByRole("button", { name: /Connect a GitHub account/ })
+      await screen.findByRole("button", { name: /Connect a GitHub account/ }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: /Disconnect mcpjam$/ })
+      screen.getByRole("button", { name: /Disconnect mcpjam$/ }),
     ).toBeDisabled();
     expect(
       screen.getByRole("switch", {
         name: /Enable checks for mcpjam\/mcp-check-fixture/,
-      })
+      }),
     ).toBeDisabled();
     expect(
       screen.getByRole("button", {
         name: /Disconnect mcpjam\/mcp-check-fixture/,
-      })
+      }),
     ).toBeDisabled();
     // The row's suite picker is a write too — `setRepoSuite` — and is the one
     // control on this page that had no `disabled` of its own to extend.
     expect(
       screen.getByRole("combobox", {
         name: /Suite for mcpjam\/mcp-check-fixture/,
-      })
+      }),
     ).toBeDisabled();
     // Nothing to fill in either, when the Connect it feeds is dead.
     expect(screen.getByRole("combobox", { name: "Repository" })).toBeDisabled();
 
     // The greyed page has to explain itself, or it reads as broken.
     expect(
-      screen.getByText(/only an organization owner or admin can change it/i)
+      screen.getByText(/only an organization owner or admin can change it/i),
     ).toBeInTheDocument();
   });
 
@@ -1852,15 +1906,15 @@ describe("GithubChecksRoute permissions", () => {
     renderRoute();
 
     expect(
-      await screen.findByRole("button", { name: /Connect a GitHub account/ })
+      await screen.findByRole("button", { name: /Connect a GitHub account/ }),
     ).toBeEnabled();
     expect(
       screen.getByRole("switch", {
         name: /Enable checks for mcpjam\/mcp-check-fixture/,
-      })
+      }),
     ).toBeEnabled();
     expect(
-      screen.queryByText(/only an organization owner or admin can change it/i)
+      screen.queryByText(/only an organization owner or admin can change it/i),
     ).not.toBeInTheDocument();
   });
 
@@ -1874,11 +1928,149 @@ describe("GithubChecksRoute permissions", () => {
 
     // Closed: the role is not known yet, so the page may not act on it.
     expect(
-      await screen.findByRole("button", { name: /Connect a GitHub account/ })
+      await screen.findByRole("button", { name: /Connect a GitHub account/ }),
     ).toBeDisabled();
     // Silent: we do not yet know the notice applies, so it must not flash.
     expect(
-      screen.queryByText(/only an organization owner or admin can change it/i)
+      screen.queryByText(/only an organization owner or admin can change it/i),
     ).not.toBeInTheDocument();
   });
+});
+
+it("Settings opts in only the selected repository", async () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [ROW];
+  renderRoute();
+  const toggle = screen.getByRole("switch", {
+    name: /Allow suite credentials in approved forks/,
+  });
+  expect(toggle).not.toBeChecked();
+  await userEvent.setup().click(toggle);
+  expect(mockSetRepoForkCredentials).toHaveBeenCalledWith({
+    configId: ROW._id,
+    enabled: true,
+  });
+});
+
+it("Settings asks only when several suite OAuth sources need a choice", async () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [
+    {
+      ...ROW,
+      prServerOAuth: {
+        status: "selection_required",
+        sources: [
+          {
+            serverId: "server-oauth",
+            name: "Test OAuth server",
+            authorized: true,
+          },
+          {
+            serverId: "server-other",
+            name: "Other OAuth server",
+            authorized: true,
+          },
+        ],
+      },
+    },
+  ];
+  renderRoute();
+
+  await chooseOption(
+    userEvent.setup(),
+    `Server authorization for ${ROW.repoFullName}`,
+    "Test OAuth server",
+  );
+
+  expect(mockSetRepoPrServerOAuth).toHaveBeenCalledWith({
+    configId: ROW._id,
+    sourceServerId: "server-oauth",
+  });
+});
+
+it("hides server authorization when the suite connection is ready", () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [
+    {
+      ...ROW,
+      prServerOAuth: {
+        status: "ready",
+        sourceServerId: "server-oauth",
+        sourceName: "Test OAuth server",
+        sources: [],
+      },
+    },
+  ];
+  renderRoute();
+
+  expect(screen.queryByText("Server authentication")).not.toBeInTheDocument();
+  expect(screen.queryByText("Authorize or reconnect")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("combobox", {
+      name: `Server authorization for ${ROW.repoFullName}`,
+    }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Authorize" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Reconnect" }),
+  ).not.toBeInTheDocument();
+});
+
+it("shows Authorize only when the suite OAuth connection needs it", () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [
+    {
+      ...ROW,
+      prServerOAuth: {
+        status: "authorization_required",
+        sourceServerId: "server-oauth",
+        sourceName: "Test OAuth server",
+        sources: [],
+      },
+    },
+  ];
+  renderRoute();
+
+  expect(
+    screen.getByText("Authorize Test OAuth server for PR checks."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Authorize" })).toBeInTheDocument();
+});
+
+it("shows Reconnect after runtime authorization is rejected", () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [
+    {
+      ...ROW,
+      prServerOAuth: {
+        status: "reauthorization_required",
+        sourceServerId: "server-oauth",
+        sourceName: "Test OAuth server",
+        sources: [],
+      },
+    },
+  ];
+  renderRoute();
+
+  expect(
+    screen.getByText("Reconnect Test OAuth server for PR checks."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
 });

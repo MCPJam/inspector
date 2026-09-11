@@ -1,3 +1,4 @@
+import type { CaseSource } from "@mcpjam/sdk/contract";
 import type {
   EvalSuiteFileCaseImport,
   SuiteGatePolicyV1,
@@ -216,6 +217,7 @@ export type EvalSuiteConfigTest = {
    * run started, not what it claims now.
    */
   import?: EvalCaseImportClaim;
+  source?: CaseSource;
   /** The run's own decision about this case. Absent on a native case. */
   importRunDecision?: EvalImportRunDecision;
 };
@@ -273,8 +275,6 @@ export type EvalSuite = {
    * `testIteration.testCaseSnapshot.predicates` at run-precreate time.
    */
   defaultPredicates?: Predicate[];
-  /** Checks opted out of by this suite. Absent or empty enables every check. */
-  disabledStageChecks?: string[];
   /**
    * Suite-level floor on per-case iteration count (1–10). When set, every
    * case in a suite run executes at least this many iterations. Resolved
@@ -475,6 +475,7 @@ export type EvalCase = {
    * from "imported, faithfulness unknown".
    */
   import?: EvalCaseImportClaim;
+  source?: CaseSource;
   _creationTime?: number; // Convex auto field
 };
 

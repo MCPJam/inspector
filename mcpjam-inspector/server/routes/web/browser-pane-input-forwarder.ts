@@ -72,6 +72,8 @@ export interface RelayInputForwarder {
   }): void;
   /** Drop what is queued and refuse more. Not reusable afterwards. */
   cancel(): void;
+  /** Wait for the messages already accepted, without waiting for future input. */
+  drain(): Promise<void>;
   /** For tests: is a dispatch outstanding? */
   busy(): boolean;
   /** For tests: how many groups are queued, carried releases included. */
@@ -79,6 +81,8 @@ export interface RelayInputForwarder {
 }
 
 export interface RelayInputForwarderOptions {
+  /** Opt-in for Node WebMCP; existing local/hosted callers retain their policy. */
+  preserveGestureBoundaries?: boolean;
   dispatch(args: {
     tabId?: string;
     events: readonly BrowserPaneInputEvent[];
@@ -107,8 +111,20 @@ export interface RelayInputForwarderOptions {
 }
 
 export function createRelayInputForwarder(
-  options: RelayInputForwarderOptions,
+  supplied: RelayInputForwarderOptions,
 ): RelayInputForwarder {
+  const settlements = new Map<
+    number,
+    { promise: Promise<void>; resolve(): void }
+  >();
+  const options: RelayInputForwarderOptions = {
+    ...supplied,
+    ack(payload) {
+      settlements.get(payload.seq)?.resolve();
+      settlements.delete(payload.seq);
+      supplied.ack(payload);
+    },
+  };
   /**
    * Batches waiting for the in-flight dispatch, grouped by tab.
    *
@@ -163,7 +179,10 @@ export function createRelayInputForwarder(
   const flush = (): void => {
     if (inFlight || cancelled || pending.length === 0) return;
     const group = pending.shift()!;
-    const events = coalesceBrowserPaneInput(group.events);
+    const events = coalesceBrowserPaneInput(
+      group.events,
+      options.preserveGestureBoundaries,
+    );
     inFlight = true;
     void dispatchGroup(group.tabId, events)
       .then((outcome) => {
@@ -209,6 +228,11 @@ export function createRelayInputForwarder(
   return {
     submit(message) {
       if (cancelled || message.events.length === 0) return;
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      settlements.set(message.seq, { promise, resolve });
       const tail = pending[pending.length - 1];
       if (tail && tail.tabId === message.tabId) {
         tail.events.push(...message.events);
@@ -264,6 +288,13 @@ export function createRelayInputForwarder(
     cancel() {
       cancelled = true;
       pending = [];
+      for (const settlement of settlements.values()) settlement.resolve();
+      settlements.clear();
+    },
+    async drain() {
+      await Promise.all(
+        [...settlements.values()].map((entry) => entry.promise),
+      );
     },
     busy: () => inFlight,
     pendingGroups: () => pending.length,

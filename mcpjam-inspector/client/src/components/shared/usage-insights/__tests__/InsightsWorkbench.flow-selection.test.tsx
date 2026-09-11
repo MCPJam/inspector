@@ -238,7 +238,14 @@ beforeEach(() => {
   mockUseUsageInsights.mockReturnValue({
     threads: undefined,
     breakdown: breakdown(),
-    rebuild: vi.fn(),
+    // Resolves, because the real one is an async function and this scope now
+    // starts its own first analysis on mount (BB-196) — a bare `vi.fn()`
+    // hands that effect `undefined` to await.
+    rebuild: vi.fn().mockResolvedValue({
+      runId: "run-1",
+      status: "queued",
+      alreadyRunning: false,
+    }),
   });
   mockUseGoalOutcomeDrilldown.mockReturnValue({
     drilldown: {

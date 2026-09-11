@@ -317,6 +317,41 @@ export function SuiteQualityGateSection({
     return "None";
   })();
 
+  /**
+   * The conditions the simplified page does not edit, listed only when this
+   * suite actually carries one. Absent means absent: an empty list renders
+   * nothing rather than three rows of "off", which would read as a policy.
+   */
+  const storedAdvancedConditions: {
+    key: string;
+    label: string;
+    value: string;
+  }[] = [
+    policy?.noDeterministicRegressions === true
+      ? {
+          key: "qualityGateNoDeterministicRegressions",
+          label: "Deterministic regressions",
+          value: "Fail",
+        }
+      : null,
+    typeof policy?.maximumP95LatencyIncreaseMs === "number"
+      ? {
+          key: "qualityGateMaximumP95LatencyIncreaseMs",
+          label: "p95 latency increase",
+          value: `${policy.maximumP95LatencyIncreaseMs} ms`,
+        }
+      : null,
+    policy?.noGatingScoreErrors === true
+      ? {
+          key: "qualityGateNoGatingScoreErrors",
+          label: "Any gating scorer errored",
+          value: "Fail",
+        }
+      : null,
+  ].filter((row): row is { key: string; label: string; value: string } =>
+    Boolean(row),
+  );
+
   const controls = (
     <div className="space-y-3">
       {!simplified && (
@@ -452,6 +487,37 @@ export function SuiteQualityGateSection({
           }
         />
       </GateRow>
+
+      {/*
+        Under `simplified` these three are not editable here — but a policy set
+        through CI is still THIS suite's policy, and a page that shows only the
+        conditions it can edit reports a weaker gate than the one that runs.
+        Each renders read-only when it carries a stored value, so the reader
+        sees what will actually be enforced; the baseline warning above is what
+        clears them.
+      */}
+      {simplified && storedAdvancedConditions.length > 0 && (
+        <div className="space-y-1 border-t border-border/60 pt-3">
+          <p className="text-[11px] text-muted-foreground/60">
+            Also enforced, set outside this page:
+          </p>
+          <ul className="space-y-0.5">
+            {storedAdvancedConditions.map((condition) => (
+              <li
+                key={condition.key}
+                data-setting-key={condition.key}
+                data-readonly="true"
+                className="flex items-center justify-between gap-4 text-[11px] text-muted-foreground"
+              >
+                <span>{condition.label}</span>
+                <span className="tabular-nums text-foreground">
+                  {condition.value}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {!simplified && (
         <>

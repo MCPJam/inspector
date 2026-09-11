@@ -219,9 +219,17 @@ describe("resolveHostTools — local engine actor coercion (structural)", () => 
   }
 
   it("honors local for a signed-in member's direct turn", () => {
+    // `bashTool` threads `requireToolApproval: false`, and local bash follows
+    // the switch like every other family now. What "local" still decides is
+    // WHICH machine the description names, which is the coercion under test.
     const bash = bashTool({});
-    expect(bash?.needsApproval).toBe(true);
+    expect(bash?.needsApproval).toBe(false);
     expect(bash?.description).toMatch(/user's own machine/);
+  });
+
+  it("gates local bash when the switch is on", () => {
+    const bash = bashTool({ requireToolApproval: true });
+    expect(bash?.needsApproval).toBe(true);
   });
 
   it("downgrades local for a scenario session", () => {
@@ -579,12 +587,16 @@ describe("resolveHostTools — browser", () => {
     });
   });
 
-  it("builds the six verbs when enabled, attested and computer-backed", () => {
+  it("builds the browser verbs when enabled, attested and computer-backed", () => {
     withFlag("1", () => {
       const tools = resolveHostTools(
         { builtInToolIds: ["browser"], computer },
         browserCtx,
       );
+      // SIX, including the listing verb: this ctx carries no page-tool
+      // snapshot, which is a session's first turn — no page has been read, so
+      // nothing first-class can replace the verb that lists a page's tools.
+      // The first-class shape (five) is pinned below, with a snapshot.
       expect(Object.keys(tools ?? {}).sort()).toEqual([
         "browser_act",
         "browser_navigate",
@@ -598,16 +610,26 @@ describe("resolveHostTools — browser", () => {
 
   it("hands back tools that carry their own approval declaration", () => {
     // Nothing is threaded back any more. The registry's whole job here is to
-    // pass the built tools through unchanged, declarations included — a
-    // caller that forgets a step cannot un-gate a browser tool.
+    // pass the built tools through unchanged, declarations included — and to
+    // hand the builder the host's switch, which is what the declaration is
+    // computed from. A registry that dropped it would silently un-gate every
+    // browser tool on a host that asked for approval.
     withFlag("1", () => {
-      const tools = resolveHostTools(
+      const gated = resolveHostTools(
         { builtInToolIds: ["browser"], computer },
-        browserCtx,
+        { ...browserCtx, requireToolApproval: true },
       );
       expect(
-        (tools?.browser_act as { needsApproval?: unknown })?.needsApproval,
+        (gated?.browser_act as { needsApproval?: unknown })?.needsApproval,
       ).toBe(true);
+
+      const free = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        { ...browserCtx, requireToolApproval: false },
+      );
+      expect(
+        (free?.browser_act as { needsApproval?: unknown })?.needsApproval,
+      ).toBe(false);
     });
   });
 
@@ -625,20 +647,16 @@ describe("resolveHostTools — browser", () => {
     });
   });
 
-  it("suppresses browser when bash is attached to the same computer", () => {
+  it("advertises browser and bash together on the same computer", () => {
     withFlag("1", () => {
       const suppressed: Array<{ id: string; reason: string }> = [];
       const tools = resolveHostTools(
         { builtInToolIds: ["bash", "browser"], computer },
         { ...browserCtx, onToolSuppressed: (info) => suppressed.push(info) },
       );
-      // bash is KEPT (behavior-preserving for hosts that already had it) and
-      // browser is dropped: one uid, one box — a shell can read the browser's
-      // cookies and its daemon token out of the process environment.
-      expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
-      expect(
-        suppressed.find((s) => s.id === "browser")?.reason,
-      ).toContain("same computer");
+      expect(Object.keys(tools ?? {})).toContain(BASH_TOOL_NAME);
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+      expect(suppressed).toEqual([]);
     });
   });
 
@@ -646,7 +664,7 @@ describe("resolveHostTools — browser", () => {
     withFlag("1", () => {
       const tools = resolveHostTools(
         { builtInToolIds: ["bash", "browser"], computer },
-        { ...browserCtx, allowComputerToolCoTenancy: true },
+        { ...browserCtx },
       );
       expect(Object.keys(tools ?? {})).toContain(BASH_TOOL_NAME);
       expect(Object.keys(tools ?? {})).toContain("browser_act");
@@ -792,7 +810,8 @@ describe("resolveHostTools — browser on a per-run sandbox", () => {
         { builtInToolIds: ["bash", "browser"], computer },
         { ...ctx, browserApprovalDelivery: { kind: "attested" as const } },
       );
-      expect(Object.keys(unbound ?? {})).toEqual([BASH_TOOL_NAME]);
+      expect(Object.keys(unbound ?? {})).toContain(BASH_TOOL_NAME);
+      expect(Object.keys(unbound ?? {})).toContain("browser_act");
     });
   });
 
@@ -827,7 +846,7 @@ describe("resolveHostTools — browser engines", () => {
   const localCtx = {
     ...ctx,
     browserApprovalDelivery: { kind: "attested" as const },
-    computerEngine: "local" as const,
+    browserEngine: "local" as const,
   };
 
   function withHostedFlag<T>(value: string | undefined, run: () => T): T {
@@ -851,6 +870,8 @@ describe("resolveHostTools — browser engines", () => {
         { builtInToolIds: ["browser"], computer },
         localCtx,
       );
+      // No snapshot on this ctx ⇒ the listing verb stays (see the hosted
+      // case above for why).
       expect(Object.keys(tools ?? {}).sort()).toEqual([
         "browser_act",
         "browser_navigate",
@@ -875,7 +896,7 @@ describe("resolveHostTools — browser engines", () => {
     });
   });
 
-  it("still drops the pair on a hosted box", () => {
+  it("allows the pair on a hosted box", () => {
     withHostedFlag("1", () => {
       const suppressed: Array<{ id: string; reason: string }> = [];
       const tools = resolveHostTools(
@@ -886,8 +907,8 @@ describe("resolveHostTools — browser engines", () => {
           onToolSuppressed: (i) => suppressed.push(i),
         },
       );
-      expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
-      expect(suppressed.some((s) => s.id === "browser")).toBe(true);
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+      expect(suppressed).toEqual([]);
     });
   });
 
@@ -982,8 +1003,8 @@ describe("resolveHostTools — browser on a machine that cannot serve it", () =>
           {
             ...ctx,
             browserApprovalDelivery: { kind: "attested" as const },
-            computerEngine: "unavailable" as const,
-            localComputerRequested: true,
+            browserEngine: "unavailable" as const,
+            localBrowserRequested: true,
             onToolSuppressed: (i: { id: string; reason: string }) =>
               suppressed.push(i),
           },
@@ -1003,7 +1024,7 @@ describe("resolveHostTools — browser on a machine that cannot serve it", () =>
         {
           ...ctx,
           browserApprovalDelivery: { kind: "attested" as const },
-          computerEngine: "unavailable" as const,
+          browserEngine: "unavailable" as const,
         },
       );
       expect(Object.keys(tools ?? {})).toContain("browser_act");
@@ -1042,7 +1063,7 @@ describe("resolveHostTools — an unattended run names itself", () => {
   // shared by every run), so these cases run on the LOCAL engine — the
   // unattended browser that keys per run today. The hosted+sandbox cases live
   // in their own describe.
-  const localEngine = { computerEngine: "local" as const };
+  const localEngine = { browserEngine: "local" as const };
 
   it("builds them for a run that carries an iteration id", () => {
     withHostedBrowserFlag("1", () => {
@@ -1095,4 +1116,108 @@ describe("resolveHostTools — an unattended run names itself", () => {
       expect(suppressed[0]?.reason).toContain("name the run");
     });
   });
+});
+
+describe("resolveHostTools — first-class page tools", () => {
+  const SNAPSHOT = {
+    tools: [
+      {
+        name: "add_topping",
+        description: "Add a topping",
+        origin: "https://pizza.test",
+        isMainFrame: true,
+        frameId: "frame-main",
+        registrationSeq: 1,
+      },
+    ],
+    bootId: "boot-1",
+    tabId: "@session",
+    navCounter: 2,
+  };
+
+  function withFlag<T>(mode: string | undefined, run: () => T): T {
+    const before = process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    const beforeHosted = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (mode === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = mode;
+    process.env.HOSTED_BROWSER_TOOLS_ENABLED = "1";
+    try {
+      return run();
+    } finally {
+      if (before === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+      else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = before;
+      if (beforeHosted === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = beforeHosted;
+      }
+    }
+  }
+
+  function resolve(over: Record<string, unknown>) {
+    return resolveHostTools(
+      { builtInToolIds: ["browser"], computer: { kind: "personal" } },
+      {
+        authHeader: "Bearer t",
+        projectId: "p1",
+        browserApprovalDelivery: { kind: "attested" },
+        ...over,
+      } as never,
+    );
+  }
+
+  it("advertises the peeked page tools when one is threaded", () => {
+    const tools = withFlag("first_class", () =>
+      resolve({ browserPageTools: SNAPSHOT, browserDynamicPageTools: true }),
+    );
+    expect(Object.keys(tools ?? {})).toContain("webmcp_add_topping");
+  });
+
+  it("advertises none when the route threaded nothing", () => {
+    // ABSENT ⇒ no page tools, whatever the flag says. A turn only gets them
+    // when its route decided to read the page AND got an answer.
+    const tools = withFlag("first_class", () => resolve({}));
+    expect(
+      Object.keys(tools ?? {}).some((name) => name.startsWith("webmcp_")),
+    ).toBe(false);
+  });
+
+  it("hands the advertised set back so the turn can persist it", () => {
+    const seen: Array<{ minted: Array<{ name: string }> }> = [];
+    withFlag("first_class", () =>
+      resolve({
+        browserPageTools: SNAPSHOT,
+        browserDynamicPageTools: true,
+        onBrowserPageTools: (info: { minted: Array<{ name: string }> }) =>
+          seen.push(info),
+      }),
+    );
+    // Written down rather than re-derived: the live browser describes the page
+    // it is on NOW, so a reopened conversation would attribute its cards to
+    // whatever tool happens to carry that name then.
+    expect(seen[0]?.minted.map((tool) => tool.name)).toEqual([
+      "webmcp_add_topping",
+    ]);
+  });
+});
+
+it("refuses both tools before a saved profile can reach an unattended shared box", () => {
+  expect(() =>
+    resolveHostTools(
+      { builtInToolIds: ["bash", "browser"], computer },
+      {
+        ...ctx,
+        browserProfileId: "saved-profile",
+        browserApprovalDelivery: {
+          kind: "unattended",
+          policy: { mode: "allow_all" },
+        },
+        sandboxBinding: {
+          sandboxId: "sandbox",
+          sandboxRowId: "row",
+          runtimeKind: "desktop-browser",
+        },
+      },
+    ),
+  ).toThrow("browser_profile_shell_conflict");
 });

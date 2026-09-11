@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   EVAL_SUITE_SETTINGS_MANIFEST,
+  SETTINGS_PAGE_HIDDEN_KEYS,
   EVAL_SUITE_SETTING_KEYS,
   type EvalSuiteSettingKey,
 } from "@/shared/eval-suite-settings-manifest";
@@ -260,7 +261,7 @@ describe("eval suite settings manifest — render parity", () => {
     const orphaned = EVAL_SUITE_SETTINGS_MANIFEST.filter(
       (row) =>
         !("excluded" in row) &&
-        !("settingsPage" in row) &&
+        !(row.key in SETTINGS_PAGE_HIDDEN_KEYS) &&
         !rendered.has(row.key),
     ).map((row) => `${row.key} (${row.label})`);
     expect(
@@ -306,7 +307,7 @@ describe("eval suite settings manifest — render parity", () => {
       const { container, unmount } = renderSettingsSheet(overrides);
       const suite = overrides.suite ?? undefined;
       for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
-        if ("excluded" in row || "settingsPage" in row) continue;
+        if ("excluded" in row || row.key in SETTINGS_PAGE_HIDDEN_KEYS) continue;
         const suite = overrides.suite ?? baseSuite;
         const isV2 = suite.verdictPolicyVersion === 2;
         if (
@@ -330,7 +331,7 @@ describe("eval suite settings manifest — render parity", () => {
       unmount();
     }
     for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
-      if ("excluded" in row || "settingsPage" in row) continue;
+      if ("excluded" in row || row.key in SETTINGS_PAGE_HIDDEN_KEYS) continue;
       const text = seen.get(row.key);
       expect(text, `no rendered row for ${row.key}`).toBeDefined();
       // The environments row is titled for the axes it actually edits: the
@@ -369,11 +370,13 @@ describe("eval suite settings manifest — render parity", () => {
     const v2 = new Set(collectAllSettingKeys(container, v2Suite));
     expect(v2.has("repetitions")).toBe(true);
     expect(v2.has("passThreshold")).toBe(true);
-    expect(v2.has("validity")).toBe(false);
+    expect(v2.has("validity")).toBe(true);
     expect(v2.has("minimumAccuracy")).toBe(false);
     expect(v2.has("minimumIterations")).toBe(false);
     expect(v2.has("qualityGateBaseline")).toBe(true);
-    expect(v2.has("qualityGateNoGatingScoreErrors")).toBe(false);
+    // Stored on `v2Suite`, so the simplified page lists it read-only. A
+    // condition the page cannot edit is still a condition the run enforces.
+    expect(v2.has("qualityGateNoGatingScoreErrors")).toBe(true);
   });
 
   it("shows quality-gate rows on a legacy suite as well", () => {
@@ -396,10 +399,15 @@ describe("eval suite settings manifest — render parity", () => {
    * A person looking at a page that simply does not mention the setting they
    * were told to configure cannot tell which one they have.
    */
-  it("omits the separate computer environment control", () => {
+  it("keeps the computer environment control on the Clients tab", () => {
+    // It edits `computerEnvironmentId`, which still reaches the backend and
+    // still decides which image every trial boots. Unmounting it left the field
+    // writable only through the API.
     const { container } = renderSettingsSheet();
-    showSettingsKey(container, "environments");
-    expect(container.querySelector('[data-setting-key="computerEnvironment"]')).toBeNull();
+    showSettingsKey(container, "computerEnvironment");
+    expect(
+      container.querySelector('[data-setting-key="computerEnvironment"]'),
+    ).toBeTruthy();
   });
 
   it("keeps triggers hidden without schedule permission", () => {
@@ -432,7 +440,14 @@ describe("eval suite settings manifest — render parity", () => {
       0,
     );
     const keys = collectAllSettingKeys(container);
-    expect(keys).not.toContain("computerEnvironment");
+    // Restored to its pre-#4739 assertion: the image row keeps its ORIGINAL
+    // flag gate when capabilities cannot be read, so it renders exactly as it
+    // did before capabilities existed rather than disappearing.
+    expect(keys).toContain("computerEnvironment");
+    // `schedule` stays absent, and NOT because a capability refused it: the
+    // triggers group is filtered out of the visible tabs, and its row is also
+    // gated on a PostHog flag that does not exist in the project. See the note
+    // on VISIBLE_SUITE_SETTINGS_GROUPS.
     expect(keys).not.toContain("schedule");
   });
 

@@ -220,6 +220,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     command: "cloud eval gate --run",
   },
   get_eval_run_route_facts: { command: "cloud eval route-facts --run" },
+  get_eval_run_server_facts: { command: "cloud eval server-facts --run" },
   propose_eval_description_rewrite: {
     command: "cloud eval description-experiment propose --run --tool",
   },
@@ -304,6 +305,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_chat_sessions: { command: "cloud sessions list" },
   search_sessions: { command: "cloud sessions search" },
   send_chat_message: { command: "cloud sessions send" },
+  drive_chat_session_browser: { command: "cloud sessions browser open" },
+  observe_chat_session_browser: { command: "cloud sessions browser observe" },
   get_chat_session: { command: "cloud sessions show" },
   get_chat_session_trace: { command: "cloud sessions trace" },
 

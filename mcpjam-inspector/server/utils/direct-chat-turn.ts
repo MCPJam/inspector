@@ -42,7 +42,11 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
-import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import {
+  mergeMcpToolOriginMetadata,
+  mergePageToolBindingMetadata,
+} from "@/shared/mcp-tool-origin-metadata";
+import { pageToolBindingOf } from "./built-in-tools/page-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { logger } from "./logger";
 import {
@@ -422,9 +426,15 @@ export function stampMcpToolOriginProviderOptions(
         const toolName = record.toolName;
         if (typeof toolName !== "string") return part;
         const serverId = readToolServerId(tools, toolName);
-        const providerOptions = mergeMcpToolOriginMetadata(
-          record.providerOptions,
-          serverId
+        // The page tool's binding too, on tool CALLS only. `merge…Binding`
+        // leaves a part that already carries one alone — that is the binding
+        // an earlier request's approval was granted against, and the very
+        // thing the tool's `execute` compares itself to on resume.
+        const providerOptions = mergePageToolBindingMetadata(
+          mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+          record.type === "tool-call"
+            ? pageToolBindingOf(tools[toolName])
+            : undefined
         );
         if (!providerOptions) return part;
         messageChanged = true;
@@ -452,9 +462,9 @@ export function withMcpToolOriginChunkMetadata<
   }
   if (typeof chunk.toolName !== "string") return chunk;
   const serverId = readToolServerId(tools, chunk.toolName);
-  const providerMetadata = mergeMcpToolOriginMetadata(
-    chunk.providerMetadata,
-    serverId
+  const providerMetadata = mergePageToolBindingMetadata(
+    mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+    pageToolBindingOf(tools[chunk.toolName])
   );
   return providerMetadata ? { ...chunk, providerMetadata } : chunk;
 }

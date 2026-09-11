@@ -63,6 +63,21 @@ export const v2Suite: EvalSuite = {
   ...baseSuite,
   verdictPolicyVersion: 2,
   verdictPolicyDefaults: { repetitions: 3, passThreshold: 0.8 },
+  /**
+   * A gate with every condition set, including the three the simplified page
+   * does not edit.
+   *
+   * They render read-only, and ONLY when stored — three rows of "off" would
+   * read as a policy nobody configured. So the ratchet needs a suite that has
+   * them, or "this row still exists" quietly becomes "this row is never shown".
+   */
+  gatePolicy: {
+    baseline: { kind: "previous_completed" },
+    maximumPassRateDrop: 0.03,
+    noDeterministicRegressions: true,
+    maximumP95LatencyIncreaseMs: 250,
+    noGatingScoreErrors: true,
+  },
 };
 
 /**

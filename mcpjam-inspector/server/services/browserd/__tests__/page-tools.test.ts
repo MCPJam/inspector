@@ -11,14 +11,18 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  pageToolInvokeFromBody,
+  pageToolInvokeFromCommandResponse,
   pageToolsFromCommandResponse,
+  sendPageToolInvoke,
+  webmcpInvokeCommand,
   webmcpToolsObserveCommand,
 } from "../page-tools";
 
 const TOKEN = { tabId: "@session", navCounter: 1, urlHash: "u", domHash: "d" };
 
 describe("webmcpToolsObserveCommand", () => {
-  it("sends the same observation the model's browser_webmcp_tools sends", () => {
+  it("sends the observation the chat turn's own page-tool peek sends", () => {
     const command = webmcpToolsObserveCommand({ source: "inspector" });
     expect(command.action).toEqual({ kind: "observe", mode: "webmcp_tools" });
     expect(command.source).toBe("inspector");
@@ -151,5 +155,177 @@ describe("pageToolsFromCommandResponse", () => {
     });
     expect(mapped.status).toBe(502);
     expect(mapped.body).toMatchObject({ ok: false, error: "unreachable" });
+  });
+});
+
+describe("webmcpInvokeCommand", () => {
+  it("stamps the source the route named, never a body-supplied one", () => {
+    const command = webmcpInvokeCommand({
+      source: "inspector",
+      toolKey: "add_topping",
+      input: { topping: "pepperoni" },
+    });
+    expect(command.source).toBe("inspector");
+    expect(command.action).toEqual({
+      kind: "webmcp_invoke",
+      toolKey: "add_topping",
+      input: { topping: "pepperoni" },
+    });
+    expect(command).not.toHaveProperty("holder");
+    expect(command.action).not.toHaveProperty("expectedBinding");
+  });
+
+  it("carries the holder and frame only when named", () => {
+    const command = webmcpInvokeCommand({
+      source: "manual",
+      toolKey: "add_topping",
+      input: {},
+      holder: "rail-tools",
+      frameId: "frame-main",
+      tabId: "tab-2",
+    });
+    expect(command.holder).toBe("rail-tools");
+    expect(command.tabId).toBe("tab-2");
+    expect(command.action).toMatchObject({
+      kind: "webmcp_invoke",
+      frameId: "frame-main",
+    });
+  });
+
+  it("mints a fresh idempotency key per invoke", () => {
+    const a = webmcpInvokeCommand({
+      source: "inspector",
+      toolKey: "add_topping",
+      input: {},
+    });
+    const b = webmcpInvokeCommand({
+      source: "inspector",
+      toolKey: "add_topping",
+      input: {},
+    });
+    expect(a.commandId).not.toBe(b.commandId);
+  });
+});
+
+describe("sendPageToolInvoke", () => {
+  it("goes out as inspector while the agent is driving", async () => {
+    const sent: Array<{ source: string; holder?: string }> = [];
+    const response = await sendPageToolInvoke(
+      async (command) => {
+        sent.push({ source: command.source, holder: command.holder });
+        return {
+          status: "ok",
+          bootId: "boot-1",
+          result: { ok: true, output: { added: "mushroom" } },
+        };
+      },
+      { toolKey: "add_topping", input: { topping: "mushroom" }, holder: "rail" },
+    );
+    expect(sent).toEqual([{ source: "inspector" }]);
+    expect(response).toMatchObject({ status: "ok" });
+  });
+
+  it("retries as this holder's manual command when the inspector hop is refused", async () => {
+    const sent: Array<{ source: string; holder?: string }> = [];
+    const response = await sendPageToolInvoke(
+      async (command) => {
+        sent.push({ source: command.source, holder: command.holder });
+        if (command.source === "inspector") {
+          return {
+            status: "lease_blocked",
+            lease: "held",
+            bootId: "boot-1",
+          };
+        }
+        return {
+          status: "ok",
+          bootId: "boot-1",
+          result: { ok: true, output: { added: "mushroom" } },
+        };
+      },
+      { toolKey: "add_topping", input: {}, holder: "rail" },
+    );
+    expect(sent).toEqual([
+      { source: "inspector" },
+      { source: "manual", holder: "rail" },
+    ]);
+    expect(response).toMatchObject({ status: "ok" });
+  });
+
+  it("does not retry without a holder — that would be an unauthenticated manual", async () => {
+    const sent: string[] = [];
+    const response = await sendPageToolInvoke(
+      async (command) => {
+        sent.push(command.source);
+        return { status: "lease_blocked", lease: "held", bootId: "boot-1" };
+      },
+      { toolKey: "add_topping", input: {} },
+    );
+    expect(sent).toEqual(["inspector"]);
+    expect(response).toMatchObject({ status: "lease_blocked" });
+  });
+});
+
+describe("pageToolInvokeFromBody", () => {
+  it("requires a toolKey and an object input", () => {
+    expect(pageToolInvokeFromBody(null)).toEqual({
+      ok: false,
+      error: "invalid_body",
+    });
+    expect(pageToolInvokeFromBody({})).toEqual({
+      ok: false,
+      error: "toolKey is required",
+    });
+    expect(
+      pageToolInvokeFromBody({ toolKey: "add_topping", input: [] }),
+    ).toEqual({ ok: false, error: "input must be an object" });
+  });
+
+  it("ignores a caller-supplied source", () => {
+    expect(
+      pageToolInvokeFromBody({
+        toolKey: "add_topping",
+        source: "agent",
+        input: { topping: "olives" },
+      }),
+    ).toEqual({
+      ok: true,
+      toolKey: "add_topping",
+      input: { topping: "olives" },
+    });
+  });
+});
+
+describe("pageToolInvokeFromCommandResponse", () => {
+  it("returns the page's output on success", () => {
+    const mapped = pageToolInvokeFromCommandResponse({
+      status: "ok",
+      bootId: "boot-1",
+      result: { ok: true, output: { added: "pepperoni" }, stateToken: TOKEN },
+    });
+    expect(mapped.status).toBe(200);
+    expect(mapped.body).toEqual({ ok: true, output: { added: "pepperoni" } });
+  });
+
+  it("surfaces a page-side failure as 200 so the pane can show it", () => {
+    const mapped = pageToolInvokeFromCommandResponse({
+      status: "ok",
+      bootId: "boot-1",
+      result: { ok: false, error: "webmcp_tool_gone" },
+    });
+    expect(mapped.status).toBe(200);
+    expect(mapped.body).toEqual({ ok: false, error: "webmcp_tool_gone" });
+  });
+
+  it("names a held lease as its own state", () => {
+    const mapped = pageToolInvokeFromCommandResponse({
+      status: "lease_blocked",
+      lease: "held",
+      holder: "users_2",
+      bootId: "boot-1",
+    });
+    expect(mapped.status).toBe(423);
+    expect(mapped.body).toEqual({ ok: false, error: "lease_held" });
+    expect(JSON.stringify(mapped.body)).not.toContain("users_2");
   });
 });

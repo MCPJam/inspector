@@ -350,7 +350,7 @@ export function PartSwitch({
       Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");
     const resolvedToolOutput = hasRenderOverrideToolOutput
       ? renderOverride.toolOutput
-      : (toolInfo.output ?? toolInfo.rawOutput);
+      : toolInfo.output ?? toolInfo.rawOutput;
 
     // --- Inline edit: effective values fed to BOTH the editors and the iframe ---
     const baseInput = (toolInfo.input ?? null) as Record<
@@ -400,7 +400,8 @@ export function PartSwitch({
     // swapping rawOutput would drop serverId on raw-result-resolved cards.)
     const toolResponseMetadataOverride = lastRunOutput
       ? (readToolResultMeta(lastRunOutput.value) as
-          Record<string, unknown> | undefined)
+          | Record<string, unknown>
+          | undefined)
       : undefined;
     const hasEdits =
       editedInput !== null || editedOutput !== null || lastRunOutput !== null;
@@ -430,10 +431,10 @@ export function PartSwitch({
     const runDisabledReason = !isServerConnected
       ? "Connect the server to run"
       : inputInvalid
-        ? "Fix the invalid input JSON to run"
-        : inputEditedToNonObject
-          ? "Input must be a JSON object to run"
-          : undefined;
+      ? "Fix the invalid input JSON to run"
+      : inputEditedToNonObject
+      ? "Input must be a JSON object to run"
+      : undefined;
 
     const handleRun = async () => {
       if (!serverId) return;
@@ -731,7 +732,10 @@ export function PartSwitch({
   // is addressed to the model, not the reader — the user already knows what
   // screen they're on, and `isDataPart` below would render it as a JSON blob
   // in the middle of their own message.
-  if (part.type === UI_CONTEXT_PART_TYPE) {
+  if (
+    part.type === UI_CONTEXT_PART_TYPE ||
+    part.type === "data-browser-readiness"
+  ) {
     return null;
   }
 

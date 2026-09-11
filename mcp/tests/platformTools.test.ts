@@ -185,6 +185,9 @@ const PLAIN_TOOLS = [
   "get_eval_run_stage_analytics",
   "get_eval_run_gate",
   "get_eval_run_route_facts",
+  // Server facts: what the run was taken against — a snapshot description, no
+  // widget view, so it belongs with the plain tools.
+  "get_eval_run_server_facts",
   "list_eval_suite_stage_analytics",
   "set_eval_suite_environments",
   // Project environments: agent-oriented payloads, no widget view.
@@ -223,6 +226,8 @@ const PLAIN_TOOLS = [
   // Agent Playground: the turn plus its two reads. Agent-oriented payloads —
   // a trace panel would be a second, drifting copy of the eval trace viewer.
   "send_chat_message",
+  "drive_chat_session_browser",
+  "observe_chat_session_browser",
   "get_chat_session",
   "get_chat_session_trace",
   // Swarms + user testing. No widget views yet: these are agent-oriented
@@ -459,6 +464,7 @@ describe("platform tool registration", () => {
       "get_eval_run_stage_analytics",
       "get_eval_run_gate",
       "get_eval_run_route_facts",
+      "get_eval_run_server_facts",
       "list_eval_suite_stage_analytics",
       "compare_eval_run",
       "get_eval_gate_waiver",
@@ -489,6 +495,8 @@ describe("platform tool registration", () => {
       "list_chat_sessions",
       "search_sessions",
       "send_chat_message",
+  "drive_chat_session_browser",
+  "observe_chat_session_browser",
       "get_chat_session",
       "get_chat_session_trace",
       "get_capabilities",
@@ -605,6 +613,7 @@ describe("platform tool registration", () => {
     const IDEMPOTENT_WRITES = new Set(["cancel_project_server_connection"]);
 
     const NON_DESTRUCTIVE_WRITES = new Set([
+      "observe_chat_session_browser",
       // Starting dials a third party's server and can spend; cancelling stops
       // one. Neither destroys a record, so both annotate as plain writes.
       "start_claude_readiness_run",
@@ -779,7 +788,8 @@ describe("platform tool registration", () => {
         // A turn under `toolMode: "auto"` executes arbitrary third-party
         // tools with the MODEL choosing the arguments, so its effects are no
         // more knowable than a direct call's. Same absent hints, same reason.
-        registration.name === "send_chat_message"
+        registration.name === "send_chat_message" ||
+        registration.name === "drive_chat_session_browser"
       ) {
         // Arbitrary third-party tool execution: destructive/idempotent hints
         // are deliberately absent so clients assume destructive (spec

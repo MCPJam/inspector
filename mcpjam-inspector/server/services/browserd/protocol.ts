@@ -81,6 +81,30 @@ export const DEFAULT_QUEUE_KEY = "@session";
 export const BROWSERD_PROTOCOL_VERSION = 2;
 
 /**
+ * Capabilities every build of this daemon has, announced on `/v1/status`.
+ *
+ * A FEATURE FLAG RATHER THAN A PROTOCOL BUMP, because both additions are
+ * strictly additive on the wire: an older daemon ignores `expectedBinding` and
+ * `webmcp_cancel.commandId`, and answers `webmcp_revision` as an unknown observe
+ * mode. Bumping `BROWSERD_PROTOCOL_VERSION` would instead have killed every live
+ * hosted browser on deploy — a session someone was signing into included — to
+ * gain a capability the server can simply ask about.
+ *
+ *   - `webmcp-eager`: the bridge attaches on tab creation and keeps a per-tab
+ *     `{revision, hash}`, so `observe {mode:"webmcp_revision"}` is answerable
+ *     and every result carries `webmcpTools`. A server talking to a daemon
+ *     WITHOUT this must fall back to a full `webmcp_tools` observation.
+ *   - `webmcp-binding`: `webmcp_invoke` validates `expectedBinding` and refuses
+ *     `stale_binding`, and `webmcp_cancel` accepts a `commandId`. A server
+ *     talking to a daemon without this must not assume its bindings are
+ *     checked — the invocation would run against whatever carries that name now.
+ */
+export const BROWSERD_WEBMCP_FEATURES = [
+  "webmcp-eager",
+  "webmcp-binding",
+] as const;
+
+/**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
  * CONTRACT rather than a launch detail — which is why it lives here and not
  * beside the Chromium switches that happen to configure it.
@@ -129,14 +153,34 @@ export const HOSTED_DISPLAY = {
   height: BROWSERD_OBSERVATION_VIEWPORT.height,
 } as const;
 
-export function isPointInViewport(x: number, y: number): boolean {
+/**
+ * Is this coordinate inside the page?
+ *
+ * `bounds` defaults to the observation viewport, which is the right answer for
+ * the FIXED-policy callers that were the only callers when this was written —
+ * the public agent contract among them, where the viewport is part of the
+ * contract and must not move under an external agent.
+ *
+ * A `followPane` session is not one of those. Its page can be up to
+ * `MAX_SESSION_VIEWPORT`, so a caller that cannot see the session's real size
+ * passes the widest bound it can justify and lets the daemon — which knows the
+ * size — make the exact refusal. Checking against a constant 1024x768 there
+ * rejected a click at x=1200 on a page 1400 wide, and rejected it before the
+ * daemon ever saw it, so the model was told its own screenshot was out of
+ * bounds.
+ */
+export function isPointInViewport(
+  x: number,
+  y: number,
+  bounds: { width: number; height: number } = BROWSERD_OBSERVATION_VIEWPORT,
+): boolean {
   return (
     Number.isFinite(x) &&
     Number.isFinite(y) &&
     x >= 0 &&
     y >= 0 &&
-    x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 &&
-    y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1
+    x <= bounds.width - 1 &&
+    y <= bounds.height - 1
   );
 }
 
@@ -161,6 +205,77 @@ export interface ObservationStateToken {
   navCounter: number;
   urlHash: string;
   domHash: string;
+  /**
+   * The session viewport this observation was taken at.
+   *
+   * The DOM hash cannot stand in for it, and that is the whole reason it
+   * exists. A CSS breakpoint crossing at 900px turns three columns into one
+   * with the IDENTICAL tag skeleton — same elements, same nesting, same
+   * structural digest — so a click computed from the wide screenshot passes
+   * every other arm of the staleness check and lands on whatever the reflow
+   * moved into that rectangle.
+   *
+   * OPTIONAL on the wire, and absent means "do not compare". A token minted by
+   * a daemon that predates this field, or handed back by a caller that
+   * round-tripped it through an older shape, must not be read as revision 0 —
+   * that would refuse every act on a session that has ever been resized, which
+   * is a worse failure than the one being prevented. A `fixed` session never
+   * moves off 0 anyway, so nothing that exists today changes behaviour.
+   */
+  viewportRevision?: number;
+}
+
+/**
+ * WHICH REGISTRATION of a page tool a caller means, as a value it can carry
+ * across a round trip and hand back.
+ *
+ * Every field is load-bearing, and the set is what it is because each weaker
+ * key was tried and let a real mistake through:
+ *
+ *   - `bootId` — the daemon restarted, so every frame id it minted is a
+ *     coincidence now.
+ *   - `tabId` — a binding is for one tab; the same page in two tabs is two
+ *     documents with their own state.
+ *   - `navCounter` — the tab navigated. THE MAIN FRAME KEEPS ITS ID across
+ *     navigation (see `webmcp-bridge.ts`), so this is the only thing that
+ *     separates a page from the page that replaced it at the same URL.
+ *   - `frameId` — which frame. Two same-origin iframes of the same document
+ *     each register their own copy of a tool, and they are not
+ *     interchangeable: one is the left panel, one is the right.
+ *   - `registrationSeq` — which registration WITHIN a document generation. A
+ *     page that unregisters and re-registers a tool (a SPA re-mounting a
+ *     component) has a new handler behind an unchanged name, frame and
+ *     navCounter.
+ *
+ * Compared by the daemon immediately before it invokes, so an approval granted
+ * against one document cannot be spent on another.
+ */
+export interface WebMcpToolBinding {
+  bootId: BootId;
+  tabId: string;
+  navCounter: number;
+  frameId: string;
+  registrationSeq: number;
+}
+
+/**
+ * A tab's WebMCP tool set, described WITHOUT touching the page.
+ *
+ * Read from the daemon's own cache, which the bridge keeps current by push. It
+ * is what makes "has anything changed?" a cheap question the server can ask
+ * before EVERY model step: a page-touching `observe` per step would be a
+ * screenshot's worth of work to usually learn nothing, and would also settle
+ * the page — an observation with side effects on a loop.
+ */
+export interface WebMcpToolsRevision {
+  /** Bumps on every bridge change: add, remove, navigate, detach. */
+  revision: number;
+  /** Over name + description + schema + frame + generation. See `declaredToolsHash`. */
+  hash: string;
+  count: number;
+  /** Whether this page (and this browser) speaks WebMCP at all. */
+  supported: boolean;
+  url?: string;
 }
 
 /**
@@ -206,6 +321,22 @@ export type BrowserAction =
       observe?: ActObserve;
     }
   | { kind: "back"; observe?: ActObserve }
+  /**
+   * The other half of the history, added for the PERSON rather than the model.
+   *
+   * There was no forward verb because the agent contract never needed one: an
+   * agent that has just gone back knows where it came from and can navigate
+   * there by URL. A person driving the pane does not have that — they went
+   * back to look at something and the way out is the forward button — and a
+   * browser whose forward button does nothing is visibly broken in a way no
+   * amount of explanation fixes.
+   *
+   * A forward with nothing to go forward to is a NO-OP, not an error, exactly
+   * as `back` is at the start of history: Chromium simply stays put. The pane
+   * disables the button from `canGoForward`, so the only way to reach this
+   * case is a race, and a race is not a fault worth a message.
+   */
+  | { kind: "forward"; observe?: ActObserve }
   | { kind: "reload"; observe?: ActObserve }
   | {
       kind: "act";
@@ -219,7 +350,23 @@ export type BrowserAction =
         | "select"
         | "fill_form"
         | "close_tab"
-        | "activate_tab";
+        | "activate_tab"
+        /**
+         * Answer the dialog this page is blocked on.
+         *
+         * SEPARATE FROM THE DEFAULTS the daemon applies. A default exists so a
+         * tab can never wedge, but it is a guess at what the caller meant —
+         * "Delete this account?" is cancelled because that is the safe answer
+         * for an absent user, not because it is the right one for every
+         * client. A client with its own rules (ask the person, always confirm
+         * a known flow) answers here instead, and runs the daemon with
+         * `dialogPolicy: "ask"` so nothing is decided for it.
+         *
+         * `accept_dialog` takes the prompt's reply in `value`, when the dialog
+         * is a `prompt` and the caller has one.
+         */
+        | "accept_dialog"
+        | "dismiss_dialog";
       target?: BrowserActTarget;
       value?: string;
       /**
@@ -268,8 +415,36 @@ export type BrowserAction =
         | "dom"
         | "a11y"
         | "console"
+        /**
+         * What the page asked the network for, and what came back.
+         *
+         * Metadata only: URLs with the query and fragment stripped, an
+         * allowlisted subset of response headers, statuses, sizes and timing.
+         * Bodies are never retained — `daemon/network.ts` says why — and
+         * `requestId` reads ONE exchange rather than the tail.
+         */
+        | "network"
+        /**
+         * The dialog this page is blocked on, or `null`.
+         *
+         * A cache read: it touches no page, which is what makes it answerable
+         * while a dialog has the renderer stopped. The point of asking is to
+         * DECIDE — see the `accept_dialog` / `dismiss_dialog` verbs.
+         */
+        | "dialog"
         | "url"
-        | "webmcp_tools";
+        | "webmcp_tools"
+        /**
+         * The cached `{revision, hash, count}` for this tab and NOTHING else.
+         *
+         * Touches no page: no screenshot, no settle, no DOM read. That is the
+         * whole point — the server asks it before every model step, and a mode
+         * that reached into the page would make discovery cost a page load per
+         * step and would itself change what it was measuring.
+         */
+        | "webmcp_revision";
+      /** `network` only: read this one exchange in full, not the tail. */
+      requestId?: string;
       /**
        * `a11y` only: scope the tree to the element this CSS selector matches,
        * instead of the whole page.
@@ -318,9 +493,40 @@ export type BrowserAction =
        * caller against a new one.
        */
       frameId?: string;
+      /**
+       * The registration the CALLER means, validated immediately before the
+       * page is touched (`stale_binding` on any mismatch).
+       *
+       * Optional and additive: an older daemon ignores it and resolves by name
+       * exactly as before, and a caller that has no binding (the legacy
+       * `browser_webmcp_invoke`) sends none. A caller that DOES send one is
+       * also refused a frame fallback — the whole point is that this
+       * invocation reaches the tool that was listed and approved, or none.
+       */
+      expectedBinding?: WebMcpToolBinding;
       input: unknown;
     }
-  | { kind: "webmcp_cancel"; invocationId: string };
+  | {
+      kind: "webmcp_cancel";
+      /**
+       * The invocation to stop, when the caller knows its id.
+       *
+       * Optional now: a server aborting a tool call it issued does NOT know
+       * the invocation id — `webmcp_invoke` is synchronous and only reports one
+       * when it settles, which on a hung tool is never. See `commandId`.
+       */
+      invocationId?: string;
+      /**
+       * Stop whatever THIS command started.
+       *
+       * The daemon records `commandId → invocationId` the moment the browser
+       * accepts an invocation, so a caller can name the thing it wants stopped
+       * using the only id it had before the call: its own. Without this an
+       * aborted request left the page's tool running to completion — the user
+       * pressed Stop and the form still submitted.
+       */
+      commandId?: string;
+    };
 
 /**
  * One command envelope. `commandId` is the idempotency key: the daemon executes
@@ -329,6 +535,8 @@ export type BrowserAction =
  * omit it for whole-session commands, which share a session-level queue.
  */
 export interface BrowserCommand {
+  /** Caller reads dimensions from each observation instead of assuming 1024x768. */
+  responsiveViewport?: boolean;
   commandId: string;
   tabId?: string;
   source: BrowserCommandSource;
@@ -438,6 +646,17 @@ export interface BrowserCommandResult {
    * one refusal whichever side of the queue it happened on.
    */
   leaseBlocked?: boolean;
+  /**
+   * The tab's WebMCP tool set at the moment this command finished, as a cheap
+   * `{revision, hash, count}` (never the definitions).
+   *
+   * ON THE ENVELOPE, beside `stateToken`, and deliberately NOT inside `output`:
+   * it is the daemon's bookkeeping rather than anything the model should read,
+   * and `output` is what gets presented. Riding along on every result is what
+   * lets a change the model's OWN action caused — a navigation, a click that
+   * mounted a component — be noticed without a second round trip.
+   */
+  webmcpTools?: WebMcpToolsRevision;
   /**
    * Where the page's console and page-error rings stood AFTER this command.
    *
@@ -560,18 +779,36 @@ export const BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  "browser_policy_refused",
   /** A `fill_form` stopped partway; the detail names which field and why. */
   "fill_form_failed",
   "out_of_viewport",
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /**
+   * Something is on top of the target at its click point, so the input would
+   * land on that element instead. The detail names the covering element.
+   *
+   * Its own code because the recovery is specific and the model can perform
+   * it: dismiss the banner or the modal, then retry the original target. A
+   * click that silently hit the overlay reports success, and a bare
+   * `act_failed` sends the model back to re-observe a page that has not
+   * changed.
+   */
+  "target_covered",
   /** A ref this tab's last observation never issued. */
   "unknown_ref",
   /** The page could not answer an accessibility tree at all. */
   "a11y_unavailable",
   "webmcp_unsupported",
   "webmcp_error",
+  /**
+   * The tool the caller named is not the tool it bound to: the tab navigated,
+   * the frame is gone, or the page re-registered under the same name. Nothing
+   * was invoked. Recoverable — the caller re-reads the page's tools.
+   */
+  "stale_binding",
   /** A dialog is open and waiting for the person who holds the lease. */
   "dialog_pending",
   /** A download exceeded the per-file or per-session cap and was cancelled. */
