@@ -50,9 +50,7 @@ export type PremiumnessGateKey =
   | "journeyRunsPerDay";
 
 export type BillingEnforcementState =
-  | "active"
-  | "disabled"
-  | "decision_required";
+  "active" | "disabled" | "decision_required";
 
 export interface GateDecision {
   gateKey: PremiumnessGateKey;
@@ -128,11 +126,7 @@ export interface OrganizationSeatPaymentIntent {
   role: "guest" | "member";
   source: string;
   status:
-    | "pending"
-    | "requires_action"
-    | "cleanup_pending"
-    | "failed"
-    | "canceled";
+    "pending" | "requires_action" | "cleanup_pending" | "failed" | "canceled";
   /**
    * The charge ended terminally and the invitee is still waiting. Only ever
    * true for charges raised automatically at signup — when an owner starts one
@@ -177,6 +171,18 @@ export interface PlanCatalog {
   currency: string;
   appOrigin?: string;
   plans: Record<OrganizationPlan, PlanCatalogEntry>;
+}
+
+// One envelope for the five stable billing reads. Bundled server-side because
+// every open page used to hold five separate subscriptions for them, which is
+// what pushed prod into its concurrent-query limit. `projectPremiumness` is
+// null when the caller sent no projectId.
+export interface OrganizationBillingBundle {
+  billingStatus: OrganizationBillingStatus;
+  entitlements: OrganizationEntitlements;
+  organizationPremiumness: PremiumnessState;
+  projectPremiumness: PremiumnessState | null;
+  planCatalog: PlanCatalog;
 }
 
 export interface OrganizationPlanChangeSnapshot {
@@ -237,20 +243,20 @@ export interface StartOrganizationPlanChangeOptions {
 
 export function useOrganizationBillingStatus(
   organizationId: string | null,
-  options?: UseOrganizationBillingStatusOptions
+  options?: UseOrganizationBillingStatusOptions,
 ): OrganizationBillingStatus | undefined {
   const isUserReady = useDbUserReady();
   const enabled = (options?.enabled ?? true) && isUserReady;
 
   return useQuery(
     "billing:getOrganizationBillingStatus" as any,
-    enabled && organizationId ? ({ organizationId } as any) : "skip"
+    enabled && organizationId ? ({ organizationId } as any) : "skip",
   ) as OrganizationBillingStatus | undefined;
 }
 
 export function useOrganizationBilling(
   organizationId: string | null,
-  options?: UseOrganizationBillingOptions
+  options?: UseOrganizationBillingOptions,
 ) {
   const projectId = options?.projectId ?? null;
   const isUserReady = useDbUserReady();
@@ -261,56 +267,57 @@ export function useOrganizationBilling(
   const shouldQuerySeatPaymentIntent =
     shouldQueryOrganization && options?.includeSeatPaymentIntent === true;
 
-  const billingStatus = useOrganizationBillingStatus(organizationId, {
-    enabled,
-  });
+  // One subscription instead of five. `useOrganizationBillingStatus` stays a
+  // separate export for callers that only want the status, so it is not reused
+  // here.
+  const bundle = useQuery(
+    "billing:getOrganizationBillingBundle" as any,
+    shouldQueryOrganization
+      ? ({
+          organizationId,
+          ...(shouldQueryProject ? { projectId } : {}),
+        } as any)
+      : "skip",
+  ) as OrganizationBillingBundle | undefined;
 
-  const entitlements = useQuery(
-    "billing:getOrganizationEntitlements" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
-  ) as OrganizationEntitlements | undefined;
-
-  const organizationPremiumness = useQuery(
-    "billing:getOrganizationPremiumness" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
-  ) as PremiumnessState | undefined;
-
-  const projectPremiumness = useQuery(
-    "billing:getProjectPremiumness" as any,
-    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip"
-  ) as PremiumnessState | undefined;
-
-  const planCatalog = useQuery(
-    "billing:getPlanCatalog" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
-  ) as PlanCatalog | undefined;
+  const billingStatus = bundle?.billingStatus;
+  const entitlements = bundle?.entitlements;
+  const organizationPremiumness = bundle?.organizationPremiumness;
+  // The bundle says null for "no projectId sent"; callers expect undefined,
+  // which is what the old "skip" subscription gave them. Gate it on
+  // shouldQueryProject too, so a bundle fetched without a project can never
+  // read as a settled project answer.
+  const projectPremiumness = shouldQueryProject
+    ? (bundle?.projectPremiumness ?? undefined)
+    : undefined;
+  const planCatalog = bundle?.planCatalog;
 
   const activeSeatPaymentIntent = useQuery(
     "billing:getActiveOrganizationSeatPaymentIntent" as any,
-    shouldQuerySeatPaymentIntent ? ({ organizationId } as any) : "skip"
+    shouldQuerySeatPaymentIntent ? ({ organizationId } as any) : "skip",
   ) as OrganizationSeatPaymentIntent | null | undefined;
 
   const startPlanChangeAction = useAction(
-    "billing:startOrganizationPlanChange" as any
+    "billing:startOrganizationPlanChange" as any,
   );
   const createPortal = useAction(
-    "billing:createOrganizationBillingPortalSession" as any
+    "billing:createOrganizationBillingPortalSession" as any,
   );
   const createCancellationPortal = useAction(
-    "billing:createOrganizationBillingPortalCancellationSession" as any
+    "billing:createOrganizationBillingPortalCancellationSession" as any,
   );
   const createIntervalChangePortal = useAction(
-    "billing:createOrganizationBillingPortalIntervalChangeSession" as any
+    "billing:createOrganizationBillingPortalIntervalChangeSession" as any,
   );
   const cancelScheduledBillingChangeAction = useAction(
-    "billing:cancelOrganizationScheduledBillingChange" as any
+    "billing:cancelOrganizationScheduledBillingChange" as any,
   );
   const selectFreeAfterTrialMutation = useMutation(
-    "billing:selectOrganizationFreePlanAfterTrial" as any
+    "billing:selectOrganizationFreePlanAfterTrial" as any,
   );
   const startSeatPaymentAction = useAction("billing:startSeatPayment" as any);
   const completeSeatPaymentAction = useAction(
-    "billing:completeSeatPayment" as any
+    "billing:completeSeatPayment" as any,
   );
   const cancelSeatPaymentAction = useAction("billing:cancelSeatPayment" as any);
   const retrySeatPaymentMutation = useMutation(
@@ -340,7 +347,7 @@ export function useOrganizationBilling(
       returnUrl: string,
       tier: "team" = "team",
       billingInterval: BillingInterval = "monthly",
-      options: StartOrganizationPlanChangeOptions = {}
+      options: StartOrganizationPlanChangeOptions = {},
     ): Promise<OrganizationPlanChangeResult> => {
       if (!organizationId) throw new Error("Organization is required");
       setIsStartingPlanChange(true);
@@ -365,7 +372,7 @@ export function useOrganizationBilling(
         setPendingPlanChangeTarget(null);
       }
     },
-    [organizationId, startPlanChangeAction]
+    [organizationId, startPlanChangeAction],
   );
 
   const openPortal = useCallback(
@@ -388,7 +395,7 @@ export function useOrganizationBilling(
         setIsOpeningPortal(false);
       }
     },
-    [createPortal, organizationId]
+    [createPortal, organizationId],
   );
 
   const openIntervalChangePortal = useCallback(
@@ -414,7 +421,7 @@ export function useOrganizationBilling(
         setIsOpeningPortal(false);
       }
     },
-    [createIntervalChangePortal, organizationId]
+    [createIntervalChangePortal, organizationId],
   );
 
   const openCancellationPortal = useCallback(
@@ -439,7 +446,7 @@ export function useOrganizationBilling(
         setIsOpeningPortal(false);
       }
     },
-    [createCancellationPortal, organizationId]
+    [createCancellationPortal, organizationId],
   );
 
   const cancelScheduledBillingChange = useCallback(async () => {
@@ -522,7 +529,7 @@ export function useOrganizationBilling(
             } catch (cancelError) {
               console.warn(
                 "[billing] Failed to cancel incomplete seat payment",
-                cancelError
+                cancelError,
               );
             }
             throw confirmError;
@@ -555,7 +562,7 @@ export function useOrganizationBilling(
         if (startResult.status === "failed") {
           if (startResult.reason === "missing_payment_method") {
             throw new Error(
-              "Stripe has no default payment method for this subscription. Add or select a card in Billing, then click Finish payment again."
+              "Stripe has no default payment method for this subscription. Add or select a card in Billing, then click Finish payment again.",
             );
           }
           throw new Error("Payment failed. The member was not added.");
@@ -577,7 +584,7 @@ export function useOrganizationBilling(
       completeSeatPaymentAction,
       organizationId,
       startSeatPaymentAction,
-    ]
+    ],
   );
 
   /**
@@ -662,7 +669,7 @@ export function useOrganizationBilling(
       activeSeatPaymentIntent?.stripeInvoiceId,
       cancelSeatPaymentAction,
       organizationId,
-    ]
+    ],
   );
 
   // The caller asked for billing and we're only waiting on the `users` row.
@@ -694,7 +701,8 @@ export function useOrganizationBilling(
     isLoadingOrganizationPremiumness,
     isLoadingProjectPremiumness,
     isLoadingPlanCatalog:
-      isAwaitingUserRow || (shouldQueryOrganization && planCatalog === undefined),
+      isAwaitingUserRow ||
+      (shouldQueryOrganization && planCatalog === undefined),
     isStartingPlanChange,
     pendingPlanChangeTarget,
     isOpeningPortal,
