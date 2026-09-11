@@ -2773,7 +2773,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
     },
     codex: {
       id: "codex",
-      label: "Codex",
+      label: "Codex Desktop",
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
