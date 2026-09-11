@@ -2,6 +2,7 @@ import { useViewportReporter } from "../browser-pane/use-viewport-reporter";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -66,6 +67,8 @@ export interface BrowserSessionTransport {
 
 export interface UseBrowserSessionArgs {
   transport: BrowserSessionTransport | null;
+  /** Reset tab metadata and pending work when the displayed browser changes. */
+  sessionKey?: string | null;
   /** This pane's lease identity. */
   holderId: string | null;
   /**
@@ -114,6 +117,7 @@ export interface BrowserSessionHandle {
 
 export function useBrowserSession({
   transport,
+  sessionKey,
   holderId,
   active,
   pollMs = DEFAULT_POLL_MS,
@@ -133,6 +137,21 @@ export function useBrowserSession({
   // restarted that often would never complete one.
   const transportRef = useRef(transport);
   transportRef.current = transport;
+  const identity = useRef({ key: sessionKey, generation: 0 });
+  if (identity.current.key !== sessionKey) {
+    identity.current = {
+      key: sessionKey,
+      generation: identity.current.generation + 1,
+    };
+  }
+
+  useLayoutEffect(() => {
+    dispatch({ type: "snapshot", snapshot: EMPTY_BROWSER_SESSION_STATE });
+    setNotice(null);
+    setError(null);
+    setResuming(false);
+    setUnsupported(false);
+  }, [sessionKey]);
 
   const setConnection = useCallback((connection: BrowserConnectionState) => {
     dispatch({ type: "connection_changed", connection });
@@ -155,13 +174,14 @@ export function useBrowserSession({
       setConnection("closed");
       return;
     }
+    const generation = identity.current.generation;
     let cancelled = false;
     let timer: number | undefined;
     const tick = async () => {
       const snapshot = await transportRef.current
         ?.readState()
         .catch(() => null);
-      if (cancelled) return;
+      if (cancelled || generation !== identity.current.generation) return;
       if (snapshot) {
         dispatch({ type: "snapshot", snapshot });
         setConnection("live");
@@ -180,7 +200,7 @@ export function useBrowserSession({
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [active, transport, pollMs, setConnection]);
+  }, [active, transport, sessionKey, pollMs, setConnection]);
 
   /** Clear a notice after a moment, and never leave a stale one on screen. */
   useEffect(() => {
@@ -192,15 +212,27 @@ export function useBrowserSession({
   const run = useCallback((command: BrowserPaneCommand) => {
     const current = transportRef.current;
     if (!current) return;
+    const generation = identity.current.generation;
     void (async () => {
       const outcome = await current.sendCommand({ command });
+      if (
+        identity.current.generation !== generation ||
+        transportRef.current !== current
+      )
+        return;
       if (outcome.ok) {
         setError(null);
         // Reconcile immediately rather than waiting out the poll: a person
         // who clicked Back expects the address to move now, and two seconds
         // of a stale address bar reads as a click that did nothing.
         const snapshot = await current.readState().catch(() => null);
-        if (snapshot) dispatch({ type: "snapshot", snapshot });
+        if (
+          snapshot &&
+          identity.current.generation === generation &&
+          transportRef.current === current
+        ) {
+          dispatch({ type: "snapshot", snapshot });
+        }
         return;
       }
       switch (outcome.reason) {
@@ -229,16 +261,21 @@ export function useBrowserSession({
   const resume = useCallback(() => {
     const current = transportRef.current;
     if (!current?.resume) return;
+    const generation = identity.current.generation;
+    const isCurrent = () =>
+      identity.current.generation === generation &&
+      transportRef.current === current;
     setResuming(true);
     void current
       .resume()
-      .catch(() => setError("Could not hand the browser back."))
+      .catch(() => {
+        if (isCurrent()) setError("Could not hand the browser back.");
+      })
       .finally(async () => {
+        if (!isCurrent()) return;
         setResuming(false);
-        const snapshot = await transportRef.current
-          ?.readState()
-          .catch(() => null);
-        if (snapshot) dispatch({ type: "snapshot", snapshot });
+        const snapshot = await current.readState().catch(() => null);
+        if (snapshot && isCurrent()) dispatch({ type: "snapshot", snapshot });
       });
   }, []);
 
@@ -257,8 +294,12 @@ export function useBrowserSession({
    * places the divider passed through, not places anybody left it.
    */
   const reportViewport = useViewportReporter(
-    (size) => transportRef.current?.reportViewport?.(size),
-    holderId,
+    (size) =>
+      active ? transportRef.current?.reportViewport?.(size) : undefined,
+    useMemo(
+      () => ({ holderId, sessionKey, active }),
+      [holderId, sessionKey, active],
+    ),
   );
 
   const holding = useMemo(() => isHeldBy(state, holderId), [state, holderId]);

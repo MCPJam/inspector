@@ -31,6 +31,7 @@ export type EvalRoute =
       testCaseId?: string;
       insightsFocus?: boolean;
       compareToRunId?: string;
+      comparison?: boolean;
     }
   | { type: "test-detail"; suiteId: string; testId: string; iteration?: string }
   | {
@@ -39,6 +40,7 @@ export type EvalRoute =
       testId: string;
       /** Deep-link: open compare run surface (same as View results) when iterations exist. */
       openCompare?: boolean;
+      checks?: boolean;
       /** Deep-link: prefer the clicked iteration/session when hydrating compare results. */
       iteration?: string;
       /** Return to the Eval my server first-run preview after editing. */

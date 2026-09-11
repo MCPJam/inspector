@@ -39,6 +39,7 @@ function fakeWindow(
     webContents: {
       id: options.id ?? 7,
       getZoomFactor: () => window_.zoom,
+      mainFrame: { url: "http://localhost:6274" },
     },
     contentView: {
       addChildView: (view: SurfaceView) => {
@@ -76,6 +77,7 @@ function install(
     mainWindow?: ReturnType<typeof fakeWindow> | null;
     surfaces?: Map<string, ContextSurface>;
     supported?: boolean;
+    verifyConsent?: (token: string | null | undefined) => Promise<boolean>;
   } = {},
 ) {
   const handlers = new Map<string, (event: any, request: any) => unknown>();
@@ -83,6 +85,9 @@ function install(
   registerAgentBrowserListeners(
     () => (options.mainWindow ?? window_) as never,
     {
+      rendererOrigin: "http://localhost:6274",
+      verifyConsent:
+        options.verifyConsent ?? (async (token) => token === "browser-token"),
       surfaceFor: (bootId) => surfaces.get(bootId),
       nativeSurfaceSupported: () => options.supported ?? true,
       ipc: {
@@ -98,18 +103,27 @@ function install(
   const senderId = (options.mainWindow ?? window_)?.webContents.id ?? 7;
   return {
     surfaces,
-    capability: (id = senderId) =>
+    capabilityFromFrame: (senderFrame: unknown) =>
       handlers.get("agent-browser:capability")!(
-        { sender: { id } },
-        undefined,
-      ) as {
-        available: boolean;
-      },
+        { sender: { id: senderId }, senderFrame },
+        "browser-token",
+      ) as Promise<{ available: boolean }>,
+    capability: (id = senderId, token: string | undefined = "browser-token") =>
+      handlers.get("agent-browser:capability")!(
+        {
+          sender: { id },
+          senderFrame: (options.mainWindow ?? window_)?.webContents.mainFrame,
+        },
+        token,
+      ) as Promise<{ available: boolean }>,
     setViewport: (request: unknown, id = senderId) =>
       handlers.get("agent-browser:set-viewport")!(
-        { sender: { id } },
-        request,
-      ) as AgentBrowserViewportResult,
+        {
+          sender: { id },
+          senderFrame: (options.mainWindow ?? window_)?.webContents.mainFrame,
+        },
+        { consentToken: "browser-token", ...(request as object) },
+      ) as Promise<AgentBrowserViewportResult>,
   };
 }
 
@@ -121,7 +135,7 @@ beforeEach(() => {
 });
 
 describe("resolveViewportBounds", () => {
-  it("scales the renderer's CSS pixels by the zoom factor", () => {
+  it("scales the renderer's CSS pixels by the zoom factor", async () => {
     // The renderer measured in ITS pixels. At 110% zoom those are BIGGER than
     // the window's, so a view placed at the raw numbers sits inside its slot —
     // the page visibly not filling the rail it is supposed to be in.
@@ -133,7 +147,7 @@ describe("resolveViewportBounds", () => {
     });
   });
 
-  it("clamps to the window's content size", () => {
+  it("clamps to the window's content size", async () => {
     // `setBounds` will happily paint a live browser over the app's own chrome,
     // or off the bottom of the window entirely.
     expect(
@@ -145,7 +159,7 @@ describe("resolveViewportBounds", () => {
     ).toEqual({ x: 100, y: 100, width: 400, height: 300 });
   });
 
-  it("refuses anything that is not a rectangle", () => {
+  it("refuses anything that is not a rectangle", async () => {
     for (const bad of [
       undefined,
       null,
@@ -161,7 +175,7 @@ describe("resolveViewportBounds", () => {
     }
   });
 
-  it("keeps a negative origin, which is an ordinary scrolled slot", () => {
+  it("keeps a negative origin, which is an ordinary scrolled slot", async () => {
     // The window clips it, exactly as the rail's own overflow would clip a
     // canvas. Refusing it would make the view vanish the moment a person
     // scrolled the pane a pixel.
@@ -174,7 +188,7 @@ describe("resolveViewportBounds", () => {
     ).toEqual({ x: -40, y: -10, width: 300, height: 200 });
   });
 
-  it("survives a zoom factor Electron could not answer", () => {
+  it("survives a zoom factor Electron could not answer", async () => {
     expect(resolveViewportBounds(BOUNDS, Number.NaN, undefined)).toEqual(
       BOUNDS,
     );
@@ -183,24 +197,54 @@ describe("resolveViewportBounds", () => {
 });
 
 describe("agent-browser:capability", () => {
-  it("says whether this Electron can place a view", () => {
-    expect(install({ supported: true }).capability()).toEqual({
+  it("says whether this Electron can place a view", async () => {
+    expect(await install({ supported: true }).capability()).toEqual({
       available: true,
     });
-    expect(install({ supported: false }).capability()).toEqual({
+    expect(await install({ supported: false }).capability()).toEqual({
       available: false,
     });
   });
 
-  it("refuses a sender that is not the main window", () => {
+  it("refuses a sender that is not the main window", async () => {
     // The same check `local-harness:pick-workspace` makes. A channel that moves
     // a live browser view into the app's window is exactly the kind a stray
     // webview must not reach.
-    expect(install().capability(999)).toEqual({ available: false });
+    expect(await install().capability(999)).toEqual({ available: false });
   });
 });
 
 describe("agent-browser:set-viewport", () => {
+  it("does not reattach a view when an older show finishes after hide", async () => {
+    const surface = createContextSurface({ authority: "shared" });
+    const view = fakeView();
+    surface.registerTab(view);
+    let finishShow!: (valid: boolean) => void;
+    const verifyConsent = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishShow = resolve;
+          }),
+      )
+      .mockResolvedValue(true);
+    const api = install({
+      surfaces: new Map([["boot-1", surface]]),
+      verifyConsent,
+    });
+    const show = api.setViewport({
+      bootId: "boot-1",
+      visible: true,
+      bounds: BOUNDS,
+    });
+    await api.setViewport({ bootId: "boot-1", visible: false });
+    finishShow(true);
+    await show;
+    expect(surface.isShown()).toBe(false);
+    expect(window_.children).not.toContain(view);
+  });
+
   const withSurface = (holder = "rail-1") => {
     const surface = createContextSurface();
     const view = fakeView();
@@ -211,9 +255,9 @@ describe("agent-browser:set-viewport", () => {
     return { surface, view, api: install({ surfaces }) };
   };
 
-  it("parents the view into the app's window at the pane's bounds", () => {
+  it("parents the view into the app's window at the pane's bounds", async () => {
     const { view, api } = withSurface();
-    const result = api.setViewport({
+    const result = await api.setViewport({
       bootId: "boot-1",
       holder: "rail-1",
       visible: true,
@@ -229,32 +273,56 @@ describe("agent-browser:set-viewport", () => {
     expect(view.bounds).toMatchObject({ x: BOUNDS.x, y: BOUNDS.y });
   });
 
-  it("takes the view back out when the pane stops wanting it", () => {
+  it("takes the view back out when the pane stops wanting it", async () => {
     // The one piece of teardown that cannot be skipped: a native view is a
     // SIBLING of the renderer, so one left behind keeps painting a browser
     // over whatever the rail switched to.
     const { view, api } = withSurface();
-    api.setViewport({
+    await api.setViewport({
       bootId: "boot-1",
       holder: "rail-1",
       visible: true,
       bounds: BOUNDS,
     });
     expect(window_.children).toContain(view);
-    expect(api.setViewport({ bootId: "boot-1", visible: false })).toEqual({
-      shown: false,
-      inputAllowed: false,
-    });
+    expect(await api.setViewport({ bootId: "boot-1", visible: false })).toEqual(
+      {
+        shown: false,
+        inputAllowed: false,
+      },
+    );
     expect(window_.children).not.toContain(view);
   });
 
-  it("hides rather than shows a browser somebody else holds", () => {
+  it("does not report a lease conflict before the first tab exists", async () => {
+    const surface = createContextSurface();
+    const api = install({
+      surfaces: new Map([["boot-1", surface]]),
+    });
+    expect(
+      await api.setViewport({
+        bootId: "boot-1",
+        holder: "rail-1",
+        visible: true,
+        bounds: BOUNDS,
+      }),
+    ).toEqual({ shown: false, inputAllowed: false });
+
+    // The placement request survives startup, so the first tab appears
+    // without requiring another resize or a change of control.
+    const view = fakeView();
+    surface.registerTab(view);
+    expect(window_.children).toContain(view);
+    expect(surface.isShown()).toBe(true);
+  });
+
+  it("hides rather than shows a browser somebody else holds", async () => {
     // THE LEASE DECIDES, not the renderer. A visible native view of a page
     // another person is typing their password into is an observation, which is
     // the one thing the lease exists to prevent — so the answer is a refusal
     // the pane can explain, not a view it merely cannot click.
     const { view, api } = withSurface("someone-else");
-    const result = api.setViewport({
+    const result = await api.setViewport({
       bootId: "boot-1",
       holder: "rail-1",
       visible: true,
@@ -268,7 +336,7 @@ describe("agent-browser:set-viewport", () => {
     expect(window_.children).not.toContain(view);
   });
 
-  it("shows but refuses input while the agent is driving", () => {
+  it("shows but refuses input while the agent is driving", async () => {
     // `free` means nobody has taken the browser and the AGENT may be mid-turn.
     // Watching is the safe common case; typing into it is not.
     const surface = createContextSurface();
@@ -278,7 +346,7 @@ describe("agent-browser:set-viewport", () => {
       surfaces: new Map<string, ContextSurface>([["boot-1", surface]]),
     });
     expect(
-      api.setViewport({
+      await api.setViewport({
         bootId: "boot-1",
         holder: "rail-1",
         visible: true,
@@ -288,20 +356,20 @@ describe("agent-browser:set-viewport", () => {
     expect(window_.children).toContain(view);
   });
 
-  it("refuses a boot id nobody registered", () => {
+  it("refuses a boot id nobody registered", async () => {
     const api = install();
     expect(
-      api.setViewport({ bootId: "nope", visible: true, bounds: BOUNDS }),
+      await api.setViewport({ bootId: "nope", visible: true, bounds: BOUNDS }),
     ).toEqual({ shown: false, inputAllowed: false, reason: "unknown" });
-    expect(api.setViewport({ visible: true } as never)).toMatchObject({
+    expect(await api.setViewport({ visible: true } as never)).toMatchObject({
       reason: "unknown",
     });
   });
 
-  it("refuses a sender that is not the main window, before anything moves", () => {
+  it("refuses a sender that is not the main window, before anything moves", async () => {
     const { view, api } = withSurface();
     expect(
-      api.setViewport(
+      await api.setViewport(
         { bootId: "boot-1", holder: "rail-1", visible: true, bounds: BOUNDS },
         999,
       ),
@@ -309,19 +377,19 @@ describe("agent-browser:set-viewport", () => {
     expect(window_.children).not.toContain(view);
   });
 
-  it("takes the view out when the rectangle stops being one", () => {
+  it("takes the view out when the rectangle stops being one", async () => {
     // A pane measured mid-layout, or scrolled entirely out of the window. The
     // view must not stay where it last was, or it hangs over whatever the rail
     // is showing now.
     const { view, api } = withSurface();
-    api.setViewport({
+    await api.setViewport({
       bootId: "boot-1",
       holder: "rail-1",
       visible: true,
       bounds: BOUNDS,
     });
     expect(
-      api.setViewport({
+      await api.setViewport({
         bootId: "boot-1",
         holder: "rail-1",
         visible: true,
@@ -331,14 +399,14 @@ describe("agent-browser:set-viewport", () => {
     expect(window_.children).not.toContain(view);
   });
 
-  it("applies the window's zoom factor to what the renderer measured", () => {
+  it("applies the window's zoom factor to what the renderer measured", async () => {
     // The renderer measures in ITS CSS pixels, and a zoomed rail's numbers are
     // smaller than the window's by exactly that factor — so a view positioned
     // from them sits inside its slot at 110% zoom and overhangs it at 90%.
     // Only the POSITION reaches the view; the size is the session's.
     const { view, api } = withSurface();
     window_.zoom = 2;
-    api.setViewport({
+    await api.setViewport({
       bootId: "boot-1",
       holder: "rail-1",
       visible: true,
@@ -347,7 +415,7 @@ describe("agent-browser:set-viewport", () => {
     expect(view.bounds).toMatchObject({ x: 10, y: 12 });
   });
 
-  it("reports the zoomed SIZE as a viewport request rather than applying it", () => {
+  it("reports the zoomed SIZE as a viewport request rather than applying it", async () => {
     // The size is a request the session decides on, through a barrier that
     // coalesces a drag and refuses to resize mid-action.
     const requested: Array<{ width: number; height: number }> = [];
@@ -360,7 +428,7 @@ describe("agent-browser:set-viewport", () => {
       surfaces: new Map<string, ContextSurface>([["boot-1", surface]]),
     });
     window_.zoom = 2;
-    api.setViewport({
+    await api.setViewport({
       bootId: "boot-1",
       holder: "rail-1",
       visible: true,
@@ -368,4 +436,50 @@ describe("agent-browser:set-viewport", () => {
     });
     expect(requested).toContainEqual({ width: 200, height: 100 });
   });
+});
+
+it("Browser IPC rejects wrong or revoked consent without changing shell state", async () => {
+  const surface = createContextSurface();
+  const view = fakeView();
+  surface.registerTab(view);
+  surface.setLease({ state: "held", holder: "rail-1" });
+  let valid = true;
+  const api = install({
+    surfaces: new Map([["boot-1", surface]]),
+    verifyConsent: async (token) => valid && token === "browser-token",
+  });
+  expect(await api.capability(undefined, "shell-token")).toEqual({
+    available: false,
+  });
+  expect(
+    await api.setViewport({
+      bootId: "boot-1",
+      consentToken: "shell-token",
+      visible: true,
+      bounds: BOUNDS,
+    }),
+  ).toMatchObject({ shown: false, reason: "consent" });
+  expect(
+    await api.setViewport({
+      bootId: "boot-1",
+      visible: true,
+      holder: "rail-1",
+      bounds: BOUNDS,
+    }),
+  ).toMatchObject({ shown: true });
+  valid = false;
+  await vi.waitFor(() => expect(surface.isShown()).toBe(false), {
+    timeout: 2000,
+  });
+  expect(await api.capability()).toEqual({ available: false });
+});
+
+it("rejects a same-window subframe and a main frame navigated away from the app", async () => {
+  const handlers = install();
+  await expect(handlers.capability()).resolves.toEqual({ available: true });
+  await expect(
+    handlers.capabilityFromFrame({ url: "http://localhost:6274" }),
+  ).resolves.toEqual({ available: false });
+  window_.webContents.mainFrame.url = "https://untrusted.test/";
+  await expect(handlers.capability()).resolves.toEqual({ available: false });
 });

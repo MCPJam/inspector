@@ -4,9 +4,8 @@
  *
  * This is the cooperation layer, not the drive mechanism — `navigate`/`act`/
  * `observe` are how browserd gets work done; `webmcp_*` is the bonus when a
- * page chooses to expose structured tools. The state machine is ported from
- * the local inspector's `webmcp-inspector/playwright-provider.ts` (the only
- * other module that speaks this domain) and keeps its hard-won behaviors:
+ * page chooses to expose structured tools. Node, cloud and Electron use this
+ * shared state machine, which preserves these browser-specific behaviors:
  *
  *   - identity is `${frameId} ${name}`, the browser's own notion;
  *   - navigation fires NO `toolsRemoved` and the main frame KEEPS its id, so
@@ -34,16 +33,8 @@
  * hands over a `CdpLike` through {@link WebMcpBridge.addSession}.
  *
  * Written against an injected `CdpLike`, so all of it is unit-testable with a
- * fake CDP session — no Chromium required. That zero-import design is also what
- * lets it be the SINGLE copy of this machine: the local inspector's
- * `webmcp-inspector/playwright-provider.ts` instantiates it too, because
- * Playwright's `CDPSession` satisfies `CdpLike` structurally.
- *
- * That import direction — inspector reaching into `browserd/daemon/` — is
- * deliberate but temporary. This file has no imports at all, so the eventual
- * move into a shared `webmcp-runtime/` package consumed by both is a file move
- * and nothing else. Anyone doing that extraction should move this rather than
- * inverting the dependency in place.
+ * fake CDP session — no Chromium required. Chromium and Electron adapters
+ * supply the same contract; WebMCP inspection reuses the daemon's tab owner.
  */
 
 /** The CDP surface this bridge uses; `chromium-launch.ts` supplies the real one. */
@@ -239,6 +230,13 @@ const MAX_EARLY_RESPONSES = 16;
  */
 const MAX_SETTLED_IDS = 32;
 
+export interface LocalDiscoveryBudget {
+  rate?: { tokens: number; at: number };
+  entries: Map<
+    object,
+    { registrations: number; bytes: number; frames: number }
+  >;
+}
 export interface WebMcpBridgeOptions {
   /**
    * How long a page has to answer before we cancel it.
@@ -246,6 +244,9 @@ export interface WebMcpBridgeOptions {
    * Only used for an invocation with NO `signal`. A caller that supplies one
    * owns the deadline — see {@link WebMcpBridge.invoke}.
    */
+  localSecurity?: boolean;
+  localBudget?: LocalDiscoveryBudget;
+  onDiscoveryLimit?: () => void;
   invocationTimeoutMs?: number;
   /** Grace for the browser's own `Canceled` after we ask it to stop. */
   cancelSettleGraceMs?: number;
@@ -286,6 +287,15 @@ function originOf(url: string): string {
  * per driven tab, created lazily on the first `webmcp_*` action.
  */
 export class WebMcpBridge {
+  private readonly externalSubscribers = new Set<(toolName: string) => void>();
+  subscribeExternalInvocation(
+    listener: (toolName: string) => void,
+  ): () => void {
+    this.externalSubscribers.add(listener);
+    return () => {
+      this.externalSubscribers.delete(listener);
+    };
+  }
   /**
    * Tools keyed `${frameId} ${name}` — the browser's own notion of identity —
    * each carrying the registration sequence minted when it arrived.
@@ -304,6 +314,7 @@ export class WebMcpBridge {
        * tools and leave a working frame looking empty.
        */
       sessionKey: string;
+      bytes?: number;
     }
   >();
   /**
@@ -369,16 +380,141 @@ export class WebMcpBridge {
     (tools: WebMcpToolDescriptor[]) => void
   >();
   private disposed = false;
+  private localSecurity = false;
+  private localBudget?: LocalDiscoveryBudget;
+  private updateBudget(): void {
+    if (!this.localBudget) return;
+    if (this.disposed) {
+      this.localBudget.entries.delete(this);
+      return;
+    }
+    let bytes = 0;
+    for (const entry of this.tools.values()) bytes += entry.bytes ?? 0;
+    this.localBudget.entries.set(this, {
+      registrations: this.tools.size,
+      bytes,
+      frames: Math.max(
+        this.frames.size,
+        this.sessions.size,
+        this.frameSessions.size,
+      ),
+    });
+  }
+  private otherBudget(): {
+    registrations: number;
+    bytes: number;
+    frames: number;
+  } {
+    const total = { registrations: 0, bytes: 0, frames: 0 };
+    for (const [owner, entry] of this.localBudget?.entries ?? [])
+      if (owner !== this) {
+        total.registrations += entry.registrations;
+        total.bytes += entry.bytes;
+        total.frames += entry.frames;
+      }
+    return total;
+  }
+  private discoveryBlocked = false;
+  private onDiscoveryLimit?: () => void;
+  private changeTokens = 2048;
+  private changeAt = Date.now();
+  discoveryLimitReached(): boolean {
+    return this.discoveryBlocked;
+  }
+  private blockDiscovery(): false {
+    if (!this.discoveryBlocked) {
+      this.discoveryBlocked = true;
+      this.tools.clear();
+      for (const [id, waiter] of this.pending) {
+        void waiter.cdp
+          .send("WebMCP.cancelInvocation", { invocationId: id })
+          .catch(() => {});
+        this.settle(id);
+        waiter.reject(
+          new WebMcpBridgeError(
+            "webmcp_tool_gone",
+            "Page tool discovery exceeded its security budget. Reload the page after reducing its registrations.",
+          ),
+        );
+      }
+      this.onDiscoveryLimit?.();
+      this.announce();
+    }
+    return false;
+  }
+  private allowChanges(count: number): boolean {
+    if (!this.localSecurity) return true;
+    if (this.discoveryBlocked) return false;
+    const now = Date.now();
+    const rate = this.localBudget
+      ? (this.localBudget.rate ??= { tokens: 2048, at: now })
+      : { tokens: this.changeTokens, at: this.changeAt };
+    rate.tokens = Math.min(
+      2048,
+      rate.tokens + Math.max(0, now - rate.at) * 1.024,
+    );
+    rate.at = now;
+    if (count > rate.tokens) return this.blockDiscovery();
+    rate.tokens -= count;
+    this.changeTokens = rate.tokens;
+    this.changeAt = now;
+    return true;
+  }
+  private allowTool(tool: WebMcpCdpTool): boolean {
+    if (!this.localSecurity) return true;
+    // Bound traversal before stringify/retention. CDP supplies JSON, but never
+    // trust the page's size or nesting to be inexpensive to process.
+    let bytes = 0,
+      nodes = 0;
+    const stack: Array<[unknown, number]> = [[tool, 0]];
+    while (stack.length) {
+      const [value, depth] = stack.pop()!;
+      if (++nodes > 65536 || depth > 32) return this.blockDiscovery();
+      if (typeof value === "string") {
+        if (value.length > 65536) return this.blockDiscovery();
+        bytes += new TextEncoder().encode(value).byteLength;
+      } else if (value && typeof value === "object") {
+        for (const key of Object.keys(value)) {
+          bytes += key.length * 3;
+          if (stack.length >= 65536) return this.blockDiscovery();
+          stack.push([(value as Record<string, unknown>)[key], depth + 1]);
+        }
+      } else bytes += 8;
+      if (bytes > 65536) return this.blockDiscovery();
+    }
+    const others = this.otherBudget();
+    if (
+      this.tools.size + others.registrations >= 1024 &&
+      !this.tools.has(this.key(tool.frameId, tool.name))
+    )
+      return this.blockDiscovery();
+    let retained = bytes;
+    for (const entry of this.tools.values()) retained += entry.bytes ?? 0;
+    if (retained + others.bytes > 8 * 1024 * 1024) return this.blockDiscovery();
+    if (
+      !this.frameSessions.has(tool.frameId) &&
+      this.frameSessions.size + others.frames >= 64
+    )
+      return this.blockDiscovery();
+    this.nextToolBytes = bytes;
+    return true;
+  }
+  private nextToolBytes = 0;
 
   private readonly onChange:
-    ((tools: WebMcpToolDescriptor[]) => void) | undefined;
+    | ((tools: WebMcpToolDescriptor[]) => void)
+    | undefined;
   private readonly onExternalInvocation:
-    ((toolName: string) => void) | undefined;
+    | ((toolName: string) => void)
+    | undefined;
 
   constructor(
     private readonly cdp: CdpLike,
     options: WebMcpBridgeOptions = {},
   ) {
+    this.localSecurity = options.localSecurity ?? false;
+    this.localBudget = options.localBudget;
+    this.onDiscoveryLimit = options.onDiscoveryLimit;
     this.sessions.set(MAIN_SESSION_KEY, {
       key: MAIN_SESSION_KEY,
       frameId: "",
@@ -402,6 +538,7 @@ export class WebMcpBridge {
    * responsible for the bridge's own bookkeeping.
    */
   private announce(): void {
+    this.updateBudget();
     // Nothing is published after dispose. `subscribers` is cleared there, but
     // `onChange` is the CONSTRUCTOR's callback and is not — so without this a
     // late event would still reach the provider, on a session it has closed.
@@ -568,8 +705,10 @@ export class WebMcpBridge {
       // registers together belong to one registration, and a per-tool counter
       // would make the identity of a tool depend on how many siblings the page
       // happened to declare beside it.
+      if (!Array.isArray(tools) || !this.allowChanges(tools.length)) return;
       const registrationSeq = this.nextRegistrationSeq++;
       for (const tool of tools ?? []) {
+        if (!this.allowTool(tool)) return;
         // A session speaks for a frame only while it OWNS that frame. A
         // retiring session can still emit for a frame its replacement has
         // taken over, and honouring that would both re-route invocations to a
@@ -583,8 +722,10 @@ export class WebMcpBridge {
           tool,
           registrationSeq,
           sessionKey: session.key,
+          bytes: this.nextToolBytes,
         });
         this.frameSessions.set(tool.frameId, session.key);
+        this.updateBudget();
       }
       this.announce();
     });
@@ -594,6 +735,7 @@ export class WebMcpBridge {
       const { tools } = (payload ?? {}) as {
         tools?: Array<{ name: string; frameId: string }>;
       };
+      if (!Array.isArray(tools) || !this.allowChanges(tools.length)) return;
       for (const tool of tools ?? []) {
         // SCOPED. A stale session can still be delivering events after a
         // replacement has taken over the same frame; its removals describe the
@@ -621,6 +763,8 @@ export class WebMcpBridge {
       // gap in an advisory one.
       if (this.outstandingSends > 0) return;
       this.onExternalInvocation?.(invoked.toolName ?? "");
+      for (const listener of this.externalSubscribers)
+        listener(invoked.toolName ?? "");
     });
 
     // NOT guarded by `live`. A response settles a PENDING INVOCATION, and a
@@ -663,6 +807,22 @@ export class WebMcpBridge {
         frame?: { id: string; url: string; parentId?: string };
       };
       if (!frame) return;
+      if (this.localSecurity && session.isMain && !frame.parentId) {
+        this.discoveryBlocked = false;
+        this.changeTokens = 2048;
+        this.changeAt = Date.now();
+        this.tools.clear();
+        this.frames.clear();
+        this.frameSessions.clear();
+      }
+      if (
+        this.localSecurity &&
+        !this.frames.has(frame.id) &&
+        this.frames.size + this.otherBudget().frames >= 64
+      ) {
+        this.blockDiscovery();
+        return;
+      }
       this.frames.set(frame.id, frame.url);
       // Navigation fires NO toolsRemoved and the main frame KEEPS its id, so
       // nothing the browser says separates "tools of the page we left" from
@@ -741,6 +901,14 @@ export class WebMcpBridge {
   async addSession(frameId: string, cdp: CdpLike): Promise<string> {
     const key = `${frameId}#${this.nextSessionSeq++}`;
     if (this.disposed) return key;
+    if (
+      this.localSecurity &&
+      (this.discoveryBlocked ||
+        this.sessions.size + this.otherBudget().frames >= 64)
+    ) {
+      this.blockDiscovery();
+      return key;
+    }
     for (const existing of [...this.sessions.values()]) {
       if (!existing.isMain && existing.frameId === frameId) {
         this.removeSession(existing.key);
@@ -748,6 +916,7 @@ export class WebMcpBridge {
     }
     const session: BridgeSession = { key, frameId, cdp, isMain: false };
     this.sessions.set(key, session);
+    this.updateBudget();
     this.frameSessions.set(frameId, key);
     this.wireSession(session);
     await cdp.send("Page.enable").catch(() => {});
@@ -793,14 +962,22 @@ export class WebMcpBridge {
     const tree = (await cdp.send("Page.getFrameTree")) as {
       frameTree?: FrameTreeNode;
     };
+    let visited = 0;
     const walk = (node: FrameTreeNode | undefined): void => {
+      if (this.localSecurity && (++visited > 64 || this.discoveryBlocked)) {
+        this.blockDiscovery();
+        return;
+      }
       if (!node?.frame) return;
       // Never overwrite: a `Page.frameNavigated` that already arrived on this
       // session describes a LATER document than the tree we are catching up on.
       if (!this.frames.has(node.frame.id)) {
         this.frames.set(node.frame.id, node.frame.url ?? "");
       }
-      for (const child of node.childFrames ?? []) walk(child);
+      for (const child of node.childFrames ?? []) {
+        if (this.localSecurity && this.discoveryBlocked) break;
+        walk(child);
+      }
     };
     walk(tree?.frameTree);
   }
@@ -913,8 +1090,8 @@ export class WebMcpBridge {
         tool.backendNodeId !== undefined
           ? ("declarative" as const)
           : tool.stackTrace
-            ? ("imperative" as const)
-            : ("unknown" as const),
+          ? ("imperative" as const)
+          : ("unknown" as const),
     }));
   }
 
@@ -1103,6 +1280,15 @@ export class WebMcpBridge {
         );
       }
       invocationId = result.invocationId;
+      if (this.localSecurity && (this.discoveryBlocked || this.disposed)) {
+        void owner
+          .send("WebMCP.cancelInvocation", { invocationId })
+          .catch(() => {});
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          "Page tool discovery is no longer available; earlier effects may already have occurred.",
+        );
+      }
       // BEFORE the await below, so a cancel arriving while the page's handler
       // is still running has an id to name. A throwing subscriber must not
       // fail the invocation it is only observing.
@@ -1229,9 +1415,11 @@ export class WebMcpBridge {
 
   /** Reject every waiter; called when the tab or daemon goes away. */
   dispose(): void {
+    this.localBudget?.entries.delete(this);
     if (this.disposed) return;
     this.disposed = true;
     this.subscribers.clear();
+    this.externalSubscribers.clear();
     this.probe = undefined;
     // Child sessions are the provider's to close; what the bridge drops is its
     // own bookkeeping. It cannot UNSUBSCRIBE them — `CdpLike` has no `off` —

@@ -1,23 +1,3 @@
-/**
- * WHICH BOX a conversation-scoped hosted turn resolves.
- *
- * Per-conversation browsers used to sit behind a PostHog flag, so the default
- * everywhere was the member's one project computer. Deleting that flag makes
- * the conversation path the default for every hosted Playground turn — and the
- * backend re-derives "may this conversation have a desktop?" from the frozen
- * host config, refusing with `browser_not_advertised` when there is no host row
- * to read.
- *
- * A Playground turn may legitimately carry no `hostId` (an ad-hoc config sends
- * `builtInToolIds` on the body), and those turns have always browsed on the
- * project computer. Without the guard under test, removing the flag would turn
- * a browser that works today into a fail-closed error the first time somebody
- * called it. These tests are that guard: the session scope decides identity,
- * but a MISSING host falls back rather than refusing.
- *
- * `defaultEnsureSession` is the seam, so this file deliberately does NOT inject
- * `ensureSession` — the point is which of the two real doors it opens.
- */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const hoisted = vi.hoisted(() => ({
@@ -33,10 +13,9 @@ vi.mock("../../../services/browserd/live-session-deps.js", () => ({
 }));
 
 vi.mock("../../computers/control-plane-client.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("../../computers/control-plane-client.js")
-    >();
+  const actual = await importOriginal<
+    typeof import("../../computers/control-plane-client.js")
+  >();
   return {
     ...actual,
     provisionPlaygroundSandbox: hoisted.provision,
@@ -58,7 +37,7 @@ vi.mock("../../../services/browserd/session-service.js", () => ({
   },
 }));
 
-import { buildBrowserTools } from "../browser";
+import { buildBrowserTools, ensureHostedConversationSession } from "../browser";
 
 /** A live daemon handle, shaped as the computer arm returns one. */
 function computerHandle() {
@@ -100,6 +79,10 @@ function buildHosted(sessionScope?: {
 beforeEach(() => {
   vi.clearAllMocks();
   hoisted.ensureLive.mockResolvedValue(computerHandle());
+  hoisted.provision.mockResolvedValue({
+    ok: true,
+    value: { sandboxRowId: "row-1", providerSandboxId: "sbx-1" },
+  });
   hoisted.resolveSession.mockResolvedValue({
     sessionId: "bs_1",
     owner: { kind: "conversation", id: "chat-a" },
@@ -115,18 +98,41 @@ beforeEach(() => {
 });
 
 describe("a conversation-scoped hosted turn with no host", () => {
-  it("uses the project computer instead of refusing", async () => {
-    // The ad-hoc-config case. Before per-conversation browsers this turn
-    // browsed on the project computer; it still must.
+  it("resolves the logical record before binding a hostless chat's own sandbox", async () => {
     const built = buildHosted({ kind: "conversation", sessionId: "chat-a" });
-    await built!.tools.browser_observe.execute({}, {
+    await built!.tools.browser_observe.execute!({}, {
       toolCallId: "call-1",
     } as never);
-
-    expect(hoisted.provision).not.toHaveBeenCalled();
-    expect(hoisted.ensureLive).toHaveBeenCalledTimes(1);
-    // No sandbox target — this is the member's durable computer.
-    expect(hoisted.ensureLive.mock.calls[0]?.[0]?.target).toBeUndefined();
+    expect(hoisted.resolveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: { kind: "conversation", id: "chat-a" },
+      }),
+    );
+    expect(hoisted.ensureLive).toHaveBeenCalledWith(
+      expect.objectContaining({
+        logicalSessionId: "bs_1",
+        target: {
+          kind: "sandbox",
+          sandboxRowId: "row-1",
+          sandboxId: "sbx-1",
+          watched: true,
+        },
+      }),
+    );
+  });
+  it("does not fall back when direct-chat admission refuses", async () => {
+    hoisted.provision.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "browser_not_advertised",
+    });
+    const built = buildHosted({ kind: "conversation", sessionId: "chat-a" });
+    await expect(
+      built!.tools.browser_observe.execute!({}, {
+        toolCallId: "call-1",
+      } as never),
+    ).rejects.toThrow("browser_not_advertised");
+    expect(hoisted.ensureLive).not.toHaveBeenCalled();
   });
 });
 
@@ -149,7 +155,7 @@ describe("a conversation-scoped hosted turn WITH a host", () => {
       sessionId: "chat-a",
       hostId: "host-1",
     });
-    await built!.tools.browser_observe.execute({}, {
+    await built!.tools.browser_observe.execute!({}, {
       toolCallId: "call-1",
     } as never);
 
@@ -168,12 +174,21 @@ describe("a conversation-scoped hosted turn WITH a host", () => {
 describe("an unscoped hosted turn", () => {
   it("is unchanged: the project computer, no durable identity", async () => {
     const built = buildHosted();
-    await built!.tools.browser_observe.execute({}, {
+    await built!.tools.browser_observe.execute!({}, {
       toolCallId: "call-1",
     } as never);
 
     expect(hoisted.resolveSession).not.toHaveBeenCalled();
     expect(hoisted.provision).not.toHaveBeenCalled();
     expect(hoisted.ensureLive).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("unattended recording targets", () => {
+  it.each(["eval_iteration", "swarm_attempt"] as const)("preserves recording opt-in for %s", async ownerKind => {
+    await ensureHostedConversationSession({ bearer: "Bearer user", projectId: "project-1", logicalSessionId: "run", ownerKind, contextMode: "ephemeral", target: { kind: "sandbox", sandboxRowId: "row", sandboxId: "box", record: true } });
+    expect(hoisted.ensureLive).toHaveBeenCalledWith(expect.objectContaining({ target: expect.objectContaining({ record: true }) }));
+    expect(hoisted.provision).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,8 @@
+import { installElectronLocalSecurity } from "./local-security.js";
+import {
+  secureDriverContext,
+  type LocalBrowserSecurityPolicy,
+} from "../local/security-policy.js";
 /**
  * A `DriverContext` over Electron `WebContentsView`s on a hidden holder window.
  *
@@ -61,6 +66,7 @@ import type {
 export const ELECTRON_TAB_CAP = 8;
 
 export interface LaunchElectronContextOptions {
+  securityPolicy?: LocalBrowserSecurityPolicy;
   /**
    * `persistent` keeps a profile across boots, which is what a playground
    * login depends on; `ephemeral` gets an in-memory partition that dies with
@@ -69,6 +75,8 @@ export interface LaunchElectronContextOptions {
   contextMode?: "persistent" | "ephemeral";
   /** Names the persistent partition. Ignored when ephemeral. */
   partitionKey?: string;
+  /** Main-process-owned profile; never supplied by page content. */
+  partition?: string;
   /** Test seam: the Electron surface, so the suite needs no real Electron. */
   electron?: ElectronLike;
   /**
@@ -102,9 +110,13 @@ export interface ElectronLike {
     id?: number;
   };
   WebContentsView?: new (options: Record<string, unknown>) => SurfaceView & {
+    getBounds(): { x: number; y: number; width: number; height: number };
     webContents: PageWebContents & {
       setWindowOpenHandler?(
-        handler: (details: { url: string }) => { action: "deny" | "allow" },
+        handler: (details: { url: string; disposition?: string }) => {
+          action: "deny" | "allow";
+          createWindow?: (options: Record<string, unknown>) => PageWebContents;
+        },
       ): void;
     };
   };
@@ -125,12 +137,16 @@ export interface ElectronWindowLike {
   id?: number;
   webContents: PageWebContents & {
     setWindowOpenHandler?(
-      handler: (details: { url: string }) => { action: "deny" | "allow" },
+      handler: (details: { url: string; disposition?: string }) => {
+        action: "deny" | "allow";
+        createWindow?: (options: Record<string, unknown>) => PageWebContents;
+      },
     ): void;
   };
   isDestroyed(): boolean;
   destroy(): void;
   focus?(): void;
+  setContentSize?(width: number, height: number): void;
 }
 
 /**
@@ -144,6 +160,22 @@ export interface ElectronWindowLike {
 export async function launchElectronContext(
   options: LaunchElectronContextOptions = {},
 ): Promise<DriverContext> {
+  const policy = options.securityPolicy;
+  if (
+    policy &&
+    (process.getuid?.() === 0 ||
+      process.env.ELECTRON_DISABLE_SANDBOX === "1" ||
+      process.argv.some((arg) =>
+        /^--(?:no-sandbox|disable-setuid-sandbox|disable-web-security)(?:=|$)/.test(
+          arg,
+        ),
+      ))
+  ) {
+    throw new Error(
+      "Local browser requires the Chromium sandbox and a non-root account.",
+    );
+  }
+  await policy?.assertActive();
   const electron = options.electron ?? (await loadElectron());
   const contextMode = options.contextMode ?? "persistent";
 
@@ -152,9 +184,12 @@ export async function launchElectronContext(
   // Electron keep it in memory and drop it with the session — the isolation an
   // unattended run depends on, and the reason two runs must not share a key.
   const partition =
-    contextMode === "persistent"
+    options.partition ??
+    (contextMode === "persistent"
       ? `persist:mcpjam-browser-${options.partitionKey ?? "default"}`
-      : `mcpjam-browser-ephemeral-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      : `mcpjam-browser-ephemeral-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2)}`);
 
   // Deny-all, matching the WebMCP surface's handler in `src/main.ts`. The agent
   // browses whatever a page links to; "the developer's own site" stops being
@@ -170,8 +205,21 @@ export async function launchElectronContext(
   }) as never);
   partitionSession.setPermissionCheckHandler?.((() => false) as never);
 
+  const removePolicy = policy
+    ? await installElectronLocalSecurity(
+        partitionSession as unknown as import("electron").Session,
+        policy,
+      )
+    : undefined;
   const windows = new Set<ElectronWindowLike>();
   let closed = false;
+  const listeners = new Set<
+    (event: {
+      page: DriverPage;
+      opener: DriverPage;
+      background?: boolean;
+    }) => void
+  >();
 
   /**
    * Can this Electron give the pane a real view?
@@ -241,9 +289,15 @@ export async function launchElectronContext(
     );
   });
 
-  function newView(): ElectronWindowLike {
+  function newView(
+    popupPreferences: Record<string, unknown> = {},
+    popupContents?: unknown,
+  ): ElectronWindowLike {
     const WebContentsView = electron.WebContentsView!;
-    const view = new WebContentsView({ webPreferences });
+    const view = new WebContentsView({
+      ...(popupContents ? { webContents: popupContents } : {}),
+      webPreferences: { ...popupPreferences, ...webPreferences },
+    });
     const parent = ensureHolder();
     parent.contentView.addChildView(view);
     view.setBounds({
@@ -260,6 +314,8 @@ export async function launchElectronContext(
     const shim: ElectronWindowLike = {
       ...(view.webContents.id !== undefined ? { id: view.webContents.id } : {}),
       webContents: view.webContents,
+      setContentSize: (width, height) =>
+        view.setBounds({ ...view.getBounds(), width, height }),
       isDestroyed: () => view.webContents.isDestroyed?.() ?? false,
       destroy: () => {
         options.surface?.forget(view);
@@ -276,11 +332,16 @@ export async function launchElectronContext(
       },
       focus: () => options.surface?.setActive(view),
     };
+    windows.add(shim);
     return shim;
   }
 
-  function newWindow(): ElectronWindowLike {
+  function newWindow(
+    popupPreferences: Record<string, unknown> = {},
+    popupContents?: unknown,
+  ): ElectronWindowLike {
     const window = new electron.BrowserWindow({
+      ...(popupContents ? { webContents: popupContents } : {}),
       show: false,
       width: BROWSERD_OBSERVATION_VIEWPORT.width,
       height: BROWSERD_OBSERVATION_VIEWPORT.height,
@@ -290,6 +351,7 @@ export async function launchElectronContext(
       // screenshot lands somewhere other than where it aimed.
       useContentSize: true,
       webPreferences: {
+        ...popupPreferences,
         // The agent browses the open web. Every one of these is what keeps a
         // page it lands on from reaching the user's machine through the
         // renderer: no Node, no preload, an isolated world, and its own
@@ -319,28 +381,81 @@ export async function launchElectronContext(
     if (!native) forgetAgentWindow(window.id);
   }
 
-  async function adopt(window: ElectronWindowLike): Promise<DriverPage> {
+  function adopt(window: ElectronWindowLike): DriverPage {
+    if (policy) {
+      const prevent = (...args: unknown[]) => {
+        const event = args[0] as { preventDefault(): void; url?: string };
+        const target = typeof args[1] === "string" ? args[1] : event.url;
+        if (target === "about:blank") return;
+        try {
+          policy.assertNavigation(target ?? "");
+        } catch {
+          event.preventDefault();
+        }
+      };
+      window.webContents.on("will-navigate", prevent);
+      window.webContents.on("will-frame-navigate", prevent);
+      window.webContents.on("will-redirect", prevent);
+    }
+    window.webContents.on("destroyed", () => forget(window));
     const page = createElectronPage(window.webContents, {
+      localSecurity: Boolean(options.securityPolicy),
+      localBudget: policy?.discoveryBudget,
       onClose() {
         forget(window);
         if (!window.isDestroyed()) window.destroy();
       },
       onBringToFront: () => window.focus?.(),
+      ...(window.setContentSize
+        ? {
+            onResize: (size: { width: number; height: number }) =>
+              window.setContentSize!(size.width, size.height),
+          }
+        : {}),
     });
 
-    // Denied, and that is the honest v1 answer rather than a limitation being
-    // hidden: `DriverContext` has no `onPageCreated` seam yet (I-2c adds it
-    // alongside tab observation), so a popup adopted here would be a page the
-    // driver could not address, could not show, and would never close.
-    // Allowing it is worse than denying: Electron's default is a real, VISIBLE
-    // window on the user's screen running a page the agent is driving. When
-    // the seam lands, this becomes a sibling hidden window reported through it.
-    window.webContents.setWindowOpenHandler?.(() => ({ action: "deny" }));
+    window.webContents.setWindowOpenHandler?.((details) => {
+      if (
+        closed ||
+        (policy && !policy.allowsRequest(details.url)) ||
+        windows.size >= ELECTRON_TAB_CAP ||
+        listeners.size === 0
+      )
+        return { action: "deny" };
+      return {
+        action: "allow",
+        createWindow: (popupOptions) => {
+          // Preserve Electron's opener preferences while enforcing our own
+          // isolation and partition. These are main-process supplied options.
+          const preferences = (popupOptions.webPreferences ?? {}) as Record<
+            string,
+            unknown
+          >;
+          const child = native
+            ? newView(preferences, popupOptions.webContents)
+            : newWindow(preferences, popupOptions.webContents);
+          const popup = adopt(child);
+          for (const listener of listeners)
+            listener({
+              page: popup,
+              opener: page,
+              background: details.disposition === "background-tab",
+            });
+          return child.webContents;
+        },
+      };
+    });
 
     return page;
   }
 
-  return {
+  const context: DriverContext = {
+    onPageCreated(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     async newPage() {
       if (closed) throw new Error("this browser is shutting down");
       if (windows.size >= ELECTRON_TAB_CAP) {
@@ -350,11 +465,24 @@ export async function launchElectronContext(
           `not found: this browser is at its limit of ${ELECTRON_TAB_CAP} tabs — close one first`,
         );
       }
-      return adopt(native ? newView() : newWindow());
+      const window = native ? newView() : newWindow();
+      // A new WebContents has no renderer yet. Initialize it before the driver
+      // enables CDP domains; DOM.enable can otherwise wait forever. Popups use
+      // adopt() directly because Electron starts their original navigation.
+      const page = adopt(window);
+      try {
+        await window.webContents.loadURL("about:blank");
+      } catch (error) {
+        forget(window);
+        if (!window.isDestroyed()) window.destroy();
+        throw error;
+      }
+      return page;
     },
     isConnected: () => !closed,
     async close() {
       closed = true;
+      removePolicy?.();
       for (const window of [...windows]) {
         forget(window);
         try {
@@ -379,6 +507,7 @@ export async function launchElectronContext(
       }
     },
   };
+  return policy ? secureDriverContext(context, policy) : context;
 }
 
 /**

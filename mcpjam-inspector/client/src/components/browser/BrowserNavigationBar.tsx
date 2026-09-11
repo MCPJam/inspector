@@ -1,7 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Play, RotateCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, RotateCw } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
-import { Button } from "@mcpjam/design-system/button";
 import {
   addressFieldValue,
   type AddressFieldEvent,
@@ -9,23 +8,11 @@ import {
 } from "@/lib/browser-shell/address-field";
 import type { BrowserControlState } from "../../../../shared/browser-session-state";
 
-/**
- * The second row: back, forward, reload, the address, and who is driving.
- *
- * TWO ROWS RATHER THAN THREE, and this one carries the ownership status and
- * "Resume agent" alongside the controls rather than in a bar of their own. The
- * page area is the point of the panel — a person opens it to watch a browser,
- * not to read chrome — and a third row costs 36 vertical pixels on every
- * screen forever to say something that is usually "the agent is driving".
- *
- * The status is a WORD, not a badge with a border and a background. It changes
- * rarely and it is not a control; giving it the visual weight of a button
- * makes it compete with the buttons beside it, and the thing that actually
- * needs to be noticed — that a person has taken over — is better said by the
- * Resume button appearing than by a chip changing colour.
- */
+/** Browser navigation and ownership status. Sending a chat message hands control back. */
 
 export interface BrowserNavigationBarProps {
+  clientName?: string;
+  authority?: { kind: "shared" } | { kind: "lease" };
   address: AddressFieldState;
   onAddress: (event: AddressFieldEvent) => void;
   canGoBack: boolean;
@@ -34,24 +21,17 @@ export interface BrowserNavigationBarProps {
   onForward: () => void;
   onReload: () => void;
   control: BrowserControlState;
-  /** True when the lease is THIS pane's, so the shell may offer to hand back. */
+  /** True when this pane holds browser control. */
   holding: boolean;
-  /**
-   * Hand the browser back and let the agent continue.
-   *
-   * Absent when there is nothing to resume — nobody is holding it, or this
-   * pane is not the holder.
-   */
-  onResumeAgent?: (() => void) | undefined;
-  /** Is a resume in flight? The button says so rather than doing nothing. */
-  resuming?: boolean;
   /** Engine-specific trailing controls: the quality menu, the stats toggle. */
   trailing?: ReactNode;
   disabled?: boolean;
 }
 
 export function BrowserNavigationBar({
+  clientName,
   address,
+  authority = { kind: "lease" },
   onAddress,
   canGoBack,
   canGoForward,
@@ -60,8 +40,6 @@ export function BrowserNavigationBar({
   onReload,
   control,
   holding,
-  onResumeAgent,
-  resuming = false,
   trailing,
   disabled = false,
 }: BrowserNavigationBarProps) {
@@ -114,9 +92,11 @@ export function BrowserNavigationBar({
         autoCorrect="off"
         autoCapitalize="off"
         aria-label="Address"
-        placeholder="Enter a URL"
+        placeholder="Search Google or enter a URL"
         data-testid="browser-address"
-        onChange={(event) => onAddress({ type: "edit", value: event.target.value })}
+        onChange={(event) =>
+          onAddress({ type: "edit", value: event.target.value })
+        }
         onFocus={() => onAddress({ type: "focus" })}
         onBlur={() => onAddress({ type: "blur" })}
         onKeyDown={(event) => {
@@ -142,29 +122,25 @@ export function BrowserNavigationBar({
           "disabled:opacity-60",
         )}
       />
-      <span
-        data-testid="browser-control-status"
-        // ANNOUNCED. Losing the browser to somebody else changes what every
-        // control on this bar does, and a person using a screen reader has no
-        // picture to notice it in.
-        role="status"
-        aria-live="polite"
-        className="shrink-0 whitespace-nowrap px-1 text-[11px] text-muted-foreground"
-      >
-        {controlSentence(control, holding)}
-      </span>
-      {onResumeAgent ? (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onResumeAgent}
-          disabled={resuming}
-          data-testid="browser-resume-agent"
-          className="h-7 shrink-0 px-2 text-xs"
+      {authority.kind === "lease" ? (
+        <span
+          data-testid="browser-control-status"
+          title={
+            holding
+              ? "Browser control returns to the agent when you send your next chat message."
+              : undefined
+          }
+          // ANNOUNCED. Losing the browser to somebody else changes what every
+          // control on this bar does, and a person using a screen reader has no
+          // picture to notice it in.
+          role="status"
+          aria-live="polite"
+          className="shrink-0 whitespace-nowrap px-1 text-[11px] text-muted-foreground"
         >
-          <Play className="mr-1 size-3" aria-hidden />
-          {resuming ? "Resuming…" : "Resume agent"}
-        </Button>
+          {clientName && control.kind === "agent" && !holding
+            ? `${clientName} is driving`
+            : controlSentence(control, holding)}
+        </span>
       ) : null}
       {trailing}
     </div>
@@ -182,7 +158,8 @@ export function controlSentence(
   control: BrowserControlState,
   holding: boolean,
 ): string {
-  if (holding) return control.parked ? "You have it (paused)" : "You have it";
+  if (holding)
+    return control.parked ? "You’re in control (paused)" : "You’re in control";
   switch (control.kind) {
     case "human":
       return "Someone else is driving";

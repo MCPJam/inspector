@@ -70,6 +70,7 @@ import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useComparisonBrowser } from "@/hooks/use-comparison-browser";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 type ThreadThemeMode = "light" | "dark";
@@ -114,6 +115,7 @@ function InvokingIndicator({
 }
 
 interface MultiModelPlaygroundCardProps {
+  browserWorkspace?: { id: string; order: number; clientCount: number };
   /**
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
    * mode `compareId === String(model.id)`; in host mode it's the host id.
@@ -145,6 +147,10 @@ interface MultiModelPlaygroundCardProps {
    * comparison column runs bash on the same engine ("This machine") the tab
    * root does — omitted ⇒ cloud, like every other surface.
    */
+  personalBrowserEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
   personalComputerEngine?: {
     engine: "local" | "cloud";
     consentToken: string | null;
@@ -236,6 +242,7 @@ interface MultiModelPlaygroundCardProps {
 }
 
 export function MultiModelPlaygroundCard({
+  browserWorkspace,
   compareId,
   compareLabel,
   compareKind,
@@ -251,6 +258,7 @@ export function MultiModelPlaygroundCard({
   hostedContext,
   hostedOrgModelConfig,
   personalComputerEngine,
+  personalBrowserEngine,
   localHarnessExecution,
   displayMode,
   onDisplayModeChange,
@@ -371,6 +379,7 @@ export function MultiModelPlaygroundCard({
     hostedContext,
     hostedOrgModelConfig,
     ...(personalComputerEngine ? { personalComputerEngine } : {}),
+    ...(personalBrowserEngine ? { personalBrowserEngine } : {}),
     ...(localHarnessExecution ? { localHarnessExecution } : {}),
     executionConfig: {
       ...executionConfig,
@@ -392,6 +401,23 @@ export function MultiModelPlaygroundCard({
       setInjectedToolRenderOverrides({});
     },
   });
+
+  useComparisonBrowser(
+    browserWorkspace && hostedContext?.projectId
+      ? {
+          workspaceId: browserWorkspace.id,
+          projectId: hostedContext.projectId,
+          sessionId: chatSessionId,
+          clientId: compareId,
+          name: compareLabel,
+          logo: logoSrc,
+          order: browserWorkspace.order,
+          clientCount: browserWorkspace.clientCount,
+          engine: personalBrowserEngine?.engine ?? "cloud",
+        }
+      : null,
+    messages,
+  );
 
   const isThreadEmpty = !messages.some(
     (message) => message.role === "user" || message.role === "assistant",

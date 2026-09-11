@@ -66,9 +66,12 @@ export function decodeBrowserTab(raw: unknown): BrowserTabState | null {
     id: value.id,
     url: typeof value.url === "string" ? value.url.slice(0, MAX_URL_CHARS) : "",
     title:
-      typeof value.title === "string" ? value.title.slice(0, MAX_TITLE_CHARS) : "",
+      typeof value.title === "string"
+        ? value.title.slice(0, MAX_TITLE_CHARS)
+        : "",
     ...(favicon ? { faviconUrl: favicon } : {}),
     loading: value.loading === true,
+    ...(typeof value.openerId === "string" ? { openerId: value.openerId } : {}),
     ...(Number.isSafeInteger(value.navCounter)
       ? { navCounter: value.navCounter as number }
       : {}),
@@ -104,7 +107,21 @@ export function decodeStateSnapshot(raw: unknown): BrowserStateSnapshot | null {
     .filter((tab): tab is BrowserTabState => tab !== null);
   const activeTabId =
     typeof body.activeTabId === "string" ? body.activeTabId : null;
+  const webmcp = body.webmcp as BrowserStateSnapshot["webmcp"];
   return {
+    ...(webmcp &&
+    typeof webmcp.revision === "number" &&
+    typeof webmcp.hash === "string" &&
+    typeof webmcp.count === "number"
+      ? {
+          webmcp: {
+            revision: webmcp.revision,
+            hash: webmcp.hash,
+            count: webmcp.count,
+            ...(typeof webmcp.url === "string" ? { url: webmcp.url } : {}),
+          },
+        }
+      : {}),
     seq: typeof body.seq === "number" ? body.seq : 0,
     tabs,
     // An active id naming a tab that is not in the list reads as "no tab is on
@@ -113,7 +130,7 @@ export function decodeStateSnapshot(raw: unknown): BrowserStateSnapshot | null {
     activeTabId:
       activeTabId && tabs.some((tab) => tab.id === activeTabId)
         ? activeTabId
-        : tabs[0]?.id ?? null,
+        : (tabs[0]?.id ?? null),
     canGoBack: body.canGoBack === true,
     canGoForward: body.canGoForward === true,
     control: decodeBrowserControl(body.control),

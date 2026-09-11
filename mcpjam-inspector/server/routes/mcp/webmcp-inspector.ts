@@ -1,3 +1,13 @@
+import { withKeyedLock } from "../../services/browserd/probe-lock.js";
+import { HTTPException } from "hono/http-exception";
+import {
+  authorizeLocalInspection,
+  inspectionNonceScope,
+  inspectionPartition,
+  type LocalInspectionScope,
+} from "../../services/webmcp-inspector/local-authorization.js";
+import { issueLocalNonce } from "../../utils/computers/local-terminal-auth.js";
+import { parsePaneCommand } from "../../services/browserd/daemon/pane-command";
 import {
   MIN_SESSION_VIEWPORT,
   MAX_SESSION_VIEWPORT,
@@ -37,10 +47,7 @@ import {
   WebMcpQueueFullError,
 } from "../../services/webmcp-inspector/session-runtime";
 import { createBrowserdWebMcpProvider } from "../../services/webmcp-inspector/browserd-provider";
-import {
-  createElectronWebviewProvider,
-  WebMcpWebviewAttachError,
-} from "../../services/webmcp-inspector/electron-webview-provider";
+
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
 import {
   classifyHostedReserveError,
@@ -90,7 +97,7 @@ import {
  * code the UI can explain beats a 404 on a route the client can plainly see.
  * `WEBMCP_INSPECTOR_ENABLED` is the kill switch in both modes;
  * `webmcpInspectorHostedEnabled()` is the separate hosted-reachability gate;
- * the client-side gate is the `webmcp-inspector-enabled` flag.
+ * client visibility follows the deployment's local/hosted Browser rollout.
  *
  * The browser opens as a real window on the machine running the inspector: the
  * developer drives their own page directly, and this API is the instrument
@@ -180,6 +187,18 @@ const startSchema = z.object({
 });
 
 const commandSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("browser_state") }),
+  z.object({
+    type: z.literal("browser_command"),
+    command: z.unknown().transform((value, ctx) => {
+      const command = parsePaneCommand(value);
+      if (!command) {
+        ctx.addIssue({ code: "custom", message: "Invalid browser command" });
+        return z.NEVER;
+      }
+      return command;
+    }),
+  }),
   z.object({ type: z.literal("navigate"), url: httpUrlSchema }),
   z.object({ type: z.literal("reload") }),
   z.object({ type: z.literal("go_back") }),
@@ -233,6 +252,7 @@ const commandSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("input"),
+    tabId: z.string().min(1).max(200).optional(),
     events: z.array(inputEventSchema).min(1).max(WEBMCP_INPUT_BATCH_LIMIT),
   }),
 ]);
@@ -244,6 +264,7 @@ const commandSchema = z.discriminatedUnion("type", [
  * that drift apart invisibly, because each one's own tests keep passing.
  */
 function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
+  if (error instanceof HTTPException) return error.getResponse();
   if (error instanceof HostedIdentityError) {
     return error.response;
   }
@@ -306,12 +327,6 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
       { error: hostedRefusal.error, code: hostedRefusal.code },
       httpStatus(hostedRefusal),
     );
-  }
-  if (error instanceof WebMcpWebviewAttachError) {
-    // 400, not 500: the id the client sent no longer names a surface we can
-    // attach to (its pane unmounted, or devtools took the debugger slot). The
-    // request was malformed by the time it arrived, and the fix is the client's.
-    return c.json({ error: error.message, code: "webview-attach-failed" }, 400);
   }
   reportRouteFailure("[webmcp] unhandled route error", error, {
     source: "mcp.webmcp-inspector",
@@ -543,6 +558,19 @@ webmcpInspector.post("/sessions", async (c) => {
     );
   }
 
+  let localScope: LocalInspectionScope | undefined;
+  // NOT `transport === "local"`: the field is optional, and an omitted one
+  // means local (a real window on this machine). Keying consent off the
+  // explicit value let the wire default launch Chromium unauthorized, and
+  // `resolveRuntime` — which checks EVERY non-hosted session — then refused
+  // every command on the session that start had just handed back.
+  if (transport !== "hosted") {
+    try {
+      localScope = await authorizeLocalInspection(c, projectId);
+    } catch (error) {
+      return webMcpErrorResponse(c, error, "Browser permission required.");
+    }
+  }
   let provider;
   /** Set on the hosted path: the reserved daemon, and who it belongs to. */
   // COMPUTER-typed: this route opens the member's own browser for a person
@@ -550,35 +578,15 @@ webmcpInspector.post("/sessions", async (c) => {
   let handle: ComputerHostedBrowserSessionHandle | undefined;
   let ownerId: string | undefined;
   if (webContentsId !== undefined) {
-    // Both refusals are 400s that name what the caller got wrong, because both
-    // describe a request that could never be honoured rather than a server that
-    // failed to honour it.
-    if (process.env.ELECTRON_APP !== "true") {
-      return c.json(
-        {
-          error:
-            "The embedded browser surface only exists inside the MCPJam desktop app.",
-          code: "electron-only",
-        },
-        400,
-      );
-    }
-    if (display !== "in-app") {
-      // A surface the client mounted IS the in-app view. Honouring a window
-      // request with it would report a transport whose pane the client is not
-      // rendering, and the person would watch an empty box beside a browser
-      // that never opened.
-      return c.json(
-        {
-          error:
-            'An embedded browser surface is the in-app view; ask for `display: "in-app"` or omit the surface.',
-          code: "webview-display-mismatch",
-        },
-        400,
-      );
-    }
-    provider = createElectronWebviewProvider({ webContentsId });
-  } else if (transport === "hosted") {
+    return c.json(
+      {
+        error: "Restart the desktop app to use managed browser tabs.",
+        code: "obsolete_surface",
+      },
+      400,
+    );
+  }
+  if (transport === "hosted") {
     // Every refusal below is a 4xx with a code the UI can explain, never a
     // 500: each one is a thing the person can actually fix (turn the feature
     // on, pick a project, sign in).
@@ -679,6 +687,7 @@ webmcpInspector.post("/sessions", async (c) => {
 
   try {
     const session = await startWebMcpSession({
+      ...(localScope ? { localScope, ownerId: localScope.ownerKey } : {}),
       url,
       ...(provider ? { provider } : {}),
       // Omitted means `window`, so a caller that never heard of this field gets
@@ -714,7 +723,21 @@ async function resolveRuntime(
   sessionId: string,
 ): Promise<WebMcpSessionRuntime> {
   if (!HOSTED_MODE || !sessionId.startsWith("hosted:")) {
-    return webMcpSessions.get(sessionId);
+    const runtime = webMcpSessions.get(sessionId);
+    if (!sessionId.startsWith("hosted:")) {
+      const scope = await authorizeLocalInspection(c);
+      if (
+        !runtime.localAuthorization ||
+        !runtime.belongsTo(scope.ownerKey) ||
+        runtime.localAuthorization.scope.consentFingerprint !==
+          scope.consentFingerprint
+      )
+        throw new WebMcpSessionNotFoundError(
+          "That inspection session is not available.",
+        );
+      await runtime.assertAuthorized();
+    }
+    return runtime;
   }
   const identity = hostedIdentity(c);
   if (!identity.ok) throw new HostedIdentityError(identity.response);
@@ -828,6 +851,7 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
     // Already gone; `subscribe` below reports it to the client properly.
   }
 
+  let unsubscribeConsent: (() => void) | undefined;
   let unsubscribe: (() => void) | undefined;
   let keepalive: ReturnType<typeof setInterval> | undefined;
   /** Set by `start`, called by `pull`. See `pendingFrame`. */
@@ -839,6 +863,8 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
   // for the life of the process, enqueueing into a closed controller every 15
   // seconds with the throw swallowed.
   const teardown = () => {
+    unsubscribeConsent?.();
+    unsubscribeConsent = undefined;
     if (keepalive) clearInterval(keepalive);
     keepalive = undefined;
     unsubscribe?.();
@@ -868,6 +894,14 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
 
   const stream = new ReadableStream({
     start(controller) {
+      unsubscribeConsent = runtime?.localAuthorization?.lifetime.onRevoked(
+        () => {
+          teardown();
+          try {
+            controller.close();
+          } catch {}
+        },
+      );
       const write = (chunk: Uint8Array) => {
         try {
           controller.enqueue(chunk);
@@ -876,6 +910,7 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
         }
       };
       const send = (payload: unknown) => {
+        if (runtime && !runtime.isAuthorized()) return;
         const isFrame =
           typeof payload === "object" &&
           payload !== null &&
@@ -1055,6 +1090,11 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
     webMcpSessions.touch(runtime);
 
     switch (command.type) {
+      case "browser_state":
+        return c.json({ state: await runtime.browserState() });
+      case "browser_command":
+        await runtime.browserCommand(command.command);
+        return c.json({ ok: true });
       case "navigate":
       case "reload":
       case "go_back": {
@@ -1128,7 +1168,12 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           streaming: await runtime.setScreencast(command.enabled),
         });
       case "input":
-        await runtime.dispatchInput(command.events);
+        await runtime.dispatchInput(
+          command.events,
+          undefined,
+          "http",
+          command.tabId,
+        );
         return c.json({ ok: true });
     }
   } catch (error) {
@@ -1153,10 +1198,69 @@ webmcpInspector.delete("/sessions/:id", async (c) => {
         return c.json({ closed: false });
       }
     }
+    if (!sessionId.startsWith("hosted:") && webMcpSessions.peek(sessionId))
+      await resolveRuntime(c, sessionId);
     const closed = await webMcpSessions.close(sessionId);
     return c.json({ closed });
   } catch (error) {
     return webMcpErrorResponse(c, error, "Could not close that session.");
+  }
+});
+
+webmcpInspector.post("/sessions/:id/stream-nonce", async (c) => {
+  try {
+    const runtime = await resolveRuntime(c, c.req.param("id"));
+    const scope = runtime.localAuthorization?.scope;
+    if (!scope) return c.json({ error: "Not found" }, 404);
+    return c.json(
+      issueLocalNonce({
+        kind: "webmcp-frames",
+        projectId: inspectionNonceScope(c.req.param("id"), scope),
+        consentFingerprint: scope.consentFingerprint,
+      }),
+    );
+  } catch (error) {
+    return webMcpErrorResponse(
+      c,
+      error,
+      "Could not open the inspection stream.",
+    );
+  }
+});
+
+webmcpInspector.delete("/profile", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const scope = await authorizeLocalInspection(
+      c,
+      typeof body.projectId === "string" ? body.projectId : undefined,
+    );
+    if (!process.versions.electron) return c.json({ cleared: true });
+    return await withKeyedLock(
+      `webmcp-profile:${scope.profileKey}`,
+      async () => {
+        const { session } = await import("electron");
+        for (const runtime of webMcpSessions.localRuntimes()) {
+          if (runtime.localAuthorization?.scope.profileKey === scope.profileKey)
+            await webMcpSessions.close(runtime.sessionId);
+        }
+        const partition =
+          body.legacy === true
+            ? "persist:webmcp-inspector"
+            : inspectionPartition(scope);
+        const profile = session.fromPartition(partition);
+        await profile.closeAllConnections();
+        await profile.clearStorageData();
+        await profile.clearCache();
+        return c.json({ cleared: true });
+      },
+    );
+  } catch (error) {
+    return webMcpErrorResponse(
+      c,
+      error,
+      "Could not clear inspection site data.",
+    );
   }
 });
 

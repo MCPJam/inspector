@@ -1,3 +1,14 @@
+import { EvalAddDrawer } from "./assertion-drawer";
+import { isTurnScopablePredicateKind } from "@mcpjam/sdk/predicates";
+import { blankStepOfKind } from "@/components/evals/step-fields";
+import type { EvalIteration } from "@/components/evals/types";
+import {
+  joinTrialResults,
+  type TrialFacts,
+} from "../case-scorecard/trial-results";
+import { TrialScorecardRow } from "../case-scorecard/trial-scorecard-row";
+import { ScorecardRowView } from "../case-scorecard/scorecard-row";
+import { afterTheRunRows } from "./case-spine-model";
 /**
  * The case, as one list.
  *
@@ -8,17 +19,12 @@
  * appear in any of them, which is why "assert a tool call after a prompt" was
  * not expressible.
  *
- * Two states, one component. A case that is still just a prompt renders the
- * FIRST-RUN FORM: what should the user ask, what should a successful answer
- * accomplish, and Run. Everything else lives behind "More options", because
- * before a single trial exists the author has nothing to harden and no
- * evidence to harden it from. The moment the case carries a check, a route, a
- * click or a second action, the spine renders instead — the author has said
- * something the two fields cannot show.
+ * Prompt, outcome, and assertions share one editor throughout authoring.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import { Target } from "lucide-react";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
@@ -48,16 +54,8 @@ import {
   defaultWidgetAssertion,
   type AvailableTool,
 } from "@/components/evals/step-fields";
-import { SuiteScorerLibraryMenu } from "@/components/evals/suite-scorer-library-menu";
 import { authorablePredicateKinds } from "@/components/evals/suite-scorer-table-model";
-import {
-  buildCaseScorecard,
-  spineLibraryKinds,
-  appendCaseScorer,
-  removeCaseScorer,
-  updateCaseScorer,
-  withCaseJudgeSkipped,
-} from "../case-scorecard/case-scorecard-model";
+import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
 import { RouteRow } from "../case-scorecard/route-row";
 import {
   initialToolsChoice,
@@ -72,11 +70,9 @@ import {
   type ToolsChoice,
 } from "../simple-case/simple-case-model";
 import { ActionRow } from "./action-row";
-import { AfterTheRunSection } from "./after-the-run";
 import { SpineCheckRow } from "./spine-check-row";
 import {
   deleteActionPlan,
-  isQuietCase,
   moveActionBlock,
   removeActionWithChecks,
   spineStatus,
@@ -121,6 +117,8 @@ export type CaseSpineProps = {
   onStopRecording?: () => void;
   onAddCheck?: () => void;
   recordEntryPrimary?: boolean;
+  trialIteration?: EvalIteration;
+  trialChain?: TrialFacts["chain"];
   readOnly?: boolean;
   inspectHeader?: ReactNode;
   stepStatusById?: Map<string, EvalStepStatus>;
@@ -130,6 +128,7 @@ export type CaseSpineProps = {
   onSelectStep?: (stepId: string) => void;
   /** The Run control. A slot so the spine never owns launching a run. */
   runControl?: ReactNode;
+  defaultChecks?: ReactNode;
 };
 
 export function CaseSpine({
@@ -143,7 +142,6 @@ export function CaseSpine({
   expectedOutput,
   onExpectedOutputChange,
   predicates,
-  onPredicatesChange,
   suiteDefaultPredicates,
   snapshotPredicates,
   availableTools = [],
@@ -155,19 +153,15 @@ export function CaseSpine({
   stashedTools: controlledStashedTools,
   onStashedToolsChange,
   judgeConfigOverride,
-  onJudgeConfigOverrideChange,
   suiteJudgeConfig,
   suiteJudgeRubric,
   capabilities,
-  onOpenSuiteSettings,
   evalValidationBorderClass,
   autoFocusPrompt,
   validationAttempted = false,
-  recording = false,
-  onStartRecording,
-  onStopRecording,
-  onAddCheck,
-  recordEntryPrimary = false,
+  trialIteration,
+  trialChain,
+  onPredicatesChange,
   readOnly = false,
   inspectHeader,
   stepStatusById,
@@ -175,7 +169,7 @@ export function CaseSpine({
   syncedStepId,
   onHoverStep,
   onSelectStep,
-  runControl,
+  defaultChecks,
 }: CaseSpineProps) {
   const view = useMemo(() => readSimpleCase(steps), [steps]);
   const resolvedMatch = resolveMatchOptions(
@@ -213,8 +207,6 @@ export function CaseSpine({
   const [pendingDelete, setPendingDelete] = useState<
     (DeleteActionPlan & { stepId: string }) | null
   >(null);
-  /** Whether the first-run form has revealed everything else. */
-  const [moreOpen, setMoreOpen] = useState(false);
 
   const card = useMemo(
     () =>
@@ -249,7 +241,33 @@ export function CaseSpine({
     ],
   );
 
-  const rows = useMemo(() => actionRows(steps), [steps]);
+  const results = useMemo(
+    () =>
+      trialIteration
+        ? new Map(
+            joinTrialResults(card.groups, {
+              iteration: trialIteration,
+              chain: trialChain,
+              steps,
+              liveStepStatusById: stepStatusById,
+            })
+              .flatMap((group) => group.rows)
+              .map((row) => [row.key, row]),
+          )
+        : undefined,
+    [card.groups, trialIteration, trialChain, steps, stepStatusById],
+  );
+  const wholeCaseRows = afterTheRunRows(card);
+  const [emptyPromptId] = useState(() => newStepId("prompt"));
+  const rows = useMemo(
+    () =>
+      actionRows(
+        steps.length || readOnly
+          ? steps
+          : [{ id: emptyPromptId, kind: "prompt", prompt: "" }],
+      ),
+    [steps, emptyPromptId, readOnly],
+  );
   const turns = useMemo(() => stepTurnIndices(steps), [steps]);
   const rowByStepId = useMemo(
     () =>
@@ -262,6 +280,7 @@ export function CaseSpine({
     [card],
   );
 
+  const outcomeRef = useRef<HTMLTextAreaElement>(null);
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
   // What this DEPLOYMENT can evaluate, intersected by the menu with what
   // this SURFACE offers. A kind an older backend rejects is a failed save;
@@ -270,12 +289,6 @@ export function CaseSpine({
     capabilities?.scorers?.predicateKinds,
   );
   const showUnsetError = validationAttempted && card.unsetBlockReason !== null;
-  const promptReady = view.prompt.trim().length > 0;
-  const quiet = useMemo(
-    () => isQuietCase({ steps, predicates, toolsChoice }),
-    [steps, predicates, toolsChoice],
-  );
-
   // ── writers ────────────────────────────────────────────────────────────────
 
   const setKind = (next: CaseKind) => {
@@ -347,11 +360,15 @@ export function CaseSpine({
       assertion,
     };
     setAddedKey(`step:${step.id}`);
-    onStepsChange(insertStepAfter(steps, anchorStepId, step));
+    const source = steps.length
+      ? steps
+      : [{ id: emptyPromptId, kind: "prompt" as const, prompt: "" }];
+    onStepsChange(insertStepAfter(source, anchorStepId, step));
   };
 
   const requestRemoveAction = (stepId: string) => {
-    if (readOnly) return;
+    if (readOnly || steps.find((step) => step.id === stepId)?.kind === "prompt")
+      return;
     const plan = deleteActionPlan(steps, stepId);
     if (!plan.needsConfirm) {
       onStepsChange(removeStepById(steps, stepId));
@@ -360,122 +377,11 @@ export function CaseSpine({
     setPendingDelete({ ...plan, stepId });
   };
 
-  // ── first-run form ─────────────────────────────────────────────────────────
-
-  if (quiet && !readOnly && !moreOpen) {
-    const promptStep = rows.actions[0]?.step;
-    return (
-      <div
-        className="space-y-6"
-        data-testid="case-spine"
-        data-state="first-run"
-      >
-        {inspectHeader}
-        <section className="space-y-2">
-          <Label
-            className="text-[11px] font-medium text-foreground"
-            htmlFor="spine-first-prompt"
-          >
-            What should the user ask?
-          </Label>
-          <Textarea
-            id="spine-first-prompt"
-            value={view.prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            rows={4}
-            placeholder="Enter the user prompt…"
-            autoFocus={autoFocusPrompt}
-            aria-label="What does the user ask?"
-            className={cnBorder(
-              !view.prompt.trim() ? evalValidationBorderClass : undefined,
-            )}
-          />
-        </section>
-
-        <section className="space-y-2">
-          <Label
-            className="text-[11px] font-medium text-foreground"
-            htmlFor="spine-first-goal"
-          >
-            What should a successful answer accomplish?
-          </Label>
-          <Textarea
-            id="spine-first-goal"
-            value={expectedOutput ?? ""}
-            onChange={(event) => onExpectedOutputChange(event.target.value)}
-            rows={3}
-            placeholder="States the signed-in account's email address."
-            className={cnBorder(undefined)}
-          />
-          <p className="text-[11px] text-muted-foreground">
-            A model grades each run against this.
-          </p>
-        </section>
-
-        {runControl ? <div>{runControl}</div> : null}
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs text-muted-foreground"
-          data-testid="spine-more-options"
-          aria-expanded={false}
-          onClick={() => setMoreOpen(true)}
-        >
-          More options
-        </Button>
-        <p className="text-[11px] text-muted-foreground">
-          Require a tool · Add a check · Record a click · Judge settings
-        </p>
-        {promptStep ? null : null}
-      </div>
-    );
-  }
-
   // ── the spine ──────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-5" data-testid="case-spine" data-state="spine">
       {inspectHeader}
-
-      <div className="flex items-center justify-between gap-2">
-        {runControl ?? <span />}
-        {readOnly ? null : recording ? (
-          <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={onAddCheck}
-            >
-              Add check
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={onStopRecording}
-            >
-              Stop
-            </Button>
-          </div>
-        ) : (
-          <Button
-            type="button"
-            variant={recordEntryPrimary ? "default" : "outline"}
-            size="sm"
-            className="h-7 text-xs"
-            disabled={!promptReady}
-            onClick={onStartRecording}
-            data-testid="simple-case-start-recording"
-          >
-            Start recording
-          </Button>
-        )}
-      </div>
 
       {rows.leading.length > 0 ? (
         <section className="space-y-1.5" data-testid="spine-leading-checks">
@@ -488,6 +394,9 @@ export function CaseSpine({
                 key={child.step.id}
                 step={child.step}
                 row={rowByStepId.get(child.step.id)}
+                trialRow={results?.get(
+                  rowByStepId.get(child.step.id)?.key ?? "",
+                )}
                 availableTools={availableTools}
                 readOnly={readOnly}
                 checkPolicy={checkPolicy}
@@ -557,7 +466,7 @@ export function CaseSpine({
               if (
                 next.kind === "prompt" &&
                 action.index === 0 &&
-                isPromptFirst(steps)
+                (steps.length === 0 || isPromptFirst(steps))
               ) {
                 setPrompt(next.prompt);
                 return;
@@ -575,24 +484,110 @@ export function CaseSpine({
               onSelectStep ? () => onSelectStep(action.step.id) : undefined
             }
           >
+            {action.ordinal === 1 ? (
+              <section className="space-y-2">
+                <Label
+                  className="text-lg font-semibold text-info"
+                  htmlFor="spine-expected-outcome"
+                >
+                  <Target className="size-4" aria-hidden="true" />
+                  Expected Outcome
+                </Label>
+                <Textarea
+                  id="spine-expected-outcome"
+                  ref={outcomeRef}
+                  value={expectedOutput ?? ""}
+                  onChange={(event) =>
+                    onExpectedOutputChange(event.target.value)
+                  }
+                  rows={3}
+                  readOnly={readOnly}
+                  placeholder={
+                    readOnly
+                      ? "No expected outcome captured"
+                      : "States the signed-in account's email address."
+                  }
+                  className={cnBorder(undefined)}
+                />
+              </section>
+            ) : null}
+            {readOnly ? null : (
+              <EvalAddDrawer
+                className="w-full"
+                triggerLabel="Add"
+                authorableKinds={authorableKinds}
+                onOutcomeFocus={() => {
+                  outcomeRef.current?.scrollIntoView?.({ block: "center" });
+                  outcomeRef.current?.focus();
+                }}
+                onSelect={(choice) => {
+                  if (choice.kind === "outcome") return;
+                  if (
+                    choice.kind === "check" &&
+                    !isTurnScopablePredicateKind(choice.predicateKind)
+                  ) {
+                    onPredicatesChange({
+                      mode: predicates?.mode ?? "extend",
+                      list: [
+                        ...(predicates?.list ?? []),
+                        blankPredicate(choice.predicateKind),
+                      ],
+                    });
+                    return;
+                  }
+                  if (choice.kind === "step") {
+                    const step = blankStepOfKind(choice.stepKind, suiteServers);
+                    const source = steps.length
+                      ? steps
+                      : [
+                          {
+                            id: emptyPromptId,
+                            kind: "prompt" as const,
+                            prompt: "",
+                          },
+                        ];
+                    onStepsChange(
+                      insertStepAfter(source, action.step.id, step),
+                    );
+                  } else {
+                    addCheckAfter(
+                      action.step.id,
+                      choice.kind === "check"
+                        ? blankPredicate(choice.predicateKind)
+                        : defaultWidgetAssertion(choice.widgetKind, ""),
+                    );
+                  }
+                }}
+              />
+            )}
+            {action.ordinal === 1 && defaultChecks ? (
+              <div className="flex justify-end">{defaultChecks}</div>
+            ) : null}
+
             {/* The route question belongs to the action that opens the model
                 turn it grades — the first prompt, or the pinned call on a
                 model-free case. */}
             {action.ordinal === 1 &&
-            (isPromptFirst(steps) || card.route.route?.kind === "locked") ? (
+            (view.tools.length > 0 ||
+              toolsChoice === "noTool" ||
+              card.route.route?.kind === "locked") ? (
               <ul className="space-y-1.5">
-                <RouteRow
-                  row={card.route}
-                  availableTools={availableTools.map((tool) => tool.name)}
-                  readOnly={readOnly}
-                  showUnsetError={showUnsetError}
-                  negativeContradiction={card.negativeContradiction}
-                  onSetTools={setTools}
-                  onChooseNoTool={chooseNoTool}
-                  onChooseTools={chooseTools}
-                  onAddTool={addTool}
-                  onSetKind={setKind}
-                />
+                {results?.get(card.route.key) ? (
+                  <TrialScorecardRow row={results.get(card.route.key)!} />
+                ) : (
+                  <RouteRow
+                    row={card.route}
+                    availableTools={availableTools.map((tool) => tool.name)}
+                    readOnly={readOnly}
+                    showUnsetError={showUnsetError}
+                    negativeContradiction={card.negativeContradiction}
+                    onSetTools={setTools}
+                    onChooseNoTool={chooseNoTool}
+                    onChooseTools={chooseTools}
+                    onAddTool={addTool}
+                    onSetKind={setKind}
+                  />
+                )}
               </ul>
             ) : null}
 
@@ -603,6 +598,9 @@ export function CaseSpine({
                     key={child.step.id}
                     step={child.step}
                     row={rowByStepId.get(child.step.id)}
+                    trialRow={results?.get(
+                      rowByStepId.get(child.step.id)?.key ?? "",
+                    )}
                     availableTools={availableTools}
                     readOnly={readOnly}
                     checkPolicy={checkPolicy}
@@ -635,63 +633,60 @@ export function CaseSpine({
                 ))}
               </ul>
             ) : null}
-
-            {readOnly ? null : (
-              <SuiteScorerLibraryMenu
-                kinds={spineLibraryKinds()}
-                authorableKinds={authorableKinds}
-                triggerLabel="Add a check after this"
-                onAdd={(kind) =>
-                  addCheckAfter(action.step.id, blankPredicate(kind))
-                }
-                onAddWidgetCheck={(kind) =>
-                  addCheckAfter(
-                    action.step.id,
-                    defaultWidgetAssertion(kind, ""),
-                  )
-                }
-              />
-            )}
           </ActionRow>
         ))}
       </ul>
 
-      <AfterTheRunSection
-        authorableKinds={authorableKinds}
-        card={card}
-        availableTools={availableTools.map((tool) => tool.name)}
-        readOnly={readOnly}
-        checkPolicy={checkPolicy}
-        addedKey={addedKey}
-        onCasePredicateChange={(index, next) =>
-          onPredicatesChange(updateCaseScorer(predicates, index, next))
-        }
-        onRemoveCasePredicate={(index) =>
-          onPredicatesChange(removeCaseScorer(predicates, index))
-        }
-        onAddScorer={(predicate) => {
-          const next = appendCaseScorer(predicates, predicate);
-          setAddedKey(`case:${next.list.length - 1}`);
-          onPredicatesChange(next);
-        }}
-        onApplySuiteScorers={
-          card.hiddenSuiteCount > 0 && predicates
-            ? () =>
-                onPredicatesChange({ mode: "extend", list: predicates.list })
-            : undefined
-        }
-        onExpectedOutputChange={onExpectedOutputChange}
-        onJudgeSkippedChange={
-          onJudgeConfigOverrideChange
-            ? (skipped) =>
-                onJudgeConfigOverrideChange(
-                  withCaseJudgeSkipped(judgeConfigOverride, skipped),
-                )
-            : undefined
-        }
-        onOpenSuiteSettings={onOpenSuiteSettings}
-      />
-
+      {wholeCaseRows.length > 0 && (
+        <section className="space-y-2" aria-label="Whole-case assertions">
+          <h3 className="text-sm font-semibold">Whole-case assertions</h3>
+          <ul className="space-y-1.5">
+            {wholeCaseRows.map((row) => {
+              const result = results?.get(row.key);
+              if (result)
+                return (
+                  <TrialScorecardRow
+                    key={row.key}
+                    row={result}
+                    syncedStepId={syncedStepId}
+                    onSyncStep={onHoverStep}
+                  />
+                );
+              return (
+                <ScorecardRowView
+                  key={row.key}
+                  row={row}
+                  readOnly={readOnly}
+                  checkPolicy={checkPolicy}
+                  availableTools={availableTools.map((tool) => tool.name)}
+                  onChangePredicate={
+                    row.provenance === "case"
+                      ? (next) =>
+                          onPredicatesChange({
+                            mode: predicates?.mode ?? "extend",
+                            list: (predicates?.list ?? []).map((item, index) =>
+                              index === row.predicateIndex ? next : item,
+                            ),
+                          })
+                      : undefined
+                  }
+                  onRemove={
+                    row.provenance === "case"
+                      ? () =>
+                          onPredicatesChange({
+                            mode: predicates?.mode ?? "extend",
+                            list: (predicates?.list ?? []).filter(
+                              (_, index) => index !== row.predicateIndex,
+                            ),
+                          })
+                      : undefined
+                  }
+                />
+              );
+            })}
+          </ul>
+        </section>
+      )}
       {pendingDelete ? (
         <DeleteActionPrompt
           plan={pendingDelete}

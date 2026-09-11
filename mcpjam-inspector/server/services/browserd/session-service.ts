@@ -235,6 +235,11 @@ export class BrowserSessionService {
   /** The external-agent door uses the same authenticated control-plane transport. */
   async agentRequest<T>(
     operation:
+      | "assert_web_writable"
+      | "create_shell"
+      | "begin_model"
+      | "open_conversation"
+      | "get_conversation"
       | "open"
       | "get"
       | "list"
@@ -248,6 +253,45 @@ export class BrowserSessionService {
     const result = await this.post<T>(`/agent-browser/${operation}`, args);
     if (result === null) throw new Error("Browser sessions are not configured");
     return result;
+  }
+
+  async conversationLocation(args: {
+    projectId: string;
+    conversationId: string;
+    bearer: string;
+    signal?: AbortSignal;
+  }): Promise<"local" | "cloud" | null> {
+    const result = await this.post<{ engine: "local" | "cloud" | null }>(
+      "/browser-sessions/location",
+      {
+        projectId: args.projectId,
+        bearer: args.bearer,
+        signal: args.signal,
+        body: { conversationId: args.conversationId },
+      },
+    );
+    return result?.engine === "local" || result?.engine === "cloud"
+      ? result.engine
+      : null;
+  }
+
+  /** Read the durable conversation owner without creating, reviving, or waking it. */
+  async getConversationSession(args: {
+    projectId: string;
+    conversationId: string;
+    bearer: string;
+    signal?: AbortSignal;
+  }): Promise<BrowserLogicalSessionRecord | null> {
+    const raw = await this.post<{ session?: unknown }>(
+      "/browser-sessions/get",
+      {
+        projectId: args.projectId,
+        bearer: args.bearer,
+        signal: args.signal,
+        body: { conversationId: args.conversationId },
+      },
+    );
+    return parseSession(raw?.session);
   }
 
   async resolveSession(args: {

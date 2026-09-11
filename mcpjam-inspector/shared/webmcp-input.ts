@@ -82,6 +82,7 @@ export const inputEventSchema = z.discriminatedUnion("kind", [
 
 export const webMcpSocketInputSchema = z.object({
   type: z.literal("input"),
+  tabId: z.string().min(1).max(200).optional(),
   seq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   events: z.array(inputEventSchema).min(1).max(WEBMCP_INPUT_BATCH_LIMIT),
 });

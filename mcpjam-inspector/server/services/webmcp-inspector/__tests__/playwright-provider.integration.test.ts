@@ -18,9 +18,16 @@ import {
   vi,
 } from "vitest";
 import { chromium } from "playwright";
+
+// Every test and every hook here launches, drives, and disposes a real
+// Chromium, which the 30s defaults do not cover on a loaded CI runner — the
+// shard has failed on both a test and an `afterEach` overrunning them. Browser
+// teardown can take longer than a test while Chromium drains navigation work,
+// so give hooks separate headroom.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 120_000 });
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
 import { startWebMcpSession, WebMcpSessionRegistry } from "../session-registry";
-import { PlaywrightWebMcpProvider } from "../playwright-provider";
+import { localBrowserdWebMcpProvider } from "../local-browserd-provider";
 import { WebMcpOutcomeUnknownError, WebMcpToolGoneError } from "../provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
@@ -70,11 +77,14 @@ if (process.env.CI && CHROMIUM_AVAILABLE && !WEBMCP_CDP_AVAILABLE) {
 }
 
 /** Headless for tests; a real session opens a window the developer drives. */
-class HeadlessProvider extends PlaywrightWebMcpProvider {
+class HeadlessProvider {
   async createSession(
-    options: Parameters<PlaywrightWebMcpProvider["createSession"]>[0],
+    options: Parameters<typeof localBrowserdWebMcpProvider.createSession>[0],
   ) {
-    return super.createSession({ ...options, headless: true });
+    return localBrowserdWebMcpProvider.createSession({
+      ...options,
+      headless: true,
+    });
   }
 }
 
@@ -374,7 +384,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       "manual",
     ).settled;
     expect(truncated).toBe(true);
-    expect(String(output)).toContain("truncated");
+    expect(String(output)).toMatch(/truncated|omitted/);
     await registry.disposeAll();
   }, 60_000);
 
@@ -463,7 +473,10 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // as a stream that delivers one frame and then goes quiet forever. Repaint
     // the page and require another frame to prove it is still turning.
     const before = frames.length;
-    await runtime.navigateCommand({ type: "reload" });
+    await runtime.navigateCommand({
+      type: "navigate",
+      url: fixture.declarativeUrl,
+    });
     await vi.waitFor(() => expect(frames.length).toBeGreaterThan(before), {
       timeout: 15_000,
     });
@@ -564,11 +577,12 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       expect(frame.deviceHeight).toBe(sof!.height);
       // …and the scale is the ratio between the picture and the page's own
       // coordinate space, whatever this browser chose to give us.
-      expect(frame.scale).toBeCloseTo(sof!.width / WEBMCP_VIEWPORT.width, 2);
+      expect(frame.scale).toBeCloseTo(sof!.width / 1024, 2);
     }
     expect(session.viewportTransport).toEqual({
       kind: "frame-stream",
-      ...WEBMCP_VIEWPORT,
+      width: 1024,
+      height: 768,
     });
     await registry.disposeAll();
   }, 60_000);
@@ -596,8 +610,8 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // `headless`, which would say there is nothing here to drive.
     expect(session.viewportTransport).toEqual({
       kind: "frame-stream",
-      width: 1280,
-      height: 800,
+      width: 1024,
+      height: 768,
     });
     // Nobody asked for the stream. Nothing else would ever turn it on, and a
     // headless browser with no stream is a session with no viewport at all.

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ElectronNativeBody } from "../ElectronNativeBody";
 import {
   BROWSER_PANE_STATS_FLAG,
@@ -75,6 +75,42 @@ const lastAsk = async () => {
 };
 
 describe("the native Electron browser pane", () => {
+  it("hides pending placement when the session disappears before IPC replies", async () => {
+    let finishShow!: (result: typeof answer) => void;
+    window.electronAPI!.agentBrowser!.setViewport = async (request) => {
+      asked.push(request);
+      if (request.visible) {
+        return new Promise<typeof answer>((resolve) => {
+          finishShow = resolve;
+        });
+      }
+      return { shown: false, inputAllowed: false };
+    };
+    const view = renderBody();
+    await lastAsk();
+    view.rerender(
+      <ElectronNativeBody
+        session={null}
+        holder="rail-1"
+        control="agent"
+        holding={false}
+        consentGranted
+      />,
+    );
+    await waitFor(() =>
+      expect(asked).toContainEqual(
+        expect.objectContaining({ bootId: "boot-1", visible: false }),
+      ),
+    );
+    finishShow({ shown: true, inputAllowed: false });
+    await waitFor(() =>
+      expect(screen.getByTestId("rail-browser-native-slot")).toHaveAttribute(
+        "data-shown",
+        "false",
+      ),
+    );
+  });
+
   it("asks for the view at the slot it measured", async () => {
     renderBody();
     expect(await lastAsk()).toEqual({
@@ -101,6 +137,41 @@ describe("the native Electron browser pane", () => {
     expect(document.querySelector("canvas")).toBeNull();
     expect(document.querySelector("img")).toBeNull();
   });
+
+  it("reports the visible slot on mount and after a resize", async () => {
+    const onViewportSize = vi.fn();
+    renderBody({ onViewportSize });
+    await waitFor(() =>
+      expect(onViewportSize).toHaveBeenCalledWith({
+        width: RECT.width,
+        height: RECT.height,
+      }),
+    );
+    const slot = screen.getByTestId("rail-browser-native-slot");
+    const rect = vi.spyOn(slot, "getBoundingClientRect").mockReturnValue({
+      ...slot.getBoundingClientRect(),
+      width: 480,
+      height: 600,
+    });
+    fireEvent(window, new Event("resize"));
+    await waitFor(() =>
+      expect(onViewportSize).toHaveBeenLastCalledWith({
+        width: 480,
+        height: 600,
+      }),
+    );
+    rect.mockRestore();
+  });
+
+  it.each([{ active: false }, { consentGranted: false }, { session: null }])(
+    "does not resize a browser the pane cannot show: %j",
+    async (props) => {
+      const onViewportSize = vi.fn();
+      renderBody({ ...props, onViewportSize });
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      expect(onViewportSize).not.toHaveBeenCalled();
+    },
+  );
 
   it("takes the view out of the window when the pane stops being visible", async () => {
     // A native view is a SIBLING of the renderer: it keeps painting a live

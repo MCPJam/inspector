@@ -74,8 +74,8 @@ function resolveAuthFetchSurface(
     input instanceof URL
       ? input.toString()
       : typeof Request !== "undefined" && input instanceof Request
-        ? input.url
-        : String(input);
+      ? input.url
+      : String(input);
   const baseOrigin =
     typeof window !== "undefined" ? window.location.origin : "http://localhost";
 
@@ -284,8 +284,8 @@ function resolveRequestUrl(input: RequestInfo | URL): URL | null {
     return input instanceof URL
       ? input
       : typeof Request !== "undefined" && input instanceof Request
-        ? new URL(input.url, baseOrigin)
-        : new URL(String(input), baseOrigin);
+      ? new URL(input.url, baseOrigin)
+      : new URL(String(input), baseOrigin);
   } catch {
     return null;
   }
@@ -344,6 +344,7 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
 // — gated by the same-origin/Convex-host check below so the bearer never
 // crosses to a foreign origin.
 const HOSTED_AUTH_PATH_PREFIXES = [
+  "/api/mcp/webmcp",
   "/api/web/",
   // The first-party UI calling its own public harness endpoint
   // (`/api/v1/harness/:id/builtin-tools`) to list a harness's native tools.
@@ -407,6 +408,7 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // including status, launch, and activity reads. Local/Electron clients need
   // the account bearer alongside their local session token.
   "/api/mcp/computers/local-browser",
+  "/api/mcp/computers/browser-location",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
   // Registry catalog/star routes are Convex HTTP actions called via absolute

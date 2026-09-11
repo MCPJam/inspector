@@ -1,3 +1,11 @@
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => ({
+    granted: true,
+    token: "test-consent",
+    grant: vi.fn(async () => true),
+  }),
+}));
+import { StrictMode } from "react";
 import { waitFor } from "@testing-library/react";
 /**
  * The pane's two jobs: ask for frames only while someone is looking, and show
@@ -406,7 +414,7 @@ describe("WebmcpInspectorTab — viewport", () => {
       name: "Live view of the inspected page",
     });
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
 
     await act(async () => {
       mouseDown(image, { clientX: 640, clientY: 400, button: 0 });
@@ -647,6 +655,49 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(sendInput).not.toHaveBeenCalled();
   });
 
+  it("keeps wheel input alive after Strict Mode replays effect setup", async () => {
+    const sendInput = vi.fn(async () => {});
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      liveFrame: liveFrame("scroll-frame"),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    const view = render(
+      <StrictMode>
+        <WebmcpInspectorTab />
+      </StrictMode>,
+    );
+    await act(async () => {});
+    await act(async () => {
+      useWebmcpInspectorStore.setState({
+        liveFrame: liveFrame("scroll-frame"),
+      });
+    });
+    const canvas = screen.getByRole("img", {
+      name: "Live view of the inspected page",
+    });
+    canvas.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
+    const wheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 200,
+      clientY: 200,
+      deltaY: 120,
+    });
+    act(() => canvas.dispatchEvent(wheel));
+    expect(wheel.defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(sendInput).toHaveBeenCalledWith([
+        expect.objectContaining({ kind: "wheel", deltaY: 120 }),
+      ]),
+    );
+    view.unmount();
+  });
+
   it("sends a paste once, as text, and never as its keystrokes", async () => {
     const sendInput = vi.fn<(events: WebMcpInputEvent[]) => Promise<void>>(
       async () => {},
@@ -852,10 +903,9 @@ describe("WebmcpInspectorTab — viewport", () => {
     });
     // A Chrome window is one click away, and is what someone wants when they
     // need their own devtools open on the page.
-    expect(startSession).toHaveBeenLastCalledWith(
-      expect.any(String),
-      undefined,
-    );
+    expect(startSession).toHaveBeenLastCalledWith(expect.any(String), {
+      projectId: undefined,
+    });
   });
 });
 

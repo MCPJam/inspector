@@ -1,3 +1,4 @@
+import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
 /**
  * The Playground rail's half of the local agent browser.
  *
@@ -10,10 +11,10 @@
  */
 import { authFetch } from "@/lib/session-token";
 import {
-  LOCAL_CONSENT_HEADER,
-  clearStoredLocalComputerConsent,
-  loadStoredLocalComputerConsent,
-} from "@/lib/local-computer-consent";
+  BROWSER_CONSENT_HEADER,
+  clearStoredLocalBrowserConsent,
+  loadStoredLocalBrowserConsent,
+} from "@/lib/local-browser-consent";
 import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
 
 /**
@@ -124,13 +125,13 @@ async function post<T>(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(consentToken ? { [LOCAL_CONSENT_HEADER]: consentToken } : {}),
+      ...(consentToken ? { [BROWSER_CONSENT_HEADER]: consentToken } : {}),
     },
     body: JSON.stringify(body),
     ...(options?.keepalive ? { keepalive: true } : {}),
   });
   const json = (await response.json().catch(() => null)) as
-    | (T & { error?: string })
+    | (T & { error?: string; code?: string })
     | null;
   if (!response.ok) {
     // A stored grant is only a UI projection; the server can reject it after
@@ -138,11 +139,11 @@ async function post<T>(
     // a late failure erase a newer grant minted while this request was flying.
     if (
       response.status === 403 &&
-      json?.error === "Local computer consent is required" &&
+      json?.code === "browser_consent_required" &&
       consentToken &&
-      loadStoredLocalComputerConsent()?.token === consentToken
+      loadStoredLocalBrowserConsent()?.token === consentToken
     ) {
-      clearStoredLocalComputerConsent();
+      clearStoredLocalBrowserConsent();
     }
     throw new LocalBrowserRequestError(
       typeof json?.error === "string"
@@ -151,6 +152,17 @@ async function post<T>(
       response.status,
       json as Record<string, unknown> | null,
     );
+  }
+  if (
+    path === "ensure" &&
+    body &&
+    typeof body === "object" &&
+    "projectId" in body
+  ) {
+    const request = body as { projectId: string; sessionId?: string };
+    useBrowserReadinessStore
+      .getState()
+      .setReason(`${request.projectId}:${request.sessionId ?? null}`, null);
   }
   return json as T;
 }
@@ -218,7 +230,7 @@ export async function fetchLocalBrowserSession(
   sessionId: string,
 ): Promise<LocalBrowserSession | null> {
   const result = await post<{ session: LocalBrowserSession | null }>(
-    "session",
+    "lookup",
     { projectId, sessionId },
     consentToken,
   );
@@ -363,6 +375,7 @@ export interface LocalBrowserTracePage {
 export function sendLocalBrowserInput(
   args: {
     bootId: string;
+    tabId?: string;
     holder: string;
     events: BrowserInputEvent[];
     anchor?: import("../../../../shared/browser-pane-command").InteractionAnchor;
@@ -387,7 +400,7 @@ export async function fetchLocalBrowserProfileArchive(args: {
       headers: {
         "Content-Type": "application/json",
         ...(args.consentToken
-          ? { [LOCAL_CONSENT_HEADER]: args.consentToken }
+          ? { [BROWSER_CONSENT_HEADER]: args.consentToken }
           : {}),
       },
       body: JSON.stringify({
@@ -408,7 +421,8 @@ export async function fetchLocalBrowserProfileArchive(args: {
       response.status,
     );
   }
-  const savedFrom = response.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
+  const savedFrom =
+    response.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
   return {
     archive: await response.blob(),
     ...(savedFrom ? { savedFrom } : {}),
@@ -448,10 +462,12 @@ export interface FrameStreamHandlers {
  */
 export function openLocalBrowserFrameStream(args: {
   bootId: string;
+  tabId?: string;
   holder: string;
   nonce: string;
   /** `"binary"` asks for the daemon's frame records; omitted keeps JSON. */
   wire?: "binary" | "json";
+  sharp?: boolean;
 }): { socket: WebSocket; close(): void } {
   // The nonce is a bearer capability and the frames are pictures of a
   // signed-in browser; neither goes over an unencrypted non-loopback hop.
@@ -461,6 +477,8 @@ export function openLocalBrowserFrameStream(args: {
     args.bootId,
   )}&holder=${encodeURIComponent(args.holder)}${
     args.wire === "binary" ? "&wire=binary" : ""
+  }${args.sharp ? "&sharp=1" : ""}${
+    args.tabId ? `&tabId=${encodeURIComponent(args.tabId)}` : ""
   }`;
   const socket = new WebSocket(url, [args.nonce]);
   // See the hosted opener: `blob` would make binary messages arrive
@@ -477,7 +495,6 @@ export function openLocalBrowserFrameStream(args: {
     },
   };
 }
-
 
 /**
  * The browser shell's three calls, on the local engine.

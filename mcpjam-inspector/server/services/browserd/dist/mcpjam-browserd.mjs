@@ -59,6 +59,7 @@ var BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  "browser_policy_refused",
   /** A `fill_form` stopped partway; the detail names which field and why. */
   "fill_form_failed",
   "out_of_viewport",
@@ -1323,6 +1324,7 @@ var BrowserdRequestHandler = class {
   bootId;
   token;
   lease;
+  authority;
   features;
   bundleHash;
   contextMode;
@@ -1351,13 +1353,26 @@ var BrowserdRequestHandler = class {
    * the very thing this whole compatibility mechanism exists to avoid).
    */
   lastActivityAt = null;
+  retiring = false;
+  suspensionId = null;
+  completedSuspensions = /* @__PURE__ */ new Set();
+  activeOperations = 0;
+  /** Atomic admission barrier held through teardown; a read of isIdle alone races. */
+  tryRetireIfIdle(disconnected = false) {
+    if (this.retiring || this.activeOperations > 0 || !this.queue.isIdle?.() || !disconnected && this.lease.state().state === "held")
+      return false;
+    this.retiring = true;
+    return true;
+  }
   constructor(deps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
+    this.authority = deps.authority ?? "lease";
     this.features = [
+      "sharp-stream-v1",
       .../* @__PURE__ */ new Set([...deps.features ?? [], ...BROWSERD_WEBMCP_FEATURES])
     ];
     this.bundleHash = deps.bundleHash;
@@ -1411,9 +1426,28 @@ var BrowserdRequestHandler = class {
     if (req.origin !== void 0) {
       return { status: 403, body: { error: "cross_origin_forbidden" } };
     }
+    if (this.retiring)
+      return {
+        status: 503,
+        body: { error: "browser_stopped", bootId: this.bootId }
+      };
+    if (this.suspensionId && req.path !== "/v1/status" && req.path !== "/v1/lifecycle")
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId }
+      };
     return void 0;
   }
   async handle(req) {
+    const operation = req.method === "POST" && req.path !== "/v1/lifecycle";
+    if (operation) this.activeOperations += 1;
+    try {
+      return await this.dispatch(req);
+    } finally {
+      if (operation) this.activeOperations -= 1;
+    }
+  }
+  async dispatch(req) {
     if (req.path === "/healthz") {
       if (req.method !== "GET" && req.method !== "HEAD") {
         return { status: 405, headers: { allow: "GET, HEAD" } };
@@ -1423,6 +1457,46 @@ var BrowserdRequestHandler = class {
     }
     const refusal = this.authorize(req);
     if (refusal) return refusal;
+    if (req.path === "/v1/lifecycle" && req.method === "POST") {
+      let body;
+      try {
+        body = JSON.parse(req.body ?? "");
+      } catch {
+        return { status: 400 };
+      }
+      if (!body || body.bootId !== this.bootId)
+        return { status: 409, body: { error: "stale_boot" } };
+      if (typeof body.operationId !== "string" || !body.operationId || body.operationId.length > 128)
+        return { status: 400 };
+      if (body.action === "resume") {
+        if (this.suspensionId && this.suspensionId !== body.operationId)
+          return { status: 409 };
+        if (!this.suspensionId && !this.completedSuspensions.has(body.operationId) && this.completedSuspensions.size >= 4096)
+          return { status: 409 };
+        this.suspensionId = null;
+        this.completedSuspensions.add(body.operationId);
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      }
+      if (body.action !== "prepare_sleep") return { status: 400 };
+      if (this.completedSuspensions.has(body.operationId) || this.completedSuspensions.size >= 4096)
+        return { status: 409 };
+      if (this.suspensionId === body.operationId)
+        return { status: 200, body: { ok: true, bootId: this.bootId } };
+      if (this.suspensionId || this.activeOperations > 0 || !this.queue.isIdle?.() || this.lease.state().state === "held") {
+        return {
+          status: 409,
+          body: { error: "browser_busy", bootId: this.bootId }
+        };
+      }
+      this.suspensionId = body.operationId;
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
+    }
+    if (this.suspensionId && req.path !== "/v1/status") {
+      return {
+        status: 503,
+        body: { error: "browser_sleeping", bootId: this.bootId }
+      };
+    }
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -1450,7 +1524,7 @@ var BrowserdRequestHandler = class {
         ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) },
         ...this.tabsSnapshot()?.list ? { tabs: this.tabsSnapshot().list } : {}
       };
-      return health.ok ? { status: 200, body: { ok: true, ...identity } } : {
+      return health.ok && !this.suspensionId ? { status: 200, body: { ok: true, ...identity } } : {
         status: 503,
         body: { ok: false, detail: health.detail, ...identity }
       };
@@ -1541,12 +1615,14 @@ var BrowserdRequestHandler = class {
       };
     }
     const snapshot = await this.driver.stateSnapshot();
+    const webmcp = this.webmcpSnapshot(snapshot.activeTabId ?? void 0);
     const lease = this.lease.state();
     return {
       status: 200,
       body: {
         bootId: this.bootId,
         ...snapshot,
+        ...webmcp ? { webmcp } : {},
         control: lease.state === "free" ? { kind: "agent" } : {
           kind: lease.holderKind === "script" ? "script" : "human",
           holder: lease.holder,
@@ -1589,8 +1665,8 @@ var BrowserdRequestHandler = class {
       };
     }
     const holder = body.holder;
-    const lease = this.lease.acquire(holder);
-    if (lease.state === "free" || lease.holder !== holder) {
+    const lease = this.authority === "shared" ? this.lease.state() : this.lease.acquire(holder);
+    if (this.authority === "lease" && (lease.state === "free" || lease.holder !== holder)) {
       return {
         status: 423,
         body: {
@@ -1620,6 +1696,7 @@ var BrowserdRequestHandler = class {
       }
     }
     const mapped = paneCommandToAction(command);
+    mapped.tabId ??= this.driver.tabsSnapshot?.().active;
     const outcome = await this.queue.submit({
       // `manual` is the one source `leaseRefusalFor` admits while a lease is
       // held, which is what lets this run at all now that the pane owns the
@@ -2002,10 +2079,7 @@ var BrowserdRequestHandler = class {
     }
     this.lastActivityAt = Date.now();
     const leaseState = this.lease.state();
-    const refusal = leaseRefusalFor(
-      leaseState,
-      parsed.command
-    );
+    const refusal = this.authority === "shared" ? void 0 : leaseRefusalFor(leaseState, parsed.command);
     if (refusal) {
       this.recordRow(parsed.command, startedAt, {
         outcome: "refused",
@@ -2218,7 +2292,7 @@ var BrowserdRequestHandler = class {
         return;
       }
       args.listener(frame);
-    });
+    }, args.maxFrameBytes);
     if (!live) unsubscribe();
     return {
       ok: true,
@@ -2307,7 +2381,7 @@ var BrowserdRequestHandler = class {
    */
   async dispatchInput(args) {
     const stillTheirs = () => {
-      const refused = leaseRefusalFor(this.lease.state(), {
+      const refused = this.authority === "shared" ? void 0 : leaseRefusalFor(this.lease.state(), {
         source: "manual",
         holder: args.holder
       });
@@ -2347,6 +2421,7 @@ var BrowserdRequestHandler = class {
   }
   /** May this watcher see frames right now? */
   watcherRefusal(holder) {
+    if (this.authority === "shared") return void 0;
     const lease = this.lease.state();
     if (lease.state === "free") return void 0;
     return holder && holder === lease.holder ? void 0 : lease.state === "held" ? "lease_held" : "lease_parked";
@@ -2356,6 +2431,11 @@ var BrowserdRequestHandler = class {
    * cannot be released by another tab that happens to know the endpoint.
    */
   handleLease(req) {
+    if (this.authority === "shared" && req.method !== "GET")
+      return {
+        status: 409,
+        body: { error: "shared_authority", bootId: this.bootId }
+      };
     if (req.method === "GET") {
       return { status: 200, body: this.leaseBody(this.lease.state()) };
     }
@@ -2470,6 +2550,24 @@ function isValidCommand(value) {
   const candidate = value;
   return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
 }
+
+// shared/browser-viewport-policy.ts
+var BROWSER_VIEWPORT_POLICY = {
+  quality: 85,
+  maxFrameBytes: 256 * 1024,
+  minIntervalMs: 100,
+  inputIntervalMs: 33,
+  inputBoostWindowMs: 1500
+};
+var SHARP_JPEG_MAX_BYTES = 2 * 1024 * 1024;
+function jpegFrameLimit(sharp) {
+  return sharp ? SHARP_JPEG_MAX_BYTES : BROWSER_VIEWPORT_POLICY.maxFrameBytes;
+}
+var JPEG_RECOVERY_POLICY = {
+  qualities: [85, 75, 65, 55, 40],
+  probeMs: 1e4,
+  maxProbeMs: 6e4
+};
 
 // shared/browserd-frame-stream.ts
 var FRAME_STREAM_VERSION = 1;
@@ -2627,12 +2725,21 @@ function createFrameStreamHost(handler, options = {}) {
       return true;
     }
     if (query?.get("codec") === "h264") {
-      void startVideoSubscription({ res, holder }).catch(() => {
+      void startVideoSubscription({
+        res,
+        holder,
+        sharp: query?.get("sharp") === "1"
+      }).catch(() => {
         writeEndAndClose(res, "video_unavailable");
       });
       return true;
     }
-    void startSubscription({ res, tabId, holder }).catch(() => {
+    void startSubscription({
+      res,
+      tabId,
+      holder,
+      sharp: query?.get("sharp") === "1"
+    }).catch(() => {
       writeEndAndClose(res, "tab_gone");
     });
     return true;
@@ -2741,7 +2848,7 @@ function createFrameStreamHost(handler, options = {}) {
         // next GOP, four seconds later, being sent units it cannot decode.
         unit.key ? { essential: true } : {}
       );
-    });
+    }, args.sharp);
     const failure = encoder.failure();
     if (failure) {
       end("video_unavailable");
@@ -2900,6 +3007,7 @@ function createFrameStreamHost(handler, options = {}) {
       pacer.close();
     });
     subscription = await handler.subscribeFrames({
+      maxFrameBytes: jpegFrameLimit(args.sharp),
       ...tabId ? { tabId } : {},
       ...holder ? { holder } : {},
       listener: (frame) => {
@@ -2996,6 +3104,7 @@ function createFrameStreamHost(handler, options = {}) {
 function statsFor(subscription, previousFramesIn) {
   const counters = subscription.counters();
   return {
+    jpeg: counters.jpeg,
     framesIn: counters.framesIn,
     framesOut: counters.framesOut,
     bytesOut: counters.bytesOut,
@@ -3228,7 +3337,7 @@ function buildBrowserdStack(driver, config) {
   const ledger = new CommandLedger({ bootId });
   const lease = config.lease ?? new HandoffLease();
   const queue = new CommandQueue(
-    guardLease(lease, guardStaleness(driver, lease)),
+    config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease)),
     bootId
   );
   const handler = new BrowserdRequestHandler({
@@ -3236,6 +3345,7 @@ function buildBrowserdStack(driver, config) {
     driver,
     bootId,
     token: config.token,
+    authority: config.authority,
     lease,
     ...config.features ? { features: config.features } : {},
     ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
@@ -3273,7 +3383,16 @@ import { spawn as spawn2 } from "node:child_process";
 var NAL_AUD = 9;
 var NAL_IDR = 5;
 var MAX_RING_BYTES = 3 * 1024 * 1024;
-function tierArgs(tier) {
+function tierArgs(tier, sharp = false) {
+  if (sharp)
+    return [
+      "-crf",
+      tier === "sharp" ? "18" : tier === "saver" ? "23" : "20",
+      "-maxrate",
+      tier === "sharp" ? "6M" : "2500k",
+      "-bufsize",
+      tier === "sharp" ? "12M" : "5M"
+    ];
   switch (tier) {
     case "sharp":
       return ["-crf", "18", "-maxrate", "6M", "-bufsize", "12M"];
@@ -3293,7 +3412,8 @@ function tierArgs(tier) {
   }
 }
 function ffmpegArgs(options) {
-  const tier = tierArgs(options.tier);
+  const tier = tierArgs(options.tier, options.sharp);
+  const fps = options.sharp ? options.tier === "sharp" ? 30 : options.tier === "saver" ? 10 : 20 : 30;
   const filters = tier.includes("-vf") ? [] : ["-vf", "mpdecimate"];
   return [
     "-loglevel",
@@ -3301,7 +3421,7 @@ function ffmpegArgs(options) {
     "-f",
     "x11grab",
     "-framerate",
-    "30",
+    String(fps),
     "-video_size",
     `${options.width}x${options.height}`,
     "-draw_mouse",
@@ -3322,7 +3442,7 @@ function ffmpegArgs(options) {
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "120",
+    String(fps * 4),
     "-sc_threshold",
     "0",
     "-x264-params",
@@ -3405,6 +3525,8 @@ function createVideoEncoder(options) {
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const listeners = /* @__PURE__ */ new Set();
   let tier = options.tier ?? "auto";
+  const sharpSubscribers = /* @__PURE__ */ new Set();
+  let sharp = false;
   let width = Math.max(2, Math.round(options.width));
   let height = Math.max(2, Math.round(options.height));
   let child;
@@ -3462,7 +3584,8 @@ function createVideoEncoder(options) {
           // smaller silently captures a corner.
           width,
           height,
-          tier
+          tier,
+          sharp
         }),
         { stdio: ["ignore", "pipe", "pipe"] }
       );
@@ -3489,8 +3612,17 @@ function createVideoEncoder(options) {
     });
   };
   return {
-    subscribe(listener) {
+    subscribe(listener, wantsSharp = false) {
       listeners.add(listener);
+      if (wantsSharp) sharpSubscribers.add(listener);
+      const nextSharp = sharpSubscribers.size === listeners.size;
+      if (sharp !== nextSharp) {
+        sharp = nextSharp;
+        if (child) {
+          stop();
+          start();
+        }
+      }
       if (listeners.size === 1) start();
       for (const unit of ring) {
         try {
@@ -3500,7 +3632,16 @@ function createVideoEncoder(options) {
       }
       return () => {
         listeners.delete(listener);
+        sharpSubscribers.delete(listener);
         if (listeners.size === 0) stop();
+        else {
+          const nextSharp2 = sharpSubscribers.size === listeners.size;
+          if (sharp !== nextSharp2) {
+            sharp = nextSharp2;
+            stop();
+            start();
+          }
+        }
       };
     },
     subscriberCount: () => listeners.size,
@@ -3532,6 +3673,16 @@ function createVideoEncoder(options) {
       stop();
     }
   };
+}
+
+// shared/browser-session-state.ts
+var BROWSER_TAB_CAP = 8;
+function tabAfterClose(tabs, closingId, activeId) {
+  if (activeId !== closingId) return activeId;
+  const index = tabs.findIndex((tab) => tab.id === closingId);
+  if (index < 0) return activeId;
+  const openerId = tabs[index].openerId;
+  return (openerId && tabs.some((tab) => tab.id === openerId && tab.id !== closingId) ? openerId : void 0) ?? tabs[index + 1]?.id ?? tabs[index - 1]?.id ?? null;
 }
 
 // server/services/browserd/daemon/network.ts
@@ -4700,6 +4851,9 @@ function originOf(url) {
 var WebMcpBridge = class {
   constructor(cdp, options = {}) {
     this.cdp = cdp;
+    this.localSecurity = options.localSecurity ?? false;
+    this.localBudget = options.localBudget;
+    this.onDiscoveryLimit = options.onDiscoveryLimit;
     this.sessions.set(MAIN_SESSION_KEY, {
       key: MAIN_SESSION_KEY,
       frameId: "",
@@ -4710,6 +4864,13 @@ var WebMcpBridge = class {
     this.cancelSettleGraceMs = options.cancelSettleGraceMs ?? DEFAULT_CANCEL_SETTLE_GRACE_MS;
     this.onChange = options.onChange;
     this.onExternalInvocation = options.onExternalInvocation;
+  }
+  externalSubscribers = /* @__PURE__ */ new Set();
+  subscribeExternalInvocation(listener) {
+    this.externalSubscribers.add(listener);
+    return () => {
+      this.externalSubscribers.delete(listener);
+    };
   }
   /**
    * Tools keyed `${frameId} ${name}` — the browser's own notion of identity —
@@ -4777,6 +4938,110 @@ var WebMcpBridge = class {
   probeGeneration = 0;
   subscribers = /* @__PURE__ */ new Set();
   disposed = false;
+  localSecurity = false;
+  localBudget;
+  updateBudget() {
+    if (!this.localBudget) return;
+    if (this.disposed) {
+      this.localBudget.entries.delete(this);
+      return;
+    }
+    let bytes = 0;
+    for (const entry of this.tools.values()) bytes += entry.bytes ?? 0;
+    this.localBudget.entries.set(this, {
+      registrations: this.tools.size,
+      bytes,
+      frames: Math.max(
+        this.frames.size,
+        this.sessions.size,
+        this.frameSessions.size
+      )
+    });
+  }
+  otherBudget() {
+    const total = { registrations: 0, bytes: 0, frames: 0 };
+    for (const [owner, entry] of this.localBudget?.entries ?? [])
+      if (owner !== this) {
+        total.registrations += entry.registrations;
+        total.bytes += entry.bytes;
+        total.frames += entry.frames;
+      }
+    return total;
+  }
+  discoveryBlocked = false;
+  onDiscoveryLimit;
+  changeTokens = 2048;
+  changeAt = Date.now();
+  discoveryLimitReached() {
+    return this.discoveryBlocked;
+  }
+  blockDiscovery() {
+    if (!this.discoveryBlocked) {
+      this.discoveryBlocked = true;
+      this.tools.clear();
+      for (const [id, waiter] of this.pending) {
+        void waiter.cdp.send("WebMCP.cancelInvocation", { invocationId: id }).catch(() => {
+        });
+        this.settle(id);
+        waiter.reject(
+          new WebMcpBridgeError(
+            "webmcp_tool_gone",
+            "Page tool discovery exceeded its security budget. Reload the page after reducing its registrations."
+          )
+        );
+      }
+      this.onDiscoveryLimit?.();
+      this.announce();
+    }
+    return false;
+  }
+  allowChanges(count) {
+    if (!this.localSecurity) return true;
+    if (this.discoveryBlocked) return false;
+    const now = Date.now();
+    const rate = this.localBudget ? this.localBudget.rate ??= { tokens: 2048, at: now } : { tokens: this.changeTokens, at: this.changeAt };
+    rate.tokens = Math.min(
+      2048,
+      rate.tokens + Math.max(0, now - rate.at) * 1.024
+    );
+    rate.at = now;
+    if (count > rate.tokens) return this.blockDiscovery();
+    rate.tokens -= count;
+    this.changeTokens = rate.tokens;
+    this.changeAt = now;
+    return true;
+  }
+  allowTool(tool) {
+    if (!this.localSecurity) return true;
+    let bytes = 0, nodes = 0;
+    const stack = [[tool, 0]];
+    while (stack.length) {
+      const [value, depth] = stack.pop();
+      if (++nodes > 65536 || depth > 32) return this.blockDiscovery();
+      if (typeof value === "string") {
+        if (value.length > 65536) return this.blockDiscovery();
+        bytes += new TextEncoder().encode(value).byteLength;
+      } else if (value && typeof value === "object") {
+        for (const key of Object.keys(value)) {
+          bytes += key.length * 3;
+          if (stack.length >= 65536) return this.blockDiscovery();
+          stack.push([value[key], depth + 1]);
+        }
+      } else bytes += 8;
+      if (bytes > 65536) return this.blockDiscovery();
+    }
+    const others = this.otherBudget();
+    if (this.tools.size + others.registrations >= 1024 && !this.tools.has(this.key(tool.frameId, tool.name)))
+      return this.blockDiscovery();
+    let retained = bytes;
+    for (const entry of this.tools.values()) retained += entry.bytes ?? 0;
+    if (retained + others.bytes > 8 * 1024 * 1024) return this.blockDiscovery();
+    if (!this.frameSessions.has(tool.frameId) && this.frameSessions.size + others.frames >= 64)
+      return this.blockDiscovery();
+    this.nextToolBytes = bytes;
+    return true;
+  }
+  nextToolBytes = 0;
   onChange;
   onExternalInvocation;
   /**
@@ -4788,6 +5053,7 @@ var WebMcpBridge = class {
    * responsible for the bridge's own bookkeeping.
    */
   announce() {
+    this.updateBudget();
     if (this.disposed) return;
     if (!this.onChange && this.subscribers.size === 0) return;
     const tools = this.list();
@@ -4917,22 +5183,27 @@ var WebMcpBridge = class {
     session.cdp.on("WebMCP.toolsAdded", (payload) => {
       if (!this.live(session)) return;
       const { tools } = payload ?? {};
+      if (!Array.isArray(tools) || !this.allowChanges(tools.length)) return;
       const registrationSeq = this.nextRegistrationSeq++;
       for (const tool of tools ?? []) {
+        if (!this.allowTool(tool)) return;
         const owner = this.frameSessions.get(tool.frameId);
         if (owner !== void 0 && owner !== session.key) continue;
         this.tools.set(this.key(tool.frameId, tool.name), {
           tool,
           registrationSeq,
-          sessionKey: session.key
+          sessionKey: session.key,
+          bytes: this.nextToolBytes
         });
         this.frameSessions.set(tool.frameId, session.key);
+        this.updateBudget();
       }
       this.announce();
     });
     session.cdp.on("WebMCP.toolsRemoved", (payload) => {
       if (!this.live(session)) return;
       const { tools } = payload ?? {};
+      if (!Array.isArray(tools) || !this.allowChanges(tools.length)) return;
       for (const tool of tools ?? []) {
         const key = this.key(tool.frameId, tool.name);
         if (this.tools.get(key)?.sessionKey !== session.key) continue;
@@ -4946,6 +5217,8 @@ var WebMcpBridge = class {
       if (this.pending.has(invoked.invocationId)) return;
       if (this.outstandingSends > 0) return;
       this.onExternalInvocation?.(invoked.toolName ?? "");
+      for (const listener of this.externalSubscribers)
+        listener(invoked.toolName ?? "");
     });
     session.cdp.on("WebMCP.toolResponded", (payload) => {
       const responded = payload ?? {};
@@ -4968,6 +5241,18 @@ var WebMcpBridge = class {
       if (!this.live(session)) return;
       const { frame } = payload ?? {};
       if (!frame) return;
+      if (this.localSecurity && session.isMain && !frame.parentId) {
+        this.discoveryBlocked = false;
+        this.changeTokens = 2048;
+        this.changeAt = Date.now();
+        this.tools.clear();
+        this.frames.clear();
+        this.frameSessions.clear();
+      }
+      if (this.localSecurity && !this.frames.has(frame.id) && this.frames.size + this.otherBudget().frames >= 64) {
+        this.blockDiscovery();
+        return;
+      }
       this.frames.set(frame.id, frame.url);
       this.dropFrame(frame.id, session.key);
       if (session.isMain && !frame.parentId) {
@@ -5017,6 +5302,10 @@ var WebMcpBridge = class {
   async addSession(frameId, cdp) {
     const key = `${frameId}#${this.nextSessionSeq++}`;
     if (this.disposed) return key;
+    if (this.localSecurity && (this.discoveryBlocked || this.sessions.size + this.otherBudget().frames >= 64)) {
+      this.blockDiscovery();
+      return key;
+    }
     for (const existing of [...this.sessions.values()]) {
       if (!existing.isMain && existing.frameId === frameId) {
         this.removeSession(existing.key);
@@ -5024,6 +5313,7 @@ var WebMcpBridge = class {
     }
     const session = { key, frameId, cdp, isMain: false };
     this.sessions.set(key, session);
+    this.updateBudget();
     this.frameSessions.set(frameId, key);
     this.wireSession(session);
     await cdp.send("Page.enable").catch(() => {
@@ -5061,12 +5351,20 @@ var WebMcpBridge = class {
   /** Record a session's frame URLs, for origins we missed by attaching late. */
   async seedFrames(cdp) {
     const tree = await cdp.send("Page.getFrameTree");
+    let visited = 0;
     const walk = (node) => {
+      if (this.localSecurity && (++visited > 64 || this.discoveryBlocked)) {
+        this.blockDiscovery();
+        return;
+      }
       if (!node?.frame) return;
       if (!this.frames.has(node.frame.id)) {
         this.frames.set(node.frame.id, node.frame.url ?? "");
       }
-      for (const child of node.childFrames ?? []) walk(child);
+      for (const child of node.childFrames ?? []) {
+        if (this.localSecurity && this.discoveryBlocked) break;
+        walk(child);
+      }
     };
     walk(tree?.frameTree);
   }
@@ -5268,6 +5566,14 @@ var WebMcpBridge = class {
         );
       }
       invocationId = result.invocationId;
+      if (this.localSecurity && (this.discoveryBlocked || this.disposed)) {
+        void owner.send("WebMCP.cancelInvocation", { invocationId }).catch(() => {
+        });
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          "Page tool discovery is no longer available; earlier effects may already have occurred."
+        );
+      }
       try {
         args.onStarted?.(invocationId);
       } catch {
@@ -5354,9 +5660,11 @@ var WebMcpBridge = class {
   }
   /** Reject every waiter; called when the tab or daemon goes away. */
   dispose() {
+    this.localBudget?.entries.delete(this);
     if (this.disposed) return;
     this.disposed = true;
     this.subscribers.clear();
+    this.externalSubscribers.clear();
     this.probe = void 0;
     for (const key of [...this.sessions.keys()]) {
       if (key !== MAIN_SESSION_KEY) this.sessions.delete(key);
@@ -5472,15 +5780,6 @@ function declaredToolsFromWebmcp(tools) {
     ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {}
   }));
 }
-
-// shared/browser-viewport-policy.ts
-var BROWSER_VIEWPORT_POLICY = {
-  quality: 75,
-  maxFrameBytes: 256 * 1024,
-  minIntervalMs: 100,
-  inputIntervalMs: 33,
-  inputBoostWindowMs: 1500
-};
 
 // server/services/webmcp-inspector/frame-throttle.ts
 function createFrameThrottle(options) {
@@ -5601,10 +5900,21 @@ var DEFAULT_MIN_INTERVAL_MS = BROWSER_VIEWPORT_POLICY.minIntervalMs;
 var DEFAULT_MAX_FRAME_BYTES = BROWSER_VIEWPORT_POLICY.maxFrameBytes;
 function createTabViewport(cdp, options) {
   let quality = options.quality ?? DEFAULT_QUALITY;
-  let oversizeRecoveryAttempted = false;
+  const requestedQuality = quality;
+  let recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+  let probing = false;
+  let recoveryTimer;
+  let captureError;
+  const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((id) => clearTimeout(id));
+  const cancelRecovery = () => {
+    if (recoveryTimer !== void 0) clearTimer(recoveryTimer);
+    recoveryTimer = void 0;
+  };
   const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const now = options.now ?? Date.now;
-  const listeners = /* @__PURE__ */ new Set();
+  const listeners = /* @__PURE__ */ new Map();
+  const effectiveLimit = () => Math.min(...listeners.values(), SHARP_JPEG_MAX_BYTES);
   let streaming = false;
   let startPending = Promise.resolve();
   let streamGeneration = 0;
@@ -5625,7 +5935,8 @@ function createTabViewport(cdp, options) {
   const publish = (frame) => {
     counters.framesOut += 1;
     counters.bytesOut += base64Bytes(frame.data);
-    for (const listener of listeners) {
+    for (const [listener, limit] of listeners) {
+      if (base64Bytes(frame.data) > limit) continue;
       try {
         listener(frame);
       } catch {
@@ -5652,24 +5963,31 @@ function createTabViewport(cdp, options) {
       return;
     }
     lastData = frame.data;
-    const bytes = Math.floor(frame.data.length * 3 / 4);
-    if (bytes > maxBytes) {
+    const bytes = base64Bytes(frame.data);
+    if (bytes > effectiveLimit()) {
       counters.dropped.oversize += 1;
-      if (!oversizeRecoveryAttempted) {
-        oversizeRecoveryAttempted = true;
-        quality = Math.min(quality, 40);
-        const run = resizeChain.then(async () => {
-          if (disposed || listeners.size === 0) return;
-          await stop();
-          if (disposed || listeners.size === 0) return;
-          await start();
-        });
-        resizeChain = run.catch(() => {
-        });
-        startPending = resizeChain;
+      cancelRecovery();
+      if (probing)
+        recoveryDelay = Math.min(
+          JPEG_RECOVERY_POLICY.maxProbeMs,
+          recoveryDelay * 2
+        );
+      probing = false;
+      const next = JPEG_RECOVERY_POLICY.qualities.find((q) => q < quality);
+      if (next === void 0) {
+        captureError = "jpeg_frame_limit";
+      } else {
+        quality = next;
+        restartCapture();
       }
       return;
     }
+    captureError = void 0;
+    if (probing) {
+      recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+      probing = false;
+    }
+    scheduleRecovery();
     const measured = measure(frame.data, options.surface);
     throttle.push({
       data: frame.data,
@@ -5680,11 +5998,21 @@ function createTabViewport(cdp, options) {
       seq: seq += 1
     });
   });
+  cdp.on("Page.frameNavigated", (payload) => {
+    const frame = payload.frame;
+    if (!frame || frame.parentId || disposed || listeners.size === 0) return;
+    if (quality < requestedQuality || captureError) {
+      resetQuality();
+      restartCapture();
+    }
+  });
   const start = async () => {
     if (streaming || disposed) return;
     streaming = true;
     const generation = ++streamGeneration;
     lastData = void 0;
+    void cdp.send("Page.enable").catch(() => {
+    });
     await cdp.send("Page.startScreencast", {
       format: "jpeg",
       quality,
@@ -5698,6 +6026,7 @@ function createTabViewport(cdp, options) {
     });
   };
   const stop = async () => {
+    cancelRecovery();
     if (!streaming) return;
     streaming = false;
     streamGeneration += 1;
@@ -5705,15 +6034,59 @@ function createTabViewport(cdp, options) {
     await cdp.send("Page.stopScreencast").catch(() => {
     });
   };
+  function restartCapture() {
+    const run = resizeChain.then(async () => {
+      if (disposed || listeners.size === 0) return;
+      await stop();
+      if (!disposed && listeners.size > 0) await start();
+    });
+    resizeChain = run.catch(() => {
+    });
+    startPending = resizeChain;
+  }
+  function scheduleRecovery() {
+    if (quality >= requestedQuality || recoveryTimer !== void 0 || disposed)
+      return;
+    recoveryTimer = setTimer(() => {
+      recoveryTimer = void 0;
+      if (disposed || listeners.size === 0) return;
+      quality = Math.min(
+        requestedQuality,
+        [...JPEG_RECOVERY_POLICY.qualities].reverse().find((q) => q > quality) ?? requestedQuality
+      );
+      probing = true;
+      restartCapture();
+    }, recoveryDelay);
+  }
+  function resetQuality() {
+    cancelRecovery();
+    quality = requestedQuality;
+    recoveryDelay = JPEG_RECOVERY_POLICY.probeMs;
+    probing = false;
+    captureError = void 0;
+  }
   return {
-    subscribe(listener) {
-      listeners.add(listener);
+    subscribe(listener, frameLimit = maxBytes) {
+      const before = effectiveLimit();
+      listeners.set(
+        listener,
+        Math.min(SHARP_JPEG_MAX_BYTES, Math.max(1, frameLimit))
+      );
+      if (listeners.size === 1 || effectiveLimit() !== before || captureError) {
+        resetQuality();
+        if (listeners.size > 1) restartCapture();
+      }
       if (listeners.size === 1) {
         startPending = pendingResizes > 0 ? resizeChain : start();
       }
       return () => {
+        const before2 = effectiveLimit();
         listeners.delete(listener);
         if (listeners.size === 0) void stop();
+        else if (effectiveLimit() !== before2) {
+          resetQuality();
+          restartCapture();
+        }
       };
     },
     subscriberCount: () => listeners.size,
@@ -5723,6 +6096,10 @@ function createTabViewport(cdp, options) {
     },
     invalidate() {
       lastData = void 0;
+      if (quality < requestedQuality || captureError) {
+        resetQuality();
+        restartCapture();
+      }
     },
     resize(surface, apply) {
       pendingResizes++;
@@ -5733,6 +6110,7 @@ function createTabViewport(cdp, options) {
           await stop();
           if (disposed) return;
           await apply?.();
+          resetQuality();
           Object.assign(options.surface, surface);
         } finally {
           pendingResizes--;
@@ -5747,7 +6125,16 @@ function createTabViewport(cdp, options) {
       return run;
     },
     boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),
-    counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
+    counters: () => ({
+      ...counters,
+      dropped: { ...counters.dropped },
+      jpeg: {
+        requestedQuality,
+        quality,
+        maxFrameBytes: effectiveLimit(),
+        reason: captureError ?? (quality < requestedQuality ? "frame_size" : "default")
+      }
+    }),
     noteTransportDrop() {
       counters.dropped.pacer += 1;
     },
@@ -5763,7 +6150,17 @@ function createTabViewport(cdp, options) {
       disposed = true;
       buttonMask = 0;
       listeners.clear();
-      await stop();
+      let timer;
+      try {
+        await Promise.race([
+          stop(),
+          new Promise((resolve2) => {
+            timer = setTimeout(resolve2, 1e3);
+          })
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
     }
   };
   async function dispatchBatch(events, stillPermitted, holder) {
@@ -6066,6 +6463,10 @@ var ChromiumDriver = class {
   sessionViewport;
   /** Monotonic per boot, so two snapshots in one millisecond still order. */
   stateSeq = 0;
+  stopPageCreated;
+  nextPopupId = 0;
+  maxTabs;
+  onExternalInvocation;
   allowPaneResize;
   viewportPolicy;
   latestViewportRequest;
@@ -6074,6 +6475,26 @@ var ChromiumDriver = class {
   resizeDisplay;
   constructor(context, options = {}) {
     this.context = context;
+    this.onExternalInvocation = options.onExternalInvocation;
+    this.maxTabs = Math.max(1, options.maxTabs ?? BROWSER_TAB_CAP);
+    this.stopPageCreated = context.onPageCreated?.(
+      ({ page, opener, background }) => {
+        const openerId = [...this.tabs].find(
+          ([, entry]) => entry.page === opener
+        )?.[0];
+        if (this.closing || !openerId || this.tabs.size + this.pendingTabs.size >= this.maxTabs) {
+          void page.close().catch(() => {
+          });
+          return;
+        }
+        let id;
+        do {
+          id = `popup-${++this.nextPopupId}`;
+        } while (this.tabs.has(id) || this.pendingTabs.has(id));
+        void this.registerTab(id, page, openerId, background).then(() => options.onPopupOpened?.(safeUrl(page))).catch(() => page.close().catch(() => {
+        }));
+      }
+    );
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
@@ -6112,14 +6533,24 @@ var ChromiumDriver = class {
     if (size.policy === "followPane" && this.allowPaneResize)
       this.viewportPolicy = "followPane";
     if (this.viewportPolicy === "fixed") return this.sessionViewport;
-    const request = size.policy === "fixed" ? { ...size, width: 1024, height: 768 } : size;
-    this.latestViewportRequest = request;
-    await this.barrier.request(request);
+    const request2 = size.policy === "fixed" ? { ...size, width: 1024, height: 768 } : size;
+    this.latestViewportRequest = request2;
+    await this.barrier.request(request2);
     return this.sessionViewport;
   }
   /** Is a resize waiting or transitioning? Surfaces as the pane's affordance. */
   viewportSettling() {
     return this.barrier.busy;
+  }
+  /** Resize an attached capture together with its page, including rollback. */
+  async resizePage(page, size) {
+    const tab = [...this.tabs].find(([, entry]) => entry.page === page);
+    const capture = tab ? await this.viewports.get(tab[0]) : void 0;
+    const apply = async () => {
+      await page.setViewportSize?.({ width: size.width, height: size.height });
+    };
+    if (capture) await capture.resize(size, apply);
+    else await apply();
   }
   /**
    * Take every tab to a new size, or leave every tab where it was.
@@ -6163,15 +6594,12 @@ var ChromiumDriver = class {
     const applied = [];
     try {
       for (const page of pages) {
-        await page.setViewportSize?.({
-          width: next.width,
-          height: next.height
-        });
+        await this.resizePage(page, next);
         applied.push(page);
       }
     } catch (error) {
       for (const page of applied) {
-        await page.setViewportSize?.({ width: previous.width, height: previous.height }).catch(() => {
+        await this.resizePage(page, previous).catch(() => {
         });
       }
       if (this.resizeDisplay) {
@@ -6187,7 +6615,7 @@ var ChromiumDriver = class {
       this.viewportPolicy = "fixed";
     for (const entry of this.tabs.values()) {
       if (applied.includes(entry.page) || entry.page.isClosed()) continue;
-      await entry.page.setViewportSize?.({ width: next.width, height: next.height }).catch(() => {
+      await this.resizePage(entry.page, next).catch(() => {
       });
     }
     try {
@@ -6237,7 +6665,7 @@ var ChromiumDriver = class {
         "a person took control of this browser before this action ran; nothing was run and nothing was observed"
       );
     }
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const action = command.action;
     const blocked = await this.answerOrRefuseDialog(
       tabId,
@@ -6272,6 +6700,11 @@ var ChromiumDriver = class {
               "this browser is shutting down; no new tab was opened"
             )
           };
+        }
+        if (command.source === "manual" && action.newTab && action.url === "about:blank" && action.observe === "none" && safeUrl(entry.page) === "about:blank") {
+          return permit() ? { ok: true } : this.leaseBlockedResult(
+            "browser control changed while opening the tab; nothing was observed"
+          );
         }
         return this.navigateVerb(
           tabId,
@@ -6333,6 +6766,8 @@ var ChromiumDriver = class {
       await page.close().catch(() => {
       });
       await this.dropTab(tabId);
+      if (!this.closing && this.tabs.size === 0)
+        await this.getOrCreateTab(DEFAULT_TAB);
       return { ok: true, output: { closed: tabId } };
     }
     if (action.verb === "accept_dialog" || action.verb === "dismiss_dialog") {
@@ -6824,7 +7259,18 @@ var ChromiumDriver = class {
         output,
         this.webmcpOutputBudgetBytes
       );
-      const frame = await this.snapshot(entry.page);
+      const frame = await this.snapshot(entry.page).catch(() => void 0);
+      if (!frame)
+        return permit() ? {
+          ok: true,
+          output: {
+            invocationId,
+            result: capped,
+            ...omitted ? { omitted } : {}
+          }
+        } : this.leaseBlockedResult(
+          "The tool ran, but control changed before its result could be read."
+        );
       return {
         ...this.observation(
           tabId,
@@ -7104,7 +7550,13 @@ var ChromiumDriver = class {
         return this.observation(
           tabId,
           entry,
-          { webmcpSupported: true, tools: bridge.list() },
+          {
+            webmcpSupported: true,
+            tools: bridge.list(),
+            ...bridge.discoveryLimitReached?.() ? {
+              notice: "Page tool discovery exceeded its security budget. Reduce registrations and reload the page; browsing remains available."
+            } : {}
+          },
           frame,
           permit
         );
@@ -7195,10 +7647,10 @@ var ChromiumDriver = class {
     };
   }
   async currentStateToken(tabId) {
-    const entry = this.tabs.get(tabId ?? DEFAULT_TAB);
+    const entry = this.tabs.get(tabId ?? this.activeTabId ?? DEFAULT_TAB);
     if (!entry) return void 0;
     return computeStateToken({
-      tabId: tabId ?? DEFAULT_TAB,
+      tabId: tabId ?? this.activeTabId ?? DEFAULT_TAB,
       navCounter: entry.navCounter,
       url: entry.page.url(),
       domSignal: await entry.page.domStructureSignal(),
@@ -7260,9 +7712,13 @@ var ChromiumDriver = class {
     };
   }
   async stateSnapshot() {
-    const live = [...this.tabs.entries()].filter(
-      ([, entry]) => !entry.page.isClosed()
-    );
+    const hadTabs = this.tabs.size > 0;
+    for (const [id, entry] of [...this.tabs]) {
+      if (entry.page.isClosed()) await this.dropTab(id);
+    }
+    if (hadTabs && this.tabs.size === 0 && !this.closing)
+      await this.getOrCreateTab(DEFAULT_TAB);
+    const live = [...this.tabs.entries()];
     const read = await Promise.all(
       live.map(async ([id, entry]) => {
         const cdp = await entry.page.cdp().catch(() => null);
@@ -7278,16 +7734,11 @@ var ChromiumDriver = class {
       tabs: read.map(({ id, meta, entry }) => ({
         id,
         navCounter: entry.navCounter,
+        ...entry.openerId ? { openerId: entry.openerId } : {},
         url: meta.url,
         title: meta.title,
         ...meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {},
-        // The driver has no per-tab loading flag: every verb here awaits its
-        // own settle before answering, so by the time anything can ask, the
-        // navigation this driver started is over. A tab loading because the
-        // PAGE navigated itself is real and is not modelled — reporting a
-        // guess would be worse than reporting nothing, since the strip's
-        // spinner is the one thing on it that must not be permanent.
-        loading: false
+        loading: entry.loading ?? false
       })),
       activeTabId,
       // The ACTIVE tab's history, which is what the two buttons act on.
@@ -7338,7 +7789,7 @@ var ChromiumDriver = class {
     return this.viewports.get(tabId ?? DEFAULT_TAB) ?? null;
   }
   async viewport(tabId) {
-    const key = tabId ?? DEFAULT_TAB;
+    const key = tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
     if (live && !live.page.isClosed()) {
       const cached = this.viewports.get(key);
@@ -7368,6 +7819,7 @@ var ChromiumDriver = class {
   }
   async close() {
     this.closing = true;
+    this.stopPageCreated?.();
     await Promise.race([
       Promise.allSettled([...this.pendingTabs.values()]),
       new Promise((resolve2) => {
@@ -7588,6 +8040,46 @@ var ChromiumDriver = class {
     const { settled } = await settlePage(steps, this.settleOptions);
     return settled;
   }
+  async registerTab(tabId, page, openerId, background = false) {
+    const entry = {
+      page,
+      ...openerId ? { openerId } : {},
+      navCounter: 0,
+      webmcp: emptyWebmcpState()
+    };
+    this.tabs.set(tabId, entry);
+    void page.cdp().then(async (cdp) => {
+      if (!cdp || this.tabs.get(tabId) !== entry) return;
+      const frames = /* @__PURE__ */ new Set();
+      cdp.on("Page.frameStartedLoading", (raw) => {
+        if (this.tabs.get(tabId) !== entry) return;
+        frames.add(raw.frameId);
+        entry.loading = true;
+      });
+      cdp.on("Page.frameStoppedLoading", (raw) => {
+        if (this.tabs.get(tabId) !== entry) return;
+        frames.delete(raw.frameId);
+        entry.loading = frames.size > 0;
+      });
+      await cdp.send("Page.enable");
+    }).catch(() => {
+    });
+    await entry.page.setViewportSize?.({
+      width: this.sessionViewport.width,
+      height: this.sessionViewport.height
+    }).catch(() => {
+    });
+    void this.attachWebmcp(tabId, entry);
+    if (!background) {
+      this.activeTabId = tabId;
+      if (openerId) await page.bringToFront?.().catch(() => {
+      });
+    } else if (this.activeTabId) {
+      await this.tabs.get(this.activeTabId)?.page.bringToFront?.().catch(() => {
+      });
+    }
+    return entry;
+  }
   /** `null` means teardown has begun and no new page will be opened. */
   async getOrCreateTab(tabId) {
     const existing = this.tabs.get(tabId);
@@ -7595,6 +8087,11 @@ var ChromiumDriver = class {
     const inFlight = this.pendingTabs.get(tabId);
     if (inFlight) return inFlight;
     if (this.closing) return null;
+    if (this.tabs.size + this.pendingTabs.size >= this.maxTabs) {
+      throw new Error(
+        `not found: this browser is at its limit of ${this.maxTabs} tabs \u2014 close one first`
+      );
+    }
     const creating = (async () => {
       await this.dropTab(tabId);
       const page = await this.context.newPage();
@@ -7603,20 +8100,7 @@ var ChromiumDriver = class {
         });
         return null;
       }
-      const entry = {
-        page,
-        navCounter: 0,
-        webmcp: emptyWebmcpState()
-      };
-      this.tabs.set(tabId, entry);
-      await entry.page.setViewportSize?.({
-        width: this.sessionViewport.width,
-        height: this.sessionViewport.height
-      }).catch(() => {
-      });
-      void this.attachWebmcp(tabId, entry);
-      this.activeTabId = tabId;
-      return entry;
+      return this.registerTab(tabId, page);
     })();
     this.pendingTabs.set(tabId, creating);
     try {
@@ -7788,7 +8272,7 @@ var ChromiumDriver = class {
    * spends the very round trip the state token exists to save.
    */
   async observeForRefusal(command, wants) {
-    const tabId = command.tabId ?? DEFAULT_TAB;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -7902,11 +8386,18 @@ var ChromiumDriver = class {
     entry.webmcp.attaching ??= (async () => {
       const bridge = await entry.page.webmcp().catch(() => null);
       if (!bridge || this.tabs.get(tabId) !== entry) return;
-      entry.webmcp.unsubscribe = bridge.subscribe((tools) => {
+      const unsubscribeTools = bridge.subscribe((tools) => {
         entry.webmcp.tools = tools;
         entry.webmcp.supported = bridge.isSupported();
         this.bumpWebmcpRevision(entry);
       });
+      const unsubscribeExternal = bridge.subscribeExternalInvocation?.(
+        (name) => this.onExternalInvocation?.(tabId, name)
+      );
+      entry.webmcp.unsubscribe = () => {
+        unsubscribeTools();
+        unsubscribeExternal?.();
+      };
     })().catch(() => {
     });
     return entry.webmcp.attaching;
@@ -7959,11 +8450,16 @@ var ChromiumDriver = class {
   async dropTab(tabId) {
     const going = this.tabs.get(tabId);
     going?.webmcp.unsubscribe?.();
+    const next = tabAfterClose(
+      [...this.tabs].map(([id, tab]) => ({ id, openerId: tab.openerId })),
+      tabId,
+      this.activeTabId ?? null
+    );
     this.tabs.delete(tabId);
-    if (this.activeTabId === tabId) {
-      const remaining = [...this.tabs.keys()];
-      this.activeTabId = remaining[remaining.length - 1];
-    }
+    this.activeTabId = next ?? void 0;
+    if (!this.closing && next)
+      await this.tabs.get(next)?.page.bringToFront?.().catch(() => {
+      });
     this.refs.delete(tabId);
     await this.dropViewport(tabId);
   }
@@ -7989,6 +8485,411 @@ function safeUrl(page) {
   } catch {
     return "";
   }
+}
+
+// server/services/browserd/local/egress-proxy.ts
+import { createServer as createServer2, request } from "node:http";
+import { connect } from "node:net";
+import { randomBytes as randomBytes3, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+
+// server/services/browserd/local/security-policy.ts
+import { networkInterfaces } from "node:os";
+
+// shared/hosted-web-timeouts.ts
+var WEB_CALL_TIMEOUT_MS = 3e4;
+
+// server/config.ts
+var SERVER_PORT = process.env.SERVER_PORT ? parseInt(process.env.SERVER_PORT, 10) : 6274;
+var SERVER_HOSTNAME = process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
+var LOCAL_SERVER_ADDR = `http://localhost:${SERVER_PORT}`;
+var HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
+var LOCAL_BROWSER_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_BROWSER_ENABLED !== "false";
+var LOCAL_COMPUTER_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
+var LOCAL_HARNESS_ENABLED = !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
+var SCHEDULED_EVALS_WRITE_ENABLED = process.env.MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED === "true";
+var WEBMCP_INSPECTOR_ENABLED = process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
+var EVAL_WIDGET_MODEL_CONTEXT = process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
+var WEB_ALLOWED_ORIGINS = (process.env.WEB_ALLOWED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter((origin) => origin.length > 0);
+var CLIENT_PORT = process.env.CLIENT_PORT || "5173";
+var DEFAULT_CORS_ORIGINS = [
+  `http://localhost:${CLIENT_PORT}`,
+  // Vite dev server
+  "http://localhost:8080",
+  // Electron renderer dev server
+  `http://localhost:${SERVER_PORT}`,
+  // Hono server
+  `http://127.0.0.1:${SERVER_PORT}`,
+  // Hono server production
+  "https://staging.mcpjam.com"
+  // Hosted deployment
+];
+var CORS_ORIGINS = HOSTED_MODE && WEB_ALLOWED_ORIGINS.length > 0 ? WEB_ALLOWED_ORIGINS : Array.from(/* @__PURE__ */ new Set([...DEFAULT_CORS_ORIGINS, ...WEB_ALLOWED_ORIGINS]));
+var ELICITATION_FORM_TTL_MS = 5 * 6e4;
+var ELICITATION_URL_CONSENT_TTL_MS = 2 * 6e4;
+var ELICITATION_TIMEOUT_EXTENSION_MS = ELICITATION_FORM_TTL_MS + 3e4;
+var MRTR_CONTINUATION_TTL_MS = 10 * 6e4;
+var MRTR_CONTINUATION_ROUTE_TIMEOUT_MS = 1e4;
+var MRTR_CONTINUATION_LEASE_TTL_MS = 4 * MRTR_CONTINUATION_ROUTE_TIMEOUT_MS + WEB_CALL_TIMEOUT_MS + 6e4;
+var MRTR_RESUME_STATE_MAX_BYTES = 128 * 1024;
+var MRTR_DISPLAY_FIELD_MAX_BYTES = 16 * 1024;
+var MRTR_RESPONSE_CONTENT_MAX_BYTES = 64 * 1024;
+var MCPJAM_HOSTED_ORIGIN = process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") || "https://app.mcpjam.com";
+function parseAllowedHosts(raw) {
+  return raw ? raw.split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0) : [];
+}
+var ALLOWED_HOSTS = parseAllowedHosts(
+  process.env.MCPJAM_ALLOWED_HOSTS
+);
+var CANIUSE_LANDING_HOSTS = new Set(
+  (process.env.CANIUSE_LANDING_HOSTS ?? "caniuse.dev,www.caniuse.dev").split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0)
+);
+var SCORE_LANDING_HOSTS = new Set(
+  (process.env.SCORE_LANDING_HOSTS ?? "score.mcpjam.com,www.score.mcpjam.com").split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0)
+);
+var BARE_HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+function parseSandboxHosts(raw) {
+  return new Set(
+    raw.split(",").map((h) => h.trim().toLowerCase()).filter((h) => BARE_HOSTNAME.test(h))
+  );
+}
+var SANDBOX_HOSTS = parseSandboxHosts(
+  process.env.SANDBOX_HOSTS ?? "sandbox.mcpjam.com,sandbox-staging.mcpjam.com"
+);
+
+// server/services/browserd/local/security-policy.ts
+var BrowserPolicyError = class extends Error {
+  code = "browser_policy_refused";
+  constructor(message = "Browser access to this destination is not allowed.") {
+    super(`browser_policy_refused: ${message}`);
+    this.name = "BrowserPolicyError";
+  }
+};
+var controllerPorts = /* @__PURE__ */ new Map();
+var controllerOrigins = /* @__PURE__ */ new Map();
+function registerBrowserController(url) {
+  const parsed = new URL(url);
+  const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+  controllerOrigins.set(
+    parsed.origin,
+    (controllerOrigins.get(parsed.origin) ?? 0) + 1
+  );
+  const local = isMachineAddress(parsed.hostname);
+  if (local) controllerPorts.set(port, (controllerPorts.get(port) ?? 0) + 1);
+  let removed = false;
+  return () => {
+    if (removed) return;
+    removed = true;
+    for (const [map, key] of [
+      [controllerOrigins, parsed.origin],
+      [controllerPorts, port]
+    ]) {
+      if (map === controllerPorts && !local) continue;
+      const registry = map;
+      const count = registry.get(key) ?? 0;
+      if (count <= 1) registry.delete(key);
+      else registry.set(key, count - 1);
+    }
+  };
+}
+function host(raw) {
+  return raw.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+}
+function isMachineAddress(raw) {
+  const value = host(raw);
+  if (value === "localhost" || value.endsWith(".localhost") || value === "::1" || value === "::" || value === "0.0.0.0" || /^127\./.test(value))
+    return true;
+  if (value.startsWith("::ffff:")) {
+    const tail = value.slice(7);
+    if (tail.includes(".")) return isMachineAddress(tail);
+    const parts = tail.split(":");
+    if (parts.length === 2 && parts.every((p) => /^[\da-f]{1,4}$/.test(p))) {
+      const first = parseInt(parts[0], 16), last = parseInt(parts[1], 16);
+      return isMachineAddress(
+        `${first >> 8}.${first & 255}.${last >> 8}.${last & 255}`
+      );
+    }
+  }
+  return Object.values(networkInterfaces()).flat().some((a) => a && host(a.address) === value);
+}
+function secureDriverContext(context, policy) {
+  const pages = /* @__PURE__ */ new WeakMap();
+  let closed = false;
+  let stop;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    stop?.();
+    try {
+      await context.close();
+    } finally {
+      policy.dispose?.();
+    }
+  };
+  stop = policy.onRevoked(close);
+  function guard(page) {
+    const existing = pages.get(page);
+    if (existing) return existing;
+    const synchronous = /* @__PURE__ */ new Set([
+      "url",
+      "isClosed",
+      "consoleEntries",
+      "consoleCursor",
+      "dropConsoleSince",
+      "networkEntries",
+      "networkCursor",
+      "dropNetworkSince",
+      "pendingDialog"
+    ]);
+    const wrapped = new Proxy(page, {
+      get(target, key) {
+        const value = Reflect.get(target, key);
+        if (typeof value !== "function") return value;
+        if (key === "close" || key === "isClosed") return value.bind(target);
+        if (synchronous.has(String(key)))
+          return (...args) => {
+            if (!policy.isActive())
+              throw new BrowserPolicyError("Browser permission was revoked.");
+            return value.apply(target, args);
+          };
+        return async (...args) => {
+          await policy.assertActive();
+          if (key === "goto") policy.assertNavigation(args[0]);
+          if (key !== "goto" && !policy.allowsRequest(target.url()))
+            throw new BrowserPolicyError();
+          const result = await value.apply(target, args);
+          await policy.assertActive();
+          if ((key === "cdp" || key === "webmcp") && result) {
+            return new Proxy(result, {
+              get(rpc, method) {
+                const member = Reflect.get(rpc, method);
+                if (typeof member !== "function") return member;
+                if (!["send", "invoke"].includes(String(method)))
+                  return member.bind(rpc);
+                return async (...params) => {
+                  await policy.assertActive();
+                  if (!policy.allowsRequest(target.url()))
+                    throw new BrowserPolicyError();
+                  if (method === "send" && params[0] === "Page.navigate")
+                    policy.assertNavigation(params[1].url);
+                  const response = await member.apply(rpc, params);
+                  await policy.assertActive();
+                  return response;
+                };
+              }
+            });
+          }
+          return result;
+        };
+      }
+    });
+    pages.set(page, wrapped);
+    return wrapped;
+  }
+  return {
+    async newPage() {
+      await policy.assertActive();
+      const page = await context.newPage();
+      await policy.assertActive();
+      return guard(page);
+    },
+    ...context.onPageCreated ? {
+      onPageCreated: (listener) => context.onPageCreated(
+        (event) => listener({
+          ...event,
+          page: guard(event.page),
+          opener: guard(event.opener)
+        })
+      )
+    } : {},
+    isConnected: () => !closed && policy.isActive() && context.isConnected(),
+    close
+  };
+}
+
+// server/services/browserd/local/egress-proxy.ts
+function pinnedAddressOptions(addresses) {
+  const lookup = (_hostname, options, callback) => {
+    if (options.all) callback(null, addresses);
+    else callback(null, addresses[0].address, addresses[0].family);
+  };
+  return {
+    lookup,
+    autoSelectFamily: true,
+    autoSelectFamilyAttemptTimeout: 250
+  };
+}
+async function startLocalBrowserProxy(policy) {
+  const username = "browser";
+  const password = randomBytes3(32).toString("hex");
+  const expected = Buffer.from(
+    `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
+  );
+  const sockets = /* @__PURE__ */ new Set();
+  let closed = false;
+  const authorized = (req) => {
+    const actual = Buffer.from(req.headers["proxy-authorization"] ?? "");
+    return !closed && policy.isActive() && actual.length === expected.length && timingSafeEqual2(actual, expected);
+  };
+  const server = createServer2(
+    { maxHeaderSize: 64 * 1024, requestTimeout: 12e4 },
+    async (req, res) => {
+      if (!authorized(req)) {
+        res.writeHead(407, {
+          "Proxy-Authenticate": 'Basic realm="MCPJam managed browser"'
+        });
+        res.end();
+        return;
+      }
+      try {
+        const target = new URL(req.url ?? "");
+        if (target.protocol !== "http:" || target.username || target.password || !policy.allowsRequest(target.href))
+          throw new Error("denied");
+        const addresses = await policy.resolveDestination(
+          target.hostname,
+          Number(target.port || 80)
+        );
+        if (closed || req.destroyed) throw new Error("closed");
+        const headers = {
+          ...req.headers,
+          host: target.host
+        };
+        delete headers["proxy-authorization"];
+        delete headers["proxy-connection"];
+        const upstream = request(
+          {
+            hostname: target.hostname.replace(/^\[|\]$/g, ""),
+            ...pinnedAddressOptions(addresses),
+            port: target.port || 80,
+            path: target.pathname + target.search,
+            method: req.method,
+            headers,
+            maxHeaderSize: 64 * 1024,
+            agent: false
+          },
+          (incoming) => {
+            res.writeHead(incoming.statusCode ?? 502, incoming.headers);
+            incoming.pipe(res);
+          }
+        );
+        upstream.on("socket", (socket) => track(socket));
+        upstream.on("error", () => {
+          if (!res.headersSent) res.writeHead(502);
+          res.end();
+        });
+        res.on("close", () => upstream.destroy());
+        req.pipe(upstream);
+      } catch {
+        res.writeHead(403);
+        res.end("Browser destination blocked.");
+      }
+    }
+  );
+  function track(socket) {
+    if (closed || sockets.size >= 256) {
+      socket.destroy();
+      return;
+    }
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    socket.on("error", () => socket.destroy());
+  }
+  server.maxConnections = 128;
+  server.on("connection", track);
+  server.on("clientError", (_error, socket) => socket.destroy());
+  const tunnel = async (req, downstream, head, upgrade) => {
+    if (!authorized(req)) {
+      downstream.end(
+        'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="MCPJam managed browser"\r\nConnection: close\r\n\r\n'
+      );
+      return;
+    }
+    try {
+      const target = new URL(upgrade ? req.url ?? "" : `https://${req.url}`);
+      if (!(upgrade ? ["http:", "ws:"] : ["https:"]).includes(target.protocol) || target.username || target.password || !policy.allowsRequest(target.href))
+        throw new Error("denied");
+      const addresses = await policy.resolveDestination(
+        target.hostname,
+        Number(target.port || (upgrade ? 80 : 443))
+      );
+      if (closed || downstream.destroyed) throw new Error("closed");
+      const upstream = connect({
+        host: target.hostname.replace(/^\[|\]$/g, ""),
+        ...pinnedAddressOptions(addresses),
+        port: Number(target.port || (upgrade ? 80 : 443))
+      });
+      track(upstream);
+      upstream.setTimeout(3e4, () => {
+        if (upstream.connecting) upstream.destroy();
+      });
+      downstream.once("close", () => upstream.destroy());
+      upstream.once("close", () => downstream.destroy());
+      upstream.once("connect", () => {
+        upstream.setTimeout(0);
+        if (closed || !policy.isActive()) {
+          upstream.destroy();
+          return;
+        }
+        if (upgrade) {
+          const headers = Object.entries({
+            ...req.headers,
+            host: target.host
+          }).filter(
+            ([key]) => !["proxy-authorization", "proxy-connection"].includes(
+              key.toLowerCase()
+            )
+          );
+          upstream.write(
+            `${req.method} ${target.pathname}${target.search} HTTP/1.1\r
+${headers.map(
+              ([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`
+            ).join("\r\n")}\r
+\r
+`
+          );
+        } else downstream.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length) upstream.write(head);
+        downstream.pipe(upstream);
+        upstream.pipe(downstream);
+      });
+    } catch {
+      downstream.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+    }
+  };
+  server.on("connect", (req, socket, head) => {
+    void tunnel(req, socket, head, false);
+  });
+  server.on("upgrade", (req, socket, head) => {
+    void tunnel(req, socket, head, true);
+  });
+  await new Promise((resolve2, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve2();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("Browser network policy unavailable.");
+  const url = `http://127.0.0.1:${address.port}`;
+  const unregister = registerBrowserController(url);
+  let unsubscribe;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    unsubscribe?.();
+    unregister();
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve2) => server.close(() => resolve2()));
+  };
+  server.on("error", () => {
+    void close();
+  });
+  unsubscribe = policy.onRevoked(close);
+  return {
+    proxy: { server: url, username, password, bypass: "<-loopback>" },
+    close
+  };
 }
 
 // server/services/webmcp-inspector/launch-args.ts
@@ -8125,10 +9026,10 @@ async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, descri
   }
   const separator = target.lastIndexOf("-");
   if (separator <= 0) return { live: false };
-  const host = target.slice(0, separator);
+  const host2 = target.slice(0, separator);
   const pid = Number(target.slice(separator + 1));
   if (!Number.isInteger(pid) || pid <= 0) return { live: false };
-  if (host !== hostname()) return { live: true, pid, host };
+  if (host2 !== hostname()) return { live: true, pid, host: host2 };
   if (!isAlive(pid)) return { live: false, pid };
   const command = describeProcess(pid)?.trim();
   if (command && !looksLikeBrowser(command)) {
@@ -8192,53 +9093,56 @@ function warn(message) {
 }
 var ACT_TIMEOUT_MS = 15e3;
 var SCREENSHOT_JPEG_QUALITY = 70;
-function wrapPage(page) {
+function wrapPage(page, localSecurity = false, localBudget) {
   const consoleRing = [];
   let consoleTotal = 0;
   let errorsTotal = 0;
-  page.on("console", (message) => {
-    try {
-      const text = message.text?.() ?? "";
-      consoleRing.push({
-        type: message.type?.() ?? "log",
-        text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
-        at: Date.now()
-      });
-      consoleTotal += 1;
-      if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
-    } catch {
+  page.on(
+    "console",
+    (message) => {
+      try {
+        const text = message.text?.() ?? "";
+        consoleRing.push({
+          type: message.type?.() ?? "log",
+          text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
+          at: Date.now()
+        });
+        consoleTotal += 1;
+        if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+      } catch {
+      }
     }
-  });
+  );
   const network = new NetworkRing();
   const requestIds = /* @__PURE__ */ new WeakMap();
   let nextRequestId = 0;
-  const idFor = (request) => {
-    const known = requestIds.get(request);
+  const idFor = (request2) => {
+    const known = requestIds.get(request2);
     if (known) return known;
     nextRequestId += 1;
     const minted = `r${nextRequestId}`;
-    requestIds.set(request, minted);
+    requestIds.set(request2, minted);
     return minted;
   };
-  page.on("request", (request) => {
+  page.on("request", (request2) => {
     try {
       network.started({
-        requestId: idFor(request),
-        method: request.method?.() ?? "GET",
-        url: request.url?.() ?? "",
-        ...request.resourceType?.() ? { resourceType: request.resourceType() } : {}
+        requestId: idFor(request2),
+        method: request2.method?.() ?? "GET",
+        url: request2.url?.() ?? "",
+        ...request2.resourceType?.() ? { resourceType: request2.resourceType() } : {}
       });
     } catch {
     }
   });
   page.on("response", (response) => {
     try {
-      const request = response.request?.();
-      if (!request) return;
+      const request2 = response.request?.();
+      if (!request2) return;
       const headers = response.headers?.();
       const length = Number(headers?.["content-length"]);
       network.finished({
-        requestId: idFor(request),
+        requestId: idFor(request2),
         ...response.status ? { status: response.status() } : {},
         ...response.statusText?.() ? { statusText: response.statusText() } : {},
         ...Number.isFinite(length) ? { bytes: length } : {},
@@ -8247,11 +9151,11 @@ function wrapPage(page) {
     } catch {
     }
   });
-  page.on("requestfailed", (request) => {
+  page.on("requestfailed", (request2) => {
     try {
       network.finished({
-        requestId: idFor(request),
-        failure: request.failure?.()?.errorText ?? "request failed"
+        requestId: idFor(request2),
+        failure: request2.failure?.()?.errorText ?? "request failed"
       });
     } catch {
     }
@@ -8293,13 +9197,22 @@ function wrapPage(page) {
   let cdpPromise = null;
   const adapted = {
     async goto(url) {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async reload() {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.reload({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async goBack() {
-      await page.goBack({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page.goBack({
+        waitUntil: "domcontentloaded",
+        timeout: NAV_TIMEOUT_MS
+      });
     },
     async setViewportSize(size) {
       await page.setViewportSize(size);
@@ -8405,7 +9318,7 @@ function wrapPage(page) {
     webmcp() {
       webmcpPromise ??= (async () => {
         const session = await adapted.cdp();
-        return session ? attachWebMcp(page, session) : null;
+        return session ? attachWebMcp(page, session, localSecurity, localBudget) : null;
       })();
       return webmcpPromise;
     },
@@ -8420,13 +9333,13 @@ function wrapPage(page) {
   };
   return adapted;
 }
-async function attachWebMcp(page, session) {
+async function attachWebMcp(page, session, localSecurity = false, localBudget) {
   try {
     const probe = async () => {
       const supported = await page.evaluate(`(() => ${PAGE_API_PROBE})()`).catch(() => false);
       return supported === true;
     };
-    const bridge = new WebMcpBridge(session);
+    const bridge = new WebMcpBridge(session, { localSecurity, localBudget });
     bridge.resupport(probe);
     await bridge.start(probe);
     attachFrameSessions(page, bridge);
@@ -8493,72 +9406,156 @@ function contextOptionsFor(options) {
   return { ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: dpr };
 }
 async function launchBrowserdContext(options) {
+  const policy = options.securityPolicy;
+  if (policy) {
+    if (process.getuid?.() === 0)
+      throw new Error(
+        "Local Browser requires a non-root user so Chromium can remain sandboxed."
+      );
+    if (options.extraArgs?.some(
+      (arg) => /--(?:no-sandbox|disable-setuid-sandbox|disable-web-security|proxy|host-resolver|ignore-certificate-errors)/.test(
+        arg
+      )
+    ))
+      throw new Error("Unsafe local Browser launch override.");
+    await policy.assertActive();
+  }
+  if (policy && options.contextMode !== "ephemeral" && options.userDataDir) {
+    const { rm } = await import("node:fs/promises");
+    const { join: join4 } = await import("node:path");
+    for (const cache of ["Service Worker", "Cache", "Code Cache"]) {
+      await rm(join4(options.userDataDir, "Default", cache), {
+        recursive: true,
+        force: true
+      });
+    }
+  }
   const { chromium } = await import("playwright");
-  const launchArgs = {
-    headless: options.headless ?? false,
-    ...options.channel ? { channel: options.channel } : {},
-    ...options.executablePath ? { executablePath: options.executablePath } : {},
-    // Chromium cannot start its renderer sandbox as uid 0 (the image builds
-    // as root), so it is disabled only in that case.
-    chromiumSandbox: process.getuid?.() !== 0,
-    args: buildBrowserdLaunchArgs(options.extraArgs)
-  };
-  if (options.contextMode === "ephemeral") {
-    const browser = await chromium.launch(launchArgs);
-    let context2;
+  const proxy = policy ? await startLocalBrowserProxy(policy) : void 0;
+  const finish = async (context, onClose) => {
     try {
-      context2 = await browser.newContext({
-        acceptDownloads: false,
-        permissions: [],
-        // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
-        // whatever the box says, so eval captures match across hosts.
-        ...contextOptionsFor({ contextMode: "ephemeral" })
+      if (policy) {
+        await context.route("**/*", async (route) => {
+          if (!policy.allowsRequest(route.request().url()))
+            await route.abort("blockedbyclient");
+          else await route.continue();
+        });
+        for (const page of context.pages()) {
+          if (!policy.allowsRequest(page.url())) await page.close();
+        }
+      }
+      const adapted = adaptContext(context, {
+        localSecurity: Boolean(policy),
+        localBudget: policy?.discoveryBudget,
+        onClose: async () => {
+          try {
+            await onClose?.();
+          } finally {
+            await proxy?.close();
+          }
+        }
       });
+      return policy ? secureDriverContext(adapted, policy) : adapted;
     } catch (error) {
-      await browser.close().catch(() => {
+      await context.close().catch(() => {
       });
+      await onClose?.();
       throw error;
     }
-    return adaptContext(context2, {
-      // The browser outlives the context, so closing the context alone would
-      // leave a Chromium process behind in the box.
-      onClose: () => browser.close()
-    });
-  }
-  const cleared = await clearStaleSingletonLock(options.userDataDir);
-  if (cleared.heldBy) {
-    throw new Error(
-      `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+  };
+  try {
+    const launchArgs = {
+      ...proxy ? { proxy: proxy.proxy } : {},
+      headless: options.headless ?? false,
+      ...options.channel ? { channel: options.channel } : {},
+      ...options.executablePath ? { executablePath: options.executablePath } : {},
+      // Chromium cannot start its renderer sandbox as uid 0 (the image builds
+      // as root), so it is disabled only in that case.
+      chromiumSandbox: process.getuid?.() !== 0,
+      args: buildBrowserdLaunchArgs(options.extraArgs)
+    };
+    if (options.contextMode === "ephemeral") {
+      const browser = await chromium.launch(launchArgs);
+      let context2;
+      try {
+        context2 = await browser.newContext({
+          acceptDownloads: false,
+          permissions: [],
+          // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
+          // whatever the box says, so eval captures match across hosts.
+          ...contextOptionsFor({ contextMode: "ephemeral" }),
+          deviceScaleFactor: options.deviceScaleFactor ?? 1
+        });
+      } catch (error) {
+        await browser.close().catch(() => {
+        });
+        throw error;
+      }
+      return await finish(context2, () => browser.close());
+    }
+    const cleared = await clearStaleSingletonLock(options.userDataDir);
+    if (cleared.heldBy) {
+      throw new Error(
+        `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+      );
+    }
+    const context = await chromium.launchPersistentContext(
+      options.userDataDir,
+      {
+        ...launchArgs,
+        acceptDownloads: false,
+        permissions: [],
+        ...contextOptionsFor({
+          contextMode: "persistent",
+          ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
+        })
+      }
     );
+    return await finish(context);
+  } catch (error) {
+    await proxy?.close();
+    throw error;
   }
-  const context = await chromium.launchPersistentContext(options.userDataDir, {
-    ...launchArgs,
-    acceptDownloads: false,
-    permissions: [],
-    ...contextOptionsFor({
-      contextMode: "persistent",
-      ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
-    })
-  });
-  return adaptContext(context);
 }
 function adaptContext(context, options = {}) {
   const startup = [...context.pages()];
   let adopted = 0;
+  const listeners = /* @__PURE__ */ new Set();
+  const wrapped = /* @__PURE__ */ new WeakMap();
+  function adopt(page) {
+    const existing = wrapped.get(page);
+    if (existing) return existing;
+    if (context.newCDPSession) {
+      registerCdpAttacher(
+        page,
+        () => context.newCDPSession(page),
+        (frame) => context.newCDPSession(frame)
+      );
+    }
+    const driverPage = wrapPage(
+      page,
+      options.localSecurity,
+      options.localBudget
+    );
+    wrapped.set(page, driverPage);
+    page.on("popup", (popup) => {
+      const child = adopt(popup);
+      for (const listener of listeners)
+        listener({ page: child, opener: driverPage });
+    });
+    return driverPage;
+  }
   return {
+    onPageCreated(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     async newPage() {
-      const page = adopted < startup.length ? startup[adopted++] : await context.newPage();
-      if (context.newCDPSession) {
-        registerCdpAttacher(
-          page,
-          () => context.newCDPSession(page),
-          // The same call with a `Frame`: how a cross-origin frame's own
-          // session is opened, so the hosted box sees the tools inside a
-          // third-party widget the way the local inspector does.
-          (frame) => context.newCDPSession(frame)
-        );
-      }
-      return wrapPage(page);
+      return adopt(
+        adopted < startup.length ? startup[adopted++] : await context.newPage()
+      );
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;
@@ -8674,7 +9671,7 @@ async function resizeHostedDisplay(deps, next, previous) {
 }
 
 // server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes3 } from "node:crypto";
+import { createHash as createHash2, randomBytes as randomBytes4 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
@@ -8745,7 +9742,7 @@ function readRecordMaxBytes(env) {
   return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 function defaultMintToken(path) {
-  const token = randomBytes3(32).toString("hex");
+  const token = randomBytes4(32).toString("hex");
   writeFileSync(path, token, { encoding: "utf8", mode: 384 });
   chmodSync(path, 384);
   return token;
@@ -8772,10 +9769,10 @@ function extraArgsFor(config) {
   }
   return args;
 }
-function formatReadyLine(host, port, bootId, protocolVersion) {
+function formatReadyLine(host2, port, bootId, protocolVersion) {
   return JSON.stringify({
     event: "listening",
-    host,
+    host: host2,
     port,
     bootId,
     ...protocolVersion === void 0 ? {} : { protocolVersion }

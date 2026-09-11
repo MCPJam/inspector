@@ -1,3 +1,4 @@
+import type { LocalDiscoveryBudget } from "../daemon/webmcp-bridge.js";
 /**
  * A `DriverPage` over one Electron `webContents`.
  *
@@ -163,10 +164,14 @@ export interface PageWebContents {
 }
 
 export interface ElectronPageDeps {
+  localSecurity?: boolean;
+  localBudget?: LocalDiscoveryBudget;
   /** Called when this page is asked to close, so the context drops its window. */
   onClose(): Promise<void> | void;
   /** Bring the page's window forward — what `activate_tab` means here. */
   onBringToFront?(): void;
+  /** Resize the native view or window when the session barrier accepts it. */
+  onResize?(size: { width: number; height: number }): void;
 }
 
 /**
@@ -301,7 +306,8 @@ export function createElectronPage(
     // (event, level, message). Both shapes appear in the wild depending on
     // which Electron the packaged app was built against, so read either.
     const first = args[0] as
-      { level?: string | number; message?: string } | undefined;
+      | { level?: string | number; message?: string }
+      | undefined;
     const level = first?.level ?? (args[1] as string | number | undefined);
     const message = first?.message ?? (args[2] as string | undefined);
     if (typeof message !== "string") return;
@@ -687,7 +693,9 @@ export function createElectronPage(
     // of a definite `true` refuses.
     const resolved = (await cdp
       .send("DOM.resolveNode", { nodeId })
-      .catch(() => undefined)) as { object?: { objectId?: string } } | undefined;
+      .catch(() => undefined)) as
+      | { object?: { objectId?: string } }
+      | undefined;
     const objectId = resolved?.object?.objectId;
     if (!objectId) return here("OTHER");
     let hostObjectId: string | undefined;
@@ -790,7 +798,7 @@ export function createElectronPage(
       type,
       x: point.x,
       y: point.y,
-      button: type === "mouseMoved" ? "none" : (options.button ?? "left"),
+      button: type === "mouseMoved" ? "none" : options.button ?? "left",
       buttons: options.buttons ?? 0,
       clickCount: options.clickCount ?? (type === "mouseMoved" ? 0 : 1),
     });
@@ -860,6 +868,13 @@ export function createElectronPage(
   }
 
   const page: DriverPage = {
+    ...(deps.onResize
+      ? {
+          async setViewportSize(size: { width: number; height: number }) {
+            deps.onResize!(size);
+          },
+        }
+      : {}),
     async goto(url) {
       // BEFORE the load, not inside the settle that follows it: `Network.enable`
       // does not replay, so a request this navigation starts before the monitor
@@ -1012,18 +1027,20 @@ export function createElectronPage(
           // select-all and insert: focus would still be wherever it already
           // was, and the text would land in an element this call never looked
           // at — the same wrong-target write by a longer route.
-          await cdp.send("DOM.focus", { nodeId: focusNodeId }).catch(async () => {
-            // ERROR PROSE IS LOAD-BEARING here, as this file's header says:
-            // an element that left the document has to say `not found`, or
-            // the driver reports a re-render as a daemon fault and the model
-            // stops instead of looking again.
-            throw new Error(
-              (await nodeIsGone(focusNodeId))
-                ? `not found: ${selector} left the document before it could ` +
-                  `be filled`
-                : `${selector}: element could not be focused to fill it`,
-            );
-          });
+          await cdp
+            .send("DOM.focus", { nodeId: focusNodeId })
+            .catch(async () => {
+              // ERROR PROSE IS LOAD-BEARING here, as this file's header says:
+              // an element that left the document has to say `not found`, or
+              // the driver reports a re-render as a daemon fault and the model
+              // stops instead of looking again.
+              throw new Error(
+                (await nodeIsGone(focusNodeId))
+                  ? `not found: ${selector} left the document before it could ` +
+                    `be filled`
+                  : `${selector}: element could not be focused to fill it`,
+              );
+            });
           // AND THEN CHECK THAT THE FOCUS STAYED PUT.
           //
           // `DOM.focus` resolving is not the same as the element being
@@ -1257,15 +1274,25 @@ export function createElectronPage(
         const cdp = await session();
         if (!cdp) return null;
         try {
-          const bridge = new Bridge(cdp);
-          await bridge.start(async () => {
-            // `WebMCP.enable` resolves even where the feature is off; the page
-            // API is the only honest probe. Same rule as every other engine.
-            const supported = await wc
-              .executeJavaScript(`(() => ${PAGE_API_PROBE})()`)
-              .catch(() => false);
-            return supported === true;
+          const bridge = new Bridge(cdp, {
+            localSecurity: deps.localSecurity,
+            localBudget: deps.localBudget,
           });
+          const probe = async () => {
+            // Electron's executeJavaScript waits for the first load. The
+            // driver awaits this bridge BEFORE navigating, so using it here
+            // deadlocks a fresh tab. CDP evaluates the current document
+            // directly while preserving discovery before the first load.
+            const result = (await cdp.send("Runtime.evaluate", {
+              expression: PAGE_API_PROBE,
+              returnByValue: true,
+            })) as { result?: { value?: unknown }; exceptionDetails?: unknown };
+            return !result.exceptionDetails && result.result?.value === true;
+          };
+          // The initial document may lack the API. Recheck each destination
+          // rather than retaining about:blank's answer for the whole session.
+          bridge.resupport(probe);
+          await bridge.start(probe);
           return bridge;
         } catch {
           return null;

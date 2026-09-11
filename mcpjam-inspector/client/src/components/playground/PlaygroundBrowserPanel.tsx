@@ -1,15 +1,15 @@
+import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { useCallback, useEffect } from "react";
 import { Maximize2, Minimize2, PanelRightClose } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
 import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
-import { useComputerEngine } from "@/hooks/useComputerEngine";
-import {
-  useMintBrowserToken,
-  useMintConversationBrowserToken,
-} from "@/hooks/useProjectComputer";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useMintConversationBrowserToken } from "@/hooks/useProjectComputer";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
+import { ComparisonBrowser } from "@/components/browser/ComparisonBrowser";
 
 /**
  * The browser, beside chat.
@@ -50,8 +50,7 @@ export function PlaygroundBrowserPanel({
   visible,
   onClose,
 }: PlaygroundBrowserPanelProps) {
-  const engine = useComputerEngine(projectId);
-  const mintBrowserToken = useMintBrowserToken();
+  const engine = useBrowserEngine(projectId);
   // THE DURABLE SESSION, in the panel as well as in the rail tab it replaces.
   // The browser a chat owns keeps its logins and its saved profile across
   // turns, and that identity travels on the token: minting the project-scoped
@@ -63,18 +62,38 @@ export function PlaygroundBrowserPanel({
     (state) => state.sessionId,
   );
   const browserSessionId = activeChatSessionId ?? undefined;
-  const mintHostedBrowserToken = useCallback(
-    ({ projectId: tokenProjectId }: { projectId: string }) =>
-      browserSessionId
-        ? mintConversationBrowserToken({
-            projectId: tokenProjectId,
-            conversationId: browserSessionId,
-          })
-        : mintBrowserToken({ projectId: tokenProjectId }),
-    [browserSessionId, mintBrowserToken, mintConversationBrowserToken],
+  const hasComparison = useBrowserComparisonStore((state) =>
+    Object.values(state.clients).some(
+      (client) =>
+        client.workspaceId === browserSessionId &&
+        client.projectId === projectId,
+    ),
   );
-  const expanded = useBrowserWorkspaceStore((state) => state.expanded);
-  const setExpanded = useBrowserWorkspaceStore((state) => state.setExpanded);
+  const mintHostedBrowserToken = useCallback(
+    ({ projectId: tokenProjectId }: { projectId: string }) => {
+      if (!browserSessionId)
+        throw new Error("The conversation is still loading.");
+      return mintConversationBrowserToken({
+        projectId: tokenProjectId,
+        conversationId: browserSessionId,
+      });
+    },
+    [browserSessionId, mintConversationBrowserToken],
+  );
+  const expanded = useBrowserWorkspaceStore((state) =>
+    browserSessionId
+      ? !!state.conversations[browserSessionId]?.expanded
+      : false,
+  );
+  const setConversationExpanded = useBrowserWorkspaceStore(
+    (state) => state.setExpanded,
+  );
+  const setExpanded = useCallback(
+    (value: boolean) => {
+      if (browserSessionId) setConversationExpanded(browserSessionId, value);
+    },
+    [browserSessionId, setConversationExpanded],
+  );
 
   // An expanded browser that is no longer on screen has nothing to be expanded
   // over. Left set, it would take over the window the next time the panel
@@ -89,6 +108,13 @@ export function PlaygroundBrowserPanel({
   // authorized it yet must see the local body's pointer, not a cloud browser
   // they did not ask for.
   const isLocal = engine.selectedEngine === "local";
+
+  if (!browserSessionId)
+    return (
+      <p role="status" className="p-4 text-sm text-muted-foreground">
+        Loading conversation…
+      </p>
+    );
 
   return (
     <div
@@ -115,6 +141,7 @@ export function PlaygroundBrowserPanel({
             <Maximize2 className="size-3.5" aria-hidden />
           )}
         </button>
+        <BrowserRuntimeControls projectId={projectId} compact />
         <button
           type="button"
           onClick={onClose}
@@ -131,8 +158,21 @@ export function PlaygroundBrowserPanel({
         </button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
-        {isLocal ? (
+        {hasComparison && projectId ? (
+          <ComparisonBrowser
+            key={`${projectId}:${browserSessionId}`}
+            projectId={projectId}
+            workspaceId={browserSessionId}
+            active={visible}
+          />
+        ) : isLocal && !engine.localAvailable ? (
+          <p className="p-4 text-sm text-muted-foreground">
+            Browser is unavailable on this machine. Check Browser settings or
+            choose Cloud for a new chat.
+          </p>
+        ) : isLocal ? (
           <LocalBrowserBody
+            key={`${projectId}:${browserSessionId}:local`}
             projectId={projectId}
             sessionId={browserSessionId}
             consentGranted={engine.consent.granted}
@@ -141,6 +181,7 @@ export function PlaygroundBrowserPanel({
           />
         ) : (
           <HostedBrowserBody
+            key={`${projectId}:${browserSessionId}:hosted`}
             projectId={projectId}
             sessionId={browserSessionId}
             mintToken={mintHostedBrowserToken}
@@ -170,11 +211,16 @@ export function PlaygroundBrowserPanel({
  */
 export function browserPanelAvailable(args: {
   hostHasBrowser: boolean;
+  sessionHasBrowser?: boolean;
   selectedEngine: "local" | "cloud";
   isAuthenticated: boolean;
   localBrowserRunning: boolean;
 }): boolean {
+  if (args.sessionHasBrowser && args.isAuthenticated) return true;
   if (args.localBrowserRunning) return true;
+  // Local users must be able to open the explicit setup prompt before any
+  // client has Browser attached. Callers already enforce the rollout gate.
+  if (args.selectedEngine === "local") return true;
   if (!args.hostHasBrowser) return false;
-  return args.selectedEngine === "local" || args.isAuthenticated;
+  return args.isAuthenticated;
 }

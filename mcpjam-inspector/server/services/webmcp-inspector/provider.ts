@@ -1,3 +1,5 @@
+import type { LocalInspectionScope } from "./local-authorization.js";
+import type { LocalBrowserSecurityPolicy } from "../browserd/local/security-policy.js";
 /**
  * The browser boundary for the WebMCP Inspector.
  *
@@ -113,12 +115,20 @@ export interface WebMcpInvokeRequest {
 }
 
 export interface WebMcpBrowserSession {
+  browserState?(): Promise<
+    import("@/shared/browser-session-state").BrowserStateSnapshot | null
+  >;
+  browserCommand?(
+    command: import("@/shared/browser-pane-command").BrowserPaneCommand,
+  ): Promise<void>;
   navigate(url: string): Promise<void>;
   reload(): Promise<void>;
   goBack(): Promise<void>;
-  invokeTool(request: WebMcpInvokeRequest): Promise<{ output: unknown }>;
+  invokeTool(
+    request: WebMcpInvokeRequest,
+  ): Promise<{ output: unknown; truncated?: boolean }>;
   /** Best-effort thumbnail; resolves undefined rather than throwing. */
-  captureScreenshot(): Promise<string | undefined>;
+  captureScreenshot(tabId?: string): Promise<string | undefined>;
   currentUrl(): string;
   viewportTransport(): WebMcpViewportTransport;
   /**
@@ -155,7 +165,7 @@ export interface WebMcpBrowserSession {
    * A provider that cannot be driven this way (the hosted one, whose viewport
    * is driven through the Browser panel instead) logs and returns.
    */
-  dispatchInput(events: WebMcpInputEvent[]): Promise<void>;
+  dispatchInput(events: WebMcpInputEvent[], tabId?: string): Promise<void>;
   /**
    * A frame could not be handed to a viewer, and was replaced by a newer one.
    *
@@ -189,6 +199,8 @@ export interface WebMcpBrowserSession {
 export type WebMcpViewportMode = "window" | "embedded";
 
 export interface CreateWebMcpSessionOptions {
+  localScope?: LocalInspectionScope;
+  securityPolicy?: LocalBrowserSecurityPolicy;
   url: string;
   /**
    * `false` ⇒ adopt the page the browser is ALREADY on instead of driving it
@@ -314,10 +326,7 @@ export class WebMcpOutcomeUnknownError extends Error {
 
 /** The invocation was cancelled — by the user, or by the timeout. */
 export class WebMcpInvocationCancelledError extends Error {
-  constructor(
-    message: string,
-    readonly reason: "cancelled" | "timeout",
-  ) {
+  constructor(message: string, readonly reason: "cancelled" | "timeout") {
     super(message);
     this.name = "WebMcpInvocationCancelledError";
   }

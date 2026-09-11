@@ -1,4 +1,5 @@
 import { GithubForkCredentialsToggle } from "@/components/settings/github-fork-credentials-toggle";
+import { GithubPrServerOAuthControl } from "@/components/settings/github-pr-server-oauth-control";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Github, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -68,6 +69,7 @@ export function SuiteGithubChecksSection({
     bindings,
     connectVerifiedRepo,
     setRepoForkCredentials,
+    setRepoPrServerOAuth,
     listInstallationRepos,
   } = useGithubChecksSettings(organizationId);
 
@@ -80,6 +82,9 @@ export function SuiteGithubChecksSection({
     GithubCheckOutagePolicy | ""
   >("");
   const [connecting, setConnecting] = useState(false);
+  const [pendingOAuth, setPendingOAuth] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   // Whether this instance is still on screen. The `ErrorBoundary` wrapping this
   // section in `suite-iterations-view` is KEYED BY organizationId, so switching
@@ -268,6 +273,33 @@ export function SuiteGithubChecksSection({
                 row={row}
                 canManage={availability?.canManage === true}
                 onChange={setRepoForkCredentials}
+              />
+              <GithubPrServerOAuthControl
+                row={row}
+                canManage={availability?.canManage === true}
+                pending={pendingOAuth.has(row._id)}
+                onChange={(sourceServerId) => {
+                  if (pendingOAuth.has(row._id)) return;
+                  setPendingOAuth((current) => new Set(current).add(row._id));
+                  void setRepoPrServerOAuth({
+                    configId: row._id,
+                    sourceServerId,
+                  })
+                    .catch((error) => {
+                      if (mountedRef.current) {
+                        toast.error(githubChecksWriteErrorMessage(error));
+                      }
+                    })
+                    .finally(() => {
+                      if (!mountedRef.current) return;
+                      setPendingOAuth((current) => {
+                        const next = new Set(current);
+                        next.delete(row._id);
+                        return next;
+                      });
+                    });
+                }}
+                onManage={() => appNavigate(`/p/${row.projectId}/servers`)}
               />
             </div>
           ))}

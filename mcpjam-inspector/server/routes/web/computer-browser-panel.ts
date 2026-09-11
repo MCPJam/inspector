@@ -11,6 +11,7 @@
  *   GET  /page-tools         → the WebMCP tools the current page declares, read
  *                              with the same observation the model's
  *                              the chat turn's page-tool peek sends (Tools pane)
+ *   POST /page-tools/invoke  → run one of those tools as this person (manual)
  *
  * Auth mirrors `computer-upload.ts`: the browser mints a ~60s Convex browser
  * token (`projectComputers.mintBrowserToken`) and sends it as
@@ -62,7 +63,10 @@ import {
   parsePaneCommand,
 } from "../../services/browserd/daemon/pane-command.js";
 import {
+  pageToolInvokeFromBody,
+  pageToolInvokeFromCommandResponse,
   pageToolsFromCommandResponse,
+  sendPageToolInvoke,
   webmcpToolsObserveCommand,
 } from "../../services/browserd/page-tools.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
@@ -131,6 +135,7 @@ export interface BrowserPanelDeps {
     browserdToken: string;
   }) => Pick<
     BrowserdClient,
+    | "status"
     | "lease"
     | "leaseAction"
     | "sendInput"
@@ -301,28 +306,21 @@ export function createComputerBrowserPanelRoutes(
 
     try {
       const ensure = c.req.query("ensure") === "1";
+      if (ensure && "sandboxRowId" in target) {
+        const woke = await wakeSandbox({
+          bearer: bearerFrom(c),
+          sandboxRowId: target.sandboxRowId,
+          verifiedUserId: auth.claims.userId,
+        });
+        if (!woke.ok)
+          return c.json(
+            { ok: false, error: woke.error },
+            woke.status === 503 ? 503 : 409,
+          );
+      }
       let session = await currentSession(target, auth.claims.sessionId);
-      if (!session && ensure) {
-        if ("computerId" in target) {
-          // Attach, never reserve: see `attachBrowserSession`. A panel must
-          // not be able to provision a machine.
-          await attachSession({ computerId: target.computerId });
-        } else {
-          // Returning to a watched Playground session is the one case where
-          // ensure may wake a box: the row and provider id already exist, so
-          // this attaches to durable state rather than provisioning a new
-          // desktop behind the user's back.
-          const woke = await wakeSandbox({
-            bearer: bearerFrom(c),
-            sandboxRowId: target.sandboxRowId,
-          });
-          if (!woke.ok) {
-            return c.json(
-              { ok: false, error: woke.error },
-              woke.status === 503 ? 503 : 409,
-            );
-          }
-        }
+      if (!session && ensure && "computerId" in target) {
+        await attachSession({ computerId: target.computerId });
         session = await currentSession(target, auth.claims.sessionId);
       }
       if (!session) {
@@ -344,6 +342,20 @@ export function createComputerBrowserPanelRoutes(
       // browser now watches through `/computers/browser/stream`, which
       // authenticates upstream on the server with a password that never
       // leaves it.
+      if ("sandboxRowId" in target) {
+        const readiness = await createClient(session).status();
+        if (readiness.kind !== "ok" || readiness.bootId !== session.bootId) {
+          return c.json(
+            {
+              ok: false,
+              error: "browser_unavailable",
+              detail:
+                "The existing browser is not ready. Retry connecting; it has not been replaced.",
+            },
+            503,
+          );
+        }
+      }
       const lease = await readLease(session);
       return c.json({
         ok: true,
@@ -648,7 +660,11 @@ export function createComputerBrowserPanelRoutes(
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
     const { computerId, userId } = auth.claims;
     const parsed: unknown = await c.req.json().catch(() => undefined);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
       return c.json({ ok: false, error: "Expected a JSON object." }, 400);
     }
     const body = parsed as {
@@ -686,10 +702,10 @@ export function createComputerBrowserPanelRoutes(
           outcome.reason === "lease_held"
             ? 423
             : outcome.reason === "page_changed"
-              ? 409
-              : outcome.reason === "unsupported"
-                ? 501
-                : 502;
+            ? 409
+            : outcome.reason === "unsupported"
+            ? 501
+            : 502;
         return c.json(
           {
             ok: false,
@@ -917,6 +933,73 @@ export function createComputerBrowserPanelRoutes(
       }
       reportRouteFailure("browser panel page-tools read failed", error, {
         source: "computer-browser-panel.page-tools",
+        hop: "mcpjam_internal",
+        context: { browserTarget: id },
+      });
+      return c.json({ ok: false, error: "unreachable" }, 502);
+    }
+  });
+
+  /**
+   * Invoke a page tool the Tools pane is showing.
+   *
+   * A person clicked Run on a tool they can see. Same hop as the read:
+   * `inspector` first so it runs while the agent is driving, then this
+   * caller's `manual` if they hold the lease. Never a body-supplied source.
+   * Counts as real use (unlike the read): the command touches the page.
+   */
+  app.post("/page-tools/invoke", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const { userId } = auth.claims;
+    const target = browserTarget(auth.claims);
+    const id = targetId(auth.claims);
+    const parsed = pageToolInvokeFromBody(await c.req.json().catch(() => null));
+    if (!parsed.ok) {
+      return c.json({ ok: false, error: parsed.error }, 400);
+    }
+
+    try {
+      const session = await currentSession(target, auth.claims.sessionId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      const client = createClient(session);
+      const response = await sendPageToolInvoke(
+        (command, bootId) => client.sendCommand(command, bootId),
+        {
+          toolKey: parsed.toolKey,
+          input: parsed.input,
+          holder: userId,
+          bootId: session.bootId,
+          ...(parsed.frameId ? { frameId: parsed.frameId } : {}),
+          ...(parsed.tabId ? { tabId: parsed.tabId } : {}),
+        },
+      );
+      const mapped = pageToolInvokeFromCommandResponse(response);
+      if (mapped.status === 200) {
+        if (shouldTouchSessionCommand(session.sessionId)) {
+          void touchSession({
+            sessionId: session.sessionId,
+            kind: "command",
+          }).catch(() => {});
+        }
+        if (
+          auth.claims.computerId &&
+          shouldTouchActivity(auth.claims.computerId)
+        ) {
+          void touchActivity({ computerId: auth.claims.computerId }).catch(
+            () => {},
+          );
+        }
+      }
+      return c.json(mapped.body, mapped.status);
+    } catch (error) {
+      if (error instanceof BrowserdClientError) {
+        return c.json({ ok: false, error: "unreachable" }, 502);
+      }
+      reportRouteFailure("browser panel page-tools invoke failed", error, {
+        source: "computer-browser-panel.page-tools-invoke",
         hop: "mcpjam_internal",
         context: { browserTarget: id },
       });

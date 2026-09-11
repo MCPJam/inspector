@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useReducer,
   useRef,
@@ -9,6 +10,7 @@ import { cn } from "@mcpjam/design-system/cn";
 import { BrowserTabStrip } from "@/components/browser/BrowserTabStrip";
 import { BrowserNavigationBar } from "@/components/browser/BrowserNavigationBar";
 import { BrowserStartPage } from "@/components/browser/BrowserStartPage";
+import { BrowserWorkspaceChrome } from "./BrowserWorkspaceChrome";
 import {
   addressFieldTarget,
   EMPTY_ADDRESS_FIELD,
@@ -41,6 +43,7 @@ import type { BrowserPaneCommand } from "../../../../shared/browser-pane-command
  */
 
 export interface BrowserShellProps {
+  authority?: { kind: "shared" } | { kind: "lease" };
   enabled?: boolean;
   state: BrowserSessionState;
   /** This pane's lease identity, for telling our hold from somebody else's. */
@@ -65,9 +68,6 @@ export interface BrowserShellProps {
    * browser acquires it, and that happens inside this call.
    */
   onCommand: (command: BrowserPaneCommand) => void;
-  /** Hand the browser back and let the agent continue from a fresh look. */
-  onResumeAgent?: (() => void) | undefined;
-  resuming?: boolean;
   /** The picture: a canvas, a video, or nothing at all on the native surface. */
   children?: ReactNode;
   /** The quality menu and the stats toggle, which differ per engine. */
@@ -113,13 +113,12 @@ export interface BrowserShellProps {
 
 export function BrowserShell({
   enabled = true,
+  authority = { kind: "lease" },
   state,
   holderId,
   control: controlOverride,
   holding: holdingOverride,
   onCommand,
-  onResumeAgent,
-  resuming = false,
   children,
   trailing,
   placeholder,
@@ -128,6 +127,7 @@ export function BrowserShell({
   ready = true,
   onViewportMeasured,
 }: BrowserShellProps) {
+  const workspace = useContext(BrowserWorkspaceChrome);
   const [address, dispatchAddress] = useReducer(
     reduceAddressField,
     EMPTY_ADDRESS_FIELD,
@@ -185,7 +185,7 @@ export function BrowserShell({
   measuredRef.current = onViewportMeasured;
   useEffect(() => {
     const element = pageRef.current;
-    if (!enabled || !element || !onViewportMeasured) return;
+    if (!enabled || !ready || !element || !onViewportMeasured) return;
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver((entries) => {
       const box = entries[0]?.contentRect;
@@ -197,7 +197,7 @@ export function BrowserShell({
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [enabled, onViewportMeasured]);
+  }, [enabled, ready, onViewportMeasured]);
 
   if (!enabled) {
     return (
@@ -214,15 +214,18 @@ export function BrowserShell({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <BrowserTabStrip
-        tabs={state.tabs}
-        activeTabId={state.activeTabId}
-        disabled={!ready}
-        onActivate={(tabId) => onCommand({ op: "activate_tab", tabId })}
-        onClose={(tabId) => onCommand({ op: "close_tab", tabId })}
-        onNewTab={() => onCommand({ op: "create_tab" })}
-      />
+      {!workspace && (
+        <BrowserTabStrip
+          tabs={state.tabs}
+          activeTabId={state.activeTabId}
+          disabled={!ready}
+          onActivate={(tabId) => onCommand({ op: "activate_tab", tabId })}
+          onClose={(tabId) => onCommand({ op: "close_tab", tabId })}
+          onNewTab={() => onCommand({ op: "create_tab" })}
+        />
+      )}
       <BrowserNavigationBar
+        clientName={workspace?.clientName}
         address={address}
         onAddress={onAddress}
         canGoBack={state.canGoBack}
@@ -231,13 +234,16 @@ export function BrowserShell({
         onBack={() => onCommand({ op: "back" })}
         onForward={() => onCommand({ op: "forward" })}
         onReload={() => onCommand({ op: "reload" })}
+        authority={authority}
         control={control}
         holding={holding}
-        {...(onResumeAgent && holding ? { onResumeAgent } : {})}
-        resuming={resuming}
         {...(trailing ? { trailing } : {})}
       />
-      <div ref={pageRef} className="relative min-h-0 flex-1 overflow-hidden">
+      <div
+        ref={pageRef}
+        data-testid="browser-page-area"
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
         {notice ? (
           <div
             data-testid="browser-notice"

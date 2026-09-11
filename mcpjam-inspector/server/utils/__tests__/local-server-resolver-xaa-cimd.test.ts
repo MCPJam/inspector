@@ -67,11 +67,6 @@ function authorizeResponse(
             authMethod: "xaa",
             useXaa: true,
             useOAuth: false,
-            // MJ-003. `preregistered` and `dcr` reveal the row's client secret
-            // to an endpoint discovered from its url, so an unbound row is
-            // refused before the mint. Bound to its own origin, as a
-            // post-backfill row is; override in a test that wants the refusal.
-            secretsBoundOrigin: "https://resource.example.com",
             ...serverConfig,
           },
           oauthAccessToken: null,

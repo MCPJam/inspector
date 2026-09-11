@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
+import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   __resetPageToolDispatchForTests,
@@ -170,7 +171,12 @@ type EnginePref = { engine: "local" | "cloud"; consentToken: string | null };
 async function renderWithEngine(
   personalComputerEngine?: EnginePref,
   hostedContext?: Record<string, unknown>,
-  extra?: { usePageTools?: boolean; requireToolApproval?: boolean },
+  extra?: {
+    builtInToolIds?: string[];
+    usePageTools?: boolean;
+    requireToolApproval?: boolean;
+    personalBrowserEngine?: EnginePref;
+  },
 ) {
   // The switch is STATE seeded from `executionConfig`, not a prop of its own —
   // so a case that needs it on has to seed it the way the app does.
@@ -179,6 +185,7 @@ async function renderWithEngine(
     useChatSession({
       selectedServers: ["server-1"],
       ...(personalComputerEngine ? { personalComputerEngine } : {}),
+      ...(extra?.personalBrowserEngine ? { builtInToolIds: ["browser"] } : {}),
       ...(hostedContext ? { hostedContext } : {}),
       ...(requireToolApproval !== undefined
         ? { executionConfig: { requireToolApproval } }
@@ -221,6 +228,108 @@ describe("useChatSession — local computer engine transmission", () => {
       tools: [],
       chatEnabled: false,
     });
+  });
+
+  it("sends an explicit empty built-in override rather than inheriting the client", async () => {
+    await renderWithEngine(undefined, undefined, { builtInToolIds: [] });
+    expect(lastTransport().body.builtInToolIds).toEqual([]);
+  });
+
+  it("sends Browser and Bash with independent destinations and credentials", async () => {
+    await renderWithEngine(
+      { engine: "local", consentToken: "shell-capability" },
+      undefined,
+      {
+        personalBrowserEngine: {
+          engine: "cloud",
+          consentToken: "browser-capability",
+        },
+      },
+    );
+    let request = lastTransport();
+    expect(request.body.computerEngine).toBe("local");
+    expect(request.body.browserEngine).toBe("cloud");
+    expect(request.headers[LOCAL_CONSENT_HEADER]).toBe("shell-capability");
+    expect(request.headers[BROWSER_CONSENT_HEADER]).toBeUndefined();
+  });
+
+  it("keeps unconsented Browser local so the server can report refusal instead of moving it", async () => {
+    await renderWithEngine(undefined, undefined, {
+      personalBrowserEngine: { engine: "local", consentToken: null },
+    });
+    const { body, headers } = lastTransport();
+    expect(body.browserEngine).toBe("local");
+    expect(body.computerEngine).toBeUndefined();
+    expect(headers[BROWSER_CONSENT_HEADER]).toBeUndefined();
+  });
+
+  it("a Browser-only grant never sends a shell grant or a token in the transcript", async () => {
+    await renderWithEngine(undefined, undefined, {
+      personalBrowserEngine: {
+        engine: "local",
+        consentToken: "browser-capability",
+      },
+    });
+    const { body, headers } = lastTransport();
+    expect(body.browserEngine).toBe("local");
+    expect(headers[BROWSER_CONSENT_HEADER]).toBe("browser-capability");
+    expect(headers[LOCAL_CONSENT_HEADER]).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain("browser-capability");
+  });
+
+  it("environment transport never carries local Browser credentials", async () => {
+    await renderWithEngine(
+      undefined,
+      {
+        projectId: "p",
+        requiresWebChatApi: true,
+        executionTarget: { kind: "environment", environmentId: "env-1" },
+      },
+      {
+        personalBrowserEngine: {
+          engine: "local",
+          consentToken: "browser-capability",
+        },
+      },
+    );
+    const { body, headers } = lastTransport();
+    expect(body.browserEngine).not.toBe("local");
+    expect(headers[BROWSER_CONSENT_HEADER]).toBeUndefined();
+  });
+
+  it("resume stores the authenticated Browser location in session state, not preferences", async () => {
+    const { authFetch } = await import("@/lib/session-token");
+    const { saveBrowserEngine, loadBrowserEngine } = await import(
+      "@/lib/browser-engine-storage"
+    );
+    const { useActiveChatSessionStore } = await import(
+      "@/stores/active-chat-session-store"
+    );
+    saveBrowserEngine("p", "local");
+    vi.mocked(authFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ engine: "cloud" }), { status: 200 }),
+    );
+    const { result } = await renderWithEngine(
+      undefined,
+      { projectId: "p" },
+      { personalBrowserEngine: { engine: "local", consentToken: null } },
+    );
+    act(() => {
+      void result.current.loadChatSession({
+        chatSessionId: "old-cloud-chat",
+        messagesBlobUrl: null,
+        version: 1,
+      });
+    });
+    await waitFor(() =>
+      expect(result.current.chatSessionId).toBe("old-cloud-chat"),
+    );
+    expect(useActiveChatSessionStore.getState().browserLocation).toEqual({
+      projectId: "p",
+      sessionId: "old-cloud-chat",
+      engine: "cloud",
+    });
+    expect(loadBrowserEngine("p")).toBe("local");
   });
 
   it("forwards computerEngine:local in the body and the consent header when local + consented", async () => {
@@ -485,67 +594,76 @@ describe("useChatSession — local computer engine transmission", () => {
       // see first, and then the pill arrives for a call already spent.
       expectRun: false,
     },
-  ])("approval flipped mid-turn — $name", ({ sentWith, flippedTo, expectRun }) => {
-    it("honours the value the turn was sent with", async () => {
-      const pageTool = {
-        alias: pageToolAlias("session-1", `https://shop.test::add_to_cart\u0000${JSON.stringify({ frameId: "main", registrationSeq: 1 })}`),
-        sessionId: "session-1",
-        toolKey: "https://shop.test::add_to_cart",
-        rawName: "add_to_cart",
-        origin: "https://shop.test",
-      };
-      useWebmcpInspectorStore.setState({
-        session: { sessionId: pageTool.sessionId, status: "ready" } as never,
-        tools: [
-          {
-            toolKey: pageTool.toolKey,
-            binding: { frameId: "main", registrationSeq: 1 },
-            name: pageTool.rawName,
-            origin: pageTool.origin,
-            fromSubframe: false,
-            registrationKind: "imperative",
-          } as never,
-        ],
-        chatEnabled: true,
-      });
-      const invoke = vi.fn(async () => ({
-        state: "succeeded",
-        output: "added",
-      }));
-      const initialStore = useWebmcpInspectorStore.getState();
-      vi.spyOn(useWebmcpInspectorStore, "getState").mockReturnValue({
-        ...initialStore,
-        session: { sessionId: pageTool.sessionId, status: "ready" } as never,
-        invokeToolForResult: invoke as never,
-      });
+  ])(
+    "approval flipped mid-turn — $name",
+    ({ sentWith, flippedTo, expectRun }) => {
+      it("honours the value the turn was sent with", async () => {
+        const pageTool = {
+          alias: pageToolAlias(
+            "session-1",
+            `https://shop.test::add_to_cart\u0000${JSON.stringify({
+              frameId: "main",
+              registrationSeq: 1,
+            })}`,
+          ),
+          sessionId: "session-1",
+          toolKey: "https://shop.test::add_to_cart",
+          rawName: "add_to_cart",
+          origin: "https://shop.test",
+        };
+        useWebmcpInspectorStore.setState({
+          session: { sessionId: pageTool.sessionId, status: "ready" } as never,
+          tools: [
+            {
+              toolKey: pageTool.toolKey,
+              binding: { frameId: "main", registrationSeq: 1 },
+              name: pageTool.rawName,
+              origin: pageTool.origin,
+              fromSubframe: false,
+              registrationKind: "imperative",
+            } as never,
+          ],
+          chatEnabled: true,
+        });
+        const invoke = vi.fn(async () => ({
+          state: "succeeded",
+          output: "added",
+        }));
+        const initialStore = useWebmcpInspectorStore.getState();
+        vi.spyOn(useWebmcpInspectorStore, "getState").mockReturnValue({
+          ...initialStore,
+          session: { sessionId: pageTool.sessionId, status: "ready" } as never,
+          invokeToolForResult: invoke as never,
+        });
 
-      const rendered = await renderWithEngine(undefined, undefined, {
-        usePageTools: true,
-        requireToolApproval: sentWith,
+        const rendered = await renderWithEngine(undefined, undefined, {
+          usePageTools: true,
+          requireToolApproval: sentWith,
+        });
+        // Sending the turn is what stamps the value; the body closure runs here.
+        const advertised = lastTransport().body.pageTools as Array<{
+          alias: string;
+        }>;
+        setAdvertisedPageTools(advertised as never);
+
+        // The user moves the switch while the response is still streaming.
+        act(() => rendered.result.current.setRequireToolApproval(flippedTo));
+
+        await mockState.chatOnToolCall!({
+          toolCall: {
+            toolName: advertised[0]!.alias,
+            toolCallId: `page-call-flip-${String(sentWith)}`,
+            input: { sku: "ABC-123" },
+          },
+        });
+
+        if (expectRun) {
+          await waitFor(() => expect(invoke).toHaveBeenCalled());
+        } else {
+          expect(invoke).not.toHaveBeenCalled();
+          expect(mockState.addToolOutput).not.toHaveBeenCalled();
+        }
       });
-      // Sending the turn is what stamps the value; the body closure runs here.
-      const advertised = lastTransport().body.pageTools as Array<{
-        alias: string;
-      }>;
-      setAdvertisedPageTools(advertised as never);
-
-      // The user moves the switch while the response is still streaming.
-      act(() => rendered.result.current.setRequireToolApproval(flippedTo));
-
-      await mockState.chatOnToolCall!({
-        toolCall: {
-          toolName: advertised[0]!.alias,
-          toolCallId: `page-call-flip-${String(sentWith)}`,
-          input: { sku: "ABC-123" },
-        },
-      });
-
-      if (expectRun) {
-        await waitFor(() => expect(invoke).toHaveBeenCalled());
-      } else {
-        expect(invoke).not.toHaveBeenCalled();
-        expect(mockState.addToolOutput).not.toHaveBeenCalled();
-      }
-    });
-  });
+    },
+  );
 });

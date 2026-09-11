@@ -36,6 +36,41 @@ import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
 const LEASE_HEARTBEAT_MS = 30_000;
 /** Keepalive cadence while merely watching. */
 const KEEPALIVE_MS = 60_000;
+/** Re-mint this long before a token actually lapses, to cover clock skew. */
+const TOKEN_EXPIRY_BUFFER_MS = 5_000;
+
+/**
+ * The backend's code for "there is no browser to attach to" — one was never
+ * reserved, or it was released or auto-paused under an open panel.
+ *
+ * Expected and user-actionable, not a fault, so the polling loops below must
+ * STOP on it. They used to swallow every failure with `.catch(() => {})`,
+ * which combined badly with minting a token per request: a single released
+ * computer logged one uncaught server error per minute per open tab, for as
+ * long as the tab stayed open, while the panel showed nothing at all.
+ *
+ * Kept in sync with `browserUnavailable` in mcpjam-backend
+ * `convex/projectComputers.ts`.
+ */
+const BROWSER_UNAVAILABLE = "browser_unavailable";
+
+/**
+ * The message to show when a mint failed because there is no browser, or
+ * `null` when this is some other (possibly transient) failure.
+ *
+ * Reads the `ConvexError` payload rather than `.message`, because Convex masks
+ * the message to "Server Error" in production — the payload is the only part
+ * that survives the boundary.
+ */
+function browserUnavailableMessage(error: unknown): string | null {
+  const data = (error as { data?: unknown })?.data;
+  if (!data || typeof data !== "object") return null;
+  if ((data as { kind?: unknown }).kind !== BROWSER_UNAVAILABLE) return null;
+  const message = (data as { message?: unknown }).message;
+  return typeof message === "string" && message.length > 0
+    ? message
+    : "No browser is running on this computer yet.";
+}
 
 type LeaseState =
   | { state: "free" }
@@ -78,34 +113,82 @@ export function BrowserPanel({
   const visibleRef = useRef(true);
   /** Bumped whenever this panel changes which browser it is looking at. */
   const panelGeneration = useRef(0);
+  /** The live browser token, reused until it is nearly expired. */
+  const tokenCache = useRef<{
+    key: string;
+    token: string;
+    expiresAt: number;
+  } | null>(null);
 
-  /** Every call mints its own token: they last ~60s, so caching one across a
-   *  panel's lifetime would just produce expiry failures. */
-  /** A bare token for the stream socket, which cannot send an auth header. */
-  const mintStreamToken = useCallback(async () => {
-    const { token } = sessionId
+  /**
+   * Which browser the cached token is for. A token minted for one conversation
+   * must never be handed to another, so the identity is part of the cache key
+   * rather than something a separate effect has to remember to invalidate.
+   */
+  const tokenKey = sessionId
+    ? `session:${projectId}:${sessionId}`
+    : `project:${projectId}`;
+
+  /**
+   * Mint once per token lifetime, not once per request.
+   *
+   * Every call used to mint: the keepalive, the lease heartbeat, each lease
+   * action, every refresh. Tokens last ~60s, so almost all of that was a round
+   * trip to Convex to re-obtain a token still sitting in memory — and when
+   * there was no browser to mint for, it was also an uncaught server error per
+   * call rather than per token.
+   */
+  const getToken = useCallback(async (): Promise<string> => {
+    const cached = tokenCache.current;
+    if (
+      cached &&
+      cached.key === tokenKey &&
+      cached.expiresAt - TOKEN_EXPIRY_BUFFER_MS > Date.now()
+    ) {
+      return cached.token;
+    }
+    const minted = sessionId
       ? await mintConversationBrowserToken({
           projectId,
           conversationId: sessionId,
         })
       : await mintBrowserToken({ projectId });
-    return token;
-  }, [mintBrowserToken, mintConversationBrowserToken, projectId, sessionId]);
+    tokenCache.current = {
+      key: tokenKey,
+      token: minted.token,
+      expiresAt: minted.expiresAt,
+    };
+    return minted.token;
+  }, [
+    mintBrowserToken,
+    mintConversationBrowserToken,
+    projectId,
+    sessionId,
+    tokenKey,
+  ]);
+
+  /** A bare token for the stream socket, which cannot send an auth header. */
+  const mintStreamToken = useCallback(() => getToken(), [getToken]);
 
   const authorized = useCallback(
     async (path: string, init: RequestInit = {}): Promise<Response> => {
-      const { token } = sessionId
-        ? await mintConversationBrowserToken({
-            projectId,
-            conversationId: sessionId,
-          })
-        : await mintBrowserToken({ projectId });
-      const headers = new Headers(init.headers);
-      headers.set("authorization", `Bearer ${token}`);
-      if (init.body) headers.set("content-type", "application/json");
-      return fetch(`/api/web/computers/browser${path}`, { ...init, headers });
+      const send = async (token: string) => {
+        const headers = new Headers(init.headers);
+        headers.set("authorization", `Bearer ${token}`);
+        if (init.body) headers.set("content-type", "application/json");
+        return fetch(`/api/web/computers/browser${path}`, { ...init, headers });
+      };
+
+      const response = await send(await getToken());
+      // Caching a token means one can now lapse in flight, which minting per
+      // request made impossible. Drop it and mint once more — but only once,
+      // so a genuinely rejected token cannot become a retry loop. `init.body`
+      // is always a string here, so replaying the request is safe.
+      if (response.status !== 401) return response;
+      tokenCache.current = null;
+      return send(await getToken());
     },
-    [mintBrowserToken, mintConversationBrowserToken, projectId, sessionId],
+    [getToken],
   );
 
   const exportProfile = useCallback(async () => {
@@ -126,6 +209,23 @@ export function BrowserPanel({
       ...(savedFrom ? { savedFrom } : {}),
     };
   }, [authorized]);
+
+  /**
+   * A polling tick failed. Transient failures are ignored as before — the next
+   * tick can still succeed. "There is no browser" is not transient: stop, and
+   * say so, rather than logging a server error every tick until the tab closes.
+   *
+   * Clearing `session` and `holding` tears down both intervals through their
+   * own effect cleanups, so there is no timer to cancel here.
+   */
+  const handlePollFailure = useCallback((cause: unknown) => {
+    const message = browserUnavailableMessage(cause);
+    if (!message) return;
+    tokenCache.current = null;
+    setSession(null);
+    setHolding(false);
+    setError(message);
+  }, []);
 
   const refresh = useCallback(async () => {
     // Captured before the await. Clearing state on a switch is not enough on
@@ -149,13 +249,21 @@ export function BrowserPanel({
         return;
       }
       setSession(body as SessionInfo);
-      if (sessionId) markBrowserSessionActive(sessionId);
+      if (sessionId) {
+        markBrowserSessionActive(sessionId);
+        useActiveChatSessionStore
+          .getState()
+          .setBrowserLocation({ projectId, sessionId, engine: "cloud" });
+      }
       setError(null);
     } catch (cause) {
       if (stale()) return;
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(
+        browserUnavailableMessage(cause) ??
+          (cause instanceof Error ? cause.message : String(cause)),
+      );
     }
-  }, [authorized, ensure, markBrowserSessionActive, sessionId]);
+  }, [authorized, ensure, markBrowserSessionActive, projectId, sessionId]);
 
   /**
    * A conversation switch is a change of BROWSER, so none of this panel's
@@ -181,6 +289,7 @@ export function BrowserPanel({
     // Anything still in flight against the previous conversation's browser
     // must not land on this one.
     panelGeneration.current += 1;
+    tokenCache.current = null;
     setSession(null);
     setHolding(false);
     setBusy(false);
@@ -205,10 +314,12 @@ export function BrowserPanel({
     if (!session) return;
     const timer = setInterval(() => {
       if (!visibleRef.current) return;
-      void authorized("/keepalive", { method: "POST" }).catch(() => {});
+      void authorized("/keepalive", { method: "POST" }).catch(
+        handlePollFailure,
+      );
     }, KEEPALIVE_MS);
     return () => clearInterval(timer);
-  }, [authorized, session]);
+  }, [authorized, handlePollFailure, session]);
 
   // Heartbeat while holding. Stopping (closing the tab, losing the network)
   // parks the lease rather than freeing it, so the agent stays stopped.
@@ -218,10 +329,10 @@ export function BrowserPanel({
       void authorized("/lease", {
         method: "POST",
         body: JSON.stringify({ action: "heartbeat" }),
-      }).catch(() => {});
+      }).catch(handlePollFailure);
     }, LEASE_HEARTBEAT_MS);
     return () => clearInterval(timer);
-  }, [authorized, holding]);
+  }, [authorized, handlePollFailure, holding]);
 
   const changeLease = useCallback(
     async (action: "acquire" | "resume") => {

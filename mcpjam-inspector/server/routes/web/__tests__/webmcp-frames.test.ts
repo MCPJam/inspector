@@ -1,3 +1,16 @@
+const scope = {
+  ownerKey: "test-owner",
+  profileKey: "test-profile",
+  consentFingerprint: "test-fingerprint",
+};
+import { issueLocalNonce } from "../../../utils/computers/local-terminal-auth.js";
+import { inspectionNonceScope } from "../../../services/webmcp-inspector/local-authorization.js";
+vi.mock("../../../utils/computers/browser-consent.js", () => ({
+  BROWSER_CONSENT_HEADER: "x-mcpjam-browser-consent",
+  getBrowserConsentFingerprint: async () => "test-fingerprint",
+  watchBrowserConsentChanges: () => () => {},
+  verifyAndFingerprintBrowserConsent: async () => "test-fingerprint",
+}));
 /**
  * Route-level tests for GET /api/web/webmcp/sessions/:id/frames — the binary
  * transport that carries painted frames off the SSE stream.
@@ -113,6 +126,12 @@ function connect(
   token: string | null,
   opts: { origin?: string | null } = {},
 ): Probe {
+  if (token === "valid-nonce")
+    token = issueLocalNonce({
+      kind: "webmcp-frames",
+      projectId: inspectionNonceScope(sessionId, scope),
+      consentFingerprint: scope.consentFingerprint,
+    }).nonce;
   const origin = opts.origin === undefined ? ALLOWED_ORIGIN : opts.origin;
   const url = `ws://127.0.0.1:${port}/api/web/webmcp/sessions/${sessionId}/frames`;
   const options = origin === null ? {} : { origin };
@@ -192,7 +211,8 @@ beforeEach(async () => {
   configState.enabled = true;
   resetWebMcpFramesForTests();
   await webMcpSessions.disposeAll();
-  token = generateSessionToken();
+  generateSessionToken();
+  token = "valid-nonce";
   provider = new FakeProvider();
   server = await startServer();
 });
@@ -219,6 +239,8 @@ async function openSession() {
     url: "https://example.test/",
     provider,
     registry: webMcpSessions,
+    ownerId: scope.ownerKey,
+    localScope: scope,
   });
 }
 
@@ -756,14 +778,16 @@ describe("WebMCP negotiated socket input", () => {
     expect(runtime.expiresAt).toBeGreaterThan(expiresBefore);
   });
 
-  it("reports a vanished registry session as no_browser_session", async () => {
+  it("closes access when the registry session is gone", async () => {
     const { browser, probe } = await streamed();
     const get = vi.spyOn(webMcpSessions, "get").mockImplementation(() => {
       throw new Error("session gone");
     });
     try {
       probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
-      await vi.waitFor(() => expect(acks(probe)[0]?.refused).toBe("no_browser_session"));
+      await vi.waitFor(() =>
+        expect(probe.ws.readyState).toBe(WebSocket.CLOSED),
+      );
       expect(browser.inputBatches).toHaveLength(0);
     } finally {
       get.mockRestore();
@@ -840,7 +864,10 @@ describe("WebMCP negotiated socket input", () => {
 
   it("does not enable input for a native Electron surface", async () => {
     const session = await openSession();
-    provider.sessions[0].transport = { kind: "electron-webview" };
+    provider.sessions[0].transport = {
+      kind: "electron-native",
+      bootId: "native-boot",
+    };
     const probe = connect(server.port, session.sessionId, token);
     await probe.opened;
     probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
@@ -849,4 +876,30 @@ describe("WebMCP negotiated socket input", () => {
     expect(provider.sessions[0].inputBatches).toHaveLength(0);
     expect(probe.text).toEqual(['{"type":"pong"}']);
   });
+});
+
+it("consumes a WebMCP nonce once and binds it to the named session", async () => {
+  const session = await openSession();
+  const nonce = issueLocalNonce({
+    kind: "webmcp-frames",
+    projectId: inspectionNonceScope(session.sessionId, scope),
+    consentFingerprint: scope.consentFingerprint,
+  }).nonce;
+  const first = connect(server.port, session.sessionId, nonce);
+  await first.opened;
+  expect(
+    (await connect(server.port, session.sessionId, nonce).closed).code,
+  ).toBe(4401);
+  const other = issueLocalNonce({
+    kind: "webmcp-frames",
+    projectId: inspectionNonceScope("different-session", scope),
+    consentFingerprint: scope.consentFingerprint,
+  }).nonce;
+  expect(
+    (await connect(server.port, session.sessionId, other).closed).code,
+  ).toBe(4404);
+  await webMcpSessions
+    .get(session.sessionId)
+    .localAuthorization!.lifetime.revoke();
+  expect((await first.closed).code).toBe(4401);
 });

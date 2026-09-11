@@ -46,7 +46,7 @@ export function SuiteRunHistorySnapshot({
                   passRate: Math.round((counts.passed / items.length) * 100),
                 }
               : metrics.latest,
-            label: `Run #${members[0].runNumber}`,
+            label: `#${members[0].runNumber}`,
           },
         ];
       });
@@ -72,6 +72,8 @@ export function SuiteRunHistorySnapshot({
       className="@container/history-metrics border-b border-border/50"
     >
       <MetricStrip
+        bars
+        showCost={data.latest.costUsd != null}
         data={data}
         surface="embedded"
         context="history"

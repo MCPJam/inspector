@@ -14,6 +14,8 @@ import { BROWSERD_PROTOCOL_VERSION } from "../protocol.js";
 const convexGetDesktopComputerStatus = vi.fn();
 const lookupBrowserSession = vi.fn();
 const findLocalBrowserSessionForProject = vi.fn();
+const findLocalBrowserSessionForSession = vi.fn();
+const getConversationSession = vi.fn();
 const ensureBrowserSession = vi.fn();
 const attachBrowserSession = vi.fn();
 const clientStatus = vi.fn();
@@ -27,10 +29,17 @@ vi.mock("../browser-sessions-client.js", () => ({
   lookupBrowserSession: (...args: unknown[]) => lookupBrowserSession(...args),
 }));
 vi.mock("../local/local-browser-session.js", () => ({
+  findLocalBrowserSessionForSession: (...args: unknown[]) =>
+    findLocalBrowserSessionForSession(...args),
   findLocalBrowserSessionForProject: (...args: unknown[]) =>
     findLocalBrowserSessionForProject(...args),
   ensureLocalBrowserSession: () => {
     throw new Error("the peek must never START a local browser");
+  },
+}));
+vi.mock("../session-service.js", () => ({
+  BrowserSessionService: class {
+    getConversationSession = getConversationSession;
   },
 }));
 vi.mock("../browserd-client.js", () => ({
@@ -107,7 +116,164 @@ function liveHostedSession() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  findLocalBrowserSessionForSession.mockReset();
+  getConversationSession.mockReset().mockResolvedValue(null);
   clientSendCommand.mockResolvedValue(okObservation());
+});
+
+describe("conversation discovery across turns", () => {
+  const turn = {
+    builtInToolIds: ["browser"],
+    browserToolId: "browser",
+    firstClass: true,
+    isHarnessTurn: false,
+    hasV1PageTools: false,
+    projectId: "p1",
+  };
+
+  it("rediscovers each local client's own tools on every turn without a warm-up command", async () => {
+    findLocalBrowserSessionForSession.mockImplementation((_project, id) => ({
+      handle: { bootId: `boot-${id}` },
+      client: {
+        sendCommand: vi.fn(async () => ({
+          ...okObservation(),
+          result: {
+            ...okObservation().result,
+            output: {
+              ...okObservation().result.output,
+              tools: [
+                {
+                  ...TOOL,
+                  name: `add_${id}`,
+                  registrationSeq: id === "cursor" ? 3 : 9,
+                },
+              ],
+            },
+          },
+        })),
+      },
+    }));
+    for (const id of ["cursor", "mcpjam", "mcpjam", "cursor"]) {
+      const peek = await peekPageToolsForChatTurn({
+        ...turn,
+        engine: "local",
+        conversationId: id,
+      });
+      expect(peek?.tools.map((tool) => tool.name)).toEqual([`add_${id}`]);
+      expect(pageToolsSnapshotFrom(peek)?.bootId).toBe(`boot-${id}`);
+    }
+    expect(findLocalBrowserSessionForProject).not.toHaveBeenCalled();
+    expect(
+      findLocalBrowserSessionForSession.mock.calls.map((call) => call[1]),
+    ).toEqual(["cursor", "mcpjam", "mcpjam", "cursor"]);
+  });
+
+  it("never borrows the project browser when a conversation is absent", async () => {
+    findLocalBrowserSessionForProject.mockReturnValue({
+      handle: { bootId: "unrelated" },
+      client: { sendCommand: clientSendCommand },
+    });
+    const result = await peekPageToolsForChatTurn({
+      ...turn,
+      engine: "local",
+      conversationId: "missing",
+    });
+    expect(result).toEqual({ tools: [], reason: "no_browser_session" });
+    expect(findLocalBrowserSessionForProject).not.toHaveBeenCalled();
+    expect(clientSendCommand).not.toHaveBeenCalled();
+  });
+
+  it("resolves hosted ownership before looking up the daemon, ignoring a different supplied sandbox", async () => {
+    getConversationSession.mockImplementation(async ({ conversationId }) => ({
+      sessionId: `logical-${conversationId}`,
+      engine: "hosted",
+      state: "active",
+      box: { sandboxRowId: `box-${conversationId}` },
+    }));
+    lookupBrowserSession.mockImplementation(async ({ sandboxRowId }) => ({
+      session: {
+        bootId: "boot-1",
+        logicalSessionId: `logical-${sandboxRowId.slice(4)}`,
+        publicOrigin: "https://box.test",
+        browserdToken: "tok",
+      },
+    }));
+    clientStatus.mockResolvedValue({
+      kind: "ok",
+      bootId: "boot-1",
+      features: ["webmcp-binding"],
+    });
+    for (const id of ["cursor", "mcpjam", "cursor"]) {
+      expect(
+        (
+          await peekPageToolsForChatTurn({
+            ...turn,
+            engine: "hosted",
+            bearer: "user",
+            conversationId: id,
+            sandboxRowId: "wrong-box",
+          })
+        )?.tools,
+      ).toHaveLength(1);
+      expect(lookupBrowserSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sandboxRowId: `box-${id}`, watched: true }),
+      );
+      expect(getConversationSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          projectId: "p1",
+          conversationId: id,
+          bearer: "user",
+        }),
+      );
+    }
+    expect(convexGetDesktopComputerStatus).not.toHaveBeenCalled();
+    expect(ensureBrowserSession).not.toHaveBeenCalled();
+    expect(attachBrowserSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    { state: "sleeping" },
+    { state: "closed" },
+    { state: "active", engine: "local", box: { localKey: "local" } },
+  ])(
+    "does not fall back or wake an unavailable hosted owner: %j",
+    async (owner) => {
+      getConversationSession.mockResolvedValue(owner);
+      expect(
+        await peekPageTools({
+          engine: "hosted",
+          projectId: "p1",
+          bearer: "user",
+          conversationId: "cursor",
+          sandboxRowId: "other",
+        }),
+      ).toEqual({ tools: [], reason: "no_browser_session" });
+      expect(lookupBrowserSession).not.toHaveBeenCalled();
+      expect(clientSendCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a sandbox rebound to a different conversation", async () => {
+    getConversationSession.mockResolvedValue({
+      sessionId: "logical-cursor",
+      engine: "hosted",
+      state: "active",
+      box: { sandboxRowId: "box" },
+    });
+    lookupBrowserSession.mockResolvedValue({
+      session: { logicalSessionId: "logical-other" },
+    });
+    expect(
+      await peekPageTools({
+        engine: "hosted",
+        projectId: "p1",
+        bearer: "user",
+        conversationId: "cursor",
+      }),
+    ).toEqual({ tools: [], reason: "no_browser_session" });
+    expect(clientStatus).not.toHaveBeenCalled();
+  });
 });
 
 describe("peekPageTools — hosted", () => {
