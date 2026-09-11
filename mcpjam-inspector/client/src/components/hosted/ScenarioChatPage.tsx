@@ -29,7 +29,10 @@ import type {
   HostedAccessErrorDetail,
   HostedAccessRecoveryResult,
 } from "@/lib/hosted-runtime-context";
-import { navigateApp } from "@/lib/app-navigation";
+import {
+  buildUserTestingScenarioPath,
+  navigateApp,
+} from "@/lib/app-navigation";
 import {
   isEmbeddedPreview,
   syncScenarioBootstrapHash,
@@ -933,6 +936,17 @@ export function ScenarioChatPage({
     leaveScenario("/scenarios");
   }, [leaveScenario]);
 
+  const isPreviewSurface = session?.surface === "preview";
+  const previewScenarioId = session?.scenarioId ?? null;
+
+  const handleReturnToStudy = useCallback(() => {
+    leaveScenario(
+      previewScenarioId
+        ? buildUserTestingScenarioPath(previewScenarioId)
+        : "/scenarios",
+    );
+  }, [leaveScenario, previewScenarioId]);
+
   const handleSignIn = useCallback(() => {
     writeScenarioSignInReturnPath(window.location.pathname);
     signIn();
@@ -1229,6 +1243,17 @@ export function ScenarioChatPage({
                           />
                         </button>
                         <div className="flex flex-1 items-center justify-end gap-1.5">
+                          {sessionForCurrentLink && isPreviewSurface ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground"
+                              onClick={handleReturnToStudy}
+                              data-testid="scenario-preview-back-to-study"
+                            >
+                              Back to study
+                            </Button>
+                          ) : null}
                           {session && shareableToken ? (
                             <Button
                               variant="ghost"

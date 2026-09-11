@@ -2262,5 +2262,64 @@ describe("ScenarioChatPage", () => {
         }),
       );
     });
+
+    function writeSurfaceSession(surface: "preview" | "share_link") {
+      writeScenarioSession({
+        scenarioId: "sbx_1",
+        accessVersion: 1,
+        surface,
+        payload: {
+          projectId: "ws_1",
+          scenarioId: "sbx_1",
+          name: "Surface Scenario",
+          description: "",
+          hostStyle: "claude",
+          mode: "anyone_with_link",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.7,
+          requireToolApproval: false,
+          servers: [],
+        },
+      });
+    }
+
+    it("shows a labelled Back to study control after consent on the preview surface", async () => {
+      writeSurfaceSession("preview");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Continue" }),
+      );
+      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Back to study" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toBeNull();
+      expect(window.location.pathname).toBe("/user-testing/sbx_1");
+      expect(window.location.hash).toBe("");
+    });
+
+    it("keeps the header free of Back to study for a share-link tester", async () => {
+      writeSurfaceSession("share_link");
+      consentAlreadyGiven();
+      window.history.replaceState({}, "", "/#surface-scenario");
+
+      render(<ScenarioChatPage />);
+
+      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Back to study" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "MCPJam" })).toBeInTheDocument();
+    });
   });
 });
