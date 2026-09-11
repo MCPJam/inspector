@@ -364,7 +364,7 @@ describe("UserTestingScenarioCreateFlow", () => {
     );
   });
 
-  it("reports an already-published environment as such, not as a failure", async () => {
+  it("refuses a setup that already has a study, rather than calling it created", async () => {
     const onCreateScenario = vi
       .fn()
       .mockResolvedValue({ scenarioId: "cb-9", created: false });
@@ -376,11 +376,11 @@ describe("UserTestingScenarioCreateFlow", () => {
     createStudy();
 
     await waitFor(() => {
-      expect(toastSuccess).toHaveBeenCalledWith(
-        expect.stringMatching(/already published/i),
+      expect(toastError).toHaveBeenCalledWith(
+        expect.stringMatching(/already have a study/i),
       );
     });
-    expect(toastError).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("surfaces the backend's message verbatim when publishing is refused", async () => {
@@ -919,7 +919,7 @@ describe("UserTestingScenarioCreateFlow — composing a setup", () => {
     expect(onCreateScenario.mock.calls[0][0].environmentId).toBe("env-1");
   });
 
-  it("says an identical setup reopens the scenario it already has", async () => {
+  it("refuses an identical composed setup instead of opening the study it has", async () => {
     const alreadyPublished = vi
       .fn()
       .mockResolvedValue({ scenarioId: "cb-9", created: false });
@@ -932,11 +932,12 @@ describe("UserTestingScenarioCreateFlow — composing a setup", () => {
     });
     createStudy();
 
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
-    // The typed name is dropped by the idempotent publish — say so rather than
-    // claiming a scenario was created with it.
-    expect(toastSuccess.mock.calls[0][0]).toMatch(/already published/i);
-    expect(toastSuccess.mock.calls[0][0]).toMatch(/name and access/i);
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    // The typed name never reached a study, so the screen must not suggest one
+    // was made with it — and "Another go" stays in the field to be retried on a
+    // different setup.
+    expect(toastError.mock.calls[0][0]).toMatch(/already have a study/i);
+    expect(screen.getByTestId("user-testing-create-save")).toBeInTheDocument();
   });
 
   it("degrades to the saved-environment path on a backend without ad-hoc rows", async () => {
@@ -1157,8 +1158,8 @@ describe("UserTestingScenarioCreateFlow — create study (Production Redesign)",
   });
 
   it("leaves an already-published study's ratings and tasks alone", async () => {
-    // Publishing is idempotent per environment, so a collision opens someone
-    // else's study — rewriting its rating widget or replacing its task list
+    // Publishing is idempotent per environment, so the id that comes back is
+    // another study's — rewriting its rating widget or replacing its task list
     // from here would reconfigure it.
     const { onApplyStudySurfaces } = renderFlow(
       vi.fn().mockResolvedValue({ scenarioId: "cb-existing", created: false }),
@@ -1170,7 +1171,7 @@ describe("UserTestingScenarioCreateFlow — create study (Production Redesign)",
     createStudy();
 
     await waitFor(() => {
-      expect(toastSuccess).toHaveBeenCalled();
+      expect(toastError).toHaveBeenCalled();
     });
     expect(onApplyStudySurfaces).not.toHaveBeenCalled();
   });
@@ -1262,5 +1263,70 @@ describe("UserTestingScenarioCreateFlow — org share ceiling", () => {
         mode: "project_members",
       });
     });
+  });
+});
+
+/**
+ * Reported: "I create a second study with the same client and server and it
+ * replaces the first — I get 'already published' and it redirects me to the
+ * original." Publishing is idempotent per environment, so nothing was created;
+ * the screen used to call that a success and walk the creator into the other
+ * study. Until the backend can carry two studies on one setup, the honest
+ * answer is to refuse and stay put.
+ */
+describe("UserTestingScenarioCreateFlow — a setup that already has a study", () => {
+  const publishedAlready = () =>
+    vi.fn().mockResolvedValue({ scenarioId: "existing-1", created: false });
+
+  it("reports the refusal as an error, not as a created study", async () => {
+    const { onCreateScenario } = renderFlow(publishedAlready());
+
+    createStudy();
+
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        expect.stringMatching(/already have a study/i),
+      ),
+    );
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("keeps the creator on their draft", async () => {
+    // Navigation is the caller's job and it is told `created: false`; what this
+    // screen owes is not disappearing out from under the draft.
+    const onCreateScenario = publishedAlready();
+    renderFlow(onCreateScenario);
+
+    createStudy();
+
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalled());
+    expect(screen.getByTestId("user-testing-create-save")).toBeInTheDocument();
+  });
+
+  it("does not write ratings or tasks onto the study that already exists", async () => {
+    // The draft on screen belongs to a study that was never created. Applying
+    // it would reconfigure someone else's live study.
+    const onApplyStudySurfaces = vi.fn().mockResolvedValue(undefined);
+    const onCreateScenario = publishedAlready();
+    renderFlow(onCreateScenario, vi.fn(), onApplyStudySurfaces);
+
+    createStudy();
+
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalled());
+    expect(onApplyStudySurfaces).not.toHaveBeenCalled();
+  });
+
+  it("lets them try again once the setup changes", async () => {
+    // The refusal releases the button; a stuck "Creating…" would make the
+    // screen a dead end.
+    const onCreateScenario = publishedAlready();
+    renderFlow(onCreateScenario);
+
+    createStudy();
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalledTimes(2));
   });
 });

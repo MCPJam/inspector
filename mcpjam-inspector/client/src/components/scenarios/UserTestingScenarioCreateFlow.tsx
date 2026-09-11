@@ -212,8 +212,12 @@ interface UserTestingScenarioCreateFlowProps {
    * The primary write path: publishes the environment, applying the name and
    * access mode in the same mutation so the scenario is never briefly live in
    * a mode nobody asked for. Resolves to the new scenario's id, plus whether
-   * this call actually created it (`false` ⇒ the environment was already
-   * published and the existing scenario is what opens).
+   * this call actually created it.
+   *
+   * `created: false` means the backend refused: publishing is idempotent per
+   * environment, so this setup already has a study and none was made. The
+   * caller must NOT navigate in that case — this screen reports it and the
+   * creator stays on their draft.
    */
   onCreateScenario: (draft: {
     environmentId: string;
@@ -527,43 +531,47 @@ export function UserTestingScenarioCreateFlow({
         mode: settingsFromScenarioAccessPreset(accessPreset).mode,
       });
 
-      // Only for a study this call actually created. Publishing is idempotent
-      // per environment, so on a collision the existing study keeps its own
-      // settings — silently rewriting its rating widget or replacing its task
-      // list would be this screen reconfiguring someone else's study.
+      // Nothing was created: this client and server already carry a study
+      // (publishing is idempotent per environment). This used to report it as
+      // a success and open that other study — which reads as "your study was
+      // created" while the screen fills with someone else's tasks, name and
+      // access. It is a refusal, so it stops here: the draft stays on screen,
+      // untouched and re-submittable once the setup changes.
+      if (!created) {
+        toast.error(
+          "This client and server already have a study. Change the setup, or open the existing study from User Testing.",
+        );
+        savingRef.current = false;
+        setIsSaving(false);
+        return;
+      }
+
+      // Past the refusal above, so this is always a study THIS call created —
+      // which is the only one whose ratings and task list are ours to write.
       let surfacesFailed = false;
-      if (created) {
-        try {
-          await onApplyStudySurfaces(scenarioId, {
-            perTurnFeedback: {
-              enabled: perTurnRatings,
-              style: ratingStyle,
-            },
-            tasks: { items: scenarioTasksFromDrafts(taskDrafts) },
-          });
-        } catch {
-          // The study exists; only its chatUi settings did not land. Say which
-          // half failed and where to fix it, rather than reporting a failed
-          // creation the user can see succeeded.
-          surfacesFailed = true;
-          toast.error(
-            "Study created, but its ratings and task list didn't save. Set them from the study's settings.",
-          );
-        }
+      try {
+        await onApplyStudySurfaces(scenarioId, {
+          perTurnFeedback: {
+            enabled: perTurnRatings,
+            style: ratingStyle,
+          },
+          tasks: { items: scenarioTasksFromDrafts(taskDrafts) },
+        });
+      } catch {
+        // The study exists; only its chatUi settings did not land. Say which
+        // half failed and where to fix it, rather than reporting a failed
+        // creation the user can see succeeded.
+        surfacesFailed = true;
+        toast.error(
+          "Study created, but its ratings and task list didn't save. Set them from the study's settings.",
+        );
       }
 
       // The error above already opens with "Study created" — pairing it with a
       // bare success toast makes the screen say two things about one outcome
       // and reads like one of them is stale.
       if (!surfacesFailed) {
-        toast.success(
-          created
-            ? "Study created"
-            : // Publishing is idempotent per environment, and composing makes a
-              // collision likelier: an identical setup resolves to the SAME row,
-              // whose scenario keeps its own name, access and tasks.
-              "This setup is already published — opening its study, with the name and access it already has",
-        );
+        toast.success("Study created");
       }
     } catch (err) {
       // Surface the backend's copy verbatim: publishing is project-admin
