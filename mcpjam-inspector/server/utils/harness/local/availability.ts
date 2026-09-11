@@ -50,9 +50,11 @@ import {
 } from "./runtime-identity.js";
 import {
   currentLocalPlatform,
+  localPackTarget,
   LOCAL_HARNESS_POLICY_VERSION,
   type LocalHarnessExecutionTarget,
 } from "./targets.js";
+import { manifestWithExpectedBundleDigest } from "./runtime-install.js";
 import { supportsOwnershipProof } from "./process-identity.js";
 
 export type LocalHarnessUnavailableStatus =
@@ -228,7 +230,16 @@ export async function resolveLocalHarnessAvailability(
   const runtimeResolution =
     compatibility.manifest.runtime.source === "managed-bundle"
       ? await resolveManagedBundle({
-          manifest: compatibility.manifest,
+          // Through `manifestWithExpectedBundleDigest`, so this path verifies
+          // against the digest the INSTALLER accepted rather than a second
+          // reading of the same table. They differ only under the documented
+          // development override — and there they differed fatally: a locally
+          // built pack installed and then could never run.
+          manifest: manifestWithExpectedBundleDigest(
+            compatibility.manifest,
+            compatibility.manifest.harnessId,
+            localPackTarget(platform),
+          ),
           runtimeRoot: query.runtimeRoot,
           platform: currentLocalPlatform(platform)!,
         })

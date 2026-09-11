@@ -9,6 +9,9 @@ import {
 } from "vitest";
 import {
   ensureLocalBrowserSession,
+  closeLocalBrowserSession,
+  findLocalBrowserSession,
+  findLocalBrowserSessionForSession,
   getLocalBrowserProfileDir,
   killLocalBrowserSessions,
   listLocalBrowserSessions,
@@ -16,12 +19,18 @@ import {
   LOCAL_BROWSER_MAX_LIFETIME_MS,
   LocalBrowserUnavailableError,
   resetLocalBrowserSessionsForTests,
+  resolveLocalBrowserSurface,
   shutdownLocalBrowserSessions,
   sweepLocalBrowserSessions,
   touchLocalBrowserSession,
+  watchLocalBrowserSession,
   type LocalBrowserDeps,
 } from "../local-browser-session";
-import { fakeContext } from "../../daemon/__tests__/fake-page";
+import { fakeContext, fakePage } from "../../daemon/__tests__/fake-page";
+import {
+  contextSurfaceCount,
+  contextSurfaceFor,
+} from "../../electron/agent-surface";
 import type { DriverContext } from "../../daemon/browser-page";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -88,6 +97,51 @@ afterEach(async () => {
 });
 
 describe("local browser session", () => {
+  it("keeps each conversation's live page across a switch and ignores a crashed browser", async () => {
+    const pageA = fakePage({ url: "https://example.test/a" });
+    const pageB = fakePage({ url: "https://example.test/b" });
+    const a = fakeContext({ pages: [pageA] });
+    const b = fakeContext({ pages: [pageB] });
+    const launch = vi
+      .fn()
+      .mockResolvedValueOnce(a.context)
+      .mockResolvedValueOnce(b.context);
+    const { deps } = makeDeps({ launch });
+    const first = await ensureLocalBrowserSession(
+      { projectId: "proj", sessionId: "chat-a" },
+      deps,
+    );
+    const second = await ensureLocalBrowserSession(
+      { projectId: "proj", sessionId: "chat-b" },
+      deps,
+    );
+    const liveA = findLocalBrowserSessionForSession("proj", "chat-a")!;
+    await liveA.client.paneCommand({
+      holder: "pane",
+      command: { op: "create_tab" },
+    });
+    expect(a.created[0]).toBe(pageA);
+    const navigationsBeforeSwitch = [...pageA.calls.goto];
+    pageA.setUrl("https://example.test/a/changed");
+
+    expect(
+      findLocalBrowserSessionForSession("proj", "chat-b")?.handle.bootId,
+    ).toBe(second.bootId);
+    expect(
+      findLocalBrowserSessionForSession("proj", "chat-a")?.handle.bootId,
+    ).toBe(first.bootId);
+    expect(pageA.url()).toBe("https://example.test/a/changed");
+    expect(pageA.calls.goto).toEqual(navigationsBeforeSwitch);
+    expect(pageA.calls.reload).toBe(0);
+    expect(a.wasClosed()).toBe(false);
+    expect(
+      findLocalBrowserSessionForSession("other", "chat-a"),
+    ).toBeUndefined();
+    a.setConnected(false);
+    expect(findLocalBrowserSessionForSession("proj", "chat-a")).toBeUndefined();
+    expect(launch).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps ONE browser per project across turns", async () => {
     const { deps, launched } = makeDeps();
     const first = await ensureLocalBrowserSession(
@@ -200,6 +254,32 @@ describe("local browser session", () => {
     expect(launched).toHaveLength(0);
   });
 
+  it("an owner key cannot forge the typed-text setting of another run", async () => {
+    // `captureTypedText` is part of the key so a run that asked for recording
+    // and one that did not never share a browser. With the flag appended, an
+    // owner key containing the flag's own text produced the same string as a
+    // different owner with recording ON — and the two runs shared a Chromium
+    // under whichever policy booted first, recording somebody's typed values
+    // into a ledger that never asked for them.
+    const { deps, launched } = makeDeps();
+    await ensureLocalBrowserSession(
+      { projectId: "proj-a", contextMode: "ephemeral", ownerKey: "run:typed" },
+      deps,
+    );
+    await ensureLocalBrowserSession(
+      {
+        projectId: "proj-a",
+        contextMode: "ephemeral",
+        ownerKey: "run",
+        captureTypedText: true,
+      },
+      deps,
+    );
+    // Two runs, two browsers.
+    expect(launched).toHaveLength(2);
+    expect(listLocalBrowserSessions()).toHaveLength(2);
+  });
+
   it("does not probe the singleton for an ephemeral browser", async () => {
     // There is no shared profile directory to own.
     const probe = vi.fn().mockResolvedValue({ live: true, pid: 1 });
@@ -302,6 +382,21 @@ describe("local browser session", () => {
     await handle.client.leaseAction!({ action: "resume", holder: "rail-1" });
 
     advance(LOCAL_BROWSER_IDLE_MS + 1);
+    await sweepLocalBrowserSessions(at());
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
+  it("foreground presence protects a browser past absolute age, then expires", async () => {
+    const { deps, advance, at } = makeDeps();
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
+    advance(LOCAL_BROWSER_MAX_LIFETIME_MS + 1);
+    watchLocalBrowserSession(handle, at());
+    await sweepLocalBrowserSessions(at());
+    expect(listLocalBrowserSessions()).toHaveLength(1);
+    advance(45_001);
     await sweepLocalBrowserSessions(at());
     expect(listLocalBrowserSessions()).toHaveLength(0);
   });
@@ -566,4 +661,167 @@ describe("local browser session — the reaper decides on current facts", () => 
     expect(closed).toEqual([true]);
     expect(listLocalBrowserSessions()).toHaveLength(0);
   });
+});
+
+describe("local browser session — the pane's own view of it", () => {
+  /** Deps whose Electron launch RECORDS what it was asked for. */
+  function electronDeps(env: NodeJS.ProcessEnv = {}) {
+    const calls: Array<Record<string, unknown>> = [];
+    const made = makeDeps({
+      runtime: () => "electron",
+      env,
+      async launchElectron(options) {
+        calls.push(options as unknown as Record<string, unknown>);
+        const { context } = fakeContext();
+        return context;
+      },
+    });
+    return { ...made, calls };
+  }
+
+  it("says `frames` for a Chromium in another process", () => {
+    // There is no view to place: a Playwright browser is a separate process,
+    // and a screencast is the only thing it can offer.
+    expect(resolveLocalBrowserSurface({}, "playwright")).toBe("frames");
+    expect(
+      resolveLocalBrowserSurface(
+        { MCPJAM_BROWSER_NATIVE_SURFACE: "false" },
+        "playwright",
+      ),
+    ).toBe("frames");
+  });
+
+  it("says `native` in the desktop app, and only the exact string turns it off", () => {
+    // A typo must not silently drop the whole path back to JPEGs — the same
+    // rule every other switch in this wave follows.
+    expect(resolveLocalBrowserSurface({}, "electron")).toBe("native");
+    expect(
+      resolveLocalBrowserSurface(
+        { MCPJAM_BROWSER_NATIVE_SURFACE: "false" },
+        "electron",
+      ),
+    ).toBe("frames");
+    for (const value of ["", "FALSE", "0", "no", "true"]) {
+      expect(
+        resolveLocalBrowserSurface(
+          { MCPJAM_BROWSER_NATIVE_SURFACE: value },
+          "electron",
+        ),
+      ).toBe("native");
+    }
+  });
+
+  it("builds the context with views, and registers them by boot id", async () => {
+    const { deps, calls } = electronDeps();
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-n" },
+      deps,
+    );
+    expect(calls[0]).toMatchObject({ nativeSurface: true });
+    expect(calls[0]!.surface).toBeTruthy();
+    // BY BOOT ID, which is what the renderer knows and the only thing it may
+    // name: a renderer that could address a surface by index could reach
+    // another project's browser by guessing.
+    expect(contextSurfaceFor(handle.bootId)).toBe(calls[0]!.surface);
+  });
+
+  it("gives the surface the daemon's lease, not the renderer's word for it", async () => {
+    // THE INPUT GATE IS SERVER-AUTHORITATIVE. A real view is something a person
+    // can click into, so what decides whether it is shown has to be the same
+    // authority that already refuses the model's commands.
+    const { deps } = electronDeps();
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-l" },
+      deps,
+    );
+    const surface = contextSurfaceFor(handle.bootId)!;
+    surface.setPaneHolder("rail-1");
+    const { client } = findLocalBrowserSession(handle.bootId)!;
+    // Through the CLIENT, which is the path the pane's route actually takes:
+    // the lease is enforced inside the handler, and a test that reached past
+    // it would prove nothing about the route.
+    expect(surface.inputAllowed()).toBe(false);
+    expect(surface.isShown()).toBe(false);
+    const act = (action: "acquire" | "resume", holder: string) =>
+      client.leaseAction!({ action, holder });
+    await act("acquire", "rail-1");
+    expect(surface.inputAllowed()).toBe(true);
+    await act("resume", "rail-1");
+    await act("acquire", "someone-else");
+    expect(surface.inputAllowed()).toBe(false);
+  });
+
+  it("forgets the surface when the browser goes", async () => {
+    const { deps } = electronDeps();
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-f" },
+      deps,
+    );
+    expect(contextSurfaceCount()).toBe(1);
+    await killLocalBrowserSessions();
+    expect(contextSurfaceFor(handle.bootId)).toBeUndefined();
+    expect(contextSurfaceCount()).toBe(0);
+  });
+
+  it("restores the pre-wave shape when the kill switch is set", async () => {
+    // `MCPJAM_BROWSER_NATIVE_SURFACE=false` — hidden windows and frames over a
+    // socket, exactly as before, with nothing for a pane to place.
+    const { deps, calls } = electronDeps({
+      MCPJAM_BROWSER_NATIVE_SURFACE: "false",
+    });
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-k" },
+      deps,
+    );
+    expect(calls[0]).toMatchObject({ nativeSurface: false });
+    expect(calls[0]!.surface).toBeUndefined();
+    expect(contextSurfaceFor(handle.bootId)).toBeUndefined();
+  });
+});
+
+it("keeps the profile closed until export completes even if ensure races", async () => {
+  const { deps, launched } = makeDeps();
+  const first = await ensureLocalBrowserSession(
+    { projectId: "export-race" },
+    deps,
+  );
+  let finish!: () => void;
+  let started!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const exporting = closeLocalBrowserSession(first.bootId, async () => {
+    started();
+    await gate;
+  });
+  await entered;
+  const opening = ensureLocalBrowserSession({ projectId: "export-race" }, deps);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(launched).toHaveLength(1);
+  finish();
+  expect(await exporting).toEqual({ closed: true });
+  expect((await opening).bootId).not.toBe(first.bootId);
+  expect(launched).toHaveLength(2);
+});
+
+it("releases the teardown lease when Chromium cannot flush a profile", async () => {
+  const { deps, contexts } = makeDeps();
+  const session = await ensureLocalBrowserSession(
+    { projectId: "export-flush-failure" },
+    deps,
+  );
+  const close = contexts[0].ctx.close.bind(contexts[0].ctx);
+  contexts[0].ctx.close = async () => {
+    throw new Error("flush failed");
+  };
+  const archive = vi.fn(async () => {});
+  await expect(
+    closeLocalBrowserSession(session.bootId, archive),
+  ).rejects.toThrow("flush failed");
+  expect(archive).not.toHaveBeenCalled();
+  expect((await session.client.lease!()).state).toBe("free");
+  contexts[0].ctx.close = close;
 });

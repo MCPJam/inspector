@@ -118,3 +118,42 @@ describe("webmcpInspectorHostedEnabled", () => {
     expect(config.webmcpInspectorHostedEnabled()).toBe(true);
   });
 });
+
+describe("webmcpInspectorReachable", () => {
+  afterEach(() => {
+    setEnv(HOSTED_ENV, originalEnv.hosted);
+    setEnv(ENABLED_ENV, originalEnv.enabled);
+    setEnv(HOSTED_GATE_ENV, originalEnv.hostedGate);
+    setEnv(BROWSER_TOOLS_ENV, originalEnv.browserTools);
+  });
+
+  // The composed question — "can a session exist here at all?" — asked by the
+  // inspector router (404 when false) AND by both chat routes, which must not
+  // advertise a page's tools to a model where nothing can fulfil the call.
+
+  it("is true on a local inspector, where the hosted gate does not apply", async () => {
+    const config = await loadConfig({});
+    expect(config.webmcpInspectorReachable()).toBe(true);
+  });
+
+  it("follows the kill switch locally", async () => {
+    const config = await loadConfig({ enabled: "false" });
+    expect(config.webmcpInspectorReachable()).toBe(false);
+  });
+
+  it("needs the hosted gate as well when hosted", async () => {
+    const dark = await loadConfig({ hosted: "true" });
+    expect(dark.webmcpInspectorReachable()).toBe(false);
+    const open = await loadConfig({ hosted: "true", hostedGate: "1" });
+    expect(open.webmcpInspectorReachable()).toBe(true);
+  });
+
+  it("still obeys the kill switch with the hosted gate on", async () => {
+    const config = await loadConfig({
+      hosted: "true",
+      hostedGate: "1",
+      enabled: "false",
+    });
+    expect(config.webmcpInspectorReachable()).toBe(false);
+  });
+});

@@ -102,7 +102,7 @@ export function RouteFactsSection({
             Expected vs observed
           </summary>
           <p className="mt-2 text-[12px] text-muted-foreground">
-            counted by tool name — a call with the wrong arguments counts as
+            counted by tool name. A call with the wrong arguments counts as
             called
           </p>
           <div className="mt-2 grid gap-4 sm:grid-cols-2">
@@ -119,8 +119,8 @@ export function RouteFactsSection({
         <div data-testid="route-facts-mismatch-note">
           <p className="text-[12.5px] text-muted-foreground">
             {mismatch.state === "excludedNegativeTest"
-              ? "Negative test — mismatch facts are not measured."
-              : "No gradeable trials — not measured."}
+              ? "Negative test. Mismatch facts are not measured."
+              : "No gradeable iterations. Not measured."}
           </p>
           <FactLines lines={lines} />
         </div>

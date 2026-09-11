@@ -384,6 +384,36 @@ const BREAKDOWN_QUERIES: Record<InsightsScope["kind"], string> = {
   benchmark: "chatSessions:getBenchmarkUsageBreakdown",
 };
 
+/**
+ * Only real options cross into the mutation.
+ *
+ * `onClick={rebuild}` type-checks, because a zero-argument callback is
+ * assignable to a click handler, but React hands it a synthetic event at
+ * runtime. Spreading that into the mutation payload made Convex throw
+ * "Converting circular structure to JSON" (the fiber closes a circle through
+ * the DOM node), so "Analyze sessions" never started.
+ *
+ * This lives at the serialization boundary rather than in `useInsightsRebuild`,
+ * because `rebuild` is returned publicly and callers reach it directly without
+ * passing through that hook.
+ *
+ * It REJECTS event-shaped values rather than allowlisting the options it knows.
+ * An allowlist would silently drop any option added to `rebuild` later, and the
+ * mutation would run with server defaults while the surface toasted success.
+ */
+function rebuildOptionsOnly(args?: {
+  force?: boolean;
+  tuning?: ClusterTuning;
+}): { force?: boolean; tuning?: ClusterTuning } | undefined {
+  if (args == null || typeof args !== "object") return undefined;
+  const candidate = args as Record<string, unknown>;
+  // A React synthetic event carries these; an options object does not.
+  if ("nativeEvent" in candidate || "currentTarget" in candidate) {
+    return undefined;
+  }
+  return args;
+}
+
 export function useUsageInsights({
   sourceId = null,
   scope,
@@ -523,14 +553,17 @@ export function useUsageInsights({
           alreadyRunning: outcome.status === "ready",
         } satisfies RebuildResult;
       }
+      // Sanitize once, here, because this is where the payload crosses into
+      // Convex and gets serialized.
+      const opts = rebuildOptionsOnly(args);
       if (effectiveScope.kind === "swarm") {
         return rebuildSwarm({
           projectId: effectiveScope.projectId,
-          ...(args?.force !== undefined ? { force: args.force } : {}),
-          ...(args?.tuning ? { tuning: args.tuning } : {}),
+          ...(opts?.force !== undefined ? { force: opts.force } : {}),
+          ...(opts?.tuning ? { tuning: opts.tuning } : {}),
         });
       }
-      return rebuildScenario({ scenarioId: effectiveScope.scenarioId, ...args });
+      return rebuildScenario({ scenarioId: effectiveScope.scenarioId, ...opts });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scope identity is its key fields
     [

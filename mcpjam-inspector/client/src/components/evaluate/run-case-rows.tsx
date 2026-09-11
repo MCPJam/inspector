@@ -19,9 +19,11 @@ import { cn } from "@/lib/utils";
 import {
   USER_VALUE_STAGES,
   USER_VALUE_STAGE_LABELS,
+  measurementUnitLabel,
   type UserValueStage,
 } from "@mcpjam/sdk/contract";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
+import { formatCostOrDash } from "../evals/helpers";
 import {
   caseRowReasonLabel,
   type CaseRowIterationCell,
@@ -96,13 +98,16 @@ const CELL_CLASS: Record<CaseRowIterationCell["outcome"], string> = {
 };
 
 function IterationStrip({ row }: { row: EvaluateCaseRow }) {
-  // One cell per iteration, so the strip's LENGTH is the sample size. A case
-  // run once and a case run ten times should not look alike.
+  // One cell per trial, so the strip's LENGTH is the sample size. A case run
+  // once and a case run ten times should not look alike.
   if (row.cells.length <= 1) return null;
   return (
     <div
       className="mt-1.5 flex flex-wrap gap-[3px]"
-      aria-label={`${row.iterations.passed} of ${row.iterations.total} iterations passed`}
+      aria-label={`${row.iterations.passed} of ${row.iterations.total} ${measurementUnitLabel(
+        "trial",
+        row.iterations.total,
+      )} passed`}
     >
       {row.cells.map((cell) => (
         <span
@@ -154,9 +159,10 @@ function StageCell({
     return (
       <span
         className="inline-block h-2 w-3.5 rounded-[2px] bg-success/70"
-        title={`${label}: passed in ${state.count} ${
-          state.count === 1 ? "iteration" : "iterations"
-        }`}
+        title={`${label}: passed in ${state.count} ${measurementUnitLabel(
+          "trial",
+          state.count,
+        )}`}
       />
     );
   }
@@ -250,7 +256,10 @@ function breakText(row: EvaluateCaseRow): string {
 function verdictNote(row: EvaluateCaseRow): string | null {
   switch (row.verdict.kind) {
     case "legacyRun":
-      return "counted in iterations — this run has no per-case verdict";
+      return `counted in ${measurementUnitLabel(
+        "trial",
+        0,
+      )} — this run has no per-case verdict`;
     case "noMatch":
       return "no verdict row matched this case";
     case "identityNotEncodable":
@@ -259,7 +268,7 @@ function verdictNote(row: EvaluateCaseRow): string | null {
       return null;
     case "matched":
       return row.mark === null && row.verdict.variants.length > 1
-        ? "variants disagree — open the case for each one"
+        ? "variants disagree. Open the case for each one"
         : null;
   }
 }
@@ -378,6 +387,29 @@ export function RunCaseRows({
               <span className="hidden w-16 shrink-0 text-right text-[12.5px] tabular-nums text-muted-foreground sm:block">
                 {formatRunCaseLatencyMs(row.p50Ms)}
               </span>
+              <span
+                // Wider than the latency cell beside it: a cost renders as
+                // `$1234.56` or `<$0.0001`, both longer than any duration
+                // this column shows, and clipping a money figure is worse
+                // than the space it costs to show it.
+                className="hidden w-24 shrink-0 truncate text-right text-[12.5px] tabular-nums text-muted-foreground sm:block"
+                title={
+                  row.costUsd === null
+                    ? "No trial in this case has a cost"
+                    : [
+                        row.costedIterations < row.coverage.total
+                          ? `${row.costedIterations} of ${row.coverage.total} iterations priced`
+                          : null,
+                        row.hasRunnerReportedCost
+                          ? "Includes cost reported by your runner, not measured by MCPJam."
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" ") || undefined
+                }
+              >
+                {formatCostOrDash(row.costUsd)}
+              </span>
             </button>
             {open ? (
               <div
@@ -396,7 +428,7 @@ export function RunCaseRows({
                       })
                     }
                   >
-                    Open this iteration
+                    Open this {measurementUnitLabel("trial", 1)}
                   </button>
                 ) : null}
               </div>
