@@ -1,3 +1,9 @@
+import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Cloud,
@@ -21,15 +27,13 @@ import { useComputerTerminal } from "@/components/computer/useComputerTerminal";
 import {
   useBrowserWorkspaceEnabled,
   useComputersEnabledState,
+  useBrowserEnabledState,
 } from "@/hooks/useComputersEnabled";
 import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
 import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
 import { browserPanelAvailable } from "@/components/playground/PlaygroundBrowserPanel";
-import {
-  useMintBrowserToken,
-  useMintConversationBrowserToken,
-} from "@/hooks/useProjectComputer";
+import { useMintConversationBrowserToken } from "@/hooks/useProjectComputer";
 import {
   useComputerEngine,
   type ComputerEngineState,
@@ -38,8 +42,10 @@ import { useHarnessWorkdir } from "@/stores/harness-workdir-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
-import { useBrowserSessionsEnabled } from "@/hooks/useBrowserSessionsEnabled";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
+import { ComparisonBrowser } from "@/components/browser/ComparisonBrowser";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -66,9 +72,8 @@ export function PlaygroundRightRail({
   isAuthenticated: boolean;
 }) {
   const computersEnabled = useComputersEnabledState();
-  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
-
-  if (!shellAvailable) {
+  const browsersEnabled = useBrowserEnabledState();
+  if (computersEnabled !== true && browsersEnabled !== true) {
     return <LoggerView onClose={onClose} />;
   }
   return (
@@ -111,7 +116,12 @@ function RightRailTabbed({
   hostConfig: HostConfigDtoV2 | null;
   hostId: string | null;
 }) {
+  const navigate = useAppNavigate();
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
+  const leftBrowserForLogs = useRef(false);
+  const computersEnabled = useComputersEnabledState();
+  const browsersEnabled = useBrowserEnabledState();
+  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
   // Which engine serves this project's computer work. The rail is an INDICATOR
   // only — switching lives on the Computer tab, which owns the consent gate.
   //
@@ -119,6 +129,8 @@ function RightRailTabbed({
   // PlaygroundMain's engine reads `sharedProjectId` only. The divergence is
   // harmless (the engine hooks no-op without a shared project) and deliberate.
   const engine = useComputerEngine(projectId);
+  const browserEngine = useBrowserEngine(projectId);
+  const browserToolIds = useBrowserToolIds(hostConfig, browserEngine.selectedEngine);
   // The BODY follows `selectedEngine` (consent-blind), mirroring the Computer
   // tab's face choice: someone who picked "This machine" but hasn't authorized
   // it yet must see the local body's pointer, not a cloud terminal they didn't
@@ -128,50 +140,96 @@ function RightRailTabbed({
   // THE FALLBACK BROWSER, and only that. While the workspace flag is on the
   // browser lives in its own panel beside chat and this tab does not exist;
   // with the flag off it is the rail's third tab again, exactly as it was.
+  const comparisonWorkspaceId = useActiveChatSessionStore(
+    (state) => state.sessionId,
+  );
+  const hasComparison = useBrowserComparisonStore((state) =>
+    Object.values(state.clients).some(
+      (client) =>
+        client.workspaceId === comparisonWorkspaceId &&
+        client.projectId === projectId,
+    ),
+  );
+  const comparisonHasBrowser = useBrowserComparisonStore((state) =>
+    Object.values(state.clients).some(
+      (client) =>
+        client.workspaceId === comparisonWorkspaceId &&
+        client.projectId === projectId &&
+        client.started,
+    ),
+  );
+  const restoredHasBrowser = useActiveChatSessionStore(
+    (state) => !!state.restoredSession?.browser,
+  );
+  const sessionHasBrowser = restoredHasBrowser || comparisonHasBrowser;
   const workspaceEnabled = useBrowserWorkspaceEnabled();
   const localBrowserRunning = useLocalBrowserRunning(
-    !workspaceEnabled && engine.selectedEngine === "local",
+    !workspaceEnabled && browserEngine.selectedEngine === "local",
   );
   const hasBrowser =
+    browsersEnabled === true &&
     !workspaceEnabled &&
     browserPanelAvailable({
-      hostHasBrowser: !!hostConfig?.builtInToolIds?.includes("browser"),
-      selectedEngine: engine.selectedEngine,
+      sessionHasBrowser,
+      hostHasBrowser: !!browserToolIds?.includes("browser"),
+      selectedEngine: browserEngine.selectedEngine,
       isAuthenticated,
       localBrowserRunning,
     });
   // Which body. Follows `selectedEngine` like the Shell above, so someone who
   // picked "This machine" but has not authorized it yet sees the local body's
   // pointer rather than a cloud browser they did not ask for.
-  const isLocalBrowser = engine.selectedEngine === "local";
-  const mintBrowserToken = useMintBrowserToken();
+  const isLocalBrowser = browserEngine.selectedEngine === "local";
   const mintConversationBrowserToken = useMintConversationBrowserToken();
-  const browserSessionsEnabled = useBrowserSessionsEnabled();
   const activeChatSessionId = useActiveChatSessionStore(
     (state) => state.sessionId,
   );
-  const browserSessionId = browserSessionsEnabled
-    ? (activeChatSessionId ?? undefined)
-    : undefined;
+  const browserSessionId = activeChatSessionId ?? undefined;
+  const browseRevealSeq = useBrowserWorkspaceStore((state) => state.revealSeq);
+  const browseRevealId = useBrowserWorkspaceStore(
+    (state) => state.revealConversationId,
+  );
   const mintHostedBrowserToken = useCallback(
-    ({ projectId: tokenProjectId }: { projectId: string }) =>
-      browserSessionId
-        ? mintConversationBrowserToken({
-            projectId: tokenProjectId,
-            conversationId: browserSessionId,
-          })
-        : mintBrowserToken({ projectId: tokenProjectId }),
-    [browserSessionId, mintBrowserToken, mintConversationBrowserToken],
+    ({ projectId: tokenProjectId }: { projectId: string }) => {
+      if (!browserSessionId)
+        throw new Error("The conversation is still loading.");
+      return mintConversationBrowserToken({
+        projectId: tokenProjectId,
+        conversationId: browserSessionId,
+      });
+    },
+    [browserSessionId, mintConversationBrowserToken],
   );
 
   // A tab that disappears cannot stay selected: leaving `activeTab` on a
   // hidden pane hides all of them and the rail looks broken.
   useEffect(() => {
-    if (!hasBrowser && activeTab === "browser") setActiveTab("logs");
-  }, [hasBrowser, activeTab]);
+    if (
+      (!hasBrowser && activeTab === "browser") ||
+      (!shellAvailable && activeTab === "shell")
+    )
+      setActiveTab("logs");
+  }, [hasBrowser, shellAvailable, activeTab]);
+
+  useEffect(() => {
+    leftBrowserForLogs.current = false;
+  }, [browserSessionId]);
+
+  // Follow the work until the person looks away. A live browser tool opens
+  // this tab the first time; switching to Logs (or Shell) is a choice we
+  // keep until they come back, or until this conversation is no longer
+  // the one browsing.
+  useEffect(() => {
+    if (!hasBrowser || !browserSessionId) return;
+    if (browseRevealId !== browserSessionId) return;
+    if (leftBrowserForLogs.current) return;
+    setActiveTab("browser");
+  }, [browseRevealSeq, browseRevealId, browserSessionId, hasBrowser]);
+
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
       if (next === activeTab) return;
+      leftBrowserForLogs.current = next !== "browser";
       track("playground_right_rail_tab_changed", {
         location: "playground_right_rail",
         from: activeTab,
@@ -182,6 +240,32 @@ function RightRailTabbed({
     [activeTab],
   );
 
+  const browserActivity =
+    projectId && isLocalBrowser && browserEngine.consent.granted ? (
+      <BrowserActivityList
+        key={projectId}
+        title="Browser activity"
+        collapsible
+        projectId={projectId}
+        consentToken={browserEngine.consent.token}
+        active={activeTab === "logs"}
+        className="max-h-[40%] shrink-0 border-t"
+      />
+    ) : null;
+
+  // Browser-only hosts must reach the tabbed rail (and its consent gate)
+  // without mounting a shell or requiring a Computer attachment.
+  if (!shellAvailable && !hasBrowser) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="min-h-0 flex-1">
+          <LoggerView onClose={onClose} />
+        </div>
+        {browserActivity}
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-0.5 border-b border-border px-2 py-1">
@@ -191,12 +275,14 @@ function RightRailTabbed({
           isActive={activeTab === "logs"}
           onClick={() => handleTabClick("logs")}
         />
-        <TabButton
-          icon={TerminalSquare}
-          label="Shell"
-          isActive={activeTab === "shell"}
-          onClick={() => handleTabClick("shell")}
-        />
+        {shellAvailable ? (
+          <TabButton
+            icon={TerminalSquare}
+            label="Shell"
+            isActive={activeTab === "shell"}
+            onClick={() => handleTabClick("shell")}
+          />
+        ) : null}
         {hasBrowser ? (
           <TabButton
             icon={Globe}
@@ -205,24 +291,46 @@ function RightRailTabbed({
             onClick={() => handleTabClick("browser")}
           />
         ) : null}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Collapse panel"
-          className="ml-auto rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-        >
-          <PanelRightClose className="h-3.5 w-3.5" />
-        </button>
+        <div className="ml-auto flex items-center gap-1">
+          {hasBrowser && activeTab === "browser" ? (
+            <>
+              <BrowserRuntimeControls projectId={projectId} compact />
+              {hostId && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(buildHostFocusTabPath(hostId, "browser"))
+                  }
+                  className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  Browser settings
+                </button>
+              )}
+            </>
+          ) : null}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Collapse panel"
+            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+          >
+            <PanelRightClose className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
       {/* Keep BOTH bodies mounted — toggling tabs must not drop the live
           terminal WebSocket or the log stream. */}
       <div
+        hidden={activeTab !== "logs"}
         className={cn(
           "min-h-0 flex-1",
           activeTab === "logs" ? "flex flex-col" : "hidden",
         )}
       >
-        <LoggerView isCollapsable={false} />
+        <div className="min-h-0 flex-1">
+          <LoggerView isCollapsable={false} />
+        </div>
+        {browserActivity}
       </div>
       {hasBrowser ? (
         <div
@@ -237,16 +345,34 @@ function RightRailTabbed({
               is what makes that safe — a pane behind the Logs tab must stop
               claiming somebody is watching, and on the hosted engine that claim
               keeps a METERED box awake. */}
-          {isLocalBrowser ? (
+          {hasComparison && projectId && browserSessionId ? (
+            <ComparisonBrowser
+              key={`${projectId}:${browserSessionId}`}
+              projectId={projectId}
+              workspaceId={browserSessionId}
+              active={activeTab === "browser"}
+            />
+          ) : !browserSessionId ? (
+            <p role="status" className="p-4 text-sm text-muted-foreground">
+              Loading conversation…
+            </p>
+          ) : isLocalBrowser && browserEngine.localAvailable === false ? (
+            <p className="p-4 text-sm text-muted-foreground">
+              Browser is unavailable on this machine. Check Browser settings or
+              choose Cloud for a new chat.
+            </p>
+          ) : isLocalBrowser ? (
             <LocalBrowserBody
+              key={`${projectId}:${browserSessionId}:local`}
               projectId={projectId}
               sessionId={browserSessionId}
-              consentGranted={engine.consent.granted}
-              consentToken={engine.consent.token}
+              consentGranted={browserEngine.consent.granted}
+              consentToken={browserEngine.consent.token}
               active={activeTab === "browser"}
             />
           ) : (
             <HostedBrowserBody
+              key={`${projectId}:${browserSessionId}:hosted`}
               projectId={projectId}
               sessionId={browserSessionId}
               mintToken={mintHostedBrowserToken}
@@ -255,31 +381,33 @@ function RightRailTabbed({
           )}
         </div>
       ) : null}
-      <div
-        className={cn(
-          "min-h-0 flex-1 flex-col",
-          activeTab === "shell" ? "flex" : "hidden",
-        )}
-      >
-        {/* The local body deliberately does NOT mount the cloud terminal
+      {shellAvailable ? (
+        <div
+          className={cn(
+            "min-h-0 flex-1 flex-col",
+            activeTab === "shell" ? "flex" : "hidden",
+          )}
+        >
+          {/* The local body deliberately does NOT mount the cloud terminal
             controller: `useComputerTerminal` reserves (and wakes) a cloud box
             on open, which would be a real machine started behind the user's
             back while their chat bash runs on this laptop. Swapping bodies
             mid-session drops a live cloud socket — the reserved box stays up
             until the idle sweep, and switching back reconnects with a fresh
             token mint. */}
-        {isLocalShell ? (
-          <LocalShellBody engine={engine} projectId={projectId} />
-        ) : (
-          <CloudShellBody
-            engine={engine}
-            projectId={projectId}
-            isAuthenticated={isAuthenticated}
-            hostConfig={hostConfig}
-            hostId={hostId}
-          />
-        )}
-      </div>
+          {isLocalShell ? (
+            <LocalShellBody engine={engine} projectId={projectId} />
+          ) : (
+            <CloudShellBody
+              engine={engine}
+              projectId={projectId}
+              isAuthenticated={isAuthenticated}
+              hostConfig={hostConfig}
+              hostId={hostId}
+            />
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -30,6 +30,43 @@ function keyEvents(dbg: FakeBrowserWebContents["debugger"]) {
     .map((c) => c.params as Record<string, unknown>);
 }
 
+describe("electron page — WebMCP support", () => {
+  it.each([
+    [{ result: { value: true } }, true],
+    [{ result: { value: false } }, false],
+    [{}, false],
+    [{ result: { value: true }, exceptionDetails: { text: "failed" } }, false],
+  ])("reads support from the CDP evaluation %j", async (reply, supported) => {
+    const { page, dbg } = makePage();
+    dbg.replies.set("Runtime.evaluate", reply);
+    const bridge = await page.webmcp();
+    expect(bridge?.isSupported()).toBe(supported);
+    bridge?.dispose();
+  });
+
+  it("rechecks support when navigation replaces the initial document", async () => {
+    const { page, dbg } = makePage();
+    dbg.replies.set("Runtime.evaluate", { result: { value: false } });
+    const bridge = await page.webmcp();
+    expect(bridge?.isSupported()).toBe(false);
+
+    dbg.replies.set("Runtime.evaluate", { result: { value: true } });
+    dbg.emitCdp("Page.frameNavigated", {
+      frame: { id: "main", url: "https://example.test/" },
+    });
+    await bridge?.probeSettled();
+    expect(bridge?.isSupported()).toBe(true);
+
+    dbg.replies.set("Runtime.evaluate", { result: { value: false } });
+    dbg.emitCdp("Page.frameNavigated", {
+      frame: { id: "main", url: "https://other.test/" },
+    });
+    await bridge?.probeSettled();
+    expect(bridge?.isSupported()).toBe(false);
+    bridge?.dispose();
+  });
+});
+
 describe("electron page — clicking", () => {
   it("moves before it presses, and releases the button it pressed", async () => {
     // Hover handlers and menus that open on mouseover both need the pointer to

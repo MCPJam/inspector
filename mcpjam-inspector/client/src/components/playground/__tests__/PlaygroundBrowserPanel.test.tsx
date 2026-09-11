@@ -1,3 +1,6 @@
+vi.mock("@/components/browser/BrowserRuntimeControls", () => ({
+  BrowserRuntimeControls: () => null,
+}));
 /**
  * The browser panel, in its new home beside chat.
  *
@@ -15,18 +18,18 @@ const engineState = {
   granted: true,
 };
 
-vi.mock("@/hooks/useComputerEngine", () => ({
-  useComputerEngine: () => ({
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
     engine: engineState.engine,
     selectedEngine: engineState.selectedEngine,
     toggleVisible: true,
+    localAvailable: true,
     localTerminalAvailable: true,
     consent: { granted: engineState.granted, token: "consent-token" },
   }),
 }));
 
 const sessionState = {
-  enabled: true,
   sessionId: "chat-1" as string | null,
 };
 
@@ -43,13 +46,10 @@ vi.mock("@/hooks/useProjectComputer", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useBrowserSessionsEnabled", () => ({
-  useBrowserSessionsEnabled: () => sessionState.enabled,
-}));
-
 vi.mock("@/stores/active-chat-session-store", () => ({
-  useActiveChatSessionStore: (select: (s: { sessionId: string | null }) => unknown) =>
-    select({ sessionId: sessionState.sessionId }),
+  useActiveChatSessionStore: (
+    select: (s: { sessionId: string | null }) => unknown,
+  ) => select({ sessionId: sessionState.sessionId }),
 }));
 
 // Both bodies are exercised in their own suites; here they only have to say
@@ -97,10 +97,9 @@ vi.mock("@/components/browser/HostedBrowserBody", () => ({
   ),
 }));
 
-const {
-  browserPanelAvailable,
-  PlaygroundBrowserPanel,
-} = await import("../PlaygroundBrowserPanel");
+const { browserPanelAvailable, PlaygroundBrowserPanel } = await import(
+  "../PlaygroundBrowserPanel"
+);
 const { useBrowserWorkspaceStore, DEFAULT_BROWSER_PANEL_SIZE } = await import(
   "@/stores/browser-workspace-store"
 );
@@ -121,12 +120,10 @@ beforeEach(() => {
   engineState.engine = "local";
   engineState.selectedEngine = "local";
   engineState.granted = true;
-  sessionState.enabled = true;
   sessionState.sessionId = "chat-1";
   useBrowserWorkspaceStore.setState({
-    open: true,
+    conversations: { "chat-1": { open: true, expanded: false } },
     size: DEFAULT_BROWSER_PANEL_SIZE,
-    expanded: false,
     collapsedRailForBrowser: false,
   });
 });
@@ -149,11 +146,7 @@ describe("which body the panel mounts", () => {
     engineState.selectedEngine = "cloud";
     engineState.engine = "cloud";
     rerender(
-      <PlaygroundBrowserPanel
-        projectId="proj-1"
-        visible
-        onClose={() => {}}
-      />,
+      <PlaygroundBrowserPanel projectId="proj-1" visible onClose={() => {}} />,
     );
     expect(screen.getByTestId("browser-pane").dataset.engine).toBe("hosted");
   });
@@ -181,7 +174,9 @@ describe("expand and close", () => {
     const button = screen.getByTestId("browser-expand");
     expect(button).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(button);
-    expect(useBrowserWorkspaceStore.getState().expanded).toBe(true);
+    expect(
+      useBrowserWorkspaceStore.getState().conversations["chat-1"]?.expanded,
+    ).toBe(true);
     expect(screen.getByTestId("browser-expand")).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -193,7 +188,9 @@ describe("expand and close", () => {
     // with the control to undo it in the corner of a panel nobody expected.
     const { rerender } = renderPanel();
     fireEvent.click(screen.getByTestId("browser-expand"));
-    expect(useBrowserWorkspaceStore.getState().expanded).toBe(true);
+    expect(
+      useBrowserWorkspaceStore.getState().conversations["chat-1"]?.expanded,
+    ).toBe(true);
 
     rerender(
       <PlaygroundBrowserPanel
@@ -202,7 +199,9 @@ describe("expand and close", () => {
         onClose={() => {}}
       />,
     );
-    expect(useBrowserWorkspaceStore.getState().expanded).toBe(false);
+    expect(
+      useBrowserWorkspaceStore.getState().conversations["chat-1"]?.expanded,
+    ).toBe(false);
   });
 
   it("hands the close back to the workspace", () => {
@@ -213,9 +212,7 @@ describe("expand and close", () => {
 });
 
 describe("browserPanelAvailable", () => {
-  it("needs the host to carry the browser built-in", () => {
-    // A panel offering a browser the model cannot use would be a promise the
-    // host config does not keep.
+  it("offers local setup before Browser is enabled for the client", () => {
     expect(
       browserPanelAvailable({
         hostHasBrowser: false,
@@ -223,7 +220,7 @@ describe("browserPanelAvailable", () => {
         isAuthenticated: true,
         localBrowserRunning: false,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("offers one anyway when this machine simply has a browser running", () => {
@@ -313,18 +310,18 @@ describe("the browser a chat owns", () => {
     );
   });
 
-  it("falls back to the project token when sessions are off", async () => {
-    // `browser-sessions` off is not "no browser" — it is the old shared
-    // project browser, which is exactly what the project mint returns.
-    sessionState.enabled = false;
-    engineState.engine = "cloud";
+  it("waits for conversation hydration without minting a project token", () => {
+    sessionState.sessionId = null;
     engineState.selectedEngine = "cloud";
     renderPanel();
-    const pane = screen.getByTestId("browser-pane");
-    expect(pane).toHaveAttribute("data-session", "");
-    fireEvent.click(pane);
-    await vi.waitFor(() =>
-      expect(pane).toHaveAttribute("data-token", "project-tok"),
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading conversation",
     );
+    expect(screen.queryByTestId("browser-pane")).toBeNull();
   });
+});
+
+it("makes a restored session browser available to its authenticated owner without a host", () => {
+  expect(browserPanelAvailable({ hostHasBrowser: false, sessionHasBrowser: true, selectedEngine: "cloud", isAuthenticated: true, localBrowserRunning: false })).toBe(true);
+  expect(browserPanelAvailable({ hostHasBrowser: false, sessionHasBrowser: true, selectedEngine: "cloud", isAuthenticated: false, localBrowserRunning: false })).toBe(false);
 });

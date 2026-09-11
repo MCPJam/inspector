@@ -179,6 +179,9 @@ export const ANALYTICS_EVENTS = {
   // local_terminal_unavailable: the local terminal could not be offered
   //   {reason} — an enum, never a node-pty error string.
   computer_engine_selected: { source: "client" },
+  local_browser_consent_denied: { source: "client" },
+  local_browser_consent_gate_shown: { source: "client" },
+  local_browser_consent_granted: { source: "client" },
   local_computer_consent_denied: { source: "client" },
   local_computer_consent_gate_shown: { source: "client" },
   local_computer_consent_granted: { source: "client" },

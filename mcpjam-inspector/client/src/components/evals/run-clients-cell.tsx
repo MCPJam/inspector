@@ -63,7 +63,8 @@ export function RunClientsCell({ rows }: { rows: SuiteRunHistoryRow[] }) {
             {mapping.client}
             <span className="text-muted-foreground">
               {" "}
-              · {mapping.models.map(compactModelIdTail).join(", ") ||
+              ·{" "}
+              {mapping.models.map(compactModelIdTail).join(", ") ||
                 "Model not recorded"}
             </span>
           </span>
@@ -74,6 +75,8 @@ export function RunClientsCell({ rows }: { rows: SuiteRunHistoryRow[] }) {
           <TooltipTrigger asChild>
             <span
               tabIndex={0}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
               className="inline-flex h-5 shrink-0 items-center rounded-sm px-1 text-[10px] font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:outline-ring"
               aria-label={`${hidden.length} more client and model pairings`}
             >

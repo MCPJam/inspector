@@ -24,7 +24,8 @@ vi.mock("../hooks/use-is-member-actor", () => ({
   useIsMemberActor: () => memberActor.value,
 }));
 
-vi.mock("../hooks/useComputersEnabled", () => ({
+vi.mock("../hooks/useComputersEnabled", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useComputersEnabled")>()),
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => flagState,
   useComputersEnabled: () => flagState === true,

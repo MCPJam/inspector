@@ -217,6 +217,8 @@ export type CaseMixInput = {
 
 /** Optional generation knobs forwarded to the backend generate endpoint. */
 export type GenerationOptions = {
+  testSet?: "quick" | "comprehensive";
+  toolCoverage?: "read-only" | "read-write";
   caseMix?: CaseMixInput;
   varyUserStyles?: boolean;
   /** User-authored direction for a follow-up generation pass. */

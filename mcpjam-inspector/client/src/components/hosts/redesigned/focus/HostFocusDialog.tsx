@@ -19,6 +19,7 @@ import { HostIdentityRow } from "./HostIdentityRow";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
 import { ToolsTab } from "./ToolsTab";
+import { BrowserTab } from "./BrowserTab";
 import { ComputerTab } from "./ComputerTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
@@ -266,7 +267,18 @@ export function HostFocusDialog({
               />
             ) : null}
             {activeTab === "tools" ? (
-              <ToolsTab draft={draft} onDraftChange={onDraftChange} />
+              <ToolsTab
+                projectId={projectId}
+                draft={draft}
+                onDraftChange={onDraftChange}
+              />
+            ) : null}
+            {activeTab === "browser" ? (
+              <BrowserTab
+                projectId={projectId}
+                draft={draft}
+                onDraftChange={onDraftChange}
+              />
             ) : null}
             {activeTab === "computer" ? (
               <ComputerTab

@@ -1,3 +1,7 @@
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
+import { resolveLocalBrowserTools } from "@/shared/local-browser-settings";
 /**
  * PlaygroundMain
  *
@@ -10,6 +14,7 @@
  * Device/display mode handling is delegated to the Thread component
  * which manages PiP/fullscreen at the widget level.
  */
+import { useConversationTargetRestoration } from "@/hooks/use-conversation-target-restoration";
 
 import {
   FormEvent,
@@ -179,7 +184,7 @@ import {
 } from "@/lib/previewed-client-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
-import { useProjectMembers } from "@/hooks/useProjects";
+import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
@@ -658,7 +663,7 @@ export function PlaygroundMain({
   const appliedHistoryContentSignatureRef = useRef<string | null>(null);
   // Assigned during render from `needsConversationTargetAck` below; read by the
   // send paths, which are declared above it.
-  const needsConversationTargetAckRef = useRef(false);
+  const conversationSendBlockedRef = useRef(false);
   const resumedThreadSendBaselineRef = useRef<{
     sessionId: string;
     version: number;
@@ -809,6 +814,20 @@ export function PlaygroundMain({
   // chat hook. Hosted mode / no local engine ⇒ cloud, and the turn sends
   // nothing extra.
   const playgroundComputerEngine = useComputerEngine(convexProjectId);
+  const playgroundBrowserEngine = useBrowserEngine(convexProjectId);
+  const personalBrowserEngineOption = useMemo(
+    () => ({
+      engine: playgroundBrowserEngine.engine,
+      consentToken: playgroundBrowserEngine.localAvailable
+        ? playgroundBrowserEngine.consent.token
+        : null,
+    }),
+    [
+      playgroundBrowserEngine.engine,
+      playgroundBrowserEngine.localAvailable,
+      playgroundBrowserEngine.consent.token,
+    ],
+  );
   // The resolved engine passed to every chat session on this tab — the root
   // and each comparison column — so "This machine" runs bash consistently
   // across model/host comparison, not just the primary session.
@@ -895,18 +914,33 @@ export function PlaygroundMain({
   const isEnvironmentMode = playgroundEnvironment.isEnvironmentMode;
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   // Whether this turn may use the tools of the page open in the WebMCP tab.
-  // Held in the inspector store so the Tools-panel toggle and this transport
-  // read one value without threading a boolean between them.
-  // Derived rather than the raw `chatEnabled`: a session that has closed leaves
-  // the opt-in and the last tool snapshot in place, and advertising a dead
-  // browser's tools to a model is worse than showing none.
+  // Derived from session liveness: a closed status leaves the last tool
+  // snapshot in place, and advertising a dead browser's tools to a model is
+  // worse than showing none.
   const webmcpPageToolsEnabled = useWebmcpInspectorStore((state) =>
     state.pageToolsLive(),
   );
-  const { host: previewedHost } = useHost({
+  const { host: previewedHost, isLoading: previewedHostLoading } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  // `shouldQueryProjectId`, not a bare truthiness check — the same guard the
+  // rest of the Convex-reading hooks use. `convexProjectId` is a shared project
+  // id today, but a local/placeholder id reaching `v.id("projects")` throws
+  // before the handler and cannot be caught downstream.
+  const projectDefaultHostConfig = useQuery(
+    "hostConfigsV2:getProjectDefault" as never,
+    isConvexAuthenticated && shouldQueryProjectId(convexProjectId)
+      ? ({ projectId: convexProjectId } as never)
+      : "skip",
+  ) as HostConfigDtoV2 | null | undefined;
+  // Match the Tools and Browser rails: no explicit selection means the
+  // project default. An explicit host still loading must not inherit another
+  // host's capabilities, and an explicit empty list must stay empty.
+  const effectiveBuiltInToolIds = useBrowserToolIds(
+    previewedHostId ? previewedHost?.config : projectDefaultHostConfig,
+    playgroundBrowserEngine.engine,
+  );
   // A newly selected host is unknown for one render while its config loads.
   // Fail closed in that gap: it may resolve to Codex or Claude Code, whose
   // opaque harness sessions cannot be safely rewound. Ordinary model hosts get
@@ -964,7 +998,7 @@ export function PlaygroundMain({
     harnessId: previewedHarnessId,
     hostedMode: HOSTED_MODE,
     environmentId: isEnvironmentMode
-      ? (playgroundEnvironment.environmentId ?? null)
+      ? playgroundEnvironment.environmentId ?? null
       : null,
     requiresWebChatApi: isEnvironmentMode,
     // A shared transcript and a replayed one are both somebody else's turn, or
@@ -989,7 +1023,7 @@ export function PlaygroundMain({
     // tell "not answered yet" from "signed out" — it used to say `needs-signin`
     // for that whole window, to a user who was signed in.
     userKey: isConvexAuthenticated
-      ? (currentUserForSender?._id ?? undefined)
+      ? currentUserForSender?._id ?? undefined
       : null,
     inScope: localHarnessInScope,
     scopeKey: localHarnessScopeKey,
@@ -1180,16 +1214,17 @@ export function PlaygroundMain({
       previewedHost?.config?.modelVisibleMcpToolResults,
     mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     // Same live-source pattern: built-in tool attachments flow from the
-    // previewed host's hostConfig. The server re-resolves via the shared
+    // effective host's hostConfig. The server re-resolves via the shared
     // execution-context helper, so this also flows through scenario sessions
     // (where the persisted host config wins via the runtime-config fetch).
-    builtInToolIds: previewedHost?.config?.builtInToolIds,
+    builtInToolIds: effectiveBuiltInToolIds,
     // For the RAW view of a reopened session only. Live turns stream the real
     // advertised set; a rehydrated one has nothing to show, and the browser is
     // the capability most likely to be a host's ONLY one — so without this Raw
     // reads `"tools": {}` beside a conversation that drove a browser.
     builtInToolDefinitions: playgroundBrowserTools.tools,
     personalComputerEngine: personalComputerEngineOption,
+    personalBrowserEngine: personalBrowserEngineOption,
     localHarnessExecution: localHarnessExecutionOption,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
@@ -1214,6 +1249,10 @@ export function PlaygroundMain({
   // conversation only while this Playground center is mounted; the rail then
   // binds the watched browser to the same durable owner. Clearing is guarded
   // so an overlapping PlaygroundMain cannot erase a newer active session.
+  const restoredSessionHasBrowser = useActiveChatSessionStore(
+    (state) => state.restoredSession?.sessionId === chatSessionId && !!state.restoredSession.browser,
+  );
+  const apiSessionViewOnly = useActiveChatSessionStore(state => state.restoredSession?.sessionId === chatSessionId && state.restoredSession.origin === "api");
   const setActiveChatSessionId = useActiveChatSessionStore(
     (state) => state.setSessionId,
   );
@@ -1476,6 +1515,38 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     projectId: multiHostProjectId,
   });
+  const { restoreTarget, restoringTarget } = useConversationTargetRestoration({
+    projectId: multiHostProjectId,
+    composer:
+      isEnvironmentMode && playgroundEnvironment.environmentId
+        ? {
+            kind: "environment",
+            environmentId: playgroundEnvironment.environmentId,
+          }
+        : { kind: "host", hostId: previewedHostId },
+    settled:
+      isSessionBootstrapComplete &&
+      !previewedHostLoading &&
+      (!isEnvironmentMode ||
+        (!playgroundEnvironment.isResolutionPending &&
+          !playgroundEnvironment.isPreviewLoading &&
+          (!environmentHostId || environmentHostId === previewedHostId))),
+    hostsLoading: hostListLoading,
+    hostIds: hostList.map((host) => host.hostId),
+    environmentsEnabled,
+    selectHost: setPreviewedHostId,
+    selectEnvironment: playgroundEnvironment.selectEnvironment,
+    clearEnvironment: playgroundEnvironment.clearEnvironment,
+  });
+  // A recorded ad-hoc session intentionally has no named host. Do not let the
+  // new-project default picker replace that explicit choice while reopening it.
+  const restoringAdhoc =
+    restoringTarget?.kind === "adhoc" ||
+    (restoredConversation?.target.kind === "adhoc" &&
+      (restoredConversation.chatSessionId === chatSessionId ||
+        loadingHistorySessionId !== null));
+  const restoringAdhocRef = useRef(restoringAdhoc);
+  restoringAdhocRef.current = restoringAdhoc;
   const { createHost: createPlaygroundHost, deleteHost: deletePlaygroundHost } =
     useHostMutations();
   const seedCatalogState = useHostCatalog();
@@ -1557,6 +1628,7 @@ export function PlaygroundMain({
       hostListLoading ||
       !multiHostProjectId ||
       hostList.length > 0 ||
+      restoringAdhoc ||
       playgroundSeededProjectIdsRef.current.has(multiHostProjectId) ||
       seedCatalogState.status === "loading"
     ) {
@@ -1609,6 +1681,11 @@ export function PlaygroundMain({
         }),
       })
         .then(({ hostId }) => {
+          if (
+            activeMultiHostProjectIdRef.current === seedProjectId &&
+            restoringAdhocRef.current
+          )
+            return;
           // As in the 3-host path: a lead now pointing at the host THIS
           // fallback just created is our own "no valid previewed host"
           // effect auto-picking it once the host list caught up, not a user
@@ -1755,6 +1832,11 @@ export function PlaygroundMain({
         // `seedProjectId` later picks this up. Lead is set explicitly
         // alongside the array since a bare array write can't promote a lead
         // when `previewedHostId` is still null (brand-new project).
+        if (
+          activeMultiHostProjectIdRef.current === seedProjectId &&
+          restoringAdhocRef.current
+        )
+          return;
         savePreviewedHostId(seedProjectId, leadHostId);
         saveSelectedHostIds(seedProjectId, hostIds);
         if (activeMultiHostProjectIdRef.current === seedProjectId) {
@@ -1779,6 +1861,7 @@ export function PlaygroundMain({
     hostListLoading,
     multiHostProjectId,
     hostList.length,
+    restoringAdhoc,
     createPlaygroundHost,
     deletePlaygroundHost,
     setPreviewedHostId,
@@ -1802,6 +1885,7 @@ export function PlaygroundMain({
     if (playgroundSeedingProjectIdsRef.current.has(multiHostProjectId)) {
       return;
     }
+    if (restoringAdhoc) return;
     const previewedHostIsValid =
       previewedHostId !== null &&
       hostList.some((host) => host.hostId === previewedHostId);
@@ -1815,6 +1899,7 @@ export function PlaygroundMain({
     hostList,
     previewedHostId,
     resolveFallbackHostId,
+    restoringAdhoc,
     setPreviewedHostId,
     seedCompletionTick,
   ]);
@@ -1873,7 +1958,7 @@ export function PlaygroundMain({
   // axis only — the input model applies to every column.
   const leadHostId = selectedHostIds[0] ?? null;
   const leadHost = leadHostId
-    ? (resolvedSelectedHosts.find((host) => host.hostId === leadHostId) ?? null)
+    ? resolvedSelectedHosts.find((host) => host.hostId === leadHostId) ?? null
     : null;
   const sharedHostColumnModel = selectedModel ?? null;
 
@@ -2001,7 +2086,7 @@ export function PlaygroundMain({
         harnessId: column.hostConfig?.harness ?? null,
         hostedMode: HOSTED_MODE,
         environmentId: isEnvironmentMode
-          ? (playgroundEnvironment.environmentId ?? null)
+          ? playgroundEnvironment.environmentId ?? null
           : null,
         requiresWebChatApi: isEnvironmentMode,
         sharedRun: isSharedSession || viewingHistoryReplay,
@@ -2179,7 +2264,7 @@ export function PlaygroundMain({
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming
       ? liveTraceEnvelope
-      : (preludeTraceEnvelope ?? liveTraceEnvelope);
+      : preludeTraceEnvelope ?? liveTraceEnvelope;
   // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
   // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
   const showTraceViewTabs =
@@ -2259,13 +2344,15 @@ export function PlaygroundMain({
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive: isStreamingActive || isPreparingServerForSend,
     composerDisabled:
-      disableChatInput || submitBlocked || isPreparingServerForSend,
+      apiSessionViewOnly || disableChatInput || submitBlocked || isPreparingServerForSend,
     submitDisabled:
       disableChatInput ||
       submitBlocked ||
       composer.submitGatedByServer ||
       isPreparingServerForSend ||
       isEnvironmentTargetPending ||
+      loadingHistorySessionId !== null ||
+      restoringTarget !== null ||
       localHarnessBlocksSend,
   });
 
@@ -2515,7 +2602,8 @@ export function PlaygroundMain({
   // Read at SEND time by callbacks defined above this line, so it has to be a
   // ref rather than a dependency — the send paths must not be re-created (and
   // re-armed) on every host or environment change.
-  needsConversationTargetAckRef.current = needsConversationTargetAck;
+  conversationSendBlockedRef.current =
+    apiSessionViewOnly || needsConversationTargetAck || loadingHistorySessionId !== null || restoringTarget !== null;
   const acknowledgeConversationTarget = useCallback(() => {
     setRestoredConversation((previous) =>
       previous ? { ...previous, acknowledged: true } : previous,
@@ -2605,11 +2693,20 @@ export function PlaygroundMain({
       detail: ChatHistoryDetailSession,
       widgetSnapshots?: ChatHistoryWidgetSnapshot[],
       options?: {
+        restoreExecutionTarget?: boolean;
         shouldRestoreComposerState?: () => boolean;
         shouldApply?: () => boolean;
         turnTraces?: ChatHistoryTurnTrace[];
       },
     ) => {
+      if (options?.restoreExecutionTarget && detail.origin !== "api") {
+        adoptRestoredConversationTarget(detail);
+        const apply = await restoreTarget(
+          readConversationExecutionTarget(detail),
+          options.shouldApply ?? (() => true),
+        );
+        if (!apply) return false;
+      }
       await loadChatSession(
         {
           chatSessionId: detail.chatSessionId,
@@ -2627,6 +2724,8 @@ export function PlaygroundMain({
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
+      useActiveChatSessionStore.getState().setRestoredSession({ sessionId: detail.chatSessionId, origin: detail.origin, browser: detail.browser });
+      if (detail.browser && detail.projectId) useActiveChatSessionStore.getState().setBrowserLocation({ projectId: detail.projectId, sessionId: detail.chatSessionId, engine: "cloud" });
       const shouldRestoreComposerState =
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
@@ -2646,10 +2745,13 @@ export function PlaygroundMain({
       );
       syncResumedVersion(detail.version);
       void markHistorySessionRead(detail._id);
+      return true;
     },
     [
       availableModels,
       loadChatSession,
+      adoptRestoredConversationTarget,
+      restoreTarget,
       markHistorySessionRead,
       setSelectedModel,
       syncResumedVersion,
@@ -2955,11 +3057,21 @@ export function PlaygroundMain({
           return;
         }
 
-        await loadHistorySession(detail.session, detail.widgetSnapshots, {
-          turnTraces: detail.turnTraces,
-        });
+        const applied = await loadHistorySession(
+          detail.session,
+          detail.widgetSnapshots,
+          {
+            restoreExecutionTarget: true,
+            turnTraces: detail.turnTraces,
+            shouldApply: () =>
+              historySelectionRequestIdRef.current === selectionRequestId,
+          },
+        );
 
-        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+        if (
+          !applied ||
+          historySelectionRequestIdRef.current !== selectionRequestId
+        ) {
           return;
         }
         restoreHistoryServerSelection(
@@ -3001,6 +3113,7 @@ export function PlaygroundMain({
       // lives on the single chat session, so the compare grid must stand down
       // rather than render over it.
       setViewingHistoryReplay(true);
+      setLoadingHistorySessionId(conversationId);
       let restored = false;
 
       try {
@@ -3013,13 +3126,21 @@ export function PlaygroundMain({
           return "failed";
         }
 
-        await loadHistorySession(detail.session, detail.widgetSnapshots, {
-          turnTraces: detail.turnTraces,
-          shouldApply: () =>
-            historySelectionRequestIdRef.current === selectionRequestId,
-        });
+        const applied = await loadHistorySession(
+          detail.session,
+          detail.widgetSnapshots,
+          {
+            restoreExecutionTarget: true,
+            turnTraces: detail.turnTraces,
+            shouldApply: () =>
+              historySelectionRequestIdRef.current === selectionRequestId,
+          },
+        );
 
-        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+        if (
+          !applied ||
+          historySelectionRequestIdRef.current !== selectionRequestId
+        ) {
           return "failed";
         }
         restoreHistoryServerSelection(
@@ -3034,6 +3155,10 @@ export function PlaygroundMain({
               modelId: detail.session.modelId,
             }
           : null;
+        if (new URLSearchParams(window.location.search).get("browser") === "open") {
+          if (detail.session.browser) useBrowserWorkspaceStore.getState().openBrowser(detail.session.chatSessionId);
+          const url = new URL(window.location.href); url.searchParams.delete("browser"); window.history.replaceState(window.history.state, "", url);
+        }
         restored = true;
         return "restored";
       } catch (error) {
@@ -3055,6 +3180,8 @@ export function PlaygroundMain({
         );
         return "failed";
       } finally {
+        if (historySelectionRequestIdRef.current === selectionRequestId)
+          setLoadingHistorySessionId(null);
         // Nothing restored means nothing to replay — release the compare
         // suppression so the user's own layout isn't stuck off.
         if (
@@ -3116,8 +3243,8 @@ export function PlaygroundMain({
 
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean }) => {
-      if (isStreaming) return;
-      if (!(await ensureDiscardDraftConfirmed())) return;
+      if (isStreaming) return false;
+      if (!(await ensureDiscardDraftConfirmed())) return false;
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
       }
@@ -3131,6 +3258,7 @@ export function PlaygroundMain({
       resetMultiModelSessions();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
+      return true;
     },
     [
       cancelPendingHistorySelection,
@@ -3299,6 +3427,12 @@ export function PlaygroundMain({
   // overlay for one frame. After ~120 ms the load is "slow enough" to warrant
   // visible feedback.
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
+  useLayoutEffect(() => {
+    useActiveChatSessionStore.getState().setRestorationPending(
+      !!loadingHistorySessionId || isRestoringConversation || restoringTarget !== null,
+    );
+    return () => useActiveChatSessionStore.getState().setRestorationPending(false);
+  }, [loadingHistorySessionId, isRestoringConversation, restoringTarget]);
   useEffect(() => {
     // A URL restore is the same "fetching a transcript" wait, and it happens on
     // a cold load — without it the user stares at an empty composer until the
@@ -3634,7 +3768,7 @@ export function PlaygroundMain({
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
         // action in between to make that a choice.
-        if (needsConversationTargetAckRef.current) {
+        if (conversationSendBlockedRef.current) {
           return;
         }
         if (!(await ensureSelectedServerReadyForChat())) {
@@ -4159,7 +4293,7 @@ export function PlaygroundMain({
     }
     // The composer is disabled in this state, so this is the belt to that
     // brace: Enter-to-send, starter chips and eval Quick Run all land here.
-    if (needsConversationTargetAckRef.current) {
+    if (conversationSendBlockedRef.current) {
       return false;
     }
     if (!(await ensureSelectedServerReadyForChat())) {
@@ -4318,7 +4452,7 @@ export function PlaygroundMain({
       // would both execute somewhere the transcript never ran AND fork the
       // thread to record it. `editDisabled` below carries the same condition
       // so the affordance reads as unavailable rather than failing on click.
-      if (needsConversationTargetAckRef.current) return false;
+      if (conversationSendBlockedRef.current) return false;
       // Same fire-and-forget exposure as the rewind below, and it lands FIRST:
       // `ensureSelectedServerReadyForChat` wraps `ensureServersReady` in
       // try/FINALLY with no catch, so a rejected connect propagates straight
@@ -4486,7 +4620,7 @@ export function PlaygroundMain({
       if (
         composerDisabled ||
         sendBlocked ||
-        needsConversationTargetAckRef.current
+        conversationSendBlockedRef.current
       ) {
         composer.setInput(prompt);
         return;
@@ -4563,7 +4697,7 @@ export function PlaygroundMain({
       if (
         composerDisabled ||
         sendBlocked ||
-        needsConversationTargetAckRef.current
+        conversationSendBlockedRef.current
       ) {
         composer.setInput(text);
         return;
@@ -4690,11 +4824,19 @@ export function PlaygroundMain({
         onDismiss={() => setLocalHarnessJustReady(false)}
       />
     ) : null;
+  const apiSessionNotice = apiSessionViewOnly ? (
+    <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
+      This conversation is driven by an agent. Continue it through the session API.
+      {restoredSessionHasBrowser ? " You can take over its browser here." : ""}
+    </p>
+  ) : null;
   const composerNotice =
+    apiSessionNotice ||
     conversationTargetNotice ||
     localHarnessNotice ||
     localHarnessReadyNotice ? (
       <div className="flex flex-col gap-2">
+        {apiSessionNotice}
         {conversationTargetNotice}
         {localHarnessNotice}
         {localHarnessReadyNotice}
@@ -4885,7 +5027,7 @@ export function PlaygroundMain({
    * composer with the device frame behind it set to `display: none`.
    */
   const showPinnedConversationTargetNotice =
-    !!conversationTargetNotice &&
+    !!(apiSessionNotice || conversationTargetNotice) &&
     isWidgetFullTakeover &&
     !showLiveTraceDiagnostics &&
     !(isThreadEmpty && showSingleModelEmptyStateComposer);
@@ -4899,7 +5041,7 @@ export function PlaygroundMain({
           className="pointer-events-auto absolute inset-x-0 top-0 z-30 px-2 pt-2"
         >
           <div className="rounded-md bg-background/95 shadow-lg backdrop-blur-md">
-            {conversationTargetNotice}
+            {apiSessionNotice || conversationTargetNotice}
           </div>
         </div>
       ) : null}
@@ -5076,7 +5218,13 @@ export function PlaygroundMain({
                 displayMode={displayMode}
                 onDisplayModeChange={handleDisplayModeChange}
                 onFullscreenChange={setIsWidgetFullscreen}
-                onToolApprovalResponse={addToolApprovalResponse}
+                interactive={
+                  !apiSessionViewOnly && loadingHistorySessionId === null && restoringTarget === null
+                }
+                onToolApprovalResponse={(response) => {
+                  if (!conversationSendBlockedRef.current)
+                    return addToolApprovalResponse(response);
+                }}
                 toolRenderOverrides={mergedToolRenderOverrides}
                 mcpToolResultImageRendering={
                   effectiveMcpToolResultImageRendering
@@ -5488,8 +5636,13 @@ export function PlaygroundMain({
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
-                      {multiHostColumns.map((column) => (
+                      {multiHostColumns.map((column, columnIndex) => (
                         <MultiModelPlaygroundCard
+                          browserWorkspace={{
+                            id: chatSessionId,
+                            order: columnIndex,
+                            clientCount: multiHostColumns.length,
+                          }}
                           usePageTools={webmcpPageToolsEnabled}
                           // Include `compareKind` in the key so a mode
                           // swap between multi-model and multi-host can't
@@ -5508,7 +5661,14 @@ export function PlaygroundMain({
                             deterministicExecutionRequest
                           }
                           stopRequestId={stopBroadcastRequestId}
-                          executionConfig={column.executionConfig}
+                          executionConfig={{
+                            ...column.executionConfig,
+                            builtInToolIds: resolveLocalBrowserTools(
+                              column.hostConfig.builtInToolIds,
+                              column.hostConfig.localBrowserEnabled,
+                              !HOSTED_MODE && playgroundBrowserEngine.engine === "local",
+                            ),
+                          }}
                           hostedContext={{
                             projectId: convexProjectId,
                             selectedServerIds: hostedSelectedServerIds,
@@ -5516,6 +5676,7 @@ export function PlaygroundMain({
                             hostId: column.compareId,
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
+                          personalBrowserEngine={personalBrowserEngineOption}
                           personalComputerEngine={personalComputerEngineOption}
                           localHarnessExecution={
                             localHarnessExecutionByColumn.get(
@@ -5577,10 +5738,15 @@ export function PlaygroundMain({
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
-                      {resolvedSelectedModels.map((model) => {
+                      {resolvedSelectedModels.map((model, modelIndex) => {
                         const compareId = String(model.id);
                         return (
                           <MultiModelPlaygroundCard
+                            browserWorkspace={{
+                              id: chatSessionId,
+                              order: modelIndex,
+                              clientCount: resolvedSelectedModels.length,
+                            }}
                             usePageTools={webmcpPageToolsEnabled}
                             // Phase 3: include `compareKind` in the key so
                             // model-mode and host-mode keys never collide
@@ -5612,8 +5778,7 @@ export function PlaygroundMain({
                                   ?.modelVisibleMcpToolResults,
                               mcpToolResultImageRendering:
                                 effectiveMcpToolResultImageRendering,
-                              builtInToolIds:
-                                previewedHost?.config?.builtInToolIds,
+                              builtInToolIds: effectiveBuiltInToolIds,
                             }}
                             hostedContext={{
                               projectId: convexProjectId,
@@ -5623,6 +5788,7 @@ export function PlaygroundMain({
                                 ? { hostId: previewedHostId }
                                 : {}),
                             }}
+                            personalBrowserEngine={personalBrowserEngineOption}
                             personalComputerEngine={
                               personalComputerEngineOption
                             }

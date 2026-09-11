@@ -79,7 +79,13 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
       touchActivity as unknown as BrowserPanelDeps["touchActivity"],
     bundleHash: () => "hash-1",
     attachSession,
-    createClient: () => ({ lease, leaseAction, sendInput } as never),
+    createClient: () =>
+      ({
+        lease,
+        leaseAction,
+        sendInput,
+        status: async () => ({ kind: "ok", bootId: SESSION.bootId }),
+      } as never),
     ...over,
   });
 
@@ -811,3 +817,41 @@ it.each(["/state", "/pane-command", "/viewport"])(
       });
   },
 );
+
+it("refuses an awake sandbox with an unhealthy or different daemon", async () => {
+  for (const status of [
+    { kind: "ok", bootId: "different" },
+    { kind: "unreachable" },
+  ]) {
+    const { call, attachSession } = build({
+      verifyToken: async () =>
+        ({
+          userId: CLAIMS.userId,
+          projectId: CLAIMS.projectId,
+          sandboxRowId: "box-row",
+        } as never),
+      sandboxInfo: async () =>
+        ({
+          ok: true,
+          value: {
+            ownerUserId: CLAIMS.userId,
+            projectId: CLAIMS.projectId,
+            providerComputerId: "box",
+          },
+        } as never),
+      lookupSession: async () =>
+        ({
+          reachable: true,
+          session: {
+            ...SESSION,
+            computerId: undefined,
+            sandboxRowId: "box-row",
+          },
+        } as never),
+      createClient: () => ({ status: async () => status } as never),
+    });
+    const response = await call("/session");
+    expect(response.status).toBe(503);
+    expect(attachSession).not.toHaveBeenCalled();
+  }
+});

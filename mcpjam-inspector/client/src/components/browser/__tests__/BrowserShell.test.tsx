@@ -114,10 +114,10 @@ describe("the tab strip", () => {
     expect(commands).toEqual([{ op: "close_tab", tabId: "b" }]);
   });
 
-  it("offers no close button on a one-tab browser", () => {
+  it("allows closing the last tab to a fresh start page", () => {
     // With one tab the control reads as "close the browser", which it is not.
     renderShell({ tabs: [tab("a")], activeTabId: "a" });
-    expect(screen.queryByTestId("browser-tab-close")).toBeNull();
+    expect(screen.getByTestId("browser-tab-close")).toBeInTheDocument();
   });
 
   it("keeps the strip when there is only one tab", () => {
@@ -165,13 +165,18 @@ describe("the address field", () => {
     expect(document.activeElement).not.toBe(field);
   });
 
-  it("sends nothing for text that is not a place", () => {
+  it("searches for text that is not a URL", () => {
     const { commands } = renderShell();
     const field = screen.getByTestId("browser-address");
     fireEvent.focus(field);
     fireEvent.change(field, { target: { value: "how do I center a div" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    expect(commands).toEqual([]);
+    expect(commands).toEqual([
+      {
+        op: "navigate",
+        url: "https://www.google.com/search?q=how+do+I+center+a+div",
+      },
+    ]);
   });
 
   it("keeps what somebody is typing while the agent navigates", () => {
@@ -237,25 +242,14 @@ describe("who is driving", () => {
     expect(screen.queryByTestId("browser-resume-agent")).toBeNull();
   });
 
-  it("offers Resume agent only to the pane that holds it", () => {
-    const onResumeAgent = vi.fn();
-    const { unmount } = renderShell(
-      { control: { kind: "human", holder: "pane-1" } },
-      { onResumeAgent },
-    );
+  it("shows control status without a manual hand-back button", () => {
+    renderShell({ control: { kind: "human", holder: "pane-1" } });
     expect(screen.getByTestId("browser-control-status")).toHaveTextContent(
-      "You have it",
+      "You’re in control",
     );
-    fireEvent.click(screen.getByTestId("browser-resume-agent"));
-    expect(onResumeAgent).toHaveBeenCalledTimes(1);
-    unmount();
-
-    renderShell(
-      { control: { kind: "human", holder: "somebody-else" } },
-      { onResumeAgent },
-    );
-    expect(screen.getByTestId("browser-control-status")).toHaveTextContent(
-      "Someone else is driving",
+    expect(screen.getByTestId("browser-control-status")).toHaveAttribute(
+      "title",
+      expect.stringContaining("next chat message"),
     );
     expect(screen.queryByTestId("browser-resume-agent")).toBeNull();
   });
@@ -270,7 +264,7 @@ describe("who is driving", () => {
   it("says a hold is paused when the lease parked", () => {
     renderShell({ control: { kind: "human", holder: "pane-1", parked: true } });
     expect(screen.getByTestId("browser-control-status")).toHaveTextContent(
-      "You have it (paused)",
+      "You’re in control (paused)",
     );
   });
 });
@@ -324,4 +318,35 @@ describe("when there is no browser to drive", () => {
     expect(screen.getByTestId("browser-back")).toBeDisabled();
     expect(screen.getByTestId("browser-address")).toBeDisabled();
   });
+});
+
+it("waits for a ready browser before observing its page size", () => {
+  const observe = vi.fn();
+  const disconnect = vi.fn();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe = observe;
+      disconnect = disconnect;
+    },
+  );
+  try {
+    const report = vi.fn();
+    const props = {
+      state: state(),
+      holderId: "pane-1",
+      onCommand: vi.fn(),
+      onViewportMeasured: report,
+    };
+    const view = render(<BrowserShell {...props} ready={false} />);
+    expect(observe).not.toHaveBeenCalled();
+    view.rerender(<BrowserShell {...props} ready />);
+    expect(observe).toHaveBeenCalledWith(
+      screen.getByTestId("browser-page-area"),
+    );
+    view.unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

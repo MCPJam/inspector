@@ -2409,7 +2409,7 @@ Send one message to a project's MCP servers and print the reply plus the raw too
 
 `--idempotency-key` is required and must be **stable for the intent**, not regenerated per attempt. It is what makes a retry safe: with the same key, a turn that already completed is replayed rather than re-run and re-billed. A fresh key per attempt deduplicates nothing.
 
-Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. Configuration is fixed at the first turn, so `--model`, `--environment`, `--server`, `--system-prompt` and `--tool-mode` are refused alongside `--session` rather than silently repinning the session.
+Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. A session created by `cloud sessions browser open` is initially unconfigured and accepts its model configuration with its first send. Configuration is fixed after the first model turn, so `--model`, `--environment`, `--server`, `--system-prompt` and `--tool-mode` are refused alongside `--session` rather than silently repinning the session.
 
 | Flag | Description |
 |------|-------------|
@@ -2427,6 +2427,32 @@ Omit `--session` to start a conversation; pass the `sessionId` the command retur
 | `--project <id-or-name>` | Project name or ID (required to start a session) |
 
 `read_only` filters on a hint the SERVER asserts, so it is a policy this host applies rather than a guarantee it can verify. A server is free to annotate a mutating tool as read-only.
+
+<Note>
+Hosted session browsers require browser availability for your account and deployment. An unavailable browser reports a refusal or `browser.attached: false` with its reason. The live pane opens in the Playground when the browser workspace is enabled.
+</Note>
+
+Add `--browser` to advertise browser tools for this turn. The first browser turn requires `--browser-mode allow_all|read_only|allowlist` unless the selected client supplies a browser policy. Optional `--browser-origins <origin...>` and `--browser-tools <name...>` restrict that grant; `--browser-profile <profileId>` selects its initial saved profile. The grant and profile are fixed thereafter. A client's current browser policy and the session's `read_only` tool mode may further restrict execution.
+
+A continuation must opt in again with `--browser`; a plain send does not wake the desktop. Screenshots are returned as URLs and trace pointers. Use the printed **Open in Playground** link to view the transcript, take over the browser, and select **Resume agent** when finished. API session transcripts are view-only there.
+
+### `cloud sessions browser`
+
+Drive the session browser without a model turn. All verbs except a new `open` require `--session <sessionId>`; use the public session ID, never its read-only conversation UUID or logical browser ID.
+
+| Verb | Description |
+|------|-------------|
+| `open` | Open or wake an existing session browser. Omit `--session` and provide `--project`, a browser policy, and a stable `--idempotency-key` to create an empty API session. |
+| `navigate <url>` | Navigate to an allowed URL. Use a stable `--command-id` for retries. |
+| `act --verb <verb>` | Act on the page; pass `--target` as JSON and optional `--value` and `--expected-state`. |
+| `invoke <toolKey> --input <json>` | Invoke a permitted page tool. |
+| `observe --mode <mode>` | Read the page; `--mode screenshot --download <dir>` saves screenshot evidence. |
+| `note <text>` | Append a note to the command ledger. |
+| `trace` | Read command receipts and screenshot URLs. |
+| `artifact --command-id <id> --download <dir>` | Fetch screenshot evidence for a command. |
+| `close` | Release the desktop; a later open or browser turn can revive the logical browser. |
+
+Desktop time is metered. The default cap is two live conversation desktops per user across projects; close one before retrying a capacity refusal. Sleeping browsers wake on the next browser command. Human takeover blocks agent actions; after `browser_in_use`, wait for the person to hand control back and observe the current page. Never repeat an `unknown` command under a new ID without inspecting its trace and page state.
 
 ### `cloud sessions show`
 

@@ -184,7 +184,11 @@ export function ToolPart({
   // this card is the one place in the client that already knows a browser tool
   // is running; it fires only while the call is LIVE, so scrolling back
   // through a transcript full of them does not reopen anything.
-  useOpenBrowserOnBrowsing({ toolName: label, state });
+  useOpenBrowserOnBrowsing({
+    toolName: label,
+    state,
+    conversationId: chatSessionId,
+  });
 
   useEffect(() => {
     const isUserInjected = toolCallId?.startsWith("skill-load-");
@@ -434,8 +438,8 @@ export function ToolPart({
                 isDisabled
                   ? "text-muted-foreground/30 cursor-not-allowed"
                   : isActive
-                    ? "bg-background text-foreground shadow-sm cursor-pointer"
-                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+                  ? "bg-background text-foreground shadow-sm cursor-pointer"
+                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -457,18 +461,18 @@ export function ToolPart({
         tab === "data"
           ? "Data"
           : tab === "state"
-            ? "State"
-            : tab === "sandbox"
-              ? "Sandbox"
-              : "Context";
+          ? "State"
+          : tab === "sandbox"
+          ? "Sandbox"
+          : "Context";
       const tooltipLabel =
         tab === "data"
           ? "Data"
           : tab === "state"
-            ? "Widget State"
-            : tab === "sandbox"
-              ? "Sandbox"
-              : "Model Context";
+          ? "Widget State"
+          : tab === "sandbox"
+          ? "Sandbox"
+          : "Model Context";
 
       return (
         <Tooltip key={tab}>
@@ -484,8 +488,8 @@ export function ToolPart({
                 activeDebugTab === tab
                   ? "bg-background text-foreground shadow-sm"
                   : badge && badge > 0
-                    ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                  ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -572,7 +576,7 @@ export function ToolPart({
               <p className="font-medium">
                 {canRun
                   ? "Re-run tool with edited input"
-                  : (runDisabledReason ?? "Re-run tool with edited input")}
+                  : runDisabledReason ?? "Re-run tool with edited input"}
               </p>
             </TooltipContent>
           </Tooltip>
@@ -861,8 +865,8 @@ export function ToolPart({
               approvalVisualState === "approved"
                 ? "border-success/40 bg-success/10"
                 : approvalVisualState === "denied"
-                  ? "border-destructive/40 bg-destructive/10"
-                  : "border-border/60 bg-muted/30",
+                ? "border-destructive/40 bg-destructive/10"
+                : "border-border/60 bg-muted/30",
             )}
           >
             <span className="inline-flex items-center gap-1.5 text-muted-foreground text-[12px] shrink-0">

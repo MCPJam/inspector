@@ -1,3 +1,8 @@
+import {
+  BROWSER_VIEWPORT_POLICY,
+  STREAM_CONGESTION_POLICY as CONGESTION,
+  type JpegDeliveryStats,
+} from "@/shared/browser-viewport-policy";
 /**
  * What a frame relay can see, counted — for both browser panes.
  *
@@ -18,14 +23,10 @@
  * same message here, so a pane reads one `stats` shape whichever engine it is
  * looking at.
  *
- * BACKPRESSURE IS A DROP, NOT A QUEUE — and here it is a drop with NO held
- * slot, unlike `webmcp-inspector/frame-pacer.ts`. That pacer can hold one
- * frame because a callback tells it when the socket drained; a Hono
- * `WSContext` reports no send completion at all, only `bufferedAmount`, so a
- * held frame would have nothing to wake it and the pane would freeze with the
- * stream healthy. Dropping the current frame instead converges the pane on the
- * live picture: the next one is already on its way, and it is the one worth
- * showing. Every drop is counted.
+ * Video deltas retain the existing drop behavior. JPEGs hold only the newest
+ * pending frame, using a bounded drain timer because Hono exposes no write
+ * completion callback. This also delivers the final paint of a static page
+ * after congestion clears, without building a queue of stale pictures.
  */
 
 /** How often the relay tells the pane what it has seen. */
@@ -42,6 +43,12 @@ const DEFAULT_MAX_BUFFERED_BYTES = 512 * 1024;
 
 /** Drop counters the daemon reports about itself (V-4a). */
 export interface DaemonFrameCounters {
+  jpeg?: {
+    requestedQuality: number;
+    quality: number;
+    maxFrameBytes: number;
+    reason: string;
+  };
   framesIn?: number;
   framesOut?: number;
   bytesOut?: number;
@@ -72,6 +79,7 @@ export interface DaemonFrameCounters {
 }
 
 export interface FrameRelayStatsSnapshot {
+  jpegDelivery?: JpegDeliveryStats;
   framesIn: number;
   framesOut: number;
   bytes: number;
@@ -92,6 +100,8 @@ export interface FrameRelayStats {
    * it rather than about what it missed.
    */
   offer(bytes: number, write: () => void): boolean;
+  /** Independent JPEGs can retain their final frame; video deltas cannot. */
+  offerJpeg(bytes: number, write: () => void): boolean;
   /** A drop the caller detected itself (a closed socket, a failed send). */
   countDrop(n?: number): void;
   setSubscribers(count: number): void;
@@ -109,6 +119,9 @@ export interface FrameRelayStatsOptions {
   /** How much the socket still owes the network, when the runtime says. */
   bufferedAmount?: () => number | undefined;
   intervalMs?: number;
+  now?: () => number;
+  setDrainTimer?: (fn: () => void, ms: number) => unknown;
+  clearDrainTimer?: (id: unknown) => void;
   maxBufferedBytes?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -134,6 +147,59 @@ export function createFrameRelayStats(
   let daemon: DaemonFrameCounters | undefined;
   let timer: unknown;
   let stopped = false;
+  const now = options.now ?? Date.now;
+  const setDrain =
+    options.setDrainTimer ??
+    ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearDrain =
+    options.clearDrainTimer ??
+    ((id: unknown) => clearTimeout(id as ReturnType<typeof setTimeout>));
+  let pending: { bytes: number; write: () => void } | undefined;
+  let drainTimer: unknown;
+  let lastJpegAt = -Infinity;
+  let lastOfferAt = -Infinity;
+  let boostUntil = -Infinity;
+  let slow = false;
+  let badSamples = 0;
+  let goodSamples = 0;
+  let sampleFrames = 0;
+  let hasJpeg = false;
+  let sampleBlocked = 0;
+  const cancelDrain = () => {
+    if (drainTimer !== undefined) clearDrain(drainTimer);
+    drainTimer = undefined;
+  };
+  const flushJpeg = (): boolean => {
+    if (!pending || stopped) return false;
+    const buffered = options.bufferedAmount?.() ?? 0;
+    const room = buffered === 0 || buffered + pending.bytes <= maxBuffered;
+    const minInterval = slow
+      ? now() < boostUntil
+        ? CONGESTION.inputIntervalMs
+        : CONGESTION.intervalMs
+      : 0;
+    if (!room || now() - lastJpegAt < minInterval) {
+      if (drainTimer === undefined)
+        drainTimer = setDrain(() => {
+          drainTimer = undefined;
+          flushJpeg();
+        }, CONGESTION.drainMs);
+      return false;
+    }
+    const frame = pending;
+    pending = undefined;
+    cancelDrain();
+    try {
+      frame.write();
+    } catch {
+      dropped++;
+      return false;
+    }
+    lastJpegAt = now();
+    framesOut++;
+    bytes += frame.bytes;
+    return true;
+  };
 
   /**
    * How far past the FRAME high-water mark a control message will still go.
@@ -162,7 +228,26 @@ export function createFrameRelayStats(
     return typeof buffered === "number" && buffered > maxBuffered;
   };
 
+  const deliveryStats = (): JpegDeliveryStats => ({
+    maxFps: slow ? (now() < boostUntil ? 10 : 5) : now() < boostUntil ? 30 : 10,
+    reason: slow ? "congestion" : "default",
+  });
+
   return {
+    offerJpeg(frameBytes, write) {
+      if (stopped) return false;
+      framesIn++;
+      sampleFrames++;
+      hasJpeg = true;
+      if (now() - lastOfferAt < 70)
+        boostUntil = now() + BROWSER_VIEWPORT_POLICY.inputBoostWindowMs;
+      lastOfferAt = now();
+      const buffered = options.bufferedAmount?.() ?? 0;
+      if (buffered > 0 && buffered + frameBytes > maxBuffered) sampleBlocked++;
+      if (pending) dropped++;
+      pending = { bytes: Math.max(0, Math.round(frameBytes)), write };
+      return flushJpeg();
+    },
     offer(frameBytes, write) {
       framesIn += 1;
       if (congested()) {
@@ -195,6 +280,32 @@ export function createFrameRelayStats(
     start() {
       if (timer !== undefined || stopped) return;
       timer = setTimer(() => {
+        if (sampleFrames > 0) {
+          const loss = sampleBlocked / sampleFrames;
+          if (loss >= CONGESTION.badLoss) {
+            badSamples++;
+            goodSamples = 0;
+          } else if (loss <= CONGESTION.goodLoss) {
+            goodSamples++;
+            badSamples = 0;
+          } else {
+            badSamples = 0;
+            goodSamples = 0;
+          }
+          if (badSamples >= CONGESTION.badSamples) {
+            slow = true;
+            badSamples = 0;
+          }
+          if (goodSamples >= CONGESTION.goodSamples) {
+            slow = false;
+            goodSamples = 0;
+          }
+        } else {
+          badSamples = 0;
+          goodSamples = 0;
+        }
+        sampleFrames = 0;
+        sampleBlocked = 0;
         // SENT WHILE CONGESTED TOO, unlike the frames themselves.
         //
         // This is the one message that ENDS congestion. `dropped` is what the
@@ -215,6 +326,7 @@ export function createFrameRelayStats(
           options.send(
             JSON.stringify({
               type: "stats",
+              ...(hasJpeg ? { jpegDelivery: deliveryStats() } : {}),
               framesIn,
               framesOut,
               bytes,
@@ -230,10 +342,13 @@ export function createFrameRelayStats(
     },
     stop() {
       stopped = true;
+      pending = undefined;
+      cancelDrain();
       if (timer !== undefined) clearTimer(timer);
       timer = undefined;
     },
     snapshot: () => ({
+      ...(hasJpeg ? { jpegDelivery: deliveryStats() } : {}),
       framesIn,
       framesOut,
       bytes,

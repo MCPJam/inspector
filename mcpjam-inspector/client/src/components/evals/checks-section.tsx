@@ -17,7 +17,7 @@
  * inline error and disable save up the tree.
  */
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -784,6 +784,7 @@ function ToolNameField({
   availableTools,
   readOnly,
   label = "Tool",
+  compact = false,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -796,6 +797,7 @@ function ToolNameField({
    * UI. The outer heading is not enough: it is not associated with the input.
    */
   label?: string;
+  compact?: boolean;
 }) {
   const id = useId();
   // When a suite has attached servers and we know the tool list, prefer a
@@ -804,13 +806,27 @@ function ToolNameField({
   // know about yet).
   const useDropdown = availableTools && availableTools.length > 0;
   return (
-    <div className="space-y-1">
+    <div
+      className={
+        compact
+          ? "grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-2 pr-7"
+          : "space-y-1"
+      }
+    >
       <Label htmlFor={id} className="text-[11px]">
         {label}
       </Label>
       {useDropdown && !readOnly ? (
         <Select value={value || undefined} onValueChange={onChange}>
-          <SelectTrigger id={id} className="h-8 text-xs" aria-label={label}>
+          <SelectTrigger
+            id={id}
+            className={
+              compact
+                ? "h-7 w-full border-0 bg-transparent font-mono text-xs shadow-none"
+                : "h-8 text-xs"
+            }
+            aria-label={label}
+          >
             <SelectValue placeholder="Pick a tool…" />
           </SelectTrigger>
           <SelectContent>
@@ -836,18 +852,25 @@ function ToolNameField({
   );
 }
 
+function CompactFieldDetails({ compact, open, label, children }: { compact: boolean; open: boolean; label: string; children: ReactNode }) {
+  if (!compact) return <>{children}</>;
+  return <details open={open} className="text-[11px] text-muted-foreground"><summary className="cursor-pointer py-1">{label}</summary>{children}</details>;
+}
+
 export function ToolCalledWithFields({
   predicate,
   onChange,
   availableTools,
   toolArgSchemas,
   readOnly,
+  compact = false,
 }: {
   predicate: Extract<Predicate, { type: "toolCalledWith" }>;
   onChange: (next: Predicate) => void;
   availableTools?: string[];
   toolArgSchemas?: ToolArgSchemas;
   readOnly: boolean;
+  compact?: boolean;
 }) {
   const minCountId = useId();
   // Schema properties for the currently-selected tool, if known. Drives the
@@ -855,46 +878,51 @@ export function ToolCalledWithFields({
   // back to free-text keys.
   const argProperties = toolArgSchemas?.[predicate.toolName];
   return (
-    <div className="space-y-3">
+    <div className={compact ? "space-y-1" : "space-y-3"}>
       <ToolNameField
+        compact={compact}
         value={predicate.toolName}
         onChange={(toolName) => onChange({ ...predicate, toolName })}
         availableTools={availableTools}
         readOnly={readOnly}
       />
-      <ArgMatcherSubform
-        value={predicate.args}
-        onChange={(args) => onChange({ ...predicate, args })}
-        argProperties={argProperties}
-        readOnly={readOnly}
-      />
-      <div className="space-y-1">
-        <Label htmlFor={minCountId} className="text-[11px]">
-          Minimum matching calls (optional)
-        </Label>
-        <Input
-          id={minCountId}
-          type="number"
-          min={1}
-          step={1}
-          value={predicate.minCount ?? ""}
-          onChange={(e) => {
-            const raw = e.target.value;
-            if (raw === "") {
-              const next = { ...predicate };
-              delete next.minCount;
-              onChange(next);
-              return;
-            }
-            const n = Number(raw);
-            if (!Number.isFinite(n)) return;
-            onChange({ ...predicate, minCount: Math.floor(n) });
-          }}
-          placeholder="1"
-          className="h-8 w-32 text-xs"
-          disabled={readOnly}
+      <CompactFieldDetails compact={compact} open={Object.keys(predicate.args.args ?? {}).length > 0} label={`Arguments · ${predicate.args.argumentMatching ?? "partial"} matching`}>
+        <ArgMatcherSubform
+          value={predicate.args}
+          onChange={(args) => onChange({ ...predicate, args })}
+          argProperties={argProperties}
+          readOnly={readOnly}
         />
-      </div>
+      </CompactFieldDetails>
+      <CompactFieldDetails compact={compact} open={predicate.minCount != null} label={`Call count${predicate.minCount != null ? ` · ${predicate.minCount}` : ""}`}>
+        <div className="space-y-1">
+          <Label htmlFor={minCountId} className="text-[11px]">
+            Minimum matching calls (optional)
+          </Label>
+          <Input
+            id={minCountId}
+            type="number"
+            min={1}
+            step={1}
+            value={predicate.minCount ?? ""}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === "") {
+                const next = { ...predicate };
+                delete next.minCount;
+                onChange(next);
+                return;
+              }
+              const n = Number(raw);
+              if (!Number.isFinite(n)) return;
+              onChange({ ...predicate, minCount: Math.floor(n) });
+            }}
+            placeholder="1"
+            className="h-8 w-32 text-xs"
+            disabled={readOnly}
+          />
+        </div>
+      </CompactFieldDetails>
     </div>
   );
 }
@@ -2022,6 +2050,7 @@ export interface CaseChecksSectionProps {
    * alarm.
    */
   embedded?: boolean;
+  emptyInheritanceMessage?: string;
   /** Append scenario predicates to steps (parent writes steps + strips global list). */
   onAppendScenarioToSteps?: (scenarioAsserts: Predicate[]) => void;
 }
@@ -2042,6 +2071,7 @@ export function CaseChecksSection({
   suiteDefaults,
   availableTools,
   embedded = false,
+  emptyInheritanceMessage,
   onAppendScenarioToSteps,
 }: CaseChecksSectionProps) {
   const resolved = resolveCaseChecks(value);
@@ -2216,7 +2246,7 @@ export function CaseChecksSection({
 
       {mode === "inherit" ? (
         suiteDefaults.length === 0 ? (
-          <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-xs text-foreground">
+          emptyInheritanceMessage ? <p className="text-xs text-muted-foreground">{emptyInheritanceMessage}</p> : <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-xs text-foreground">
             <span aria-hidden className="mt-0.5 text-warning">⚠</span>
             <span>
               Suite has no default checks. This case has{" "}

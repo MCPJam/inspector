@@ -66,6 +66,8 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       // The chatSessions doc id the checks panel keys on. Distinct field from
       // the `threadId` prop on purpose — the component must read this one.
       _id: "session-doc-1",
+      chatSessionId: "wire-uuid",
+      projectId: "project-1",
       sourceType: mockThreadState.sourceType,
       synthetic: mockThreadState.synthetic,
       readiness: mockThreadState.readiness,
@@ -234,6 +236,12 @@ describe("ShareUsageThreadDetail", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+  });
+
+  it("links a direct session to its Playground conversation", async () => {
+    mockThreadState.sourceType = "direct";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    expect(await screen.findByRole("link", { name: "Open in Playground" })).toHaveAttribute("href", "/playground?conversation=wire-uuid&project=project-1");
   });
 
   it("renders formatted share traces with collapsed reasoning", async () => {

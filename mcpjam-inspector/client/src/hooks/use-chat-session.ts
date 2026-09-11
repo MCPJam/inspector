@@ -1,3 +1,7 @@
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
+import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
+import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
+import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 /**
  * useChatSession
  *
@@ -102,7 +106,6 @@ import {
 } from "@/lib/chat-error-reporting";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
-import { useBrowserSessionsEnabled } from "@/hooks/useBrowserSessionsEnabled";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   prepareLocalHarnessSendRequest,
@@ -356,6 +359,11 @@ export interface UseChatSessionOptions {
   hostedContext?: HostedRuntimeContext;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
+  /** Browser location and Browser-only capability, independent of shell. */
+  personalBrowserEngine?: {
+    engine: "local" | "cloud";
+    consentToken: string | null;
+  };
   /**
    * Resolved Local⇄Cloud engine for this project's personal computer, provided
    * by the caller (Playground) so the CENTRAL hook stays free of the config
@@ -1705,6 +1713,7 @@ export function useChatSession(
     executionConfig,
     hostStyle,
     personalComputerEngine,
+    personalBrowserEngine,
     localHarnessExecution,
     onReset,
   } = options;
@@ -1712,6 +1721,13 @@ export function useChatSession(
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
   const resolvedLocalEngine = personalComputerEngine?.engine === "local";
   const localConsentToken = personalComputerEngine?.consentToken ?? null;
+  const localBrowserRequested =
+    !HOSTED_MODE &&
+    personalBrowserEngine?.engine === "local" &&
+    (options.builtInToolIds ?? executionConfig?.builtInToolIds)?.includes(
+      "browser",
+    ) === true;
+  const browserConsentToken = personalBrowserEngine?.consentToken ?? null;
   // Surfaces that omit `executionConfig` entirely (e.g. Playground) own their
   // chat-execution state imperatively and must not be re-synced from prop
   // defaults. Surfaces that pass `executionConfig` are in controlled mode and
@@ -1720,7 +1736,6 @@ export function useChatSession(
   // hook defaults rather than retaining the prior host's value.
   const isExecutionConfigControlled = "executionConfig" in options;
   const hostedProjectId = hostedContext?.projectId;
-  const browserSessionsEnabled = useBrowserSessionsEnabled();
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
   const hostedOAuthTokens = hostedContext?.oauthTokens;
@@ -2152,6 +2167,25 @@ export function useChatSession(
 
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (
+        part &&
+        typeof part === "object" &&
+        "type" in part &&
+        part.type === "data-browser-readiness" &&
+        "data" in part
+      ) {
+        const data = part.data as { reason?: unknown } | null;
+        if (!data || typeof data !== "object") return;
+        if (data.reason === null || typeof data.reason === "string") {
+          useBrowserReadinessStore
+            .getState()
+            .setReason(
+              `${hostedProjectId}:${chatSessionIdRef.current}`,
+              data.reason,
+            );
+        }
+        return;
+      }
       if (!isTraceEventDataPart(part)) {
         if (isScopeStepUpFinishedDataPart(part)) {
           const event = part.data;
@@ -2695,7 +2729,7 @@ export function useChatSession(
     !HOSTED_MODE &&
     !hostedRequiresWebChatApi &&
     selectedModelUsesOrgRuntime &&
-    hasLocalOnlySelectedServer;
+    (hasLocalOnlySelectedServer || localBrowserRequested);
   /**
    * Does THIS send explicitly ask to run Claude Code on this machine?
    *
@@ -2917,6 +2951,10 @@ export function useChatSession(
       !hostedScenarioId &&
       Boolean(localConsentToken) &&
       authIsMemberRef.current;
+    const sendLocalBrowser =
+      !shouldUseOrgAwareChatApi && localBrowserRequested && !hostedScenarioId;
+    if (sendLocalBrowser && browserConsentToken)
+      mergedHeaders[BROWSER_CONSENT_HEADER] = browserConsentToken;
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
@@ -2972,7 +3010,7 @@ export function useChatSession(
         selectedServerIds: resolvedServerIds,
         selectedServerNames: resolvedServerNames,
         chatSessionId,
-        ...(browserSessionsEnabled && isHostedDirectChat
+        ...(isHostedDirectChat
           ? { browserScope: "conversation" as const }
           : {}),
         // Handshake: tells the server this bundle can render an elicitation
@@ -3068,7 +3106,7 @@ export function useChatSession(
             : {
                 selectedServers,
                 chatSessionId,
-                ...(browserSessionsEnabled && !hostedScenarioId
+                ...(!hostedScenarioId
                   ? { browserScope: "conversation" as const }
                   : {}),
                 // `directVisibility` only applies to direct chat. The
@@ -3096,6 +3134,13 @@ export function useChatSession(
                 // engine. The consent capability rides the header above; the
                 // server ignores this without it (and off the /mcp direct
                 // path). Absent ⇒ the legacy cloud-family resolution.
+                ...(!hostedScenarioId && personalBrowserEngine
+                  ? {
+                      browserEngine: sendLocalBrowser
+                        ? ("local" as const)
+                        : ("cloud" as const),
+                    }
+                  : {}),
                 ...(sendLocalEngine
                   ? { computerEngine: "local" as const }
                   : {}),
@@ -3171,11 +3216,8 @@ export function useChatSession(
             ? { expectedVersion: resumedVersionRef.current }
             : {}),
           ...(rewind ? { rewind } : {}),
-          // Host-managed built-in tools (e.g. ["web_search"]). Forwarded only
-          // when non-empty so pre-feature traces stay byte-identical. The
-          // scenario path overrides this with the persisted host config server-
-          // side; playground trusts this value (same as systemPrompt etc.).
-          ...(builtInToolIdsRef.current && builtInToolIdsRef.current.length > 0
+          // Preserve []: it explicitly disables the client's built-in tools.
+          ...(builtInToolIdsRef.current !== undefined
             ? { builtInToolIds: builtInToolIdsRef.current }
             : {}),
           // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
@@ -3278,7 +3320,9 @@ export function useChatSession(
     // the very next turn.
     resolvedLocalEngine,
     localConsentToken,
-    browserSessionsEnabled,
+    localBrowserRequested,
+    browserConsentToken,
+    personalBrowserEngine,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
@@ -3287,12 +3331,13 @@ export function useChatSession(
   const latestTransportRef = useRef<ChatTransport<UIMessage>>(transport);
   latestTransportRef.current = transport;
   const proxyTransport = useMemo<ChatTransport<UIMessage>>(
-    () => ({
-      sendMessages: (options) =>
-        latestTransportRef.current.sendMessages(options),
-      reconnectToStream: (options) =>
-        latestTransportRef.current.reconnectToStream(options),
-    }),
+    () =>
+      withWebMcpTraffic({
+        sendMessages: (options) =>
+          latestTransportRef.current.sendMessages(options),
+        reconnectToStream: (options) =>
+          latestTransportRef.current.reconnectToStream(options),
+      }),
     [],
   );
 
@@ -3680,6 +3725,10 @@ export function useChatSession(
   statusRef.current = status;
   const hostedProjectIdRef = useRef(hostedProjectId);
   hostedProjectIdRef.current = hostedProjectId;
+  const browserProjectIdRef = useRef(
+    hostedProjectId ?? appState?.activeProjectId,
+  );
+  browserProjectIdRef.current = hostedProjectId ?? appState?.activeProjectId;
 
   // Bounded wait for the turn to land server-side. There is no "persisted"
   // event on the wire, so this polls the same detail row the post-stream
@@ -4118,6 +4167,7 @@ export function useChatSession(
         // during the preflight below would post this turn under an unrelated
         // session and ingest it into that transcript.
         const sessionAtSend = chatSessionIdRef.current;
+        const browserProjectAtSend = browserProjectIdRef.current;
         // NEVER for an environment target. The environment's servers already
         // carry authoritative Convex ids and are re-resolved server-side; some
         // of them are plugin-contributed and deliberately absent from
@@ -4172,6 +4222,26 @@ export function useChatSession(
             );
             return false; // fail closed — do not send with unresolved servers
           }
+        }
+        try {
+          await releaseBrowserForChat(browserProjectAtSend, sessionAtSend);
+          if (
+            chatSessionIdRef.current !== sessionAtSend ||
+            browserProjectIdRef.current !== browserProjectAtSend
+          ) {
+            throw new Error(
+              "The chat changed while returning browser control. Send your message again.",
+            );
+          }
+        } catch (error) {
+          pendingWidgetModelContextRef.current = undefined;
+          resolvedHostedServersRef.current = null;
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Couldn't return browser control.",
+          );
+          return false;
         }
         try {
           const timestampedMetadata = withMessageTimestampMetadata(
@@ -4641,6 +4711,37 @@ export function useChatSession(
         shouldApply?: () => boolean;
       },
     ) => {
+      // The resume pointer is only a destination hint. Read the existing
+      // authenticated logical-session binding before selecting its location.
+      if (!HOSTED_MODE && hostedContext?.projectId && personalBrowserEngine) {
+        try {
+          const response = await authFetch(
+            "/api/mcp/computers/browser-location",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                projectId: hostedContext.projectId,
+                conversationId: session.chatSessionId,
+              }),
+            },
+          );
+          if (response.ok) {
+            const location = await response.json();
+            if (
+              (!options?.shouldApply || options.shouldApply()) &&
+              (location.engine === "local" || location.engine === "cloud")
+            )
+              useActiveChatSessionStore.getState().setBrowserLocation({
+                projectId: hostedContext.projectId,
+                sessionId: session.chatSessionId,
+                engine: location.engine,
+              });
+          }
+        } catch {
+          /* A failed lookup grants nothing; the turn/open boundary still refuses a mismatch. */
+        }
+      }
       let uiMessages: UIMessage[] = [];
 
       if (session.messagesBlobUrl) {
@@ -4718,7 +4819,12 @@ export function useChatSession(
       });
       onResetRef.current?.("hydrate");
     },
-    [queueSessionHydration, setSystemPrompt],
+    [
+      queueSessionHydration,
+      setSystemPrompt,
+      hostedContext?.projectId,
+      personalBrowserEngine,
+    ],
   );
 
   // When controlled, mirror `executionConfig` fields into local state; when
@@ -5217,7 +5323,14 @@ export function useChatSession(
     isAuthLoading,
     authHeaders,
     isAuthReady,
-    isSessionBootstrapComplete,
+    // A target change is unready in the first render, before the auth effect
+    // can reset its state. History restoration must not hydrate in that gap.
+    isSessionBootstrapComplete:
+      isSessionBootstrapComplete &&
+      areHostedSessionScopesEqual(lastResolvedHostedScopeRef.current, {
+        projectId: hostedProjectId,
+        targetKey: hostedTargetKeyValue,
+      }),
 
     // Config
     systemPrompt,

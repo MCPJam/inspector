@@ -1,16 +1,30 @@
+import { saveMarkdownCases } from "@/lib/apis/markdown-case-import-api";
+import type {
+  MarkdownDraft,
+  MarkdownSaveRequest,
+} from "@/shared/markdown-case-import";
+import type { MetadataSnapshot } from "./eval-tool-metadata";
 import { deriveQuery, deriveExpectedToolCalls } from "@/shared/steps";
 import { create } from "zustand";
+import type { GenerationOptions } from "@/lib/apis/evals-api";
 import { generateId } from "ai";
-import { stepsSchema, type TestStep } from "@mcpjam/sdk/contract";
+import { mintCaseId, stepsSchema, type TestStep } from "@mcpjam/sdk/contract";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
 import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 
 export interface EvalDraft {
   title: string;
+  expectedOutput?: string;
   steps: TestStep[];
 }
 export interface EvalDraftBridge {
-  read: () => { draft: EvalDraft; revision: string; tools: unknown[] };
+  read: () => {
+    draft: EvalDraft;
+    revision: string;
+    tools: unknown[];
+    metadata?: MetadataSnapshot;
+  };
+  retryTools?: (serverId?: string) => Promise<void>;
   edit: (revision: string, patch: Partial<EvalDraft>) => unknown;
   undo: (revision: string) => unknown;
 }
@@ -19,16 +33,61 @@ export interface EvalSuiteBridge {
   generate: (
     instructions: string,
     stage: (input: CreateEvalTestCaseInput) => Promise<unknown>,
+    options?: GenerationOptions,
   ) => Promise<void>;
   save: (input: CreateEvalTestCaseInput) => Promise<unknown>;
   run?: () => Promise<unknown>;
 }
 const drafts = new Map<string, EvalDraftBridge>();
 const suites = new Map<string, EvalSuiteBridge>();
+export const useEvalContextVersion = create(() => ({ version: 0 }));
+export function notifyEvalContextChanged() {
+  useEvalContextVersion.setState((state) => ({ version: state.version + 1 }));
+}
+/** Suite history is optional; a readable draft and useful metadata are enough to describe a case. */
+export function readEvalContext(scope: EvalAgentScope) {
+  let currentCase: ReturnType<EvalDraftBridge["read"]> | undefined;
+  let suite: unknown;
+  try {
+    currentCase = getEvalDraft(scope).read();
+  } catch {
+    /* Editor is mounting. */
+  }
+  try {
+    suite = getEvalSuite(scope).read();
+  } catch {
+    /* Suite details can arrive later. */
+  }
+  const servers = currentCase?.metadata?.servers;
+  let status: "loading" | "ready" | "partial" | "empty" | "error" = "loading";
+  if (currentCase) {
+    if (!servers)
+      status = "ready"; // Non-Describe bridges retain their existing contract.
+    else if (servers.some((s) => s.status === "ready"))
+      status = servers.every(
+        (s) => s.status === "ready" || s.status === "empty",
+      )
+        ? "ready"
+        : "partial";
+    else if (servers.some((s) => s.status === "loading")) status = "loading";
+    else if (servers.some((s) => s.status === "error")) status = "error";
+    else status = "empty";
+  }
+  return {
+    status,
+    suiteStatus: suite === undefined ? "loading" : "ready",
+    suite,
+    case: currentCase,
+  };
+}
+export function isEvalContextReady(scope: EvalAgentScope) {
+  const { status } = readEvalContext(scope);
+  return status === "ready" || status === "partial";
+}
+
 let activeDraftScope: EvalAgentScope | undefined;
 let activeSuiteScope:
-  | Omit<EvalAgentScope, "id" | "kind" | "version">
-  | undefined;
+  Omit<EvalAgentScope, "id" | "kind" | "version"> | undefined;
 export function currentEvalPageScope() {
   if (activeDraftScope) {
     const {
@@ -41,7 +100,11 @@ export function currentEvalPageScope() {
       return {
         ...scope,
         caseTitle: getEvalDraft(activeDraftScope).read().draft.title,
-        hasCaseContent: getEvalDraft(activeDraftScope).read().draft.steps.some((step) => step.kind !== "prompt" || Boolean(step.prompt.trim())),
+        hasCaseContent: getEvalDraft(activeDraftScope)
+          .read()
+          .draft.steps.some(
+            (step) => step.kind !== "prompt" || Boolean(step.prompt.trim()),
+          ),
       };
     } catch {
       return scope;
@@ -66,10 +129,12 @@ export function registerEvalDraft(
   const key = draftKey(scope);
   drafts.set(key, bridge);
   activeDraftScope = scope;
+  notifyEvalContextChanged();
   return () => {
     if (drafts.get(key) === bridge) {
       drafts.delete(key);
       if (activeDraftScope === scope) activeDraftScope = undefined;
+      notifyEvalContextChanged();
     }
   };
 }
@@ -88,10 +153,12 @@ export function registerEvalSuite(
   const key = evalSuiteKey(scope);
   suites.set(key, bridge);
   activeSuiteScope = scope;
+  notifyEvalContextChanged();
   return () => {
     if (suites.get(key) === bridge) {
       suites.delete(key);
       if (activeSuiteScope === scope) activeSuiteScope = undefined;
+      notifyEvalContextChanged();
     }
   };
 }
@@ -122,6 +189,12 @@ export function parseDraftPatch(
   return patch;
 }
 export interface GeneratedDraft {
+  markdownImport?: {
+    source: MarkdownDraft["source"];
+    issues: MarkdownDraft["issues"];
+    warnings: string[];
+    prepared?: MarkdownSaveRequest;
+  };
   id: string;
   revision: string;
   input: CreateEvalTestCaseInput;
@@ -129,6 +202,7 @@ export interface GeneratedDraft {
   error?: string;
 }
 export interface GenerationState {
+  reviewRequestId?: string;
   status: "running" | "ready" | "error";
   error?: string;
   drafts: GeneratedDraft[];
@@ -194,9 +268,63 @@ function updateGeneration(
     },
   }));
 }
+/** Imported cases share the persisted review queue, but keep their provenance and retry payload. */
+export function stageMarkdownDrafts(
+  scope: Pick<EvalAgentScope, "projectId" | "suiteId">,
+  drafts: MarkdownDraft[],
+  warnings: string[],
+) {
+  const staged: GeneratedDraft[] = drafts.map((draft) => ({
+    id: `imported-${generateId()}`,
+    revision: generateId(),
+    input: {
+      suiteId: scope.suiteId!,
+      caseId: mintCaseId(),
+      title: draft.title,
+      query: draft.prompt,
+      expectedOutput: draft.expectedOutput,
+      steps: [{ id: "prompt", kind: "prompt", prompt: draft.prompt }],
+      models: [],
+      runs: 1,
+      isNegativeTest: false,
+      expectedToolCalls: [],
+    },
+    markdownImport: {
+      source: draft.source,
+      issues: draft.issues,
+      warnings,
+    },
+  }));
+  updateGeneration(evalSuiteKey(scope), (state) => ({
+    ...state,
+    drafts: [...state.drafts, ...staged],
+    reviewRequestId: generateId(),
+  }));
+}
+
+export function importedDraftBlockedReason(
+  draft: GeneratedDraft,
+): string | undefined {
+  const imported = draft.markdownImport;
+  if (!imported || imported.prepared) return;
+  if (
+    !draft.input.title.trim() ||
+    !draft.input.query.trim() ||
+    !draft.input.expectedOutput?.trim()
+  )
+    return "Complete the case title, User Prompt, and Expected Outcome.";
+  if (
+    draft.input.title.length > 500 ||
+    draft.input.query.length > 20000 ||
+    draft.input.expectedOutput.length > 10000
+  )
+    return "Shorten the case title, prompt, or expected outcome before adding.";
+}
+
 export function startEvalGeneration(
   scope: EvalAgentScope,
   instructions: string,
+  options?: GenerationOptions,
 ) {
   const key = evalSuiteKey(scope);
   const bridge = getEvalSuite(scope);
@@ -206,16 +334,20 @@ export function startEvalGeneration(
     );
   updateGeneration(key, (s) => ({ ...s, status: "running", error: undefined }));
   void bridge
-    .generate(instructions, async (input) => {
-      if (input.suiteId !== scope.suiteId)
-        throw new Error("Generated case is outside the scoped suite.");
-      const id = `generated-${generateId()}`;
-      updateGeneration(key, (s) => ({
-        ...s,
-        drafts: [...s.drafts, { id, revision: generateId(), input }],
-      }));
-      return id;
-    })
+    .generate(
+      instructions,
+      async (input) => {
+        if (input.suiteId !== scope.suiteId)
+          throw new Error("Generated case is outside the scoped suite.");
+        const id = `generated-${generateId()}`;
+        updateGeneration(key, (s) => ({
+          ...s,
+          drafts: [...s.drafts, { id, revision: generateId(), input }],
+        }));
+        return id;
+      },
+      options,
+    )
     .then(
       () => updateGeneration(key, (s) => ({ ...s, status: "ready" })),
       (error) =>
@@ -234,13 +366,22 @@ export function editGeneratedDraft(
   scope: EvalAgentScope,
   id: string,
   revision: string,
-  patch: Partial<EvalDraft>,
+  patch: Partial<EvalDraft> &
+    Pick<
+      Partial<CreateEvalTestCaseInput>,
+      "expectedOutput" | "matchOptions" | "predicates"
+    >,
 ) {
   const key = evalSuiteKey(scope);
   const current = useEvalGeneration
     .getState()
     .suites[key]?.drafts.find((d) => d.id === id);
-  if (!current || current.revision !== revision || current.saving)
+  if (
+    !current ||
+    current.revision !== revision ||
+    current.saving ||
+    current.markdownImport?.prepared
+  )
     throw new Error(
       "Generated draft changed or is unavailable. Read context before retrying.",
     );
@@ -273,6 +414,19 @@ export function editGeneratedDraft(
     changedFields: Object.keys(patch),
   };
 }
+/** Discard only an unsaved draft; pending saves must finish first. */
+export function removeGeneratedDraft(scope: EvalAgentScope, id: string) {
+  const key = evalSuiteKey(scope);
+  const current = useEvalGeneration
+    .getState()
+    .suites[key]?.drafts.find((draft) => draft.id === id);
+  if (!current || current.saving || current.markdownImport?.prepared) return;
+  updateGeneration(key, (state) => ({
+    ...state,
+    drafts: state.drafts.filter((draft) => draft.id !== id),
+  }));
+}
+
 export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
   const key = evalSuiteKey(scope);
   const current = useEvalGeneration
@@ -286,7 +440,6 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
     ),
   }));
   try {
-    const bridge = getEvalSuite(scope);
     if (current.input.suiteId !== scope.suiteId)
       throw new Error("Draft is outside the selected suite.");
     if (!current.input.title.trim())
@@ -299,7 +452,60 @@ export async function saveGeneratedDraft(scope: EvalAgentScope, id: string) {
     )
       throw new Error("Complete the case steps before saving.");
     stepsSchema.parse(current.input.steps);
-    await bridge.save(current.input);
+    if (current.markdownImport) {
+      const blocked = importedDraftBlockedReason(current);
+      if (blocked) throw new Error(blocked);
+      const request = current.markdownImport.prepared ?? {
+        projectId: scope.projectId!,
+        suiteId: scope.suiteId!,
+        cases: [
+          {
+            caseId: current.input.caseId!,
+            idempotencyKey: `markdown:${current.id}:${current.revision}`,
+            title: current.input.title.trim(),
+            prompt: current.input.query.trim(),
+            expectedOutput: current.input.expectedOutput!.trim(),
+            source: current.markdownImport.source,
+          },
+        ],
+      };
+      updateGeneration(key, (state) => ({
+        ...state,
+        drafts: state.drafts.map((draft) =>
+          draft.id === id
+            ? {
+                ...draft,
+                markdownImport: {
+                  ...current.markdownImport!,
+                  prepared: request,
+                },
+              }
+            : draft,
+        ),
+      }));
+      const result = await saveMarkdownCases(request);
+      if (result.failed.length) {
+        // A definitive failure permits editing. Unknown outcomes retain the
+        // exact payload and idempotency key until a retry confirms the save.
+        updateGeneration(key, (state) => ({
+          ...state,
+          drafts: state.drafts.map((draft) =>
+            draft.id === id
+              ? {
+                  ...draft,
+                  markdownImport: {
+                    ...draft.markdownImport!,
+                    prepared: undefined,
+                  },
+                }
+              : draft,
+          ),
+        }));
+        throw new Error(result.failed[0].message);
+      }
+    } else {
+      await getEvalSuite(scope).save(current.input);
+    }
     updateGeneration(key, (s) => ({
       ...s,
       drafts: s.drafts.filter((d) => d.id !== id),

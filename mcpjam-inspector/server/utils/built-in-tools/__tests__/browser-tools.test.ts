@@ -1,3 +1,7 @@
+import { verifyLocalBrowserConsent } from "../../computers/browser-consent.js";
+vi.mock("../../computers/browser-consent.js", () => ({
+  verifyLocalBrowserConsent: vi.fn(async () => true),
+}));
 /**
  * `buildBrowserTools` — the two structural guarantees, plus the policy matrix.
  *
@@ -59,7 +63,7 @@ function fakeSession(
         sessionId: "session-1",
         computerId: "computer-1",
         bootId,
-        client: { sendCommand } as never,
+        client: { sendCommand, status: async () => ({ kind: "ok", features: ["webmcp-binding"] }) } as never,
         streamUrl: "https://stream.example/vnc.html",
         streamPassword: "pw",
         contextMode: "persistent",
@@ -1020,7 +1024,10 @@ describe("the screenshot reaches the model as an IMAGE, not as text", () => {
       status: "stale_observation",
       result: {
         ok: false,
-        output: { url: "https://moved.test", a11y: "- button \"Delete\" [ref=e1]" },
+        output: {
+          url: "https://moved.test",
+          a11y: '- button "Delete" [ref=e1]',
+        },
       },
     }));
     const tools = result!.tools as any;
@@ -1938,7 +1945,6 @@ describe("buildBrowserTools — an unattended run must name itself", () => {
     expect(built).toBeDefined();
   });
 });
-
 
 describe("the toolset's context footprint is pinned", () => {
   /**
@@ -3727,5 +3733,75 @@ describe("buildBrowserTools — the page-tool hint names what is actually there"
         }
       }
     }
+  });
+});
+
+it("revoked Browser consent blocks a previously cached local session", async () => {
+  const { result, sendCommand } = build({ engine: "local", localConsentToken: "browser-token" });
+  await run(result!.tools, "browser_observe", {});
+  const count = sendCommand.mock.calls.length;
+  vi.mocked(verifyLocalBrowserConsent).mockResolvedValueOnce(false);
+  await expect(run(result!.tools, "browser_observe", {})).rejects.toThrow("browser_consent_required");
+  expect(sendCommand).toHaveBeenCalledTimes(count);
+});
+
+describe("buildBrowserTools — session policy", () => {
+  it("pins generic page tool calls to the allowed registration and propagates a stale refusal", async () => {
+    const daemon = vi.fn(async (command: any) => command.action.kind === "observe" ? {
+      ...OK,
+      result: { ...OK.result!, output: { url: "https://example.com", tools: [{ name: "submit", origin: "https://example.com", frameId: "frame", registrationSeq: 7 }] } },
+    } : { status: "ok", result: { ok: false, error: "stale_binding: the document changed" } });
+    const { result } = build({ pageTools: undefined, approvalDelivery: { kind: "session-policy", policy: { mode: "allowlist", originAllowlist: ["https://example.com"] } }, sessionScope: { kind: "conversation", sessionId: "wire" } }, daemon);
+    const answer = await run(result!.tools, "browser_webmcp_invoke", { toolName: "submit", input: {} });
+    expect(daemon.mock.calls[0][0].action).toEqual({ kind: "observe", mode: "webmcp_tools" });
+    expect(daemon.mock.calls[1][0].action.expectedBinding).toEqual({ bootId: "boot-1", tabId: "@session", navCounter: 1, frameId: "frame", registrationSeq: 7 });
+    expect(JSON.stringify(answer)).toContain("stale_binding");
+    expect(daemon).toHaveBeenCalledTimes(2);
+  });
+  it("keeps a hosted conversation persistent and applies its read-only policy", async () => {
+    const { result, ensureSession } = build({
+      approvalDelivery: {
+        kind: "session-policy",
+        policy: { mode: "read_only" },
+      },
+      sessionScope: { kind: "conversation", sessionId: "wire-session" },
+    });
+    expect(result).toBeDefined();
+    expect(result!.tools.browser_act).toBeUndefined();
+    expect(result!.tools.browser_observe.needsApproval).toBe(false);
+    await run(result!.tools, "browser_observe", {});
+    expect(ensureSession).toHaveBeenCalledWith(
+      expect.objectContaining({ contextMode: "persistent" }),
+    );
+  });
+  it("requires conversation scope instead of falling back to a project browser", () => {
+    const { result } = build({
+      approvalDelivery: {
+        kind: "session-policy",
+        policy: { mode: "allow_all" },
+      },
+    });
+    expect(result).toBeUndefined();
+  });
+  it("enforces session origins before sending navigation", async () => {
+    const daemon = vi.fn(echoingDaemon());
+    const { result } = build(
+      {
+        approvalDelivery: {
+          kind: "session-policy",
+          policy: {
+            mode: "allowlist",
+            originAllowlist: ["https://example.com"],
+          },
+        },
+        sessionScope: { kind: "conversation", sessionId: "wire-session" },
+      },
+      daemon,
+    );
+    const answer = await run(result!.tools, "browser_navigate", {
+      url: "https://forbidden.example",
+    });
+    expect(JSON.stringify(answer)).toContain("origin_not_allowed");
+    expect(daemon).not.toHaveBeenCalled();
   });
 });

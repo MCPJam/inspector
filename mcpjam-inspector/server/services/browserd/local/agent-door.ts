@@ -322,7 +322,7 @@ export async function runAgentCommand(
 }
 
 /** Map one daemon response onto the contract's three outcomes. */
-function toContractResult(args: {
+export function toContractResult(args: {
   response: BrowserdCommandResponse;
   commandId: string;
   policy: BrowserAgentSessionPolicy;

@@ -187,6 +187,7 @@ describe("GET /api/web/computers/config", () => {
         cloud: { available: false },
       },
       capabilities: {
+        browserConsent: true,
         personalCloudAvailable: false,
         ephemeralCloudAvailable: false,
       },
@@ -209,6 +210,7 @@ describe("GET /api/web/computers/config", () => {
     expect(body.remoteDataPlaneUrl).toBeNull();
     expect(body.engines.cloud).toEqual({ available: true });
     expect(body.capabilities).toEqual({
+      browserConsent: true,
       personalCloudAvailable: true,
       ephemeralCloudAvailable: true,
     });
@@ -227,6 +229,7 @@ describe("GET /api/web/computers/config", () => {
     expect(body.localConfigured).toBe(false);
     expect(body.remoteDataPlaneUrl).toBe("https://dp.example.test");
     expect(body.capabilities).toEqual({
+      browserConsent: true,
       personalCloudAvailable: true,
       ephemeralCloudAvailable: false,
     });

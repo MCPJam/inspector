@@ -40,6 +40,8 @@ import {
   getChatSessionOperation,
   getChatSessionTraceOperation,
   sendChatMessageOperation,
+  driveChatSessionBrowserOperation,
+  observeChatSessionBrowserOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
@@ -1694,6 +1696,14 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // session I just created" is not "show me what everyone has been saying".
   // The reads are therefore direct; widening them into enumeration would
   // reopen the exclusion by another door.
+  { operation: driveChatSessionBrowserOperation, tier: "gated", proposal: { describe: (input) => {
+    const action = input.op === "navigate" ? `Navigate to ${previewValue(input.url)}`
+      : input.op === "invoke" ? `Invoke page tool ${previewValue(input.toolKey)}`
+      : input.op === "act" ? `Act ${previewValue(input.command)}`
+      : `${String(input.op)} browser`;
+    return `${action} · session ${previewValue(input.sessionId ?? "new")} · metered desktop time`;
+  }, buttonLabel: "Continue", kind: "start", confirmSeverity: "spend" } },
+  { operation: observeChatSessionBrowserOperation, tier: "gated", proposal: { describe: () => "Observe this session browser; waking it uses metered desktop time.", buttonLabel: "Continue", kind: "start", confirmSeverity: "spend" } },
   {
     operation: sendChatMessageOperation,
     tier: "gated",

@@ -336,7 +336,9 @@ export type BrowserAgentRefusalCode =
   | "session_revoked"
   | "session_closed"
   | "busy"
-  | "daemon_at_capacity";
+  | "daemon_at_capacity"
+  /** Provisioning or wake failed before a command could be sent. */
+  | "browser_unavailable";
 
 /** Why an outcome is unknowable. @see BrowserAgentResult */
 export type BrowserAgentUnknownReason =

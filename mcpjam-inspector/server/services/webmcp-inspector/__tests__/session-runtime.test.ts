@@ -1,3 +1,5 @@
+import { createRelayInputForwarder } from "../../../routes/web/browser-pane-input-forwarder";
+import { fromBrowserPaneInput } from "@/shared/webmcp-input";
 import { describe, it, expect, vi } from "vitest";
 import {
   WEBMCP_RESULT_CAP_BYTES,
@@ -12,6 +14,8 @@ import {
   WebMcpSessionRuntime,
 } from "../session-runtime";
 import { WebMcpToolGoneError } from "../provider";
+import { WebMcpBridgeError } from "../../browserd/daemon/webmcp-bridge";
+import { translateBridgeError } from "../provider-shared";
 import { FakeBrowserSession, fakeTool } from "./fake-provider";
 
 function makeRuntime(
@@ -209,6 +213,8 @@ describe("invocation", () => {
       "https://example.test::echo",
       { n: 2 },
       "chat",
+      undefined,
+      runtime.currentTools()[0].binding,
     );
     first.settled.catch(() => {});
     second.settled.catch(() => {});
@@ -301,6 +307,34 @@ describe("invocation", () => {
     // reporting the page as busy here would 409 a legitimate next step.
     expect(runtime.inFlight).toBe(0);
   });
+
+  it.each(["cancelled", "timeout"] as const)(
+    "records uncertain page effects after %s as unknown",
+    async (reason) => {
+      const { runtime, session, activity } = makeRuntime();
+      session.emitTools([fakeTool()]);
+      const message =
+        "Page execution may continue; verify the page state before retrying.";
+      vi.spyOn(session, "invokeTool").mockRejectedValue(
+        translateBridgeError(
+          new WebMcpBridgeError("webmcp_outcome_unknown", message, reason),
+          "echo",
+        ),
+      );
+      const { settled } = runtime.invoke(
+        "https://example.test::echo",
+        {},
+        "manual",
+      );
+      await expect(settled).rejects.toThrow(message);
+      await vi.waitFor(() =>
+        expect(entryOfKind(activity(), "invocation_settled")).toMatchObject({
+          state: "unknown",
+          errorMessage: message,
+        }),
+      );
+    },
+  );
 
   it("cancels a running invocation and records it as cancelled", async () => {
     const { runtime, session, activity } = makeRuntime();
@@ -445,7 +479,10 @@ describe("an invokeId identifies ONE call", () => {
     // (a long call) where a retry is most likely.
     let clock = 0;
     const { runtime, session } = makeRuntime({ now: () => clock });
-    session.emitTools([fakeTool({ name: "slow" }), fakeTool({ name: "quick" })]);
+    session.emitTools([
+      fakeTool({ name: "slow" }),
+      fakeTool({ name: "quick" }),
+    ]);
     session.hangOnInvoke = true;
 
     const slow = runtime.invoke(
@@ -795,6 +832,53 @@ describe("viewport frames", () => {
     expect(runtime.toPublic().status).not.toBe("error");
   });
 
+  it("replays the attached transport without a provisional native-window session", () => {
+    const runtime = new WebMcpSessionRuntime("https://example.test/", {
+      sessionId: "session-embedded",
+    });
+    const callbacks = runtime.callbacks();
+    // Providers navigate and discover tools inside createSession, before the
+    // returned browser can be attached to the runtime.
+    callbacks.onNavigated("https://example.test/", "https://example.test");
+    callbacks.onToolsChanged([fakeTool()]);
+
+    const session = new FakeBrowserSession(callbacks);
+    session.transport = { kind: "electron-webview" };
+    runtime.attach(session);
+    runtime.expiresAt = 2_000;
+    runtime.hardExpiresAt = 3_000;
+    runtime.publishSession();
+
+    const replay: WebMcpEvent[] = [];
+    runtime.hub.subscribe((event) => replay.push(event));
+    const sessions = replay.filter((event) => event.type === "session");
+    // Even a transient native-window replay makes the client unmount its
+    // webview, destroying the guest before the correct snapshot arrives.
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].session).toMatchObject({
+      status: "ready",
+      viewportTransport: { kind: "electron-webview" },
+      expiresAt: 2_000,
+      hardExpiresAt: 3_000,
+    });
+    expect(replay.some((event) => event.type === "tools")).toBe(true);
+    expect(
+      replay.some(
+        (event) =>
+          event.type === "activity" && event.entry.kind === "navigated",
+      ),
+    ).toBe(true);
+
+    callbacks.onCrashed("The embedded page was closed.");
+    expect(replay.at(-2)).toMatchObject({
+      type: "session",
+      session: {
+        status: "error",
+        viewportTransport: { kind: "electron-webview" },
+      },
+    });
+  });
+
   it("does not publish a quality change before a browser is attached", () => {
     const runtime = new WebMcpSessionRuntime("https://example.test/", {
       sessionId: "session-1",
@@ -838,6 +922,156 @@ describe("viewport frames", () => {
 });
 
 describe("input forwarding", () => {
+  it("keeps HTTP fallback behind work still queued in the socket relay", async () => {
+    const { runtime, session } = makeRuntime();
+    let release!: () => void;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const dispatch = vi
+      .spyOn(session, "dispatchInput")
+      .mockImplementationOnce(() => gate)
+      .mockResolvedValue(undefined);
+    const relay = createRelayInputForwarder({
+      dispatch: async ({ events }) => {
+        await runtime.dispatchInput(
+          events.map(fromBrowserPaneInput),
+          () => false,
+          "socket",
+        );
+        return { ok: true };
+      },
+      ack() {},
+    });
+    const unregister = runtime.registerSocketInputDrain(() => relay.drain());
+    relay.submit({ seq: 1, events: [{ type: "text", text: "socket 1" }] });
+    relay.submit({ seq: 2, events: [{ type: "text", text: "socket 2" }] });
+    const fallback = runtime.dispatchInput([{ kind: "text", text: "http" }]);
+    await Promise.resolve();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    release();
+    await fallback;
+    expect(dispatch.mock.calls.map(([events]) => events[0])).toEqual([
+      { kind: "text", text: "socket 1" },
+      { kind: "text", text: "socket 2" },
+      { kind: "text", text: "http" },
+    ]);
+    unregister();
+    relay.cancel();
+  });
+
+  it("keeps resize behind work still queued in the socket relay", async () => {
+    const { runtime, session } = makeRuntime();
+    let release!: () => void;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const dispatch = vi
+      .spyOn(session, "dispatchInput")
+      .mockImplementationOnce(() => gate)
+      .mockResolvedValue(undefined);
+    const relay = createRelayInputForwarder({
+      dispatch: async ({ events }) => {
+        await runtime.dispatchInput(
+          events.map(fromBrowserPaneInput),
+          () => false,
+          "socket",
+        );
+        return { ok: true };
+      },
+      ack() {},
+    });
+    const unregister = runtime.registerSocketInputDrain(() => relay.drain());
+    relay.submit({ seq: 1, events: [{ type: "text", text: "socket 1" }] });
+    relay.submit({ seq: 2, events: [{ type: "text", text: "socket 2" }] });
+    const resize = vi.fn(async () => {
+      expect(dispatch).toHaveBeenCalledTimes(2);
+    });
+    Object.assign(session, { resizeViewport: resize });
+    const fallback = runtime.resizeViewport(600, 700);
+    await Promise.resolve();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    release();
+    await fallback;
+    expect(dispatch.mock.calls.map(([events]) => events[0])).toEqual([
+      { kind: "text", text: "socket 1" },
+      { kind: "text", text: "socket 2" },
+    ]);
+    expect(resize).toHaveBeenCalledWith(600, 700);
+    unregister();
+    relay.cancel();
+  });
+
+  it("serializes all input callers and continues after a dispatch rejection", async () => {
+    const { runtime, session } = makeRuntime();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const dispatch = vi
+      .spyOn(session, "dispatchInput")
+      .mockImplementationOnce(() =>
+        gate.then(() => {
+          throw new Error("dispatch failed");
+        }),
+      )
+      .mockResolvedValue(undefined);
+    const first = runtime.dispatchInput([{ kind: "key_down", key: "a" }]);
+    const failed = expect(first).rejects.toThrow("dispatch failed");
+    const second = runtime.dispatchInput([{ kind: "key_up", key: "a" }]);
+    await Promise.resolve();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    release();
+    await failed;
+    await second;
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1][0][0].kind).toBe("key_up");
+  });
+
+  it("rechecks socket cancellation after waiting behind another caller", async () => {
+    const { runtime, session } = makeRuntime();
+    let release!: () => void;
+    let cancelled = false;
+    const dispatch = vi.spyOn(session, "dispatchInput").mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const first = runtime.dispatchInput([{ kind: "text", text: "http" }]);
+    const second = runtime.dispatchInput(
+      [{ kind: "text", text: "socket" }],
+      () => cancelled,
+    );
+    const refused = expect(second).rejects.toThrow("no longer available");
+    await Promise.resolve();
+    cancelled = true;
+    release();
+    await first;
+    await refused;
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses queued input after the runtime closes", async () => {
+    const { runtime, session } = makeRuntime();
+    let release!: () => void;
+    const dispatch = vi.spyOn(session, "dispatchInput").mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const first = runtime.dispatchInput([{ kind: "key_down", key: "a" }]);
+    const second = runtime.dispatchInput([{ kind: "key_up", key: "a" }]);
+    const refused = expect(second).rejects.toThrow("no longer available");
+    await Promise.resolve();
+    await runtime.close();
+    release();
+    await first;
+    await refused;
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
   it("hands the batch to the browser and ticks the idle clock", async () => {
     const { runtime, session, onActivity } = makeRuntime();
     onActivity.mockClear();
@@ -875,4 +1109,106 @@ describe("input forwarding", () => {
       runtime.dispatchInput([{ kind: "mouse_move", x: 1, y: 1 }]),
     ).rejects.toThrow(/not ready/i);
   });
+});
+
+describe("registration bindings", () => {
+  it("refuses a queued chat call after same-name replacement", async () => {
+    const { runtime, session, activity } = makeRuntime();
+    session.emitTools([fakeTool()]);
+    const binding = runtime.currentTools()[0].binding!;
+    session.hangOnInvoke = true;
+    const first = runtime.invoke(
+      "https://example.test::echo",
+      { n: 1 },
+      "manual",
+    );
+    await vi.waitFor(() => expect(session.pending).toBeDefined());
+    const queued = runtime.invoke(
+      "https://example.test::echo",
+      { n: 2 },
+      "chat",
+      undefined,
+      binding,
+    );
+    session.emitTools([fakeTool({ registrationSeq: 2 })]);
+    session.pending!.resolve({ output: "first" });
+    await first.settled;
+    await expect(queued.settled).rejects.toBeInstanceOf(WebMcpToolGoneError);
+    expect(
+      activity().find(
+        (entry) =>
+          entry.kind === "invocation_settled" &&
+          entry.invokeId === queued.invokeId,
+      ),
+    ).toMatchObject({ state: "failed", errorCode: "tool-gone" });
+    expect(session.invocations).toHaveLength(1);
+    await runtime.close();
+  });
+
+  it("requires the advertised binding for chat instead of inferring the live one", () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool()]);
+    expect(() =>
+      runtime.invoke("https://example.test::echo", {}, "chat"),
+    ).toThrow(WebMcpToolGoneError);
+    expect(session.invocations).toHaveLength(0);
+  });
+
+  it("does not reuse an invocation id for a different registration", async () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool()]);
+    const binding = runtime.currentTools()[0].binding!;
+    const first = runtime.invoke(
+      "https://example.test::echo",
+      {},
+      "chat",
+      "id",
+      binding,
+    );
+    await first.settled;
+    expect(() =>
+      runtime.invoke("https://example.test::echo", {}, "chat", "id", {
+        ...binding,
+        registrationSeq: 2,
+      }),
+    ).toThrow(WebMcpInvokeIdReusedError);
+    expect(session.invocations).toHaveLength(1);
+    await runtime.close();
+  });
+
+  it("reads a pending or completed outcome without executing again", async () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool()]);
+    session.hangOnInvoke = true;
+    const call = runtime.invoke(
+      "https://example.test::echo",
+      {},
+      "manual",
+      "read-id",
+    );
+    expect(runtime.invocationResult(call.invokeId)).toEqual({ pending: true });
+    await vi.waitFor(() => expect(session.pending).toBeDefined());
+    session.pending!.resolve({ output: "paid" });
+    await call.settled;
+    const retained = runtime.invocationResult(call.invokeId)!;
+    expect("settled" in retained).toBe(true);
+    if ("settled" in retained)
+      await expect(retained.settled).resolves.toMatchObject({ output: "paid" });
+    expect(runtime.invocationResult("missing")).toBeUndefined();
+    expect(session.invocations).toHaveLength(1);
+    await runtime.close();
+  });
+});
+
+it("keeps distinct frames addressable when their four-character hashes collide", () => {
+  const frames = [
+    "87A4D1F43B315A289F0F44348FCA2E0E",
+    "053054454A0136E6B929F5931FBB18FB",
+  ];
+  const descriptors = frames.map((frameId) =>
+    fakeTool({ frameId, isMainFrame: false }),
+  );
+  const tools = assignToolKeys(descriptors);
+  expect(new Set(tools.map((tool) => tool.toolKey)).size).toBe(2);
+  expect(assignToolKeys([...descriptors].reverse()).reverse()).toEqual(tools);
 });

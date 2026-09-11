@@ -19,6 +19,7 @@
  *     one ledger row, and no window in which the page moves between an act and
  *     the observation that was supposed to describe it.
  */
+import { buildPlatformClient } from "../lib/platform-client.js";
 import { Command } from "commander";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -43,13 +44,16 @@ import {
   writeBrowserState,
 } from "../lib/browser-session-store.js";
 
-const LOCAL_CONSENT_HEADER = "x-mcpjam-local-consent";
+const BROWSER_CONSENT_HEADER = "x-mcpjam-browser-consent";
 const BROWSER_ROUTE = "/api/mcp/computers/local-browser";
 
 /** How this CLI names itself in the ledger. See the door's actor rules. */
 const CLIENT_KIND = "cli";
 
 interface CommonOptions {
+  cloud?: boolean;
+  apiKey?: string;
+  apiUrl?: string;
   inspectorUrl?: unknown;
   project?: unknown;
   session?: unknown;
@@ -59,12 +63,24 @@ interface CommonOptions {
 
 function addCommonOptions(command: Command): Command {
   return command
+    .option("--cloud", "Drive an isolated MCPJam cloud browser")
+    .option(
+      "--api-url <url>",
+      "Cloud API URL (for example https://staging.mcpjam.com/api/v1)",
+    )
+    .option(
+      "--api-key <key>",
+      "Cloud API key (or use MCPJAM_API_KEY / cloud login)",
+    )
     .option("--inspector-url <url>", "Local Inspector base URL")
     .option("--project <id>", "Project whose browser to drive", "default")
-    .option("--session <id>", "Browser session id (defaults to the last opened)")
+    .option(
+      "--session <id>",
+      "Browser session id (defaults to the last opened)",
+    )
     .option(
       "--consent <token>",
-      "Local computer consent capability (defaults to the stored one)",
+      "Local browser consent capability (defaults to the stored one)"
     )
     .option(
       "--client-id <id>",
@@ -92,21 +108,28 @@ function consentOf(options: CommonOptions): string {
   if (typeof options.consent === "string" && options.consent.trim()) {
     return options.consent.trim();
   }
-  const fromEnv = process.env.MCPJAM_LOCAL_CONSENT;
+  const fromEnv = process.env.MCPJAM_BROWSER_CONSENT;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-  const stored = readBrowserState(getBrowserStateFilePath()).consent;
+  const stored = readBrowserState(getBrowserStateFilePath()).browserConsent;
   if (stored) return stored;
   throw operationalError(
     "This machine's browser has not been authorized for the CLI.",
-    "Open the Inspector, allow the local computer, then run " +
+    "Open the Inspector, allow the local browser, then run " +
       "`mcpjam browser consent --token <capability>` (or set " +
-      "MCPJAM_LOCAL_CONSENT). The CLI never grants this itself — the consent " +
-      "screen is where a person authorizes the agent browser.",
+      "MCPJAM_BROWSER_CONSENT). The CLI never grants this itself — the consent " +
+      "screen is where a person authorizes the agent browser."
   );
 }
 
 /** The session for this project: explicit, else the last one opened here. */
+function sessionStoreKey(options: CommonOptions, projectId: string): string {
+  if (!options.cloud) return projectId;
+  const { baseUrl } = buildPlatformClient(options);
+  return `cloud:${baseUrl.replace(/\/$/, "")}:${projectId}`;
+}
+
 function sessionOf(options: CommonOptions, projectId: string): string {
+  const storeKey = sessionStoreKey(options, projectId);
   if (typeof options.session === "string" && options.session.trim()) {
     return options.session.trim();
   }
@@ -115,8 +138,8 @@ function sessionOf(options: CommonOptions, projectId: string): string {
   // function and be handed on as though it were a session id.
   const sessions = readBrowserState(getBrowserStateFilePath()).sessions;
   const stored =
-    sessions && Object.hasOwn(sessions, projectId)
-      ? sessions[projectId]
+    sessions && Object.hasOwn(sessions, storeKey)
+      ? sessions[storeKey]
       : undefined;
   if (typeof stored === "string" && stored) return stored;
   throw usageError(
@@ -128,7 +151,7 @@ function sessionOf(options: CommonOptions, projectId: string): string {
 /**
  * The Inspector base URL these commands may use.
  *
- * Every request here carries the local computer CONSENT capability — a
+ * Every request here carries the local browser CONSENT capability — a
  * credential that authorizes driving a browser signed into the user's accounts.
  * Sending it in cleartext to a host that is not this machine puts it on the
  * wire for anyone on the path, so http:// is admitted for loopback only.
@@ -156,13 +179,31 @@ function browserBaseUrl(options: CommonOptions): string {
   // `ws://localhost` — not a cleartext risk, but a URL this cannot talk to,
   // failing later inside a fetch instead of here where the message is about
   // the argument the caller actually typed.
-  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
+  if (
+    parsed.protocol !== "https:" &&
+    !(parsed.protocol === "http:" && loopback)
+  ) {
     throw usageError(
-      `Refusing to send the local computer consent capability to ${baseUrl} in cleartext.`,
-      "Use https:// for a remote Inspector; http:// is allowed for localhost only.",
+      `Refusing to send the local browser consent capability to ${baseUrl} in cleartext.`,
+      "Use https:// for a remote Inspector; http:// is allowed for localhost only."
     );
   }
   return baseUrl;
+}
+
+async function requireBrowserConsentCapability(
+  client: InspectorApiClient
+): Promise<void> {
+  const result = await client.request("/api/web/computers/config", {
+    method: "GET",
+  });
+  const config = result as { capabilities?: { browserConsent?: boolean } };
+  if (config.capabilities?.browserConsent !== true) {
+    throw operationalError(
+      "Update Inspector to use Browser-scoped consent.",
+      "Then grant Browser permission in the Browser panel and run mcpjam browser consent again."
+    );
+  }
 }
 
 async function post(
@@ -171,11 +212,29 @@ async function post(
   body: Record<string, unknown>,
   timeoutMs?: number,
 ): Promise<Record<string, unknown>> {
+  if (options.cloud) {
+    if (options.inspectorUrl || options.consent)
+      throw usageError(
+        "--cloud uses cloud credentials, not --inspector-url or --consent",
+      );
+    if (body.projectId === "default")
+      throw usageError("Pass --project <cloud-project-id>");
+    const { client } = buildPlatformClient({
+      ...options,
+      timeoutMs: timeoutMs ?? 120000,
+    });
+    return client.browserSession(
+      path.slice(1) as Parameters<typeof client.browserSession>[0],
+      body,
+    );
+  }
   const client = new InspectorApiClient({ baseUrl: browserBaseUrl(options) });
+  const consentToken = consentOf(options);
+  await requireBrowserConsentCapability(client);
   const result = await client.request(`${BROWSER_ROUTE}${path}`, {
     method: "POST",
     body,
-    headers: { [LOCAL_CONSENT_HEADER]: consentOf(options) },
+    headers: { [BROWSER_CONSENT_HEADER]: consentToken },
     ...(timeoutMs ? { timeoutMs } : {}),
     // The door answers a REFUSAL with 403 and an UNKNOWN outcome with 502, and
     // those bodies carry the distinction the whole contract turns on: `refused`
@@ -256,19 +315,39 @@ async function fetchScreenshot(
       detail: "the screenshot was captured but its payload is no longer kept",
     };
   }
+  if (options.cloud) {
+    const body = await post(
+      options,
+      "/artifact",
+      { projectId, sessionId, artifactId: artifact.id },
+      timeoutMs,
+    );
+    if (typeof body.screenshot !== "string")
+      return { kind: "failed", detail: "Screenshot is no longer available" };
+    if (inline)
+      return {
+        kind: "inline",
+        base64: body.screenshot,
+        mediaType: "image/jpeg",
+      };
+    const file = join(outDir ?? tmpdir(), `mcpjam-browser-${artifact.id}.jpg`);
+    await writeFile(file, Buffer.from(body.screenshot, "base64"));
+    return { kind: "file", path: file };
+  }
   const baseUrl = browserBaseUrl(options);
   // Its OWN fetch, rather than the shared `request` helper, and for a reason
   // that is easy to get wrong: that helper reads every response with
   // `response.text()`, which decodes as UTF-8 and replaces every invalid
   // sequence with U+FFFD. A JPEG read that way is not a slightly damaged JPEG,
   // it is a file that will not open — and nothing would say so.
+  await requireBrowserConsentCapability(new InspectorApiClient({ baseUrl }));
   const token = await fetchInspectorSessionToken(baseUrl);
   const response = await fetch(`${baseUrl}${BROWSER_ROUTE}/artifact`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-MCP-Session-Auth": `Bearer ${token}`,
-      [LOCAL_CONSENT_HEADER]: consentOf(options),
+      [BROWSER_CONSENT_HEADER]: consentOf(options),
     },
     body: JSON.stringify({ projectId, sessionId, artifactId: artifact.id }),
     // The SAME budget the command itself got. Without a signal a route that
@@ -308,22 +387,44 @@ function extensionFor(mediaType: string | undefined): string {
 export function registerBrowserCommands(program: Command): void {
   const browser = program
     .command("browser")
-    .description("Drive this machine's browser and read its session trace");
+    .description("Drive a local or cloud browser and read its session trace");
 
   // ---- consent ----------------------------------------------------------
   browser
     .command("consent")
-    .description("Store the local computer capability granted in the Inspector")
-    .requiredOption("--token <token>", "The capability the Inspector showed once")
+    .description(
+      "Validate and store the Browser capability granted in the Inspector"
+    )
+    .option("--inspector-url <url>", "Local Inspector base URL")
+    .requiredOption(
+      "--token <token>",
+      "The capability the Inspector showed once",
+    )
     .action(async (options, command) => {
-      const globalOptions = getGlobalOptions(command);
+      const globalOptions = getGlobalOptions(
+        command,
+        options.cloud ? 120_000 : 30_000,
+      );
+      const client = new InspectorApiClient({
+        baseUrl: browserBaseUrl(options),
+      });
+      await requireBrowserConsentCapability(client);
+      const verified = (await client.request(
+        `${BROWSER_ROUTE}/consent/verify`,
+        { method: "POST", body: { token: String(options.token) } }
+      )) as { valid?: boolean };
+      if (verified.valid !== true)
+        throw operationalError(
+          "Browser capability was rejected.",
+          "Grant Browser permission in Inspector and supply its Browser token."
+        );
       const file = getBrowserStateFilePath();
       const state = readBrowserState(file);
-      await writeBrowserState(file, { ...state, consent: String(options.token) });
-      writeResult(
-        { success: true, stored: file },
-        globalOptions.format,
-      );
+      await writeBrowserState(file, {
+        ...state,
+        browserConsent: String(options.token),
+      });
+      writeResult({ success: true, stored: file }, globalOptions.format);
     });
 
   // ---- open -------------------------------------------------------------
@@ -352,15 +453,15 @@ export function registerBrowserCommands(program: Command): void {
       "Keep a ledger without pictures for this session",
     )
     .action(async (options, command) => {
-      const globalOptions = getGlobalOptions(command);
+      const globalOptions = getGlobalOptions(
+        command,
+        options.cloud ? 120_000 : 30_000,
+      );
       const projectId = projectOf(options);
       // Caught here as well as at the door, because `--profile ephermal` asks
       // for a throwaway browser and would otherwise open the real logged-in
       // one. A usage error names the flag the person actually typed.
-      if (
-        options.profile !== "persistent" &&
-        options.profile !== "ephemeral"
-      ) {
+      if (options.profile !== "persistent" && options.profile !== "ephemeral") {
         throw usageError(
           `Unknown --profile \`${String(options.profile)}\`.`,
           "Use --profile persistent or --profile ephemeral.",
@@ -382,9 +483,13 @@ export function registerBrowserCommands(program: Command): void {
               ? { toolAllowlist: options.tool }
               : {}),
           },
-          ...(options.screenshots === false ? { captureScreenshots: false } : {}),
+          ...(options.screenshots === false
+            ? { captureScreenshots: false }
+            : {}),
           ...(options.observe ? { observe: options.observe } : {}),
-          ...(typeof options.runKey === "string" ? { runKey: options.runKey } : {}),
+          ...(typeof options.runKey === "string"
+            ? { runKey: options.runKey }
+            : {}),
           ...identity(options),
         },
         globalOptions.timeout,
@@ -395,7 +500,7 @@ export function registerBrowserCommands(program: Command): void {
         // an explicit flag always wins.
         await rememberSession(
           getBrowserStateFilePath(),
-          projectId,
+          sessionStoreKey(options, projectId),
           session.sessionId,
         );
       }
@@ -417,15 +522,26 @@ export function registerBrowserCommands(program: Command): void {
           detail: error instanceof Error ? error.message : String(error),
         }));
         if (shot.kind === "file") extra = { screenshotPath: shot.path };
-        else if (shot.kind === "failed") extra = { screenshotError: shot.detail };
+        else if (shot.kind === "failed")
+          extra = { screenshotError: shot.detail };
       }
       writeResult({ success: true, ...body, ...extra }, globalOptions.format);
     });
 
-  // ---- observe ----------------------------------------------------------
   addCommonOptions(
-    browser.command("observe").description("Look at the page"),
-  )
+    browser.command("sessions").description("List browser sessions"),
+  ).action(async (options, command) => {
+    const body = await post(
+      options,
+      "/sessions",
+      { projectId: projectOf(options) },
+      getGlobalOptions(command).timeout,
+    );
+    writeResult(body, getGlobalOptions(command).format);
+  });
+
+  // ---- observe ----------------------------------------------------------
+  addCommonOptions(browser.command("observe").description("Look at the page"))
     .option(
       "--mode <mode>",
       "a11y | screenshot | text | dom | console | network | dialog | url | page_tools",
@@ -442,7 +558,10 @@ export function registerBrowserCommands(program: Command): void {
     .option("--out-dir <dir>", "Where to write a screenshot")
     .option("--inline", "Return screenshot bytes instead of a file path")
     .action(async (options, command) => {
-      const globalOptions = getGlobalOptions(command);
+      const globalOptions = getGlobalOptions(
+        command,
+        options.cloud ? 120_000 : 30_000,
+      );
       const projectId = projectOf(options);
       const sessionId = sessionOf(options, projectId);
       const result = await post(
@@ -490,13 +609,12 @@ export function registerBrowserCommands(program: Command): void {
       "--command-id <id>",
       "Idempotency key: reuse it to retry safely after a transport failure",
     )
-    .option(
-      "--observe-after <mode>",
-      "a11y | screenshot | none",
-      "a11y",
-    )
+    .option("--observe-after <mode>", "a11y | screenshot | none", "a11y")
     .action(async (url, options, command) => {
-      const globalOptions = getGlobalOptions(command);
+      const globalOptions = getGlobalOptions(
+        command,
+        options.cloud ? 120_000 : 30_000,
+      );
       const projectId = projectOf(options);
       const sessionId = sessionOf(options, projectId);
       const result = await post(
@@ -532,7 +650,9 @@ export function registerBrowserCommands(program: Command): void {
   addCommonOptions(
     browser
       .command("act")
-      .description("Click, type, press, scroll, hover, drag, select, or move tabs"),
+      .description(
+        "Click, type, press, scroll, hover, drag, select, or move tabs",
+      ),
   )
     .requiredOption(
       "--verb <verb>",
@@ -549,14 +669,13 @@ export function registerBrowserCommands(program: Command): void {
       "--command-id <id>",
       "Idempotency key: reuse it to retry safely after a transport failure",
     )
-    .option(
-      "--observe-after <mode>",
-      "a11y | screenshot | none",
-      "a11y",
-    )
+    .option("--observe-after <mode>", "a11y | screenshot | none", "a11y")
     .option("--out-dir <dir>", "Where to write a screenshot")
     .action(async (options, command) => {
-      const globalOptions = getGlobalOptions(command);
+      const globalOptions = getGlobalOptions(
+        command,
+        options.cloud ? 120_000 : 30_000,
+      );
       const projectId = projectOf(options);
       const sessionId = sessionOf(options, projectId);
       const result = await post(
@@ -592,13 +711,101 @@ export function registerBrowserCommands(program: Command): void {
       });
     });
 
+  for (const op of ["back", "forward", "reload"] as const) {
+    addCommonOptions(
+      browser.command(op).description(`${op} the current browser tab`),
+    )
+      .option("--tab <id>", "Tab to drive")
+      .option("--command-id <id>", "Idempotency key for this command")
+      .action(async (options, command) => {
+        const global = getGlobalOptions(
+          command,
+          options.cloud ? 120_000 : 30_000,
+        );
+        const projectId = projectOf(options);
+        const sessionId = sessionOf(options, projectId);
+        const result = await post(
+          options,
+          "/command",
+          {
+            projectId,
+            sessionId,
+            command: { op, observeAfter: "a11y" },
+            ...identity(options),
+            ...(options.tab ? { tabId: options.tab } : {}),
+            ...(options.commandId ? { commandId: options.commandId } : {}),
+          },
+          global.timeout,
+        );
+        await emit(result, {
+          options,
+          projectId,
+          sessionId,
+          format: global.format,
+          saveScreenshots: false,
+        });
+      });
+  }
+
+  addCommonOptions(
+    browser
+      .command("invoke <toolKey>")
+      .description("Invoke a WebMCP tool listed by observe --mode page_tools"),
+  )
+    .option("--input <json>", "Tool arguments as JSON", "{}")
+    .option("--frame <id>", "Frame declaring the tool")
+    .option("--tab <id>", "Tab declaring the tool")
+    .option("--command-id <id>", "Idempotency key for this invocation")
+    .action(async (toolKey, options, command) => {
+      let input: unknown;
+      try {
+        input = JSON.parse(options.input);
+      } catch {
+        throw usageError("--input must be valid JSON");
+      }
+      const global = getGlobalOptions(
+        command,
+        options.cloud ? 120_000 : 30_000,
+      );
+      const projectId = projectOf(options);
+      const sessionId = sessionOf(options, projectId);
+      const result = await post(
+        options,
+        "/command",
+        {
+          projectId,
+          sessionId,
+          command: {
+            op: "invoke_page_tool",
+            toolKey,
+            input,
+            ...(options.frame ? { frameId: options.frame } : {}),
+          },
+          ...identity(options),
+          ...(options.tab ? { tabId: options.tab } : {}),
+          ...(options.commandId ? { commandId: options.commandId } : {}),
+        },
+        global.timeout,
+      );
+      await emit(result, {
+        options,
+        projectId,
+        sessionId,
+        format: global.format,
+        saveScreenshots: false,
+      });
+    });
+
   // ---- note -------------------------------------------------------------
   addCommonOptions(
     browser
       .command("note <text>")
       .description("Write a marker into the session trace"),
   ).action(async (text, options, command) => {
-    const globalOptions = getGlobalOptions(command);
+    const globalOptions = getGlobalOptions(
+      command,
+      options.cloud ? 120_000 : 30_000,
+    );
     const projectId = projectOf(options);
     const sessionId = sessionOf(options, projectId);
     const body = await post(
@@ -612,15 +819,16 @@ export function registerBrowserCommands(program: Command): void {
 
   // ---- trace ------------------------------------------------------------
   addCommonOptions(
-    browser
-      .command("trace")
-      .description("Read this session's command history"),
+    browser.command("trace").description("Read this session's command history"),
   )
     .option("--after-seq <seq>", "Only rows after this seq")
     .option("--command-id <id>", "Find one command's row")
     .option("--limit <n>", "How many rows", "100")
     .action(async (options, command) => {
-      const globalOptions = getGlobalOptions(command);
+      const globalOptions = getGlobalOptions(
+        command,
+        options.cloud ? 120_000 : 30_000,
+      );
       const projectId = projectOf(options);
       const sessionId = sessionOf(options, projectId);
       const body = await post(
@@ -651,7 +859,10 @@ export function registerBrowserCommands(program: Command): void {
       "Close the browser itself, not just this participant",
     )
     .action(async (options, command) => {
-      const globalOptions = getGlobalOptions(command);
+      const globalOptions = getGlobalOptions(
+        command,
+        options.cloud ? 120_000 : 30_000,
+      );
       const projectId = projectOf(options);
       const sessionId = sessionOf(options, projectId);
       const body = await post(
@@ -666,7 +877,11 @@ export function registerBrowserCommands(program: Command): void {
         globalOptions.timeout,
       );
       // Only if it was the remembered one; see `forgetSessionIf`.
-      await forgetSessionIf(getBrowserStateFilePath(), projectId, sessionId);
+      await forgetSessionIf(
+        getBrowserStateFilePath(),
+        sessionStoreKey(options, projectId),
+        sessionId,
+      );
       writeResult({ success: true, ...body }, globalOptions.format);
     });
 }
@@ -680,7 +895,9 @@ function targetFrom(options: {
 }): Record<string, unknown> | undefined {
   const named = [
     typeof options.ref === "string" && options.ref ? "ref" : null,
-    typeof options.selector === "string" && options.selector ? "selector" : null,
+    typeof options.selector === "string" && options.selector
+      ? "selector"
+      : null,
     options.x !== undefined || options.y !== undefined ? "coordinates" : null,
   ].filter(Boolean);
   if (named.length === 0) return undefined;
@@ -691,7 +908,8 @@ function targetFrom(options: {
       `Give one target, not ${named.length}: ${named.join(", ")}.`,
     );
   }
-  if (typeof options.ref === "string" && options.ref) return { ref: options.ref };
+  if (typeof options.ref === "string" && options.ref)
+    return { ref: options.ref };
   if (typeof options.selector === "string" && options.selector) {
     return { selector: options.selector };
   }

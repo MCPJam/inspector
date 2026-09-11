@@ -1,3 +1,8 @@
+import {
+  resolveBrowserEngine,
+  coerceBrowserEngineForActor,
+} from "../computers/browser-engine.js";
+import { guestBrowserProject } from "../computers/browser-rollout.js";
 import { requireGithubToolSelection } from "../../services/github-checks/credential-policy.js";
 /**
  * Host tool resolver: resolved host config → AI SDK ToolSet.
@@ -189,6 +194,12 @@ export interface BuiltInToolContext {
    * signed-in member's own direct turn.
    */
   computerEngine?: ComputerEngine;
+  browserEngine?: ComputerEngine;
+  /** Verified local guest, supplied by the request boundary, never the body. */
+  localBrowserGuestId?: string;
+  browserConsentToken?: string;
+  localBrowserRequested?: boolean;
+  browserUnavailableReason?: string;
   /**
    * The request EXPLICITLY (and validly) asked for the local engine. Only
    * used to pick the honest unavailable-error message inside the bash tool.
@@ -253,6 +264,15 @@ export interface BuiltInToolContext {
   browserSessionScope?: BrowserSessionScope;
   /** Explicit profile pin from a host/eval config. */
   browserProfileId?: string;
+  browserHandoffMaxWaitMs?: number;
+  onBrowserHandoffWaiting?: Parameters<
+    typeof buildBrowserTools
+  >[0]["onHandoffWaiting"];
+  browserSessionHandle?: Awaited<
+    ReturnType<
+      NonNullable<Parameters<typeof buildBrowserTools>[0]["ensureSession"]>
+    >
+  >;
   /** Surface notices while a conversation browser waits for capacity. */
   onBrowserNotice?: (notice: string) => void;
   /**
@@ -306,16 +326,6 @@ export interface BuiltInToolContext {
       BrowserToolsResult["currentPageToolsBinding"]
     >;
   }) => void;
-  /**
-   * Accept the bash/browser co-tenancy trust boundary for this turn. Both
-   * drive the SAME computer as the same uid, so a shell can read the driven
-   * browser's cookies and its daemon token out of the process environment —
-   * which turns a page-injected prompt into a credential-theft path. Default
-   * (absent) suppresses `browser` when `bash` is also present; the backend
-   * refuses to PERSIST the pair at all, so this only covers runtime drift and
-   * deployments that have accepted the boundary.
-   */
-  allowComputerToolCoTenancy?: boolean;
 }
 
 /** The host-config fields this resolver consumes. */
@@ -397,6 +407,21 @@ export function resolveHostTools(
       { ids: [...ids] },
     );
     return undefined;
+  }
+
+  // Reject the whole unattended target before advertising either tool: a
+  // shell on the shared box could read the pinned profile or daemon secrets.
+  if (
+    (ctx.sandboxBinding ||
+      ctx.isJourneySession ||
+      ctx.browserApprovalDelivery?.kind === "unattended") &&
+    ctx.browserProfileId &&
+    ids.includes(BASH_TOOL_NAME) &&
+    ids.includes(BROWSER_BUILT_IN_TOOL_ID)
+  ) {
+    throw new Error(
+      "browser_profile_shell_conflict: An unattended target with Browser and Bash must use a blank Browser profile. Remove the saved profile pin or Bash.",
+    );
   }
 
   const authHeader = normalizeAuthHeader(ctx.authHeader);
@@ -543,31 +568,24 @@ export function resolveHostTools(
       continue;
     }
     if (id === BROWSER_BUILT_IN_TOOL_ID) {
-      // WHERE this browser runs, resolved exactly as bash's engine is and at
-      // the same chokepoint: whatever the route asked for, `local` survives
-      // only for a signed-in member's own direct turn — a guest, a scenario, a
-      // journey or a swarm re-resolves to the cloud family here.
+      // Browser has its own engine and grant. Ineligible actors cannot use
+      // local Browser, and an explicit local request never moves to Cloud.
       const requestedEngine =
-        ctx.computerEngine ??
-        resolvePersonalComputerEngine({ localConsentValid: false });
-      const resolvedEngine = coercePersonalEngineForActor(requestedEngine, {
+        ctx.browserEngine ?? resolveBrowserEngine({ localConsentValid: false });
+      const resolvedEngine = coerceBrowserEngineForActor(requestedEngine, {
         isGuest: Boolean(ctx.isGuest),
+        localGuestAuthorized: Boolean(ctx.localBrowserGuestId),
         isScenarioSession: Boolean(ctx.isScenarioSession),
         isJourneySession: Boolean(ctx.isJourneySession),
         executionScopeKind: ctx.executionScope?.kind,
       });
-      // `unavailable` is a real answer here, not a synonym for "cloud", and
-      // the distinction matters in exactly one case: the user ASKED for their
-      // own machine and it could not be honored (consent lapsed, kill switch
-      // off, no local engine). Falling through to the hosted browser would
-      // quietly run their session somewhere else — the dishonesty
-      // `resolvePersonalComputerEngine` refuses to commit for bash, in its own
-      // words. Everywhere else `unavailable` only means "no LOCAL engine",
-      // which says nothing about the hosted browser: that has its own gates
-      // below, and reads `config.computer`, not this.
+      // Preserve explicit-location failures. Legacy hosted callers still
+      // pass through the hosted provisioning and entitlement gates below.
       if (
         resolvedEngine === "unavailable" &&
-        ctx.localComputerRequested === true
+        (ctx.localBrowserRequested === true ||
+          requestedEngine === "local" ||
+          Boolean(ctx.browserUnavailableReason))
       ) {
         logger.warn(
           "[built-in-tools] browser suppressed: this machine was requested but is unavailable",
@@ -576,9 +594,10 @@ export function resolveHostTools(
         ctx.onToolSuppressed?.({
           id,
           reason:
+            ctx.browserUnavailableReason ??
             "browser is not available: this turn asked for the browser on this " +
-            "machine, and this machine cannot serve it — check that local " +
-            "computer consent is still granted.",
+              "machine, and this machine cannot serve it — check that local " +
+              "Browser permission is still granted.",
         });
         continue;
       }
@@ -615,6 +634,7 @@ export function resolveHostTools(
           "[built-in-tools] browser requested while HOSTED_BROWSER_TOOLS_ENABLED is off; skipping",
           { projectId: ctx.projectId },
         );
+        ctx.onToolSuppressed?.({ id, reason: "HOSTED_BROWSER_TOOLS_ENABLED is disabled on this server." });
         continue;
       }
       // The backend's own gate (catalog entry + desktop template + desktop
@@ -681,42 +701,6 @@ export function resolveHostTools(
         });
         continue;
       }
-      // Co-tenancy: a shell and a driven browser on ONE box, as one uid. Keep
-      // `bash` (behavior-preserving for hosts that already have it) and drop
-      // `browser`, unless this deployment accepted the boundary.
-      //
-      // NOT applied locally. The stated risk is that a shell on the box reads
-      // the browser's cookies and its daemon token out of the process
-      // environment — but on the user's own machine the shell is already
-      // running as them, with access to every credential store on it, and the
-      // local daemon's token never enters an environment at all (the client
-      // calls its handler in-process). The boundary here is device consent
-      // plus per-action approval, and refusing the pair would only mean a user
-      // who attached both gets neither of the two things they asked for.
-      //
-      // NOT applied to a PER-RUN BOX either, and for a different reason: the
-      // risk is a shell reading a HUMAN's cookies and daemon token, and a
-      // disposable box holds no human profile — it is created for one run,
-      // signed into nothing, and destroyed with it. (The backend cannot even
-      // persist the pair: `validateBuiltInToolScope` refuses bash + browser on
-      // one host config, so this arm is unreachable today and stated so the
-      // exemption is a decision rather than an accident if that ever changes.)
-      if (
-        !isLocalBrowser &&
-        !sandboxBrowser &&
-        ids.includes(BASH_TOOL_NAME) &&
-        !ctx.allowComputerToolCoTenancy
-      ) {
-        const reason =
-          "browser is not advertised alongside bash: both drive the same computer as " +
-          "the same user, so a shell can read the browser's cookies and its daemon " +
-          "token out of the process environment.";
-        logger.warn("[built-in-tools] browser suppressed for bash co-tenancy", {
-          projectId: ctx.projectId,
-        });
-        ctx.onToolSuppressed?.({ id, reason });
-        continue;
-      }
       // AN UNATTENDED RUN NEEDS A BOX OF ITS OWN, whatever surface it came
       // from. Generalized from the journey-only gate it replaces: an eval is
       // in exactly the same position, and the hosted engine has ONE computer
@@ -742,14 +726,19 @@ export function resolveHostTools(
       // box IS the computer here, and it arrives on `ctx` rather than on the
       // host config — which is the whole point: nothing in a member-readable
       // snapshot can forge one.
-      if (!sandboxBrowser && !computer && !conversationBrowser) {
+      if (
+        !isLocalBrowser &&
+        !sandboxBrowser &&
+        !computer &&
+        !conversationBrowser
+      ) {
         logger.warn(
           "[built-in-tools] browser requested without a computer attached; skipping",
           { projectId: ctx.projectId },
         );
         continue;
       }
-      if (ctx.isGuest) {
+      if (ctx.isGuest && !(isLocalBrowser && ctx.localBrowserGuestId)) {
         logger.debug(
           "[built-in-tools] browser not advertised to guest actors; skipping",
           { projectId: ctx.projectId },
@@ -770,8 +759,17 @@ export function resolveHostTools(
       }
       const browser = buildBrowserTools({
         authHeader,
-        projectId: ctx.projectId,
+        projectId: ctx.localBrowserGuestId
+          ? guestBrowserProject(ctx.projectId, ctx.localBrowserGuestId)
+          : ctx.projectId,
+        localGuest: Boolean(ctx.localBrowserGuestId),
         engine: isLocalBrowser ? "local" : "hosted",
+        localConsentToken: ctx.browserConsentToken,
+        handoffMaxWaitMs: ctx.browserHandoffMaxWaitMs,
+        onHandoffWaiting: ctx.onBrowserHandoffWaiting,
+        ...(ctx.browserSessionHandle
+          ? { ensureSession: async () => ctx.browserSessionHandle! }
+          : {}),
         // The host's switch, exactly as bash gets it. This family follows it
         // rather than overruling it.
         requireToolApproval: ctx.requireToolApproval,
@@ -805,6 +803,7 @@ export function resolveHostTools(
               sandboxTarget: {
                 sandboxRowId: sandboxBrowser.sandboxRowId!,
                 sandboxId: sandboxBrowser.sandboxId,
+                record: ctx.browserApprovalDelivery?.kind === "unattended",
               },
             }
           : {}),

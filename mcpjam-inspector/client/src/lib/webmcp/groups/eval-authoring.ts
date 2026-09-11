@@ -1,17 +1,17 @@
+import {
+  askDescribeQuestion,
+  proposeDescribeCases,
+  useDescribeFlow,
+} from "@/lib/mcpjam-agent/describe-flow";
 import type { UiToolDefinition } from "../ui-tools-registry";
 import {
   evalTurnScope,
   assertEvalToolAllowed,
 } from "@/lib/mcpjam-agent/eval-scope";
 import {
-  getEvalDraft,
-  getEvalSuite,
+  readEvalContext,
   useEvalGeneration,
   evalSuiteKey,
-  parseDraftPatch,
-  startEvalGeneration,
-  runScopedEvalSuite,
-  editGeneratedDraft,
 } from "@/lib/mcpjam-agent/eval-workspace";
 
 const revision = {
@@ -19,22 +19,57 @@ const revision = {
   description: "Exact current revision returned by ui_eval_context.",
 };
 const patch = {
+  expectedOutput: {
+    type: "string",
+    description: "What a successful response must do for this case.",
+  },
   title: { type: "string", description: "New case title." },
   steps: {
     type: "array",
     description:
-      "Complete ordered TestStep sequence; preserve unchanged steps and ids. Kinds: prompt {id,kind,prompt}; assert {id,kind,assertion}; toolCall {id,kind,toolName,arguments}; interact. Read the current steps first. Example assert: {id:'check-1',kind:'assert',assertion:{type:'responseContains',needle:'hello'}}. Validated against the shared eval step contract.",
+      "Complete ordered TestStep sequence; preserve unchanged steps and ids. Kinds: prompt {id,kind,prompt}; assert {id,kind,assertion}; toolCall {id,kind,serverName,toolName,arguments}; interact. Read the current steps first. Example assert: {id:'check-1',kind:'assert',assertion:{type:'responseContains',needle:'hello'}}. Validated against the shared eval step contract.",
     items: { type: "object", additionalProperties: true },
   },
 };
 export function buildEvalAuthoringTools(): UiToolDefinition[] {
   return [
     {
-      name: "ui_eval_run_suite",
+      name: "ui_eval_question",
       description:
-        "Run ALL SAVED cases in the scoped suite without navigation. Does not run unsaved drafts. Spends eval usage and executes real server tools; approval required. Only use when the user requests a suite run. Read context for results.",
-      readOnly: false,
-      properties: {},
+        "Ask the single allowed follow-up about the expected outcome, then stop and wait for the user's next message. Never edits a case.",
+      readOnly: true,
+      properties: { question: { type: "string" } },
+      required: ["question"],
+    },
+    {
+      name: "ui_eval_propose_cases",
+      description:
+        "Prepare 1–5 cases for a Create button. Does not edit or save cases. Stop after this tool. Each case has title and ordered steps with prompts and checks.",
+      readOnly: true,
+      properties: {
+        revision,
+        subject: {
+          type: "string",
+          description: "Short subject, e.g. issue search; max 80 characters.",
+        },
+        summary: {
+          type: "string",
+          description:
+            "One sentence describing expected behavior, max 300 characters.",
+        },
+        cases: {
+          type: "array",
+          minItems: 1,
+          maxItems: 5,
+          items: {
+            type: "object",
+            properties: patch,
+            required: ["title", "steps"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["revision", "subject", "summary", "cases"],
     },
     {
       name: "ui_eval_context",
@@ -43,57 +78,15 @@ export function buildEvalAuthoringTools(): UiToolDefinition[] {
       readOnly: true,
       properties: {},
     },
-    {
-      name: "ui_eval_edit_case",
-      description:
-        "Update the scoped case's working draft. Requires its exact current revision. Returns changed fields and revision; user saves from the editor. Never navigates.",
-      readOnly: false,
-      properties: { revision, ...patch },
-      required: ["revision"],
-    },
-    {
-      name: "ui_eval_undo_case",
-      description:
-        "Undo the latest agent edit to the scoped draft only if its revision still matches. Never overwrites later manual edits.",
-      readOnly: false,
-      properties: { revision },
-      required: ["revision"],
-    },
-    {
-      name: "ui_eval_generate_cases",
-      description:
-        "Generate additional coverage from connected servers into reviewable drafts. Spends model usage; approval required. Does not save or run cases. Read context for progress, never restart a running job.",
-      readOnly: false,
-      properties: {
-        instructions: {
-          type: "string",
-          description:
-            "Coverage goal, constraints and refinement direction for NEW cases.",
-        },
-      },
-      required: ["instructions"],
-    },
-    {
-      name: "ui_eval_edit_generated_case",
-      description:
-        "Refine an existing generated draft in the scoped suite. Requires its id and revision from context. Does not generate duplicates or save.",
-      readOnly: false,
-      properties: { draftId: { type: "string" }, revision, ...patch },
-      required: ["draftId", "revision"],
-    },
   ].map((spec) => ({
     name: spec.name,
     description: spec.description,
     readOnly: spec.readOnly,
     annotations: {
       readOnlyHint: spec.readOnly,
-      destructiveHint: ["ui_eval_generate_cases", "ui_eval_run_suite"].includes(
-        spec.name,
-      ),
-      idempotentHint: spec.readOnly,
-      openWorldHint: ["ui_eval_generate_cases", "ui_eval_run_suite"].includes(
-        spec.name,
-      ),
+      destructiveHint: false,
+      idempotentHint: spec.name === "ui_eval_context",
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -109,40 +102,25 @@ export function buildEvalAuthoringTools(): UiToolDefinition[] {
       if (!scope)
         throw new Error("Open Ask MCPJam from the eval workspace first.");
       let result: unknown;
-      if (spec.name === "ui_eval_run_suite") {
-        result = await runScopedEvalSuite(scope);
+      if (spec.name === "ui_eval_question") {
+        result = askDescribeQuestion(
+          context.scope,
+          String(args.question ?? ""),
+        );
+      } else if (spec.name === "ui_eval_propose_cases") {
+        result = {
+          status: "proposed",
+          proposalId: proposeDescribeCases(context.scope, scope, args),
+          instruction: "Stop. The user can now click Create.",
+        };
       } else if (spec.name === "ui_eval_context") {
         result = {
           scope,
-          suite: getEvalSuite(scope).read(),
-          ...(scope.caseId ? { case: getEvalDraft(scope).read() } : {}),
+          workflow: useDescribeFlow.getState().sessions[context.scope] ?? null,
+          ...readEvalContext(scope),
           generation:
             useEvalGeneration.getState().suites[evalSuiteKey(scope)] ?? null,
         };
-      } else if (spec.name === "ui_eval_generate_cases") {
-        if (typeof args.instructions !== "string" || !args.instructions.trim())
-          throw new Error("Describe the requested coverage.");
-        result = startEvalGeneration(scope, args.instructions);
-      } else {
-        if (typeof args.revision !== "string")
-          throw new Error("Read context and provide its current revision.");
-        if (spec.name === "ui_eval_undo_case")
-          result = getEvalDraft(scope).undo(args.revision);
-        else if (spec.name === "ui_eval_edit_case")
-          result = getEvalDraft(scope).edit(
-            args.revision,
-            parseDraftPatch(args),
-          );
-        else {
-          if (typeof args.draftId !== "string")
-            throw new Error("Provide the generated draft id.");
-          result = editGeneratedDraft(
-            scope,
-            args.draftId,
-            args.revision,
-            parseDraftPatch(args),
-          );
-        }
       }
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     },

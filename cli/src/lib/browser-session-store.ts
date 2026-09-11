@@ -3,7 +3,7 @@
  *
  * Two things, and neither is a secret this file invents:
  *
- *   - the LOCAL COMPUTER CONSENT capability, granted once by a person in the
+ *   - the BROWSER CONSENT capability, granted once by a person in the
  *     Inspector UI. The CLI never mints one. The consent screen exists so a
  *     human authorizes the agent browser explicitly, and a CLI that could mint
  *     its own capability would be that screen's own bypass — so this stores
@@ -28,7 +28,7 @@ const STORE_VERSION = 1;
 export interface StoredBrowserState {
   version: 1;
   /** The device consent capability, as granted in the Inspector UI. */
-  consent?: string;
+  browserConsent?: string;
   /** projectId → the session this CLI last opened for it. */
   sessions?: Record<string, string>;
 }
@@ -75,7 +75,9 @@ export function readBrowserState(filePath: string): StoredBrowserState {
     const parsed = JSON.parse(raw) as Partial<StoredBrowserState>;
     return {
       version: STORE_VERSION,
-      ...(typeof parsed.consent === "string" ? { consent: parsed.consent } : {}),
+      ...(typeof parsed.browserConsent === "string"
+        ? { browserConsent: parsed.browserConsent }
+        : {}),
       ...(isSessionMap(parsed.sessions) ? { sessions: parsed.sessions } : {}),
     };
   } catch {

@@ -32,6 +32,12 @@
  */
 
 import { Sandbox } from "e2b";
+import { hasBearerChallenge } from "@mcpjam/sdk/browser";
+import {
+  DEFAULT_EGRESS_DENY_CIDRS,
+  resolveEgressPolicy,
+} from "./egress-policy.js";
+import { startNetworkMonitor, stopNetworkMonitor } from "./network-monitor.js";
 import { logger } from "../../utils/logger.js";
 import type { CheckRecipe } from "./recipes.js";
 
@@ -93,18 +99,8 @@ export const CLONE_TIMEOUT_MS = 5 * 60_000;
 export const HEALTH_TIMEOUT_MS = 2 * 60_000;
 export const HEALTH_INTERVAL_MS = 2_000;
 
-/**
- * The GitHub-checks box is non-guest, so its baseline must match the backend's
- * `resolveEgressBaseline(false)` exactly. Keep this hand-mirrored list in sync
- * with `convex/lib/computerProviders/e2b.ts`; omitting it here would silently
- * fall back to E2B's allow-all default. Link-local is intentionally not part of
- * this list because E2B uses that range for its own metadata service.
- */
-export const GITHUB_CHECKS_EGRESS_DENY_CIDRS = [
-  "10.0.0.0/8",
-  "172.16.0.0/12",
-  "192.168.0.0/16",
-] as const;
+/** Shared defaults; a deployment override replaces the effective list. */
+export const GITHUB_CHECKS_EGRESS_DENY_CIDRS = DEFAULT_EGRESS_DENY_CIDRS;
 
 /**
  * Per-attempt cap on the health probe, clamped to the remaining deadline. A
@@ -364,11 +360,25 @@ export async function provisionCheckSandbox(args: {
   if (!apiKey || !templateId) {
     throw new CheckStepError(
       "infra_error",
-      "github-checks sandbox requires E2B_API_KEY and GITHUB_CHECKS_E2B_TEMPLATE_ID"
+      "github-checks sandbox requires E2B_API_KEY and GITHUB_CHECKS_E2B_TEMPLATE_ID",
     );
   }
 
   try {
+    const policy = resolveEgressPolicy(process.env.E2B_EGRESS_DENY_CIDRS);
+    const policyContext = {
+      ...args,
+      policyVersion: policy.version,
+      denyOut: policy.denyOut,
+      policySource: policy.source,
+    };
+    if (policy.weakensDefaults) {
+      logger.warn(
+        "[github-checks] network override weakens defaults",
+        policyContext,
+      );
+    }
+    logger.info("[github-checks] network policy requested", policyContext);
     const sandbox = await Sandbox.create(templateId, {
       apiKey,
       timeoutMs: CHECK_SANDBOX_TIMEOUT_MS,
@@ -380,7 +390,7 @@ export async function provisionCheckSandbox(args: {
       // The network is never modified afterwards — see the module docblock.
       network: {
         allowPublicTraffic: true,
-        denyOut: [...GITHUB_CHECKS_EGRESS_DENY_CIDRS],
+        denyOut: policy.denyOut,
       },
       metadata: {
         purpose: "github-checks",
@@ -390,14 +400,30 @@ export async function provisionCheckSandbox(args: {
       },
     });
     logger.info("[github-checks] sandbox provisioned", {
+      ...policyContext,
       sandboxId: sandbox.sandboxId,
-      triggerId: args.triggerId,
     });
+    try {
+      await startNetworkMonitor(
+        sandbox as unknown as CheckSandbox,
+        policyContext,
+      );
+    } catch {
+      logger.warn("[github-checks] network monitor", {
+        ...policyContext,
+        sandboxId: sandbox.sandboxId,
+        reason: "start_failed",
+      });
+    }
     return sandbox as unknown as CheckSandbox;
-  } catch (error) {
+  } catch {
+    logger.warn("[github-checks] sandbox provisioning failed", {
+      ...args,
+      reason: "policy_or_provider_rejected",
+    });
     throw new CheckStepError(
       "infra_error",
-      `sandbox provision failed: ${errorMessage(error)}`
+      "sandbox provisioning failed; verify the network policy and provider configuration",
     );
   }
 }
@@ -727,6 +753,8 @@ export type StartedServer = {
   readStderrTail: () => Promise<string>;
   /** See `SpawnIdentity` — the only identity the verifier is allowed to trust. */
   spawn: SpawnIdentity;
+  /** The verified listener requires OAuth before it can answer initialize. */
+  authorizationRequired?: boolean;
 };
 
 /**
@@ -834,12 +862,12 @@ export async function buildAndStart(
 
   const readServerLogTail = () => readLogTail(sandbox);
   const url = `https://${sandbox.getHost(recipe.port)}${recipe.mcpPath}`;
-  const healthy = await waitForMcpInitialize(url, {
+  const probe = await probeMcpInitialize(url, {
     timeoutMs: options?.healthTimeoutMs ?? HEALTH_TIMEOUT_MS,
     intervalMs: options?.healthIntervalMs ?? HEALTH_INTERVAL_MS,
     fetchImpl: options?.fetchImpl,
   });
-  if (!healthy) {
+  if (probe === "unhealthy") {
     throw new CheckStepError(
       "server_unhealthy",
       `server never completed MCP initialize on port ${recipe.port}${recipe.mcpPath}`,
@@ -847,7 +875,14 @@ export async function buildAndStart(
     );
   }
 
-  return { url, readStderrTail: readServerLogTail, spawn };
+  return {
+    url,
+    readStderrTail: readServerLogTail,
+    spawn,
+    ...(probe === "authorization_required"
+      ? { authorizationRequired: true }
+      : {}),
+  };
 }
 
 /** Marker the process-group read prints on. Matched, never parsed for. */
@@ -1071,6 +1106,25 @@ export async function waitForMcpInitialize(
     sleep?: (ms: number) => Promise<void>;
   }
 ): Promise<boolean> {
+  return (await probeMcpInitialize(url, options)) === "healthy";
+}
+
+export type McpInitializeProbeResult =
+  | "healthy"
+  | "authorization_required"
+  | "unhealthy";
+
+/** Detailed probe used by GitHub checks to distinguish an OAuth challenge. */
+export async function probeMcpInitialize(
+  url: string,
+  options?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  }
+): Promise<McpInitializeProbeResult> {
   const timeoutMs = options?.timeoutMs ?? HEALTH_TIMEOUT_MS;
   const intervalMs = options?.intervalMs ?? HEALTH_INTERVAL_MS;
   const doFetch = options?.fetchImpl ?? fetch;
@@ -1115,11 +1169,18 @@ export async function waitForMcpInitialize(
         // bounded too.
         signal: abort.signal,
       });
+      const challenge = response.headers.get("www-authenticate") ?? "";
+      if (
+        (response.status === 401 || response.status === 403) &&
+        hasBearerChallenge(challenge)
+      ) {
+        return "authorization_required";
+      }
       if (
         transportProcessesBody(response) &&
         (await probeResponseIsHealthy(response, era.accepts))
       ) {
-        return true;
+        return "healthy";
       }
     } catch {
       // Connection refused, DNS not ready, this era rejected outright, or our
@@ -1137,7 +1198,7 @@ export async function waitForMcpInitialize(
     url,
     attempts,
   });
-  return false;
+  return "unhealthy";
 }
 
 /** One era's probe: what to send, and what counts as an answer. */
@@ -1861,9 +1922,16 @@ function isServerIdentity(value: unknown): boolean {
 
 /** Best-effort teardown. E2B's TTL + `onTimeout: "kill"` is the real backstop. */
 export async function killCheckSandbox(
-  sandbox: CheckSandbox | null
+  sandbox: CheckSandbox | null,
 ): Promise<void> {
   if (!sandbox) return;
+  try {
+    await stopNetworkMonitor(sandbox);
+  } catch {
+    logger.warn("[github-checks] monitor cleanup failed", {
+      sandboxId: sandbox.sandboxId,
+    });
+  }
   try {
     await sandbox.kill();
   } catch (error) {

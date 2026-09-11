@@ -91,6 +91,17 @@ export type BrowserPageToolsResponse =
   | BrowserPageToolsOk
   | BrowserPageToolsError;
 
+/**
+ * One manual invoke of a page tool from the Tools pane.
+ *
+ * Transport refusals reuse the read codes (`lease_held`, `no_page`, …). A
+ * page that ran the tool and failed answers with its own error string — the
+ * same shape the WebMCP Inspector shows after Invoke.
+ */
+export type BrowserPageToolInvokeResponse =
+  | { ok: true; output: unknown }
+  | { ok: false; error: string; detail?: string };
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

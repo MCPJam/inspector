@@ -1,3 +1,4 @@
+import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
 import {
   act,
   fireEvent,
@@ -29,12 +30,25 @@ beforeEach(() => {
     removeEventListener: vi.fn(),
   }));
   useAgentPanelStore.getState().setActiveSession(null, null);
+  useAgentPanelStore.getState().setOpen(false);
+  useDescribeSurface.setState({
+    scope: {
+      kind: "evals",
+      version: 1,
+      id: "surface",
+      projectId: "resolved-project",
+      suiteId: "suite",
+      suiteName: "Suite",
+      caseId: "draft:describe",
+    },
+  });
 });
 it("renders inside the dashboard under its header and preserves its resolved project session", async () => {
   const sessionId = openEvalChat({
     projectId: "resolved-project",
     suiteId: "suite",
     suiteName: "Suite",
+    caseId: "draft:describe",
   });
   render(
     <>
@@ -69,14 +83,10 @@ it("renders inside the dashboard under its header and preserves its resolved pro
   ).toHaveLength(1);
 });
 
-it.each(["home", "servers", "chat", "settings", "tools"])(
-  "opens general chat on %s without carrying over the eval conversation",
+it.each(["evaluate"])(
+  "cannot open chat on %s without a mounted Describe editor",
   (activeTab) => {
-    openEvalChat({
-      projectId: "project",
-      suiteId: "suite",
-      suiteName: "Suite",
-    });
+    useDescribeSurface.setState({ scope: null });
     render(
       <AgentSidePanelMount
         projectId="project"
@@ -84,57 +94,57 @@ it.each(["home", "servers", "chat", "settings", "tools"])(
         activeTab={activeTab}
       />,
     );
+    fireEvent.keyDown(window, { key: "\\", metaKey: true });
+    expect(useAgentPanelStore.getState().isOpen).toBe(false);
     expect(
       screen.queryByRole("complementary", { name: "Ask MCPJam" }),
     ).toBeNull();
     expect(useAgentPanelStore.getState().isOpen).toBe(false);
-    fireEvent.keyDown(window, { key: "\\", metaKey: true });
-    expect(useAgentPanelStore.getState().isOpen).toBe(true);
-    expect(useAgentPanelStore.getState().activeSessionId).toBeNull();
-    expect(screen.getByText("General chat")).toBeVisible();
   },
 );
-
-it("opens general chat on the Evaluate landing page without a suite context", () => {
-  useAgentPanelStore.getState().setOpen(false);
+it("hides a retained session when Describe unmounts", () => {
+  openEvalChat({
+    projectId: "resolved-project",
+    suiteId: "suite",
+    suiteName: "Suite",
+    caseId: "draft:describe",
+  });
   render(
-    <AgentSidePanelMount
-      projectId="project"
-      organizationId={null}
-      activeTab="evaluate"
-    />,
-  );
-  fireEvent.keyDown(window, { key: "\\", ctrlKey: true });
-  expect(screen.getByText("General chat")).toBeVisible();
-});
-
-it("closes on leaving Evaluate and requires an explicit request when returning", () => {
-  const scope = { projectId: "project", suiteId: "suite", suiteName: "Suite" };
-  const sessionId = openEvalChat(scope);
-  const view = (activeTab: string) => (
     <>
-      <EvalAgentWorkspace projectId="project" organizationId={null}>
-        <button>Edit steps</button>
+      <EvalAgentWorkspace projectId="resolved-project" organizationId={null}>
+        <p>Editor</p>
       </EvalAgentWorkspace>
       <AgentSidePanelMount
-        projectId="project"
+        projectId="resolved-project"
         organizationId={null}
-        activeTab={activeTab}
+        activeTab="evaluate"
       />
-    </>
+    </>,
   );
-  const { rerender } = render(view("evaluate"));
-  expect(screen.getByLabelText("Composer for project")).toBeVisible();
-  rerender(view("servers"));
+  expect(screen.getByLabelText("Composer for resolved-project")).toBeVisible();
+  act(() => useDescribeSurface.setState({ scope: null }));
   expect(
     screen.queryByRole("complementary", { name: "Ask MCPJam" }),
   ).toBeNull();
-  rerender(view("evaluate"));
-  expect(
-    screen.queryByRole("complementary", { name: "Ask MCPJam" }),
-  ).toBeNull();
-  act(() => {
-    expect(openEvalChat(scope)).toBe(sessionId);
-  });
-  expect(screen.getByLabelText("Composer for project")).toBeVisible();
+});
+
+it.each(["home", "servers", "chat", "settings", "tools", "evals"])(
+  "opens general chat on %s without Describe", (activeTab) => {
+    useDescribeSurface.setState({ scope: null });
+    render(<AgentSidePanelMount projectId="project" organizationId={null} activeTab={activeTab} />);
+    fireEvent.keyDown(window, { key: "\\", metaKey: true });
+    expect(screen.getByText("General chat")).toBeVisible();
+    fireEvent.keyDown(window, { key: "\\", metaKey: true });
+    expect(useAgentPanelStore.getState().isOpen).toBe(false);
+  }
+);
+it("does not carry Describe chat into Home and can open a general session there", () => {
+  const scope = useDescribeSurface.getState().scope!;
+  openEvalChat(scope);
+  const view = render(<><EvalAgentWorkspace projectId={scope.projectId} organizationId={null}><p>Editor</p></EvalAgentWorkspace><AgentSidePanelMount projectId={scope.projectId} organizationId={null} activeTab="evaluate" /></>);
+  view.rerender(<AgentSidePanelMount projectId={scope.projectId} organizationId={null} activeTab="home" />);
+  expect(screen.queryByLabelText(`Composer for ${scope.projectId}`)).toBeNull();
+  fireEvent.keyDown(window, { key: "\\", metaKey: true });
+  expect(screen.getByText("General chat")).toBeVisible();
+  expect(useAgentPanelStore.getState().activeSessionId).toBeNull();
 });

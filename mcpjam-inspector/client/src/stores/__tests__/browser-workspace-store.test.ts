@@ -8,10 +8,11 @@ import {
 
 const reset = () =>
   useBrowserWorkspaceStore.setState({
-    open: false,
+    conversations: {},
     size: DEFAULT_BROWSER_PANEL_SIZE,
-    expanded: false,
     collapsedRailForBrowser: false,
+    revealSeq: 0,
+    revealConversationId: null,
   });
 
 describe("browser workspace layout", () => {
@@ -19,28 +20,43 @@ describe("browser workspace layout", () => {
 
   it("starts closed at roughly sixty percent", () => {
     const state = useBrowserWorkspaceStore.getState();
-    expect(state.open).toBe(false);
+    expect(state.conversations).toEqual({});
     expect(state.size).toBe(60);
   });
 
-  it("is idempotent to open, because browsing calls it on every tool call", () => {
+  it("keeps the conversation layout stable when browsing calls it again", () => {
     const { openBrowser } = useBrowserWorkspaceStore.getState();
-    openBrowser();
+    openBrowser("a");
     const first = useBrowserWorkspaceStore.getState();
-    openBrowser();
-    expect(useBrowserWorkspaceStore.getState()).toBe(first);
+    openBrowser("a");
+    const again = useBrowserWorkspaceStore.getState();
+    expect(again.conversations).toBe(first.conversations);
+    expect(again.revealSeq).toBe(first.revealSeq + 1);
+    expect(again.revealConversationId).toBe("a");
   });
 
   it("puts an expanded browser away entirely when it closes", () => {
     // Expanded-but-hidden only becomes visible the confusing way: reopening it
     // later takes over the whole window with no obvious cause.
     const store = useBrowserWorkspaceStore.getState();
-    store.openBrowser();
-    store.setExpanded(true);
-    useBrowserWorkspaceStore.getState().closeBrowser();
-    expect(useBrowserWorkspaceStore.getState()).toMatchObject({
+    store.openBrowser("a");
+    store.setExpanded("a", true);
+    useBrowserWorkspaceStore.getState().closeBrowser("a");
+    expect(useBrowserWorkspaceStore.getState().conversations.a).toMatchObject({
       open: false,
       expanded: false,
+    });
+  });
+
+  it("keeps A's layout when a background tool opens B", () => {
+    const store = useBrowserWorkspaceStore.getState();
+    store.openBrowser("a");
+    store.setExpanded("a", true);
+    store.openBrowser("b");
+    store.closeBrowser("b");
+    expect(useBrowserWorkspaceStore.getState().conversations).toEqual({
+      a: { open: true, expanded: true },
+      b: { open: false, expanded: false },
     });
   });
 
@@ -82,18 +98,22 @@ describe("browser workspace layout", () => {
     expect(useBrowserWorkspaceStore.getState()).toBe(after);
   });
 
-  it("persists the size but never the open or expanded flags", () => {
+  it("persists each conversation’s visibility but not expansion", () => {
     // Reopening on load would start a browser session nobody asked for, on a
     // metered box, before the person had said anything.
     const store = useBrowserWorkspaceStore.getState();
-    store.openBrowser();
-    store.setExpanded(true);
+    store.openBrowser("a");
+    store.setExpanded("a", true);
     store.setSize(72);
     const persisted = JSON.parse(
       window.localStorage.getItem("mcpjam.playground.browserWorkspace") ?? "{}",
     );
     expect(persisted.state).toMatchObject({ size: 72 });
     expect(persisted.state).not.toHaveProperty("open");
-    expect(persisted.state).not.toHaveProperty("expanded");
+    expect(persisted.state).not.toHaveProperty("revealSeq");
+    expect(persisted.state.conversations.a).toEqual({
+      open: true,
+      expanded: false,
+    });
   });
 });

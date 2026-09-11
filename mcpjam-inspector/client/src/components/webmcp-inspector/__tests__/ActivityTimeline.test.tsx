@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ActivityTimeline } from "../ActivityTimeline";
 import type { WebMcpActivityEntry } from "@/shared/webmcp-inspector-protocol";
@@ -45,5 +45,19 @@ describe("ActivityTimeline", () => {
 
     fireEvent.click(screen.getByText(/add_topping · 42ms/));
     expect(screen.getByText("Added 1 topping")).toBeInTheDocument();
+  });
+
+  it("clears the timeline from the toolbar", () => {
+    const onClear = vi.fn();
+    render(<ActivityTimeline entries={ENTRIES} onClear={onClear} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear activity" }));
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps clear visible and disabled when the timeline is empty", () => {
+    render(<ActivityTimeline entries={[]} onClear={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Clear activity" })).toBeDisabled();
   });
 });
