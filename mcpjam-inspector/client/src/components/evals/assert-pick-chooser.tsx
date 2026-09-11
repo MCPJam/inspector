@@ -172,7 +172,7 @@ export function AssertPickChooser({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
-            <MousePointerClick className="h-4 w-4 text-amber-500" />
+            <MousePointerClick className="h-4 w-4 text-warning" />
             What should we check?
           </DialogTitle>
           <DialogDescription>
@@ -196,7 +196,7 @@ export function AssertPickChooser({
                 className={
                   "flex flex-col gap-1 rounded-lg border p-3 text-left transition " +
                   (active
-                    ? "border-amber-500/60 bg-amber-500/5 ring-1 ring-amber-500/30"
+                    ? "border-warning/60 bg-warning/5 ring-1 ring-warning/30"
                     : "border-border/60 hover:border-border hover:bg-muted/30")
                 }
               >

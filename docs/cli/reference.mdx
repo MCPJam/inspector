@@ -1159,6 +1159,8 @@ Create a runnable eval suite from authored test cases (does not run it).
 | `--model <model>` | No | Suite-level default model (overrides the file) |
 | `--provider <provider>` | No | Suite-level default provider (overrides the file) |
 | `--server <id-or-name...>` | No | Project HTTP server names or IDs (overrides the file) |
+| `--client <id-or-name...>` | No | Clients to attach the suite to (overrides the file). Without one the suite lists no client, and `eval run --client` has nothing to select |
+| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
 
 ### `cloud eval list`
 
@@ -1196,9 +1198,11 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only) |
 | `--environment <id-or-name...>` | No | Attached project environment(s) to run. Several values start one **paid run each**. |
-| `--host <id-or-name...>` | No | Attached host(s) to run, so the run is stamped with that host's config. Several values start one **paid run each**. |
+| `--client <id-or-name...>` | No | Attached client(s) to run, so the run is stamped with that client's config. Several values start one **paid run each**. |
+| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. Not the host-compat catalog id `mcpjam compat --host` / `mcpjam tools --host` take — see [Two different `--host` flags](#two-different---host-flags). |
 | `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) — one **paid run per target** |
-| `--iterations <n>` | No | Run each case this many times (1-10), for this run only |
+| `--repetitions <n>` | No | Run each case this many times (1-10), for this run only |
+| `--iterations <n>` | No | **Deprecated** alias for `--repetitions`. Passing both is an error. |
 | `--case <id-or-title...>` | No | Run only these cases instead of the whole suite |
 | `--exclude-skills` | No | Run the "without skills" A/B arm: nothing is pinned, and the run is labelled as excluded |
 | `--refresh-snapshot` | No | **Persists a new host-config snapshot on the suite** (see below). Single-target runs only. |
@@ -1210,20 +1214,26 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--wait-timeout <ms>` | No | Maximum wait time (default 600000); requires `--wait` |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
-| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
+| `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Ephemeral by default** — pass `--save-targets` to attach it to the suite. |
+| `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
-| `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
+| `--compose-model <id...>` | No | Model(s) to run on the composed stack. Replaces the client's pinned model unless `--with-client-default` is set |
+| `--with-client-default` | No | Also launch an inherit cell using each client's pinned model, alongside `--compose-model` |
+| `--compose-server <id-or-name...>` | No | Server(s) to pin on the composed stack, snapshotted into a server group so a rerun keeps testing them. Mutually exclusive with `--compose-server-group` |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
+| `--compose-host-servers` | No | Run against whatever servers the client points at **right now** instead of pinning a set — editing that client later changes what a rerun tests |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
+| `--save-targets` | No | Attach the composed environments to the suite (append, capped at 10). Without it the stack is ephemeral |
 
 #### Composing a target instead of naming one
 
-`--compose-host <id-or-name>` builds an execution stack for this run instead of
+`--compose-client <id-or-name>` builds an execution stack for this run instead of
 naming a saved environment, refined by `--compose-computer`, `--compose-model`,
 `--compose-server-group`, `--compose-skill` and `--compose-secret`. The stack becomes an unnamed,
 content-addressed environment (the same one `environments ensure-adhoc`
 produces), so composing the same stack twice reuses one environment.
+`--compose-host` is the deprecated spelling of the same flag.
 
 `--compose-model` and `--compose-secret` carry the deployment requirement
 described under [Deployment support for model overrides and secret
@@ -1232,16 +1242,35 @@ either is refused before it composes anything if this deployment does not
 publish the capability.
 
 <Warning>
-  **This edits the suite.** The composed environment is appended to the suite's
-  environment list — deliberately, because an environment the suite does not
-  list is one nobody can re-run from the app afterwards. The result reports both
-  writes (`composed.environment.created`, `composed.attachment.attached`) even
-  when the launch itself fails, so you always know what changed.
+  **With `--save-targets`, this edits the suite.** The composed environment is
+  appended to the suite's environment list — deliberately, because an
+  environment the suite does not list is one nobody can re-run from the app
+  afterwards. Without it the stack is ephemeral and the suite is untouched,
+  except on a deployment with no ephemeral-launch support, where a
+  single-target compose still attaches. The result reports both writes
+  (`composed.environment.created`, `composed.attachment.attached`) even when
+  the launch itself fails, so you always know what changed.
 </Warning>
 
-Any `--compose-*` flag alongside `--environment`, `--host`, `--server` or
+Any `--compose-*` flag alongside `--environment`, `--client`, `--server` or
 `--all-targets` is a usage error: compose builds the stack the run uses, so
 naming a target alongside it describes two different runs.
+
+#### Two different `--host` flags
+
+`--host` means two unrelated things in this CLI, and only one of them lives
+under `cloud eval`.
+
+| Command | `--host` names |
+|---------|----------------|
+| `mcpjam tools` / `resources` / `prompts` / `probe` / `compat` | A **host-compat catalog id** — which AI host to emulate. `claude`, `chatgpt`, `cursor`, `copilot`, `codex`, `goose`, and the rest of the catalog. |
+| `mcpjam cloud eval run` / `cases run` / `update` / `create` | A **client saved in your project** (`mcpjam cloud clients list`). |
+
+The catalog sense keeps `--host`: it genuinely means "which AI host am I
+emulating". Under `cloud eval`, **`--client` is canonical** and `--host` is a
+deprecated alias for it — so `mcpjam cloud eval run --host claude` looks for a
+saved client named `claude` and fails if you do not have one. When the value
+you pass is a catalog id, the error says so and points at `--client`.
 
 #### Which target runs
 
@@ -1249,19 +1278,19 @@ naming a target alongside it describes two different runs.
 how much to spend, so:
 
 - **nothing attached** → the suite's saved server selection runs (unchanged);
-- **exactly one** attached environment or host → that one runs automatically,
-  and the run is stamped with its configuration;
+- **exactly one** attached environment or client → that one runs
+  automatically, and the run is stamped with its configuration;
 - **several attached** → the run fails with `TARGET_REQUIRED`, listing every
-  choice. Name one with `--environment` / `--host`, several by repeating the
+  choice. Name one with `--environment` / `--client`, several by repeating the
   flag, or run all of them with `--all-targets`.
 
 `--all-targets` expands **one axis**: attached environments if the suite has
-any, otherwise attached hosts — never a cross product, because an environment
-already resolves a host. It starts **one paid run per target**, launched as a
+any, otherwise attached clients — never a cross product, because an environment
+already resolves a client. It starts **one paid run per target**, launched as a
 single group that occupies one concurrency slot rather than N.
 
-`--environment` / `--host` and `--server` are mutually exclusive: an
-environment or host supplies a closed server set that an override cannot
+`--environment` / `--client` and `--server` are mutually exclusive: an
+environment or client supplies a closed server set that an override cannot
 change.
 
 <Warning>
@@ -1340,7 +1369,7 @@ synchronization is unaffected and always runs.
 
 Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
 declared suite id, project, target, and every run-affecting knob
-(`--iterations`, `--case`, `--min-pass-rate`, `--exclude-skills`,
+(`--repetitions`, `--case`, `--min-pass-rate`, `--exclude-skills`,
 `--match-options`, `--environment` / `--host` / `--server` / `--all-targets`,
 `--refresh-snapshot`, compose flags, and the normalized
 `--allow-approximated` set with its `--approval-reason`). Repeating the same
@@ -1434,6 +1463,43 @@ server set, and pinned plugin versions instead of the suite's saved selection.
 Every run records the environment and the exact revision it used, so `eval
 status` can answer "which configuration did this run actually execute against?"
 long after the environment has been edited.
+
+### `cloud eval server-facts`
+
+Read the server a run was taken against.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+Per server: the tool count, the catalog's measured size, annotation and
+output-schema coverage, and the deterministic tool-metadata prechecks — plus
+what connect and discovery observed, and any conformance or readiness runs for
+the same servers.
+
+**None of it is a verdict.** A large tool surface is not a defect and a slow
+connect is not a failure; only a precheck with `class: "spec_required"` names a
+violation, and a row marked `protocolDependent` is a rule that may not apply to
+this server's protocol version at all.
+
+**Payload size is three different numbers** and this reports two of them, each
+carrying its `payload.basis`: `aggregated_catalog_json` is the catalog as the
+client assembled it (measured at capture), `normalized_snapshot` is what was
+retained after redaction — smaller, and `payload.complete` says so. What the
+model actually saw is a host fact and is not here. Token figures are estimated
+as `json_chars_div_4` against a **reference** window, not measured against any
+model's real context.
+
+Server facts are computed on read, so there is no backfill window: a run that
+finished long ago still answers. A run with nothing to describe answers inside
+the document with `state: "unavailable"` and a reason — `snapshotMissing`,
+`snapshotPartial` (the servers that answered are still listed, and their numbers
+are real), or `setupNotObserved` (unmeasured, **not** failed).
+
+Related conformance and readiness runs are joined by **server id alone**, so a
+different server version, environment or auth context is not excluded by the
+match. Each carries its own timestamp, and none of them is this run's verdict.
 
 ### `cloud eval status`
 
@@ -1572,10 +1638,21 @@ run before evaluating it.
 | `--min-effect-size-percent <0-100>` | No | Smallest pass-rate drop worth failing on, as a percentage (default 1); requires `--baseline` or `--baseline-sha` |
 | `--gate-deterministic-regressions` | No | Fail if a deterministic gating scorer flipped from passed to failed; requires `--baseline` or `--baseline-sha` |
 | `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` or `--baseline-sha` |
+| `--max-cost-usd <usd>` | No | Fail if the run's MCPJam-billed cost exceeded this many dollars. Accepts decimals (`0.05`) |
+| `--max-cost-increase-percent <percent>` | No | Fail if cost rose by more than this percentage of the baseline's; requires `--baseline` or `--baseline-sha`. Values above 100 are allowed — a run costing three times its baseline is a 200% increase |
 | `--wait` | No | Poll until the run reaches a terminal status |
 | `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the structured eval and gate report to stdout. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the report to a file; defaults to `json-summary`, or uses `--reporter` when present |
+
+Both cost gates report **non-gateable** (exit 3) rather than passing when the
+cost is unknown or only partly measured. Cost is stamped per iteration and is
+absent whenever the model was not MCPJam-billed (your own API key), the run
+used a harness (which mixes models within a turn), or the trial reported no
+tokens — so a total built from some of the run is smaller than the truth, and
+gating a ceiling against it would pass exactly the runs least understood. A
+`--max-cost-increase-percent` gate is also non-gateable when the baseline cost
+nothing, since a percentage of zero is undefined.
 
 Report files are flushed before gate exit codes are set, including failed and
 incomplete gate outcomes.
@@ -1750,6 +1827,57 @@ Fetch the full trace for one eval iteration (complete message history and spans)
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval screenshots`
+
+Pull the rendered widget screenshots an eval iteration captured — printed
+inline when the terminal supports images, otherwise as URLs, or saved to disk
+with `--out`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--out <path>` | No | Save the PNGs here instead of printing them. A directory — except without `--video`, where a single-screenshot iteration may name a file. Created if it does not exist |
+| `--index <n>` | No | Only the Nth screenshot (1-based) |
+| `--video` | No | With `--out`, also save the iteration's replay recording beside the screenshots, as `<iteration>.mp4` or `<iteration>.webm` |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval video`
+
+Get the replay recording an eval iteration made — prints the URL, or downloads
+it with `--out`.
+
+**Unattended runs on a hosted browser are recorded at 15 fps.** Idle time is
+held rather than dropped, so the file's duration matches the run's wall clock
+even when the page sat still for a minute. Recordings stop at 60 MiB and
+**say so**: a capped take is a complete, playable *beginning* of the run rather
+than a corrupt file, and both this command and the run page label it. Read
+`videoMeta.truncated` before treating a duration as the length of the run.
+
+A local widget-harness run records a `.webm` through Playwright and reports
+nothing else about it; a hosted run records an `.mp4` and reports its duration,
+rate, and distinct-frame count. `--format json` returns `videoMeta` when the
+recording carried one.
+
+Recording can be turned off for a deployment, in which case hosted runs simply
+have no recording to fetch.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--out <path>` | No | Download the recording to this file instead of printing the URL |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+```bash
+# The URL, plus what the recording says about itself
+mcpjam cloud eval video --run "$RUN_ID" --iteration "$ITERATION_ID"
+
+# Screenshots and the recording together, into one directory
+mcpjam cloud eval screenshots --run "$RUN_ID" --iteration "$ITERATION_ID" \
+  --out ./evidence/ --video
+```
 
 ### `cloud eval get`
 
@@ -1946,7 +2074,8 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--description <text>` | No | Suite description |
 | `--server <id-or-name...>` | No | Replace the suite's server selection (project server names) |
 | `--computer-image <id-or-name\|off>` | No | Sandbox image eval runs boot a fresh computer from (list them with `mcpjam cloud images list`). `off` uses the provider's default base image |
-| `--host <name...>` | No | Replace host attachments (by name/ID) |
+| `--client <name...>` | No | Replace client attachments (by name/ID) |
+| `--host <name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
 | `--model <id>` | No | Execution model ID |
 | `--system-prompt <text>` | No | Execution system prompt |
 | `--temperature <n>` | No | Execution temperature |
@@ -1976,10 +2105,18 @@ runs were launched against it. Rows carry no configuration snapshots.
 mcpjam cloud eval revisions --suite "Asana MCP Evals" --format json
 ```
 
-### `cloud eval checks list`
+### `cloud eval github list`
 
 List the repositories whose pull requests run an eval suite, plus the
 repositories the MCPJam GitHub App can reach.
+
+<Note>
+  This subgroup was `cloud eval checks`, and `mcpjam cloud eval checks
+  list|connect` still works. It was renamed because `checks` under `cloud eval`
+  already meant a case's **grading rules** — the suite's checks, the app's
+  Checks section, `create_eval_case`'s `checks` — while these two commands
+  manage **GitHub** checks. Two resources under one noun.
+</Note>
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -1990,7 +2127,7 @@ all, so connecting a repository will not help. `connectable: null` means the
 App could not be asked (GitHub unavailable, or no installation) — different
 from an empty list, which would mean it reaches nothing.
 
-### `cloud eval checks connect`
+### `cloud eval github connect`
 
 Run this suite on every pull request to a repository. **Affects everyone who
 opens a pull request on that repository**, and with `fail-closed` it can block
@@ -1999,7 +2136,7 @@ their merges.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
-| `--repo <owner/repo>` | Yes | Repository to connect. Must be one `eval checks list` reports as connectable |
+| `--repo <owner/repo>` | Yes | Repository to connect. Must be one `eval github list` reports as connectable |
 | `--outage-policy <fail-open\|fail-closed>` | Yes | What the check reports when MCPJam cannot conclude |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
@@ -2111,14 +2248,17 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--server <id-or-name...>` | No | Override the suite's saved servers for this run |
 | `--environment <id-or-name>` | No | Project environment to run against (must be attached to the suite) |
-| `--host <id-or-name>` | No | Attached host to run against, so the run is stamped with that host's config |
-| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment; appends the composed environment to the suite |
+| `--client <id-or-name>` | No | Attached client to run against, so the run is stamped with that client's config |
+| `--host <id-or-name>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
+| `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment: the client it runs as. **Ephemeral** — this command has no `--save-targets` |
+| `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
-| `--iterations <n>` | No | Run the case this many times (1-10) |
+| `--repetitions <n>` | No | Run the case this many times (1-10) |
+| `--iterations <n>` | No | **Deprecated** alias for `--repetitions`. Passing both is an error. |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 
 Every `--compose-*` flag behaves exactly as it does for `eval run` — see
@@ -2269,7 +2409,7 @@ Send one message to a project's MCP servers and print the reply plus the raw too
 
 `--idempotency-key` is required and must be **stable for the intent**, not regenerated per attempt. It is what makes a retry safe: with the same key, a turn that already completed is replayed rather than re-run and re-billed. A fresh key per attempt deduplicates nothing.
 
-Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. Configuration is fixed at the first turn, so `--model`, `--environment`, `--server`, `--system-prompt` and `--tool-mode` are refused alongside `--session` rather than silently repinning the session.
+Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. A session created by `cloud sessions browser open` is initially unconfigured and accepts its model configuration with its first send. Configuration is fixed after the first model turn, so `--model`, `--environment`, `--server`, `--system-prompt` and `--tool-mode` are refused alongside `--session` rather than silently repinning the session.
 
 | Flag | Description |
 |------|-------------|
@@ -2287,6 +2427,32 @@ Omit `--session` to start a conversation; pass the `sessionId` the command retur
 | `--project <id-or-name>` | Project name or ID (required to start a session) |
 
 `read_only` filters on a hint the SERVER asserts, so it is a policy this host applies rather than a guarantee it can verify. A server is free to annotate a mutating tool as read-only.
+
+<Note>
+Hosted session browsers require browser availability for your account and deployment. An unavailable browser reports a refusal or `browser.attached: false` with its reason. The live pane opens in the Playground when the browser workspace is enabled.
+</Note>
+
+Add `--browser` to advertise browser tools for this turn. The first browser turn requires `--browser-mode allow_all|read_only|allowlist` unless the selected client supplies a browser policy. Optional `--browser-origins <origin...>` and `--browser-tools <name...>` restrict that grant; `--browser-profile <profileId>` selects its initial saved profile. The grant and profile are fixed thereafter. A client's current browser policy and the session's `read_only` tool mode may further restrict execution.
+
+A continuation must opt in again with `--browser`; a plain send does not wake the desktop. Screenshots are returned as URLs and trace pointers. Use the printed **Open in Playground** link to view the transcript, take over the browser, and select **Resume agent** when finished. API session transcripts are view-only there.
+
+### `cloud sessions browser`
+
+Drive the session browser without a model turn. All verbs except a new `open` require `--session <sessionId>`; use the public session ID, never its read-only conversation UUID or logical browser ID.
+
+| Verb | Description |
+|------|-------------|
+| `open` | Open or wake an existing session browser. Omit `--session` and provide `--project`, a browser policy, and a stable `--idempotency-key` to create an empty API session. |
+| `navigate <url>` | Navigate to an allowed URL. Use a stable `--command-id` for retries. |
+| `act --verb <verb>` | Act on the page; pass `--target` as JSON and optional `--value` and `--expected-state`. |
+| `invoke <toolKey> --input <json>` | Invoke a permitted page tool. |
+| `observe --mode <mode>` | Read the page; `--mode screenshot --download <dir>` saves screenshot evidence. |
+| `note <text>` | Append a note to the command ledger. |
+| `trace` | Read command receipts and screenshot URLs. |
+| `artifact --command-id <id> --download <dir>` | Fetch screenshot evidence for a command. |
+| `close` | Release the desktop; a later open or browser turn can revive the logical browser. |
+
+Desktop time is metered. The default cap is two live conversation desktops per user across projects; close one before retrying a capacity refusal. Sleeping browsers wake on the next browser command. Human takeover blocks agent actions; after `browser_in_use`, wait for the person to hand control back and observe the current page. Never repeat an `unknown` command under a new ID without inspecting its trace and page state.
 
 ### `cloud sessions show`
 

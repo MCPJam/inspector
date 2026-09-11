@@ -113,3 +113,38 @@ describe("BrowserArtifactsView", () => {
     expect(screen.getByText("view-cart")).toBeInTheDocument();
   });
 });
+
+/**
+ * R-4. The metadata has to reach the player, not just the props.
+ *
+ * `BrowserArtifactsView` rebuilds the filmstrip's props by hand, which is a
+ * place a field can be added at one end and silently dropped at the other —
+ * and a truncated recording that does not say so is the one failure this
+ * whole field exists to prevent.
+ */
+describe("BrowserArtifactsView — the recording's own numbers reach the player", () => {
+  it("forwards videoMeta, badge and all", () => {
+    render(
+      <BrowserArtifactsView
+        videoUrl="https://store.example/replay.mp4"
+        videoMeta={{
+          source: "hosted",
+          fps: 15,
+          durationMs: 9_000,
+          truncated: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("browser-replay-truncated-badge")).toBeTruthy();
+    expect(screen.getByTestId("browser-replay-video-meta").textContent).toContain(
+      "15 fps",
+    );
+  });
+
+  it("renders a player with no metadata line when there is nothing to say", () => {
+    render(<BrowserArtifactsView videoUrl="https://store.example/replay.webm" />);
+    expect(screen.getByTestId("browser-replay-video")).toBeTruthy();
+    expect(screen.queryByTestId("browser-replay-video-meta")).toBeNull();
+  });
+});

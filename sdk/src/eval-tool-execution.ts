@@ -2,6 +2,7 @@ import type {
   EvalTraceInput,
   EvalTraceSpanInput,
 } from "./eval-reporting-types.js";
+import { checkRole } from "./predicates/policy.js";
 import type { ToolErrorKind, ToolErrorRecord } from "./predicates/types.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -22,6 +23,43 @@ function unwrapToolOutput(output: unknown): unknown {
   return output.value;
 }
 
+/** An `error-text` output's value, as text. */
+function errorTextOf(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return undefined;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The model-visible text of an MCP `CallToolResult`, for an error record.
+ *
+ * Text parts first, because that is what a server writes its error into;
+ * `structuredContent` is a fallback for a server that answers only in JSON.
+ * Bounded by the caller's own reason cap, so no truncation here.
+ */
+function callToolResultText(result: Record<string, unknown>): string | undefined {
+  const content = result.content;
+  if (Array.isArray(content)) {
+    const text = content
+      .map((entry) =>
+        isRecord(entry) && entry.type === "text" && typeof entry.text === "string"
+          ? entry.text
+          : ""
+      )
+      .filter(Boolean)
+      .join(" ");
+    if (text.trim()) return text;
+  }
+  if (result.structuredContent !== undefined) {
+    return errorTextOf(result.structuredContent);
+  }
+  return undefined;
+}
+
 /**
  * Classify a tool failure on a single persisted trace message part, or `null`
  * if the part is not a failed tool result. Distinguishes:
@@ -30,40 +68,51 @@ function unwrapToolOutput(output: unknown): unknown {
  *   - `content-error` — an MCP `CallToolResult` with `isError: true`: the tool
  *     ran and reported a domain error the protocol-correct way.
  */
-export function classifyToolFailurePart(
-  part: unknown,
-): { kind: ToolErrorKind; toolName?: string } | null {
+export function classifyToolFailurePart(part: unknown): ToolErrorRecord | null {
   if (!isRecord(part) || typeof part.type !== "string") return null;
   if (part.type !== "tool-result") return null;
 
   const toolName =
     typeof part.toolName === "string" ? part.toolName : undefined;
-  const record = (
-    kind: ToolErrorKind,
-  ): { kind: ToolErrorKind; toolName?: string } =>
-    toolName ? { kind, toolName } : { kind };
+  // The call id rides along so a check can read the error against the
+  // arguments of the call that actually failed, not against every call to
+  // that tool.
+  const toolCallId =
+    typeof part.toolCallId === "string" ? part.toolCallId : undefined;
+  const record = (kind: ToolErrorKind, message?: string): ToolErrorRecord => ({
+    kind,
+    ...(toolName ? { toolName } : {}),
+    ...(toolCallId ? { toolCallId } : {}),
+    // The server's own words, carried through. A record without them is not
+    // merely less informative: `toolErrorNamesInput` reads the message, and
+    // an absent one reports "a tool error carried no message at all" — a
+    // finding about the server, manufactured out of our own omission, on
+    // every live run.
+    ...(message && message.trim() ? { message: message.trim() } : {}),
+  });
 
   // Transport / execution failures → protocol-error.
   if (typeof part.error === "string" && part.error.trim())
-    return record("protocol-error");
+    return record("protocol-error", part.error);
   if (
     isRecord(part.error) &&
     typeof part.error.message === "string" &&
     part.error.message.trim()
   ) {
-    return record("protocol-error");
+    return record("protocol-error", part.error.message);
   }
   const output = part.output;
   if (isRecord(output) && output.type === "error-text")
-    return record("protocol-error");
+    return record("protocol-error", errorTextOf(output.value));
 
   // Protocol-correct domain errors (tool ran, isError:true) → content-error.
   if (isRecord(part.result) && part.result.isError === true)
-    return record("content-error");
+    return record("content-error", callToolResultText(part.result));
   const unwrapped = unwrapToolOutput(output);
   if (isRecord(unwrapped) && unwrapped.isError === true)
-    return record("content-error");
-  if (part.isError === true) return record("content-error");
+    return record("content-error", callToolResultText(unwrapped));
+  if (part.isError === true)
+    return record("content-error", callToolResultText(part));
 
   return null;
 }
@@ -140,13 +189,7 @@ function messageToolErrorRecords(
     if (typeof msg.content === "string" || !Array.isArray(msg.content)) continue;
     for (const part of msg.content) {
       const classified = classifyToolFailurePart(part);
-      if (classified) {
-        records.push(
-          classified.toolName
-            ? { kind: classified.kind, toolName: classified.toolName }
-            : { kind: classified.kind }
-        );
-      }
+      if (classified) records.push(classified);
     }
   }
   return records;
@@ -160,12 +203,13 @@ function spanToolErrorRecords(
   for (const span of spans) {
     if (span.category !== "tool" || span.status !== "error") continue;
     const name = (span as { name?: unknown }).name;
+    const toolCallId = (span as { toolCallId?: unknown }).toolCallId;
     // An errored tool span = the execution failed → protocol-error.
-    records.push(
-      typeof name === "string"
-        ? { kind: "protocol-error", toolName: name }
-        : { kind: "protocol-error" }
-    );
+    records.push({
+      kind: "protocol-error",
+      ...(typeof name === "string" ? { toolName: name } : {}),
+      ...(typeof toolCallId === "string" ? { toolCallId } : {}),
+    });
   }
   return records;
 }
@@ -201,10 +245,14 @@ export type FinalizeEvalPassedParams = {
   failOnToolError?: boolean;
   /**
    * State-based predicate verdicts (see `./predicates`). When present, the case
-   * additionally fails unless every predicate passed. Predicates are their own
+   * additionally fails unless every **gating** predicate passed. Advisory
+   * results are recorded and never fail the trial. Predicates are their own
    * assertion layer — they apply regardless of `failOnToolError`.
    */
-  predicateResults?: ReadonlyArray<{ passed: boolean }>;
+  predicateResults?: ReadonlyArray<{
+    passed: boolean;
+    predicate?: { role?: "gating" | "advisory" };
+  }>;
 };
 
 /**
@@ -215,9 +263,15 @@ export function finalizePassedForEval(
 ): boolean {
   const { matchPassed, trace, iterationError, failOnToolError, predicateResults } =
     params;
-  // The predicate gate is independent of failOnToolError: a failing predicate
-  // fails the case even when tool-error gating is disabled.
-  if (predicateResults && predicateResults.some((r) => !r.passed)) {
+  // The predicate gate is independent of failOnToolError: a failing gating
+  // predicate fails the case even when tool-error gating is disabled.
+  // Advisory (Warn/Report) results never fail the trial.
+  if (
+    predicateResults &&
+    predicateResults.some(
+      (r) => !r.passed && checkRole(r.predicate) !== "advisory"
+    )
+  ) {
     return false;
   }
   const gateActive = failOnToolError !== false;
