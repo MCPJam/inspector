@@ -148,13 +148,13 @@ describe("RunDescriptionExperimentCard", () => {
       }),
     );
     const card = screen.getByTestId("description-experiment-card");
-    expect(card).toHaveTextContent("not enough trials to say");
+    expect(card).toHaveTextContent("not enough iterations to say");
     expect(card).not.toHaveTextContent(/at least|at most/);
     await user.click(
       screen.getByRole("button", { name: /Description experiment/ }),
     );
     const expanded = screen.getByTestId("description-experiment-card");
-    expect(expanded).toHaveTextContent("not enough trials to say");
+    expect(expanded).toHaveTextContent("not enough iterations to say");
     expect(expanded.textContent).not.toMatch(/[+-]?\d+(\.\d+)? points/);
   });
 
@@ -248,7 +248,7 @@ describe("RunDescriptionExperimentCard", () => {
     await user.click(
       screen.getByRole("button", { name: /Description experiment/ }),
     );
-    expect(screen.getByText("fresh computer per trial")).toBeInTheDocument();
+    expect(screen.getByText("fresh computer per iteration")).toBeInTheDocument();
     expect(
       screen.getByText(/upstream server's state was not verified/),
     ).toBeInTheDocument();
@@ -315,7 +315,7 @@ describe("RunDescriptionExperimentCard", () => {
       screen.getByRole("button", { name: /Description experiment/ }),
     );
     await user.click(screen.getByTestId("description-experiment-start"));
-    expect(screen.getByText(/20 trials in total/)).toBeInTheDocument();
+    expect(screen.getByText(/20 iterations in total/)).toBeInTheDocument();
     expect(screen.getByText(/cap of 200/)).toBeInTheDocument();
     expect(
       screen.getByText(/judge will auto-run on both arms/),

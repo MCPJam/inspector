@@ -57,6 +57,7 @@ type ToolListResponse = {
 };
 
 type RunEvalsRequest = EvalRequestWithServers & {
+  idempotencyKey?: string;
   suiteId?: string;
   suiteName?: string;
   suiteDescription?: string;
@@ -76,11 +77,23 @@ type RunEvalsRequest = EvalRequestWithServers & {
    */
   suiteRerun?: boolean;
   /**
+   * Narrow the run to these cases. The server filters the snapshot and the
+   * cap-math to them, so a one-case run of a large suite is not rejected by
+   * the suite's total cap.
+   *
+   * This is what "Run test" on one case uses. A quick run cannot be judged —
+   * every judge surface is keyed by `suiteRunId`, which a quick run has none
+   * of — so the only way to ask "did it accomplish the goal?" is to run the
+   * case as a suite run narrowed to it.
+   */
+  caseIds?: string[];
+  /**
    * Transient per-run iteration count (1-10). Server overlays `runs` on
    * every test case in the run snapshot; persisted `EvalCase.runs`
    * default is not mutated.
    */
   iterationOverride?: number;
+  ephemeralEnvironment?: boolean;
   /**
    * One-off match-option override applied to every iteration of this run
    * (layered on top of suite default + case override). Does not mutate
@@ -204,8 +217,12 @@ export type CaseMixInput = {
 
 /** Optional generation knobs forwarded to the backend generate endpoint. */
 export type GenerationOptions = {
+  testSet?: "quick" | "comprehensive";
+  toolCoverage?: "read-only" | "read-write";
   caseMix?: CaseMixInput;
   varyUserStyles?: boolean;
+  /** User-authored direction for a follow-up generation pass. */
+  refinement?: string;
 };
 
 type GenerateTestsRequest = EvalRequestWithServers & {
@@ -341,8 +358,8 @@ async function postEvalRequest<TResponse>(
       typeof errorBody?.message === "string"
         ? errorBody.message
         : typeof errorBody?.error === "string"
-        ? errorBody.error
-        : `Request failed (${response.status})`;
+          ? errorBody.error
+          : `Request failed (${response.status})`;
 
     rethrowIfBillingError(errorBody);
 

@@ -171,24 +171,9 @@ describe("useProjectRouteCoordinator", () => {
       reason: "not-a-member",
     });
     expect(switchProject).not.toHaveBeenCalled();
-  });
-
-  it("does not report an inaccessible event for a confirmed stale sign-in return", () => {
-    renderHook(
-      () =>
-        useProjectRouteCoordinator(
-          inputFor({
-            projects: { [A]: {} },
-            allProjects: [{ _id: A, organizationId: "org_a" }],
-            suppressInaccessibleTelemetryFor: B,
-          }),
-        ),
-      { wrapper: wrapperFor(`/p/${B}/servers`) },
-    );
-
-    expect(vi.mocked(track)).not.toHaveBeenCalledWith(
+    expect(vi.mocked(track)).toHaveBeenCalledWith(
       "project_route_inaccessible",
-      expect.anything(),
+      expect.objectContaining({ reason: "not-a-member" }),
     );
   });
 
@@ -325,13 +310,7 @@ describe("useProjectRouteCoordinator", () => {
     // without waiting out the 15s resolve budget first.
     const switchProject = vi.fn().mockRejectedValue(new Error("persistent"));
     const { result } = renderHook(
-      () =>
-        useProjectRouteCoordinator(
-          inputFor({
-            switchProject,
-            suppressInaccessibleTelemetryFor: B,
-          }),
-        ),
+      () => useProjectRouteCoordinator(inputFor({ switchProject })),
       { wrapper: wrapperFor(`/p/${B}/servers`) },
     );
     await waitFor(

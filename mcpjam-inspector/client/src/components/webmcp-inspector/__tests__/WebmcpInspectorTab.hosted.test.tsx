@@ -1,3 +1,10 @@
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => ({
+    granted: true,
+    token: "test-consent",
+    grant: vi.fn(async () => true),
+  }),
+}));
 /**
  * The tab on a hosted replica: what it offers, and what it must not.
  *
@@ -5,6 +12,7 @@
  * a file with the local-mode viewport tests.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("@/lib/config", async (importOriginal) => {
@@ -29,12 +37,24 @@ vi.mock("@/components/computer/BrowserPanel", () => ({
   ),
 }));
 
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel-group">{children}</div>
+  ),
+  ResizablePanel: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="resizable-handle" />,
+}));
+
 const contextState = vi.hoisted(() => ({
   activeProjectId: "proj-1" as string | null,
 }));
 vi.mock("@/stores/client-context-store", () => ({
-  useHostContextStore: (selector: (s: unknown) => unknown) =>
-    selector(contextState),
+  useHostContextStore: Object.assign(
+    (selector: (s: unknown) => unknown) => selector(contextState),
+    { subscribe: () => () => {} },
+  ),
 }));
 
 class FakeEventSource {

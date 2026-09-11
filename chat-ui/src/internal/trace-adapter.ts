@@ -20,6 +20,7 @@ import {
   extractTextFromToolResult,
 } from "./tool-result-text";
 import { getToolServerId } from "./tool-server";
+import type { TraceDisplayMode } from "./trace-display";
 import { detectUIType, getUIResourceUri, UIType } from "./widget-detection";
 import {
   readToolResultMeta,
@@ -213,7 +214,6 @@ export interface AdaptedTraceResult {
 }
 
 type ToolResultDisplay = "sibling-text" | "attached-to-tool" | "tool-card";
-type TraceDisplayMode = "markdown" | "json-markdown";
 type TraceDisplayAttachment =
   | { kind: "text"; text: string; mode: "markdown" }
   | {

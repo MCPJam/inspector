@@ -58,7 +58,17 @@ export function useEvalQueries({
   // Convex's `isAuthenticated` already covers hosted guests — they hold a
   // guest token via the unified auth provider — so a separate WorkOS `user`
   // check would wrongly skip queries for guests with a project.
-  const hasActorAccess = isDirectGuest || (isAuthenticated && isUserReady);
+  //
+  // `isDirectGuest` is deliberately NOT an escape hatch here. It is only true
+  // when the guest token mint has failed every retry (`unified-convex-auth`
+  // sets the token to null and clears loading), which means the session holds
+  // no Convex identity at all. Every one of these queries is a `userQuery`, so
+  // letting them through cannot produce data — it produces a thrown
+  // "Authentication required" from `requireIdentity`, which surfaces as the
+  // "Could not load Testing" fallback and a Sentry event (CONVEX-CQ). Every
+  // other Convex-backed surface skips in this state and renders its
+  // signed-out/empty view; Evals now matches them.
+  const hasActorAccess = isAuthenticated && isUserReady;
   // Authenticated, but the `users` row is still bootstrapping: the queries are
   // skipped and an answer IS coming, so this window must report as loading.
   // Reporting it as settled-and-empty makes `EvalsTab`'s redirect read a
