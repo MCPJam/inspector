@@ -902,6 +902,46 @@ describe("updateEvalSuiteOperation", () => {
     ]);
   });
 
+  /**
+   * The suite's attachment list is CLIENTS. The wire body still names it
+   * `hosts`, so `clients` folds onto it entry by entry — and both at once is a
+   * refusal, because two replace-all lists describe two different suites.
+   */
+  it("folds `clients` onto the wire's `hosts`", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      {
+        suite: "smoke",
+        clients: [{ client: "Claude" }, { client: "ChatGPT", servers: ["a"] }],
+      },
+      { client },
+    );
+
+    expect(patchBodies).toEqual([
+      { hosts: [{ host: "Claude" }, { host: "ChatGPT", servers: ["a"] }] },
+    ]);
+  });
+
+  it("refuses `clients` and `hosts` together", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    const error = await updateEvalSuiteOperation
+      .execute(
+        {
+          suite: "smoke",
+          clients: [{ client: "Claude" }],
+          hosts: [{ host: "ChatGPT" }],
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain("not both");
+    expect(patchBodies).toEqual([]);
+  });
+
   it("omits expectedRevisionNumber when the caller did not supply one", async () => {
     const { client, patchBodies } = makePatchClient();
 
@@ -955,9 +995,14 @@ describe("runEvalSuiteOperation", () => {
     const createCall = fetchMock.mock.calls.find(([target]) =>
       String(target).endsWith("/eval-runs")
     );
+    // `serverNames` rides along PAIRED WITH `serverIds` by index. A launch
+    // that re-authors the suite's saved selection persists these names; when
+    // they were missing the platform stored the raw ids, and every surface
+    // that lists the suite showed an opaque id where the server name belongs.
     expect(JSON.parse(String((createCall?.[1] as RequestInit).body))).toEqual({
       suiteId: "suite-1",
       serverIds: ["server-http", "server-disabled"],
+      serverNames: ["Echo", "Retired"],
     });
   });
 
@@ -1122,6 +1167,24 @@ describe("runEvalCaseOperation", () => {
     });
   });
 
+  it("pairs serverNames with an explicit server override", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await runEvalCaseOperation.execute(
+      { suite: "Smoke", case: "echo works", servers: ["echo"] },
+      { client }
+    );
+
+    const runCall = fetchMock.mock.calls.find(
+      (call) =>
+        String(call[0]).endsWith("/eval-runs") &&
+        (call[1] as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((runCall?.[1] as RequestInit).body));
+    expect(body.serverIds).toEqual(["server-http"]);
+    expect(body.serverNames).toEqual(["Echo"]);
+  });
+
   it("requires a suite and a case", () => {
     expect(
       runEvalCaseOperation.inputSchema.safeParse({ suite: "Smoke" }).success
@@ -1191,6 +1254,138 @@ describe("createEvalSuiteOperation", () => {
         expect.objectContaining({ kind: "assert" }),
       ],
     });
+  });
+
+  /**
+   * A case's grading rule is a CHECK. This operation called the same field
+   * `predicates` while the API, the UI and `create_eval_case` all called it
+   * `checks` — so an agent authored a suite in one word and then edited one of
+   * its own cases in another.
+   */
+  it("folds a case's `checks` onto the wire's `predicates`", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    const gate = {
+      mode: "replace",
+      list: [{ type: "toolCalledAtLeastOnce", toolName: "echo" }],
+    };
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+            checks: gate,
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.tests[0].predicates).toEqual(gate);
+    expect(body.tests[0]).not.toHaveProperty("checks");
+  });
+
+  it("refuses a case that sets both `checks` and `predicates`", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    const gate = { mode: "replace", list: [] };
+
+    const error = await createEvalSuiteOperation
+      .execute(
+        {
+          name: "Authored smoke",
+          servers: ["echo"],
+          model: "anthropic/claude-haiku-4.5",
+          cases: [
+            {
+              title: "echo works",
+              steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+              checks: gate,
+              predicates: gate,
+            },
+          ],
+        },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain("echo works");
+    expect(
+      fetchMock.mock.calls.some(
+        ([target, init]) =>
+          String(target).endsWith("/eval-suites") &&
+          (init as RequestInit | undefined)?.method === "POST"
+      )
+    ).toBe(false);
+  });
+
+  it("attaches the named clients so the suite is not authored without one", async () => {
+    // An API-authored suite had no way to name its client: it read back with
+    // an empty Client everywhere it was listed, and `run_eval_suite`'s host
+    // selector — which only runs hosts ATTACHED to the suite — had nothing to
+    // select.
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        hosts: ["Claude", "host-chatgpt"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.hosts).toEqual([{ host: "Claude" }, { host: "host-chatgpt" }]);
+  });
+
+  it("omits hosts entirely when no client is named", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body).not.toHaveProperty("hosts");
   });
 
   it("rejects stdio servers before creating the suite", async () => {
@@ -2002,7 +2197,9 @@ describe("operation catalog consistency", () => {
     generate_eval_cases: { suite: "s", prompt: "q" },
     get_eval_run: { project: "p", runId: "r" },
     get_eval_run_stage_analytics: { project: "p", runId: "r" },
+    get_eval_run_gate: { project: "p", runId: "r" },
     get_eval_run_route_facts: { project: "p", runId: "r" },
+    get_eval_run_server_facts: { project: "p", runId: "r" },
     propose_eval_description_rewrite: {
       project: "p",
       runId: "r",
@@ -2026,12 +2223,20 @@ describe("operation catalog consistency", () => {
     get_eval_gate_waiver: { project: "p", runId: "r" },
     revoke_eval_gate_waiver: { project: "p", runId: "r", waiverId: "w" },
     request_eval_run_judge: { project: "p", runId: "r" },
-    list_eval_check_repos: {},
-    connect_eval_check_repo: {
+    list_eval_github_repos: {},
+    connect_eval_github_repo: {
       suite: "s",
       repo: "acme/widgets",
       // No default: the policy decides what other people's pull requests
       // report during an outage, so every caller states it.
+      outagePolicy: "fail_open",
+    },
+    // The pre-rename spellings of the two above. Still advertised, so an agent
+    // already calling one keeps its tool; same inputs, same implementation.
+    list_eval_check_repos: {},
+    connect_eval_check_repo: {
+      suite: "s",
+      repo: "acme/widgets",
       outagePolicy: "fail_open",
     },
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
@@ -2205,6 +2410,8 @@ describe("operation catalog consistency", () => {
       modelId: "anthropic/claude-sonnet-5",
       serverIds: ["srv"],
     },
+    drive_chat_session_browser: { op: "close", sessionId: "cs_1" },
+    observe_chat_session_browser: { op: "trace", sessionId: "cs_1" },
     get_chat_session: { sessionId: "cs_1" },
     get_chat_session_trace: { sessionId: "cs_1" },
     render_server_widget: { server: "srv", toolName: "show_map" },
@@ -2293,6 +2500,7 @@ describe("operation catalog consistency", () => {
       // read — it only polls the receipt.
       "propose_eval_description_rewrite",
       "start_eval_description_experiment",
+      "connect_eval_github_repo",
       "connect_eval_check_repo",
       "create_eval_suite",
       "set_eval_suite_environments",
@@ -2411,6 +2619,8 @@ describe("operation catalog consistency", () => {
       // transcript, and `risk: "spend"` because it runs a model — the two
       // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
       "send_chat_message",
+      "drive_chat_session_browser",
+      "observe_chat_session_browser",
       // Gate waivers. Both are writes because both persist an audited record
       // and both move a published GitHub Check Run. `get_eval_gate_waiver` is
       // deliberately NOT here — reading whether a gate is waived is available
@@ -2441,6 +2651,7 @@ describe("operation catalog consistency", () => {
       // arguments. Softening the destructive default would claim a safety the
       // host cannot verify, since `readOnlyHint` is server-asserted.
       "send_chat_message",
+      "drive_chat_session_browser",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.mayBeDestructive === true).toBe(

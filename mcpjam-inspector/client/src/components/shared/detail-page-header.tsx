@@ -15,8 +15,14 @@ import {
 } from "@/components/shared/view-mode-selector";
 import { cn } from "@/lib/utils";
 
+// `lg:shrink-0` is load-bearing: the tab buttons are individually shrink-0, so
+// a shrinkable strip can only clip them — "Sessions" rendered as "Sess" next to
+// a long run name. It starts at lg, not md: with the sidebar expanded these
+// headers need ~590px of min-content, which a 768px viewport cannot give, and
+// a non-shrinkable strip there would overflow the ancestor's `overflow-hidden`
+// and clip Share instead. Below lg the strip shrinks and scrolls, as before.
 const TAB_CLASSNAME =
-  "w-auto min-w-0 shrink justify-start overflow-x-auto [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-sm sm:[&_button]:min-h-8 sm:[&_button]:px-3 sm:[&_button]:text-sm md:[&_button]:min-h-8 lg:[&_button]:px-3.5";
+  "w-auto min-w-0 shrink lg:shrink-0 justify-start overflow-x-auto [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-sm sm:[&_button]:min-h-8 sm:[&_button]:px-3 sm:[&_button]:text-sm md:[&_button]:min-h-8 lg:[&_button]:px-3.5";
 
 export function DetailBackLink({
   label,
@@ -86,7 +92,10 @@ export function DetailPageHeader<T extends string>({
             className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
             aria-hidden="true"
           />
-          <div className="min-w-0">{title}</div>
+          {/* Bounds how far a long name can push the tabs right; past the cap
+              the surface's own title ellipsizes. Names under it still size the
+              slot to content, so the tab row is not pinned to one spot. */}
+          <div className="min-w-0 md:max-w-[52ch]">{title}</div>
           {tabs ? (
             <>
               <div
