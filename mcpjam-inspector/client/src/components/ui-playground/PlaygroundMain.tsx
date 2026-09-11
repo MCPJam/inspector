@@ -50,6 +50,7 @@ import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
+import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import {
@@ -4870,9 +4871,20 @@ export function PlaygroundMain({
       : undefined;
 
   // Shared chat input props
+  /**
+   * Up/Down through this thread's own user messages (BB-183). Same derivation
+   * as `ChatTabV2` — the Playground mirrors that component rather than reusing
+   * it, so the wiring has to be made twice; the walk itself does not.
+   */
+  const chatInputHistory = useMemo(
+    () => collectInputHistory(messages),
+    [messages],
+  );
+
   const sharedChatInputProps = {
     value: composer.input,
     onChange: composer.handleInputChange,
+    inputHistory: chatInputHistory,
     onSubmit,
     stop: stopActiveChat,
     disabled: composerDisabled,
