@@ -32,6 +32,7 @@ import {
   isDebugOAuthCallbackPath,
   normalizeInitialLegacyHashBookmark,
 } from "./lib/app-navigation";
+import { queueProjectSignInReturnPath } from "./lib/app-signin-return-path";
 import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
@@ -383,13 +384,15 @@ if (isInIframe) {
             carried?.[PERMALINK_SIGN_IN_STATE_KEY],
             window.location.origin,
           );
-        // `replace`, not `assign`: `/callback` is not somewhere the back
-        // button should return to.
         if (returnTo) {
-          // Keep the generic return path through this redirect. `App.tsx`
-          // consumes it on the restored page, where it also arms stale-project
-          // recovery. Clearing it here loses that signal because this replace
-          // navigates away before the callback route's App effect can run.
+          // A scoped return cannot navigate until App has the database user
+          // and authoritative memberships. Keep it in same-origin storage and
+          // leave the browser on `/callback`; App consumes and validates it,
+          // then performs the one final replacement navigation.
+          if (queueProjectSignInReturnPath(returnTo)) return;
+          // `replace`, not `assign`: `/callback` is not somewhere the back
+          // button should return to. Unscoped handoffs need no membership
+          // validation and retain their existing immediate behavior.
           window.location.replace(returnTo);
         }
       }}

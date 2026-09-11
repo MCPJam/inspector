@@ -16,9 +16,16 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 
+export interface ToolSwitchItem {
+  id: string;
+  label: string;
+  description?: string;
+}
+
 export interface ToolSwitchListProps {
-  names: string[];
-  onSelect: (name: string) => void;
+  items: ToolSwitchItem[];
+  selectedId?: string;
+  onSelect: (id: string) => void;
 }
 
 interface SelectedToolHeaderProps {
@@ -40,7 +47,7 @@ export function SelectedToolHeader({
   onSave,
 }: SelectedToolHeaderProps) {
   const toolNameControl =
-    toolSwitchList && toolSwitchList.names.length > 0 ? (
+    toolSwitchList && toolSwitchList.items.length > 0 ? (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -61,18 +68,30 @@ export function SelectedToolHeader({
           align="start"
           className="max-h-[min(280px,45vh)] min-w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto"
         >
-          {toolSwitchList.names.map((name) => (
-            <DropdownMenuItem
-              key={name}
-              onSelect={() => toolSwitchList.onSelect(name)}
-              className={cn(
-                "cursor-pointer font-mono text-xs",
-                name === toolName && "bg-accent",
-              )}
-            >
-              {name}
-            </DropdownMenuItem>
-          ))}
+          {toolSwitchList.items.map((item) => {
+            const selected = toolSwitchList.selectedId
+              ? item.id === toolSwitchList.selectedId
+              : item.label === toolName || item.id === toolName;
+            return (
+              <DropdownMenuItem
+                key={item.id}
+                onSelect={() => toolSwitchList.onSelect(item.id)}
+                className={cn(
+                  "cursor-pointer font-mono text-xs",
+                  selected && "bg-accent",
+                )}
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate">{item.label}</span>
+                  {item.description ? (
+                    <span className="truncate text-[10px] text-muted-foreground">
+                      {item.description}
+                    </span>
+                  ) : null}
+                </span>
+              </DropdownMenuItem>
+            );
+          })}
         </DropdownMenuContent>
       </DropdownMenu>
     ) : (

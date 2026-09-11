@@ -64,6 +64,11 @@ import {
   type EvalTrialExclusions,
 } from "./verdict-policy.js";
 import { buildPathKey } from "./tool-path.js";
+import {
+  FRICTION_SIGNAL_KINDS,
+  type EvalTrialFrictionSignals,
+  type FrictionSignalKind,
+} from "./friction-signals.js";
 // The path helpers are the contract's shared `tool-path` module; re-exported
 // here so a caller that imports the route-facts module directly sees the
 // same names the route facts are built from.
@@ -181,6 +186,15 @@ export type RouteFactsTrialInput = {
   caseKey?: string;
   executionVariant?: EvalExecutionVariant;
   endedWithQuestion?: boolean;
+  /**
+   * The trial's friction signals, when a producer derived them.
+   *
+   * ABSENT for every trial that predates the measurement, which is what keeps
+   * the `frictionSignals` block off a document assembled from such trials —
+   * see `rollupClassifiedRoutes`. Report-only, exactly like everything else
+   * here: a signal never becomes a route, a tag or a mismatch.
+   */
+  frictionSignals?: EvalTrialFrictionSignals;
 };
 
 export type RouteFactsCatalog =
@@ -446,6 +460,30 @@ const routeTagsSchema = z
   })
   .strict();
 
+/**
+ * Per-kind rates over the case's trials, one {@link EvalRateMeasurement} each.
+ *
+ * TWO DENOMINATORS, and conflating them is the bug this shape exists to
+ * prevent. The three adjacency kinds are counted over included trials whose
+ * friction document is `measured`; the two identifier kinds are counted over
+ * the SMALLER set that also has `identifierSignals.state === "measured"`. A
+ * trial whose results were never retained looked for retries and found none —
+ * it never looked for an unused identifier at all, and putting it in that
+ * denominator would report "0 of 40" for a measurement that ran on four.
+ */
+const routeFrictionSignalsSchema = z
+  .object({
+    identifierSurfacedUnused: evalRateMeasurementStructuralSchema,
+    searchRepeatedAfterIdentifier: evalRateMeasurementStructuralSchema,
+    identicalRetry: evalRateMeasurementStructuralSchema,
+    changedRetry: evalRateMeasurementStructuralSchema,
+    paginationContinuation: evalRateMeasurementStructuralSchema,
+  })
+  .strict();
+export type EvalRouteFrictionSignals = z.infer<
+  typeof routeFrictionSignalsSchema
+>;
+
 const caseRoutesSchema = z
   .object({
     population: z.literal(EVAL_RUN_MEASUREMENT_UNITS[1]),
@@ -457,6 +495,15 @@ const caseRoutesSchema = z
     tags: routeTagsSchema,
     loopedOn: z.array(loopedOnRowSchema),
     endedWithQuestion: evalRateMeasurementStructuralSchema,
+    /**
+     * How often each friction signal fired across this case's trials.
+     *
+     * OPTIONAL, and omitted entirely when no included trial supplied a
+     * friction document. A run whose producer predates the measurement writes
+     * a document byte-identical to what it wrote before, rather than five
+     * `notMeasured` rates that a reader has to learn to ignore.
+     */
+    frictionSignals: routeFrictionSignalsSchema.optional(),
     /**
      * Trials whose call sequence was cut at `MAX_ROUTE_TOOL_CALLS`: their
      * route, retry count and looping tag describe the prefix only. Present
@@ -658,6 +705,16 @@ export const evalRunRouteFactsSchema =
         ["cases", index, "routes", "endedWithQuestion"],
         caseRow.routes.endedWithQuestion
       );
+      const friction = caseRow.routes.frictionSignals;
+      if (friction) {
+        for (const kind of FRICTION_SIGNAL_KINDS) {
+          addNestedRateIssues(
+            ctx,
+            ["cases", index, "routes", "frictionSignals", kind],
+            friction[kind]
+          );
+        }
+      }
     }
   });
 export type EvalRunRouteFacts = z.infer<typeof evalRunRouteFactsSchema>;
@@ -735,6 +792,13 @@ function rollupClassifiedRoutes(
   let endedWithQuestionTrue = 0;
   let endedWithQuestionKnown = 0;
   let truncatedTrials = 0;
+  // Two denominators, per `routeFrictionSignalsSchema`. `supplied` decides
+  // whether the block exists at all; the two counts decide what each rate is
+  // divided by.
+  let frictionSupplied = 0;
+  let frictionMeasured = 0;
+  let frictionIdentifierMeasured = 0;
+  const frictionFired = new Map<FrictionSignalKind, number>();
 
   for (const row of included) {
     const existing = routeCounts.get(row.route.pathKey) ?? {
@@ -765,6 +829,24 @@ function rollupClassifiedRoutes(
     if (typeof row.trial.endedWithQuestion === "boolean") {
       endedWithQuestionKnown += 1;
       if (row.trial.endedWithQuestion) endedWithQuestionTrue += 1;
+    }
+
+    const friction = row.trial.frictionSignals;
+    if (friction) {
+      frictionSupplied += 1;
+      if (friction.state === "measured") {
+        frictionMeasured += 1;
+        const identifierMeasured =
+          friction.identifierSignals.state === "measured";
+        if (identifierMeasured) frictionIdentifierMeasured += 1;
+        // A trial counts ONCE per kind however many times the kind fired:
+        // these are trial-population rates, like every other rate here, so
+        // the numerator has to be a count of trials.
+        const kinds = new Set(friction.signals.map((signal) => signal.kind));
+        for (const kind of kinds) {
+          frictionFired.set(kind, (frictionFired.get(kind) ?? 0) + 1);
+        }
+      }
     }
   }
 
@@ -810,6 +892,37 @@ function rollupClassifiedRoutes(
       endedWithQuestionKnown,
       exclusions
     ),
+    ...(frictionSupplied > 0
+      ? {
+          frictionSignals: {
+            identifierSurfacedUnused: evalTrialRate(
+              frictionFired.get("identifierSurfacedUnused") ?? 0,
+              frictionIdentifierMeasured,
+              exclusions
+            ),
+            searchRepeatedAfterIdentifier: evalTrialRate(
+              frictionFired.get("searchRepeatedAfterIdentifier") ?? 0,
+              frictionIdentifierMeasured,
+              exclusions
+            ),
+            identicalRetry: evalTrialRate(
+              frictionFired.get("identicalRetry") ?? 0,
+              frictionMeasured,
+              exclusions
+            ),
+            changedRetry: evalTrialRate(
+              frictionFired.get("changedRetry") ?? 0,
+              frictionMeasured,
+              exclusions
+            ),
+            paginationContinuation: evalTrialRate(
+              frictionFired.get("paginationContinuation") ?? 0,
+              frictionMeasured,
+              exclusions
+            ),
+          },
+        }
+      : {}),
     ...(truncatedTrials > 0 ? { truncatedTrials } : {}),
   };
 }

@@ -62,6 +62,20 @@ export interface PinnedHostExecutionSpec {
   serverIds: string[];
   optionalServerIds?: string[];
   builtInToolIds?: string[];
+  /**
+   * What THIS target's `browser_*` tools may do, pinned from the host config
+   * at launch. A swarm session never pauses to ask, so approval — the gate
+   * every interactive surface uses — does not exist here and this declared
+   * policy is the ONLY thing that can authorize a browser tool. Absent or
+   * malformed ⇒ no browser tools are advertised (fail-closed).
+   *
+   * `unknown` on purpose: the snapshot is member-readable JSON, so it is
+   * parsed by `parseBrowserToolPolicy` at the point of use rather than trusted
+   * as a shape here.
+   */
+  browserToolPolicy?: unknown;
+  /** Explicit profile pin; unattended targets never inherit chat defaults. */
+  browserProfileId?: string;
   computer?: HostComputerResource;
   /**
    * PRESENCE-ONLY signal that this target has a bootable environment image
@@ -207,11 +221,7 @@ export interface CreateJourneyRunResult {
 }
 
 export type SwarmAttemptStatus =
-  | "pending"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "rate_limited";
+  "pending" | "running" | "succeeded" | "failed" | "rate_limited";
 
 export interface SwarmPersonaNextTurnResponse {
   message: string;
@@ -241,7 +251,7 @@ export class SwarmAgentError extends Error {
     status: number,
     bodyText: string,
     message: string,
-    retryAfter?: string
+    retryAfter?: string,
   ) {
     super(message);
     this.name = "SwarmAgentError";
@@ -280,7 +290,7 @@ async function postJson<T>(
   timeoutMs: number,
   // Optional caller signal (e.g. the run's abort) composed with the per-call
   // timeout so EITHER a timeout OR a shutdown/cancel aborts the in-flight fetch.
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
@@ -299,7 +309,7 @@ async function postJson<T>(
       response.status,
       errorText,
       `swarm-agent ${url} failed (${response.status}): ${errorText}`,
-      upstreamRetryAfter(response)
+      upstreamRetryAfter(response),
     );
   }
   return (await response.json()) as T;
@@ -309,7 +319,7 @@ async function getJson<T>(
   url: string,
   bearer: string,
   timeoutMs: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(url, {
     method: "GET",
@@ -324,7 +334,7 @@ async function getJson<T>(
       response.status,
       errorText,
       `swarm-agent ${url} failed (${response.status}): ${errorText}`,
-      upstreamRetryAfter(response)
+      upstreamRetryAfter(response),
     );
   }
   return (await response.json()) as T;
@@ -366,7 +376,7 @@ export async function fetchPinnedSkill(
     targetId: string;
     contentHash: string;
     signal?: AbortSignal;
-  }
+  },
 ): Promise<PinnedSkillArtifact> {
   const query = new URLSearchParams({
     runId: args.runId,
@@ -382,7 +392,7 @@ export async function fetchPinnedSkill(
     `${convexHttpUrl}/journey-execution/runs/skill?${query.toString()}`,
     bearer,
     NON_LLM_TIMEOUT_MS,
-    args.signal
+    args.signal,
   );
   const skill = data.skill;
   if (
@@ -399,12 +409,12 @@ export async function fetchPinnedSkill(
     throw new PinnedSkillIntegrityError(
       `Invalid pinned-skill response from backend: ${
         data.error ?? "malformed envelope"
-      }`
+      }`,
     );
   }
   if (skill.contentHash !== args.contentHash) {
     throw new PinnedSkillIntegrityError(
-      `Pinned skill hash mismatch: requested ${args.contentHash}, served ${skill.contentHash}`
+      `Pinned skill hash mismatch: requested ${args.contentHash}, served ${skill.contentHash}`,
     );
   }
   return skill;
@@ -436,7 +446,7 @@ export async function createJourneyRun(
     swarmRunGroupId?: string;
     /** Per-run environment fan-out, overriding the journey's stored list. */
     environmentIds?: string[];
-  }
+  },
 ): Promise<CreateJourneyRunResult> {
   const data = await postJson<{
     ok?: boolean;
@@ -463,7 +473,7 @@ export async function createJourneyRun(
         ? { environmentIds: args.environmentIds }
         : {}),
     },
-    NON_LLM_TIMEOUT_MS
+    NON_LLM_TIMEOUT_MS,
   );
   if (
     !data.ok ||
@@ -475,7 +485,7 @@ export async function createJourneyRun(
     throw new Error(
       `Invalid response from backend createJourneyRun: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
   return {
@@ -528,7 +538,7 @@ export async function reportAttempt(
     chatSessionId?: string;
     errorCode?: string;
     errorMessage?: string;
-  }
+  },
 ): Promise<{ ok: true; applied: boolean }> {
   const data = await postJson<{
     ok?: boolean;
@@ -548,13 +558,13 @@ export async function reportAttempt(
       ...(args.errorCode ? { errorCode: args.errorCode } : {}),
       ...(args.errorMessage ? { errorMessage: args.errorMessage } : {}),
     },
-    NON_LLM_TIMEOUT_MS
+    NON_LLM_TIMEOUT_MS,
   );
   if (data.ok !== true) {
     throw new Error(
       `Invalid response from backend reportAttempt: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
   // The backend (`journeyRuns.recordAttempt`, PR 3c backend #693) always returns
@@ -613,7 +623,7 @@ export async function claimSwarmChecks(
   convexHttpUrl: string,
   bearer: string,
   args: { projectId: string; runId: string; chatSessionId: string },
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<SwarmChecksClaim | null> {
   const data = await postJson<
     { ok?: boolean; claimed?: boolean; error?: string } & Partial<
@@ -628,13 +638,13 @@ export async function claimSwarmChecks(
       chatSessionId: args.chatSessionId,
     },
     NON_LLM_TIMEOUT_MS,
-    signal
+    signal,
   );
   if (data.ok !== true) {
     throw new Error(
       `Invalid response from backend claimSwarmChecks: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
   if (data.claimed !== true) return null;
@@ -645,7 +655,7 @@ export async function claimSwarmChecks(
     !Array.isArray(data.criteria)
   ) {
     throw new Error(
-      "Invalid response from backend claimSwarmChecks: malformed claim"
+      "Invalid response from backend claimSwarmChecks: malformed claim",
     );
   }
   return {
@@ -680,20 +690,20 @@ export async function completeSwarmChecks(
     generation: number;
     criterionResults: SwarmCriterionResult[];
   },
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
   const data = await postJson<{ ok?: boolean; error?: string }>(
     `${convexHttpUrl}/journey-execution/runs/checks/complete`,
     bearer,
     args,
     NON_LLM_TIMEOUT_MS,
-    signal
+    signal,
   );
   if (data.ok !== true) {
     throw new Error(
       `Invalid response from backend completeSwarmChecks: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
 }
@@ -716,20 +726,20 @@ export async function failSwarmChecks(
     generation: number;
     error: string;
   },
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
   const data = await postJson<{ ok?: boolean; error?: string }>(
     `${convexHttpUrl}/journey-execution/runs/checks/fail`,
     bearer,
     args,
     NON_LLM_TIMEOUT_MS,
-    signal
+    signal,
   );
   if (data.ok !== true) {
     throw new Error(
       `Invalid response from backend failSwarmChecks: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
 }
@@ -737,19 +747,19 @@ export async function failSwarmChecks(
 export async function heartbeatJourneyRun(
   convexHttpUrl: string,
   bearer: string,
-  args: { projectId: string; runId: string }
+  args: { projectId: string; runId: string },
 ): Promise<void> {
   const data = await postJson<{ ok?: boolean; error?: string }>(
     `${convexHttpUrl}/journey-execution/runs/heartbeat`,
     bearer,
     { projectId: args.projectId, runId: args.runId },
-    NON_LLM_TIMEOUT_MS
+    NON_LLM_TIMEOUT_MS,
   );
   if (data.ok !== true) {
     throw new Error(
       `Invalid response from backend heartbeatJourneyRun: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
 }
@@ -776,7 +786,7 @@ export async function finalizePendingAttempts(
     terminalStatus?: Exclude<SwarmAttemptStatus, "pending" | "running">;
     errorCode?: string;
     errorMessage?: string;
-  }
+  },
 ): Promise<void> {
   const data = await postJson<{ ok?: boolean; error?: string }>(
     `${convexHttpUrl}/journey-execution/runs/finalize-pending`,
@@ -788,13 +798,13 @@ export async function finalizePendingAttempts(
       ...(args.errorCode ? { errorCode: args.errorCode } : {}),
       ...(args.errorMessage ? { errorMessage: args.errorMessage } : {}),
     },
-    NON_LLM_TIMEOUT_MS
+    NON_LLM_TIMEOUT_MS,
   );
   if (data.ok !== true) {
     throw new Error(
       `Invalid response from backend finalizePendingAttempts: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
 }
@@ -816,7 +826,7 @@ export async function swarmPersonaNextTurn(
     // an uncancellable place; forwarding the run's signal lets a shutdown/cancel
     // abort the parked fetch immediately so the session can unwind.
     signal?: AbortSignal;
-  }
+  },
 ): Promise<SwarmPersonaNextTurnResponse> {
   const data = await postJson<{
     ok?: boolean;
@@ -833,13 +843,13 @@ export async function swarmPersonaNextTurn(
       transcriptSoFar: args.transcriptSoFar,
     },
     LLM_TIMEOUT_MS,
-    args.signal
+    args.signal,
   );
   if (!data.ok || typeof data.message !== "string") {
     throw new Error(
       `Invalid response from backend swarmPersonaNextTurn: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
   return {

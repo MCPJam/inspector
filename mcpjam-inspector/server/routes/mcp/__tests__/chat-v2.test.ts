@@ -137,7 +137,7 @@ vi.mock("ai", async () => {
         toUIMessageStreamResponse: vi.fn().mockReturnValue(
           new Response(JSON.stringify({ type: "text", content: "Hello" }), {
             headers: { "Content-Type": "text/event-stream" },
-          })
+          }),
         ),
       };
     }),
@@ -158,7 +158,7 @@ vi.mock("ai", async () => {
     createUIMessageStreamResponse: vi.fn().mockReturnValue(
       new Response(JSON.stringify({ type: "stream" }), {
         headers: { "Content-Type": "text/event-stream" },
-      })
+      }),
     ),
   };
 });
@@ -203,6 +203,10 @@ vi.mock("../../../utils/scenario-runtime-config.js", () => ({
 // through this fetch; the task-created delivery tests use it to turn the
 // tasks policy on. Inert for every request without a `hostId`.
 const fetchHostRuntimeConfigMock = vi.hoisted(() => vi.fn());
+const readLocalBrowserSettingMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/computers/local-browser-settings.js", () => ({
+  readLocalBrowserSetting: (...args: unknown[]) => readLocalBrowserSettingMock(...args),
+}));
 vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: (...args: unknown[]) =>
     fetchHostRuntimeConfigMock(...args),
@@ -268,7 +272,7 @@ describe("POST /api/mcp/chat-v2", () => {
       // streamWebChatTurn dispatch).
       expect(vi.mocked(isHostedCatalogModel)).toHaveBeenCalledWith(
         "gpt-5-nano",
-        "openai"
+        "openai",
       );
     });
   });
@@ -293,7 +297,7 @@ describe("POST /api/mcp/chat-v2", () => {
         expect.objectContaining({
           scenarioId: "cbx_1",
           bearer: "Bearer guest-test-token",
-        })
+        }),
       );
     });
 
@@ -396,7 +400,7 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(data.error).toContain("'server.read_file'");
       expect(data.error).toContain("'namespace/list'");
       expect(data.error).toContain(
-        "Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters)."
+        "Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).",
       );
     });
 
@@ -465,6 +469,96 @@ describe("POST /api/mcp/chat-v2", () => {
   });
 
   describe("success cases", () => {
+    it("keeps guest local Browser independent of member-only project settings", async () => {
+      const guest = await import("../../../utils/computers/local-engine-request.js");
+      const guestCheck = vi.spyOn(guest, "isGuestChatRequest").mockReturnValue(true);
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValue({
+        enabled: true, actor: { id: "guest-browser-user", guest: true },
+      });
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          projectId: "guest-project", builtInToolIds: ["browser"], browserEngine: "local",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(readLocalBrowserSettingMock).not.toHaveBeenCalled();
+        expect(resolveRollout).toHaveBeenCalledOnce();
+        expect(capturedStreamEvents.find((event) => event.type === "data-browser-readiness")?.data.reason)
+          .toContain("browser_consent_required");
+      } finally {
+        guestCheck.mockRestore();
+        resolveRollout.mockRestore();
+      }
+    });
+
+    it.each([
+      { enabled: true, toolIds: [], engine: "local", offered: true },
+      { enabled: false, toolIds: ["browser"], engine: "local", offered: false },
+      { enabled: true, toolIds: [], engine: "cloud", offered: false },
+    ])("resolves local client settings: $enabled / $engine", async ({ enabled, toolIds, engine, offered }) => {
+      fetchHostRuntimeConfigMock.mockResolvedValueOnce({ ok: true, config: {
+        hostId: "host-browser", builtInToolIds: toolIds, localBrowserEnabled: enabled,
+      } });
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValue({
+        enabled: true, actor: { id: "test-member", guest: false },
+      });
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          hostId: "host-browser", builtInToolIds: toolIds, browserEngine: engine,
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(resolveRollout).toHaveBeenCalledTimes(offered ? 1 : 0);
+        if (offered) {
+          expect(capturedStreamEvents.find((event) => event.type === "data-browser-readiness")?.data.reason)
+            .toContain("browser_consent_required");
+        }
+      } finally { resolveRollout.mockRestore(); }
+    });
+
+    it("loads project defaults for a local chat without a selected client", async () => {
+      readLocalBrowserSettingMock.mockResolvedValueOnce(true);
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValueOnce({
+        enabled: true, actor: { id: "test-member", guest: false },
+      });
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          projectId: "project-browser", builtInToolIds: [], browserEngine: "local",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(readLocalBrowserSettingMock).toHaveBeenCalledWith("signed-in-test-token", "project-browser");
+        expect(resolveRollout).toHaveBeenCalledOnce();
+      } finally { resolveRollout.mockRestore(); }
+    });
+
+    it("withholds Browser if the shared setting cannot be read", async () => {
+      readLocalBrowserSettingMock.mockRejectedValueOnce(new Error("Backend unavailable"));
+      const rollout = await import("../../../utils/computers/browser-rollout.js");
+      const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout");
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+          projectId: "project-browser", builtInToolIds: ["browser"], browserEngine: "local",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(resolveRollout).not.toHaveBeenCalled();
+        expect(capturedStreamEvents.find((event) => event.type === "data-browser-readiness")?.data.reason)
+          .toContain("Could not load local Browser settings");
+      } finally { resolveRollout.mockRestore(); }
+    });
+
     it("calls getToolsForAiSdk with selected servers", async () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
@@ -478,7 +572,7 @@ describe("POST /api/mcp/chat-v2", () => {
         ["server-1", "server-2"],
         expect.objectContaining({
           modelVisibleMcpToolResults: resolvedImagePolicyMatcher(true),
-        })
+        }),
       );
     });
 
@@ -496,8 +590,43 @@ describe("POST /api/mcp/chat-v2", () => {
         ["server-1"],
         expect.objectContaining({
           modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
-        })
+        }),
       );
+    });
+
+    it("emits Browser readiness as data, never as assistant text", async () => {
+      // Exercise missing consent after the server's independent rollout gate.
+      const rollout = await import(
+        "../../../utils/computers/browser-rollout.js"
+      );
+      vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValueOnce({
+        enabled: true,
+        actor: { id: "test-member", guest: false },
+      });
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        builtInToolIds: ["browser"],
+        browserEngine: "local",
+      });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      const readiness = capturedStreamEvents.find(
+        (event) => event.type === "data-browser-readiness",
+      );
+      expect(readiness?.data.reason).toContain("browser_consent_required");
+      const { streamText } = await import("ai");
+      expect(vi.mocked(streamText).mock.calls.at(-1)?.[0].system).toContain(
+        "The user must click Allow in the Browser panel, then retry their request.",
+      );
+      expect(
+        capturedStreamEvents
+          .filter((event) => event.type?.startsWith("text-"))
+          .some((event) =>
+            JSON.stringify(event).includes("browser_consent_required"),
+          ),
+      ).toBe(false);
     });
 
     it("returns streaming response", async () => {
@@ -528,7 +657,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const requestPayloadEvents = capturedStreamEvents.filter(
         (event) =>
           event?.type === "data-trace-event" &&
-          event.data?.type === "request_payload"
+          event.data?.type === "request_payload",
       );
 
       expect(traceEvents).toEqual(
@@ -538,16 +667,16 @@ describe("POST /api/mcp/chat-v2", () => {
           "text_delta",
           "trace_snapshot",
           "turn_finish",
-        ])
+        ]),
       );
       expect(traceEvents.indexOf("turn_start")).toBeLessThan(
-        traceEvents.indexOf("request_payload")
+        traceEvents.indexOf("request_payload"),
       );
       expect(traceEvents.indexOf("request_payload")).toBeLessThan(
-        traceEvents.indexOf("trace_snapshot")
+        traceEvents.indexOf("trace_snapshot"),
       );
       expect(traceEvents.indexOf("trace_snapshot")).toBeLessThan(
-        traceEvents.indexOf("turn_finish")
+        traceEvents.indexOf("turn_finish"),
       );
       expect(requestPayloadEvents).toHaveLength(1);
       expect(requestPayloadEvents[0]?.data).toMatchObject({
@@ -594,7 +723,7 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           temperature: 0.5,
-        })
+        }),
       );
     });
 
@@ -646,7 +775,7 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           abortSignal: expect.any(AbortSignal),
-        })
+        }),
       );
     });
 
@@ -729,7 +858,7 @@ describe("POST /api/mcp/chat-v2", () => {
               ],
             }),
           ]),
-        })
+        }),
       );
     });
 
@@ -859,7 +988,7 @@ describe("POST /api/mcp/chat-v2", () => {
               ],
             }),
           ]),
-        })
+        }),
       );
     });
 
@@ -876,12 +1005,12 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           system: expect.stringContaining("You are a helpful assistant"),
-        })
+        }),
       );
       expect(streamText).not.toHaveBeenCalledWith(
         expect.objectContaining({
           system: expect.stringContaining("## Connected MCP Tools"),
-        })
+        }),
       );
     });
   });
@@ -910,7 +1039,7 @@ describe("POST /api/mcp/chat-v2", () => {
         system?: string;
       };
       expect(
-        Object.keys(options.tools).filter((name) => /^ui_/.test(name))
+        Object.keys(options.tools).filter((name) => /^ui_/.test(name)),
       ).toEqual([]);
       expect(options.system ?? "").not.toContain("MCPJam UI tools");
     });
@@ -988,7 +1117,7 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(options.system ?? "").not.toContain("MCPJam UI tools");
       expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
         undefined,
-        expect.objectContaining({ needsApproval: true })
+        expect.objectContaining({ needsApproval: true }),
       );
       expect(options.tools["ui_navigate"]?.needsApproval).toBeUndefined();
     });
@@ -997,7 +1126,7 @@ describe("POST /api/mcp/chat-v2", () => {
   describe("error handling", () => {
     it("returns 500 when getToolsForAiSdk fails", async () => {
       manager.getToolsForAiSdk.mockRejectedValue(
-        new Error("Tools fetch failed")
+        new Error("Tools fetch failed"),
       );
 
       const res = await postJson(app, "/api/mcp/chat-v2", {
@@ -1042,8 +1171,8 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(
         capturedStreamEvents.some(
           (event) =>
-            event?.type === "data-trace-event" && event.data?.type === "error"
-        )
+            event?.type === "data-trace-event" && event.data?.type === "error",
+        ),
       ).toBe(false);
     });
   });
@@ -1100,7 +1229,7 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     async function getOnError(
-      provider: string
+      provider: string,
     ): Promise<(error: unknown) => string> {
       await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
@@ -1126,7 +1255,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for openai. Check your organization's model providers configuration."
+        "Invalid API key for openai. Check your organization's model providers configuration.",
       );
       expect(result.statusCode).toBe(401);
     });
@@ -1143,7 +1272,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for anthropic. Check your organization's model providers configuration."
+        "Invalid API key for anthropic. Check your organization's model providers configuration.",
       );
     });
 
@@ -1161,7 +1290,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for deepseek. Check your organization's model providers configuration."
+        "Invalid API key for deepseek. Check your organization's model providers configuration.",
       );
       expect(result.statusCode).toBe(401);
     });
@@ -1180,7 +1309,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for xai. Check your organization's model providers configuration."
+        "Invalid API key for xai. Check your organization's model providers configuration.",
       );
     });
 
@@ -1198,7 +1327,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for google. Check your organization's model providers configuration."
+        "Invalid API key for google. Check your organization's model providers configuration.",
       );
     });
 
@@ -1247,7 +1376,7 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(result.code).toBeUndefined();
       expect(result.message).toBe("Rate limit exceeded");
       expect(result.details).toBe(
-        '{"error":{"message":"Rate limit exceeded"}}'
+        '{"error":{"message":"Rate limit exceeded"}}',
       );
     });
 
@@ -1269,7 +1398,7 @@ describe("POST /api/mcp/chat-v2", () => {
     it("normalizes retry-exhausted provider overload errors", async () => {
       const onError = await getOnError("anthropic");
       const error = new Error(
-        "Failed after 3 attempts. Last error: Overloaded"
+        "Failed after 3 attempts. Last error: Overloaded",
       );
 
       const result = JSON.parse(onError(error));
@@ -1320,7 +1449,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for openai. Check your organization's model providers configuration."
+        "Invalid API key for openai. Check your organization's model providers configuration.",
       );
     });
   });
@@ -1381,7 +1510,7 @@ describe("POST /api/mcp/chat-v2", () => {
           apiKey: "local",
           ollamaBaseUrl: "http://localhost:11434",
         },
-        "Bearer any-token"
+        "Bearer any-token",
       );
 
       expect(res.status).toBe(200);
@@ -1513,7 +1642,7 @@ describe("POST /api/mcp/chat-v2", () => {
           .mock.calls.find(([url]) => String(url).endsWith("/stream"));
         expect(streamCall).toBeDefined();
         expect(
-          JSON.parse(String((streamCall![1] as RequestInit).body ?? "{}"))
+          JSON.parse(String((streamCall![1] as RequestInit).body ?? "{}")),
         ).toMatchObject({
           projectId: "project_123",
         });
@@ -1552,12 +1681,13 @@ describe("POST /api/mcp/chat-v2", () => {
             requireToolApproval: true,
             modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
             selectedServerIds: ["abc123serverid", "def456serverid"],
-          })
+          }),
         );
         expect(body.resumeConfig).toEqual(
           expect.objectContaining({
+            executionTarget: { kind: "adhoc" },
             modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
-          })
+          }),
         );
       } finally {
         global.fetch = originalFetch;
@@ -1769,7 +1899,7 @@ describe("POST /api/mcp/chat-v2", () => {
           .mock.calls.find(([url]) => String(url).endsWith("/stream"));
         expect(streamCall).toBeDefined();
         const body = JSON.parse(
-          String((streamCall![1] as RequestInit).body ?? "{}")
+          String((streamCall![1] as RequestInit).body ?? "{}"),
         );
 
         // Anthropic 400s on the field being present at all, so assert the key
@@ -1883,12 +2013,12 @@ describe("POST /api/mcp/chat-v2", () => {
         });
 
         const streamBody = JSON.parse(
-          String((init as RequestInit).body ?? "{}")
+          String((init as RequestInit).body ?? "{}"),
         );
         expect(streamBody.tools).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ name: "web_search" }),
-          ])
+          ]),
         );
       } finally {
         global.fetch = originalFetch;
@@ -2066,15 +2196,15 @@ describe("POST /api/mcp/chat-v2", () => {
           // /stream call, not merely resolved — otherwise the guest request
           // would reach Convex unauthenticated.
           const streamHeaders = new Headers(
-            (streamCall?.[1] as RequestInit | undefined)?.headers
+            (streamCall?.[1] as RequestInit | undefined)?.headers,
           );
           expect(streamHeaders.get("authorization")).toBe(
-            "Bearer guest-test-token"
+            "Bearer guest-test-token",
           );
         } finally {
           global.fetch = originalFetch;
         }
-      }
+      },
     );
   });
 
@@ -2097,11 +2227,11 @@ describe("POST /api/mcp/chat-v2", () => {
         const url = String(input);
         if (url === "https://test-convex.example.com/stream/org") {
           const headers = new Headers(
-            (init as RequestInit | undefined)?.headers
+            (init as RequestInit | undefined)?.headers,
           );
           expect(headers.get("X-Inspector-Service-Token")).toBeNull();
           expect(headers.get("Authorization")).toBe(
-            "Bearer signed-in-test-token"
+            "Bearer signed-in-test-token",
           );
           const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
           expect(body).toMatchObject({
@@ -2146,11 +2276,11 @@ describe("POST /api/mcp/chat-v2", () => {
         const url = String(input);
         if (url === "https://test-convex.example.com/stream/org/resolve") {
           const headers = new Headers(
-            (init as RequestInit | undefined)?.headers
+            (init as RequestInit | undefined)?.headers,
           );
           expect(headers.get("X-Inspector-Service-Token")).toBeNull();
           expect(headers.get("Authorization")).toBe(
-            "Bearer signed-in-test-token"
+            "Bearer signed-in-test-token",
           );
           const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
           expect(body).toMatchObject({
@@ -2172,11 +2302,11 @@ describe("POST /api/mcp/chat-v2", () => {
         }
         if (url === "https://test-convex.example.com/stream/org/local-usage") {
           const headers = new Headers(
-            (init as RequestInit | undefined)?.headers
+            (init as RequestInit | undefined)?.headers,
           );
           expect(headers.get("X-Inspector-Service-Token")).toBeNull();
           expect(headers.get("Authorization")).toBe(
-            "Bearer signed-in-test-token"
+            "Bearer signed-in-test-token",
           );
           return Response.json({ ok: true });
         }
@@ -2199,17 +2329,17 @@ describe("POST /api/mcp/chat-v2", () => {
         await lastStreamExecution;
         expect(fetchMock).toHaveBeenCalledWith(
           "https://test-convex.example.com/stream/org/resolve",
-          expect.anything()
+          expect.anything(),
         );
         expect(fetchMock).toHaveBeenCalledWith(
           "https://test-convex.example.com/stream/org/local-usage",
-          expect.anything()
+          expect.anything(),
         );
         expect(
           fetchMock.mock.calls.some(
             ([input]) =>
-              String(input) === "https://test-convex.example.com/stream/org"
-          )
+              String(input) === "https://test-convex.example.com/stream/org",
+          ),
         ).toBe(false);
       } finally {
         global.fetch = originalFetch;
@@ -2228,11 +2358,11 @@ describe("POST /api/mcp/chat-v2", () => {
         const url = String(input);
         if (url === "https://test-convex.example.com/stream/org") {
           const headers = new Headers(
-            (init as RequestInit | undefined)?.headers
+            (init as RequestInit | undefined)?.headers,
           );
           expect(headers.get("X-Inspector-Service-Token")).toBeNull();
           expect(headers.get("Authorization")).toBe(
-            "Bearer signed-in-test-token"
+            "Bearer signed-in-test-token",
           );
           const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
           expect(body).toMatchObject({
@@ -2276,13 +2406,86 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(
           fetchMock.mock.calls.some(
             ([input]) =>
-              String(input) === "https://test-convex.example.com/stream/org"
-          )
+              String(input) === "https://test-convex.example.com/stream/org",
+          ),
         ).toBe(true);
         expect(
           fetchMock.mock.calls.some(([input]) =>
-            String(input).includes("/stream/org/resolve")
-          )
+            String(input).includes("/stream/org/resolve"),
+          ),
+        ).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("keeps org credentials in Convex for an explicit local Browser even without the client routing hint", async () => {
+      // A `custom:` provider is local-runtime-eligible, so without the flag this
+      // chat resolves + runs the model locally (see the test above). When a
+      // selected MCP server is local-only, `localMcpRuntimeRequired` must force
+      // the CLOUD runtime so the org key stays in Convex and the model call is
+      // proxied through /stream/org — the tool loop still runs locally against
+      // the local MCP connection.
+      const originalFetch = global.fetch;
+      const fetchMock = vi.fn().mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org") {
+          const headers = new Headers(
+            (init as RequestInit | undefined)?.headers,
+          );
+          expect(headers.get("X-Inspector-Service-Token")).toBeNull();
+          expect(headers.get("Authorization")).toBe(
+            "Bearer signed-in-test-token",
+          );
+          const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
+          expect(body).toMatchObject({
+            projectId: "project-1",
+            providerKey: "custom:local-one",
+          });
+          return createSseResponse([
+            {
+              type: "finish",
+              finishReason: "stop",
+              messageMetadata: {
+                inputTokens: 1,
+                outputTokens: 1,
+                totalTokens: 2,
+              },
+            },
+          ]);
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock;
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: {
+            id: "custom:local-one:m-1",
+            provider: "custom",
+            customProviderName: "local-one",
+          },
+          projectId: "project-1",
+          selectedServers: ["server-1"],
+          selectedServerIds: ["server-1"],
+          browserEngine: "local",
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        // Cloud proxy hit; the local-runtime resolve path is never taken, so
+        // the org key never leaves Convex.
+        expect(
+          fetchMock.mock.calls.some(
+            ([input]) =>
+              String(input) === "https://test-convex.example.com/stream/org",
+          ),
+        ).toBe(true);
+        expect(
+          fetchMock.mock.calls.some(([input]) =>
+            String(input).includes("/stream/org/resolve"),
+          ),
         ).toBe(false);
       } finally {
         global.fetch = originalFetch;
@@ -2319,7 +2522,7 @@ describe("POST /api/mcp/chat-v2", () => {
     const capturedTaskSeam = () => {
       const call = manager.getToolsForAiSdk.mock.calls.find(
         (args: unknown[]) =>
-          (args[1] as { tasks?: unknown } | undefined)?.tasks !== undefined
+          (args[1] as { tasks?: unknown } | undefined)?.tasks !== undefined,
       );
       expect(call).toBeDefined();
       return (
@@ -2329,7 +2532,7 @@ describe("POST /api/mcp/chat-v2", () => {
 
     const expectTaskCreatedPartDelivered = () => {
       const part = capturedStreamEvents.find(
-        (event) => event?.type === "data-task-created"
+        (event) => event?.type === "data-task-created",
       );
       expect(part).toBeDefined();
       expect(part.transient).toBe(true);
@@ -2398,8 +2601,8 @@ describe("POST /api/mcp/chat-v2", () => {
       expectTaskCreatedPartDelivered();
       expect(
         warnSpy.mock.calls.some(([message]) =>
-          String(message).includes("no live stream writer")
-        )
+          String(message).includes("no live stream writer"),
+        ),
       ).toBe(false);
       warnSpy.mockRestore();
     });
@@ -2526,7 +2729,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[]
+        messages: any[],
       ) => {
         // Simulate adding tool result to messages
         const toolResultMsg = {
@@ -2582,34 +2785,34 @@ describe("POST /api/mcp/chat-v2", () => {
 
         // Find tool-input-available and tool-output-available events
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available"
+          (e) => e.type === "tool-input-available",
         );
         const toolOutputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-output-available"
+          (e) => e.type === "tool-output-available",
         );
 
         // Verify tool-input-available was emitted for the orphaned tool call
         expect(toolInputEvents.length).toBeGreaterThanOrEqual(1);
         expect(
-          toolInputEvents.some((e) => e.toolCallId === "orphaned-call-123")
+          toolInputEvents.some((e) => e.toolCallId === "orphaned-call-123"),
         ).toBe(true);
 
         // Verify tool-output-available was also emitted
         expect(toolOutputEvents.length).toBeGreaterThanOrEqual(1);
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === "orphaned-call-123")
+          toolOutputEvents.some((e) => e.toolCallId === "orphaned-call-123"),
         ).toBe(true);
 
         // Verify order: tool-input-available must come before tool-output-available
         const inputIndex = capturedStreamEvents.findIndex(
           (e) =>
             e.type === "tool-input-available" &&
-            e.toolCallId === "orphaned-call-123"
+            e.toolCallId === "orphaned-call-123",
         );
         const outputIndex = capturedStreamEvents.findIndex(
           (e) =>
             e.type === "tool-output-available" &&
-            e.toolCallId === "orphaned-call-123"
+            e.toolCallId === "orphaned-call-123",
         );
 
         expect(inputIndex).toBeLessThan(outputIndex);
@@ -2625,7 +2828,7 @@ describe("POST /api/mcp/chat-v2", () => {
       // No unresolved tool calls - all are resolved
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        (async () => []) as any
+        (async () => []) as any,
       );
 
       // Mock fetch for CONVEX_HTTP_URL
@@ -2641,7 +2844,7 @@ describe("POST /api/mcp/chat-v2", () => {
               totalTokens: 2,
             },
           },
-        ])
+        ]),
       );
 
       try {
@@ -2678,7 +2881,7 @@ describe("POST /api/mcp/chat-v2", () => {
         const toolInputEvents = capturedStreamEvents.filter(
           (e) =>
             e.type === "tool-input-available" &&
-            e.toolCallId === "resolved-call-456"
+            e.toolCallId === "resolved-call-456",
         );
 
         expect(toolInputEvents.length).toBe(0);
@@ -2698,7 +2901,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[]
+        messages: any[],
       ) => {
         // Simulate adding tool results for both calls
         const firstToolResult = {
@@ -2770,22 +2973,22 @@ describe("POST /api/mcp/chat-v2", () => {
 
         // Verify both tool calls get tool-input-available emitted
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available"
+          (e) => e.type === "tool-input-available",
         );
 
         expect(toolInputEvents.some((e) => e.toolCallId === "call-1")).toBe(
-          true
+          true,
         );
         expect(toolInputEvents.some((e) => e.toolCallId === "call-2")).toBe(
-          true
+          true,
         );
 
         // Verify tool names and inputs are preserved
         const call1Event = toolInputEvents.find(
-          (e) => e.toolCallId === "call-1"
+          (e) => e.toolCallId === "call-1",
         );
         const call2Event = toolInputEvents.find(
-          (e) => e.toolCallId === "call-2"
+          (e) => e.toolCallId === "call-2",
         );
 
         expect(call1Event?.toolName).toBe("tool_a");
@@ -2808,7 +3011,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[]
+        messages: any[],
       ) => {
         const msg1 = {
           role: "tool",
@@ -2896,24 +3099,24 @@ describe("POST /api/mcp/chat-v2", () => {
 
         // Both tool calls should be collected from a single fetch
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available"
+          (e) => e.type === "tool-input-available",
         );
         expect(
-          toolInputEvents.some((e) => e.toolCallId === "batch-call-1")
+          toolInputEvents.some((e) => e.toolCallId === "batch-call-1"),
         ).toBe(true);
         expect(
-          toolInputEvents.some((e) => e.toolCallId === "batch-call-2")
+          toolInputEvents.some((e) => e.toolCallId === "batch-call-2"),
         ).toBe(true);
 
         // Both tool results should be emitted
         const toolOutputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-output-available"
+          (e) => e.type === "tool-output-available",
         );
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === "batch-call-1")
+          toolOutputEvents.some((e) => e.toolCallId === "batch-call-1"),
         ).toBe(true);
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === "batch-call-2")
+          toolOutputEvents.some((e) => e.toolCallId === "batch-call-2"),
         ).toBe(true);
 
         // Only 2 fetch calls total (one for tool calls batch, one for final response)
@@ -2936,7 +3139,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[]
+        messages: any[],
       ) => {
         // Simulate adding tool result for the new tool call
         const toolResultMsg = {
@@ -2997,7 +3200,7 @@ describe("POST /api/mcp/chat-v2", () => {
         const toolInputEventsForNewCall = capturedStreamEvents.filter(
           (e) =>
             e.type === "tool-input-available" &&
-            e.toolCallId === "new-call-from-step"
+            e.toolCallId === "new-call-from-step",
         );
 
         // Should be emitted exactly ONCE (when processing json.messages),
@@ -3020,7 +3223,7 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[]
+        messages: any[],
       ) => {
         const latestAssistantWithToolCall = [...messages]
           .reverse()
@@ -3028,11 +3231,11 @@ describe("POST /api/mcp/chat-v2", () => {
             (msg) =>
               msg?.role === "assistant" &&
               Array.isArray(msg.content) &&
-              msg.content.some((part: any) => part?.type === "tool-call")
+              msg.content.some((part: any) => part?.type === "tool-call"),
           );
 
         const latestToolCall = latestAssistantWithToolCall?.content?.find(
-          (part: any) => part?.type === "tool-call"
+          (part: any) => part?.type === "tool-call",
         );
 
         if (!latestToolCall?.toolCallId) return [];
@@ -3100,10 +3303,10 @@ describe("POST /api/mcp/chat-v2", () => {
         await lastStreamExecution;
 
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available"
+          (e) => e.type === "tool-input-available",
         );
         const toolOutputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-output-available"
+          (e) => e.type === "tool-output-available",
         );
 
         expect(fetchCallCount).toBe(3);
@@ -3118,10 +3321,10 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(secondToolCallId).toMatch(/dup-call__s2_/);
 
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === firstToolCallId)
+          toolOutputEvents.some((e) => e.toolCallId === firstToolCallId),
         ).toBe(true);
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === secondToolCallId)
+          toolOutputEvents.some((e) => e.toolCallId === secondToolCallId),
         ).toBe(true);
       } finally {
         global.fetch = originalFetch;

@@ -1,3 +1,5 @@
+import type { LocalInspectionScope } from "./local-authorization.js";
+import type { LocalBrowserSecurityPolicy } from "../browserd/local/security-policy.js";
 /**
  * The browser boundary for the WebMCP Inspector.
  *
@@ -13,6 +15,7 @@
  * at once.
  */
 import type {
+  WebMcpRegistrationBinding,
   WebMcpFrame,
   WebMcpInputEvent,
   WebMcpToolAnnotations,
@@ -21,6 +24,9 @@ import type {
 
 /** A tool as the browser reports it, before identity policy is applied. */
 export interface ProviderToolDescriptor {
+  registrationSeq?: number;
+  /** Hosted observation identity; local providers use frameId + registrationSeq. */
+  binding?: WebMcpRegistrationBinding;
   /** CDP frame id. Churns across page loads — never persist it as identity. */
   frameId: string;
   name: string;
@@ -58,6 +64,17 @@ export interface WebMcpSessionCallbacks {
   onActivityObserved(): void;
   onCrashed(message: string): void;
   /**
+   * Something about the session is wrong, but the session is not.
+   *
+   * For the conditions that would otherwise be invisible: a frame we could not
+   * attach a CDP session to still renders, so the page looks like it simply
+   * registered no tools. Distinct from `onCrashed`, which is terminal and fails
+   * everything in flight — this one is a note on a session that is still
+   * working. OPTIONAL, because only a provider that inspects frames one by one
+   * has anything to say here.
+   */
+  onSessionNotice?(message: string): void;
+  /**
    * A painted frame of the page, for the `frame-stream` viewport.
    *
    * Deliberately NOT routed through `onActivityObserved`. A page with a CSS
@@ -79,6 +96,7 @@ export interface WebMcpSessionCallbacks {
 }
 
 export interface WebMcpInvokeRequest {
+  expectedBinding?: WebMcpRegistrationBinding;
   frameId: string;
   toolName: string;
   input: Record<string, unknown>;
@@ -97,12 +115,20 @@ export interface WebMcpInvokeRequest {
 }
 
 export interface WebMcpBrowserSession {
+  browserState?(): Promise<
+    import("@/shared/browser-session-state").BrowserStateSnapshot | null
+  >;
+  browserCommand?(
+    command: import("@/shared/browser-pane-command").BrowserPaneCommand,
+  ): Promise<void>;
   navigate(url: string): Promise<void>;
   reload(): Promise<void>;
   goBack(): Promise<void>;
-  invokeTool(request: WebMcpInvokeRequest): Promise<{ output: unknown }>;
+  invokeTool(
+    request: WebMcpInvokeRequest,
+  ): Promise<{ output: unknown; truncated?: boolean }>;
   /** Best-effort thumbnail; resolves undefined rather than throwing. */
-  captureScreenshot(): Promise<string | undefined>;
+  captureScreenshot(tabId?: string): Promise<string | undefined>;
   currentUrl(): string;
   viewportTransport(): WebMcpViewportTransport;
   /**
@@ -127,6 +153,7 @@ export interface WebMcpBrowserSession {
    * a failed command on a session whose viewport may be working fine.
    */
   setScreencast(enabled: boolean): Promise<boolean>;
+  resizeViewport?(width: number, height: number): Promise<void>;
   /**
    * Apply a batch of input to the page, in order.
    *
@@ -138,7 +165,7 @@ export interface WebMcpBrowserSession {
    * A provider that cannot be driven this way (the hosted one, whose viewport
    * is driven through the Browser panel instead) logs and returns.
    */
-  dispatchInput(events: WebMcpInputEvent[]): Promise<void>;
+  dispatchInput(events: WebMcpInputEvent[], tabId?: string): Promise<void>;
   /**
    * A frame could not be handed to a viewer, and was replaced by a newer one.
    *
@@ -151,6 +178,8 @@ export interface WebMcpBrowserSession {
    * this, and should not have to carry an empty method to say so.
    */
   noteFramePressure?(): void;
+  /** Refresh a polled provider after a definite stale-registration refusal. */
+  refreshTools?(): Promise<void>;
   /** Idempotent, and must not hang: teardown races a timeout internally. */
   dispose(): Promise<void>;
 }
@@ -170,6 +199,8 @@ export interface WebMcpBrowserSession {
 export type WebMcpViewportMode = "window" | "embedded";
 
 export interface CreateWebMcpSessionOptions {
+  localScope?: LocalInspectionScope;
+  securityPolicy?: LocalBrowserSecurityPolicy;
   url: string;
   /**
    * `false` ⇒ adopt the page the browser is ALREADY on instead of driving it
@@ -295,10 +326,7 @@ export class WebMcpOutcomeUnknownError extends Error {
 
 /** The invocation was cancelled — by the user, or by the timeout. */
 export class WebMcpInvocationCancelledError extends Error {
-  constructor(
-    message: string,
-    readonly reason: "cancelled" | "timeout",
-  ) {
+  constructor(message: string, readonly reason: "cancelled" | "timeout") {
     super(message);
     this.name = "WebMcpInvocationCancelledError";
   }
