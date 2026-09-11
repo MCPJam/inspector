@@ -62,6 +62,12 @@ import { SystemPromptSelector } from "@/components/chat-v2/chat-input/system-pro
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { useTextareaCaretPosition } from "@/hooks/use-textarea-caret-position";
 import {
+  caretIsOnFirstLine,
+  caretIsOnLastLine,
+  navigateInputHistory,
+  type InputHistoryNavigation,
+} from "@/components/chat-v2/chat-input/input-history";
+import {
   Context,
   ContextTrigger,
   ContextContent,
@@ -259,9 +265,18 @@ function getFilesFromClipboardData(dataTransfer: DataTransfer): File[] {
   return Array.from(dataTransfer.files);
 }
 
+/** Stable identity, so the default never re-triggers a memo downstream. */
+const EMPTY_INPUT_HISTORY: readonly string[] = [];
+
 interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * What Up/Down walk through, newest first — the thread's own user messages
+   * (see `input-history.ts`). Omitted by surfaces with no thread behind them,
+   * and the arrows then belong entirely to the caret.
+   */
+  inputHistory?: readonly string[];
   onSubmit: (
     event: FormEvent<HTMLFormElement>,
     additionalInput?: string
@@ -413,6 +428,7 @@ interface ChatInputProps {
 export function ChatInput({
   value,
   onChange,
+  inputHistory = EMPTY_INPUT_HISTORY,
   onSubmit,
   stop,
   disabled = false,
@@ -528,6 +544,13 @@ export function ChatInput({
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /**
+   * Where an Up/Down walk through past messages currently stands — see
+   * `input-history.ts`. A ref, not state: nothing renders off it (the recalled
+   * text goes out through `onChange` like any other edit), and it must be
+   * readable by the very next keypress rather than after a commit.
+   */
+  const historyNavigationRef = useRef<InputHistoryNavigation | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
@@ -1292,6 +1315,47 @@ export function ChatInput({
       event.preventDefault();
       setMcpPromptPopoverKeyTrigger(event.key);
       return;
+    }
+
+    // Up/Down through your own past messages (BB-183). AFTER the prompts
+    // popover, which owns the arrows while it is open, and never with a
+    // modifier held: Shift+Up selects, and the rest belong to the OS.
+    if (
+      (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.nativeEvent.isComposing
+    ) {
+      const older = event.key === "ArrowUp";
+      const atEdge = older
+        ? caretIsOnFirstLine(value, currentCaretIndex)
+        : caretIsOnLastLine(value, currentCaretIndex);
+      if (atEdge) {
+        const next = navigateInputHistory({
+          direction: older ? "older" : "newer",
+          entries: inputHistory,
+          value,
+          navigation: historyNavigationRef.current,
+        });
+        if (next) {
+          event.preventDefault();
+          historyNavigationRef.current = next.navigation;
+          if (next.value !== value) {
+            onChange(next.value);
+            // Land the caret at the end of the recalled text, where a terminal
+            // leaves it — the next thing anyone does is keep typing. After the
+            // controlled re-render, hence the frame.
+            const textarea = event.currentTarget;
+            requestAnimationFrame(() => {
+              const end = textarea.value.length;
+              textarea.setSelectionRange(end, end);
+            });
+          }
+          return;
+        }
+      }
     }
 
     if (
