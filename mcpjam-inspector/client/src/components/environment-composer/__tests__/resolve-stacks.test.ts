@@ -21,7 +21,7 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
  * needs no arguments must be one.
  */
 function env(
-  overrides: Partial<ProjectEnvironmentView> & { environmentId: string }
+  overrides: Partial<ProjectEnvironmentView> & { environmentId: string },
 ): ProjectEnvironmentView {
   return {
     projectId: "proj-1",
@@ -34,13 +34,13 @@ function env(
 }
 
 function named(
-  overrides: Partial<ProjectEnvironmentView> & { environmentId: string }
+  overrides: Partial<ProjectEnvironmentView> & { environmentId: string },
 ): ProjectEnvironmentView {
   return env({ name: "Prod-like", origin: "named", ...overrides });
 }
 
 function composeState(
-  stack: Partial<EnvironmentComposerState["stack"]>
+  stack: Partial<EnvironmentComposerState["stack"]>,
 ): EnvironmentComposerState {
   return {
     environmentIds: [],
@@ -51,13 +51,13 @@ function composeState(
 
 function ensureReturning(
   ids: string[],
-  opts: { created?: boolean } = { created: true }
+  opts: { created?: boolean } = { created: true },
 ): EnsureAdhocEnvironmentsFn {
   return vi.fn(async () =>
     ids.map((environmentId) => ({
       environment: env({ environmentId }),
       ...(opts.created === undefined ? {} : { created: opts.created }),
-    }))
+    })),
   );
 }
 
@@ -100,7 +100,7 @@ describe("resolveComposerEnvironments — saved-environment path", () => {
         },
         liveEnvironments: [named({ environmentId: "env-a" })],
         ensureAdhocEnvironments: ensureReturning([]),
-      })
+      }),
     ).rejects.toMatchObject({ code: "UNRESOLVED_ENVIRONMENT" });
   });
 
@@ -115,7 +115,7 @@ describe("resolveComposerEnvironments — saved-environment path", () => {
         },
         liveEnvironments: [named({ environmentId: "env-a", archivedAt: 5 })],
         ensureAdhocEnvironments: ensureReturning([]),
-      })
+      }),
     ).rejects.toMatchObject({ code: "UNRESOLVED_ENVIRONMENT" });
   });
 });
@@ -229,7 +229,7 @@ describe("resolveComposerEnvironments — compose path", () => {
         state: composeState({ hostIds: [] }),
         liveEnvironments: [],
         ensureAdhocEnvironments: ensureReturning([]),
-      })
+      }),
     ).rejects.toMatchObject({ code: "NO_TARGETS" });
   });
 
@@ -241,7 +241,7 @@ describe("resolveComposerEnvironments — compose path", () => {
         state: composeState({ hostIds: ["h1", "h2", "h3"] }),
         liveEnvironments: [],
         ensureAdhocEnvironments: ensureReturning([]),
-      })
+      }),
     ).rejects.toMatchObject({ code: "TOO_MANY_TARGETS" });
   });
 });
@@ -332,11 +332,11 @@ describe("resolveComposerEnvironments — reusing a named environment", () => {
 describe("resolveComposerEnvironments — backend skew", () => {
   const missingFunction = Object.assign(
     new Error(
-      "[CONVEX M(projectEnvironments:ensureAdhocEnvironments)] Could not find public function"
+      "[CONVEX M(projectEnvironments:ensureAdhocEnvironments)] Could not find public function",
     ),
     {
       data: "Could not find public function for 'projectEnvironments:ensureAdhocEnvironments'",
-    }
+    },
   );
 
   it("classifies a missing mutation as ADHOC_UNAVAILABLE", async () => {
@@ -376,7 +376,7 @@ describe("resolveComposerEnvironments — backend skew", () => {
         state: composeState({ hostIds: ["h1", "h2"] }),
         liveEnvironments: [],
         ensureAdhocEnvironments: ensureReturning(["adhoc-1"]),
-      })
+      }),
     ).rejects.toMatchObject({ code: "BACKEND_REJECTED" });
   });
 });
@@ -414,7 +414,7 @@ describe("defaultComposerState", () => {
           serverAttachmentId: "grp-2",
           skillSelection: { mode: "explicit", skillIds: ["s1"] },
         }),
-      ])
+      ]),
     );
   });
 
@@ -496,7 +496,7 @@ describe("defaultComposerState", () => {
         environments: [],
         hosts: [],
         serverAttachments: [{ _id: "grp-1" }],
-      })
+      }),
     ).toBeNull();
   });
 });
@@ -564,8 +564,8 @@ describe("environmentsExceedOneStack", () => {
           named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
           named({ environmentId: "b", hostId: "h1", serverAttachmentId: "g2" }),
         ],
-        allSlots
-      )
+        allSlots,
+      ),
     ).toBe(true);
   });
 
@@ -576,8 +576,8 @@ describe("environmentsExceedOneStack", () => {
           named({ environmentId: "a", hostId: "h1" }),
           named({ environmentId: "b", hostId: "h2" }),
         ],
-        allSlots
-      )
+        allSlots,
+      ),
     ).toBe(false);
   });
 
@@ -591,8 +591,8 @@ describe("environmentsExceedOneStack", () => {
           named({ environmentId: "a", hostId: "h1", serverAttachmentId: "g1" }),
           named({ environmentId: "b", hostId: "h2", serverAttachmentId: "g2" }),
         ],
-        allSlots
-      )
+        allSlots,
+      ),
     ).toBe(true);
   });
 
@@ -613,7 +613,7 @@ describe("environmentsExceedOneStack", () => {
       environmentsExceedOneStack(selection, {
         skillsEnabled: false,
         computersEnabled: false,
-      })
+      }),
     ).toBe(false);
     expect(environmentsExceedOneStack(selection, allSlots)).toBe(true);
   });
@@ -622,8 +622,8 @@ describe("environmentsExceedOneStack", () => {
     expect(
       environmentsExceedOneStack(
         [named({ environmentId: "a", hostId: "h1" })],
-        allSlots
-      )
+        allSlots,
+      ),
     ).toBe(false);
   });
 });
@@ -639,7 +639,7 @@ describe("environmentsCarryPluginPins", () => {
           hostId: "h1",
           pluginVersionIds: ["pv-1"],
         }),
-      ])
+      ]),
     ).toBe(true);
   });
 
@@ -648,7 +648,7 @@ describe("environmentsCarryPluginPins", () => {
       environmentsCarryPluginPins([
         named({ environmentId: "a", hostId: "h1", pluginVersionIds: [] }),
         named({ environmentId: "b", hostId: "h2" }),
-      ])
+      ]),
     ).toBe(false);
   });
 });
@@ -718,6 +718,37 @@ describe("resolveComposerEnvironments — model axis", () => {
     expect(result.environmentIds).toEqual(["a", "b", "c", "d"]);
   });
 
+  it("uses the model choices configured for each individual client", async () => {
+    const ensure = ensureReturning(["a", "b", "c"]);
+    await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h1", "h2"],
+        modelSelectionsByHost: {
+          h1: {
+            includeClientDefaults: true,
+            explicitModelIds: ["openai/gpt-5.1"],
+          },
+          h2: {
+            includeClientDefaults: false,
+            explicitModelIds: ["anthropic/claude-sonnet"],
+          },
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [
+        { hostId: "h1" },
+        { hostId: "h1", modelId: "openai/gpt-5.1" },
+        { hostId: "h2", modelId: "anthropic/claude-sonnet" },
+      ],
+    });
+  });
+
   it("dedupes explicit model ids before minting or counting the product", async () => {
     const ensure = ensureReturning(["inherit", "override"]);
     await resolveComposerEnvironments({
@@ -727,7 +758,10 @@ describe("resolveComposerEnvironments — model axis", () => {
         hostIds: ["h1"],
         modelSelection: {
           includeClientDefaults: true,
-          explicitModelIds: ["google/gemini-2.5-flash", "google/gemini-2.5-flash"],
+          explicitModelIds: [
+            "google/gemini-2.5-flash",
+            "google/gemini-2.5-flash",
+          ],
         },
       }),
       liveEnvironments: [],
@@ -779,7 +813,9 @@ describe("resolveComposerEnvironments — model axis", () => {
       ensureAdhocEnvironments: ensureReturning([]),
     }).catch((e) => e);
     expect(err.code).toBe("TOO_MANY_TARGETS");
-    expect(err.message).toMatch(/3 clients × 4 model choices = 12 targets; limit 10/);
+    expect(err.message).toMatch(
+      /3 clients × 4 model choices = 12 targets; limit 10/,
+    );
   });
 
   it("does not reuse a named override row for an inherit compose", async () => {
@@ -864,7 +900,7 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
     expect(
       environmentsCarryModels([
         named({ environmentId: "a", hostId: "h1", modelId: "m1" }),
-      ])
+      ]),
     ).toBe(true);
   });
 
@@ -879,8 +915,8 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
             modelId: "google/gemini-2.5-flash",
           }),
         ],
-        { skillsEnabled: true, computersEnabled: true, modelsEnabled: true }
-      )
+        { skillsEnabled: true, computersEnabled: true, modelsEnabled: true },
+      ),
     ).toBe(false);
   });
 
@@ -895,8 +931,8 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
             modelId: "google/gemini-2.5-flash",
           }),
         ],
-        { skillsEnabled: true, computersEnabled: true }
-      )
+        { skillsEnabled: true, computersEnabled: true },
+      ),
     ).toBe(true);
   });
 
@@ -912,8 +948,8 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
           }),
           named({ environmentId: "c", hostId: "h2" }),
         ],
-        { skillsEnabled: true, computersEnabled: true, modelsEnabled: true }
-      )
+        { skillsEnabled: true, computersEnabled: true, modelsEnabled: true },
+      ),
     ).toBe(true);
   });
 
@@ -933,7 +969,7 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
           modelId: "google/gemini-2.5-flash",
         }),
       ],
-      { skillsEnabled: true, computersEnabled: true, modelsEnabled: true }
+      { skillsEnabled: true, computersEnabled: true, modelsEnabled: true },
     );
     expect(state.stack.modelSelection).toEqual({
       includeClientDefaults: true,

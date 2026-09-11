@@ -61,21 +61,30 @@ interface JudgesSectionProps {
 export function pruneEmpty(
   value: EvalJudgeConfig,
 ): EvalJudgeConfig | undefined {
-  if (!value.goalCompletion) return undefined;
   const gc = value.goalCompletion;
-  const hasAnyField =
-    gc.enabled !== undefined ||
-    (gc.judgeModel !== undefined && gc.judgeModel !== "") ||
-    gc.threshold !== undefined ||
-    gc.autoRun !== undefined ||
-    // `role` counts, and it is the one field here that must never be dropped
-    // by accident: a suite carrying only `role: "gating"` — legal, because an
-    // absent `enabled` already resolves to on — would otherwise have its whole
-    // judge config discarded the moment someone reset the model to the managed
-    // default, silently erasing a gate the organization had to earn.
-    gc.role !== undefined;
-  if (!hasAnyField) return undefined;
-  return { goalCompletion: gc };
+  const hasGoalCompletion = Boolean(
+    gc &&
+      (gc.enabled !== undefined ||
+        (gc.judgeModel !== undefined && gc.judgeModel !== "") ||
+        gc.threshold !== undefined ||
+        gc.autoRun !== undefined ||
+        // `role` counts, and it is the one field here that must never be dropped
+        // by accident: a suite carrying only `role: "gating"` — legal, because an
+        // absent `enabled` already resolves to on — would otherwise have its whole
+        // judge config discarded the moment someone reset the model to the managed
+        // default, silently erasing a gate the organization had to earn.
+        gc.role !== undefined ||
+        // Same for presentation severity: a suite whose only authored field is
+        // `severity: "warn"` would otherwise vanish on an unrelated model reset.
+        gc.severity !== undefined),
+  );
+  const groundedness = value.groundedness;
+  const hasGroundedness = groundedness !== undefined;
+  if (!hasGoalCompletion && !hasGroundedness) return undefined;
+  return {
+    ...(hasGoalCompletion ? { goalCompletion: gc } : {}),
+    ...(hasGroundedness ? { groundedness } : {}),
+  };
 }
 
 export function JudgesSection({
@@ -146,7 +155,10 @@ export function JudgesSection({
     patch: Partial<NonNullable<EvalJudgeConfig["goalCompletion"]>>,
   ) => {
     const nextGC = { ...(gc ?? {}), ...patch };
-    const nextConfig: EvalJudgeConfig = { goalCompletion: nextGC };
+    const nextConfig: EvalJudgeConfig = {
+      goalCompletion: nextGC,
+      ...(value?.groundedness ? { groundedness: value.groundedness } : {}),
+    };
     onChange(pruneEmpty(nextConfig));
   };
 

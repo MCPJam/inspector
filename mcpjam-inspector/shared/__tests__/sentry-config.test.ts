@@ -7,6 +7,8 @@ import {
   buildServerSentryConfig,
   CLIENT_BUILD_SURFACES,
   electronBuildSurface,
+  type FingerprintableEvent,
+  groupDomMutationConflicts,
   isSentryBuildSurface,
   resolveClientBuildSurface,
   SENTRY_BUILD_SURFACES,
@@ -195,6 +197,99 @@ describe("surface builders", () => {
     expect((abort as RegExp).test("AbortError: The user aborted a request")).toBe(
       true,
     );
+  });
+
+  it("groups DOM mutation conflicts on the browser client only", () => {
+    const ctx = { environment: "prod", deployment: "hosted" as const };
+    expect(buildClientSentryConfig(ctx).beforeSend).toBe(
+      groupDomMutationConflicts,
+    );
+    // A server-side NotFoundError is an upstream or storage failure, so
+    // collapsing those by message would merge unrelated defects.
+    expect(buildElectronSentryConfig(ctx)).not.toHaveProperty("beforeSend");
+    expect(buildServerSentryConfig(ctx)).not.toHaveProperty("beforeSend");
+  });
+});
+
+describe("groupDomMutationConflicts", () => {
+  function domMutationEvent(
+    value: string,
+    environment = "prod",
+  ): FingerprintableEvent {
+    return {
+      environment,
+      exception: { values: [{ type: "NotFoundError", value }] },
+    };
+  }
+
+  // Blink names the mutating method, so both wordings are the same defect.
+  it.each([
+    "Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.",
+    "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.",
+  ])("collapses %j into one fingerprint", (value) => {
+    expect(
+      groupDomMutationConflicts(domMutationEvent(value)).fingerprint,
+    ).toEqual(["dom-mutation-conflict", "prod"]);
+  });
+
+  it("leaves the ambiguous WebKit wording ungrouped", () => {
+    // WebKit uses this sentence for the whole NotFoundError class, so a match
+    // cannot prove a DOM mutation. Grouping on it would fold an IndexedDB
+    // failure into this issue; those keep their frame-based grouping.
+    expect(
+      groupDomMutationConflicts(
+        domMutationEvent("The object can not be found here."),
+      ).fingerprint,
+    ).toBeUndefined();
+  });
+
+  it("keeps dev out of the production group", () => {
+    // An issue spans environments in Sentry, and dev is the larger share of
+    // this project's volume — one group for both would bury production again.
+    expect(
+      groupDomMutationConflicts(
+        domMutationEvent(
+          "Failed to execute 'removeChild' on 'Node': gone.",
+          "dev",
+        ),
+      ).fingerprint,
+    ).toEqual(["dom-mutation-conflict", "dev"]);
+  });
+
+  it("leaves an unrelated NotFoundError alone", () => {
+    // Same DOMException name, different defect: IndexedDB raises NotFoundError
+    // too, and merging those into the DOM group would hide a storage bug.
+    const event: FingerprintableEvent = {
+      environment: "prod",
+      exception: {
+        values: [
+          { type: "NotFoundError", value: "The named object was not found." },
+        ],
+      },
+    };
+    expect(groupDomMutationConflicts(event).fingerprint).toBeUndefined();
+  });
+
+  it("leaves other exception types alone even on a matching message", () => {
+    const event: FingerprintableEvent = {
+      environment: "prod",
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Failed to execute 'removeChild' on 'Node': nope",
+          },
+        ],
+      },
+    };
+    expect(groupDomMutationConflicts(event).fingerprint).toBeUndefined();
+  });
+
+  it("passes through an event carrying no exception", () => {
+    // Message events and transactions reach beforeSend too; reading through a
+    // missing `exception` must not throw on the reporting path.
+    const event: FingerprintableEvent = { environment: "prod" };
+    expect(groupDomMutationConflicts(event)).toBe(event);
   });
 });
 

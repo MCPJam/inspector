@@ -104,6 +104,81 @@ export function extractIterationVideoUrl(result: unknown): string | undefined {
   return asString(trace.videoUrl);
 }
 
+/** What a recording reports about itself, as the trace carries it. */
+export type IterationVideoMeta = {
+  source?: string;
+  fps?: number;
+  durationMs?: number;
+  distinctFrames?: number;
+  truncated?: boolean;
+};
+
+/**
+ * Pull the recording's own numbers out of a trace result.
+ *
+ * `undefined` for every trace written before recordings reported anything, and
+ * for the local widget harness, which knows none of it. Read field by field
+ * because the payload is server-defined and reaches the CLI untyped — a
+ * partially-shaped answer yields the fields it does carry rather than nothing.
+ */
+export function extractIterationVideoMeta(
+  result: unknown,
+): IterationVideoMeta | undefined {
+  const root = asRecord(result);
+  if (!root) return undefined;
+  const trace = asRecord(root.trace) ?? root;
+  const meta = asRecord(trace.videoMeta);
+  if (!meta) return undefined;
+  const out: IterationVideoMeta = {};
+  if (typeof meta.source === "string") out.source = meta.source;
+  if (typeof meta.fps === "number") out.fps = meta.fps;
+  if (typeof meta.durationMs === "number") out.durationMs = meta.durationMs;
+  if (typeof meta.distinctFrames === "number") {
+    out.distinctFrames = meta.distinctFrames;
+  }
+  if (typeof meta.truncated === "boolean") out.truncated = meta.truncated;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * The file extension for a recording, from the recorder that made it.
+ *
+ * The URL is a Convex storage link and carries no extension, so `source` is
+ * what there is to go on: the hosted daemon writes a fragmented MP4, the local
+ * widget harness a Playwright `.webm`. An unknown or absent source falls back
+ * to `.webm` — every recording that predates a second recorder is one of
+ * those, and a file named for the wrong container is a file a player refuses
+ * before it has read a byte.
+ */
+export function iterationVideoExtension(
+  meta: IterationVideoMeta | undefined,
+): "mp4" | "webm" {
+  return meta?.source === "hosted" ? "mp4" : "webm";
+}
+
+/**
+ * One line describing a recording, for a terminal.
+ *
+ * Built only from what the recorder reported — nothing is derived — and it
+ * says `truncated` LOUDLY, because a take that stopped at its size cap is a
+ * complete, playable prefix of the run and reads as the whole run otherwise.
+ */
+export function describeIterationVideo(
+  meta: IterationVideoMeta | undefined,
+): string {
+  if (!meta) return "";
+  const parts: string[] = [];
+  if (typeof meta.durationMs === "number" && meta.durationMs > 0) {
+    parts.push(`${Math.round(meta.durationMs / 1000)}s`);
+  }
+  if (typeof meta.fps === "number" && meta.fps > 0) parts.push(`${meta.fps}fps`);
+  if (typeof meta.distinctFrames === "number") {
+    parts.push(`${meta.distinctFrames} distinct frames`);
+  }
+  if (meta.truncated) parts.push("STOPPED AT THE SIZE LIMIT");
+  return parts.join(" · ");
+}
+
 /**
  * Build a filesystem-safe PNG filename for a screenshot. Keeps the tool name
  * readable but strips anything that isn't alnum/dash/underscore so multi-render

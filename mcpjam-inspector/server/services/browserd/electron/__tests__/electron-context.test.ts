@@ -61,6 +61,15 @@ describe("electron context — the windows it opens", () => {
     });
   });
 
+  it("resizes the hidden window's content when the driver resizes its page", async () => {
+    const electron = fakeElectron();
+    const context = await launchElectronContext({ electron });
+    const page = await context.newPage();
+    await page.setViewportSize!({ width: 480, height: 600 });
+    expect(electron.windows[0]?.contentSize).toEqual({ width: 480, height: 600 });
+    await context.close();
+  });
+
   it("refuses every permission a page asks for", async () => {
     const electron = fakeElectron();
     await launchElectronContext({ electron });
@@ -182,6 +191,18 @@ describe("electron context — lifecycle", () => {
 });
 
 describe("electron context — the page it hands back", () => {
+  it("closes a window whose initial document fails to load", async () => {
+    const contents = new FakeBrowserWebContents({
+      loadError: new Error("load failed"),
+    });
+    const electron = fakeElectron([contents]);
+    const context = await launchElectronContext({ electron });
+    await expect(context.newPage()).rejects.toThrow("load failed");
+    expect(electron.windows[0]?.isDestroyed()).toBe(true);
+    expect(agentBrowserWindowCount()).toBe(0);
+    await context.close();
+  });
+
   it("drives the webContents the window was built with", async () => {
     const contents = new FakeBrowserWebContents();
     const electron = fakeElectron([contents]);
@@ -190,7 +211,10 @@ describe("electron context — the page it hands back", () => {
     const page = await context.newPage();
     await page.goto("https://example.test/");
 
-    expect(contents.navigations).toEqual(["https://example.test/"]);
+    expect(contents.navigations).toEqual([
+      "about:blank",
+      "https://example.test/",
+    ]);
     expect(page.url()).toBe("https://example.test/");
   });
 
@@ -251,5 +275,158 @@ describe("electron context — outside Electron", () => {
     // check shows up here as a slow test that reaches for the filesystem.
     expect(process.versions.electron).toBeUndefined();
     await expect(launchElectronContext({})).rejects.toThrow(/not Electron/i);
+  });
+});
+
+/**
+ * V-3. Tabs as VIEWS on one hidden holder, which is what makes the browser
+ * showable: the pane reparents the active view into the app's own window and
+ * the person is looking at Chromium rather than at a JPEG of it.
+ */
+describe("the native surface", () => {
+  function surfaceSpy() {
+    const calls: Array<{ kind: string; view: unknown }> = [];
+    return {
+      calls,
+      surface: {
+        registerTab: (view: unknown) => calls.push({ kind: "register", view }),
+        setActive: (view: unknown) => calls.push({ kind: "active", view }),
+        forget: (view: unknown) => calls.push({ kind: "forget", view }),
+        show: () => {},
+        hide: () => {},
+        setLease: () => {},
+        setPaneHolder: () => {},
+        paneHolder: () => undefined,
+        setViewport: () => {},
+        setShieldFactory: () => {},
+        isShown: () => false,
+        visibilityAllowed: () => true,
+        isShielded: () => false,
+        inputAllowed: () => false,
+        dispose: () => calls.push({ kind: "dispose", view: undefined }),
+      },
+    };
+  }
+
+  it("puts every tab on ONE holder, not a window each", async () => {
+    // A window per tab is what made Electron count agent tabs as windows, so
+    // `window-all-closed` never fired and the app never quit.
+    const electron = fakeElectron();
+    const spy = surfaceSpy();
+    const context = await launchElectronContext({
+      electron,
+      nativeSurface: true,
+      surface: spy.surface as never,
+    });
+    await context.newPage();
+    await context.newPage();
+    expect(electron.holders).toHaveLength(1);
+    expect(electron.views).toHaveLength(2);
+    expect(electron.windows).toHaveLength(0);
+    expect(electron.holders[0]!.children).toHaveLength(2);
+    expect(electron.holders[0]!.options.show).toBe(false);
+    await context.close();
+  });
+
+  it("tells the surface about each tab, newest active", async () => {
+    const electron = fakeElectron();
+    const spy = surfaceSpy();
+    const context = await launchElectronContext({
+      electron,
+      nativeSurface: true,
+      surface: spy.surface as never,
+    });
+    await context.newPage();
+    expect(spy.calls.map((call) => call.kind)).toContain("register");
+    expect(spy.calls[0]!.view).toBe(electron.views[0]);
+    await context.close();
+  });
+
+  it("keeps the pages hostile-content-safe", async () => {
+    // Same `webPreferences` as the window path: the agent browses the open web,
+    // and a view is no less a hostile-content surface than a window was.
+    const electron = fakeElectron();
+    const context = await launchElectronContext({
+      electron,
+      nativeSurface: true,
+    });
+    await context.newPage();
+    const prefs = electron.views[0]!.options.webPreferences as Record<
+      string,
+      unknown
+    >;
+    expect(prefs).toMatchObject({
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      backgroundThrottling: false,
+    });
+    expect(String(prefs.partition)).toContain("mcpjam-browser");
+    await context.close();
+  });
+
+  it("destroys the holder last, or the app never quits", async () => {
+    // The holder IS a window as far as Electron is concerned.
+    const electron = fakeElectron();
+    const context = await launchElectronContext({
+      electron,
+      nativeSurface: true,
+    });
+    await context.newPage();
+    expect(electron.holders[0]!.isDestroyed()).toBe(false);
+    await context.close();
+    expect(electron.holders[0]!.isDestroyed()).toBe(true);
+  });
+
+  it("falls back to windows when the surface is off", async () => {
+    // `MCPJAM_BROWSER_NATIVE_SURFACE=false` restores the pre-V-3 shape exactly.
+    const electron = fakeElectron();
+    const context = await launchElectronContext({ electron });
+    await context.newPage();
+    expect(electron.windows).toHaveLength(1);
+    expect(electron.views).toHaveLength(0);
+    await context.close();
+  });
+
+  it("falls back on an Electron with no WebContentsView", async () => {
+    const electron = fakeElectron();
+    delete (electron as { WebContentsView?: unknown }).WebContentsView;
+    const context = await launchElectronContext({
+      electron,
+      nativeSurface: true,
+    });
+    await context.newPage();
+    expect(electron.windows).toHaveLength(1);
+    await context.close();
+  });
+});
+
+describe("managed Electron popups", () => {
+  it("returns the adopted webContents with its original opener, and enforces the cap", async () => {
+    const electron = fakeElectron();
+    const context = await launchElectronContext({ electron });
+    const parent = await context.newPage();
+    const events: unknown[] = [];
+    context.onPageCreated!((event) => events.push(event));
+    const handler = electron.windows[0].webContents.windowOpenHandler!;
+    const decision = handler({ url: "https://popup.test" }) as {
+      action: string;
+      createWindow: (options: object) => unknown;
+    };
+    expect(decision.action).toBe("allow");
+    const originalContents = { originalPopup: true };
+    const contents = decision.createWindow({ webContents: originalContents });
+    expect(electron.windows[1].options.webContents).toBe(originalContents);
+    expect(contents).toBe(electron.windows[1].webContents);
+    expect(events[0]).toMatchObject({ opener: parent });
+    expect(electron.windows[1].options.webPreferences).toMatchObject({
+      sandbox: true,
+      nodeIntegration: false,
+      partition: "persist:mcpjam-browser-default",
+    });
+    for (let i = 2; i < ELECTRON_TAB_CAP; i++) await context.newPage();
+    expect(handler({ url: "https://excess.test" })).toEqual({ action: "deny" });
+    await context.close();
   });
 });
