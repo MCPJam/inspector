@@ -1,8 +1,14 @@
 /**
  * Persona selector — a real `tablist` with roving tabindex, one tab per
- * persona: pixel-golem avatar, name, sentiment pill.
+ * persona: pixel-golem avatar, name, and a badge under it.
+ *
+ * The badge defaults to the sentiment pill, which is what a swarm wants: its
+ * personas are authored people, so the feeling is the new information. On User
+ * Testing the persona IS the feeling, so the tab title already says it and the
+ * pill would only repeat itself — that surface passes a session count instead.
  */
 
+import type { ReactNode } from "react";
 import { useRef } from "react";
 import { cn } from "@/lib/utils";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
@@ -13,10 +19,13 @@ export function FindingsPersonaTabs({
   personas,
   selectedIndex,
   onSelect,
+  renderBadge,
 }: {
   personas: readonly PersonaFindingsModel[];
   selectedIndex: number;
   onSelect: (index: number) => void;
+  /** Under the name. Defaults to the sentiment pill. */
+  renderBadge?: (persona: PersonaFindingsModel) => ReactNode;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -78,7 +87,11 @@ export function FindingsPersonaTabs({
               <span className="mb-1 block truncate text-sm font-semibold text-foreground">
                 {persona.name}
               </span>
-              <SentimentPill sentiment={persona.sentiment} />
+              {renderBadge ? (
+                renderBadge(persona)
+              ) : (
+                <SentimentPill sentiment={persona.sentiment} />
+              )}
             </span>
           </button>
         );

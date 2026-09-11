@@ -47,6 +47,9 @@ const BASE: SuiteSettingsValues = {
   defaultPredicates: [],
   judgeConfig: undefined,
   judgeRubric: undefined,
+  verdictPolicyVersion: undefined,
+  verdictPolicyDefaults: undefined,
+  gatePolicy: undefined,
 };
 
 const RUBRIC = { criteria: [{ id: "crit_1", label: "Answers the question" }] };
@@ -129,6 +132,42 @@ describe("the legacy fallback tells the caller what it could not send", () => {
       droppedKeys: [],
     });
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Settings saved");
+  });
+
+  it("drops an unsaved quality-gate policy and keeps it retryable", async () => {
+    mocks.applySuiteSettings.mockRejectedValueOnce(missingComposite());
+    const { result } = renderHook(() => useSuiteSettingsCommit());
+    let draft = initSuiteSettingsDraft({ suiteId: "suite-a", values: BASE });
+    draft = suiteSettingsReducer(draft, {
+      type: "edit",
+      key: "name",
+      value: "Renamed",
+    });
+    draft = suiteSettingsReducer(draft, {
+      type: "edit",
+      key: "gatePolicy",
+      value: { noGatingScoreErrors: true },
+    });
+
+    let outcome!: Awaited<ReturnType<typeof result.current.commit>>;
+    await act(async () => {
+      outcome = await result.current.commit({ draft, suiteId: "suite-a" });
+    });
+
+    const sent = mocks.updateTestSuite.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    expect(sent.name).toBe("Renamed");
+    expect("gatePolicy" in sent).toBe(false);
+    expect(outcome).toEqual({
+      status: "saved",
+      revisionNumber: null,
+      droppedKeys: ["gatePolicy"],
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      expect.stringContaining("gatePolicy"),
+    );
   });
 });
 

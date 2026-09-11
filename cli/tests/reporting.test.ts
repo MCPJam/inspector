@@ -145,7 +145,7 @@ test("human output labels its counts with the population they count", () => {
   );
   assert.match(
     formatEvalRunDecisionSummary(corpusSummary("legacy-run-trial-counts")),
-    /4\/6 trials passed/
+    /4\/6 iterations passed/
   );
 });
 

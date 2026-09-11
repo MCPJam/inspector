@@ -145,7 +145,7 @@ describe("shouldShowComputerToggle", () => {
       shouldShowComputerToggle({
         catalogHasComputerBackedTool: true,
         computerAttached: false,
-      })
+      }),
     ).toBe(true);
   });
 
@@ -154,7 +154,7 @@ describe("shouldShowComputerToggle", () => {
       shouldShowComputerToggle({
         catalogHasComputerBackedTool: false,
         computerAttached: true,
-      })
+      }),
     ).toBe(true);
   });
 
@@ -163,7 +163,7 @@ describe("shouldShowComputerToggle", () => {
       shouldShowComputerToggle({
         catalogHasComputerBackedTool: false,
         computerAttached: false,
-      })
+      }),
     ).toBe(false);
   });
 
@@ -173,27 +173,63 @@ describe("shouldShowComputerToggle", () => {
         catalogHasComputerBackedTool: true,
         computerAttached: true,
         disallowed: true,
-      })
+      }),
     ).toBe(false);
   });
 });
 
 describe("visibleBuiltInToolCatalog", () => {
+  it("shows Browser with Computers off, while preserving removability", () => {
+    const browser = { ...CATALOG[1], id: "browser", requiresComputer: false };
+    expect(
+      visibleBuiltInToolCatalog([browser], {
+        computersEnabled: false,
+        browsersEnabled: false,
+        selectedIds: [],
+      }),
+    ).toEqual([]);
+    expect(
+      visibleBuiltInToolCatalog([browser], {
+        computersEnabled: false,
+        browsersEnabled: true,
+        selectedIds: [],
+      }),
+    ).toEqual([browser]);
+    expect(
+      visibleBuiltInToolCatalog([browser], {
+        computersEnabled: false,
+        browsersEnabled: false,
+        selectedIds: ["browser"],
+      }),
+    ).toEqual([browser]);
+    const draft = emptyHostConfigInputV2({
+      computer: { kind: "personal" },
+      builtInToolIds: ["browser"],
+    });
+    expect(detachComputerPatch(draft, [browser]).builtInToolIds).toEqual([
+      "browser",
+    ]);
+    expect(
+      sanitizeHostConfigForEvalSuite(draft, [browser]).builtInToolIds,
+    ).toEqual(["browser"]);
+  });
   it("returns the catalog unchanged when the computers flag is on", () => {
     expect(
       visibleBuiltInToolCatalog(CATALOG, {
         computersEnabled: true,
+        browsersEnabled: false,
         selectedIds: [],
-      })
-    ).toBe(CATALOG);
+      }),
+    ).toEqual(CATALOG);
   });
 
   it("hides computer-backed rows when the flag is off (enabled bash row stays invisible pre-rollout)", () => {
     expect(
       visibleBuiltInToolCatalog(CATALOG, {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: [],
-      })
+      }),
     ).toEqual([CATALOG[0]]);
   });
 
@@ -201,8 +237,9 @@ describe("visibleBuiltInToolCatalog", () => {
     expect(
       visibleBuiltInToolCatalog(CATALOG, {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: ["bash"],
-      })
+      }),
     ).toEqual(CATALOG);
   });
 
@@ -210,8 +247,9 @@ describe("visibleBuiltInToolCatalog", () => {
     expect(
       visibleBuiltInToolCatalog(undefined, {
         computersEnabled: false,
+        browsersEnabled: false,
         selectedIds: [],
-      })
+      }),
     ).toBeUndefined();
   });
 });

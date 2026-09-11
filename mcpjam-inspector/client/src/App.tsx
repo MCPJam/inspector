@@ -1,3 +1,4 @@
+import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
@@ -88,6 +89,7 @@ import {
   SidebarProvider,
   useSidebar,
 } from "./components/ui/sidebar";
+import { SidebarAutoCollapse } from "./components/sidebar/sidebar-auto-collapse";
 import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
 import { AppChromePanel } from "@/components/app-chrome-panel";
 import {
@@ -206,7 +208,7 @@ import {
 import {
   captureAppSignInReturnPath,
   consumeAppSignInReturnPath,
-  readAppSignInReturnPath,
+  writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
 import {
   trackSignInReturnRestored,
@@ -299,6 +301,7 @@ import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
   buildHostsPath,
   buildOrganizationPath,
+  buildOrganizationSwitchTarget,
   buildProjectSettingsTarget,
   buildProjectSwitchTarget,
   getInvalidOrganizationRouteNavigationTarget,
@@ -308,7 +311,6 @@ import {
   pathnameToActiveTab,
   routePaths,
   scopeNavigationTarget,
-  type OrganizationRouteSection,
   useCurrentLocationParts,
   useCurrentSearchParam,
   useActiveTab,
@@ -2269,6 +2271,7 @@ export function PlaygroundRoute() {
     activeProject,
     activeProjectId,
     appState,
+    areServersHydrated,
     ensureServersReady,
     evalChatHandoff,
     handleConnect,
@@ -2298,6 +2301,7 @@ export function PlaygroundRoute() {
       isConvexAuthenticated={isAuthenticated}
       isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
       isClientConfigSyncPending={isClientConfigSyncPending}
+      areServersHydrated={areServersHydrated}
       hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
       isServerSyncing={isSelectedServerSyncing}
       onConnect={handleConnect}
@@ -2492,6 +2496,8 @@ export function HomeRoute() {
 export default function App() {
   const activeTab = useActiveTab();
   const currentOrgRoute = useCurrentOrgRoute();
+  const billingLocation = useCurrentLocationParts();
+  const navigate = useAppNavigate();
   const [hostsTabSelectedHostId, setHostsTabSelectedHostId] = useState<
     string | null
   >(null);
@@ -2515,16 +2521,10 @@ export default function App() {
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const [pendingProjectReturnRecovery, setPendingProjectReturnRecovery] =
-    useState<ProjectSignInReturnRecoveryIntent | null>(() => {
-      if (window.location.pathname === routePaths.callback) return null;
-      const restoredPath = readAppSignInReturnPath();
-      const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-      return restoredPath === currentPath
-        ? createProjectSignInReturnRecoveryIntent(restoredPath)
-        : null;
-    });
-  const billingDeepLinkNavRef = useRef(false);
-  /** True after we read valid plan/interval from the URL and stripped query params; avoids clearing session on the next /billing tick. */
+    useState<ProjectSignInReturnRecoveryIntent | null>(null);
+  const callbackReturnConsumedRef = useRef(false);
+  const billingSignInStartedRef = useRef(false);
+  /** True after we read valid plan/interval from the current billing entry. */
   const billingCheckoutQueryConsumedRef = useRef(false);
   const [pendingCheckoutIntent, setPendingCheckoutIntent] =
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
@@ -2537,25 +2537,6 @@ export default function App() {
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
-
-  // AuthKit can restore a permalink from `main.tsx` before the callback route
-  // ever renders. Consume the generic return path on that restored page so it
-  // can still arm stale-project recovery. Layout timing prevents the generic
-  // unavailable boundary from painting first.
-  useLayoutEffect(() => {
-    if (window.location.pathname === routePaths.callback) return;
-    const restoredPath = consumeAppSignInReturnPath();
-    if (!restoredPath) return;
-    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (restoredPath !== currentPath) {
-      trackSignInReturnRestored("superseded");
-      return;
-    }
-    trackSignInReturnRestored("restored");
-    setPendingProjectReturnRecovery(
-      createProjectSignInReturnRecoveryIntent(restoredPath),
-    );
-  }, []);
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
   // View-only (localStorage) — the x on a chip dismisses it from this header
@@ -2927,6 +2908,8 @@ export default function App() {
 
   useEffect(() => {
     if (!isOAuthCallback) {
+      callbackReturnConsumedRef.current = false;
+      setPendingProjectReturnRecovery(null);
       setCallbackCompleted(false);
       setCallbackRecoveryExpired(false);
       return;
@@ -2949,8 +2932,25 @@ export default function App() {
       return;
     }
 
-    // Let AuthKit + Convex auth settle before leaving /callback.
-    if (!isAuthLoading && isAuthenticated) {
+    // A guest session is also Convex-authenticated. For billing returns, wait
+    // for AuthKit to expose the real WorkOS user before consuming the return;
+    // otherwise the guest identity can restore `/billing` and start the same
+    // sign-in flow again while the successful login is still settling.
+    const isBillingReturnWaitingForWorkOs =
+      !!readPersistedCheckoutIntent() &&
+      !!readBillingSignInReturnPath() &&
+      !workOsUser;
+    if (isBillingReturnWaitingForWorkOs) return;
+
+    // Select the return exactly once after AuthKit + Convex auth settle. A
+    // project-scoped return stays on `/callback` until the database user and
+    // first authoritative membership response are ready below.
+    if (
+      !isAuthLoading &&
+      isAuthenticated &&
+      !callbackReturnConsumedRef.current
+    ) {
+      callbackReturnConsumedRef.current = true;
       const scenarioReturnPath = readScenarioSignInReturnPath();
       const persistedCheckoutIntent = readPersistedCheckoutIntent();
       const billingReturnPath = persistedCheckoutIntent
@@ -2983,9 +2983,12 @@ export default function App() {
             ? "restored"
             : "superseded",
       );
-      setPendingProjectReturnRecovery(
-        createProjectSignInReturnRecoveryIntent(restoredPath),
-      );
+      const projectReturnIntent =
+        createProjectSignInReturnRecoveryIntent(restoredPath);
+      if (projectReturnIntent) {
+        setPendingProjectReturnRecovery(projectReturnIntent);
+        return;
+      }
       // `navigateApp`, not `history.replaceState`: a raw history write leaves
       // the ROUTER matched on `/callback` while the address bar says
       // `/p/<id>/evals/...`, so the project boundary never mounts and the URL
@@ -2994,14 +2997,7 @@ export default function App() {
       navigateApp(restoredPath, { replace: true });
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
-      return;
     }
-
-    const timeout = setTimeout(() => {
-      setCallbackRecoveryExpired(true);
-    }, 15000);
-
-    return () => clearTimeout(timeout);
   }, [
     isOAuthCallback,
     isAuthLoading,
@@ -3010,15 +3006,30 @@ export default function App() {
     workOsUser,
   ]);
 
+  // One deadline covers both session bootstrap and the authoritative project
+  // response. Dependency changes must not restart it while either is pending.
+  useEffect(() => {
+    if (!isOAuthCallback || callbackCompleted) return;
+    const timeout = window.setTimeout(() => {
+      setCallbackRecoveryExpired(true);
+    }, 15000);
+    return () => window.clearTimeout(timeout);
+  }, [isOAuthCallback, callbackCompleted]);
+
   const handleRetryCallbackSignIn = useCallback(() => {
+    if (pendingProjectReturnRecovery) {
+      writeAppSignInReturnPath(pendingProjectReturnRecovery.path);
+    }
     clearHostedCallbackRetryState();
+    callbackReturnConsumedRef.current = false;
+    setPendingProjectReturnRecovery(null);
     window.history.replaceState({}, "", "/");
     setCallbackCompleted(true);
     setCallbackRecoveryExpired(false);
     queueMicrotask(() => {
       signIn();
     });
-  }, [signIn]);
+  }, [pendingProjectReturnRecovery, signIn]);
 
   const handleReloadFromCallback = useCallback(() => {
     clearHostedCallbackRetryState();
@@ -3096,6 +3107,10 @@ export default function App() {
   // on auth-scope changes: WorkOS navigation can redirect before that effect
   // gets a chance to run.
   const disconnectRuntimeServersForAuthExit = useCallback(async () => {
+    const inspection = useWebmcpInspectorStore.getState();
+    if (inspection.session && !inspection.session.sessionId.startsWith("hosted:")) {
+      await inspection.closeSession();
+    }
     const serverNames = Object.keys(appState.servers);
     const cleanupPromise = Promise.allSettled([
       Promise.allSettled(
@@ -3305,6 +3320,7 @@ export default function App() {
       readProjectPathSegment(window.location.pathname) !== null);
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
+    pendingCheckoutIntent === null &&
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
@@ -4204,8 +4220,7 @@ export default function App() {
     clearBillingSignInReturnPath();
     clearCheckoutIntentFromUrl();
     setPendingCheckoutIntent(null);
-    billingDeepLinkNavRef.current = false;
-    billingCheckoutQueryConsumedRef.current = false;
+    billingSignInStartedRef.current = false;
   }, []);
 
   const handleCheckoutIntentNavigationStarted = useCallback(() => {
@@ -4217,77 +4232,93 @@ export default function App() {
     if (isDebugCallback) return;
     if (isHostedChatRoute) return;
 
-    const path = window.location.pathname;
+    const path = billingLocation.pathname;
     if (!isBillingEntryPathname(path)) {
       billingCheckoutQueryConsumedRef.current = false;
     }
 
-    if (window.location.pathname === "/callback") return;
+    if (path === "/callback") return;
 
     const onBillingEntry = isBillingEntryPathname(path);
+    let checkoutIntent = pendingCheckoutIntent;
 
     if (onBillingEntry) {
-      billingDeepLinkNavRef.current = false;
-      const search = window.location.search;
+      const search = billingLocation.search;
       const invalid =
         hasInvalidCheckoutQueryParams(search) ||
         hasInvalidCheckoutIntervalParam(search);
 
       if (invalid) {
-        clearPersistedCheckoutIntent();
-        clearBillingSignInReturnPath();
-        setPendingCheckoutIntent(null);
-        billingCheckoutQueryConsumedRef.current = false;
-      } else {
-        const fromUrl = readCheckoutIntentFromSearch(search);
-        if (fromUrl) {
-          persistCheckoutIntent(fromUrl);
-          setPendingCheckoutIntent(fromUrl);
-          billingCheckoutQueryConsumedRef.current = true;
-        } else if (!new URLSearchParams(search).has("plan")) {
-          const persistedIntent = readPersistedCheckoutIntent();
-          if (persistedIntent) {
-            billingCheckoutQueryConsumedRef.current = true;
-            if (
-              pendingCheckoutIntent?.plan !== persistedIntent.plan ||
-              pendingCheckoutIntent?.interval !== persistedIntent.interval
-            ) {
-              setPendingCheckoutIntent(persistedIntent);
-            }
-          } else if (!billingCheckoutQueryConsumedRef.current) {
-            clearPersistedCheckoutIntent();
-            clearBillingSignInReturnPath();
-            setPendingCheckoutIntent(null);
-          }
-        }
-      }
-
-      clearCheckoutIntentFromUrl();
-
-      if (!isAuthenticated) {
-        if (!isAuthLoading) {
-          writeBillingSignInReturnPath(path);
-          void signIn();
-        }
+        consumeCheckoutIntent();
+        navigate(routePaths.root, { replace: true, unscoped: true });
         return;
       }
 
-      if (path !== routePaths.root && path !== "") {
-        navigateApp(routePaths.root, { replace: true });
+      const fromUrl = readCheckoutIntentFromSearch(search);
+      if (fromUrl && !billingCheckoutQueryConsumedRef.current) {
+        checkoutIntent = fromUrl;
+        persistCheckoutIntent(fromUrl);
+        if (
+          pendingCheckoutIntent?.plan !== fromUrl.plan ||
+          pendingCheckoutIntent?.interval !== fromUrl.interval
+        ) {
+          setPendingCheckoutIntent(fromUrl);
+        }
+        billingCheckoutQueryConsumedRef.current = true;
+      } else if (fromUrl) {
+        // The URL hook can trail a same-tick replaceState while checkout is
+        // being consumed. Do not restore the intent from that stale render.
+        checkoutIntent = pendingCheckoutIntent;
+      } else if (!new URLSearchParams(search).has("plan")) {
+        const persistedIntent = readPersistedCheckoutIntent();
+        if (persistedIntent) {
+          checkoutIntent = persistedIntent;
+          billingCheckoutQueryConsumedRef.current = true;
+          if (
+            pendingCheckoutIntent?.plan !== persistedIntent.plan ||
+            pendingCheckoutIntent?.interval !== persistedIntent.interval
+          ) {
+            setPendingCheckoutIntent(persistedIntent);
+          }
+        } else if (!billingCheckoutQueryConsumedRef.current) {
+          consumeCheckoutIntent();
+          navigate(routePaths.root, { replace: true, unscoped: true });
+          return;
+        }
       }
     }
 
-    if (!isAuthenticated || isAuthLoading) return;
-    if (isLoadingOrganizations) return;
+    if (!checkoutIntent) {
+      billingSignInStartedRef.current = false;
+      return;
+    }
 
     if (billingEntitlementsUiEnabled === false) {
+      toast.error("Checkout isn't available in this environment.");
+      consumeCheckoutIntent();
       return;
     }
 
-    if (!pendingCheckoutIntent) {
-      billingDeepLinkNavRef.current = false;
+    // Convex guest sessions are authenticated too, so WorkOS is the source of
+    // truth for whether this actor may begin a paid checkout.
+    if (!workOsUser) {
+      if (isWorkOsLoading || billingSignInStartedRef.current) return;
+      billingSignInStartedRef.current = true;
+      writeBillingSignInReturnPath(routePaths.billing);
+      void Promise.resolve()
+        .then(() => signIn())
+        .catch(() => {
+          billingSignInStartedRef.current = false;
+          toast.error("Could not start sign in. Try again.");
+          consumeCheckoutIntent();
+        });
       return;
     }
+    billingSignInStartedRef.current = false;
+
+    if (!isAuthenticated || isAuthLoading) return;
+    if (!isUserReady || currentUser?.isAnonymous === true) return;
+    if (isLoadingOrganizations) return;
 
     const projectOrgId = activeProject?.organizationId;
     const orgId = resolveCheckoutOrganizationId(
@@ -4309,22 +4340,26 @@ export default function App() {
       return;
     }
 
-    if (billingDeepLinkNavRef.current) {
-      return;
-    }
-
-    navigateApp(buildOrganizationPath(orgId, "billing"));
-    billingDeepLinkNavRef.current = true;
+    // The current route is the retry guard. If another redirect wins after
+    // this navigation, the changed route reruns the effect and resumes the
+    // handoff instead of leaving a lifetime ref latched until reload.
+    navigate(buildOrganizationPath(orgId, "billing"), { replace: true });
   }, [
     activeOrganizationId,
     activeProject?.organizationId,
+    billingLocation.pathname,
+    billingLocation.search,
     billingEntitlementsUiEnabled,
     consumeCheckoutIntent,
+    currentUser?.isAnonymous,
     isAuthLoading,
     isAuthenticated,
     isDebugCallback,
     isHostedChatRoute,
     isLoadingOrganizations,
+    isUserReady,
+    isWorkOsLoading,
+    navigate,
     pendingCheckoutIntent,
     routeOrganizationId,
     routeOrganizationSection,
@@ -4393,31 +4428,28 @@ export default function App() {
     navigateToTarget(section);
   };
 
-  const handleSidebarSwitchOrganization = useCallback(
-    (
-      organizationId: string,
-      section: OrganizationRouteSection = "overview",
-    ) => {
-      setActiveOrganizationId(organizationId);
-      navigateApp(buildOrganizationPath(organizationId, section));
-    },
-    [setActiveOrganizationId],
-  );
+  // The URL owns which project this tab is on. This reconciles the two
+  // continuously — on cold open, on Back/Forward, and on every in-app
+  // navigation — switching organization first when the link crosses one.
+  const { allProjects: allMembershipProjects } = useProjectQueries({
+    isAuthenticated,
+  });
 
-  const handleSwitchActiveOrganization = useCallback(
+  const handleSidebarSwitchOrganization = useCallback(
     (organizationId: string) => {
       if (organizationId === activeOrganizationId) return;
-      // Mirror main's `handleSidebarSwitchOrganization`: only flip the active
-      // org. The auto-resolution effect in `use-project-state.ts` notices that
-      // the previous active project is no longer in the new org's filtered
-      // project list and picks a new one; we must NOT clear local/convex project
-      // selection here, otherwise the local-fallback default project (which can
-      // carry servers from earlier sessions) bleeds through during the
-      // transition.
-      setActiveOrganizationId(organizationId);
-      navigateToServers();
+      // The URL is the switch, exactly as it is for a project row. Navigating
+      // to a project that lives in the target organization is what makes the
+      // route coordinator switch the organization; setting the active org here
+      // and then asking for `/servers` could not work, because the logical
+      // path is already Servers (so the navigation no-ops) and the pathname
+      // keeps `/p/<project-in-the-old-org>` — which the coordinator then reads
+      // back as an instruction to return to the organization we just left.
+      navigateToTarget(
+        buildOrganizationSwitchTarget(organizationId, allMembershipProjects),
+      );
     },
-    [activeOrganizationId, setActiveOrganizationId, navigateToServers],
+    [activeOrganizationId, allMembershipProjects, navigateToTarget],
   );
 
   const handleContinueEvalInChat = useCallback(
@@ -4523,12 +4555,6 @@ export default function App() {
     ],
   );
 
-  // The URL owns which project this tab is on. This reconciles the two
-  // continuously — on cold open, on Back/Forward, and on every in-app
-  // navigation — switching organization first when the link crosses one.
-  const { allProjects: allMembershipProjects } = useProjectQueries({
-    isAuthenticated,
-  });
   const allMembershipProjectIds = useMemo(
     () =>
       allMembershipProjects
@@ -4536,17 +4562,6 @@ export default function App() {
         : undefined,
     [allMembershipProjects],
   );
-  const currentLocation = useCurrentLocationParts();
-  const currentProjectPath = `${currentLocation.pathname}${currentLocation.search}${currentLocation.hash}`;
-  const confirmedStaleReturnProjectId =
-    pendingProjectReturnRecovery &&
-    isProjectIdShape(pendingProjectReturnRecovery.requestedProjectId) &&
-    allMembershipProjectIds !== undefined &&
-    !allMembershipProjectIds.has(
-      pendingProjectReturnRecovery.requestedProjectId,
-    )
-      ? pendingProjectReturnRecovery.requestedProjectId
-      : null;
   // Silent: the URL already told the user which project they are in, so a
   // toast on every cold open of a shared link would be narrating the address
   // bar back at them.
@@ -4564,48 +4579,46 @@ export default function App() {
     activeOrganizationId,
     setActiveOrganizationId,
     switchProject: switchProjectForRoute,
-    suppressInaccessibleTelemetryFor: confirmedStaleReturnProjectId,
   });
 
-  const fallbackProjectForStaleReturn =
-    activeProject && allMembershipProjectIds?.has(activeProjectId)
-      ? { id: activeProjectId, name: activeProject.name }
-      : null;
+  const authoritativeMembershipProjectIds =
+    isUserReady && !isLoadingRemoteProjects
+      ? allMembershipProjectIds
+      : undefined;
+  const fallbackProjectIdForStaleReturn =
+    activeProject && authoritativeMembershipProjectIds?.has(activeProjectId)
+      ? activeProjectId
+      : (allMembershipProjects?.[0]?._id ?? null);
   const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
     intent: pendingProjectReturnRecovery,
-    routeState: projectRouteState,
-    currentPath: currentProjectPath,
-    membershipProjectIds: allMembershipProjectIds,
-    fallbackProject: fallbackProjectForStaleReturn,
+    membershipProjectIds: authoritativeMembershipProjectIds,
+    fallbackProjectId: fallbackProjectIdForStaleReturn,
   });
-  const projectRouteStateForBoundary =
-    projectReturnRecoveryDecision.kind === "switch" ||
-    projectReturnRecoveryDecision.kind === "home"
-      ? {
-          status: "resolving" as const,
-          requestedProjectId:
-            pendingProjectReturnRecovery?.requestedProjectId ?? "",
-        }
-      : projectRouteState;
 
-  // Layout timing keeps the generic unavailable screen from painting for a
-  // stale sign-in return. The intent is cleared before navigation so a bad
-  // fallback can show the normal error but can never loop.
+  // Resolve while `/callback` still owns the screen. Clear the one-shot intent
+  // before the only navigation so a bad destination can never loop.
   useLayoutEffect(() => {
-    if (projectReturnRecoveryDecision.kind === "none") return;
+    if (
+      projectReturnRecoveryDecision.kind === "none" ||
+      projectReturnRecoveryDecision.kind === "wait"
+    ) {
+      return;
+    }
     setPendingProjectReturnRecovery(null);
+    setCallbackCompleted(true);
+    setCallbackRecoveryExpired(false);
 
-    if (projectReturnRecoveryDecision.kind === "clear") return;
     if (projectReturnRecoveryDecision.kind === "home") {
       trackStaleProjectReturnRecovered("no-fallback");
       navigateApp(routePaths.root, { replace: true, unscoped: true });
       return;
     }
 
-    trackStaleProjectReturnRecovered("switched");
+    if (projectReturnRecoveryDecision.kind === "switch") {
+      trackStaleProjectReturnRecovered("switched");
+    }
     navigateApp(projectReturnRecoveryDecision.path, { replace: true });
-    toast.error(projectReturnRecoveryDecision.message);
-  }, [pendingProjectReturnRecovery, projectReturnRecoveryDecision]);
+  }, [projectReturnRecoveryDecision]);
 
   /**
    * Picking another project in the switcher NAVIGATES. It does not switch
@@ -4626,6 +4639,43 @@ export default function App() {
       navigateToTarget(buildProjectSettingsTarget(projectId));
     },
     [navigateToTarget],
+  );
+
+  /**
+   * Creating from the switcher always lands you in the new project, and the
+   * URL is what performs that switch — same contract as picking an existing
+   * row. A project created in ANOTHER organization resolves through the route
+   * coordinator: the URL names a project the active org's filtered list does
+   * not contain, so the coordinator switches organization first and then the
+   * project, once the subscription delivers the new row.
+   *
+   * `switchTo` is off in cloud mode. Pre-selecting the new project would be
+   * the state-then-URL ordering this whole surface just stopped using, and for
+   * a cross-organization create the write is undone on the next render anyway:
+   * `activeProjectId` is derived from the organization-FILTERED project map,
+   * which does not contain a project in the org being moved to.
+   *
+   * Local fallback is the exception, and the only reason the switch is not
+   * purely a navigation: a local id is a UUID, which `buildProjectPath` refuses
+   * to put in the canonical position, so no URL can name the project and state
+   * is the only thing that can select it. That selection has to happen INSIDE
+   * `handleCreateProject`, atomically with the create — calling
+   * `handleSwitchProject` afterwards does not work, because it validates the id
+   * against the project map captured in the render it was created in, which
+   * cannot contain a project dispatched a moment ago, and answers
+   * "Project not found".
+   */
+  const handleSidebarCreateProject = useCallback(
+    async (name: string, organizationId?: string) => {
+      const projectId = await handleCreateProject(name, !isCloudSyncActive, {
+        organizationId,
+      });
+      if (projectId && isProjectIdShape(projectId)) {
+        navigateToTarget(buildProjectSwitchTarget(projectId));
+      }
+      return projectId;
+    },
+    [handleCreateProject, isCloudSyncActive, navigateToTarget],
   );
 
   /**
@@ -4788,10 +4838,6 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  if (isBillingEntryHandoff) {
-    return <BillingHandoffLoading />;
-  }
-
   if (isLoading && !isHostedChatRoute) {
     return <LoadingScreen />;
   }
@@ -4837,6 +4883,10 @@ export default function App() {
         email={workOsUser?.email}
       />
     );
+  }
+
+  if (isBillingEntryHandoff) {
+    return <BillingHandoffLoading />;
   }
 
   const shouldShowActiveServerSelector =
@@ -4991,7 +5041,7 @@ export default function App() {
     // What the URL's project segment resolved to. `ProjectRouteBoundary`
     // renders on it, and the legacy normalizer reads the rest of this bag to
     // decide which project an old link should adopt.
-    projectRouteState: projectRouteStateForBoundary,
+    projectRouteState,
     activeMcpProfile,
     activeOrganizationId,
     activeOrganizationName,
@@ -5080,6 +5130,10 @@ export default function App() {
 
   const appContent = (
     <SidebarProvider defaultOpen={true}>
+      {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
+          collapse the sidebar to its icon rail; navigating back out of them
+          expands it again. */}
+      <SidebarAutoCollapse activeTab={activeTab} />
       <AppChromeSidebar
         hidden={playgroundOnboarding}
         onNavigate={handleNavigate}
@@ -5088,13 +5142,12 @@ export default function App() {
         activeProjectId={activeProjectId}
         onSwitchProject={handleSidebarSwitchProject}
         onOpenProjectSettings={handleSidebarOpenProjectSettings}
-        onCreateProject={handleCreateProject}
+        onCreateProject={handleSidebarCreateProject}
         onDeleteProject={handleDeleteProjectAndLeave}
         isLoadingProjects={isLoadingRemoteProjects}
         activeOrganizationId={activeOrganizationId}
         activeOrganizationName={activeOrganizationName}
         onSwitchOrganization={handleSidebarSwitchOrganization}
-        onSwitchActiveOrganization={handleSwitchActiveOrganization}
         onProjectShared={handleProjectShared}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
@@ -5106,6 +5159,7 @@ export default function App() {
       {/* The inset is the linen shell: the sidebar and top bar read as one
           continuous outer chrome and the off-white panel below is the working
           surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-row has-[[data-agent-dock=bottom]]:flex-col">
       <SidebarInset className="bg-sidebar flex flex-col min-h-0">
         <AppChromeHeader
           // "make nux clean" (#2868) hid this on Home for everyone, but that
@@ -5143,6 +5197,7 @@ export default function App() {
         organizationId={activeOrganizationId ?? null}
         activeTab={activeTab}
       />
+      </div>
       <Dialog
         open={showTrialDecisionModal}
         onOpenChange={(open) => {

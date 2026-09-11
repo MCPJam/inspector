@@ -12,6 +12,7 @@
  * branches surface later, parameterize `useChatSession` and route the
  * agent through it instead.
  */
+import { pinEvalTurn, readEvalScope } from "@/lib/mcpjam-agent/eval-scope";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { generateId } from "ai";
@@ -537,6 +538,7 @@ export function useMcpjamAgentSession(
       if (!providedSessionId) {
         config.seeded = true;
       }
+      pinEvalTurn(chatSessionId);
       turnIndexRef.current += 1;
       turnStartedAtRef.current = Date.now();
       // Turn timing/attribution lives on the shared Chat entry so a hand-off
@@ -568,7 +570,7 @@ export function useMcpjamAgentSession(
       // Appending is free. Built here, at send time, so it reflects wherever
       // the user has navigated themselves since the last turn.
       void sendMessage({
-        parts: [buildUiContextPart(), { type: "text", text: trimmed }],
+        parts: [...(readEvalScope(chatSessionId) ? [] : [buildUiContextPart()]), { type: "text", text: trimmed }],
         metadata: withMessageTimestampMetadata(undefined, Date.now()),
       });
     },

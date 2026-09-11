@@ -5,11 +5,17 @@ import type { WebMcpToolDescriptor } from "@/shared/webmcp-inspector-protocol";
 /**
  * Annotation badges.
  *
- * Shown as CLAIMS, never as guarantees. They are written by the inspected page
- * — third-party content — and Chromium 151 does not even carry their values
- * through for imperatively-registered tools, so an absent `readOnly` says
- * nothing at all. Nothing in the product may derive a permission decision from
- * them; the tooltips say as much to whoever is reading the panel.
+ * Shown as CLAIMS, never as guarantees. They are written by the inspected page,
+ * which is third-party content, and a page that wants its tool run without a
+ * prompt has every incentive to describe it favourably. Nothing in the product
+ * derives a permission decision from them, and the tooltips say so to whoever
+ * is reading the panel.
+ *
+ * The values themselves are reported faithfully — the browser carries a page's
+ * `readOnlyHint` and `untrustedContentHint` through unchanged — so nothing here
+ * hedges about the TRANSPORT. The one exception is `consequential`, which the
+ * pinned Chromium does not report at all; its tooltip says that rather than
+ * letting an absent badge read as "the page did not claim it".
  */
 function AnnotationBadges({ tool }: { tool: WebMcpToolDescriptor }) {
   const badges: { label: string; title: string }[] = [];
@@ -31,26 +37,30 @@ function AnnotationBadges({ tool }: { tool: WebMcpToolDescriptor }) {
     badges.push({
       label: "consequential",
       title:
-        "The page claims this tool may have a consequential side effect. A claim, not a guarantee — model-driven calls still ask before running.",
+        "The page claims this tool may have a consequential side effect. A claim, not a guarantee — model-driven calls still ask before running. The browser build this inspector pins does not report this annotation at all, so a tool that declares it may show no badge here.",
     });
   }
   if (tool.annotations?.autosubmit) {
     badges.push({
       label: "autosubmit",
-      title: "Declared with the autosubmit attribute.",
+      title:
+        "Declared with the toolautosubmit attribute, so invoking it submits the form rather than only filling it in.",
     });
   }
   if (tool.fromSubframe) {
     badges.push({
       label: "subframe",
+      // The origin heading above each group already says WHICH publisher this
+      // is; what the badge adds is that it is not the page you typed in.
       title:
-        "Registered by a frame inside the page rather than the page itself.",
+        "Registered by a frame inside the page rather than the page itself. When its origin differs from the page's, it is a cross-origin frame running in its own process — a third-party widget, inspected through a CDP session of its own.",
     });
   }
   if (tool.registrationKind === "declarative") {
     badges.push({
       label: "declarative",
-      title: "Declared in markup rather than registered from script.",
+      title:
+        "Declared in markup (a <form toolname>) rather than registered from script. Its input schema was derived by the browser from the form's own controls.",
     });
   }
   if (badges.length === 0) return null;

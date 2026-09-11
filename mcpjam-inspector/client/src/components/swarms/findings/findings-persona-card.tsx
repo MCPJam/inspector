@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { SentimentPill } from "./findings-sentiment-pill";
 import { FindingsGoalInspect } from "./findings-goal-inspect";
+import type { FindingsSessionScope } from "./findings-goal-sessions";
 import type { JourneyStageId } from "./journey-stages";
 import type { PersonaFindingsModel } from "./findings-derivation";
 
@@ -20,7 +21,7 @@ export function FindingsPersonaCard({
   selectedStage,
   onSelectStage,
   onOpenSession,
-  projectId,
+  sessionScope,
 }: {
   persona: PersonaFindingsModel;
   /** id of the tab that labels this panel (aria wiring). */
@@ -30,7 +31,8 @@ export function FindingsPersonaCard({
   selectedStage: JourneyStageId;
   onSelectStage: (stage: JourneyStageId) => void;
   onOpenSession?: (sessionId: string) => void;
-  projectId?: string;
+  /** How this surface pages a goal's sessions. Omit for no click-through. */
+  sessionScope?: FindingsSessionScope;
 }) {
   return (
     <section
@@ -113,7 +115,7 @@ export function FindingsPersonaCard({
                     selectedStage={selectedStage}
                     onSelectStage={onSelectStage}
                     onOpenSession={onOpenSession}
-                    projectId={projectId}
+                    sessionScope={sessionScope}
                   />
                 </div>
               ) : null}
