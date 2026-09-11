@@ -22,6 +22,12 @@ export interface Organization {
    * org (opening one crashed the route: Sentry INSPECTOR-CLIENT-24C).
    */
   seatPending?: boolean;
+  /**
+   * A guest's own organization, created implicitly to give their projects a
+   * billing subject. It has no admins to configure anything, so org-admin
+   * surfaces (today: the spend budget) hide themselves for it.
+   */
+  isPersonal?: boolean;
 }
 
 export const ORGANIZATION_CREATION_LIMIT = 1;
@@ -76,6 +82,24 @@ export function canManageOrgCredits(
  * `canManageOrgCredits`: `isCreator` alone does not open those screens.
  */
 export function canManageOrgModels(
+  org: Pick<Organization, "myRole"> | null | undefined,
+): boolean {
+  if (!org) return false;
+  return org.myRole === "owner" || org.myRole === "admin";
+}
+
+/**
+ * Whether the current user may change the GitHub Checks integration.
+ *
+ * The backend's `authorizeWrite` requires org ADMIN for every write on that
+ * page, while the availability query it renders behind requires only MEMBER —
+ * on purpose, so a member is told the integration exists rather than that the
+ * org does not. Without this the page rendered every control live for someone
+ * the backend was always going to refuse, and the refusal arrived as a toast
+ * after the click. Same owner/admin pair as `canManageOrgModels`, kept separate
+ * because the two surfaces are free to diverge.
+ */
+export function canManageGithubChecks(
   org: Pick<Organization, "myRole"> | null | undefined,
 ): boolean {
   if (!org) return false;

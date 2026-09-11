@@ -1,13 +1,11 @@
-/**
- * Glue between the side-panel store and the rest of the app:
- * - wires the global ⌘\ / Ctrl+\ shortcut to toggle the panel (skipping
- *   inputs/textareas/contentEditable to stay friendly to the composer);
- * - renders the panel itself.
- *
- * Lives at the SidebarProvider scope (above `<Outlet>`) so the panel survives
- * navigation between tabs without unmounting the in-flight `useChat`
- * instance.
- */
+import {
+  openEvalChat,
+  useEvalAgentScopes,
+} from "@/lib/mcpjam-agent/eval-scope";
+import { createPortal } from "react-dom";
+import { useEvalChatHost } from "@/lib/mcpjam-agent/eval-chat-host";
+import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
+/** Keep scoped eval chat in its dashboard and general chat available app-wide. */
 import { useEffect } from "react";
 import { AgentSidePanel } from "@/components/mcpjam-agent/AgentSidePanel";
 import { useAppReady } from "@/hooks/use-app-ready";
@@ -33,16 +31,36 @@ export function AgentSidePanelMount({
   organizationId,
   activeTab,
 }: AgentSidePanelMountProps) {
+  const sessionId = useAgentPanelStore((s) => s.activeSessionId);
+  const scoped = useEvalAgentScopes(
+    (s) =>
+      !!sessionId && (!!s.scopes[sessionId] || sessionId.startsWith("eval-")),
+  );
+  const isOpen = useAgentPanelStore((s) => s.isOpen);
   const toggle = useAgentPanelStore((s) => s.toggle);
+  const host = useEvalChatHost((s) => s.host);
+  const inEvaluate = activeTab === "evaluate";
+  const describeScope = useDescribeSurface((s) => s.scope);
+  const describeReady = !!describeScope && !!host && host.projectId === describeScope.projectId;
+  const resolvedProjectId = inEvaluate && host ? host.projectId : projectId;
 
   useEffect(() => {
+    if (!inEvaluate && scoped && isOpen)
+      useAgentPanelStore.getState().setOpen(false);
+  }, [inEvaluate, scoped, isOpen]);
+
+  useEffect(() => {
+    if (inEvaluate && !describeReady) return;
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "\\") return;
       if (!(event.metaKey || event.ctrlKey)) return;
       if (event.shiftKey || event.altKey) return;
       if (isEditableTarget(event.target)) return;
-      event.preventDefault();
       const willOpen = !useAgentPanelStore.getState().isOpen;
+      const context =
+        willOpen && inEvaluate ? describeScope : undefined;
+
+      event.preventDefault();
       if (willOpen) {
         track("mcpjam_agent_panel_opened", {
           location: "agent_side_panel",
@@ -50,11 +68,16 @@ export function AgentSidePanelMount({
           tab: activeTab,
         });
       }
-      toggle();
+      if (context) openEvalChat(context);
+      else {
+        if (willOpen && scoped)
+          useAgentPanelStore.getState().setActiveSession(null, null);
+        toggle();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTab, toggle]);
+  }, [activeTab, inEvaluate, describeReady, describeScope, scoped, toggle]);
 
   // Drop the persisted session pointer whenever the panel state and the
   // current active project disagree about which project the session belongs
@@ -67,20 +90,32 @@ export function AgentSidePanelMount({
   const appReady = useAppReady();
   const activeSessionId = useAgentPanelStore((s) => s.activeSessionId);
   const activeSessionProjectId = useAgentPanelStore(
-    (s) => s.activeSessionProjectId
+    (s) => s.activeSessionProjectId,
   );
   useEffect(() => {
     if (appReady.status !== "ready") return;
+    if (inEvaluate && !host) return;
     if (activeSessionId === null) return;
-    if (activeSessionProjectId === projectId) return;
+    if (activeSessionProjectId === resolvedProjectId) return;
     useAgentPanelStore.getState().setActiveSession(null, null);
-  }, [activeSessionId, activeSessionProjectId, appReady.status, projectId]);
+  }, [
+    activeSessionId,
+    activeSessionProjectId,
+    appReady.status,
+    resolvedProjectId,
+    inEvaluate,
+    host,
+  ]);
 
-  return (
+  if (inEvaluate && (!describeReady || !scoped)) return null;
+  if (!inEvaluate && scoped) return null;
+  if (inEvaluate && scoped && !host) return null;
+  const panel = (
     <AgentSidePanel
-      projectId={projectId}
-      organizationId={organizationId}
+      projectId={resolvedProjectId}
+      organizationId={inEvaluate && host ? host.organizationId : organizationId}
       activeTab={activeTab}
     />
   );
+  return inEvaluate && host ? createPortal(panel, host.element) : panel;
 }

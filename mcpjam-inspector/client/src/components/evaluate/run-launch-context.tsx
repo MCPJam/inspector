@@ -86,7 +86,7 @@ export function RunLaunchContext({
       data-testid="evaluate-run-launch-context"
     >
       {environmentRef ? (
-        <Fact label="Environment">
+        <Fact label="Client">
           <EnvironmentChip
             name={environmentRef.name}
             environmentId={environmentRef.environmentId}

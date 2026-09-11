@@ -18,6 +18,10 @@ vi.mock("../../../config", () => ({
   },
   hostedBrowserEnabled: () => configState.hostedBrowser,
   webmcpInspectorHostedEnabled: () => configState.webmcpHosted,
+  // Composed exactly as `config.ts` composes it, for HOSTED_MODE true: BOTH
+  // the kill switch and the hosted gate have to be on.
+  webmcpInspectorReachable: () =>
+    configState.enabled && configState.webmcpHosted,
   HOSTED_MODE: true,
 }));
 
@@ -58,7 +62,8 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 const providerState = vi.hoisted(() => ({
   deps: [] as Array<Record<string, unknown>>,
 }));
-vi.mock("../../../services/webmcp-inspector/browserd-provider", () => ({
+vi.mock("../../../services/webmcp-inspector/browserd-provider", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../services/webmcp-inspector/browserd-provider")>()),
   createBrowserdWebMcpProvider: (deps: Record<string, unknown>) => {
     providerState.deps.push(deps);
     return {
@@ -381,6 +386,7 @@ describe("hosted WebMCP inspector — the invocation's answer", () => {
       toolKey: "https://example.test::echo",
       input,
       source: "chat",
+      expectedBinding: { frameId: "frame-main", registrationSeq: 1 },
     });
 
   beforeEach(async () => {

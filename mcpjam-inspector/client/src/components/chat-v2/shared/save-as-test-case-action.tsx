@@ -36,6 +36,7 @@ import {
 } from "@/components/evals/client-attachments-editor";
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 type SaveAsTestCaseActionProps = {
   /**
@@ -149,7 +150,7 @@ export function SaveAsTestCaseAction({
 
   const availableSuites = useMemo(
     () =>
-      (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
+      (suitesOverview ?? []).filter((entry) => !isCiOwnedSuite(entry.suite)),
     [suitesOverview],
   );
 
