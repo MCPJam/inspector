@@ -22,8 +22,8 @@ const PINNED = LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion;
 const PINNED_CODEX = LOCAL_HARNESS_MANIFEST.codex.adapterVersion;
 
 /** A manifest with conformance recorded, so the platform/profile rules can be
- *  exercised on their own. Everything shipped has an EMPTY conformance version
- *  until evidence exists, which the first test below is about. */
+ *  exercised on their own. Overrides are applied last, so passing an empty
+ *  `lifecycleConformanceVersion` is how the no-evidence case is expressed. */
 function conformed(
   base: LocalHarnessCompatibility,
   overrides: Partial<LocalHarnessCompatibility> = {},
@@ -38,18 +38,41 @@ function conformed(
 }
 
 describe("the shipped manifest", () => {
-  it("enables nothing until conformance evidence is recorded", () => {
-    for (const harnessId of ["claude-code", "codex"] as const) {
-      const result = resolveLocalCompatibility({
-        harnessId,
-        platform: "linux",
-        targetKind: "local-native",
-        installedAdapterVersion:
-          LOCAL_HARNESS_MANIFEST[harnessId].adapterVersion,
-        permissionProfile: "workspace-edits",
-      });
+  it("enables nothing for a harness with no conformance evidence", () => {
+    // The property is the resolver's, not the repository's: no evidence means
+    // no local execution, whatever the shipped manifest happens to carry. This
+    // used to query LOCAL_HARNESS_MANIFEST directly and lean on every entry
+    // being empty, which stopped being true the moment claude-code's
+    // conformance run was stamped.
+    for (const harnessId of SUPPORTED_LOCAL_HARNESS_IDS) {
+      const result = resolveLocalCompatibility(
+        {
+          harnessId,
+          platform: "linux",
+          targetKind: "local-native",
+          installedAdapterVersion:
+            LOCAL_HARNESS_MANIFEST[harnessId].adapterVersion,
+          permissionProfile: "workspace-edits",
+        },
+        conformed(LOCAL_HARNESS_MANIFEST[harnessId], {
+          lifecycleConformanceVersion: "",
+        }),
+      );
       expect(result.ok).toBe(false);
       expect(result).toMatchObject({ status: "conformance-missing" });
+    }
+  });
+
+  it("records conformance evidence for every harness it calls native", () => {
+    // The invariant that replaces "everything shipped is empty", and the one
+    // that actually matters now. A non-empty `nativePlatforms` is the manifest
+    // claiming a platform can run this harness locally; an empty conformance
+    // version is the manifest saying nobody proved it. Both at once is the
+    // state `conformance-missing` exists to catch at runtime — and it should
+    // never get as far as runtime.
+    for (const manifest of Object.values(LOCAL_HARNESS_MANIFEST)) {
+      if (manifest.nativePlatforms.length === 0) continue;
+      expect(manifest.lifecycleConformanceVersion).not.toBe("");
     }
   });
 
