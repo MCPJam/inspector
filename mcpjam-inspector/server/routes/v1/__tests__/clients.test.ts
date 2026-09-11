@@ -430,6 +430,138 @@ describe("v1 client routes", () => {
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
 
+    // ── CONVEX-1ZM ────────────────────────────────────────────────────────
+    // Convex validates `input` before the mutation runs, and prod Convex
+    // redacts that error to a bare "Server Error", so an unknown config key
+    // reached the caller as a generic 500 naming nothing. One agent caller
+    // retried the identical body five times in three minutes.
+    describe("unknown config fields", () => {
+      it("names a misplaced nested field and points at its real home (400)", async () => {
+        const res = await request("POST", "/api/v1/projects/p1/clients", {
+          body: {
+            name: "Alpha",
+            config: {
+              modelId: "gpt-4o-mini",
+              initialize: {
+                clientInfo: { name: "codex", version: "0.60.0" },
+                supportedProtocolVersions: ["2025-11-25"],
+              },
+            },
+          },
+        });
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as {
+          code?: string;
+          message?: string;
+          details?: { unknownFields?: string[] };
+        };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        expect(body.message).toContain("initialize");
+        expect(body.message).toContain("mcpProfile.initialize");
+        expect(body.details?.unknownFields).toEqual(["initialize"]);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      });
+
+      it("names the field but never echoes config VALUES", async () => {
+        const res = await request("POST", "/api/v1/projects/p1/clients", {
+          body: {
+            name: "Alpha",
+            config: {
+              modelId: "gpt-4o-mini",
+              connectionDefaults: {
+                headers: { authorization: "Bearer super-secret" },
+                requestTimeout: 10_000,
+              },
+              initialize: { clientInfo: { name: "codex" } },
+            },
+          },
+        });
+        expect(res.status).toBe(400);
+        const raw = await res.text();
+        expect(raw).toContain("initialize");
+        expect(raw).not.toContain("super-secret");
+      });
+
+      it("names every unknown field, not just the first", async () => {
+        const res = await request("POST", "/api/v1/projects/p1/clients", {
+          body: {
+            name: "Alpha",
+            config: { modelId: "gpt-4o-mini", initialize: {}, nonsense: 1 },
+          },
+        });
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as {
+          message?: string;
+          details?: { unknownFields?: string[] };
+        };
+        expect(body.details?.unknownFields).toEqual(["initialize", "nonsense"]);
+        // No invented home for a field that has none.
+        expect(body.message).toContain("`nonsense`");
+        expect(body.message).not.toContain("mcpProfile.nonsense");
+      });
+
+      // The lookup key is caller-supplied, so a prototype-chain hit would
+      // render `function toString() { [native code] }` as the suggested home.
+      it("does not answer a prototype key with an inherited value", async () => {
+        const res = await request("POST", "/api/v1/projects/p1/clients", {
+          body: {
+            name: "Alpha",
+            config: { modelId: "gpt-4o-mini", toString: 1, constructor: 2 },
+          },
+        });
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { message?: string };
+        expect(body.message).toContain("`toString`");
+        expect(body.message).not.toContain("native code");
+        expect(body.message).not.toContain("did you mean");
+      });
+
+      // Declared on the SDK's `HostConfigInputV2` and canonicalized, but no
+      // backend validator or column accepts it, so it fails closed like any
+      // other unknown key until that gap is closed.
+      it("rejects `oauthProfile`, which no write accepts yet (400)", async () => {
+        const res = await request("POST", "/api/v1/projects/p1/clients", {
+          body: {
+            name: "Alpha",
+            config: { modelId: "gpt-4o-mini", oauthProfile: {} },
+          },
+        });
+        expect(res.status).toBe(400);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      });
+
+      // The read DTO adds these two; stripping them is what makes the obvious
+      // `get` → edit one field → `update` loop work, so they must not read as
+      // the caller's mistake.
+      it("still accepts the read-only keys a `get` round-trip carries", async () => {
+        convexMutationMock.mockResolvedValue({ hostId: "h1" });
+        mockQuery({ "hosts:getHost": DETAIL_ROW });
+        const res = await request("POST", "/api/v1/projects/p1/clients", {
+          body: {
+            name: "Alpha",
+            config: { modelId: "gpt-4o-mini", id: "hc1", schemaVersion: 2 },
+          },
+        });
+        expect(res.status).toBe(201);
+        expect(createdHostInput()).toEqual({ modelId: "gpt-4o-mini" });
+      });
+
+      // Guards the dangerous direction: an allowlist missing a key our own
+      // templates emit would reject a perfectly valid config.
+      it("accepts a real catalog template posted back as a caller config", async () => {
+        convexMutationMock.mockResolvedValue({ hostId: "h1" });
+        mockQuery({ "hosts:getHost": DETAIL_ROW });
+        const template = getCatalogTemplate(
+          bundledHostCompatCatalog(),
+          "claude"
+        );
+        const res = await request("POST", "/api/v1/projects/p1/clients", {
+          body: { name: "Claude", config: template },
+        });
+        expect(res.status).toBe(201);
+      });
+    });
+
     // ── FORWARD-CLIENT INVARIANT ─────────────────────────────────────────
     // A client with no model cannot back a headless environment: resolution
     // falls through to `ENV_MODEL_REQUIRED` at LAUNCH, long after creation.
@@ -690,6 +822,23 @@ describe("v1 client routes", () => {
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
 
+    // The replacement branch takes a whole config, so it reaches the same
+    // Convex validator create does — and used to fail the same opaque way.
+    it("names an unknown field inside a whole-config replacement (400)", async () => {
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+        body: {
+          expectedConfigId: "hc1",
+          config: { modelId: "gpt-4o-mini", initialize: {} },
+        },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("mcpProfile.initialize");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
     describe("the model invariant", () => {
       it.each([
         ["empty", ""],
@@ -805,8 +954,9 @@ describe("v1 client routes", () => {
     });
 
     // Only the two derived keys are dropped. Anything else the caller invents
-    // still reaches the backend validator and still fails closed there.
-    it("leaves an unrecognized key alone", async () => {
+    // is REFUSED — still never dropped silently, but no longer forwarded for
+    // Convex to reject as a 500 that names nothing (CONVEX-1ZM).
+    it("refuses an unrecognized key instead of forwarding it", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
       const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
@@ -815,13 +965,11 @@ describe("v1 client routes", () => {
           config: { modelId: "openai/gpt-5", typodField: 1 },
         },
       });
-      expect(res.status).toBe(200);
-      expect(convexMutationMock).toHaveBeenCalledWith(
-        "hosts:updateHost",
-        expect.objectContaining({
-          input: { modelId: "openai/gpt-5", typodField: 1 },
-        })
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { message?: string }).message).toContain(
+        "typodField"
       );
+      expect(convexMutationMock).not.toHaveBeenCalled();
     });
   });
 
@@ -1164,6 +1312,18 @@ describe("v1 client routes", () => {
         body: { expectedConfigId: "hc1", set: { temperature: 0.2 } },
       });
       expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("names an unknown config field on the alias too (400)", async () => {
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request("PATCH", "/api/v1/projects/p1/hosts/h1", {
+        body: { config: { modelId: "gpt-4o-mini", initialize: {} } },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("mcpProfile.initialize");
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
 

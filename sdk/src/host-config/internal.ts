@@ -24,6 +24,7 @@ export {
 export { sha256Hex, computeHostConfigHashV2 } from "./hash.js";
 export {
   HARNESS_IDS,
+  HOST_CONFIG_INPUT_V2_WIRE_KEYS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
   isHarness,
   OAUTH_AUTH_MODELS,
