@@ -96,15 +96,14 @@ export function createFrameWireReader(
      * kind it does not know.
      */
     video?: boolean;
+    sharp?: boolean;
   } = {},
 ): {
   push(chunk: ArrayBuffer | Uint8Array): void;
   /** Stop decoding and release the pending bitmap, if any. */
   close(): void;
 } {
-  const decoder = createFrameStreamDecoder(
-    options.video ? { video: true } : {},
-  );
+  const decoder = createFrameStreamDecoder(options);
   let closed = false;
   /**
    * The newest sequence already handed to the caller.

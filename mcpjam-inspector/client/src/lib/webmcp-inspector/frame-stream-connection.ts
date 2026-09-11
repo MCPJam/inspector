@@ -22,7 +22,6 @@ import type {
   WebMcpBinaryFrame,
   WebMcpInputEvent,
 } from "@/shared/webmcp-inspector-protocol";
-import { getSessionToken } from "@/lib/session-token";
 
 /**
  * Close codes the server sends, and what each one MEANS to the ladder.
@@ -118,7 +117,7 @@ export function openWebMcpFrameStream(
       clearInterval(handle as ReturnType<typeof setInterval>));
 
   const url = buildWebMcpFramesWsUrl(opts);
-  const token = opts.token ?? getSessionToken();
+  const token = opts.token;
   const factory =
     opts.wsFactory ??
     ((u: string, p: string[]) =>

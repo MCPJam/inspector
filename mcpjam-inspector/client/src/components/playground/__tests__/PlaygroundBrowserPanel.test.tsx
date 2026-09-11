@@ -212,9 +212,7 @@ describe("expand and close", () => {
 });
 
 describe("browserPanelAvailable", () => {
-  it("needs the host to carry the browser built-in", () => {
-    // A panel offering a browser the model cannot use would be a promise the
-    // host config does not keep.
+  it("offers local setup before Browser is enabled for the client", () => {
     expect(
       browserPanelAvailable({
         hostHasBrowser: false,
@@ -222,7 +220,7 @@ describe("browserPanelAvailable", () => {
         isAuthenticated: true,
         localBrowserRunning: false,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("offers one anyway when this machine simply has a browser running", () => {
@@ -321,4 +319,9 @@ describe("the browser a chat owns", () => {
     );
     expect(screen.queryByTestId("browser-pane")).toBeNull();
   });
+});
+
+it("makes a restored session browser available to its authenticated owner without a host", () => {
+  expect(browserPanelAvailable({ hostHasBrowser: false, sessionHasBrowser: true, selectedEngine: "cloud", isAuthenticated: true, localBrowserRunning: false })).toBe(true);
+  expect(browserPanelAvailable({ hostHasBrowser: false, sessionHasBrowser: true, selectedEngine: "cloud", isAuthenticated: false, localBrowserRunning: false })).toBe(false);
 });

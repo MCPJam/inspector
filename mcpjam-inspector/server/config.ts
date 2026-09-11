@@ -109,8 +109,8 @@ export const SCHEDULED_EVALS_WRITE_ENABLED =
  * unreachable.
  *
  * Hosted reachability is a second, independent gate — see
- * `webmcpInspectorHostedEnabled` — and the client-side gate is still the
- * `webmcp-inspector-enabled` PostHog flag.
+ * `webmcpInspectorHostedEnabled` — and client visibility follows the
+ * deployment's `local-browser-enabled` / `hosted-browser-enabled` rollout.
  */
 export const WEBMCP_INSPECTOR_ENABLED =
   process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";

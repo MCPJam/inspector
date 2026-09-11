@@ -48,6 +48,13 @@ function appInventory(): Set<string> {
 
 /** Route -> the `PlatformApiClient` method that calls it. */
 const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
+  "post /chat-sessions/browser": "createChatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/open": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/command": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/note": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/trace": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/artifact": "chatSessionBrowser",
+  "post /chat-sessions/{sessionId}/browser/close": "chatSessionBrowser",
   // The browser operation transport is shared by all agent-session routes.
   "post /browser-sessions/session": "browserSession",
   "post /browser-sessions/sessions": "browserSession",

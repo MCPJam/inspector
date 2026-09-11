@@ -1,3 +1,6 @@
+import { lock } from "proper-lockfile";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { readFile, unlink } from "node:fs/promises";
 import {
   capabilityFingerprint as hashToken,
@@ -20,11 +23,28 @@ export function createDeviceConsent(consentFilePath: () => string) {
    * revoke's verify-then-unlink spans multiple awaits — without exclusion, a
    * concurrent grant can rotate the capability between the verify and the
    * unlink and the stale revoke would delete the NEW capability. The file is
-   * only ever mutated through this module in the single server process, so an
-   * in-process chain is sufficient exclusion. `verify` stays lock-free: it is
+   * shared by local server processes. A filesystem lock coordinates them,
+   * while an in-process chain keeps our own mutations ordered. `verify` stays lock-free: it is
    * a pure read, and the enforcement path must never queue behind mutations.
    */
-  const withConsentMutationLock = createCapabilityMutationLock();
+  const serialize = createCapabilityMutationLock();
+  const withConsentMutationLock = <T>(
+    operation: () => Promise<T>,
+  ): Promise<T> =>
+    serialize(async () => {
+      const file = consentFilePath();
+      await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+      const release = await lock(file, {
+        realpath: false,
+        retries: { retries: 40, minTimeout: 25, maxTimeout: 100 },
+        stale: 10_000,
+      });
+      try {
+        return await operation();
+      } finally {
+        await release();
+      }
+    });
 
   async function readPersistedConsent(): Promise<PersistedConsent | null> {
     try {
@@ -111,7 +131,8 @@ export function createDeviceConsent(consentFilePath: () => string) {
   async function verifyAndFingerprint(
     token: string | null | undefined,
   ): Promise<string | null> {
-    if (typeof token !== "string" || token.length < 16 || token.length > 256) return null;
+    if (typeof token !== "string" || token.length < 16 || token.length > 256)
+      return null;
     const persisted = await readPersistedConsent();
     if (!persisted) return null;
     return capabilityMatches(token, persisted.tokenHash)

@@ -12,7 +12,7 @@ const rolloutCache = new Map<
   string,
   { until: number; value: Promise<boolean> }
 >();
-async function rolloutEnabled(
+export async function rolloutEnabled(
   local: boolean,
   actorId: string,
 ): Promise<boolean> {

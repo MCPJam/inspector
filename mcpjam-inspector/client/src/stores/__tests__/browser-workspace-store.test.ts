@@ -11,6 +11,8 @@ const reset = () =>
     conversations: {},
     size: DEFAULT_BROWSER_PANEL_SIZE,
     collapsedRailForBrowser: false,
+    revealSeq: 0,
+    revealConversationId: null,
   });
 
 describe("browser workspace layout", () => {
@@ -22,12 +24,15 @@ describe("browser workspace layout", () => {
     expect(state.size).toBe(60);
   });
 
-  it("is idempotent to open, because browsing calls it on every tool call", () => {
+  it("keeps the conversation layout stable when browsing calls it again", () => {
     const { openBrowser } = useBrowserWorkspaceStore.getState();
     openBrowser("a");
     const first = useBrowserWorkspaceStore.getState();
     openBrowser("a");
-    expect(useBrowserWorkspaceStore.getState()).toBe(first);
+    const again = useBrowserWorkspaceStore.getState();
+    expect(again.conversations).toBe(first.conversations);
+    expect(again.revealSeq).toBe(first.revealSeq + 1);
+    expect(again.revealConversationId).toBe("a");
   });
 
   it("puts an expanded browser away entirely when it closes", () => {
@@ -105,6 +110,7 @@ describe("browser workspace layout", () => {
     );
     expect(persisted.state).toMatchObject({ size: 72 });
     expect(persisted.state).not.toHaveProperty("open");
+    expect(persisted.state).not.toHaveProperty("revealSeq");
     expect(persisted.state.conversations.a).toEqual({
       open: true,
       expanded: false,

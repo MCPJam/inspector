@@ -19,6 +19,7 @@ import {
 } from "../chat-dispatch";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import type { PageToolSnapshotEntry } from "@/shared/chat-v2";
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
 
 const ENTRY: PageToolSnapshotEntry = {
   binding: { frameId: "frame-main", registrationSeq: 1 },
@@ -307,6 +308,7 @@ describe("invokePageToolForChat", () => {
 
 describe("page-tool approval dispatch", () => {
   beforeEach(() => {
+    useTrafficLogStore.getState().clear();
     vi.restoreAllMocks();
     __resetPageToolDispatchForTests();
     setAdvertisedPageTools([ENTRY]);
@@ -323,6 +325,7 @@ describe("page-tool approval dispatch", () => {
       }),
     ).toBe(true);
     expect(invoke).not.toHaveBeenCalled();
+    expect(useTrafficLogStore.getState().mcpServerItems).toHaveLength(0);
   });
 
   it("fulfills an approved call exactly once and ships its result", async () => {
@@ -351,6 +354,10 @@ describe("page-tool approval dispatch", () => {
       ENTRY.binding,
     );
     expect(addToolOutput).toHaveBeenCalledTimes(1);
+    expect(useTrafficLogStore.getState().mcpServerItems).toMatchObject([
+      { kind: "webmcp", method: "add_to_cart", serverName: ENTRY.origin, direction: "RECEIVE", payload: { output: { content: [{ type: "text", text: "ok" }] } } },
+      { kind: "webmcp", method: "add_to_cart", serverId: ENTRY.sessionId, direction: "SEND", payload: { input: { sku: "ABC-123" } } },
+    ]);
     expect(addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({
         tool: ENTRY.alias,
@@ -380,6 +387,18 @@ describe("page-tool approval dispatch", () => {
 
     expect(invoke).not.toHaveBeenCalled();
     expect(addToolOutput).not.toHaveBeenCalled();
+    expect(useTrafficLogStore.getState().mcpServerItems).toHaveLength(0);
+  });
+
+  it("logs a thrown page invocation as an error and still supplies the result", async () => {
+    stubStore("session-1", async () => { throw new Error("Browser disconnected"); });
+    const addToolOutput = vi.fn();
+    await fulfillApprovedPageToolCall({ toolCallId: "tc-failed", alias: ENTRY.alias, input: {}, addToolOutput });
+    expect(useTrafficLogStore.getState().mcpServerItems).toMatchObject([
+      { direction: "RECEIVE", payload: { output: { isError: true, content: [{ text: expect.stringContaining("Browser disconnected") }] } } },
+      { direction: "SEND" },
+    ]);
+    expect(addToolOutput).toHaveBeenCalledOnce();
   });
 });
 
@@ -413,7 +432,7 @@ describe("snapshotPageToolsForTurn", () => {
     });
   });
 
-  it("advertises the open page's tools when opted in", () => {
+  it("advertises the open page's tools", () => {
     const entries = snapshotPageToolsForTurn();
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
@@ -423,14 +442,9 @@ describe("snapshotPageToolsForTurn", () => {
     expect(entries[0].alias).toMatch(/^page_[0-9a-f]{8}$/);
   });
 
-  it("advertises nothing until someone opts in", () => {
-    useWebmcpInspectorStore.setState({ chatEnabled: false });
-    expect(snapshotPageToolsForTurn()).toEqual([]);
-  });
-
   it("advertises nothing for a session that has closed", () => {
-    // The opt-in and the tool list both survive a close, so this is the only
-    // thing between a dead browser and a model being offered its tools.
+    // The tool list survives a close, so this is the only thing between a
+    // dead browser and a model being offered its tools.
     useWebmcpInspectorStore.setState({
       session: { ...SESSION!, status: "closed" },
     });

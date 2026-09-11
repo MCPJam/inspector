@@ -11,12 +11,15 @@ import {
 } from "@/hooks/use-environment-preview";
 import { RedesignedHostCanvas } from "@/components/hosts/redesigned/canvas/RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "@/components/hosts/redesigned/canvas/canvasBuilder";
-import type { HostRedesignContext } from "@/components/hosts/redesigned/types";
+import { BROWSER_NODE_ID, type HostRedesignContext } from "@/components/hosts/redesigned/types";
 import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
   type HostConfigDtoV2,
 } from "@/lib/client-config-v2";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
+import { useBrowserProfileName } from "@/hooks/useBrowserProfileName";
+import { useBrowserEnabled } from "@/hooks/useComputersEnabled";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 
 /**
@@ -99,6 +102,7 @@ export function EnvironmentCanvasPanel({
   isAuthenticated,
 }: EnvironmentCanvasPanelProps) {
   const navigate = useAppNavigate();
+  const browsersEnabled = useBrowserEnabled();
   // Archived environments are keyed off the ROW, never off a parsed error: the
   // preview endpoint 409s on them (`ENV_ARCHIVED`), so passing `null` keeps the
   // doomed fetch — including the hook's focus-return refetch — from ever firing.
@@ -108,6 +112,7 @@ export function EnvironmentCanvasPanel({
     revision
   );
   const { host, isLoading: hostLoading } = useHost({ isAuthenticated, hostId });
+  const browserProfileName = useBrowserProfileName(projectId, host?.config?.browserProfileId);
   const { hosts } = useHostList({
     isAuthenticated,
     projectId,
@@ -119,7 +124,7 @@ export function EnvironmentCanvasPanel({
     if (!preview || !host) return null;
     const listedHost = hosts.find((item) => item.hostId === hostId);
     return buildRedesignedHostCanvas(
-      buildEnvironmentCanvasContext({
+      { ...buildEnvironmentCanvasContext({
         hostName:
           (listedHost ? clientDisplayName(listedHost) : null) ??
           host.name ??
@@ -128,16 +133,16 @@ export function EnvironmentCanvasPanel({
         hostConfig: host.config ?? null,
         previewServers: preview.servers,
         projectServers: servers,
-      }),
+      }), browsersEnabled, browserProfileName },
       []
     );
-  }, [preview, host, hosts, hostId, servers]);
+  }, [preview, host, hosts, hostId, servers, browsersEnabled, browserProfileName]);
 
   // Stable across renders: the canvas memoizes its matrix context on
   // `onRequestEdit`, so a fresh closure would re-render the matrix subtree
   // through that context on every parent render.
-  const handleRequestEdit = useCallback(() => {
-    navigate(buildHostsPath(hostId));
+  const handleRequestEdit = useCallback((nodeId?: string) => {
+    navigate(nodeId === BROWSER_NODE_ID ? buildHostFocusTabPath(hostId, "browser") : buildHostsPath(hostId));
   }, [navigate, hostId]);
 
   if (isArchived) {
