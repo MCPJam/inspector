@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useId, useRef, useState } from "react";
+import { casePassesNeeded } from "@mcpjam/sdk/contract";
 import { Button } from "@mcpjam/design-system/button";
 import type { SuiteVerdictPolicyDefaults } from "./suite-settings-draft";
 
@@ -50,13 +51,15 @@ const VALIDITY_PLACEHOLDERS = {
  * required one it reverts to the stored value: there is no default to fall
  * back to, and committing 0 would turn an empty box into "accept anything".
  */
-function PercentInput({
+export function PercentInput({
   label,
   value,
   placeholder,
   onCommit,
   ariaLabel,
   required = false,
+  disabled = false,
+  aligned = false,
 }: {
   label?: string;
   value: number | undefined;
@@ -66,6 +69,8 @@ function PercentInput({
   ariaLabel: string;
   /** A blank reverts to the stored value instead of committing `undefined`. */
   required?: boolean;
+  disabled?: boolean;
+  aligned?: boolean;
 }) {
   const asPercent = value === undefined ? "" : String(Math.round(value * 100));
   const [text, setText] = useState(asPercent);
@@ -112,14 +117,15 @@ function PercentInput({
   };
 
   return (
-    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+    <label className={`flex items-center gap-2 text-xs text-muted-foreground ${aligned ? "justify-between" : ""}`}>
       {label ? <span className="min-w-[9rem]">{label}</span> : null}
-      <span className="flex items-center gap-1">
+      <span className="relative flex shrink-0 items-center gap-1">
         <input
-          className="h-8 w-20 rounded-md border border-input bg-background px-2 text-right text-xs text-foreground"
+          className={`h-8 ${aligned ? "w-40" : "w-20"} rounded-md border border-input bg-background px-2 text-right text-xs text-foreground`}
           value={text}
           inputMode="decimal"
           placeholder={placeholder}
+          disabled={disabled}
           aria-label={ariaLabel}
           onFocus={() => setEditing(true)}
           onChange={(event) => setText(event.target.value)}
@@ -132,11 +138,20 @@ function PercentInput({
             }
           }}
         />
-        <span aria-hidden>%</span>
+        <span aria-hidden className={aligned ? "absolute left-full ml-2" : undefined}>%</span>
       </span>
     </label>
   );
 }
+
+/**
+ * The case-threshold hint under the v2 quality-gate controls.
+ *
+ * Exported so the ledger test and later quality-gate rows pin the same
+ * sentence. Store a fraction; the field next to this hint renders `%`.
+ */
+export const QUALITY_GATE_THRESHOLD_HINT =
+  "Each case is graded on its own iterations. A case passes when at least this share of them passes.";
 
 /**
  * The v2 policy controls: how many trials, and how many of them must pass.
@@ -144,9 +159,11 @@ function PercentInput({
 export function VerdictPolicyV2Controls({
   defaults,
   onChange,
+  aligned = false,
 }: {
   defaults: SuiteVerdictPolicyDefaults | undefined;
   onChange: (next: SuiteVerdictPolicyDefaults) => void;
+  aligned?: boolean;
 }) {
   const repetitionsId = useId();
   // A v2 suite always HAS defaults; a suite mid-upgrade in the draft may not
@@ -156,19 +173,23 @@ export function VerdictPolicyV2Controls({
     repetitions: 1,
     passThreshold: 1,
   };
+  const passesNeeded = casePassesNeeded(
+    current.repetitions,
+    current.passThreshold,
+  );
   return (
     <div className="space-y-2">
       <div data-setting-key="repetitions">
         <label
-          className="flex items-center gap-2 text-xs text-muted-foreground"
+          className={`flex items-center gap-2 text-xs text-muted-foreground ${aligned ? "justify-between" : ""}`}
           htmlFor={repetitionsId}
         >
           <span className="min-w-[9rem]">Repetitions</span>
           <select
             id={repetitionsId}
-            className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+            className={`h-8 ${aligned ? "w-40 shrink-0" : ""} rounded-md border border-input bg-background px-2 text-xs text-foreground`}
             value={current.repetitions}
-            aria-label="Trials per case unless the case overrides it"
+            aria-label="Iterations per case unless the case overrides it"
             onChange={(event) =>
               onChange({ ...current, repetitions: Number(event.target.value) })
             }
@@ -183,9 +204,10 @@ export function VerdictPolicyV2Controls({
       </div>
       <div data-setting-key="passThreshold">
         <PercentInput
+          aligned={aligned}
           label="Pass threshold"
           value={current.passThreshold}
-          ariaLabel="Fraction of a case's trials that must pass"
+          ariaLabel="Fraction of a case's iterations that must pass"
           required
           onCommit={(fraction) => {
             // A required field never commits a blank, so `undefined` cannot
@@ -197,8 +219,9 @@ export function VerdictPolicyV2Controls({
         />
       </div>
       <p className="text-[11px] text-muted-foreground/60">
-        Each case is graded on its own trials. A case passes when at least this
-        share of them passes.
+        {QUALITY_GATE_THRESHOLD_HINT} A case with {current.repetitions} iteration
+        {current.repetitions === 1 ? "" : "s"} needs {passesNeeded} pass
+        {passesNeeded === 1 ? "" : "es"}.
       </p>
     </div>
   );
@@ -249,13 +272,13 @@ export function VerdictValidityControls({
         className="flex items-center gap-2 text-xs text-muted-foreground"
         htmlFor={trialsId}
       >
-        <span className="min-w-[9rem]">Minimum eligible trials</span>
+        <span className="min-w-[9rem]">Minimum eligible iterations</span>
         <input
           id={trialsId}
           className="h-8 w-20 rounded-md border border-input bg-background px-2 text-right text-xs text-foreground"
           inputMode="numeric"
           placeholder={VALIDITY_PLACEHOLDERS.minEligibleTrials}
-          aria-label="Minimum gradeable trials before a run may be decided"
+          aria-label="Minimum gradeable iterations before a run may be decided"
           value={validity.minEligibleTrials ?? ""}
           onChange={(event) => {
             const raw = event.target.value.trim();
@@ -273,14 +296,14 @@ export function VerdictValidityControls({
         label="Minimum completion"
         value={validity.minCompletionRate}
         placeholder={VALIDITY_PLACEHOLDERS.minCompletionRate}
-        ariaLabel="Minimum share of trials that must have completed"
+        ariaLabel="Minimum share of iterations that must have completed"
         onCommit={(fraction) => setValidity({ minCompletionRate: fraction })}
       />
       <PercentInput
         label="Maximum grader errors"
         value={validity.maxEvaluatorErrorRate}
         placeholder={VALIDITY_PLACEHOLDERS.maxEvaluatorErrorRate}
-        ariaLabel="Maximum share of trials whose grader errored"
+        ariaLabel="Maximum share of iterations whose grader errored"
         onCommit={(fraction) =>
           setValidity({ maxEvaluatorErrorRate: fraction })
         }
@@ -327,7 +350,7 @@ export function VerdictPolicyUpgradeButton({
       </Button>
       <p className="text-[11px] text-muted-foreground/60">
         {disabledReason ??
-          `Grades each case on its own trials: ${proposal.repetitions} repetition${
+          `Grades each case on its own iterations: ${proposal.repetitions} repetition${
             proposal.repetitions === 1 ? "" : "s"
           }, ${Math.round(proposal.passThreshold * 100)}% threshold. One-way.`}
       </p>

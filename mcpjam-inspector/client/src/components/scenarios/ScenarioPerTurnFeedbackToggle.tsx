@@ -108,7 +108,7 @@ export function ScenarioPerTurnFeedbackToggle({
     } catch (err) {
       setOptimistic((prev) => ({ ...prev, enabled: null }));
       toast.error(
-        convexErrMessage(err, "Failed to update the per-turn ratings setting")
+        convexErrMessage(err, "Failed to update the per-turn ratings setting"),
       );
     } finally {
       inFlightRef.current = false;
@@ -133,7 +133,7 @@ export function ScenarioPerTurnFeedbackToggle({
     } catch (err) {
       setOptimistic((prev) => ({ ...prev, style: null }));
       toast.error(
-        convexErrMessage(err, "Failed to update the rating widget style")
+        convexErrMessage(err, "Failed to update the rating widget style"),
       );
     } finally {
       inFlightRef.current = false;
@@ -173,7 +173,15 @@ export function ScenarioPerTurnFeedbackToggle({
         <div
           role="radiogroup"
           aria-label="Rating widget style"
-          className="mt-3 inline-flex rounded-md border border-border/60 p-0.5"
+          // Recessed track, raised selected pill (BB-176). The version this
+          // replaces distinguished the two by `bg-muted` against a
+          // TRANSPARENT track, which in dark mode is a ~2% lightness
+          // difference and no outline — a tester could not tell which style
+          // was selected. Now the track is filled, the selected pill is
+          // LIGHTER than it, and it carries its own border and weight, so the
+          // signal survives both themes and does not rest on the shadow
+          // (which dark mode all but erases).
+          className="mt-3 inline-flex rounded-lg border border-border/60 bg-muted p-0.5"
           data-testid="user-testing-per-turn-feedback-style"
         >
           {STYLE_OPTIONS.map((option) => {
@@ -186,10 +194,10 @@ export function ScenarioPerTurnFeedbackToggle({
                 aria-checked={selected}
                 title={option.hint}
                 disabled={saving}
-                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
                   selected
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "border border-border bg-background font-semibold text-foreground shadow-sm"
+                    : "border border-transparent font-medium text-muted-foreground hover:text-foreground"
                 } ${saving ? "cursor-default opacity-70" : ""}`}
                 onClick={() => void handleStyleChange(option.value)}
                 data-testid={`user-testing-per-turn-feedback-style-${option.value}`}

@@ -274,7 +274,7 @@ describe("useOnboarding", () => {
     expect(resumed.result.current.isGuidedPostConnect).toBe(true);
   });
 
-  it("does not resume guided mode after the NUX was shown", () => {
+  it("resumes guided mode after the NUX was shown but no message was sent", () => {
     localStorage.setItem(
       "mcp-onboarding-state",
       JSON.stringify({ status: "seen", shownAt: Date.now() })
@@ -295,8 +295,237 @@ describe("useOnboarding", () => {
       })
     );
 
+    expect(result.current.phase).toBe("connected_guided");
+    expect(result.current.isGuidedPostConnect).toBe(true);
+  });
+
+  it("reconnects the guided server on a reload that resumed an unfinished run", async () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const onConnect = vi.fn();
+
+    renderHook(() =>
+      useOnboarding({
+        servers: {},
+        onConnect,
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
+    );
+
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
+  });
+
+  it("retires guided mode once the first message completed onboarding", () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "completed", completedAt: Date.now() })
+    );
+    const connectedServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "connected"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: connectedServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
+    );
+
+    expect(result.current.phase).toBe("completed");
+    expect(result.current.isGuidedPostConnect).toBe(false);
+    expect(result.current.isFirstRunUnfinished).toBe(false);
+  });
+
+  it("keeps a resumed run unfinished when the guided server fails to connect", () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const failedServers = {
+      [EXCALIDRAW_SERVER_NAME]: {
+        ...createServer(EXCALIDRAW_SERVER_NAME, "failed"),
+        lastError: "Failed to connect to Excalidraw",
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: failedServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
+    );
+
+    // The guided copy stays withheld — the server never came up — but the run
+    // is still this device's to finish, and only a sent message retires it.
+    expect(result.current.phase).toBe("connect_error");
+    expect(result.current.isGuidedPostConnect).toBe(false);
+    expect(result.current.isFirstRunUnfinished).toBe(true);
+  });
+
+  it("keeps a resumed run unfinished while the guided connect is still hanging", () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const connectingServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "connecting"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: connectingServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
+    );
+
+    // A connect that hangs never reaches connect_error, so this phase is where
+    // a resumed run sits indefinitely. It is unfinished all the same.
+    expect(result.current.phase).toBe("connecting_excalidraw");
+    expect(result.current.isGuidedPostConnect).toBe(false);
+    expect(result.current.isFirstRunUnfinished).toBe(true);
+  });
+
+  it("does not decide a resumed run from a servers map that is still hydrating", () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const onConnect = vi.fn();
+    const hydratedServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "disconnected"
+      ),
+      "existing-server": createServer("existing-server", "connected"),
+    };
+
+    const { result, rerender } = renderHook(
+      ({
+        servers,
+        areServersHydrated,
+      }: {
+        servers: Record<string, ServerWithName>;
+        areServersHydrated: boolean;
+      }) =>
+        useOnboarding({
+          servers,
+          onConnect,
+          isSignedInWithWorkOs: false,
+          isWorkOsAuthLoading: false,
+          areServersHydrated,
+        }),
+      {
+        initialProps: {
+          servers: {} as Record<string, ServerWithName>,
+          areServersHydrated: false,
+        },
+      }
+    );
+
+    // An empty map that is still loading means "unknown", not "no servers":
+    // a phase committed here is one the recompute effect can never correct.
+    expect(result.current.phase).toBe("dismissed");
+    expect(result.current.isAwaitingFirstRunServers).toBe(true);
+
+    rerender({ servers: hydratedServers, areServersHydrated: true });
+
+    expect(result.current.phase).toBe("dismissed");
+    expect(result.current.isFirstRunUnfinished).toBe(false);
+    expect(result.current.isAwaitingFirstRunServers).toBe(false);
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  it("starts the guided run once an empty servers map has hydrated", async () => {
+    const onConnect = vi.fn();
+
+    const { result, rerender } = renderHook(
+      ({ areServersHydrated }: { areServersHydrated: boolean }) =>
+        useOnboarding({
+          servers: {},
+          onConnect,
+          isSignedInWithWorkOs: false,
+          isWorkOsAuthLoading: false,
+          areServersHydrated,
+        }),
+      { initialProps: { areServersHydrated: false } }
+    );
+
+    expect(onConnect).not.toHaveBeenCalled();
+
+    rerender({ areServersHydrated: true });
+
+    expect(result.current.phase).toBe("connecting_excalidraw");
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
+  });
+
+  it("resumes guided mode when the remote row is seen but this device never finished", () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const connectedServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "connected"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: connectedServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        hasRemoteOnboardingState: true,
+        hasSeenOnboarding: true,
+      })
+    );
+
+    expect(result.current.phase).toBe("connected_guided");
+    expect(result.current.isGuidedPostConnect).toBe(true);
+  });
+
+  it("keeps guided mode retired for a returning identity with no local first run", () => {
+    const connectedServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "connected"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: connectedServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        hasRemoteOnboardingState: true,
+        hasSeenOnboarding: true,
+      })
+    );
+
     expect(result.current.phase).toBe("dismissed");
     expect(result.current.isGuidedPostConnect).toBe(false);
+    expect(result.current.isFirstRunUnfinished).toBe(false);
   });
 
   it("uses the guest user row over localStorage when deciding first-run eligibility", async () => {

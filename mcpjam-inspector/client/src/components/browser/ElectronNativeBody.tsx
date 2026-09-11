@@ -1,0 +1,390 @@
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { PaneMessage } from "@/components/computer/PaneMessage";
+import {
+  PaneControlBar,
+  type PaneControl,
+} from "@/components/browser/PaneControlBar";
+import { StatsOverlay } from "@/components/browser/StatsOverlay";
+import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
+
+/**
+ * The agent's browser, as the browser — not a picture of it.
+ *
+ * On the desktop app the page is a `WebContentsView` running in this very
+ * process, so the JPEG path is a round trip through encode, base64, parse,
+ * decode and paint to show somebody a page their own machine already has.
+ * Here the main process parents that view into the app's own window at this
+ * pane's bounds, and what the person looks at IS Chromium: no encoder, no
+ * socket, no decode, and input latency that is a repaint rather than a round
+ * trip.
+ *
+ * ── What this component does NOT have ────────────────────────────────────
+ * No `<img>`, no `<canvas>`, no pointer handlers and no keyboard handlers.
+ * The view is a real browser; it takes its own input from the OS, which is the
+ * whole reason the latency goes away. So this file renders the CONTROL BAR
+ * (shared with every other engine, from `PaneControlBar`) and a measured empty
+ * slot the view is placed over — the pane's job is to say where, not to draw.
+ *
+ * ── Why the empty slot still matters ─────────────────────────────────────
+ * A `WebContentsView` is a sibling of the renderer, not a DOM node in it: it
+ * paints OVER whatever the app draws in that rectangle, and it does not scroll,
+ * clip or z-index with the page. So the slot has to be measured continuously
+ * (a rail drag, a window resize, a sidebar toggle) and the view has to be taken
+ * back out the moment this pane stops being the visible tab — otherwise a live
+ * browser sits over the app's UI while somebody is reading their logs.
+ *
+ * ── The lease is still the daemon's ──────────────────────────────────────
+ * `visible: true` is a REQUEST. The main process asks the surface, and the
+ * surface answers to the daemon's lease — the same authority that refuses the
+ * model's commands. A view held by somebody else is hidden rather than merely
+ * deafened, because a visible native view of a page another person is typing
+ * their password into is an observation.
+ */
+export function ElectronNativeBody({
+  session,
+  holder,
+  control,
+  holding,
+  consentGranted,
+  consentToken,
+  onTakeControl,
+  onHandBack,
+  placeholder,
+  error,
+  active = true,
+  engine = "local",
+  extra,
+  chrome = "bar",
+  onViewportSize,
+}: {
+  chrome?: "bar" | "none";
+  /** The browser this pane is looking at, or null while none is running. */
+  session: { bootId: string } | null;
+  /** This pane's lease identity, compared against the daemon's holder. */
+  holder: string;
+  control: PaneControl;
+  /** Does this pane hold the browser? Only used for what the bar says. */
+  holding: boolean;
+  consentGranted: boolean;
+  consentToken?: string | null;
+  onTakeControl?: (() => void) | undefined;
+  onHandBack?: (() => void) | undefined;
+  /** The engine's empty and blocked states — no browser yet, no consent. */
+  placeholder?: React.ReactNode;
+  error?: string | null;
+  /**
+   * Is this pane the rail's visible tab?
+   *
+   * Load-bearing HERE in a way it is not for a canvas: an inactive canvas is
+   * simply a hidden DOM node, but an inactive native view would keep painting
+   * a browser over whatever the rail switched to.
+   */
+  active?: boolean;
+  engine?: string;
+  extra?: ReactNode;
+  /** Negotiate the page size through the session's resize barrier. */
+  onViewportSize?: (size: { width: number; height: number }) => void;
+}) {
+  const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
+  const slotRef = useRef<HTMLDivElement | null>(null);
+  /** What the main process last said actually happened. */
+  const [placed, setPlaced] = useState<{
+    shown: boolean;
+    reason?: "unknown" | "no_window" | "bad_bounds" | "lease" | "consent";
+  }>({ shown: false });
+
+  /**
+   * Does this pane want the page on screen right now?
+   *
+   * Consent is in here and not only in the placeholder because a native view
+   * is not something a placeholder can cover: the view paints OVER the app, so
+   * a revoked grant has to take it out of the window, not draw a message in
+   * front of it.
+   */
+  const wantVisible = active && consentGranted && !!session;
+
+  /**
+   * The latest ask, coalesced into an animation frame.
+   *
+   * A `ResizeObserver` during a rail drag fires once per frame and each call
+   * crosses a process boundary; without this a drag is hundreds of IPC round
+   * trips, and the view lags the rail it is supposed to be inside.
+   */
+  const pendingRef = useRef<number | null>(null);
+  const bootIdRef = useRef<string | null>(null);
+  bootIdRef.current = session?.bootId ?? null;
+  /**
+   * The browser this pane last asked to have ON SCREEN, including pending IPC.
+   *
+   * Tracked separately from `bootIdRef` because a view that is parented into
+   * the window can only be taken out BY NAME, and by the time the pane knows
+   * it should come out — a project switch, a reap, a browser that was stopped
+   * — `session` is already null and the name is gone. Without this the last
+   * view of the previous project stays painted over whatever the rail shows
+   * next, and nothing short of an unmount removes it.
+   */
+  const shownRef = useRef<string | null>(null);
+  const requestRevision = useRef(0);
+  const takeoverRef = useRef(chrome === "none");
+  takeoverRef.current = chrome === "none";
+  const holderRef = useRef(holder);
+  holderRef.current = holder;
+  const consentTokenRef = useRef(consentToken);
+  consentTokenRef.current = consentToken;
+  const wantVisibleRef = useRef(wantVisible);
+  wantVisibleRef.current = wantVisible;
+  const onViewportSizeRef = useRef(onViewportSize);
+  onViewportSizeRef.current = onViewportSize;
+
+  const push = useCallback(() => {
+    const api = window.electronAPI?.agentBrowser;
+    if (!api) return;
+    const revision = ++requestRevision.current;
+    const bootId = bootIdRef.current;
+    // A browser we are no longer looking at comes out FIRST, and by its own
+    // name — this is the only moment its id is still known.
+    const previous = shownRef.current;
+    if (previous && previous !== bootId) {
+      shownRef.current = null;
+      setPlaced({ shown: false });
+      void api
+        .setViewport({
+          consentToken: consentTokenRef.current,
+          bootId: previous,
+          visible: false,
+        })
+        .catch(() => {});
+    }
+    if (!bootId) return;
+    const element = slotRef.current;
+    const visible = wantVisibleRef.current && !!element;
+    // The ELEMENT's viewport rectangle, which is the window's content
+    // coordinate space: an Electron window's content area and its renderer's
+    // viewport share an origin, so no conversion belongs here. The zoom factor
+    // does — and it is applied in the MAIN process, which is the side that
+    // actually knows it.
+    const rect = element?.getBoundingClientRect();
+    // Remember pending placement too: teardown may run before IPC responds.
+    if (visible) shownRef.current = bootId;
+    if (visible && rect && rect.width > 0 && rect.height > 0) {
+      onViewportSizeRef.current?.({ width: rect.width, height: rect.height });
+    }
+    void api
+      .setViewport({
+        consentToken: consentTokenRef.current,
+        bootId,
+        holder: holderRef.current,
+        takeover: takeoverRef.current,
+        visible,
+        ...(visible && rect
+          ? {
+              bounds: {
+                x: rect.left,
+                y: rect.top,
+                width: rect.width,
+                height: rect.height,
+              },
+            }
+          : {}),
+      })
+      .then((result) => {
+        if (requestRevision.current !== revision) return;
+        // Once the latest ask settles, remember only what was parented.
+        shownRef.current = result.shown ? bootId : null;
+        setPlaced(
+          result.reason
+            ? { shown: result.shown, reason: result.reason }
+            : { shown: result.shown },
+        );
+      })
+      .catch(() => {
+        if (requestRevision.current !== revision) return;
+        shownRef.current = null;
+        // A channel that is not there, or a main process mid-teardown. The
+        // pane says nothing rather than showing an error over a browser that
+        // may be perfectly fine — `shown: false` is already the honest state.
+        setPlaced({ shown: false });
+      });
+  }, []);
+
+  const schedule = useCallback(() => {
+    if (pendingRef.current !== null) return;
+    pendingRef.current = requestAnimationFrame(() => {
+      pendingRef.current = null;
+      push();
+    });
+  }, [push]);
+
+  // Measure, and keep measuring. A rail drag, a window resize, a sidebar
+  // toggle and a scroll all move the slot without React re-rendering this.
+  useEffect(() => {
+    const element = slotRef.current;
+    if (!element) return;
+    const observer =
+      typeof ResizeObserver === "function"
+        ? new ResizeObserver(() => schedule())
+        : null;
+    observer?.observe(element);
+    window.addEventListener("resize", schedule);
+    // Capturing, because a scroll inside ANY ancestor moves this slot and only
+    // the capture phase sees a scroll on a nested container.
+    window.addEventListener("scroll", schedule, true);
+    schedule();
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
+      if (pendingRef.current !== null) {
+        cancelAnimationFrame(pendingRef.current);
+        pendingRef.current = null;
+      }
+    };
+  }, [schedule]);
+
+  // Re-ask whenever the ANSWER could change: a different browser, a lease that
+  // moved, a pane that stopped being the visible tab, a grant withdrawn.
+  useEffect(() => {
+    schedule();
+  }, [schedule, session?.bootId, holder, control, wantVisible, chrome]);
+
+  /**
+   * Take the view OUT of the window on the way past.
+   *
+   * The one piece of teardown that cannot be skipped. A canvas that unmounts
+   * takes its pixels with it; a native view that unmounts keeps painting over
+   * whatever the app draws next, because it is a sibling of the renderer
+   * rather than a node inside it.
+   *
+   * Its own effect with an empty dependency list, and it reads the boot id
+   * from a ref, so a re-render never runs the hide and a bootId that changed
+   * during teardown still hides the RIGHT browser.
+   */
+  useEffect(() => {
+    return () => {
+      ++requestRevision.current;
+      const api = window.electronAPI?.agentBrowser;
+      // Whatever is actually in the window — which is not necessarily the
+      // session this render knows about, and is the only thing worth hiding.
+      const last = shownRef.current ?? bootIdRef.current;
+      shownRef.current = null;
+      if (!api || !last) return;
+      void api
+        .setViewport({
+          consentToken: consentTokenRef.current,
+          bootId: last,
+          visible: false,
+        })
+        .catch(() => {});
+    };
+  }, []);
+
+  // One sample per pane, so the session summary can say the picture never went
+  // through a wire at all — which is the number this whole path exists for.
+  useEffect(() => {
+    if (!placed.shown) return;
+    paneFrameStats.noteEngine(engine);
+    paneFrameStats.noteTransport("native");
+  }, [placed.shown, engine]);
+
+  /**
+   * What the pane says when the page is not on screen.
+   *
+   * Only ever a MESSAGE, never a picture: there is nothing to draw here, and
+   * the one case with something to explain is a lease somebody else holds —
+   * where the view is hidden on purpose and a person staring at an empty slot
+   * deserves to be told why.
+   */
+  const message = (() => {
+    if (placeholder) return placeholder;
+    if (!session) return null;
+    if (placed.shown) return null;
+    if (placed.reason === "lease") {
+      return (
+        <PaneMessage dashed>
+          <span data-testid="rail-browser-native-lease">
+            Someone else has taken control of this browser. The view will come
+            back when they hand it back.
+          </span>
+        </PaneMessage>
+      );
+    }
+    if (placed.reason === "unknown") {
+      return (
+        <PaneMessage dashed>
+          <span data-testid="rail-browser-native-gone">
+            This browser is no longer running. Open it again to watch.
+          </span>
+        </PaneMessage>
+      );
+    }
+    return null;
+  })();
+
+  return (
+    <>
+      {chrome === "bar" ? (
+        <PaneControlBar
+          control={control}
+          onTakeControl={onTakeControl}
+          onHandBack={onHandBack}
+          extra={extra}
+          statsOpen={statsOpen}
+          onToggleStats={(next) => {
+            paneFrameStats.setEnabled(next);
+            setStatsOpen(next);
+          }}
+        />
+      ) : null}
+      <div
+        className={
+          chrome === "none"
+            ? "relative flex min-h-0 flex-1 flex-col"
+            : "relative flex min-h-0 flex-1 flex-col px-3 pb-3"
+        }
+      >
+        {/*
+          IN FLOW, not over the picture. There is no picture: the view paints
+          over the slot's rectangle, so an overlay inside it would be on screen
+          in the DOM and invisible on the glass. Taking its own strip costs the
+          view some height and is the only way the numbers are readable at all.
+        */}
+        {statsOpen ? <StatsOverlay engine={engine} inline /> : null}
+        <div
+          ref={slotRef}
+          data-testid="rail-browser-native-slot"
+          data-shown={placed.shown ? "true" : "false"}
+          data-holding={holding ? "true" : undefined}
+          aria-label="The agent's browser"
+          // Nothing is drawn in here — the view paints over it — so the slot is
+          // an empty box whose only job is to have a rectangle. It FLEXES
+          // rather than filling: the stats strip above takes its own height,
+          // and a slot that still claimed the whole box would put the view
+          // back over it.
+          className="min-h-0 w-full flex-1"
+        />
+        {/*
+          OVER the slot rather than beside it. The slot must keep its rectangle
+          even while the view is hidden — it is what the pane will ask for the
+          moment the lease frees — so a message that pushed it out of the way
+          would report a shrinking box on every refusal.
+        */}
+        {message ? (
+          <div className="pointer-events-none absolute inset-x-3 bottom-3 top-0">
+            <div className="pointer-events-auto h-full">{message}</div>
+          </div>
+        ) : null}
+      </div>
+      {error ? (
+        <div className="shrink-0 px-3 pb-2 text-xs text-destructive">
+          {error}
+        </div>
+      ) : null}
+    </>
+  );
+}

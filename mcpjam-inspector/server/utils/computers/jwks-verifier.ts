@@ -35,8 +35,10 @@ type KeySet = ReturnType<typeof createLocalJWKSet>;
 /** The claims every computer token carries; the shape is shared across surfaces. */
 export interface ComputerTokenClaims {
   userId: string;
-  computerId: string;
+  computerId?: string;
+  sandboxRowId?: string;
   projectId: string;
+  sessionId?: string;
 }
 
 export interface JwksVerifierSpec {
@@ -129,13 +131,14 @@ export function createComputerJwksVerifier(
     payload: Record<string, unknown>,
   ): ComputerTokenClaims | null {
     if (payload.purpose !== spec.purpose) return null;
-    if (typeof payload.sub !== "string" || payload.sub.length === 0) return null;
-    if (
-      typeof payload.computerId !== "string" ||
-      payload.computerId.length === 0
-    ) {
+    if (typeof payload.sub !== "string" || payload.sub.length === 0)
       return null;
-    }
+    const hasComputer =
+      typeof payload.computerId === "string" && payload.computerId.length > 0;
+    const hasSandbox =
+      typeof payload.sandboxRowId === "string" &&
+      payload.sandboxRowId.length > 0;
+    if (hasComputer === hasSandbox) return null;
     if (
       typeof payload.projectId !== "string" ||
       payload.projectId.length === 0
@@ -144,8 +147,12 @@ export function createComputerJwksVerifier(
     }
     return {
       userId: payload.sub,
-      computerId: payload.computerId,
+      ...(hasComputer ? { computerId: payload.computerId as string } : {}),
+      ...(hasSandbox ? { sandboxRowId: payload.sandboxRowId as string } : {}),
       projectId: payload.projectId,
+      ...(typeof payload.sessionId === "string" && payload.sessionId.length > 0
+        ? { sessionId: payload.sessionId }
+        : {}),
     };
   }
 

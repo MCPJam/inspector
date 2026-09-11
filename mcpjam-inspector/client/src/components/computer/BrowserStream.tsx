@@ -32,9 +32,69 @@ interface BrowserStreamProps {
 /** Close codes the server sends. 4401 is recoverable — mint a new token. */
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_GONE = 4404;
+/**
+ * The two ways a HEALTHY stream ends without the server deciding anything:
+ * `1001` is a replica draining (every deploy to this environment does it) and
+ * `1006` is the socket dying with no close frame at all. Both are the same
+ * situation from here — the far end went away and will be back — and both were
+ * previously terminal, so a routine deploy left a member staring at "The
+ * connection to the browser dropped." over a browser that was still running.
+ */
+const CLOSE_GOING_AWAY = 1001;
+const CLOSE_ABNORMAL = 1006;
 /** Bounded, so a token rejected for any OTHER reason cannot spin forever. */
 const MAX_RECONNECTS = 5;
 const RECONNECT_DELAY_MS = 500;
+
+export interface StreamCloseOutcome {
+  /** Reconnect (with a fresh token), rather than showing a dead pane. */
+  retry: boolean;
+  /** What to show if this is the end of the line. */
+  detail: string;
+}
+
+/**
+ * What a close code means, as a pure function so the policy is testable
+ * without a socket, a DOM, or noVNC.
+ *
+ * `reason` is the server's own sentence — the stream proxy sends real ones
+ * ("Could not reach the browser stream.", "The browser stream did not
+ * respond.") and dropping them on the floor is how an explained failure
+ * reaches a member as an unexplained one.
+ */
+export function streamCloseOutcome(event: {
+  code: number;
+  reason?: string;
+}): StreamCloseOutcome {
+  const reason = event.reason?.trim();
+  switch (event.code) {
+    case CLOSE_UNAUTHORIZED:
+      // The 60s token expired, which is how a long view normally ends.
+      return { retry: true, detail: "The browser session expired." };
+    case CLOSE_GOING_AWAY:
+    case CLOSE_ABNORMAL:
+      return { retry: true, detail: "The connection to the browser dropped." };
+    case CLOSE_GONE:
+      return {
+        retry: false,
+        detail: "The browser on this computer is no longer running.",
+      };
+    default:
+      return {
+        retry: false,
+        detail: reason || "The connection to the browser dropped.",
+      };
+  }
+}
+
+/**
+ * Back off between reconnects rather than retrying five times in 2.5s: the
+ * common cause is a deploy, and a replica needs longer than that to come back.
+ * 0.5s → 8s across the five attempts, ~15s in total.
+ */
+export function reconnectDelayMs(consecutive: number): number {
+  return RECONNECT_DELAY_MS * 2 ** Math.max(0, consecutive - 1);
+}
 
 export function BrowserStream({
   mintToken,
@@ -104,28 +164,21 @@ export function BrowserStream({
       socket.binaryType = "arraybuffer";
       socket.addEventListener("close", (event) => {
         if (disposed) return;
-        if (
-          event.code === CLOSE_UNAUTHORIZED &&
-          consecutiveRef.current < MAX_RECONNECTS
-        ) {
+        const outcome = streamCloseOutcome(event);
+        if (outcome.retry && consecutiveRef.current < MAX_RECONNECTS) {
           consecutiveRef.current += 1;
-          // The 60s token expired, which is how a long view normally ends.
-          // Reconnecting mints a fresh one; nothing about the session changed.
-          // Capped and delayed, so a token that is being rejected for some
-          // other reason cannot spin.
+          // Reconnecting mints a fresh token; nothing about the session
+          // changed. Capped and backed off, so a socket failing for some other
+          // reason cannot spin.
           setStatus("connecting");
           retry = setTimeout(
             () => setAttempt((n) => n + 1),
-            RECONNECT_DELAY_MS,
+            reconnectDelayMs(consecutiveRef.current),
           );
           return;
         }
         setStatus("lost");
-        setDetail(
-          event.code === CLOSE_GONE
-            ? "The browser on this computer is no longer running."
-            : "The connection to the browser dropped.",
-        );
+        setDetail(outcome.detail);
       });
 
       rfb = new RFB(container, socket);

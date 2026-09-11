@@ -53,11 +53,12 @@ export type SeededHostConfigInput = {
   // stays free of cross-imports, like `harness` below. Absent ⇒ legacy
   // all-visible; `{ mode: "explicit", skillIds: [] }` = explicitly no skills.
   skillSelection?:
-    | { mode: "all-visible" }
-    | { mode: "explicit"; skillIds: string[] };
+    { mode: "all-visible" } | { mode: "explicit"; skillIds: string[] };
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: { kind: "personal"; workdir?: string };
+  // Optional saved browser profile selected for hosted browser sessions.
+  browserProfileId?: string;
   // Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"`
   // run a real CLI runtime (requires an attached computer); absent ⇒ MCPJam's
   // emulated engine.
@@ -161,6 +162,7 @@ export function emptyHostConfigInputV2(
             : {}),
         }
       : undefined,
+    browserProfileId: partial.browserProfileId,
     // String literal — near-pass-through like progressiveToolDiscovery.
     harness: partial.harness,
     connectionDefaults: {
