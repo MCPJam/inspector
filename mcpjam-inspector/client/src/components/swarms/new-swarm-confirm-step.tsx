@@ -996,8 +996,8 @@ export function NewSwarmConfirmStep({
           </p>
           <p className="sr-only" data-testid="new-swarm-launch-session-estimate">
             This launch will run {launchSessionEstimate}{" "}
-            {launchSessionEstimate === 1 ? "conversation" : "conversations"} total
-            across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
+            {launchSessionEstimate === 1 ? "conversation" : "conversations"}{" "}
+            total across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
           </p>
           {environmentLabels.length > 0 && proposed.length > 0 ? (
             <p
@@ -1239,8 +1239,10 @@ export function NewSwarmConfirmStep({
               value={iterations}
               disabled={launching}
               data-testid="new-swarm-iterations"
-              onChange={(event) => onIterationsChange(Number(event.target.value))}
-              className="w-20 text-center font-mono"
+              onChange={(event) =>
+                onIterationsChange(Number(event.target.value))
+              }
+              className="w-20 text-center font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
             <Button
               type="button"
@@ -1253,19 +1255,27 @@ export function NewSwarmConfirmStep({
               <Plus className="size-4" />
             </Button>
           </div>
-          <div className="flex items-baseline justify-between gap-4 rounded-xl bg-muted/50 px-3 py-2.5">
+          <div className="flex items-baseline justify-between gap-4 rounded-xl border border-border bg-muted/20 px-4 py-3">
             <div>
               <p
-                className="text-sm leading-relaxed text-muted-foreground"
+                className="text-sm text-muted-foreground"
                 data-testid="new-swarm-conversation-equation"
               >
-                {newJourneyCount} {newJourneyCount === 1 ? "goal" : "goals"} ×{" "}
-                {iterations} {iterations === 1 ? "iteration" : "iterations"} ×{" "}
-                {fanoutEnvironmentCount}{" "}
+                <strong className="font-semibold tabular-nums text-foreground">
+                  {newJourneyCount}
+                </strong>{" "}
+                {newJourneyCount === 1 ? "goal" : "goals"} ×{" "}
+                <strong className="font-semibold tabular-nums text-foreground">
+                  {iterations}
+                </strong>{" "}
+                {iterations === 1 ? "iteration" : "iterations"} ×{" "}
+                <strong className="font-semibold tabular-nums text-foreground">
+                  {fanoutEnvironmentCount}
+                </strong>{" "}
                 {fanoutEnvironmentCount === 1 ? "environment" : "environments"}
               </p>
               {reusedCount > 0 ? (
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                <p className="mt-1 text-[11px] text-muted-foreground">
                   Plus {reusedCount} reused{" "}
                   {reusedCount === 1 ? "goal" : "goals"}, counted at the
                   iterations already saved on {reusedCount === 1 ? "it" : "them"}
@@ -1273,9 +1283,9 @@ export function NewSwarmConfirmStep({
                 </p>
               ) : null}
             </div>
-            <p className="shrink-0 font-mono text-xl font-semibold text-foreground">
+            <p className="shrink-0 font-mono text-xl font-semibold tabular-nums">
               {launchSessionEstimate.toLocaleString()}
-              <span className="ml-1 font-sans text-sm font-normal text-muted-foreground">
+              <span className="ml-1 font-sans text-xs font-normal text-muted-foreground">
                 conversations
               </span>
             </p>
