@@ -92,6 +92,8 @@ describe("navigateInputHistory", () => {
       index: 0,
       draft: "",
       applied: "newest",
+      // The prefix this walk came by — its identity if the list is replaced.
+      path: ["newest"],
     });
   });
 
@@ -214,6 +216,37 @@ describe("navigateInputHistory", () => {
     })!;
 
     expect(afterSwap.value).toBe("a different thread");
+    expect(afterSwap.navigation?.index).toBe(0);
+  });
+
+  it("restarts the walk when the replacement thread shares the walked entry", () => {
+    // The hole a current-entry-only check left: two threads routinely carry
+    // the same message, and one sitting at the walked index kept the old walk
+    // alive — the next step then jumped past everything newer.
+    let walk = navigateInputHistory({
+      direction: "older",
+      entries,
+      value: "",
+      navigation: null,
+    })!;
+    walk = navigateInputHistory({
+      direction: "older",
+      entries,
+      value: walk.value,
+      navigation: walk.navigation,
+    })!;
+    expect(walk.value).toBe("middle");
+
+    // Same text at the same index; everything around it different.
+    const otherThread = ["a different newest", "middle", "and an older one"];
+    const afterSwap = navigateInputHistory({
+      direction: "older",
+      entries: otherThread,
+      value: walk.value,
+      navigation: walk.navigation,
+    })!;
+
+    expect(afterSwap.value).toBe("a different newest");
     expect(afterSwap.navigation?.index).toBe(0);
   });
 
