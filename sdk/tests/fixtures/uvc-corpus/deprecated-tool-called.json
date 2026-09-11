@@ -1,0 +1,94 @@
+{
+  "id": "deprecated-tool-called",
+  "title": "A tool whose own description marks it deprecated",
+  "rationale": "The useful firing for `noDeprecatedToolCalled`: the description self-deprecates and points at the replacement, and the model called it anyway.",
+  "transcript": {
+    "toolCalls": [
+      {
+        "toolCallId": "c1",
+        "toolName": "old_search",
+        "arguments": {
+          "q": "invoice 88"
+        }
+      }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "Invoice 88 is paid.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "old_search",
+        "description": "[DEPRECATED] Use `search` instead. Kept for one more release.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "q": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "q"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": true
+        }
+      },
+      {
+        "name": "search",
+        "description": "Search across invoices, orders and customers.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": true
+        }
+      }
+    ],
+    "toolResults": [
+      {
+        "toolCallId": "c1",
+        "toolName": "old_search",
+        "text": "{\"invoice\":88,\"state\":\"paid\"}",
+        "isError": false,
+        "size": {
+          "bytes": 29,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      }
+    ],
+    "toolCallTimings": [
+      {
+        "toolCallId": "c1",
+        "toolName": "old_search",
+        "durationMs": 130,
+        "provenance": "span"
+      }
+    ],
+    "capture": {
+      "toolResults": "complete",
+      "toolCallTimings": "complete",
+      "toolInventory": "complete"
+    }
+  },
+  "expect": [
+    {
+      "predicate": {
+        "type": "noDeprecatedToolCalled",
+        "role": "advisory"
+      },
+      "observation": "fail",
+      "relevance": "useful",
+      "note": "the tool works, so this is Warn, not Gate — but the surface is telling the model to stop using it"
+    }
+  ]
+}

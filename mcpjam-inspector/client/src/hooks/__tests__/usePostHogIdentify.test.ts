@@ -180,6 +180,7 @@ describe("usePostHogIdentify", () => {
     // otherwise every flag evaluated before the next page load targets an
     // unknown deployment.
     expect(mockState.posthog.setPersonPropertiesForFlags).toHaveBeenCalledWith({
+      local_browser_security_version: "1",
       deployment: "self_hosted",
       platform: "mac",
     });

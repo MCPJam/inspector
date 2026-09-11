@@ -80,6 +80,7 @@ export const WORKER_SKILL_ROOTS = [
   // author eval files elsewhere. Everything below it is about writing evals;
   // this is about running them through the eval tools the worker exposes.
   "skills/run-mcpjam-evals",
+  "skills/drive-mcpjam-playground",
   // REFERENCE MATERIAL, not a procedure — and the reason it is served rather
   // than inlined. Every eval read hands a model wire enums (`userValue`,
   // `argumentMismatch`, `evaluatorErrorRateAboveMaximum`) whose meanings are

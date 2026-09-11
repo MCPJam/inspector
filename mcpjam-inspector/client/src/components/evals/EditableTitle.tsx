@@ -122,7 +122,9 @@ export function EditableTitle({
     >
       <span
         className={cn(
-          truncate && "truncate",
+          // min-w-0: the label is a flex child of the button, so without it
+          // `truncate` has no width to ellipsize against and the text spills.
+          truncate && "min-w-0 truncate",
           showingPlaceholder && "text-muted-foreground",
         )}
       >

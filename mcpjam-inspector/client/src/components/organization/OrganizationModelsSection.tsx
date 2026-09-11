@@ -545,7 +545,14 @@ function ProviderRow({
 // UsageSummaryCard
 // ---------------------------------------------------------------------------
 
-function UsageSummaryCard({
+/**
+ * The 30-day model-usage breakdown.
+ *
+ * Exported so the Budget section can mount it beneath the meter: "what did we
+ * spend it on" is the next question after "how much have we spent", and
+ * building a second breakdown there would be a second thing to keep honest.
+ */
+export function UsageSummaryCard({
   summary,
   isLoading,
 }: {

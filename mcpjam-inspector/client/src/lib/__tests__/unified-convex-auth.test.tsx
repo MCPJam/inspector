@@ -79,6 +79,48 @@ describe("useUnifiedConvexAuth", () => {
       __guest: true,
       id: "__guest__",
     });
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("reports once after guest session bootstrap exhausts every attempt", async () => {
+    mockState.getOrCreateGuestSession.mockResolvedValue(null);
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(4);
+    expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
+    const [error, options] = mockState.reportCaught.mock.calls[0]!;
+    expect(error).toEqual(
+      new Error("Guest session bootstrap exhausted without a token"),
+    );
+    expect(options).toEqual({
+      source: "guest_session_bootstrap",
+      level: "error",
+      extra: { attempts: 4 },
+    });
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.user).toBeNull();
+  });
+
+  it("does not report guest session bootstrap after unmount", async () => {
+    mockState.getOrCreateGuestSession.mockResolvedValue(null);
+
+    const { unmount } = renderHook(() => useUnifiedConvexAuth());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
   });
 
   it("marks the guest activated only when Convex pulls the guest token, not on resolve", async () => {
@@ -125,6 +167,9 @@ describe("useUnifiedConvexAuth", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
       });
+      // Bootstrap exhaustion is covered above. Refresh tests count only reports
+      // emitted by the token fetch they invoke after mounting.
+      mockState.reportCaught.mockClear();
       return result;
     }
 
@@ -257,6 +302,32 @@ describe("useUnifiedConvexAuth", () => {
     it("gives up immediately on a dead WorkOS session", async () => {
       // authkit latches to ERROR after this — retrying only re-throws, and a
       // genuine sign-out is not a fault worth reporting.
+      //
+      // Shaped exactly as authkit throws it: `LoginRequiredError` extends
+      // `Error` without ever assigning `name`, so the instance carries
+      // `name: "Error"` and only the message identifies it.
+      const loginRequired = new Error("No access token available");
+      expect(loginRequired.name).toBe("Error");
+      mockState.workos.user = { id: "user-1" };
+      mockState.workos.getAccessToken.mockRejectedValue(loginRequired);
+
+      const result = await mountGuest();
+
+      let token: string | null = "unset";
+      await act(async () => {
+        token = await result.current.getAccessToken();
+      });
+
+      expect(token).toBeNull();
+      expect(mockState.workos.getAccessToken).toHaveBeenCalledTimes(1);
+      expect(mockState.reportCaught).not.toHaveBeenCalled();
+      // Retrying cannot help here, so the banner must offer sign-in instead.
+      expect(useSessionRefreshStore.getState().kind).toBe("signed_out");
+    });
+
+    it("gives up immediately when authkit labels the error by name", async () => {
+      // Belt and braces: if a later authkit sets `name`, that must keep
+      // classifying as a dead session even if the message is reworded.
       const loginRequired = new Error("login required");
       loginRequired.name = "LoginRequiredError";
       mockState.workos.user = { id: "user-1" };
@@ -272,7 +343,6 @@ describe("useUnifiedConvexAuth", () => {
       expect(token).toBeNull();
       expect(mockState.workos.getAccessToken).toHaveBeenCalledTimes(1);
       expect(mockState.reportCaught).not.toHaveBeenCalled();
-      // Retrying cannot help here, so the banner must offer sign-in instead.
       expect(useSessionRefreshStore.getState().kind).toBe("signed_out");
     });
 
