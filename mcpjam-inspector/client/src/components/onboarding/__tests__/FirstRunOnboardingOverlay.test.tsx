@@ -183,7 +183,17 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("heading", { name: "Set up your server" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to connect to MCP server",
+    );
+    expect(screen.queryByText("Connection refused")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View technical details" }),
+    );
+    expect(screen.getByText("Connection refused")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Hide technical details" }),
+    ).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
     expect(onConnectOwnServer).toHaveBeenCalledTimes(2);
     expect(onConnectOwnServer).toHaveBeenLastCalledWith({
@@ -300,6 +310,14 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.queryByRole("heading", { name: "Set up your server" }),
     ).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to connect to MCP server",
+    );
+    expect(screen.queryByText("Service unavailable")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View technical details" }),
+    );
+    expect(screen.getByText("Service unavailable")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try demo again" }));
     expect(onConnectDemo).toHaveBeenCalledOnce();
   });

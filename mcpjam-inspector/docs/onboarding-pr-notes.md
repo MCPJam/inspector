@@ -24,6 +24,7 @@
 - Interrupted connection records now remember the attempted server and auto-repair only when that same server is connected. Legacy records auto-repair only after a conservative stale interval with exactly one connected server, preventing an unrelated hydrated server from closing a fresh choice screen.
 - Refreshing after successful onboarding restores the chosen server selection, reconnects that saved server, and retains the prefilled Playground prompt until the user sends it.
 - Personal failure still opens the editable form and demo failure still opens the demo-unavailable screen.
+- Personal and demo failures now show a compact, plain-language connection notice with the original diagnostic available through an explicit technical-details disclosure.
 - Rolled back the experimental Playground-first backdrop and startup-choice hydration screen after they exposed an invalid temporary project ID during guest provisioning. The Welcome styling is restored to its prior implementation.
 - Added App, state, overlay, refresh, stale-record, and blur regression coverage.
 
