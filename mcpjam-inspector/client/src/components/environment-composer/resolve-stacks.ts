@@ -16,6 +16,7 @@ import {
   expandModelChoices,
   isComposeMode,
   modelChoiceCount,
+  modelSelectionForHost,
   sameOptionalModel,
   stackFieldsEqual,
   targetProductCapReason,
@@ -42,7 +43,9 @@ export type AdhocStackInput = {
 export type EnsureAdhocEnvironmentsFn = (args: {
   projectId: string;
   stacks: AdhocStackInput[];
-}) => Promise<Array<{ environment: ProjectEnvironmentView; created?: boolean }>>;
+}) => Promise<
+  Array<{ environment: ProjectEnvironmentView; created?: boolean }>
+>;
 
 export type ComposerResolveErrorCode =
   | "NO_TARGETS"
@@ -71,7 +74,8 @@ export class ComposerResolveError extends Error {
  * to pick a saved environment instead).
  */
 export function isAdhocUnavailable(err: unknown): boolean {
-  if (err instanceof ComposerResolveError) return err.code === "ADHOC_UNAVAILABLE";
+  if (err instanceof ComposerResolveError)
+    return err.code === "ADHOC_UNAVAILABLE";
   return /could not find public function/i.test(backendMessage(err) ?? "");
 }
 
@@ -109,7 +113,7 @@ export type ResolveComposerResult = {
 function sharedFields(
   stack: EnvironmentStack,
   skillsEnabled: boolean,
-  computersEnabled: boolean
+  computersEnabled: boolean,
 ) {
   return {
     serverAttachmentId: stack.serverAttachmentId ?? null,
@@ -145,7 +149,7 @@ function matchingNamedEnvironment(
    */
   preferIds: readonly string[] = [],
   /** Inherit cell = undefined. A named row with an override must not match. */
-  modelId?: string
+  modelId?: string,
 ): ProjectEnvironmentView | undefined {
   const matches = (env: ProjectEnvironmentView) =>
     !env.archivedAt &&
@@ -159,7 +163,7 @@ function matchingNamedEnvironment(
         skillSelection: env.skillSelection ?? null,
         computerEnvironmentId: env.computerEnvironmentId ?? null,
       },
-      fields
+      fields,
     );
 
   for (const id of preferIds) {
@@ -203,7 +207,7 @@ export async function resolveComposerEnvironments(args: {
     if (state.environmentIds.length === 0) {
       throw new ComposerResolveError(
         "NO_TARGETS",
-        "Pick an environment or a client to choose where this runs."
+        "Pick an environment or a client to choose where this runs.",
       );
     }
     const environments: ProjectEnvironmentView[] = [];
@@ -214,7 +218,7 @@ export async function resolveComposerEnvironments(args: {
         // a target that can never launch, so make the user detach it instead.
         throw new ComposerResolveError(
           "UNRESOLVED_ENVIRONMENT",
-          "One of the selected environments is no longer available. Remove it and pick another."
+          "One of the selected environments is no longer available. Remove it and pick another.",
         );
       }
       environments.push(env);
@@ -228,34 +232,52 @@ export async function resolveComposerEnvironments(args: {
   }
 
   const hostIds = [...new Set(state.stack.hostIds.filter(Boolean))];
-  const rawSelection: ModelSelection = state.stack.modelSelection ?? {
-    includeClientDefaults: true,
-    explicitModelIds: [],
-  };
-  const modelSelection: ModelSelection = {
-    includeClientDefaults: rawSelection.includeClientDefaults,
-    explicitModelIds: [...new Set(rawSelection.explicitModelIds.filter(Boolean))],
-  };
-  const choices = expandModelChoices(modelSelection);
-  if (hostIds.length === 0 || choices.length === 0) {
+  const selectionsByHost = hostIds.map((hostId) => ({
+    hostId,
+    selection: normalizeModelSelection(
+      modelSelectionForHost(state.stack, hostId),
+    ),
+  }));
+  if (
+    hostIds.length === 0 ||
+    selectionsByHost.some(
+      ({ selection }) => expandModelChoices(selection).length === 0,
+    )
+  ) {
     throw new ComposerResolveError(
       "NO_TARGETS",
-      choices.length === 0
+      selectionsByHost.some(
+        ({ selection }) => expandModelChoices(selection).length === 0,
+      )
         ? "Pick at least one model choice — Client defaults or a catalog model."
-        : "Pick at least one client to choose where this runs."
+        : "Pick at least one client to choose where this runs.",
     );
   }
-  if (modelSelection.explicitModelIds.length > 0 && modelMatrixEnabled !== true) {
+  if (
+    selectionsByHost.some(
+      ({ selection }) => selection.explicitModelIds.length > 0,
+    ) &&
+    modelMatrixEnabled !== true
+  ) {
     throw new ComposerResolveError(
       "BACKEND_REJECTED",
-      "This workspace's backend doesn't support model fan-out yet. Leave Client defaults selected, or upgrade the backend."
+      "This workspace's backend doesn't support model fan-out yet. Leave Client defaults selected, or upgrade the backend.",
     );
   }
-  const product = hostIds.length * modelChoiceCount(modelSelection);
+  const product = selectionsByHost.reduce(
+    (total, { selection }) => total + modelChoiceCount(selection),
+    0,
+  );
   if (product > max) {
     throw new ComposerResolveError(
       "TOO_MANY_TARGETS",
-      targetProductCapReason(hostIds.length, choices.length, max)
+      state.stack.modelSelectionsByHost
+        ? `${product} targets; limit ${max}`
+        : targetProductCapReason(
+            hostIds.length,
+            modelChoiceCount(selectionsByHost[0]!.selection),
+            max,
+          ),
     );
   }
 
@@ -263,8 +285,8 @@ export async function resolveComposerEnvironments(args: {
 
   type Cell = { hostId: string; modelId: string | undefined; key: string };
   const cells: Cell[] = [];
-  for (const hostId of hostIds) {
-    for (const choice of choices) {
+  for (const { hostId, selection } of selectionsByHost) {
+    for (const choice of expandModelChoices(selection)) {
       cells.push({
         hostId,
         modelId: choice.modelId,
@@ -282,7 +304,7 @@ export async function resolveComposerEnvironments(args: {
       fields,
       live,
       state.environmentIds,
-      cell.modelId
+      cell.modelId,
     );
     if (named) reusedByCell.set(cell.key, named);
     else toMint.push(cell);
@@ -301,7 +323,9 @@ export async function resolveComposerEnvironments(args: {
       ...(fields.serverAttachmentId
         ? { serverAttachmentId: fields.serverAttachmentId }
         : {}),
-      ...(fields.skillSelection ? { skillSelection: fields.skillSelection } : {}),
+      ...(fields.skillSelection
+        ? { skillSelection: fields.skillSelection }
+        : {}),
       ...(fields.computerEnvironmentId
         ? { computerEnvironmentId: fields.computerEnvironmentId }
         : {}),
@@ -315,19 +339,20 @@ export async function resolveComposerEnvironments(args: {
       if (isAdhocUnavailable(err)) {
         throw new ComposerResolveError(
           "ADHOC_UNAVAILABLE",
-          "This workspace's backend doesn't support quick setups yet. Pick a saved environment instead."
+          "This workspace's backend doesn't support quick setups yet. Pick a saved environment instead.",
         );
       }
       throw new ComposerResolveError(
         "BACKEND_REJECTED",
-        backendMessage(err) ?? "Could not resolve this setup into environments."
+        backendMessage(err) ??
+          "Could not resolve this setup into environments.",
       );
     }
 
     if (results.length !== toMint.length) {
       throw new ComposerResolveError(
         "BACKEND_REJECTED",
-        "Could not resolve this setup into environments."
+        "Could not resolve this setup into environments.",
       );
     }
     toMint.forEach((cell, i) => mintedByCell.set(cell.key, results[i]));
@@ -348,18 +373,25 @@ export async function resolveComposerEnvironments(args: {
     if (!minted) {
       throw new ComposerResolveError(
         "BACKEND_REJECTED",
-        "Could not resolve this setup into environments."
+        "Could not resolve this setup into environments.",
       );
     }
     pushUnique(
       minted.environment,
       environmentIds,
       environments,
-      minted.created === true ? createdIds : reusedIds
+      minted.created === true ? createdIds : reusedIds,
     );
   }
 
   return { environmentIds, environments, createdIds, reusedIds };
+}
+
+function normalizeModelSelection(selection: ModelSelection): ModelSelection {
+  return {
+    includeClientDefaults: selection.includeClientDefaults,
+    explicitModelIds: [...new Set(selection.explicitModelIds.filter(Boolean))],
+  };
 }
 
 function cellKey(hostId: string, modelId: string | undefined): string {
@@ -376,7 +408,7 @@ function pushUnique(
   env: ProjectEnvironmentView,
   environmentIds: string[],
   environments: ProjectEnvironmentView[],
-  bucket: string[]
+  bucket: string[],
 ) {
   if (environmentIds.includes(env.environmentId)) return;
   environmentIds.push(env.environmentId);

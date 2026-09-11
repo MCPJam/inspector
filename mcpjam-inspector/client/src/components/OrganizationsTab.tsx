@@ -96,6 +96,7 @@ import { useSlackAgentSettingsEnabled } from "@/hooks/useSlackAgentSettingsEnabl
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
 import { useTraceDestinationsEnabled } from "@/hooks/useTraceDestinationsEnabled";
 import { TraceDestinationsSection } from "./organization/observability/TraceDestinationsSection";
+import { OrganizationSpendBudgetSection } from "./organization/OrganizationSpendBudgetSection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   useAppNavigate,
@@ -686,7 +687,11 @@ function OrganizationPage({
             : // Same collapse again for Observability.
               section === "observability" && traceDestinationsEnabled
               ? "observability"
-              : "overview";
+              : // Budget is behind no flag; the collapse is for a personal
+                // org, which cannot have one.
+                section === "budget" && organization.isPersonal !== true
+                ? "budget"
+                : "overview";
   // The sub-tab lives in `?tab=` — views of one settings section, not separate
   // org routes. Read from the URL rather than component state so a link to a
   // specific tab works, and through the router's location context so switching
@@ -1084,6 +1089,11 @@ function OrganizationPage({
     ...(traceDestinationsEnabled
       ? ([{ id: "observability", label: "Observability" }] as const)
       : []),
+    // Hidden for a personal (guest-owned) org, which cannot have a budget.
+    // The section self-enforces this too, for anyone who types the URL.
+    ...(organization.isPersonal === true
+      ? []
+      : ([{ id: "budget", label: "Budget" }] as const)),
     { id: "billing", label: "Billing" },
   ];
   const navigateToSlackTab = (tab: SlackSettingsTabId) => {
@@ -1432,6 +1442,13 @@ function OrganizationPage({
       ) : activeSection === "observability" ? (
         <ErrorBoundary name="organization_observability">
           <TraceDestinationsSection
+            organizationId={organization._id}
+            isAdmin={canEdit}
+          />
+        </ErrorBoundary>
+      ) : activeSection === "budget" ? (
+        <ErrorBoundary name="organization_spend_budget">
+          <OrganizationSpendBudgetSection
             organizationId={organization._id}
             isAdmin={canEdit}
           />

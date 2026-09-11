@@ -554,4 +554,38 @@ describe("shadowVerdictFromScores", () => {
     expect(verdict.disagreeingScorerIds).toHaveLength(1);
     expect(verdict.disagreeingScorerIds[0]).toMatch(/^predicate:/);
   });
+
+  test("an advisory predicate is ignore-on-error and hash-stable", () => {
+    const real: Predicate = {
+      type: "responseContains",
+      needle: "refund issued",
+    };
+    const advised: Predicate = {
+      ...real,
+      role: "advisory",
+      severity: "warn",
+    };
+    const gating = buildHostedScoreContract({
+      predicateResults: [{ predicate: real, passed: false }],
+      evaluation,
+    });
+    const advisory = buildHostedScoreContract({
+      predicateResults: [{ predicate: advised, passed: false }],
+      evaluation,
+    });
+    const gatingDef = gating.evaluationConfig.definitions.find((d) =>
+      d.scorerId.startsWith("predicate:")
+    );
+    const advisoryDef = advisory.evaluationConfig.definitions.find((d) =>
+      d.scorerId.startsWith("predicate:")
+    );
+    expect(advisoryDef?.role).toBe("advisory");
+    expect(advisoryDef?.onError).toBe("ignore");
+    expect(advisoryDef?.scorerId).toBe(gatingDef?.scorerId);
+    expect(advisoryDef?.implementationHash).toBe(gatingDef?.implementationHash);
+    expect(JSON.stringify(advisoryDef)).not.toContain("severity");
+    expect(
+      shadowVerdictFromScores(advisory.scores, advisory.evaluationConfig).passed
+    ).toBe(true);
+  });
 });

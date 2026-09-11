@@ -48,7 +48,7 @@ export function reviewErrorMessage(error: unknown): string {
     return "The judge has not graded this trial yet.";
   }
   if (message.includes("JUDGE_REVIEW_NO_RUN")) {
-    return "Only trials from a suite run can be labelled.";
+    return "Only iterations from a suite run can be labelled.";
   }
   if (message.includes("EVAL_JUDGE_REVIEW_NOTE_TOO_LONG")) {
     return "That note is too long — 500 characters at most.";
@@ -60,6 +60,7 @@ export function TrialJudgeReviewPanel({
   iterationId,
   judgeCase,
   canReview = true,
+  onVisibilityChange,
 }: {
   iterationId: string;
   judgeCase: JudgeCase;
@@ -69,6 +70,12 @@ export function TrialJudgeReviewPanel({
    * the backend's refusal than to hide an affordance somebody does have.
    */
   canReview?: boolean;
+  /**
+   * Whether the judge's answer is still hidden on this panel. The trial page
+   * uses this to keep the Scores list from printing the same number. True
+   * while the read is pending and while the trial is unlabeled and unrevealed.
+   */
+  onVisibilityChange?: (hidden: boolean) => void;
 }) {
   const convex = useConvex();
   // The row is stamped with the trial it answers for, and `loaded` below is
@@ -142,6 +149,14 @@ export function TrialJudgeReviewPanel({
     [iterationId, submitJudgeReview],
   );
 
+  useEffect(() => {
+    if (!loaded) {
+      onVisibilityChange?.(true);
+      return;
+    }
+    onVisibilityChange?.(review === null);
+  }, [loaded, review, onVisibilityChange]);
+
   if (!loaded) {
     // No label control and no reveal until this trial's row is known: a
     // label chosen now would be recorded blind over one the reviewer has
@@ -163,6 +178,7 @@ export function TrialJudgeReviewPanel({
       judgeCase={judgeCase}
       review={review}
       onReview={canReview ? onReview : undefined}
+      onRevealed={() => onVisibilityChange?.(false)}
     />
   );
 }

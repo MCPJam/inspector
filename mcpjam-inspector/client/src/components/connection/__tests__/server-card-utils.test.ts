@@ -44,6 +44,34 @@ describe("getConnectionStatusMeta", () => {
     expect(meta.iconClassName).toContain("text-gray-500");
   });
 
+  /**
+   * Dots drawn from `indicatorClassName` track the theme; the hex beside it
+   * does not, which is why AGENTS.md rules a literal colour out of new code.
+   * Pinned as a set so a status added later cannot arrive without one.
+   */
+  it("gives every status a role-token dot class and no literal colour", () => {
+    const statuses: ConnectionStatus[] = [
+      "connected",
+      "connecting",
+      "oauth-flow",
+      "failed",
+      "disconnected",
+    ];
+    const classes = statuses.map(
+      (status) => getConnectionStatusMeta(status).indicatorClassName,
+    );
+    expect(classes).toEqual([
+      "bg-success",
+      "bg-info",
+      "bg-pending",
+      "bg-destructive",
+      "bg-muted-foreground",
+    ]);
+    for (const className of classes) {
+      expect(className).not.toMatch(/#|oklch|rgb/);
+    }
+  });
+
   it("falls back to disconnected for unknown status", () => {
     // @ts-expect-error - testing runtime fallback
     const meta = getConnectionStatusMeta("unknown-status");

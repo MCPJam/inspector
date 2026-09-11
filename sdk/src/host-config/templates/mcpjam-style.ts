@@ -80,7 +80,7 @@ const MCPJAM_LIGHT_DARK_VARS: Record<
     "oklch(0.7713 0.0169 99.0657 / 0.5)",
   ],
   "--color-text-info": ["oklch(0.623 0.214 259)", "oklch(0.7 0.18 259)"],
-  "--color-text-danger": ["oklch(0.627 0.208 25.331)", "oklch(0.74 0.18 25.331)"],
+  "--color-text-danger": ["oklch(0.6261 0.2077 25.2698)", "oklch(0.6368 0.2078 25.3313)"],
   "--color-text-success": ["oklch(0.696 0.17 152.5)", "oklch(0.78 0.16 152)"],
   "--color-text-warning": ["oklch(0.769 0.188 85.3)", "oklch(0.83 0.17 85.3)"],
   "--color-text-disabled": [
@@ -109,7 +109,7 @@ const MCPJAM_LIGHT_DARK_VARS: Record<
     "oklch(0.3618 0.0101 106.8928 / 0)",
   ],
   "--color-border-info": ["oklch(0.623 0.214 259)", "oklch(0.7 0.18 259)"],
-  "--color-border-danger": ["oklch(0.627 0.208 25.331)", "oklch(0.74 0.18 25.331)"],
+  "--color-border-danger": ["oklch(0.6261 0.2077 25.2698)", "oklch(0.6368 0.2078 25.3313)"],
   "--color-border-success": ["oklch(0.696 0.17 152.5)", "oklch(0.78 0.16 152)"],
   // `--color-border-warning` is the source `getScenarioShellStyle` reads
   // to produce shadcn `--primary` for the claude visual family. We pipe
@@ -139,8 +139,8 @@ const MCPJAM_LIGHT_DARK_VARS: Record<
   ],
   "--color-ring-info": ["oklch(0.623 0.214 259 / 0.5)", "oklch(0.7 0.18 259 / 0.5)"],
   "--color-ring-danger": [
-    "oklch(0.627 0.208 25.331 / 0.5)",
-    "oklch(0.74 0.18 25.331 / 0.5)",
+    "oklch(0.6261 0.2077 25.2698 / 0.5)",
+    "oklch(0.6368 0.2078 25.3313 / 0.5)",
   ],
   "--color-ring-success": [
     "oklch(0.696 0.17 152.5 / 0.5)",
