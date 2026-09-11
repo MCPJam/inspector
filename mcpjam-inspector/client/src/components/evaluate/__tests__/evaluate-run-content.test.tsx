@@ -62,6 +62,13 @@ const routeFacts = vi.hoisted(() => ({
     error: null as { kind: string; message: string } | null,
   },
 }));
+const serverFacts = vi.hoisted(() => ({
+  current: {
+    status: "idle" as string,
+    document: null as unknown,
+    error: null as { kind: string; message: string } | null,
+  },
+}));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
 const descriptionExperimentFlag = vi.hoisted(() => ({ current: false }));
 const failureGroupsFlag = vi.hoisted(() => ({ current: false }));
@@ -109,8 +116,8 @@ vi.mock("posthog-js/react", () => ({
     flag === "description-experiments-enabled"
       ? descriptionExperimentFlag.current
       : flag === "evaluate-failure-groups-enabled"
-        ? failureGroupsFlag.current
-        : flagEnabled.current,
+      ? failureGroupsFlag.current
+      : flagEnabled.current,
 }));
 vi.mock("@/hooks/use-suite-failure-groups", () => ({
   useSuiteFailureGroups: (args: { enabled?: boolean; suiteId?: string }) => {
@@ -138,6 +145,12 @@ vi.mock("@/hooks/use-eval-run-route-facts", () => ({
       refetch: () => {},
     };
   },
+}));
+vi.mock("@/hooks/use-eval-run-server-facts", () => ({
+  useEvalRunServerFacts: () => ({
+    ...serverFacts.current,
+    refetch: () => {},
+  }),
 }));
 
 // Server quality reaches Convex through `useMutation`, which needs a provider
@@ -277,6 +290,7 @@ afterEach(() => {
     start: () => Promise.resolve(),
     refetch: () => {},
   };
+  serverFacts.current = { status: "idle", document: null, error: null };
   compareState.current = { status: "disabled", dto: null, errorKind: null };
   detailState.current = {
     ...detailState.current,
@@ -300,42 +314,77 @@ describe("EvaluateRunContent", () => {
     expect(screen.getByTestId("run-verdict-sentence")).toHaveTextContent(
       "Draw and share a diagram broke at Selection: an expected tool call was never made.",
     );
-    // The expected/observed pair is a peek under the sentence, not the
-    // counting caveats and not the hero. The open case row repeats both names
-    // in its own evidence block, which is intended, so queries are scoped.
-    const peek = screen.getByTestId("run-grading-peek");
-    expect(peek).toHaveTextContent("Graded against");
-    expect(within(peek).getByText("create_view")).toBeInTheDocument();
-    expect(
-      within(peek).getByText("never called").closest("li"),
-    ).toHaveTextContent("export_to_excalidraw never called");
-    expect(screen.getByTestId("run-verdict-hero")).not.toHaveTextContent(
-      "Expected",
+    const pairings = screen.getByTestId("run-verdict-pairings");
+    expect(within(pairings).getAllByTestId("run-verdict-pairing")).toHaveLength(
+      1,
     );
-    expect(screen.getByTestId("run-verdict-caveats")).not.toHaveTextContent(
-      "export_to_excalidraw",
+    expect(within(pairings).getByText("1 passed")).toBeVisible();
+    expect(within(pairings).getByText("1 failed")).toBeVisible();
+    expect(within(pairings).getByTestId("result-count-bar")).toBeVisible();
+    expect(within(pairings).queryByText("1 of 2")).toBeNull();
+    expect(
+      pairings.compareDocumentPosition(
+        screen.getByRole("heading", { name: "What broke" }),
+      ),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.getByRole("heading", { name: "What broke" })).toHaveClass(
+      "text-sm",
+      "font-semibold",
+    );
+    expect(
+      screen.getByRole("heading", { name: /How to fix|Next step/ }),
+    ).toHaveClass("text-sm", "font-semibold");
+    expect(screen.queryByTestId("run-grading-peek")).toBeNull();
+    expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
+    expect(within(pairings).getByTestId("result-count-bar")).toHaveAttribute(
+      "role",
+      "img",
     );
   });
 
-  it("folds the counting caveats instead of leading with them", () => {
-    detailState.current = {
-      ...detailState.current,
-      status: "ready",
-      summary: summary(),
-      diagnostics: [DIAGNOSTIC],
-    };
-    renderContent();
+  it("pairs hero deltas to a fallback previous launch when previousRunId is omitted", () => {
+    const current = {
+      _id: "run_2",
+      status: "running",
+      result: "pending",
+      namedHostId: "host-1",
+      effectiveModelId: "sonnet",
+      runNumber: 2,
+      createdAt: 2_000,
+    } as unknown as EvalSuiteRun;
+    const previous = {
+      _id: "run_1",
+      status: "completed",
+      result: "failed",
+      namedHostId: "host-1",
+      effectiveModelId: "sonnet",
+      runNumber: 1,
+      createdAt: 1_000,
+    } as unknown as EvalSuiteRun;
+    const previousRows = [
+      {
+        _id: "prev_1",
+        suiteRunId: "run_1",
+        result: "failed",
+        status: "completed",
+      },
+      {
+        _id: "prev_2",
+        suiteRunId: "run_1",
+        result: "failed",
+        status: "completed",
+      },
+    ] as unknown as EvalIteration[];
 
-    const caveats = screen.getByTestId("run-verdict-caveats");
-    // Present, and closed: the accounting is available to anyone who asks and
-    // is not the first thing a reader has to get through.
-    expect(caveats).not.toHaveAttribute("open");
-    expect(caveats).toHaveTextContent("legacy percent-threshold run");
-    expect(caveats).toHaveTextContent("Counts are iterations, not cases");
-    expect(caveats).toHaveTextContent(
-      "1 non-passing of 3 trials examined — this is the run's whole non-passing set.",
-    );
-    expect(caveats).toHaveTextContent("It is a location, not a claim");
+    renderContent({
+      run: current,
+      iterations: ITERATIONS,
+      previousRunId: null,
+      siblingRuns: [previous, current],
+      allIterations: previousRows,
+    });
+
+    expect(screen.getByTestId("run-verdict-stat-delta")).toHaveTextContent("+1");
   });
 
   it("says nothing about a verdict while the read is in flight", () => {
@@ -347,6 +396,10 @@ describe("EvaluateRunContent", () => {
     };
     renderContent();
 
+    expect(
+      screen.getByRole("status", { name: "Loading run summary" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("What happened")).toBeNull();
     // PASS_WORDS alone is too weak here: it does not contain "Failed" or
     // "Inconclusive", so a regression that rendered either while the read was
     // in flight would have passed this test. The claim is that NO verdict word
@@ -362,6 +415,15 @@ describe("EvaluateRunContent", () => {
     );
     expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
     expect(screen.queryByTestId("run-grading-peek")).toBeNull();
+  });
+
+  it("hides summary cards when the finished read has no summary", () => {
+    renderContent();
+    expect(screen.queryByTestId("run-summary-loading")).toBeNull();
+    expect(screen.queryByText("What happened")).toBeNull();
+    expect(screen.queryByText("Next step")).toBeNull();
+    expect(screen.queryByTestId("run-grading-peek")).toBeNull();
+    expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
   });
 
   it("says nothing about a verdict when the read failed", () => {
@@ -970,5 +1032,69 @@ describe("EvaluateRunContent", () => {
     const line = screen.getByTestId("route-line-case_1").textContent ?? "";
     expect(line).toContain("claude (anthropic)");
     expect(line).toContain("gpt (openai)");
+  });
+});
+
+/**
+ * The server-facts read, in each state that is not a document.
+ *
+ * Silence is the one answer a reader cannot act on, and it was the answer they
+ * got for three of these: the card rendered only on `ready`, so a deployment
+ * that does not serve the route yet, a read that failed, and a run nobody can
+ * see were all the same empty space under the stage strip.
+ */
+describe("EvaluateRunContent — server facts service states", () => {
+  it("says so when the deployment does not serve the route yet", () => {
+    serverFacts.current = {
+      status: "error",
+      document: null,
+      error: { kind: "routeUnavailable", message: "404" },
+    };
+    renderContent();
+    const note = screen.getByTestId("server-facts-error");
+    expect(note).toHaveTextContent(/not available on this deployment/i);
+    // A service state is NOT a defect in the server under test.
+    expect(note.className).not.toContain("text-destructive");
+  });
+
+  it("says the read failed, rather than showing nothing", () => {
+    serverFacts.current = {
+      status: "error",
+      document: null,
+      error: { kind: "requestFailed", message: "network" },
+    };
+    renderContent();
+    expect(screen.getByTestId("server-facts-error")).toHaveTextContent(
+      /Couldn't load the server facts/i,
+    );
+  });
+
+  it("keeps a contract mismatch red, because that one IS a bug report", () => {
+    serverFacts.current = {
+      status: "error",
+      document: null,
+      error: { kind: "invalidContract", message: "bad payload" },
+    };
+    renderContent();
+    const note = screen.getByTestId("server-facts-error");
+    expect(note).toHaveTextContent(/did not match their contract/i);
+    expect(note.className).toContain("text-destructive");
+  });
+
+  it("explains an absent read instead of rendering nothing", () => {
+    serverFacts.current = { status: "absent", document: null, error: null };
+    renderContent();
+    expect(screen.getByTestId("server-facts-absent")).toHaveTextContent(
+      /not visible here/i,
+    );
+  });
+
+  it("stays quiet while the read is still in flight", () => {
+    // Loading is not a state to explain — a message here would flash on every
+    // page load and say nothing.
+    serverFacts.current = { status: "loading", document: null, error: null };
+    renderContent();
+    expect(screen.queryByTestId("server-facts-error")).toBeNull();
+    expect(screen.queryByTestId("server-facts-absent")).toBeNull();
   });
 });

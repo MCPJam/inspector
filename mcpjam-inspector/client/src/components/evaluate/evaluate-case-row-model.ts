@@ -146,6 +146,17 @@ export type EvaluateCaseRow = {
   cells: CaseRowIterationCell[];
   coverage: CaseRowCoverage;
   p50Ms: number | null;
+  /**
+   * MCPJam-billed cost for this case, and how many of its trials that covers.
+   *
+   * The count rides along because a total over some of the trials is a
+   * smaller number than the truth and renders identically to a complete one.
+   * `null` means nothing here was priced — never that the case was free.
+   */
+  costUsd: number | null;
+  costedIterations: number;
+  /** True when a customer's runner supplied part of `costUsd`. */
+  hasRunnerReportedCost: boolean;
   /** The iteration a reader should be taken to, and the one that opens. */
   opensIterationId: string | null;
   diagnostic: EvalRunDecisionDiagnostic | null;
@@ -481,6 +492,9 @@ export function buildEvaluateCaseRows(
         note,
       },
       p50Ms: group.p50Ms,
+      costUsd: group.totalCostUsd,
+      costedIterations: group.costedIterations,
+      hasRunnerReportedCost: group.hasRunnerReportedCost,
       opensIterationId: opensId,
       diagnostic: opensId ? diagnosticsByIteration.get(opensId) ?? null : null,
       // Largest group first: the shape that broke most iterations is the one

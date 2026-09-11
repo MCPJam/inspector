@@ -126,7 +126,7 @@ export function FailureGroupsCard({ suiteId }: { suiteId: string }) {
           {completed && !completed.grouped ? (
             <div className="flex flex-col gap-2">
               <p className="text-[12.5px] text-muted-foreground">
-                reasons did not separate into groups — showing the list
+                reasons did not separate into groups. Showing the list
               </p>
               <ul className="flex flex-col gap-1">
                 {flat.map((item) => (
@@ -149,8 +149,8 @@ export function FailureGroupsCard({ suiteId }: { suiteId: string }) {
               stages={FAILURE_SANKEY_STAGES}
               stageTitles={FAILURE_STAGE_TITLES}
               stageColors={FAILURE_STAGE_COLORS}
-              unitNoun="trials"
-              ariaLabel="Failed trials from case through route to reason"
+              unitNoun="iterations"
+              ariaLabel="Failed iterations from case through route to reason"
               labelForNode={(node) =>
                 node.key === SANKEY_UNLABELED
                   ? UNJUDGED_REASON_LABEL

@@ -153,6 +153,7 @@ export function JudgeRubricEditor({
             key={index}
             className="space-y-1.5 rounded-md border border-border/60 p-2"
             data-criterion-index={index}
+            aria-invalid={error ? true : undefined}
           >
             <div className="flex items-center gap-2">
               <input

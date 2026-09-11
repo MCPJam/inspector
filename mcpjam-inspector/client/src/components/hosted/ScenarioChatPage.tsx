@@ -53,6 +53,8 @@ import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capab
 import { ScenarioSurfaceProvider } from "@/contexts/scenario-surface-context";
 import { WebManagedServersProvider } from "@/contexts/web-managed-servers-context";
 import { ScenarioHostOnboardingOverlays } from "@/components/hosted/ScenarioHostOnboardingOverlays";
+import { ScenarioRecordingDeclinedPanel } from "@/components/hosted/ScenarioRecordingConsentDialog";
+import { ScenarioTaskChecklist } from "@/components/hosted/ScenarioTaskChecklist";
 import { useScenarioHostIntroGate } from "@/components/hosted/useScenarioHostIntroGate";
 import {
   getScenarioHostLabel,
@@ -109,10 +111,7 @@ const UNEXPECTED_SCENARIO_ERROR_MESSAGE =
 
 type ScenarioBootstrapAuthMode = "workos" | "guest";
 type ScenarioLandingState =
-  | "resolvingAuth"
-  | "bootstrapping"
-  | "ready"
-  | "denied";
+  "resolvingAuth" | "bootstrapping" | "ready" | "denied";
 
 function sanitizeScenarioRouteErrorMessage(message: string): string {
   const normalized = message.replace(/\s+/g, " ").trim();
@@ -129,7 +128,7 @@ function sanitizeScenarioRouteErrorMessage(message: string): string {
 function createScenarioRouteError(
   status: number,
   message: string,
-  code?: string
+  code?: string,
 ): ScenarioRouteError {
   const fallbackMessage = `Request failed with status ${status}`;
   const rawMessage = message.trim() || fallbackMessage;
@@ -166,8 +165,8 @@ async function readRouteError(response: Response): Promise<ScenarioRouteError> {
       typeof domainCode === "string" && domainCode
         ? domainCode
         : typeof body?.code === "string"
-        ? body.code
-        : undefined;
+          ? body.code
+          : undefined;
     message =
       body?.message ||
       body?.error ||
@@ -194,7 +193,7 @@ function isScenarioRouteError(error: unknown): error is ScenarioRouteError {
 }
 
 function getScenarioDisplayError(
-  error: ScenarioRouteError | null
+  error: ScenarioRouteError | null,
 ): ScenarioDisplayError {
   if (!error) {
     return {
@@ -206,7 +205,7 @@ function getScenarioDisplayError(
 
   const normalizedMessage = error.message.toLowerCase();
   const requiresSignIn = normalizedMessage.includes(
-    "sign in to access this scenario"
+    "sign in to access this scenario",
   );
   // The code is authoritative when the route sent one; the substring checks
   // stay as the deploy-skew fallback for servers that predate the code.
@@ -295,7 +294,7 @@ async function redeemScenarioToken(
      * `share_link` on the request wire.
      */
     surface?: ScenarioSession["surface"];
-  }
+  },
 ): Promise<ScenarioSession> {
   const redeemResponse = await authFetch("/api/web/scenarios/redeem", {
     method: "POST",
@@ -331,7 +330,7 @@ async function redeemScenarioToken(
   if (!nextSession) {
     throw createScenarioRouteError(
       502,
-      "Scenario redeem returned an incomplete bootstrap payload."
+      "Scenario redeem returned an incomplete bootstrap payload.",
     );
   }
 
@@ -339,7 +338,7 @@ async function redeemScenarioToken(
 }
 
 function getScenarioBootstrapAuthMode(
-  isAuthenticated: boolean
+  isAuthenticated: boolean,
 ): ScenarioBootstrapAuthMode {
   return isAuthenticated ? "workos" : "guest";
 }
@@ -400,7 +399,7 @@ export function ScenarioChatPage({
   }, []);
 
   const [session, setSession] = useState<ScenarioSession | null>(() =>
-    readCurrentSession()
+    readCurrentSession(),
   );
   const [isBootstrapping, setIsBootstrapping] = useState(Boolean(pathToken));
   const [routeError, setRouteError] = useState<ScenarioRouteError | null>(null);
@@ -437,19 +436,19 @@ export function ScenarioChatPage({
   // refresh forever; navigating to a DIFFERENT scenario still trips them.
   const resolveShareToken = useCallback(
     () => tokenFromPathRef.current ?? sessionRef.current?.shareToken ?? null,
-    []
+    [],
   );
   const isAuthSettling =
     Boolean(tokenFromPath) && (isWorkOsLoading || isAuthLoading);
 
   const sessionServersRequired = useMemo(
     () => session?.payload.servers.filter((s) => !s.optional) ?? [],
-    [session]
+    [session],
   );
 
   const sessionServersOptional = useMemo(
     () => session?.payload.servers.filter((s) => s.optional) ?? [],
-    [session]
+    [session],
   );
 
   const [enabledOptionalServerIds, setEnabledOptionalServerIds] = useState<
@@ -460,7 +459,7 @@ export function ScenarioChatPage({
     if (!session?.scenarioId) return;
     try {
       const raw = sessionStorage.getItem(
-        scenarioEnabledOptionalStorageKey(session.scenarioId)
+        scenarioEnabledOptionalStorageKey(session.scenarioId),
       );
       if (!raw) {
         setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
@@ -469,10 +468,12 @@ export function ScenarioChatPage({
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
       const optionalIdSet = new Set(
-        session.payload.servers.filter((s) => s.optional).map((s) => s.serverId)
+        session.payload.servers
+          .filter((s) => s.optional)
+          .map((s) => s.serverId),
       );
       const next = parsed.filter(
-        (id): id is string => typeof id === "string" && optionalIdSet.has(id)
+        (id): id is string => typeof id === "string" && optionalIdSet.has(id),
       );
       setEnabledOptionalServerIds((prev) => {
         if (
@@ -506,7 +507,7 @@ export function ScenarioChatPage({
     if (!session) return [];
     const enabled = new Set(enabledOptionalServerIds);
     const optionalActive = session.payload.servers.filter(
-      (s) => s.optional && enabled.has(s.serverId)
+      (s) => s.optional && enabled.has(s.serverId),
     );
     return [...sessionServersRequired, ...optionalActive];
   }, [session, sessionServersRequired, enabledOptionalServerIds]);
@@ -518,7 +519,7 @@ export function ScenarioChatPage({
   // from the canonical `authMethod`.
   const oauthRequirementByServerId = useHostedOAuthRequirements(
     sessionServersActive,
-    !!session
+    !!session,
   );
 
   const oauthServers = useMemo(
@@ -542,17 +543,12 @@ export function ScenarioChatPage({
           authorizationRequiredUpfront: requirement === "required",
         };
       }),
-    [sessionServersActive, oauthRequirementByServerId]
-  );
-
-  const requiredOAuthServers = useMemo(
-    () => oauthServers.filter((server) => !server.optional),
-    [oauthServers]
+    [sessionServersActive, oauthRequirementByServerId],
   );
 
   const handleEnableScenarioOptionalServer = useCallback((serverId: string) => {
     setEnabledOptionalServerIds((prev) =>
-      prev.includes(serverId) ? prev : [...prev, serverId]
+      prev.includes(serverId) ? prev : [...prev, serverId],
     );
   }, []);
 
@@ -566,19 +562,15 @@ export function ScenarioChatPage({
         useOAuth: s.useOAuth,
       }));
   }, [sessionServersOptional, enabledOptionalServerIds]);
-  const {
-    pendingOAuthServers,
-    authorizeServer,
-    markOAuthRequired,
-    hasBusyOAuth,
-  } = useHostedOAuthGate({
-    surface: "scenario",
-    pendingKey: SCENARIO_OAUTH_PENDING_KEY,
-    servers: oauthServers,
-    projectId: session?.payload.projectId ?? null,
-    scenarioId: session?.scenarioId,
-    isAuthenticated,
-  });
+  const { pendingOAuthServers, authorizeServer, markOAuthRequired } =
+    useHostedOAuthGate({
+      surface: "scenario",
+      pendingKey: SCENARIO_OAUTH_PENDING_KEY,
+      servers: oauthServers,
+      projectId: session?.payload.projectId ?? null,
+      scenarioId: session?.scenarioId,
+      isAuthenticated,
+    });
 
   const scenarioServerConfigs = useMemo(() => {
     if (!session) return {};
@@ -596,7 +588,7 @@ export function ScenarioChatPage({
           retryCount: 0,
           enabled: true,
         } satisfies ServerWithName,
-      ])
+      ]),
     );
   }, [session, sessionServersActive]);
 
@@ -607,7 +599,7 @@ export function ScenarioChatPage({
       sessionServersActive.flatMap((server) => [
         [server.serverName, server.serverId],
         [server.serverId, server.serverId],
-      ])
+      ]),
     );
   }, [session, sessionServersActive]);
 
@@ -668,7 +660,7 @@ export function ScenarioChatPage({
                 500,
                 error instanceof Error
                   ? error.message
-                  : "Unable to open this scenario."
+                  : "Unable to open this scenario.",
               );
           const displayError = getScenarioDisplayError(nextError);
 
@@ -708,7 +700,7 @@ export function ScenarioChatPage({
 
       setSession(null);
       setRouteError(
-        createScenarioRouteError(404, "Invalid or expired scenario link")
+        createScenarioRouteError(404, "Invalid or expired scenario link"),
       );
     };
 
@@ -784,7 +776,7 @@ export function ScenarioChatPage({
                 0,
                 error instanceof Error
                   ? error.message
-                  : "Unable to refresh scenario access."
+                  : "Unable to refresh scenario access.",
               );
           const detail = {
             status: routeError.status,
@@ -803,7 +795,7 @@ export function ScenarioChatPage({
           if (!isDefinitive) {
             console.warn(
               "[ScenarioChatPage] Scenario re-redeem failed transiently",
-              detail
+              detail,
             );
           }
           return isDefinitive
@@ -838,23 +830,23 @@ export function ScenarioChatPage({
       setSession(null);
       clearCurrentSession(sessionRef.current?.scenarioId ?? null);
       setRouteError(
-        createScenarioRouteError(error.status, error.message, error.code)
+        createScenarioRouteError(error.status, error.message, error.code),
       );
     },
-    [clearCurrentSession]
+    [clearCurrentSession],
   );
 
   const displayError = useMemo(
     () => getScenarioDisplayError(routeError),
-    [routeError]
+    [routeError],
   );
   const landingState: ScenarioLandingState = isAuthSettling
     ? "resolvingAuth"
     : isBootstrapping
-    ? "bootstrapping"
-    : session
-    ? "ready"
-    : "denied";
+      ? "bootstrapping"
+      : session
+        ? "ready"
+        : "denied";
 
   useEffect(() => {
     if (
@@ -920,7 +912,7 @@ export function ScenarioChatPage({
 
     try {
       await navigator.clipboard.writeText(
-        buildScenarioLink(token, session.payload.name)
+        buildScenarioLink(token, session.payload.name),
       );
       toast.success("Link copied");
     } catch {
@@ -950,7 +942,7 @@ export function ScenarioChatPage({
     (details?: HostedOAuthRequiredDetails) => {
       markOAuthRequired(details);
     },
-    [markOAuthRequired]
+    [markOAuthRequired],
   );
 
   // Before the redeem resolves we don't know which host this scenario
@@ -970,17 +962,27 @@ export function ScenarioChatPage({
   const hostStyle =
     sessionForCurrentLink?.payload.hostStyle ?? DEFAULT_HOST_STYLE.id;
   const chatUiOverride = sessionForCurrentLink?.payload.chatUiOverride;
-  const shellStyle = getScenarioShellStyle(hostStyle, themeMode, chatUiOverride);
+  const shellStyle = getScenarioShellStyle(
+    hostStyle,
+    themeMode,
+    chatUiOverride,
+  );
   const clientLabel = getScenarioHostLabel(hostStyle, chatUiOverride);
   const clientLogoSrc = getScenarioHostLogo(
     hostStyle,
     chatUiOverride,
-    themeMode
+    themeMode,
   );
   const oauthPending = pendingOAuthServers.length > 0;
-  const welcomeAvailable =
-    (session?.payload.chatUi?.surfaces?.welcome?.enabled ?? true) &&
-    !!session?.payload.chatUi?.surfaces?.welcome?.body?.trim();
+
+  // The study's "what to try" list. Absent on a backend predating BB-176, and
+  // empty for most studies — both mean the header control is not rendered and
+  // the consent dialog does not point at one.
+  const scenarioTasks = useMemo(() => {
+    const items = session?.payload.chatUi?.surfaces?.tasks?.items;
+    return Array.isArray(items) ? items : [];
+  }, [session?.payload.chatUi?.surfaces?.tasks?.items]);
+  const hasScenarioTasks = scenarioTasks.length > 0;
 
   // Per-turn ratings. OFF unless the scenario explicitly enabled them — the
   // backend default is `false`, so this whole surface is inert on every
@@ -1000,14 +1002,8 @@ export function ScenarioChatPage({
   });
   const introGate = useScenarioHostIntroGate({
     scenarioId: session?.payload.scenarioId ?? "",
-    // The probed descriptors, not the raw bootstrap rows: the gate asks "does
-    // this session require authorization", which the payload's `useOAuth`
-    // mirror cannot answer (see `oauthServers` above).
-    servers: requiredOAuthServers,
     oauthPending,
-    hasBusyOAuth,
     pendingOAuthServers,
-    welcomeAvailable,
   });
   const isFinishingOAuth =
     pendingOAuthServers.length > 0 &&
@@ -1067,12 +1063,28 @@ export function ScenarioChatPage({
       return null;
     }
 
+    /**
+     * They chose Leave on the recording notice.
+     *
+     * The chat is not merely blocked, it is not MOUNTED: a disabled composer
+     * over a live transcript still shows the study, and someone who declined
+     * being recorded should not be sitting in the thing they declined.
+     * Rejoining re-arms the dialog rather than skipping it.
+     */
+    if (introGate.consentDeclined) {
+      return (
+        <ScenarioRecordingDeclinedPanel
+          onRejoin={introGate.rejoinAfterDecline}
+        />
+      );
+    }
+
     return (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <ChatTabV2
           connectedOrConnectingServerConfigs={scenarioServerConfigs}
           selectedServerNames={sessionServersActive.map(
-            (server) => server.serverName
+            (server) => server.serverName,
           )}
           minimalMode
           showContextPopover
@@ -1083,7 +1095,7 @@ export function ScenarioChatPage({
             scenarioSurface: session.surface ?? "share_link",
             projectId: session.payload.projectId,
             selectedServerIds: sessionServersActive.map(
-              (server) => server.serverId
+              (server) => server.serverId,
             ),
             requestRefreshAccessVersion,
             refreshAccessSession,
@@ -1102,7 +1114,7 @@ export function ScenarioChatPage({
             mcpToolResultImageRendering:
               gateMcpToolResultImageRenderingByModelVisibility(
                 session.payload.mcpToolResultImageRendering,
-                session.payload.modelVisibleMcpToolResults
+                session.payload.modelVisibleMcpToolResults,
               ),
           }}
           onOAuthRequired={handleOAuthRequired}
@@ -1124,9 +1136,10 @@ export function ScenarioChatPage({
           }
         />
         <ScenarioHostOnboardingOverlays
-          showWelcome={introGate.showWelcome}
-          onGetStarted={introGate.dismissIntro}
-          welcomeBody={session.payload.chatUi?.surfaces?.welcome?.body}
+          showConsent={introGate.showConsent}
+          hasTasks={hasScenarioTasks}
+          onAcceptConsent={introGate.acceptConsent}
+          onDeclineConsent={introGate.declineConsent}
           showAuthPanel={introGate.showAuthPanel}
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}
@@ -1225,6 +1238,29 @@ export function ScenarioChatPage({
                             >
                               Copy link
                             </Button>
+                          ) : null}
+                          {/* "What to try", beside Copy link and available for
+                              the whole session (BB-176) — not a one-shot
+                              intro the tester can never get back to. Rendered
+                              only when the study actually has tasks: the
+                              control's entire content would otherwise be a
+                              count of nothing. */}
+                          {/* `sessionForCurrentLink`, not `session`: a stored
+                              session from link A must not lend its checklist
+                              to link B while B is still redeeming — the same
+                              rule the client name and logo above follow, and
+                              for the same reason. */}
+                          {sessionForCurrentLink && hasScenarioTasks ? (
+                            <ScenarioTaskChecklist
+                              // The SAME id the consent latch keys on
+                              // (`useScenarioHostIntroGate`), so one study's
+                              // two pieces of per-tab tester state cannot end
+                              // up scoped differently.
+                              scenarioId={
+                                sessionForCurrentLink.payload.scenarioId
+                              }
+                              tasks={scenarioTasks}
+                            />
                           ) : null}
                         </div>
                       </div>
