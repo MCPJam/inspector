@@ -1698,6 +1698,44 @@ describe("ChatInput", () => {
       expect(onChange).not.toHaveBeenCalled();
     });
 
+    it("stays out of the way while the composer is disabled", () => {
+      const { onChange } = renderWithHistory({ disabled: true });
+
+      fireEvent.keyDown(textarea(), { key: "ArrowUp" });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("does not overwrite the draft hidden behind a recording", async () => {
+      // Mid-recording the box shows "Listening..." while `value` holds the
+      // draft underneath. A recall there would replace something the user
+      // cannot see, and the textarea's own onChange already refuses to write
+      // in this state.
+      installAudioRecordingMocks();
+      const onChange = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="the hidden draft"
+          onChange={onChange}
+          inputHistory={history}
+        />
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+      await waitFor(() => {
+        expect(screen.getByDisplayValue("Listening...")).toBeInTheDocument();
+      });
+
+      fireEvent.keyDown(screen.getByDisplayValue("Listening..."), {
+        key: "ArrowUp",
+      });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
     it("does not hijack Shift+ArrowUp, which selects", () => {
       const { onChange } = renderWithHistory();
 
