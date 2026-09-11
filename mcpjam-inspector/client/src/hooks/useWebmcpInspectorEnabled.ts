@@ -1,20 +1,23 @@
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { HOSTED_MODE } from "@/lib/config";
+import {
+  HOSTED_BROWSER_FEATURE_FLAG,
+  LOCAL_BROWSER_FEATURE_FLAG,
+} from "./useComputersEnabled";
 
 /**
  * PostHog rollout gate for the WebMCP Inspector — the `/webmcp` nav tab and
  * workspace, and the page-tools section in Playground. Flag off ⇒ invisible, so
  * the surface can roll out per-user without a deploy.
  *
- * This is the VISIBILITY gate only. Two other gates sit under it and neither is
- * a substitute: `/api/mcp/*` is mounted only outside hosted mode, and
- * `MCPJAM_WEBMCP_INSPECTOR_ENABLED` is the server-side emergency stop. A
- * flagged-in user on a hosted deployment still gets nothing, which is correct:
- * the browser would have to open on the machine running the inspector.
- *
- * Named `webmcp-inspector-*` rather than `webmcp-*` throughout the code, since
- * `client/src/lib/webmcp/` is the unrelated in-app agent bridge.
+ * Select by deployment, not by the OR used for Browser host authoring:
+ * Node/Electron follow local Browser; hosted follows hosted Browser. Neither
+ * Computers nor the retired WebMCP flag can expose this surface. Server
+ * authentication, runtime readiness, and emergency stops remain independent.
  */
-export const WEBMCP_INSPECTOR_FEATURE_FLAG = "webmcp-inspector-enabled";
+export const WEBMCP_INSPECTOR_FEATURE_FLAG = HOSTED_MODE
+  ? HOSTED_BROWSER_FEATURE_FLAG
+  : LOCAL_BROWSER_FEATURE_FLAG;
 
 /**
  * Tri-state flag: `true` enabled, `false` explicitly disabled, `undefined`

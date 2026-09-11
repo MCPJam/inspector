@@ -638,6 +638,16 @@
         "compare": null,
         "delta": null,
         "percentDelta": null
+      },
+      "costCoverage": {
+        "base": {
+          "costed": 0,
+          "total": 3
+        },
+        "compare": {
+          "costed": 0,
+          "total": 3
+        }
       }
     },
     "scores": {
@@ -847,7 +857,9 @@
             "outputTokens": null,
             "cachedInputTokens": null,
             "reasoningTokens": null,
-            "estimatedCostUsd": null
+            "estimatedCostUsd": null,
+            "costedIterations": 0,
+            "totalIterations": 1
           }
         },
         "compare": {
@@ -877,7 +889,9 @@
             "outputTokens": null,
             "cachedInputTokens": null,
             "reasoningTokens": null,
-            "estimatedCostUsd": null
+            "estimatedCostUsd": null,
+            "costedIterations": 0,
+            "totalIterations": 1
           }
         },
         "metrics": {
@@ -916,6 +930,16 @@
             "compare": null,
             "delta": null,
             "percentDelta": null
+          },
+          "costCoverage": {
+            "base": {
+              "costed": 0,
+              "total": 1
+            },
+            "compare": {
+              "costed": 0,
+              "total": 1
+            }
           },
           "estimatedCostUsd": {
             "base": null,
@@ -978,7 +1002,9 @@
             "outputTokens": null,
             "cachedInputTokens": null,
             "reasoningTokens": null,
-            "estimatedCostUsd": null
+            "estimatedCostUsd": null,
+            "costedIterations": 0,
+            "totalIterations": 1
           }
         },
         "compare": {
@@ -1003,7 +1029,9 @@
             "outputTokens": null,
             "cachedInputTokens": null,
             "reasoningTokens": null,
-            "estimatedCostUsd": null
+            "estimatedCostUsd": null,
+            "costedIterations": 0,
+            "totalIterations": 1
           }
         },
         "metrics": {
@@ -1042,6 +1070,16 @@
             "compare": null,
             "delta": null,
             "percentDelta": null
+          },
+          "costCoverage": {
+            "base": {
+              "costed": 0,
+              "total": 1
+            },
+            "compare": {
+              "costed": 0,
+              "total": 1
+            }
           },
           "estimatedCostUsd": {
             "base": null,
@@ -1104,7 +1142,9 @@
             "outputTokens": null,
             "cachedInputTokens": null,
             "reasoningTokens": null,
-            "estimatedCostUsd": null
+            "estimatedCostUsd": null,
+            "costedIterations": 0,
+            "totalIterations": 1
           }
         },
         "compare": {
@@ -1129,7 +1169,9 @@
             "outputTokens": null,
             "cachedInputTokens": null,
             "reasoningTokens": null,
-            "estimatedCostUsd": null
+            "estimatedCostUsd": null,
+            "costedIterations": 0,
+            "totalIterations": 1
           }
         },
         "metrics": {
@@ -1168,6 +1210,16 @@
             "compare": null,
             "delta": null,
             "percentDelta": null
+          },
+          "costCoverage": {
+            "base": {
+              "costed": 0,
+              "total": 1
+            },
+            "compare": {
+              "costed": 0,
+              "total": 1
+            }
           },
           "estimatedCostUsd": {
             "base": null,

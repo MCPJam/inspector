@@ -376,7 +376,7 @@ describe("population honesty", () => {
   it("states the scope as complete when the SERVER said so", () => {
     const state = ready(build());
     expect(state.byStage.connection!.scopeLine).toContain(
-      "over all 6 scanned trials",
+      "over all 6 scanned iterations",
     );
   });
 
@@ -389,7 +389,7 @@ describe("population honesty", () => {
       }),
     );
     expect(state.byStage.connection!.scopeLine).toContain(
-      "over the first 20 trials scanned",
+      "over the first 20 iterations scanned",
     );
     expect(state.byStage.connection!.scopeLine).toContain(
       "not the complete set",
@@ -414,7 +414,7 @@ describe("population honesty", () => {
     );
     // One `response` diagnostic in the corpus; the tally counts three.
     expect(state.byStage.response!.unattributedNote).toContain(
-      "2 further stage failures occurred on trials whose cases passed",
+      "2 further stage failures occurred on iterations whose cases passed",
     );
     expect(state.byStage.response!.unattributedNote).toContain(
       "no diagnostic row here",
@@ -473,7 +473,7 @@ describe("population honesty", () => {
       }),
     );
     expect(complete.byStage.response!.unattributedNote).toContain(
-      "trials whose cases passed",
+      "iterations whose cases passed",
     );
     expect(complete.byStage.connection!.reconciliationNote).toContain(
       "worth reporting",
@@ -500,7 +500,7 @@ describe("population honesty", () => {
     );
     // The TALLY is what the headline still states.
     expect(state.byStage.connection!.headline).toContain(
-      "failed in 0 of 6 measured trials",
+      "failed in 0 of 6 measured iterations",
     );
   });
 
@@ -542,7 +542,7 @@ describe("degraded states are each their own variant", () => {
       ...base,
       status: "error",
       error: {
-        title: "Couldn't load the trial evidence",
+        title: "Couldn't load the iteration evidence",
         detail: "It failed.",
       },
     });

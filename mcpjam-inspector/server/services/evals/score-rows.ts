@@ -39,6 +39,15 @@ export type HostedPredicateResultLike = {
   passed: boolean;
   reason?: string;
   scope?: PredicateScope;
+  /**
+   * `"error"` ⇒ the check could not be scored. Absent ⇒ `"scored"`.
+   *
+   * The row still carries `passed: false` (the field is required on the wire),
+   * so a reader that ignores this projects an unmeasured check as a 0 — a
+   * defect on the dashboard nobody observed, and a failed trial if the check
+   * gates.
+   */
+  status?: "scored" | "error";
 };
 
 /** The tool-call matcher's verdict, as it lands on the evaluation. */
@@ -215,6 +224,19 @@ export function buildHostedScoreRows(
     const criterionId = hostedCriterionId(result.predicate, result.scope);
     const definition = byId.get(`predicate:${criterionId}`);
     if (!definition) continue;
+    // A check with no evidence is an ERROR row, not a 0. The distinction is
+    // load-bearing downstream: an error row carries no value, keeps the
+    // scorer in `unresolvedScorerIds`, and leaves its stage `notMeasured`,
+    // where a 0 would attribute a defect to the server on a measurement we
+    // never took.
+    if (result.status === "error") {
+      rows.push(
+        errorScoreResult(definition, result.reason ?? "no evidence captured", {
+          ...(result.scope ? { scope: result.scope } : {}),
+        })
+      );
+      continue;
+    }
     rows.push(
       fromCriterionResult(definition, {
         criterionId,
