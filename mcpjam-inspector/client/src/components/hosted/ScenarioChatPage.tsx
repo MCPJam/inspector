@@ -389,6 +389,14 @@ export function ScenarioChatPage({
    * resume for a scenario this visitor can no longer reach. Takes the scenario
    * id explicitly because the session it belongs to is being torn down in the
    * same breath.
+   *
+   * Every exit path that drops the session goes through here, because this is
+   * the one place that knows the embed rule: inside the same-origin Preview
+   * iframe, never touch sessionStorage — it belongs to the host tab, and
+   * clearing it would wipe the outer dashboard's own scenario session. The
+   * rule is only safe because the embed never runs the post-redeem URL strip
+   * (see `readCurrentSession` above): its URL keeps the share token, so
+   * skipping the clear leaves nothing stale behind and a reload re-redeems.
    */
   const clearCurrentSession = useCallback((scenarioId?: string | null) => {
     if (isEmbeddedPreview()) {
@@ -925,13 +933,11 @@ export function ScenarioChatPage({
 
   const leaveScenario = useCallback(
     (to: string) => {
-      if (!isEmbeddedPreview()) {
-        clearScenarioSession();
-      }
+      clearCurrentSession();
       navigateApp(to, { replace: true });
       onExitScenarioChat?.();
     },
-    [onExitScenarioChat],
+    [clearCurrentSession, onExitScenarioChat],
   );
 
   const handleOpenMcpJam = useCallback(() => {
