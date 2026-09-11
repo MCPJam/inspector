@@ -1,3 +1,7 @@
+import {
+  jpegFrameLimit,
+  SHARP_STREAM_FEATURE,
+} from "@/shared/browser-viewport-policy";
 /**
  * The hosted browser's frame socket (`/api/web/computers/browser/frames`).
  *
@@ -42,14 +46,36 @@ import {
   isComputersDataPlaneConfigured,
   touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionCommand,
+} from "../../utils/computers/activity-touch.js";
 import {
   lookupBrowserSession,
   touchBrowserSession,
   type BrowserSessionRecord,
 } from "../../services/browserd/browser-sessions-client.js";
-import { BrowserdClient } from "../../services/browserd/browserd-client.js";
+import {
+  BrowserdClient,
+  type BrowserdStatus,
+} from "../../services/browserd/browserd-client.js";
+import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
 import { browserdBundleHash } from "../../services/browserd/live-session-deps.js";
+import {
+  encodeFrameStreamRecord,
+  FRAME_STREAM_KIND,
+} from "../../services/browserd/frame-stream.js";
+import {
+  createFrameRelayStats,
+  pongFor,
+  type DaemonFrameCounters,
+} from "./browser-frame-relay-stats.js";
+import {
+  createRelayInputForwarder,
+  type InputRefusal,
+  type RelayInputForwarder,
+} from "./browser-pane-input-forwarder.js";
+import { parseBrowserPaneInputMessage } from "../../../shared/browser-pane-input.js";
 import { logger } from "../../utils/logger.js";
 
 /**
@@ -64,6 +90,16 @@ const CLOSE_NOT_FOUND = 4404; // no browser there
  */
 const CLOSE_LEASE_HELD = 4409;
 const CLOSE_UNAVAILABLE = 4503; // shutting down, or an unexplained drop
+/**
+ * This box cannot encode video; ask again without it.
+ *
+ * Its OWN code, because the pane's answer is different from every other close:
+ * a generic 4503 is a transient fault worth retrying as-is, and retrying as-is
+ * here means asking for H.264 again from a daemon that has already said it has
+ * no encoder — an endless reconnect loop with no picture, when the JPEG wire
+ * beneath it works perfectly.
+ */
+const CLOSE_VIDEO_UNAVAILABLE = 4415;
 
 /**
  * How often a WATCHED pane keeps the session row and the box awake.
@@ -81,22 +117,62 @@ export interface BrowserFramesDeps {
   touchActivity?: typeof touchComputerActivity;
   bundleHash?: () => string;
   configured?: () => boolean;
+  /** Ask the daemon what it can do, so the relay never requests more. */
+  daemonStatus?: (session: BrowserSessionRecord) => Promise<BrowserdStatus>;
   /** Open the daemon's frame stream. Injected so tests need no sandbox. */
   openUpstream?: (args: {
     session: BrowserSessionRecord;
     holder: string;
     tabId?: string;
+    codec?: "jpeg" | "h264";
+    sharp?: boolean;
     signal: AbortSignal;
+    /**
+     * One frame, as the DAEMON produced it — raw JPEG bytes, not base64.
+     *
+     * The seam hands the bytes over rather than a string because the relay now
+     * decides the wire: a pane on the binary wire gets these forwarded almost
+     * verbatim, and base64ing them first only to un-base64 them would be a
+     * third more bytes and two conversions for nothing.
+     */
     onFrame: (frame: {
-      data: string;
+      jpeg: Uint8Array;
       deviceWidth: number;
       deviceHeight: number;
       scale: number;
       ts: number;
       seq: number;
     }) => void;
+    /** One H.264 access unit, on a `codec: "h264"` stream. */
+    onVideo?: (record: {
+      key: boolean;
+      au: Uint8Array;
+      deviceWidth: number;
+      deviceHeight: number;
+      scale: number;
+      ts: number;
+      seq: number;
+    }) => void;
+    /** The daemon's own counters, from the heartbeat. */
+    onStats?: (stats: DaemonFrameCounters) => void;
     onEnd: (reason: string | undefined) => void;
   }) => Promise<{ ok: true } | { ok: false; status: number; error: string }>;
+  /**
+   * Forward one batch to the daemon. Injected so tests need no sandbox, and
+   * separate from `openUpstream` because input and frames now share a socket
+   * but still take opposite hops.
+   */
+  sendInput?: (args: {
+    session: BrowserSessionRecord;
+    holder: string;
+    tabId?: string;
+    events: readonly ViewportInputEvent[];
+  }) => Promise<{ ok: true } | { ok: false; status: number; error: string }>;
+  /** Forward a quality tier to the daemon's encoder. */
+  setQuality?: (args: {
+    session: BrowserSessionRecord;
+    tier: "auto" | "sharp" | "saver";
+  }) => Promise<unknown>;
 }
 
 const liveSockets = new Set<{ close(): void }>();
@@ -153,18 +229,55 @@ export function createComputerBrowserFramesWsHandler(
       }).streamFrames({
         holder: args.holder,
         ...(args.tabId ? { tabId: args.tabId } : {}),
+        ...(args.codec ? { codec: args.codec } : {}),
+        ...(args.sharp ? { sharp: true } : {}),
+        ...(args.onVideo
+          ? {
+              onVideo: (record) =>
+                args.onVideo?.({
+                  key: record.kind === FRAME_STREAM_KIND.video_key,
+                  au: record.au,
+                  deviceWidth: record.deviceWidth,
+                  deviceHeight: record.deviceHeight,
+                  scale: record.scale,
+                  ts: record.ts,
+                  seq: record.seq,
+                }),
+            }
+          : {}),
         signal: args.signal,
-        onFrame: (frame) =>
-          args.onFrame({
-            // The pane reads base64, as the local one does.
-            data: Buffer.from(frame.jpeg).toString("base64"),
-            deviceWidth: frame.deviceWidth,
-            deviceHeight: frame.deviceHeight,
-            scale: frame.scale,
-            ts: frame.ts,
-            seq: frame.seq,
-          }),
+        // Straight through: the relay owns the wire decision, not this seam.
+        onFrame: (frame) => args.onFrame(frame),
+        ...(args.onStats ? { onStats: (stats) => args.onStats?.(stats) } : {}),
         onEnd: args.onEnd,
+      }));
+  const setQuality =
+    deps.setQuality ??
+    ((args: {
+      session: BrowserSessionRecord;
+      tier: "auto" | "sharp" | "saver";
+    }) =>
+      new BrowserdClient({
+        baseUrl: args.session.publicOrigin,
+        bearer: args.session.browserdToken,
+      }).setQuality({ tier: args.tier }));
+  const daemonStatus =
+    deps.daemonStatus ??
+    ((session: BrowserSessionRecord) =>
+      new BrowserdClient({
+        baseUrl: session.publicOrigin,
+        bearer: session.browserdToken,
+      }).status());
+  const sendInput =
+    deps.sendInput ??
+    (async (args) =>
+      new BrowserdClient({
+        baseUrl: args.session.publicOrigin,
+        bearer: args.session.browserdToken,
+      }).sendInput({
+        holder: args.holder,
+        events: args.events,
+        ...(args.tabId ? { tabId: args.tabId } : {}),
       }));
 
   return upgradeWebSocket(async (c) => {
@@ -173,6 +286,28 @@ export function createComputerBrowserFramesWsHandler(
     const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
     const token = protocolHeader.split(",")[0]?.trim() ?? "";
     const tabId = c.req.query("tabId") ?? undefined;
+    /** This socket's tab, for the input path that must agree with the stream. */
+    const tabIdParam = tabId;
+    /**
+     * Does this pane want the daemon's own bytes instead of a JSON envelope?
+     *
+     * NEGOTIATED, not assumed. A client that predates V-4b sends no `wire`
+     * param and keeps getting base64 in JSON — which is what makes shipping
+     * this safe while an old bundle is still cached in somebody's tab.
+     */
+    const binaryWire = c.req.query("wire") === "binary";
+    const wantsSharp = c.req.query("sharp") === "1";
+    let sharpAgreed = false;
+    /**
+     * Did this pane ask for video, and can it take it?
+     *
+     * Two gates, both necessary. The pane only asks when its browser has a
+     * `VideoDecoder`; the DAEMON only gets asked when it advertised `"h264"`,
+     * because one too old to encode would answer an error stream and a reader
+     * cannot tell that apart from a dead browser. Video also implies the binary
+     * wire — an access unit in a JSON envelope would be base64 again.
+     */
+    const wantsVideo = binaryWire && c.req.query("codec") === "h264";
 
     // Resolved BEFORE the upgrade wherever possible, but reported as a close
     // code: once an upgrade has been requested there is no HTTP status left to
@@ -180,6 +315,8 @@ export function createComputerBrowserFramesWsHandler(
     let refusal: { code: number; reason: string } | null = null;
     let session: BrowserSessionRecord | null = null;
     let viewerId = "";
+    /** Did the DAEMON say it can encode? Resolved before the socket opens. */
+    let videoAgreed = false;
     const openedAt = killGeneration;
 
     if (shuttingDown) {
@@ -191,7 +328,10 @@ export function createComputerBrowserFramesWsHandler(
       if (!claims) {
         refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
       } else {
-        const info = await sandboxInfo({ computerId: claims.computerId });
+        const target = claims.computerId
+          ? { computerId: claims.computerId }
+          : { sandboxRowId: claims.sandboxRowId };
+        const info = await sandboxInfo(target);
         if (!info.ok) {
           refusal = { code: CLOSE_UNAVAILABLE, reason: "computer unavailable" };
         } else if (
@@ -204,7 +344,8 @@ export function createComputerBrowserFramesWsHandler(
         } else {
           viewerId = claims.userId;
           const lookup = await lookupSession({
-            computerId: claims.computerId,
+            ...target,
+            ...(claims.sandboxRowId ? { watched: true } : {}),
             expectedBundleHash: bundleHash(),
             // `"any"`: a pane watches whatever browser this computer is
             // running, which is the same question the panel's own lookup asks.
@@ -213,6 +354,25 @@ export function createComputerBrowserFramesWsHandler(
           session = lookup.session;
           if (!session) {
             refusal = { code: CLOSE_NOT_FOUND, reason: "no_browser_session" };
+          } else if (
+            claims.sessionId &&
+            session.logicalSessionId !== claims.sessionId
+          ) {
+            refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
+          } else if (wantsVideo || wantsSharp) {
+            // ANNOUNCED, never assumed. A daemon too old to encode would answer
+            // an error stream, and a reader cannot tell that apart from a dead
+            // browser — so the relay asks first and simply serves JPEG when the
+            // answer is no.
+            const status = await daemonStatus(session).catch(() => null);
+            videoAgreed =
+              wantsVideo &&
+              status?.kind === "ok" &&
+              (status.features ?? []).includes("h264");
+            sharpAgreed =
+              wantsSharp &&
+              status?.kind === "ok" &&
+              (status.features ?? []).includes(SHARP_STREAM_FEATURE);
           }
         }
       }
@@ -225,6 +385,16 @@ export function createComputerBrowserFramesWsHandler(
     const abort = new AbortController();
     let registered: { close(): void } | undefined;
     let activityTimer: ReturnType<typeof setInterval> | undefined;
+    /**
+     * What this socket saw, and what it could not pass on.
+     *
+     * Created per socket rather than per route: the interesting number is one
+     * pane's loss, and a process-wide counter would average a congested viewer
+     * away against every healthy one.
+     */
+    let stats: ReturnType<typeof createFrameRelayStats> | undefined;
+    /** One dispatch in flight per socket — see the forwarder's docstring. */
+    let input: RelayInputForwarder | undefined;
     /**
      * Has the pane said it is being looked at since the last activity touch?
      *
@@ -241,6 +411,12 @@ export function createComputerBrowserFramesWsHandler(
       abort.abort();
       if (activityTimer) clearInterval(activityTimer);
       activityTimer = undefined;
+      stats?.stop();
+      stats = undefined;
+      // Whatever is queued belonged to the hold that queued it; delivering it
+      // after the socket went away types into whoever holds the browser next.
+      input?.cancel();
+      input = undefined;
       if (registered) {
         // By identity, so a reconnect cannot retain the dead `WSContext` of the
         // connection it replaced.
@@ -262,6 +438,101 @@ export function createComputerBrowserFramesWsHandler(
 
         registered = { close: () => ws.close(CLOSE_UNAVAILABLE, "closed") };
         liveSockets.add(registered);
+
+        stats = createFrameRelayStats({
+          send: (payload) => ws.send(payload),
+          bufferedAmount: () =>
+            (ws.raw as { bufferedAmount?: number } | undefined)?.bufferedAmount,
+        });
+        stats.setSubscribers(1);
+        stats.start();
+
+        input = createRelayInputForwarder({
+          dispatch: async ({ tabId: messageTab, events }) => {
+            // THIS SOCKET'S tab when the message did not name one. The frame
+            // stream is pinned to `?tabId=`, and input with no tab resolves to
+            // the daemon's DEFAULT tab — so a pane watching a second tab was
+            // clicking into the first one, at coordinates measured against a
+            // picture of the second.
+            const tabId = messageTab ?? tabIdParam;
+            const outcome = await sendInput({
+              session: live,
+              // NEVER from the client, exactly as `POST /input` derives it: the
+              // daemon admits input when `holder === lease.holder`, so a holder
+              // read off the wire would let anyone who echoed the right id type
+              // into somebody else's held session — a password field, mid-login.
+              holder: viewerId,
+              ...(tabId ? { tabId } : {}),
+              events: events as readonly ViewportInputEvent[],
+            });
+            if (outcome.ok) return { ok: true };
+            return { ok: false, refused: refusalFor(outcome.status) };
+          },
+          ack: (payload) => {
+            if (closed) return;
+            try {
+              ws.send(JSON.stringify({ type: "input_ack", ...payload }));
+            } catch {
+              /* the socket went away */
+            }
+          },
+          onDispatched: () => {
+            // A person typing is REAL USE, and `kind: "command"` says so: the
+            // panel keepalive stops counting once the last real command is old
+            // enough, which is exactly the case for somebody who took control
+            // to solve a CAPTCHA and issues no agent commands at all.
+            //
+            // BOTH touches are throttled, each on its OWN key, and only on a
+            // dispatch that actually landed. `onDispatched` fires per landed
+            // flush — tens a second through a drag — and every touch is a
+            // control-plane write.
+            //
+            // The session touch is keyed by SESSION because that is the row it
+            // patches, and because a sandbox target has no computer id to key
+            // on; the computer touch stays keyed by COMPUTER. Both are
+            // leading-edge, so the first input after a pause writes at once and
+            // nothing is slept out from under somebody who just came back.
+            if (closed) return;
+            if (shouldTouchSessionCommand(live.sessionId)) {
+              void touchSession({
+                sessionId: live.sessionId,
+                kind: "command",
+              }).catch(() => {});
+            }
+            const computerId =
+              live.target === "sandbox" ? undefined : live.computerId;
+            if (computerId && shouldTouchActivity(computerId)) {
+              void touchActivity({ computerId }).catch(() => {});
+            }
+          },
+        });
+
+        // What this server can do, said before the pane has to guess. A client
+        // that does not see `input` here keeps POSTing, which is how a new
+        // build talks to an old server for one release.
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "hello",
+              features: [
+                "input",
+                ...(sharpAgreed ? [SHARP_STREAM_FEATURE] : []),
+              ],
+              // What this stream will actually carry. `"h264"` appears only
+              // when the pane asked AND the daemon said it could — a pane that
+              // asked and does not see it keeps its JPEG path, which is the
+              // same fallback a browser with no `VideoDecoder` takes.
+              codecs: videoAgreed ? ["jpeg", "h264"] : ["jpeg"],
+              codec: videoAgreed ? "h264" : "jpeg",
+              // Echoed rather than assumed: the pane asked in its query, and
+              // this is the server agreeing. A pane that asked and did not hear
+              // back keeps its JSON parser armed.
+              wire: binaryWire ? "binary" : "json",
+            }),
+          );
+        } catch {
+          /* the socket went away between the upgrade and the first send */
+        }
 
         /**
          * A watching pane issues no COMMANDS, so nothing else keeps the session
@@ -286,10 +557,12 @@ export function createComputerBrowserFramesWsHandler(
               // up, and touching then keeps a computer awake for a socket that
               // is gone.
               if (closed || !counted) return;
-              if (!shouldTouchActivity(live.computerId)) return;
-              void touchActivity({ computerId: live.computerId }).catch(
-                () => {},
-              );
+              const computerId =
+                live.target === "sandbox" ? undefined : live.computerId;
+              if (!computerId || !shouldTouchActivity(computerId)) {
+                return;
+              }
+              void touchActivity({ computerId }).catch(() => {});
             })
             .catch(() => {});
         };
@@ -314,14 +587,90 @@ export function createComputerBrowserFramesWsHandler(
           // NEVER from the client: see the module docstring.
           holder: viewerId,
           ...(tabId ? { tabId } : {}),
+          ...(videoAgreed ? { codec: "h264" as const } : {}),
+          ...(sharpAgreed ? { sharp: true } : {}),
+          ...(videoAgreed
+            ? {
+                onVideo: (record) => {
+                  if (closed) {
+                    stats?.countDrop();
+                    return;
+                  }
+                  // The daemon's record, forwarded — the timestamp rewritten to
+                  // THIS hop's clock, exactly as a JPEG frame is.
+                  const bytes = new Uint8Array(
+                    encodeFrameStreamRecord({
+                      kind: record.key
+                        ? FRAME_STREAM_KIND.video_key
+                        : FRAME_STREAM_KIND.video_delta,
+                      deviceWidth: record.deviceWidth,
+                      deviceHeight: record.deviceHeight,
+                      scale: record.scale,
+                      ts: Date.now(),
+                      seq: record.seq,
+                      au: record.au,
+                    }),
+                  );
+                  stats?.offer(bytes.byteLength, () => ws.send(bytes));
+                },
+              }
+            : {}),
           signal: abort.signal,
           onFrame: (frame) => {
-            if (closed) return;
-            try {
-              ws.send(JSON.stringify({ type: "frame", frame }));
-            } catch {
-              /* the socket went away between the check and the send */
+            if (frame.jpeg.byteLength > jpegFrameLimit(sharpAgreed)) {
+              stats?.countDrop();
+              return;
             }
+            if (closed) {
+              stats?.countDrop();
+              return;
+            }
+            // `relayTs` and not the sandbox's `ts`: the two clocks belong to
+            // different machines, so a pane subtracting `ts` from `Date.now()`
+            // reports the drift between two boxes and calls it latency. This
+            // one is stamped by the hop the pane can actually compare against
+            // — it measured this replica's round trip with its own ping.
+            if (binaryWire) {
+              // The daemon's record, forwarded — byte for byte except the
+              // timestamp, which is rewritten to THIS hop's clock. No base64,
+              // no JSON: a third of the bytes and none of the parse.
+              const bytes = encodeFrameStreamRecord({
+                kind: FRAME_STREAM_KIND.frame,
+                deviceWidth: frame.deviceWidth,
+                deviceHeight: frame.deviceHeight,
+                scale: frame.scale,
+                ts: Date.now(),
+                seq: frame.seq,
+                jpeg: frame.jpeg,
+              });
+              // `ws.send` wants an ArrayBuffer-backed view; the encoder's
+              // output already is one, but its type is widened by the shared
+              // module's `Uint8Array<ArrayBufferLike>`.
+              const view = new Uint8Array(bytes);
+              stats?.offerJpeg(view.byteLength, () => ws.send(view));
+              return;
+            }
+            const payload = JSON.stringify({
+              type: "frame",
+              frame: {
+                // The pane reads base64 on the JSON wire, as the local one
+                // does. One release of this, then it is only the fallback.
+                data: Buffer.from(frame.jpeg).toString("base64"),
+                deviceWidth: frame.deviceWidth,
+                deviceHeight: frame.deviceHeight,
+                scale: frame.scale,
+                ts: frame.ts,
+                seq: frame.seq,
+                relayTs: Date.now(),
+              },
+            });
+            stats?.offerJpeg(payload.length, () => ws.send(payload));
+          },
+          // The daemon's side of the accounting, merged into the same `stats`
+          // message the relay's own counters go out on. One shape for the pane,
+          // whichever engine it is looking at.
+          onStats: (daemon) => {
+            stats?.mergeDaemon(daemon);
           },
           onEnd: (reason) => {
             if (closed) return;
@@ -342,7 +691,8 @@ export function createComputerBrowserFramesWsHandler(
         if (!started.ok) {
           detach();
           logger.warn("[computers] browser frame stream refused", {
-            computerId: live.computerId,
+            browserTarget:
+              live.target === "computer" ? live.computerId : live.sandboxRowId,
             status: started.status,
           });
           ws.close(
@@ -363,11 +713,50 @@ export function createComputerBrowserFramesWsHandler(
         // on its own tick now, because a one-way stream has no ping to borrow.
         // It still says somebody is watching.
         try {
-          const parsed = JSON.parse(String(event.data)) as { type?: unknown };
-          if (parsed?.type !== "ping" || closed) return;
+          const parsed = JSON.parse(String(event.data)) as {
+            type?: unknown;
+            t?: unknown;
+          };
+          if (closed) return;
+          if (parsed?.type === "input") {
+            const message = parseBrowserPaneInputMessage(parsed);
+            if (!message.ok) {
+              // An ack, not a close: a malformed batch is a bug in one
+              // message, and dropping the socket would take the picture with
+              // it.
+              const seq = (parsed as { seq?: unknown }).seq;
+              ws.send(
+                JSON.stringify({
+                  type: "input_ack",
+                  seq: typeof seq === "number" ? seq : -1,
+                  dispatched: 0,
+                  refused: "invalid_input",
+                }),
+              );
+              return;
+            }
+            input?.submit(message);
+            return;
+          }
+          if (parsed?.type === "quality") {
+            const tier = (parsed as { tier?: unknown }).tier;
+            if (tier === "auto" || tier === "sharp" || tier === "saver") {
+              // Fire and forget: a tier that does not land leaves the picture
+              // exactly as it was, which is a worse picture rather than a
+              // broken one — and nothing about it is worth a banner.
+              if (session) {
+                void setQuality({ session, tier }).catch(() => {});
+              }
+            }
+            return;
+          }
+          if (parsed?.type !== "ping") return;
           // The evidence the activity timer waits for.
           watched = true;
-          ws.send(JSON.stringify({ type: "pong" }));
+          // The pane's own stamp comes back untouched, which is what makes the
+          // round trip measurable at all: nothing here reads it, because this
+          // clock is not the pane's.
+          ws.send(pongFor(parsed));
         } catch {
           // Not our protocol; ignore rather than close.
         }
@@ -383,6 +772,22 @@ export function createComputerBrowserFramesWsHandler(
       },
     };
   });
+}
+
+/**
+ * Turn the daemon's input status into the ack's `refused` word.
+ *
+ * A 423 is the ORDINARY answer while the agent is driving, not a failure —
+ * which is exactly why it must not become a close. Everything else the daemon
+ * can answer (a stale bearer, a 500, an origin refusal) is an upstream
+ * problem, and dressing one up as a lease refusal would tell the pane to wait
+ * for a hand-back from a holder who does not exist.
+ */
+function refusalFor(status: number): InputRefusal {
+  if (status === 423) return "lease_held";
+  if (status === 404) return "unknown_tab";
+  if (status === 409) return "no_browser_session";
+  return "upstream_error";
 }
 
 /**
@@ -403,6 +808,8 @@ function closeFor(reason: string | undefined): [number, string] {
       return [CLOSE_NOT_FOUND, reason];
     case "shutting_down":
       return [CLOSE_UNAVAILABLE, reason];
+    case "video_unavailable":
+      return [CLOSE_VIDEO_UNAVAILABLE, reason];
     default:
       return [CLOSE_UNAVAILABLE, "stream ended"];
   }

@@ -361,7 +361,7 @@ info {
 note   { border-left-color: var(--mcj-orange) !important;        color: var(--mcj-orange-edge) !important; }
 tip    { border-left-color: oklch(0.55 0.13 152.5) !important;   color: oklch(0.40 0.10 152.5) !important; }
 info   { border-left-color: oklch(0.55 0.16 259) !important;     color: oklch(0.40 0.14 259) !important; }
-warning{ border-left-color: oklch(0.627 0.208 25.331) !important;color: oklch(0.50 0.18 25.331) !important; }
+warning{ border-left-color: oklch(0.6261 0.2077 25.2698) !important;color: oklch(0.50 0.18 25.270) !important; }
 
 .dark note,    [data-theme="dark"] note    { color: oklch(0.78 0.13 38.7) !important; }
 .dark tip,     [data-theme="dark"] tip     { color: oklch(0.78 0.12 152.5) !important; }

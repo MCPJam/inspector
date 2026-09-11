@@ -1,3 +1,4 @@
+import { resolveExecutionContext } from "../../../utils/host-execution-context.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
@@ -23,6 +24,16 @@ const {
   disconnectAllServersMock: vi.fn(),
   convexQueryMock: vi.fn(),
 }));
+
+vi.mock("../../../utils/host-execution-context.js", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../../../utils/host-execution-context.js")
+  >();
+  return {
+    ...actual,
+    resolveExecutionContext: vi.fn(actual.resolveExecutionContext),
+  };
+});
 
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
@@ -299,6 +310,10 @@ describe("web chat-v2 — environment execution target", () => {
     expect(fetchHostRuntimeConfigMock).toHaveBeenCalledWith(
       expect.objectContaining({ hostId: "host_legacy" })
     );
+    expect(
+      persistChatSessionToConvexMock.mock.calls[0][0].resumeConfig
+        .executionTarget,
+    ).toEqual({ kind: "host", hostId: "host_legacy" });
     // No ENVIRONMENT was resolved — which is what this test is about. A host
     // target does now query the project's skill catalog, because its skills
     // reach the turn as a live capability set rather than through a separate
@@ -309,6 +324,42 @@ describe("web chat-v2 — environment execution target", () => {
       expect.anything()
     );
   });
+
+  it.each([
+    { configured: [], requested: ["browser"] },
+    { configured: undefined, requested: ["browser"] },
+    { configured: ["web_search"], requested: [] },
+  ])(
+    "keeps environment built-ins authoritative: $configured / $requested",
+    async ({ configured, requested }) => {
+      convexQueryMock.mockResolvedValue({
+        ...ENV_SPEC,
+        host: {
+          ...ENV_SPEC.host,
+          runtimeConfig: {
+            ...ENV_SPEC.host.runtimeConfig,
+            builtInToolIds: configured,
+          },
+        },
+      });
+      const { app, token } = createWebTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          ...BASE_BODY,
+          builtInToolIds: requested,
+          executionTarget: { kind: "environment", environmentId: "env_1" },
+        },
+        token,
+      );
+      expect(response.status).toBe(200);
+      expect(
+        vi.mocked(resolveExecutionContext).mock.results.at(-1)?.value
+          .builtInToolIds,
+      ).toEqual(configured);
+    },
+  );
 
   it("uses the RESOLVED server set everywhere, never the body's", async () => {
     const { app, token } = createWebTestApp();
@@ -350,6 +401,10 @@ describe("web chat-v2 — environment execution target", () => {
     // plugin lifecycle check — a plugin server belongs to its environment at
     // launch, never to a stored session list.
     expect(persistArgs.resumeConfig.selectedServers).toEqual(["linear"]);
+    expect(persistArgs.resumeConfig.executionTarget).toEqual({
+      kind: "environment",
+      environmentId: "env_1",
+    });
     expect(JSON.stringify(persistArgs)).not.toContain("body-server-9");
   });
 
