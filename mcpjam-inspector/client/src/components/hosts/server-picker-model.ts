@@ -35,11 +35,6 @@ function normalize(name: string): string {
   return name.trim().toLowerCase();
 }
 
-/** Escape a name for use inside a RegExp — server names are user text. */
-function escapeForPattern(name: string): string {
-  return name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
  * Is this row a bare server's stand-in rather than a group of its own?
  *
@@ -61,12 +56,16 @@ export function isServerStandIn(group: PickerGroup): boolean {
   const base = normalize(serverName);
   const name = normalize(group.name);
   if (name === base) return true;
+  // Compared as TEXT. Built as a pattern, the name would have to be escaped
+  // first — server names are user text, and `a.b` otherwise claims `axb 2`
+  // while `c++` is not a pattern at all.
+  if (!name.startsWith(`${base} `)) return false;
   // From 2 up, because that is where `deriveServerGroupName` starts counting:
   // `alpha 0` and `alpha 1` are names a person chose, and claiming them would
-  // hide their group and hand it out as the bare server.
-  return new RegExp(`^${escapeForPattern(base)} (?:[2-9]|[1-9][0-9]+)$`).test(
-    name,
-  );
+  // hide their group and hand it out as the bare server. No leading zero —
+  // the generator never writes `alpha 02`.
+  const suffix = name.slice(base.length + 1);
+  return /^[1-9][0-9]*$/.test(suffix) && Number(suffix) >= 2;
 }
 
 /**

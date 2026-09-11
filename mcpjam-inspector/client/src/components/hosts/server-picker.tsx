@@ -242,24 +242,14 @@ export function ServerPicker({
   /**
    * A SAME-TICK backstop for `busy`, and deliberately nothing more.
    *
-   * `busy` remains the one flag and the mechanism: it disables every control
-   * that could start a write, so a refusal the user cannot see never has to
-   * happen. But it is React state. Two events dispatched before React commits
-   * that disable both read the pre-write render, and both start a mutation —
-   * two rows minted for one server, or two groups from one Create.
+   * `busy` disables every control that could start a write, but it is React
+   * state: two events dispatched before that disable commits both read the
+   * pre-write render, and both start a mutation. Closed silently, because the
+   * second event is the same choice arriving twice, not one to explain.
    *
-   * This closes only that window, and closes it silently on purpose: the
-   * second event is not a choice to refuse and explain, it is the same choice
-   * arriving twice. Anything a user could reasonably retry still goes through
-   * `busy`, which they can see.
-   *
-   * NOT covered by a test, and that is not an oversight. Every path that takes
-   * this ref now also raises `creating`, so `busy` disables the control and
-   * jsdom — which flushes a discrete event synchronously — never fires the
-   * second click. The window this closes is the one before that flush, and it
-   * is unreachable from a DOM test, which is also why the practical risk
-   * through a mouse is small. Deleting this because "no test fails" would be
-   * reading that backwards.
+   * No DOM test can reach it — jsdom flushes a discrete event synchronously,
+   * so the control is already disabled. `server-picker-reentrancy.test.tsx`
+   * covers it at the boundary that can: a panel that freezes nothing.
    */
   const writing = useRef(false);
 
@@ -721,22 +711,21 @@ export function ServerPicker({
    * bare-server mint still wants that name, and calls the deriver directly.
    */
   const deriveName = useCallback(
-    (pickedServerNames: string[]) => {
-      const taken = attachments.map((a) => a.name ?? "");
-      if (pickedServerNames.length !== 1) {
-        return deriveServerGroupName(pickedServerNames, taken);
-      }
+    (pickedServerNames: string[]) =>
       /**
-       * The numbered name, not the server's own — that one IS the stand-in
-       * shape, so suggesting it would hide the group being made.
+       * One server derives the NUMBERED name, not the server's own — that one
+       * IS the stand-in shape, so suggesting it would hide the group being
+       * made. Hence the empty list rather than a second function.
        *
        * Known gap, and not closable by naming: for a server called literally
        * `group`, every `Group N` reads as ITS stand-in, because the rule
        * infers kind from the name and the numbering stem is that name. Closing
        * it wants the storage column, the same one the rename case wants.
        */
-      return deriveServerGroupName([], taken);
-    },
+      deriveServerGroupName(
+        pickedServerNames.length === 1 ? [] : pickedServerNames,
+        attachments.map((a) => a.name ?? ""),
+      ),
     [attachments],
   );
 

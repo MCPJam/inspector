@@ -240,6 +240,11 @@ describe("a stand-in whose name had to be suffixed", () => {
     expect(
       isServerStandIn(group("g_c", "alphax 2", ["srv_1"], ["alpha"])),
     ).toBe(false);
+    // The SEPARATOR is a space, not merely "something". Matching the name as
+    // a prefix and then reading digits from a fixed offset accepts this.
+    expect(isServerStandIn(group("g_d", "alpha-2", ["srv_1"], ["alpha"]))).toBe(
+      false,
+    );
   });
 
   it("still needs to hold exactly the one server", () => {

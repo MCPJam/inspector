@@ -114,14 +114,15 @@ const CHIP =
 /**
  * Roughly what a chip occupies in the row, in pixels.
  *
- * Measured in the app at 11px: 16px of padding plus 4px of gap, then 5.13px a
- * latin character, 11px a CJK one, 14px an emoji. Characters alone dropped the
- * padding and cut a two-chip row to one with 42px still free; treating every
- * character as equal let two CJK names in and wrapped it.
+ * Measured in the app at 11px: 16px of padding plus 4px of gap — rounded to
+ * the flat 22 below — then 5.2px a latin character and 11.5px a wide one.
+ * Characters alone dropped the padding and cut a two-chip row to one with 42px
+ * still free; treating every character as equal let two CJK names in and
+ * wrapped it.
  *
- * `[...text]` so a surrogate pair counts once, not twice. Emoji are charged
- * the CJK rate, which under-reads them slightly — the flat 22 and the summary
- * reserve absorb it.
+ * `[...text]` so a surrogate pair counts once, not twice. Emoji are wide, so
+ * they are charged the CJK rate, which under-reads them slightly — the flat 22
+ * and the summary reserve absorb it.
  *
  * A formula, not a measurement. Swap in a real one only if a font change makes
  * it wrong enough to wrap.
