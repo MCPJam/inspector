@@ -24,9 +24,13 @@ import { appTsxFiles, parseTsx, readAppFile } from "./support/client-tsx";
  */
 const ALLOWED: Record<string, string> = {
   "components/hosts/server-selection-list.tsx":
-    "The shared multi-select leaf (checkbox rows, no data, no popover) that " +
-    "the host attachment editor renders. A control ServerPicker's own panel " +
-    "is a sibling of, not a competitor to it.",
+    "The shared multi-select leaf: checkbox rows, no data, no popover. Its " +
+    "last production importer was ServerGroupPicker, deleted here, and the " +
+    "only importer left — hosts/attachment-editor.tsx — has no importers of " +
+    "its own, so nothing renders this today. Kept rather than deleted because " +
+    "that editor is pre-existing dead code this change did not bring in; " +
+    "removing both is its own commit. Listed so the guard states what is " +
+    "true now, not what was true when it was written.",
 
   "components/ActiveServerSelector.tsx":
     "The header's connection strip: multi-select by server NAME over runtime " +

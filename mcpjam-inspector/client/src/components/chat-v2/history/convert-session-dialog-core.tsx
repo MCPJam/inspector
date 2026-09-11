@@ -959,7 +959,6 @@ function ConvertSessionDialogCoreInner({
               projectId={effectiveProjectId}
               value={serverAttachmentId}
               onChange={setServerAttachmentId}
-              onClearSelection={() => setServerAttachmentId(null)}
               disabled={isSubmitting}
               variant="field"
               triggerId="promote-new-suite-server"
