@@ -1157,20 +1157,45 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(previewPaneMock).not.toHaveBeenCalled();
   });
 
-  it("lays Settings out as a single fixed-measure column", () => {
+  it("lays Settings out in two columns that fill the pane", () => {
     const { container } = renderEdit();
 
     expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
-    // The 560px measure the frame specifies, not a percentage of a split pane
-    // that keeps shrinking as the window narrows.
-    expect(container.querySelector('[class*="w-[560px]"]')).not.toBeNull();
-    // A resizable split is what the fixed measure replaced. Asserted against
-    // the MOCK's own test id, not `[data-panel-group]`: the group is stubbed
-    // in this file, so the real attribute never appears in jsdom and that
-    // assertion could not fail even if the split came back.
+    // Reported as "too much white space": the 560px column this replaces sat
+    // pinned to the left of a pane twice its width. Two columns from `xl`,
+    // capped so an ultra-wide monitor does not stretch the measure.
+    expect(container.querySelector('[class*="w-[560px]"]')).toBeNull();
+    expect(container.querySelector('[class*="xl:grid-cols-2"]')).not.toBeNull();
+    expect(container.querySelector('[class*="max-w-[1400px]"]')).not.toBeNull();
+    // A resizable split is what the single column replaced, and it is not
+    // coming back. Asserted against the MOCK's own test id, not
+    // `[data-panel-group]`: the group is stubbed in this file, so the real
+    // attribute never appears in jsdom and that assertion could not fail even
+    // if the split came back.
     expect(
       screen.queryByTestId("stub-resizable-group"),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps every settings section on the page after the split", () => {
+    // The redesign moved sections between columns; losing one to a bad JSX
+    // nesting is the failure mode a layout change actually has.
+    renderEdit();
+
+    expect(
+      screen.getByTestId("user-testing-description-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Sharing permissions" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Ratings" }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("scenario-grading-section")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-tasks-section"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
   });
 
   it("tags Open preview as preview traffic, not as a tester session", () => {
