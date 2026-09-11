@@ -920,18 +920,18 @@ export function ScenarioChatPage({
     }
   }, [session, shareableToken]);
 
+  const leaveScenario = useCallback(
+    (to: string) => {
+      clearScenarioSession();
+      navigateApp(to, { replace: true });
+      onExitScenarioChat?.();
+    },
+    [onExitScenarioChat],
+  );
+
   const handleOpenMcpJam = useCallback(() => {
-    clearScenarioSession();
-    // Route via the navigation API so React Router's `useLocation`
-    // (consumed by App's pathname-sync effect) sees the new pathname.
-    // A bare `window.history.replaceState` would leave `locationForRoute`
-    // stale on `/scenario/...`, and the sync effect would then redirect
-    // back to `/servers` before the hash-migration shim could pivot.
-    navigateApp("/scenarios", {
-      replace: isEmbeddedPreview() ? true : true,
-    });
-    onExitScenarioChat?.();
-  }, [onExitScenarioChat]);
+    leaveScenario("/scenarios");
+  }, [leaveScenario]);
 
   const handleSignIn = useCallback(() => {
     writeScenarioSignInReturnPath(window.location.pathname);

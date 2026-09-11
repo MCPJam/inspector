@@ -2239,4 +2239,28 @@ describe("ScenarioChatPage", () => {
       );
     });
   });
+
+  describe("preview surface", () => {
+    it("keeps surface=preview on the session after the URL collapses to /#slug", async () => {
+      window.history.replaceState(
+        {},
+        "",
+        "/user-testing/demo/scenario-token?surface=preview",
+      );
+
+      render(<ScenarioChatPage pathToken="scenario-token" />);
+
+      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(window.location.hash).toBe("#resolved-scenario");
+      });
+      expect(window.location.search).toBe("");
+      expect(readScenarioSession()?.surface).toBe("preview");
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          hostedContext: expect.objectContaining({ scenarioSurface: "preview" }),
+        }),
+      );
+    });
+  });
 });
