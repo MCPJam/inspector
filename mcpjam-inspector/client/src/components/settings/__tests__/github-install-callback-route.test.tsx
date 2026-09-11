@@ -117,6 +117,12 @@ function renderCallback(query: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` clears CALLS, not implementations. Two tests here make the
+  // redirect throw to prove the guard's developer text never reaches the
+  // screen, and without this that throwing implementation leaks into every
+  // test after them — where a redirect assertion still passes, because the
+  // call was made, while the page is actually showing a failure.
+  mockRedirectToGithub.mockReset();
   mockAuth.mockReturnValue({ isLoading: false, isAuthenticated: true });
   mockUserReady.mockReturnValue(true);
   mockWorkosAuth.mockReturnValue({
@@ -414,8 +420,32 @@ describe("the OAuth leg", () => {
     );
   });
 
-  it("says so plainly when the user has the app installed nowhere", async () => {
-    // An EMPTY proven list is a real answer, not a failure.
+  it("goes straight to GitHub when there is nothing to pick from", async () => {
+    // An EMPTY proven list is a real answer, not a failure — this GitHub user
+    // administers no account with the app. Installing is the only move, so
+    // make it, rather than rendering a screen whose whole content is "go and
+    // install". This is what keeps a first-time user at one click.
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [],
+      installUrl: "https://github.com/apps/mcpjam/installations/new?state=xyz",
+    });
+    renderCallback("?code=c&state=s");
+
+    await waitFor(() =>
+      expect(mockRedirectToGithub).toHaveBeenCalledWith(
+        "https://github.com/apps/mcpjam/installations/new?state=xyz"
+      )
+    );
+    expect(
+      screen.queryByText(/not installed on any account you administer/i)
+    ).toBeNull();
+  });
+
+  it("still leaves somewhere to go when the backend sends no install URL", async () => {
+    // The old-backend fallback. The settings page no longer has an install
+    // button of its own, so this branch must not strand anyone while it shows.
     mockCompleteUserAuthorization.mockResolvedValue({
       status: "pick_required",
       linkSessionId: "sess-1",
@@ -426,6 +456,185 @@ describe("the OAuth leg", () => {
     expect(
       await screen.findByText(/not installed on any account you administer/i)
     ).toBeInTheDocument();
+    expect(mockRedirectToGithub).not.toHaveBeenCalled();
+  });
+
+  it("refuses an install URL that is not GitHub, showing no developer text", async () => {
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [],
+      installUrl: "https://github.com.evil.test/apps/mcpjam/installations/new",
+    });
+    mockRedirectToGithub.mockImplementation(() => {
+      throw new Error("Refused to redirect outside GitHub");
+    });
+    renderCallback("?code=c&state=s");
+
+    // The guard's message is developer text and must never reach the screen.
+    const shown = await screen.findByText(/could not finish connecting/i);
+    expect(shown).toBeInTheDocument();
+    expect(shown.textContent).not.toMatch(/Refused to redirect/i);
+  });
+
+  it("offers a way to install on an account that is not listed", async () => {
+    // The capability the product did not have at all: reaching an account the
+    // app is not on yet.
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+        },
+      ],
+      installUrl: "https://github.com/apps/mcpjam/installations/new?state=xyz",
+    });
+    const user = userEvent.setup();
+    renderCallback("?code=c&state=s");
+    await screen.findByText("acme");
+
+    await user.click(
+      screen.getByRole("button", { name: /Install on another account/ })
+    );
+
+    expect(mockRedirectToGithub).toHaveBeenCalledWith(
+      "https://github.com/apps/mcpjam/installations/new?state=xyz"
+    );
+    // The redirect SUCCEEDED. Asserting the call alone would pass even if the
+    // guard had thrown and the page had fallen back to a refusal.
+    expect(screen.queryByText(/could not finish connecting/i)).toBeNull();
+  });
+
+  it("offers no install action when the backend sent no URL", async () => {
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+        },
+      ],
+    });
+    renderCallback("?code=c&state=s");
+    await screen.findByText("acme");
+
+    expect(
+      screen.queryByRole("button", { name: /Install on another account/ })
+    ).toBeNull();
+  });
+
+  it("marks an already-connected account instead of offering the click", async () => {
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+          conflict: { organizationName: "Dana's Org" },
+        },
+        { installationId: 12, accountLogin: "dana", accountType: "User" },
+      ],
+    });
+    renderCallback("?code=c&state=s");
+
+    await screen.findByText("acme");
+    // The taken row stays VISIBLE — it is an account they administer, and
+    // hiding it would read as GitHub losing it rather than it being taken.
+    expect(await screen.findByText(/Dana's Org/)).toBeInTheDocument();
+
+    const buttons = screen.getAllByRole("button", { name: "Connect" });
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toBeDisabled();
+    expect(buttons[1]).toBeEnabled();
+  });
+
+  it("points the disabled button at the reason it is disabled", async () => {
+    // The note renders AFTER the button, so without the association a screen
+    // reader reaches "Connect, unavailable" and never learns why — which is
+    // the only thing a blocked row exists to say.
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+          conflict: { organizationName: "Dana's Org" },
+        },
+        { installationId: 12, accountLogin: "dana", accountType: "User" },
+      ],
+    });
+    renderCallback("?code=c&state=s");
+    await screen.findByText("acme");
+
+    const [taken, free] = screen.getAllByRole("button", { name: "Connect" });
+    const noteId = taken.getAttribute("aria-describedby");
+    expect(noteId).toBeTruthy();
+    expect(document.getElementById(noteId as string)?.textContent).toMatch(
+      /Dana's Org/
+    );
+    // A connectable row describes nothing — there is no reason to give.
+    expect(free).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("never fires a claim the backend would refuse", async () => {
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+          conflict: { organizationName: "Dana's Org" },
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderCallback("?code=c&state=s");
+    await screen.findByText("acme");
+
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    // The point of the whole change: no round trip, and no navigation away to
+    // a dead-end failure screen.
+    expect(mockClaimProvenInstallation).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("names no organization when the backend named none", async () => {
+    // An absent `organizationName` is the ANSWER — the caller is not a member
+    // of the holding org — not a lookup that failed. The row must not imply
+    // one exists to go and look at.
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+          conflict: {},
+        },
+      ],
+    });
+    renderCallback("?code=c&state=s");
+
+    const note = await screen.findByText(
+      /already connected to another MCPJam organization/i
+    );
+    expect(note).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    // It points at the party the person can actually reach.
+    expect(note.textContent).toMatch(/owner of the acme GitHub account/i);
   });
 
   it("shows a non-disclosing conflict exactly as the backend worded it", async () => {

@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import {
   EVAL_ROUTE_CATALOG_STATES,
+  FRICTION_SIGNAL_KINDS,
   EVAL_ROUTE_TAGS,
   EVAL_RUN_ROUTE_FACTS_SCHEMA_VERSION,
   EVAL_TOOL_CATALOG_MEMBERSHIPS,
@@ -39,6 +40,7 @@ import {
   mismatchFacts,
   readToolName,
   rollupCaseRoutes,
+  type EvalTrialFrictionSignals,
   type RouteFactsCatalog,
   type RouteFactsRunInput,
   type RouteFactsTrialInput,
@@ -646,5 +648,168 @@ describe("route truncation", () => {
       ],
     });
     expect(doc.cases[0]!.routes.truncatedTrials).toBe(1);
+  });
+});
+
+// ── friction-signal rates (additive; ROUTE_FACTS_VERSION unchanged) ──────────
+
+describe("friction-signal rates", () => {
+  const frictionDoc = (
+    over: Partial<EvalTrialFrictionSignals> = {}
+  ): EvalTrialFrictionSignals =>
+    ({
+      version: 1,
+      state: "measured",
+      callCount: 2,
+      resultAvailableCount: 2,
+      timedCallCount: 0,
+      identifierSignals: { state: "measured" },
+      signals: [],
+      ...over,
+    } as EvalTrialFrictionSignals);
+
+  const retry = (callIndex: number) =>
+    ({
+      kind: "identicalRetry",
+      callIndex,
+      priorCallIndex: callIndex - 1,
+      toolName: "tool_a",
+      afterError: false,
+    } as const);
+
+  const unusedIdentifier = () =>
+    ({
+      kind: "identifierSurfacedUnused",
+      informationCallIndex: 0,
+      observedAtCallIndex: 1,
+      toolName: "tool_a",
+      identifierKeyPaths: ["results[].id"],
+      identifierCount: 1,
+      laterCallCount: 2,
+    } as const);
+
+  test("the block is absent when no trial supplied one", () => {
+    const doc = build([
+      trial({ trialKey: "t1", result: "passed" }),
+      trial({ trialKey: "t2" }),
+    ]);
+    expect(caseOf(doc).routes.frictionSignals).toBeUndefined();
+  });
+
+  test("the block appears as soon as one included trial supplies one", () => {
+    const doc = build([
+      trial({
+        trialKey: "t1",
+        result: "passed",
+        frictionSignals: frictionDoc(),
+      }),
+      trial({ trialKey: "t2" }),
+    ]);
+    const rates = caseOf(doc).routes.frictionSignals!;
+    expect(rates.identicalRetry).toMatchObject({
+      state: "measured",
+      numerator: 0,
+      denominator: 1,
+    });
+  });
+
+  test("a trial counts once per kind however many times the kind fired", () => {
+    const doc = build([
+      trial({
+        trialKey: "t1",
+        frictionSignals: frictionDoc({
+          callCount: 4,
+          resultAvailableCount: 4,
+          signals: [retry(1), retry(2), retry(3)],
+        }),
+      }),
+    ]);
+    expect(caseOf(doc).routes.frictionSignals!.identicalRetry).toMatchObject({
+      numerator: 1,
+      denominator: 1,
+    });
+  });
+
+  test("identifier rates carry the SMALLER denominator", () => {
+    const doc = build([
+      trial({
+        trialKey: "t1",
+        frictionSignals: frictionDoc({ signals: [unusedIdentifier()] }),
+      }),
+      trial({
+        trialKey: "t2",
+        frictionSignals: frictionDoc({
+          resultAvailableCount: 0,
+          identifierSignals: {
+            state: "notMeasured",
+            reason: "resultsUnavailable",
+          },
+          signals: [retry(1)],
+        }),
+      }),
+    ]);
+    const rates = caseOf(doc).routes.frictionSignals!;
+    // Both trials looked for a retry; only one looked for an identifier.
+    expect(rates.identicalRetry).toMatchObject({
+      numerator: 1,
+      denominator: 2,
+    });
+    expect(rates.identifierSurfacedUnused).toMatchObject({
+      numerator: 1,
+      denominator: 1,
+    });
+  });
+
+  test("a notMeasured trial supplies the block but no denominator", () => {
+    const doc = build([
+      trial({
+        trialKey: "t1",
+        frictionSignals: frictionDoc({
+          state: "notMeasured",
+          notMeasuredReason: "noToolCalls",
+          callCount: 0,
+          resultAvailableCount: 0,
+          identifierSignals: { state: "notMeasured", reason: "noToolCalls" },
+        }),
+      }),
+    ]);
+    const rates = caseOf(doc).routes.frictionSignals!;
+    for (const kind of FRICTION_SIGNAL_KINDS) {
+      expect(rates[kind], kind).toMatchObject({
+        state: "notMeasured",
+        value: null,
+        denominator: 0,
+      });
+    }
+  });
+
+  test("an excluded trial's signals never reach a rate", () => {
+    const doc = build([
+      {
+        trialKey: "cancelled",
+        status: "cancelled",
+        actualToolCalls: [],
+        expectedToolCalls: [],
+        caseVariantKey: "case_a\u0000",
+        caseKey: "case_a",
+        frictionSignals: frictionDoc({ signals: [retry(1)] }),
+      },
+      trial({ trialKey: "t1", frictionSignals: frictionDoc() }),
+    ]);
+    expect(caseOf(doc).routes.frictionSignals!.identicalRetry).toMatchObject({
+      numerator: 0,
+      denominator: 1,
+    });
+  });
+
+  test("the document still validates, and the rates are real measurements", () => {
+    const doc = build([
+      trial({
+        trialKey: "t1",
+        frictionSignals: frictionDoc({ signals: [retry(1)] }),
+      }),
+    ]);
+    expect(evalRunRouteFactsSchema.safeParse(doc).success).toBe(true);
+    expect(ROUTE_FACTS_VERSION).toBe(1);
   });
 });

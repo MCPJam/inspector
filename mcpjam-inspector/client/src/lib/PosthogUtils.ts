@@ -86,7 +86,7 @@ export function scrubSensitiveUrl(value: string): string {
 }
 
 function sanitizeAnalyticsProperties(
-  properties: Record<string, any>
+  properties: Record<string, any>,
 ): Record<string, any> {
   for (const key of ["$current_url", "$referrer", "$pathname"]) {
     if (typeof properties[key] === "string") {
@@ -178,12 +178,13 @@ export const SESSION_RECORDING_OPTIONS = {
 export function isCredentialBearingPath(
   pathname: string | undefined = typeof window === "undefined"
     ? undefined
-    : window.location?.pathname
+    : window.location?.pathname,
 ): boolean {
-  return !!pathname && (
-    pathname.startsWith("/results/") ||
-    pathname.startsWith("/conformance/shared/") ||
-    pathname.startsWith("/evals/shared/")
+  return (
+    !!pathname &&
+    (pathname.startsWith("/results/") ||
+      pathname.startsWith("/conformance/shared/") ||
+      pathname.startsWith("/evals/shared/"))
   );
 }
 
@@ -248,7 +249,7 @@ export function syncSessionRecordingForPath(
 export function getPageviewCaptureOptions(
   hostname: string | undefined = typeof window === "undefined"
     ? undefined
-    : window.location?.hostname
+    : window.location?.hostname,
 ) {
   const isLandingHost =
     !!hostname && LANDING_ANALYTICS_HOSTS.has(hostname.toLowerCase());
@@ -316,6 +317,7 @@ export const options = {
     // targeting degrading to "no person properties" is acceptable; throwing
     // inside `loaded` would take out the whole analytics init.
     posthog.setPersonPropertiesForFlags?.({
+      ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
       deployment: HOSTED_MODE ? "hosted" : "self_hosted",
       platform: detectPlatform(),
     });
@@ -363,6 +365,7 @@ export const getPostHogOptions = () =>
         // that rollout.
         loaded: (posthog: any) => {
           posthog.setPersonPropertiesForFlags?.({
+            ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
             deployment: HOSTED_MODE ? "hosted" : "self_hosted",
             platform: detectPlatform(),
           });

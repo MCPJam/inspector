@@ -7,10 +7,14 @@ import {
   randomBytes,
 } from "crypto";
 import { getOrCreateLocalSecret } from "../utils/local-secret-store.js";
+import { resolveWorkosApiBaseUrl } from "../services/workos-api-base.js";
 
-const WORKOS_AUTHENTICATE_URL =
-  "https://api.workos.com/user_management/authenticate";
-const WORKOS_BASE_URL = "https://api.workos.com";
+// Resolved per call, not captured at module load: a test stubs
+// `WORKOS_API_BASE_URL` long after this module is imported. Unset, both are
+// exactly the api.workos.com URLs they were before.
+const workosBaseUrl = () => resolveWorkosApiBaseUrl(process.env).baseUrl;
+const workosAuthenticateUrl = () =>
+  `${workosBaseUrl()}/user_management/authenticate`;
 const WORKOS_SESSION_COOKIE = "__Host-mcpjam_workos_session";
 const LOCAL_WORKOS_SESSION_COOKIE = "mcpjam_workos_sessions";
 const LEGACY_LOCAL_WORKOS_SESSION_COOKIE = "mcpjam_workos_session";
@@ -89,7 +93,7 @@ function unsealValue(value: string | undefined): unknown {
 
   try {
     const [iv, tag, ciphertext] = parts.map((part) =>
-      Buffer.from(part, "base64url")
+      Buffer.from(part, "base64url"),
     );
     const decipher = createDecipheriv("aes-256-gcm", getEncryptionKey(), iv);
     decipher.setAuthTag(tag);
@@ -153,20 +157,25 @@ function getClientOrigin(c: Context): string {
 }
 
 function getClientOriginKey(c: Context): string {
-  return createHash("sha256").update(getClientOrigin(c)).digest("hex").slice(0, 16);
+  return createHash("sha256")
+    .update(getClientOrigin(c))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 function getLocalSessionJar(c: Context): StoredWorkosSessionJar {
-  return parseStoredSessionJar(unsealValue(getCookie(c, LOCAL_WORKOS_SESSION_COOKIE)));
+  return parseStoredSessionJar(
+    unsealValue(getCookie(c, LOCAL_WORKOS_SESSION_COOKIE)),
+  );
 }
 
 function pruneLocalSessions(
-  sessions: Record<string, StoredWorkosSession>
+  sessions: Record<string, StoredWorkosSession>,
 ): Record<string, StoredWorkosSession> {
   return Object.fromEntries(
     Object.entries(sessions)
       .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
-      .slice(0, MAX_LOCAL_SESSIONS)
+      .slice(0, MAX_LOCAL_SESSIONS),
   );
 }
 
@@ -178,12 +187,17 @@ function setSessionCookies(c: Context, session: StoredWorkosSession) {
       ...jar.sessions,
       [key]: session,
     });
-    setCookie(c, LOCAL_WORKOS_SESSION_COOKIE, sealValue({ version: 1, sessions }), {
-      httpOnly: true,
-      sameSite: "Lax",
-      path: "/",
-      maxAge: COOKIE_MAX_AGE,
-    });
+    setCookie(
+      c,
+      LOCAL_WORKOS_SESSION_COOKIE,
+      sealValue({ version: 1, sessions }),
+      {
+        httpOnly: true,
+        sameSite: "Lax",
+        path: "/",
+        maxAge: COOKIE_MAX_AGE,
+      },
+    );
     setCookie(c, LEGACY_LOCAL_WORKOS_SESSION_COOKIE, "", {
       path: "/",
       maxAge: 0,
@@ -232,7 +246,7 @@ function clearSessionCookies(c: Context) {
           sameSite: "Lax",
           path: "/",
           maxAge: COOKIE_MAX_AGE,
-        }
+        },
       );
     } else {
       setCookie(c, LOCAL_WORKOS_SESSION_COOKIE, "", {
@@ -269,7 +283,7 @@ function getStoredSession(c: Context) {
 }
 
 async function postToWorkos(body: Record<string, unknown>) {
-  return fetch(WORKOS_AUTHENTICATE_URL, {
+  return fetch(workosAuthenticateUrl(), {
     method: "POST",
     headers: {
       Accept: "application/json, text/plain, */*",
@@ -279,15 +293,39 @@ async function postToWorkos(body: Record<string, unknown>) {
   });
 }
 
+/**
+ * Whether a non-OK WorkOS refresh response leaves the stored token dead.
+ *
+ * Clearing is destructive in a way nothing above can undo: this jar holds the
+ * ONLY copy of the refresh token, so wiping it on a 502 converts one bad
+ * second at WorkOS into a forced sign-in. That is the failure class the
+ * client's retry ladder (`fetchTokenWithRetry` in `unified-convex-auth.ts`)
+ * exists to absorb — but no retry can help once the credential itself is gone:
+ * the next attempt finds an empty jar, gets "No local WorkOS session", and
+ * AuthKit treats that as terminal and fires `onRefreshFailure`.
+ *
+ * A rejected grant is the opposite case and must still clear. WorkOS answers
+ * 400 for a refresh token that is expired, revoked, or already rotated, and
+ * keeping one would leave `workos-has-session` set so every subsequent load
+ * re-enters the same refusal.
+ *
+ * A `fetch` rejection (offline, DNS, connection reset) never reaches here: it
+ * throws before any cookie is touched, which lands on the same side of this
+ * line by construction.
+ */
+function isTransientWorkosFailure(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
 function redirectToWorkos(c: Context, path: string) {
   const source = new URL(c.req.url);
-  const target = new URL(path, WORKOS_BASE_URL);
+  const target = new URL(path, workosBaseUrl());
   target.search = source.search;
   return c.redirect(target.toString(), 302);
 }
 
 workosAuthkitRoutes.get("/authorize", (c) =>
-  redirectToWorkos(c, "/user_management/authorize")
+  redirectToWorkos(c, "/user_management/authorize"),
 );
 
 workosAuthkitRoutes.get("/sessions/logout", (c) => {
@@ -338,7 +376,11 @@ workosAuthkitRoutes.post("/authenticate", async (c) => {
   const refreshToken = responseJson.refresh_token;
   if (response.ok && typeof refreshToken === "string") {
     setSessionCookies(c, { refreshToken, updatedAt: Date.now() });
-  } else if (!response.ok && body.grant_type === "refresh_token") {
+  } else if (
+    !response.ok &&
+    body.grant_type === "refresh_token" &&
+    !isTransientWorkosFailure(response.status)
+  ) {
     clearSessionCookies(c);
   }
 
