@@ -8,6 +8,7 @@ import {
   OUTPUT_CLAMP_CHARS,
   redactCloneCredential,
   PROBE_MAX_RESPONSE_BYTES,
+  probeMcpInitialize,
   waitForMcpInitialize,
   type CheckSandbox,
 } from "../sandbox";
@@ -579,8 +580,9 @@ describe("cloneAndCheckout", () => {
       "https://github.com/mcpjam/mcp-check-fixture.git"
     );
     expect(cloneCall).toContain("pull/7/head");
-    expect(cloneCall).toContain("git checkout --detach");
-    expect(cloneCall).toContain(headSha);
+    expect(cloneCall).not.toContain("checkout --detach");
+    expect(box.calls[1].command).toContain("checkout --detach");
+    expect(box.calls[1].command).toContain(headSha);
     // No credential of any kind reaches the box.
     expect(cloneCall).not.toMatch(/x-access-token|ghs_|@github\.com/);
     expect(box.calls[0].opts?.envs).toBeUndefined();
@@ -665,8 +667,10 @@ describe("cloneAndCheckout", () => {
     // BOTH authenticated requests: the PR ref is a second fetch against the same
     // private repository, and a clone that works followed by a fetch that 404s
     // is the shape of forgetting it.
-    expect(script).toContain(`git -c '${header}' clone --depth 50`);
-    expect(script).toContain(`git -c '${header}' fetch --depth 50 origin`);
+    expect(script).toContain(
+      `-c '${header}' clone --no-checkout --template= --depth 50`,
+    );
+    expect(script).toContain(`-c '${header}' fetch --depth 50 origin`);
     // The URL stays the ORDINARY public-looking HTTPS one. A credential in the
     // URL is written verbatim into `.git/config`, where the PR's own build runs.
     expect(script).toContain("'https://github.com/mcpjam/private-fixture.git'");
@@ -677,7 +681,7 @@ describe("cloneAndCheckout", () => {
     expect(script).not.toContain(TOKEN);
     // Not an env var, not a file, not a credential helper.
     expect(box.calls[0].opts?.envs).toBeUndefined();
-    expect(script).not.toContain("credential.helper");
+    expect(script).toContain("-c credential.helper=");
     expect(script).not.toContain("git config");
   });
 
@@ -696,11 +700,11 @@ describe("cloneAndCheckout", () => {
     });
 
     const script = scriptOf(box.calls[0].command);
-    const [checkoutSegment] = script.split("git checkout").slice(1);
+    const checkoutSegment = box.calls[1].command;
     expect(checkoutSegment).toBeDefined();
     expect(checkoutSegment).not.toContain("extraheader");
     // The sha assertion is its own command, and carries nothing.
-    const revParse = box.calls[1].command;
+    const revParse = box.calls[2].command;
     expect(revParse).toContain("rev-parse HEAD");
     expect(revParse).not.toContain("extraheader");
     for (const form of credentialForms(TOKEN)) {
@@ -710,37 +714,31 @@ describe("cloneAndCheckout", () => {
     expect(script.match(/-c 'http\.extraheader=/g)).toHaveLength(2);
   });
 
-  it("leaves the anonymous clone byte-for-byte unchanged", async () => {
-    // The public path is the overwhelming majority of checks, and it must not
-    // acquire so much as a stray space from the private one existing.
+  it("isolates checkout from authenticated processes and inherited Git config", async () => {
     const headSha = "a".repeat(40);
     const box = fakeSandbox({ stdout: { "rev-parse HEAD": `${headSha}\n` } });
-
     await cloneAndCheckout(box.sandbox, {
-      repoFullName: "mcpjam/mcp-check-fixture",
+      repoFullName: "mcpjam/fixture",
       prNumber: 7,
       headSha,
     });
-
-    expect(scriptOf(box.calls[0].command)).toBe(
-      [
-        "set -e",
-        "rm -rf /home/user/repo",
-        "git clone --depth 50 'https://github.com/mcpjam/mcp-check-fixture.git' /home/user/repo",
-        "cd /home/user/repo",
-        "git fetch --depth 50 origin 'pull/7/head'",
-        `git checkout --detach '${headSha}'`,
-      ].join(" && ")
-    );
+    expect(box.calls[0].command).toContain("--no-checkout --template=");
+    expect(box.calls[0].command).not.toContain("checkout --detach");
+    expect(box.calls[1].command).toContain("checkout --detach");
+    for (const call of box.calls.slice(0, 2)) {
+      expect(call.command).toContain("GIT_CONFIG_NOSYSTEM=1");
+      expect(call.command).toContain("core.hooksPath=/dev/null");
+      expect(call.command).toContain("credential.helper=");
+    }
   });
 
   it("redacts every credential form out of a failing clone's output", async () => {
     // git prints the failing request on some errors, and the output travels to
     // the check's details on somebody's pull request.
     const box = fakeSandbox({
-      exitCodes: { "clone --depth 50": 128 },
+      exitCodes: { "clone --no-checkout --template= --depth 50": 128 },
       stderr: {
-        "clone --depth 50": [
+        "clone --no-checkout --template= --depth 50": [
           `fatal: unable to access 'https://github.com/mcpjam/private-fixture.git/'`,
           `> AUTHORIZATION: basic ${basicValue(TOKEN)}`,
           `token was ${TOKEN}`,
@@ -774,7 +772,7 @@ describe("cloneAndCheckout", () => {
     // clamping, and this path does not even go through the clamp.
     const box = fakeSandbox({
       throwOn: (command) =>
-        command.includes("clone --depth 50")
+        command.includes("clone --no-checkout --template= --depth 50")
           ? new Error(`sandbox unavailable while running: ${command}`)
           : undefined,
     });
@@ -805,7 +803,8 @@ describe("cloneAndCheckout", () => {
     try {
       const box = fakeSandbox({
         throwOn: (command) => {
-          if (!command.includes("clone --depth 50")) return undefined;
+          if (!command.includes("clone --no-checkout --template= --depth 50"))
+            return undefined;
           vi.setSystemTime(Date.now() + 6 * 60_000);
           return Object.assign(new Error("timeout"), {
             stderr: `giving up on AUTHORIZATION: basic ${basicValue(TOKEN)}`,
@@ -840,7 +839,7 @@ describe("redactCloneCredential", () => {
     const text = [
       `raw ${TOKEN} here`,
       `encoded ${basic} here`,
-      `git -c 'http.extraheader=AUTHORIZATION: basic ${basic}' clone --depth 50`,
+      `git -c 'http.extraheader=AUTHORIZATION: basic ${basic}' clone --no-checkout --template= --depth 50`,
     ].join("\n");
 
     const out = redactCloneCredential(text, TOKEN);
@@ -849,7 +848,7 @@ describe("redactCloneCredential", () => {
     expect(out).toContain("[redacted]");
     // The shell quoting around the header survives, so the surrounding command
     // is still readable as a command.
-    expect(out).toContain("' clone --depth 50");
+    expect(out).toContain("' clone --no-checkout --template= --depth 50");
   });
 
   it("removes an AUTHORIZATION header even with no token to compare against", async () => {
@@ -883,6 +882,27 @@ describe("redactCloneCredential", () => {
 });
 
 describe("waitForMcpInitialize", () => {
+  it("reports a Bearer challenge as authorization required", async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response("unauthorized", {
+        status: 401,
+        headers: {
+          "www-authenticate": 'Basic realm="legacy", Bearer realm="mcp"',
+        },
+      })
+    );
+    const options = {
+      timeoutMs: 50,
+      intervalMs: 1,
+      fetchImpl: fetchImpl as typeof fetch,
+    };
+
+    expect(await probeMcpInitialize("https://box/mcp", options)).toBe(
+      "authorization_required"
+    );
+    expect(await waitForMcpInitialize("https://box/mcp", options)).toBe(false);
+  });
+
   const seams = {
     intervalMs: 1,
     sleep: async () => {},

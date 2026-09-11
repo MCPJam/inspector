@@ -8,6 +8,15 @@ import { Hono } from "hono";
 // columns leak), project-scope guards, null-clears, schedule preserve-interval,
 // environment edits without a live MCP connection, and generate persistence.
 
+// The schedule PATCH refuses an ENABLE unless the deployment switch is on
+// (`config.ts`, default OFF while Schedule is untested). These cases exercise
+// the schedule's own semantics — interval reuse, environment pinning — which
+// only exist past that guard, so the switch is on for this file. The guard
+// itself is covered in `eval-schedule-write-switch.test.ts`.
+vi.hoisted(() => {
+  process.env.MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED = "true";
+});
+
 const {
   validateGuestTokenMock,
   createAuthorizedManagerMock,
@@ -431,6 +440,82 @@ describe("v1 eval-edit routes", () => {
         autoRun: true,
         threshold: 0.85,
       },
+    });
+  });
+
+  it("PATCH goal-completion preserves a stored groundedness slot", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "openai/gpt-5-mini",
+              },
+              groundedness: { role: "advisory", judgeModel: "stored-g" },
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { judge: { threshold: 0.9, severity: "warn" } } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.judgeConfig).toEqual({
+      goalCompletion: {
+        enabled: true,
+        judgeModel: "openai/gpt-5-mini",
+        threshold: 0.9,
+        severity: "warn",
+      },
+      groundedness: { role: "advisory", judgeModel: "stored-g" },
+    });
+  });
+
+  it("PATCH refuses a groundedness write while unwired", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { judge: { groundedness: { enabled: true } } } }
+    );
+    expect(res.status).toBe(400);
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("GET reports stored groundedness and severity without inventing defaults", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "openai/gpt-5-mini",
+                severity: "warn",
+              },
+              groundedness: {
+                role: "advisory",
+                judgeModel: "stored-g",
+                threshold: 0.6,
+              },
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.settings.judge.severity).toBe("warn");
+    expect(body.settings.judge.groundedness).toEqual({
+      role: "advisory",
+      model: "stored-g",
+      threshold: 0.6,
     });
   });
 
@@ -3884,5 +3969,270 @@ describe("v1 eval-edit routes", () => {
       expect(body.message).toMatch(/^name:/);
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * The CI-owned suite lock, as an API caller experiences it.
+ *
+ * The platform decides — there is no route-level ownership check, deliberately:
+ * a second copy of the rule here is a copy that can disagree with the one that
+ * actually guards the write. What these routes owe the caller is (a) a way to
+ * write AS the file, and (b) a refusal they can act on instead of a 500.
+ *
+ * 409, not 403. The caller's ROLE is fine and no amount of privilege changes
+ * the answer; what changes it is editing the source of truth or taking a copy.
+ * A 403 would send someone to ask an admin for access they already have.
+ */
+describe("v1 eval-edit — CI-owned suites", () => {
+  const CI_SUITE = { ...SUITE_DOC, declaredSuiteId: "s_from_file" };
+
+  /** The platform's refusal, as it reaches the route. */
+  function ciOwnedRefusal() {
+    return Object.assign(new Error("ci owned"), {
+      data: {
+        code: "CI_OWNED_SUITE_READ_ONLY",
+        action: "suite.edit",
+        message:
+          "This suite is managed by CI. Edit the test file in your repository " +
+          "and run it again, or duplicate the suite to get an editable copy.",
+      },
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_URL = "https://convex.example.com";
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite") return Promise.resolve(CI_SUITE);
+      return defaultQueryImpl(name);
+    });
+    convexMutationMock.mockImplementation((name: string, args?: any) => {
+      // The platform allows the write iff the marker names the suite's own id.
+      const declared = args?.fileSync?.declaredSuiteId;
+      if (declared !== "s_from_file") throw ciOwnedRefusal();
+      return defaultMutationImpl(name, args);
+    });
+  });
+
+  it.each([
+    [
+      "PATCH suite",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { name: "renamed" },
+    ],
+    [
+      "PATCH schedule",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+      { enabled: true, intervalMinutes: 60 },
+    ],
+    [
+      "POST case",
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        title: "added",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+      },
+    ],
+    [
+      "PATCH case",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { title: "renamed" },
+    ],
+  ] as const)(
+    "refuses %s without the marker, as a 409 naming the remedy",
+    async (_label, method, path, body) => {
+      const res = await request(method, path, { ...body });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as {
+        code?: string;
+        message?: string;
+        details?: { reason?: string; hint?: string };
+      };
+      expect(json.code).toBe("CONFLICT");
+      expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+      // The platform's own copy survives the trip — it names the two remedies
+      // an app user has.
+      expect(json.message).toMatch(/duplicate/i);
+      // …and the hint names the third one, which only an API caller has.
+      expect(json.details?.hint).toContain("declaredSuiteId");
+    }
+  );
+
+  it.each([
+    [
+      "PATCH suite",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { name: "renamed", declaredSuiteId: "s_from_file" },
+      "testSuites:updateTestSuite",
+    ],
+    [
+      "PATCH schedule",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+      {
+        enabled: true,
+        intervalMinutes: 60,
+        declaredSuiteId: "s_from_file",
+      },
+      "testSuites:setSuiteSchedule",
+    ],
+    [
+      "POST case",
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        title: "added",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        declaredSuiteId: "s_from_file",
+      },
+      "testSuites:createTestCases",
+    ],
+    [
+      "PATCH case",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { title: "renamed", declaredSuiteId: "s_from_file" },
+      "testSuites:updateTestCase",
+    ],
+  ] as const)(
+    "forwards the marker on %s, and the write lands",
+    async (_label, method, path, body, mutation) => {
+      const res = await request(method, path, { ...body });
+      expect(res.status).toBeLessThan(300);
+      const call = convexMutationMock.mock.calls.find(
+        ([name]: [string]) => name === mutation
+      );
+      expect(call?.[1]).toMatchObject({
+        fileSync: { declaredSuiteId: "s_from_file" },
+      });
+    }
+  );
+
+  it.each([
+    [
+      "PATCH suite",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { name: "renamed" },
+      "testSuites:updateTestSuite",
+    ],
+    [
+      "PATCH schedule",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+      { enabled: true, intervalMinutes: 60 },
+      "testSuites:setSuiteSchedule",
+    ],
+    [
+      "POST case",
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      { title: "added", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] },
+      "testSuites:createTestCases",
+    ],
+    [
+      "POST case batch",
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      {
+        cases: [
+          { title: "added", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] },
+        ],
+      },
+      "testSuites:createTestCases",
+    ],
+    [
+      "PATCH case",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { title: "renamed" },
+      "testSuites:updateTestCase",
+    ],
+  ] as const)(
+    "takes the marker from the QUERY STRING on %s — the spelling the SDK sends",
+    async (_label, method, path, body, mutation) => {
+      // The wire contract that matters. Every body here is `.strict()`, on this
+      // Inspector and on every Inspector that predates the lock, so a body
+      // field is a 400 against an older deployment — which would break
+      // `eval run --file` for anyone whose CLI is newer than their Inspector.
+      // The SDK therefore puts it on the query string, and this is the half
+      // that has to read it.
+      const res = await request(
+        method,
+        `${path}?declaredSuiteId=s_from_file`,
+        { ...body }
+      );
+      expect(res.status).toBeLessThan(300);
+      const call = convexMutationMock.mock.calls.find(
+        ([name]: [string]) => name === mutation
+      );
+      expect(call?.[1]).toMatchObject({
+        fileSync: { declaredSuiteId: "s_from_file" },
+      });
+    }
+  );
+
+  it("takes the marker as a query parameter on the deletes", async () => {
+    const suite = await request(
+      "DELETE",
+      "/api/v1/projects/p1/eval-suites/suite_1?declaredSuiteId=s_from_file"
+    );
+    expect(suite.status).toBe(200);
+    expect(
+      convexMutationMock.mock.calls.find(
+        ([name]: [string]) => name === "testSuites:deleteTestSuite"
+      )?.[1]
+    ).toMatchObject({ fileSync: { declaredSuiteId: "s_from_file" } });
+
+    convexMutationMock.mockClear();
+    const testCase = await request(
+      "DELETE",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1?declaredSuiteId=s_from_file"
+    );
+    expect(testCase.status).toBe(200);
+    expect(
+      convexMutationMock.mock.calls.find(
+        ([name]: [string]) => name === "testSuites:deleteTestCase"
+      )?.[1]
+    ).toMatchObject({ fileSync: { declaredSuiteId: "s_from_file" } });
+  });
+
+  it("sends NO fileSync at all when the caller did not name an id", async () => {
+    // An older platform rejects an unknown mutation argument outright, so
+    // `fileSync: undefined` would break every ordinary suite edit against a
+    // deployment that predates the lock.
+    convexMutationMock.mockImplementation((name: string, args?: any) =>
+      defaultMutationImpl(name, args)
+    );
+    await request("PATCH", "/api/v1/projects/p1/eval-suites/suite_1", {
+      name: "renamed",
+    });
+    const call = convexMutationMock.mock.calls.find(
+      ([name]: [string]) => name === "testSuites:updateTestSuite"
+    );
+    expect(call?.[1]).not.toHaveProperty("fileSync");
+  });
+
+  it("reports the suite as CI-managed before anyone tries to write it", async () => {
+    convexMutationMock.mockImplementation((name: string, args?: any) =>
+      defaultMutationImpl(name, args)
+    );
+    const res = await request(
+      "GET",
+      "/api/v1/projects/p1/eval-suites/suite_1"
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { managedBy?: string };
+    // Without this the first sign that a suite is read-only was a 409 on a
+    // write the caller had no way to know would be refused.
+    expect(body.managedBy).toBe("ci");
   });
 });

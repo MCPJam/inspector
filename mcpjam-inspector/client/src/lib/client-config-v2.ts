@@ -147,6 +147,8 @@ export type HostConfigHarnessV2 = Harness;
  * write path stops sending server fields.
  */
 export type HostConfigInputV2 = {
+  /** Editor-only metadata, saved on the client rather than its immutable config. */
+  localBrowserEnabled?: boolean;
   hostStyle: HostStyleId;
   modelId: string;
   systemPrompt: string;
@@ -198,6 +200,8 @@ export type HostConfigInputV2 = {
    * is the only shape; `workdir` optionally pins the initial shell cwd.
    */
   computer?: HostConfigComputerV2;
+  /** Optional saved browser profile selected for hosted browser sessions. */
+  browserProfileId?: string;
   /**
    * Real agent harness (see {@link HostConfigHarnessV2}). `"claude-code"` runs
    * the real Claude Code runtime on the attached computer; absent ⇒ MCPJam's
@@ -259,6 +263,8 @@ export type HostConfigInputV2 = {
  * can detect "no change" vs "modified" and skip unnecessary writes.
  */
 export type HostConfigDtoV2 = {
+  /** Effective shared local setting (client override or project default). */
+  localBrowserEnabled?: boolean;
   id: string;
   schemaVersion: number;
   hostStyle: HostStyleId;
@@ -292,6 +298,8 @@ export type HostConfigDtoV2 = {
    * wire — `hostConfigDtoToInput` reads only `kind`/`workdir`.
    */
   computer?: HostConfigComputerV2 & { toolset?: string };
+  /** Optional saved browser profile selected for hosted browser sessions. */
+  browserProfileId?: string;
   /**
    * Real agent harness (see HostConfigInputV2.harness). Optional; pre-feature
    * rows and non-harness hosts omit it.
@@ -420,6 +428,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
           ...(dto.computer.workdir ? { workdir: dto.computer.workdir } : {}),
         }
       : undefined,
+    browserProfileId: dto.browserProfileId,
     // String literal pass-through; absent ⇒ emulated engine.
     harness: dto.harness,
     connectionDefaults: {
@@ -863,7 +872,7 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     // turning an era off silently wrote nothing.
     (profile.toolCallCancellation === undefined ||
       Object.values(profile.toolCallCancellation).every(
-        (value) => value === undefined
+        (value) => value === undefined,
       )) &&
     !profile.apps &&
     !profile.extensions
@@ -1178,6 +1187,7 @@ export function hostConfigInputsEqual(
   // Order-insensitive, same semantics as server ids — toggling a built-in
   // marks the draft dirty in the host/project/eval editors.
   if (!stringArrayEq(a.builtInToolIds, b.builtInToolIds)) return false;
+  if (a.localBrowserEnabled !== b.localBrowserEnabled) return false;
   // Computer: presence, KIND and workdir. Attaching/detaching or changing the
   // workdir marks the draft dirty. `kind` is compared because it is no longer
   // always 'personal' — a run's pinned config can carry the platform-minted
@@ -1188,6 +1198,7 @@ export function hostConfigInputsEqual(
     if (a.computer.kind !== b.computer.kind) return false;
     if (a.computer.workdir !== b.computer.workdir) return false;
   }
+  if (a.browserProfileId !== b.browserProfileId) return false;
   // Harness selector: undefined vs "claude-code" are distinct states (backend
   // hashes them distinctly). Switching engines marks the draft dirty.
   if (a.harness !== b.harness) return false;

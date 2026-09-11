@@ -263,6 +263,11 @@ export async function forceRefreshHostedOAuthAccessToken(
             refreshTokenInvalid: true,
             serverId,
             serverName: options?.serverName ?? null,
+            // Present only when the authorization server declined under a code
+            // that does not mean "dead refresh token". Forwarded verbatim: it
+            // is the one part of this failure the user can fix on their side.
+            specNote:
+              typeof body?.specNote === "string" ? body.specNote : null,
           }
         : isAuthServerUnreachable
         ? {

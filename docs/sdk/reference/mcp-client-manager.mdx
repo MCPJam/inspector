@@ -599,7 +599,7 @@ const agent = new HostRunner({
 });
 
 const result = await agent.run("Add 2 and 3");
-console.log(result.getText());
+console.log(result.text);
 ```
 
 <Note>
@@ -702,7 +702,7 @@ async function main() {
     });
 
     const result = await agent.run("Add 2 and 3");
-    console.log(result.getText());
+    console.log(result.text);
   } finally {
     await manager.disconnectServer("math");
     await manager.disconnectServer("asana");

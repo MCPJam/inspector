@@ -41,6 +41,7 @@ export function fakeTool(
 ): ProviderToolDescriptor {
   return {
     frameId: "frame-main",
+    registrationSeq: 1,
     name: "echo",
     description: "Echoes",
     inputSchema: { type: "object", properties: {} },
@@ -167,6 +168,11 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
   /** Announce a quality change the way an adaptive provider would. */
   emitStreamQuality(quality: number): void {
     this.callbacks.onStreamQualityChanged?.(quality);
+  }
+
+  /** Report a non-terminal session condition, e.g. a frame we could not reach. */
+  emitSessionNotice(message: string): void {
+    this.callbacks.onSessionNotice?.(message);
   }
 
   async dispose(): Promise<void> {

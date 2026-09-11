@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Copy, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -39,6 +39,7 @@ import {
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
 import { SessionFeedbackMark } from "@/components/connection/share-usage/session-feedback-mark";
+import { SessionClientModelChip } from "@/components/connection/share-usage/session-client-model";
 import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
@@ -631,9 +632,30 @@ export function ShareUsageThreadDetail({
           <p className="truncate text-sm font-semibold text-card-foreground">
             {thread.visitorDisplayName}
           </p>
+          {/* Which client and model ran this session — beside the name on both
+              products, so nobody has to open Raw or the trace to find out. */}
+          <SessionClientModelChip
+            sessionId={thread._id}
+            modelId={thread.modelId}
+          />
           <SessionFeedbackMark thread={thread} variant="header" />
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {thread.sourceType === "direct" && thread.chatSessionId && (
+            <Button asChild variant="outline" size="sm">
+              <a
+                href={`/playground?${new URLSearchParams({
+                  conversation: thread.chatSessionId,
+                  ...(hasBrowserArtifacts ? { browser: "open" } : {}),
+                  ...(thread.projectId ?? promote?.projectId
+                    ? { project: (thread.projectId ?? promote?.projectId)! }
+                    : {}),
+                }).toString()}`}
+              >
+                Open in Playground
+              </a>
+            </Button>
+          )}
           {canPromoteThread ? (
             <Button
               type="button"
@@ -646,15 +668,24 @@ export function ShareUsageThreadDetail({
               Promote to test case
             </Button>
           ) : null}
+          {/* Labeled, never icon-only: readers who wanted to send a session to
+              a teammate did not recognize the copy icon as the way to do it.
+              Same label on Swarm and User Testing. */}
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-8 w-8 rounded-lg px-0"
-            aria-label={sessionLink ? "Copy session link" : "Copy session ID"}
+            className="h-8 rounded-lg px-2.5 text-xs"
+            data-testid="share-usage-share-session"
+            title={
+              sessionLink
+                ? "Copy a link to this session"
+                : "Copy this session's reference"
+            }
             onClick={() => void handleCopySessionRef()}
           >
-            <Copy className="size-3.5" />
+            <Share2 className="mr-1.5 size-3.5" />
+            Share this session
           </Button>
         </div>
       </div>
