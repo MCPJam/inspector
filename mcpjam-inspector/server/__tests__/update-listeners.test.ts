@@ -383,10 +383,11 @@ describe("update-listeners", () => {
     }
   });
 
-  it("sends a stale click on the manual fallback back to the error path", async () => {
-    // The renderer opens the releases page for `manual`, so this only
-    // happens when a click races the status change. Silence is the bug
-    // being fixed, so re-broadcast rather than no-op.
+  it("does not toast twice when a stale click races the manual fallback", async () => {
+    // The renderer opens the releases page for `manual`, so a click only
+    // arrives here when it raced the status change — and the collapse that
+    // set `manual` already broadcast the error, which is what resets the
+    // renderer. Repeating it would show two toasts back to back.
     const window = createWindow();
     windows.push(window);
     const { registerUpdateListeners } = await loadUpdateListeners();
@@ -395,12 +396,170 @@ describe("update-listeners", () => {
     emitAutoUpdaterEvent("update-available");
     ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
     emitAutoUpdaterEvent("update-not-available");
+    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
     (window.webContents.send as any).mockClear();
 
     ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
 
-    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+    expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
     expect(quitAndInstallMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores the Windows shape of a refused concurrent check", async () => {
+    // Squirrel.Windows refuses the overlapping poll from spawnUpdate with a
+    // plain Error — no NSError domain — so a download slower than the
+    // 10-minute poll used to be retired on a healthy machine.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    (window.webContents.send as any).mockClear();
+
+    emitAutoUpdaterEvent(
+      "error",
+      new Error(
+        "AutoUpdater process with arguments --checkForUpdate,https://example.test is already running",
+      ),
+    );
+
+    expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "pending", installRequested: true });
+
+    // The queued install survives, so the slow download still installs.
+    emitAutoUpdaterEvent("update-downloaded", {}, "notes", "3.5.2");
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the manual download when checks stay refused after a collapse", async () => {
+    // A download that hangs with no error keeps Squirrel busy forever, so
+    // every later poll is refused and `pending` never comes back. Without
+    // this the user is left with no button, no toast and no link at all.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-not-available");
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "idle" });
+    (window.webContents.send as any).mockClear();
+
+    const refused = Object.assign(new Error("The command is disabled"), {
+      domain: "RACCommandErrorDomain",
+      code: 1,
+    });
+    emitAutoUpdaterEvent("error", refused);
+
+    expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+      kind: "manual",
+    });
+    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+  });
+
+  it("stops re-toasting once the manual fallback is showing", async () => {
+    // update-electron-app keeps polling every 10 minutes. An install that
+    // fails the same way each time must not nag forever — the pill already
+    // says where to go.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("error", new Error("staging failed"));
+    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+    (window.webContents.send as any).mockClear();
+
+    emitAutoUpdaterEvent("error", new Error("staging failed"));
+
+    expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+    expect(
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+    ).toEqual({ kind: "manual", version: undefined });
+  });
+
+  it("collapses a simulated error the same way the real one does", async () => {
+    appState.isPackaged = false;
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    ipcListeners.get("app:simulate-update")?.({ sender: { id: 1 } });
+    ipcListeners.get("app:simulate-update-error")?.({ sender: { id: 1 } });
+
+    expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+      kind: "idle",
+    });
+
+    ipcListeners.get("app:simulate-update")?.({ sender: { id: 1 } });
+    ipcListeners.get("app:simulate-update-error")?.({ sender: { id: 1 } });
+
+    expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+      kind: "manual",
+      version: undefined,
+    });
+  });
+
+  it("does not push the stall deadline out when the poll re-announces the update", async () => {
+    // update-available on every poll used to re-arm the watchdog, so a stuck
+    // download could hold the button for the life of the process.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setStalledDownloadTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+
+      vi.advanceTimersByTime(700);
+      emitAutoUpdaterEvent("update-available");
+      vi.advanceTimersByTime(400);
+
+      expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+        kind: "idle",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not give a slow download extra time because the user clicked", async () => {
+    // The click brings the deadline forward at most; it never resets it, so
+    // a healthy-but-slow download is not judged by a fresh five minutes
+    // starting from whenever the user happened to look at the pill.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setStalledDownloadTimeoutForTests(1_000);
+      mod.__setStalledInstallTimeoutForTests(5_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+
+      vi.advanceTimersByTime(900);
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+      vi.advanceTimersByTime(150);
+
+      expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+        kind: "manual",
+        version: undefined,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("guards installUpdateOnQuit against quitAndInstall throws", async () => {
