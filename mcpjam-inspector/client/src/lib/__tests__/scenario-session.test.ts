@@ -15,6 +15,73 @@ import {
   writeScenarioSignInReturnPath,
 } from "../scenario-session";
 
+describe("normalizeScenarioSession — tasks surface", () => {
+  const payload = (tasks: unknown) => ({
+    scenarioId: "sbx_1",
+    accessVersion: 1,
+    payload: {
+      projectId: "p1",
+      scenarioId: "sbx_1",
+      name: "Study",
+      hostStyle: "claude",
+      mode: "anyone_with_link",
+      allowGuestAccess: false,
+      viewerIsProjectMember: true,
+      systemPrompt: "hi",
+      modelId: "m",
+      temperature: 0.5,
+      requireToolApproval: false,
+      servers: [],
+      chatUi: { surfaces: { tasks } },
+    },
+  });
+
+  it("drops duplicate ids, first wins", () => {
+    // The checklist keys both its checked set and its remaining count on
+    // `task.id`, so two rows sharing one id would tick together on a single
+    // click and leave "N left" wrong. The backend repairs collisions; this
+    // boundary exists for responses that did not come from it.
+    const session = normalizeScenarioSession(
+      payload({
+        items: [
+          { id: "a", title: "First" },
+          { id: "a", title: "Second" },
+          { id: "b", title: "Third" },
+        ],
+      }),
+    );
+
+    expect(session?.payload.chatUi?.surfaces?.tasks?.items).toEqual([
+      { id: "a", title: "First" },
+      { id: "b", title: "Third" },
+    ]);
+  });
+
+  it("drops rows that cannot work: no id, no title", () => {
+    const session = normalizeScenarioSession(
+      payload({
+        items: [
+          { id: "", title: "No id" },
+          { id: "b", title: "   " },
+          { id: "c", title: "Keep me", hint: "with a detail" },
+          "nonsense",
+        ],
+      }),
+    );
+
+    expect(session?.payload.chatUi?.surfaces?.tasks?.items).toEqual([
+      { id: "c", title: "Keep me", hint: "with a detail" },
+    ]);
+  });
+
+  it("keeps an empty list as a parsed surface", () => {
+    // "This study has no tasks" is the ordinary answer, and it must read the
+    // same as absent downstream rather than losing the whole envelope.
+    const session = normalizeScenarioSession(payload({ items: [] }));
+    expect(session?.payload.chatUi?.surfaces?.tasks?.items).toEqual([]);
+  });
+});
+
 describe("scenario-session", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -31,7 +98,7 @@ describe("scenario-session", () => {
 
   it("extracts token from /user-testing/<slug>/<token> paths", () => {
     expect(extractScenarioTokenFromPath("/user-testing/demo/abc123")).toBe(
-      "abc123"
+      "abc123",
     );
     // The scenario screen lives one segment shorter, and must NOT be read as a
     // tester link — doing so renders the public runtime over the app screen.
@@ -168,7 +235,7 @@ describe("scenario-session", () => {
           requireToolApproval: true,
           servers: [],
         },
-      })
+      }),
     );
 
     // Stored row predates the post-refactor session shape; reading it must
@@ -196,7 +263,7 @@ describe("scenario-session", () => {
           requireToolApproval: true,
           servers: [],
         },
-      })
+      }),
     );
 
     expect(readScenarioSession()).toEqual({
@@ -242,7 +309,7 @@ describe("scenario-session", () => {
           requireToolApproval: true,
           servers: [],
         },
-      })
+      }),
     );
 
     expect(readScenarioSession()?.payload.hostStyle).toBe("codex");
@@ -274,7 +341,9 @@ describe("scenario-session", () => {
 
   it("reads scenario surface from the url query", () => {
     expect(readScenarioSurfaceFromUrl("?surface=preview")).toBe("preview");
-    expect(readScenarioSurfaceFromUrl("?surface=share_link")).toBe("share_link");
+    expect(readScenarioSurfaceFromUrl("?surface=share_link")).toBe(
+      "share_link",
+    );
     expect(readScenarioSurfaceFromUrl("?surface=other")).toBe("share_link");
     expect(readScenarioSurfaceFromUrl("")).toBe("share_link");
   });
@@ -304,7 +373,7 @@ describe("scenario-session", () => {
 
   it("builds scenario links from the current browser origin", () => {
     expect(buildScenarioLink("token 123", "Demo Scenario")).toBe(
-      `${window.location.origin}/user-testing/demo-scenario/token%20123`
+      `${window.location.origin}/user-testing/demo-scenario/token%20123`,
     );
   });
 });
@@ -346,7 +415,7 @@ describe("chatUi surface normalization", () => {
         surfaces: {
           perTurnFeedback: { enabled: true, prompt: "How was that?" },
         },
-      })
+      }),
     );
     expect(normalized?.payload.chatUi?.surfaces?.perTurnFeedback).toEqual({
       enabled: true,
@@ -361,7 +430,7 @@ describe("chatUi surface normalization", () => {
           welcome: { enabled: true, body: "hello" },
           perTurnFeedback: { enabled: false },
         },
-      })
+      }),
     );
     expect(normalized?.payload.chatUi?.surfaces?.welcome).toEqual({
       enabled: true,
@@ -376,17 +445,17 @@ describe("chatUi surface normalization", () => {
     // Its write path and storage table are gone; carrying it into the runtime
     // would offer a dialog that saves nowhere.
     const normalized = normalizeScenarioSession(
-      session({ surfaces: { feedback: { enabled: true } } })
+      session({ surfaces: { feedback: { enabled: true } } }),
     );
     expect(normalized?.payload.chatUi).toBeUndefined();
   });
 
   it("never null-punches an omitted optional string", () => {
     const normalized = normalizeScenarioSession(
-      session({ surfaces: { perTurnFeedback: { enabled: true } } })
+      session({ surfaces: { perTurnFeedback: { enabled: true } } }),
     );
     expect(
-      normalized?.payload.chatUi?.surfaces?.perTurnFeedback
+      normalized?.payload.chatUi?.surfaces?.perTurnFeedback,
     ).not.toHaveProperty("prompt");
   });
 
@@ -394,7 +463,7 @@ describe("chatUi surface normalization", () => {
     const normalized = normalizeScenarioSession(
       session({
         surfaces: { perTurnFeedback: { enabled: true, style: "thumbs" } },
-      })
+      }),
     );
     expect(normalized?.payload.chatUi?.surfaces?.perTurnFeedback).toEqual({
       enabled: true,
@@ -411,10 +480,10 @@ describe("chatUi surface normalization", () => {
       const normalized = normalizeScenarioSession(
         session({
           surfaces: { perTurnFeedback: { enabled: true, style } },
-        })
+        }),
       );
       expect(
-        normalized?.payload.chatUi?.surfaces?.perTurnFeedback
+        normalized?.payload.chatUi?.surfaces?.perTurnFeedback,
       ).not.toHaveProperty("style");
     }
   });
@@ -423,11 +492,11 @@ describe("chatUi surface normalization", () => {
     const normalized = normalizeScenarioSession(
       session({
         surfaces: { perTurnFeedback: { enabled: true, style: "stars" } },
-      })
+      }),
     );
     // Absence IS stars — one representation, so no reader has to handle two.
     expect(
-      normalized?.payload.chatUi?.surfaces?.perTurnFeedback
+      normalized?.payload.chatUi?.surfaces?.perTurnFeedback,
     ).not.toHaveProperty("style");
   });
 });

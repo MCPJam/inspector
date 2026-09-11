@@ -16,6 +16,7 @@ import {
   PATH_SEPARATOR,
   buildEvalRunRouteFacts,
   evalRunRouteFactsSchema,
+  type EvalTrialFrictionSignals,
   type RouteFactsInput,
   type RouteFactsTrialInput,
 } from "../src/contract/index.js";
@@ -27,6 +28,27 @@ const GOLDEN_PATH = join(
 );
 
 const call = (name: string) => ({ toolName: name });
+
+/**
+ * A friction document, spelled out rather than derived.
+ *
+ * The rollup COUNTS documents a producer already wrote; it never re-derives
+ * one. Writing these by hand is what keeps the golden a test of the counting
+ * rules and not a second test of the deriver.
+ */
+const friction = (
+  over: Partial<EvalTrialFrictionSignals> = {}
+): EvalTrialFrictionSignals =>
+  ({
+    version: 1,
+    state: "measured",
+    callCount: 3,
+    resultAvailableCount: 3,
+    timedCallCount: 0,
+    identifierSignals: { state: "measured" },
+    signals: [],
+    ...over,
+  } as EvalTrialFrictionSignals);
 
 const completed = (
   over: Partial<RouteFactsTrialInput> & { trialKey: string }
@@ -150,6 +172,77 @@ const INPUT: RouteFactsInput = {
       caseVariantKey: "case_a\u0000",
       caseKey: "case_a",
     },
+    // ── case_c: the friction denominators ────────────────────────────────
+    //
+    // Three trials that prove the TWO-DENOMINATOR rule, in their own case so
+    // case_a and case_b keep the shapes they were written for — and so the
+    // same golden also proves that a case whose trials supplied nothing gets
+    // NO block at all.
+    //
+    // adjacency denominator 3 (all three measured), identifier denominator 2
+    // (i14 never looked). identicalRetry 2 of 3; identifierSurfacedUnused 1
+    // of 2 — and reading it as 1 of 3 is exactly the error the second
+    // denominator exists to prevent.
+    completed({
+      trialKey: "i12",
+      caseVariantKey: "case_c\u0000",
+      caseKey: "case_c",
+      expectedToolCalls: [call("tool_a")],
+      actualToolCalls: [call("tool_a"), call("tool_a"), call("tool_b")],
+      frictionSignals: friction({
+        signals: [
+          {
+            kind: "identicalRetry",
+            callIndex: 1,
+            priorCallIndex: 0,
+            toolName: "tool_a",
+            afterError: false,
+          },
+          {
+            kind: "identifierSurfacedUnused",
+            informationCallIndex: 0,
+            observedAtCallIndex: 2,
+            toolName: "tool_a",
+            identifierKeyPaths: ["results[].id"],
+            identifierCount: 2,
+            laterCallCount: 2,
+          },
+        ],
+      }),
+    }),
+    completed({
+      trialKey: "i13",
+      caseVariantKey: "case_c\u0000",
+      caseKey: "case_c",
+      result: "passed",
+      expectedToolCalls: [call("tool_a")],
+      actualToolCalls: [call("tool_a")],
+      frictionSignals: friction({ callCount: 1, resultAvailableCount: 1 }),
+    }),
+    completed({
+      trialKey: "i14",
+      caseVariantKey: "case_c\u0000",
+      caseKey: "case_c",
+      expectedToolCalls: [call("tool_b")],
+      actualToolCalls: [call("tool_b"), call("tool_b")],
+      frictionSignals: friction({
+        callCount: 2,
+        resultAvailableCount: 0,
+        identifierSignals: {
+          state: "notMeasured",
+          reason: "resultsUnavailable",
+        },
+        signals: [
+          {
+            kind: "identicalRetry",
+            callIndex: 1,
+            priorCallIndex: 0,
+            toolName: "tool_b",
+            afterError: false,
+          },
+        ],
+      }),
+    }),
   ],
 };
 
@@ -170,8 +263,8 @@ describe("golden fixture", () => {
   });
 
   test("the scenario actually exercises what it claims to", () => {
-    expect(actual.includedTrials).toBe(8);
-    expect(actual.totalTrials).toBe(11);
+    expect(actual.includedTrials).toBe(11);
+    expect(actual.totalTrials).toBe(14);
     expect(actual.exclusions).toEqual({
       cancelled: 1,
       executionFailed: 1,
@@ -208,6 +301,27 @@ describe("golden fixture", () => {
     expect(caseB.routes.routes[0]).toMatchObject({
       pathKey: `tool_a${PATH_SEPARATOR}tool_b`,
       passed: 1,
+    });
+
+    // The friction block exists only where a trial supplied one.
+    expect(caseA.routes.frictionSignals).toBeUndefined();
+    expect(caseB.routes.frictionSignals).toBeUndefined();
+    const caseC = actual.cases.find((row) => row.caseKey === "case_c")!;
+    const rates = caseC.routes.frictionSignals!;
+    expect(rates.identicalRetry).toMatchObject({
+      state: "measured",
+      numerator: 2,
+      denominator: 3,
+    });
+    expect(rates.identifierSurfacedUnused).toMatchObject({
+      state: "measured",
+      numerator: 1,
+      denominator: 2,
+    });
+    expect(rates.changedRetry).toMatchObject({
+      state: "measured",
+      numerator: 0,
+      denominator: 3,
     });
   });
 });

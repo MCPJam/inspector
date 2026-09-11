@@ -143,22 +143,19 @@ export async function projectSelectedMcpServersAsHostTools(args: {
    * the host's intent — it falls back to the SDK's defaults, which is how a
    * Codex turn came to run `toModelOutput` under a policy the host never chose.
    *
-   * Two of the four `getToolsForAiSdk` options are deliberately NOT accepted:
+   * `needsApproval` IS accepted, and is the reason this path pauses at all.
    *
-   *  - `needsApproval` — the AI SDK approval flag is read by MCPJam's EMULATED
-   *    loop, which never runs on this path. Host-executed approval is enforced
-   *    by `HarnessAgent`'s own `toolApproval` map, which `runHarnessTurn`
-   *    builds over every key of `hostExecutedTools` (these projections
-   *    included) whenever the host requires approval and the adapter advertises
-   *    `supportsHostExecutedToolApproval`; unsound combinations are refused
-   *    outright by `harnessToolApprovalRefusalReason`, at the route pre-flight
-   *    AND at the in-turn backstop. Setting `needsApproval` here would add a
-   *    SECOND approval declaration that nothing on this path reads — inert, and
-   *    indistinguishable on inspection from enforcement. So the field is
-   *    absent by construction rather than dropped by omission, and a future
-   *    host-executed adapter that flips `supportsHostExecutedToolApproval` is
-   *    already covered by the map, not by this argument.
-   *  - `schemas` — no harness surface overrides tool schemas.
+   * It used to be excluded, on the grounds that the AI SDK approval flag was
+   * read only by MCPJam's emulated loop and would be an inert second
+   * declaration here. That was true while `runHarnessTurn` built its
+   * `toolApproval` map over EVERY key of `hostExecutedTools`: the flag said
+   * nothing the map did not already say, more loosely. It is not true now —
+   * the map is DERIVED from these declarations, so a projection that carries
+   * nothing is a tool the harness will not pause on. One declaration, read by
+   * three engines instead of two.
+   *
+   * `schemas` is still not accepted: no harness surface overrides tool
+   * schemas.
    *
    * Built by the shared {@link mcpToolOptionsFor}, so absent-everything yields
    * `undefined` and the enumeration takes the no-options overload: a default
