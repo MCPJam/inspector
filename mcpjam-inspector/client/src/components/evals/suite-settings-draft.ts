@@ -25,9 +25,28 @@
 
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
+import {
+  normalizeSuiteGatePolicy,
+  type SuiteGatePolicyV1,
+} from "@mcpjam/sdk/contract";
 import { ORDER_OPTIONS, ARGS_OPTIONS } from "./validators-section";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
+import {
+  describeGatePolicy,
+  describeJudge,
+  describePredicates,
+  describeValidity,
+  formatFraction,
+  summarizeRubric,
+} from "./suite-settings-summary";
+
+export {
+  describeGatePolicy,
+  describeJudge,
+  describeValidity,
+  formatFraction,
+  summarizeRubric,
+} from "./suite-settings-summary";
 
 /**
  * The fields the sheet drafts.
@@ -65,6 +84,11 @@ export type SuiteSettingsValues = {
    * answer but an unanswerable one.
    */
   verdictPolicyDefaults: SuiteVerdictPolicyDefaults | undefined;
+  /**
+   * Stored quality-gate policy. `undefined` is "none"; a dirty clear
+   * travels as `null` so the backend can distinguish omit from wipe.
+   */
+  gatePolicy: SuiteGatePolicyV1 | undefined;
 };
 
 /** The v2 defaults a case inherits. Fractions in [0,1], never percents. */
@@ -91,6 +115,7 @@ export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
   "judgeRubric",
   "verdictPolicyVersion",
   "verdictPolicyDefaults",
+  "gatePolicy",
 ];
 
 export type SuiteSettingsDraft = {
@@ -166,6 +191,7 @@ export function readSuiteSettingsValues(suite: {
   judgeRubric?: EvalJudgeRubric;
   verdictPolicyVersion?: 2;
   verdictPolicyDefaults?: SuiteVerdictPolicyDefaults;
+  gatePolicy?: SuiteGatePolicyV1;
 }): SuiteSettingsValues {
   return {
     name: suite.name ?? "",
@@ -184,7 +210,17 @@ export function readSuiteSettingsValues(suite: {
     judgeRubric: suite.judgeRubric,
     verdictPolicyVersion: suite.verdictPolicyVersion,
     verdictPolicyDefaults: suite.verdictPolicyDefaults,
+    gatePolicy: normalizeDraftGatePolicy(suite.gatePolicy),
   };
+}
+
+/** Drop inactive `false` booleans; keep numeric `0`; empty becomes unset. */
+export function normalizeDraftGatePolicy(
+  policy: SuiteGatePolicyV1 | undefined,
+): SuiteGatePolicyV1 | undefined {
+  if (!policy) return undefined;
+  const normalized = normalizeSuiteGatePolicy(policy);
+  return Object.keys(normalized).length === 0 ? undefined : normalized;
 }
 
 export function initSuiteSettingsDraft(args: {
@@ -440,6 +476,10 @@ export function toUpdateArgs(
         // it. There is no downgrade: v2 is one-way.
         if (value !== undefined) args[key] = value;
         break;
+      case "gatePolicy":
+        // NULL clears the stored policy. Omission would keep the old one.
+        args.gatePolicy = value ?? null;
+        break;
     }
   }
   return args;
@@ -470,41 +510,6 @@ function describeMatchOptions(value: EvalMatchOptions | undefined): string {
   if (value.maxExtraToolCalls !== undefined)
     parts.push(`at most ${value.maxExtraToolCalls} extra calls`);
   return parts.length > 0 ? parts.join(", ") : "Inherited";
-}
-
-function describePredicates(list: Predicate[]): string {
-  if (list.length === 0) return "None";
-  // The KINDS, counted — not the arguments. A review dialog listing every
-  // predicate's operand would be unreadable at five checks and is not the
-  // question the reader is asking, which is "what did I change".
-  const counts = new Map<string, number>();
-  for (const predicate of list) {
-    const label =
-      PREDICATE_KIND_LABELS[
-        predicate.type as keyof typeof PREDICATE_KIND_LABELS
-      ] ?? predicate.type;
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([label, count]) => (count > 1 ? `${label} ×${count}` : label))
-    .join(", ");
-}
-
-function describeJudge(value: EvalJudgeConfig | undefined): string {
-  const goal = value?.goalCompletion;
-  // An ABSENT config is not an off judge: `GOAL_COMPLETION_DEFAULTS` resolves
-  // an unset `enabled` to true, so a suite with no judgeConfig is running an
-  // advisory judge that simply never auto-runs. Rendering it as "Off" made the
-  // review dialog claim a change ("Off -> Advisory") that was not the change
-  // being made.
-  if (!goal) return "Not configured";
-  if (goal.enabled === false) return "Off";
-  const bits = [goal.role === "gating" ? "Gating" : "Advisory"];
-  if (goal.autoRun) bits.push("runs automatically");
-  if (goal.judgeModel) bits.push(goal.judgeModel);
-  if (goal.threshold !== undefined)
-    bits.push(`threshold ${Math.round(goal.threshold * 100)}%`);
-  return bits.join(", ");
 }
 
 /**
@@ -564,7 +569,7 @@ export function describeChange(
     case "defaultPredicates":
       return {
         key,
-        label: "Checks",
+        label: "Scorers",
         before: describePredicates(before.defaultPredicates),
         after: describePredicates(after.defaultPredicates),
       };
@@ -585,7 +590,7 @@ export function describeChange(
     case "verdictPolicyVersion":
       return {
         key,
-        label: "Policy",
+        label: "Quality gate",
         before: describePolicyVersion(before),
         after: describePolicyVersion(after),
       };
@@ -596,9 +601,16 @@ export function describeChange(
       // no change.
       return {
         key,
-        label: "Policy defaults",
+        label: "Quality gate defaults",
         before: describePolicyDefaults(before.verdictPolicyDefaults),
         after: describePolicyDefaults(after.verdictPolicyDefaults),
+      };
+    case "gatePolicy":
+      return {
+        key,
+        label: "Quality gate",
+        before: describeGatePolicy(before.gatePolicy),
+        after: describeGatePolicy(after.gatePolicy),
       };
   }
 }
@@ -633,40 +645,6 @@ function describePolicyDefaults(
   ];
   if (defaults.validity) parts.push(`validity: ${describeValidity(defaults)}`);
   return parts.join(", ");
-}
-
-/** The three validity ceilings, as percents where they are fractions. */
-function describeValidity(
-  defaults: SuiteVerdictPolicyDefaults | undefined,
-): string {
-  const validity = defaults?.validity;
-  if (!validity) return "Contract defaults";
-  const parts: string[] = [];
-  if (validity.minEligibleTrials !== undefined)
-    parts.push(`at least ${validity.minEligibleTrials} trials`);
-  if (validity.minCompletionRate !== undefined)
-    parts.push(`${formatFraction(validity.minCompletionRate)} completed`);
-  if (validity.maxEvaluatorErrorRate !== undefined)
-    parts.push(
-      `at most ${formatFraction(validity.maxEvaluatorErrorRate)} grader errors`,
-    );
-  return parts.length > 0 ? parts.join(", ") : "Contract defaults";
-}
-
-/**
- * A stored FRACTION as the percent a person reads.
- *
- * Rendering only — `0.8` is what is stored and what goes on the wire, and the
- * one place a percent may exist is in front of a reader.
- */
-export function formatFraction(value: number): string {
-  return `${Math.round(value * 100)}%`;
-}
-
-function summarizeRubric(rubric: EvalJudgeRubric | undefined): string {
-  const criteria = rubric?.criteria ?? [];
-  if (criteria.length === 0) return "None";
-  return criteria.map((criterion) => criterion.label).join(", ");
 }
 
 /** Every change in this draft, in the sheet's own row order. */

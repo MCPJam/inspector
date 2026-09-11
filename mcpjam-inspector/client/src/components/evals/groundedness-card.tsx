@@ -112,7 +112,7 @@ export function GroundednessCard({
                     "rounded border p-2",
                     entry.passed
                       ? "border-border/40 bg-background/40"
-                      : "border-red-500/40 bg-red-500/5",
+                      : "border-destructive/40 bg-destructive/5",
                   )}
                   data-testid="groundedness-case"
                 >
@@ -121,8 +121,8 @@ export function GroundednessCard({
                       className={cn(
                         "mt-0.5 flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold",
                         entry.passed
-                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                          : "bg-red-500/15 text-red-700 dark:text-red-400",
+                          ? "bg-success/15 text-success"
+                          : "bg-destructive/15 text-destructive",
                       )}
                     >
                       {entry.passed ? (
@@ -142,7 +142,7 @@ export function GroundednessCard({
                           {entry.unsupportedClaims.map((claim, index) => (
                             <li
                               key={index}
-                              className="text-[11px] leading-tight text-red-600 dark:text-red-400"
+                              className="text-[11px] leading-tight text-destructive"
                               data-testid="groundedness-unsupported-claim"
                             >
                               unsupported: “{claim}”

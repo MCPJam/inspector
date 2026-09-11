@@ -181,10 +181,17 @@ export function describeHostedOAuthFailure(
     code === "refresh_token_invalid" ||
     details?.refreshTokenInvalid === true
   ) {
+    // The backend's own message here is generic ("...is invalid. Please
+    // reconnect."), which only restates the title. When the authorization
+    // server declined under the wrong RFC 6749 code, the note naming that
+    // violation is the one line worth the space — it is what the user can
+    // take back to their own server.
+    const specNote =
+      typeof details?.specNote === "string" ? details.specNote.trim() : "";
     return {
       kind: "declined",
       title: `Refresh token declined for ${serverName}`,
-      detail: [message],
+      detail: [specNote || message],
       action: "reconnect",
     };
   }

@@ -1,3 +1,4 @@
+import { handleMarkdownImport } from "../shared/markdown-case-import.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
@@ -13,6 +14,7 @@ import {
   RunTestCaseRequestSchema,
   generateEvalTestsWithManager,
   generateNegativeEvalTestsWithManager,
+  passCriteriaSchema,
   prepareEvalRun,
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
@@ -42,11 +44,12 @@ const ReplayRunRequestSchema = z.object({
   convexAuthToken: z.string(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   notes: z.string().optional(),
-  passCriteria: z
-    .object({
-      minimumPassRate: z.number(),
-    })
-    .optional(),
+  // The SHARED pass-criteria schema, so a replay is bounded and speaks the same
+  // vocabulary as every other write. As a bare `z.object` this both STRIPPED
+  // `minimumPassRatePercent` silently — a replay losing the very override it
+  // was sent to apply — and accepted an unbounded number, so `0.8` meant 0.8%
+  // and the gate it produced could never fail.
+  passCriteria: passCriteriaSchema.optional(),
 });
 
 const TraceRepairStartSchema = z.discriminatedUnion("scope", [
@@ -72,6 +75,9 @@ const TraceRepairStopSchema = z.object({
   jobId: z.string().min(1),
   convexAuthToken: z.string(),
 });
+
+evals.post("/extract-markdown", (c) => handleMarkdownImport(c, "extract", true));
+evals.post("/import-markdown", (c) => handleMarkdownImport(c, "save", true));
 
 evals.post("/run", async (c) => {
   try {

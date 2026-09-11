@@ -23,7 +23,7 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { ArrowRight, ArrowUpRight, Plus, Server, Settings, TerminalSquare } from "lucide-react";
+import { Globe, ArrowRight, ArrowUpRight, Plus, Server, Settings, TerminalSquare } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { cn } from "@/lib/utils";
 import type { HostThemeMode } from "@/lib/client-styles";
@@ -35,6 +35,7 @@ import {
   type AddServerPillNodeData,
   type BuiltinToolsNodeData,
   type ComputerNodeData,
+  type BrowserNodeData,
   type HostMatrixNodeData,
   type HostRedesignViewModel,
   type ServerCardNodeData,
@@ -377,6 +378,26 @@ const BuiltinToolsNodeRenderer = memo(
 );
 BuiltinToolsNodeRenderer.displayName = "BuiltinToolsNodeRenderer";
 
+const BrowserNodeRenderer = memo(
+  ({ data, selected }: NodeProps<Node<BrowserNodeData, "redesignBrowser">>) => (
+    <div className={cn(
+      "flex w-full flex-col gap-2 rounded-lg border bg-card px-3 py-2.5",
+      !data.enabled && "border-dashed text-muted-foreground",
+      selected && "ring-2 ring-primary/40",
+    )}>
+      <div className="flex items-center gap-2 text-[13px] font-semibold">
+        <Globe className="size-4" />
+        {data.enabled ? "Browser" : "+ Browser"}
+      </div>
+      <span className="text-[10.5px]">
+        {data.enabled ? data.profileLabel : "Configure browser access"}
+      </span>
+      <Handle type="target" position={Position.Left} id="left" className={decorativeHandleClass} />
+    </div>
+  ),
+);
+BrowserNodeRenderer.displayName = "BrowserNodeRenderer";
+
 const ComputerNodeRenderer = memo(
   (props: NodeProps<Node<ComputerNodeData, "redesignComputer">>) => {
     const { data, selected } = props;
@@ -489,6 +510,7 @@ const nodeTypes = {
   redesignAddServer: AddServerPillRenderer,
   redesignBuiltinTools: BuiltinToolsNodeRenderer,
   redesignComputer: ComputerNodeRenderer,
+  redesignBrowser: BrowserNodeRenderer,
 };
 
 /**
@@ -659,7 +681,7 @@ interface RedesignedHostCanvasProps {
    * uneditable summary of the scenario's referenced host.
    */
   readOnly?: boolean;
-  onRequestEdit?: () => void;
+  onRequestEdit?: (nodeId?: string) => void;
 }
 
 export function RedesignedHostCanvas({
@@ -847,7 +869,7 @@ export function RedesignedHostCanvas({
           }}
           onNodeClick={(_, node) => {
             if (readOnly) {
-              onRequestEdit?.();
+              onRequestEdit?.(node.id);
               return;
             }
             if (node.id === "add-server") {
@@ -856,7 +878,7 @@ export function RedesignedHostCanvas({
             }
             onSelectNode(node.id);
           }}
-          onPaneClick={readOnly ? onRequestEdit : onClearSelection}
+          onPaneClick={readOnly ? () => onRequestEdit?.() : onClearSelection}
         >
           <Background
             id="host-redesign-dots"

@@ -510,7 +510,7 @@ test: async (agent) => {
 ```typescript
 test: async (agent) => {
   const result = await agent.run("What is 5 + 5?");
-  return result.getText().includes("10");
+  return result.text.includes("10");
 };
 ```
 
@@ -522,7 +522,7 @@ test: async (agent) => {
   return (
     result.hasToolCall("multiply") &&
     !result.hasError() &&
-    result.getText().length > 0
+    result.text.length > 0
   );
 };
 ```

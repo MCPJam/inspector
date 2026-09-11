@@ -11,6 +11,7 @@ import { SuiteResultsSplit } from "./suite-results-split";
 import { buildHostNamesById } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import { isModelFree } from "@/shared/steps";
+import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
 
 interface RunTrendPoint {
   runId: string;
@@ -143,13 +144,22 @@ export function SuiteDashboard({
   );
   const hostNamesById = hostNamesByIdProp ?? attachmentHostNames;
 
-  // Monitoring rail item: synthetic-monitors flag AND the suite actually has
-  // monitoring signal (a schedule or at least one widget probe case).
+  // Monitoring rail item: the suite has monitoring signal AND the flag that
+  // owns that signal is on. TWO flags, because the rail has two halves and
+  // they ship on different clocks — a schedule answers to `scheduled-evals-
+  // enabled` (dark until Schedule is tested), a widget probe case to
+  // `synthetic-monitors`. One shared flag would make hiding either hide both.
+  //
+  // The OR opens the pane; it does NOT say what the pane may show. Both flags
+  // travel on so each section answers to its own — otherwise a suite with a
+  // schedule AND a probe case would earn the pane from `synthetic-monitors`
+  // alone and then render the "Scheduled runs" strip inside it.
+  const scheduledEvalsEnabled = useScheduledEvalsEnabled();
   const syntheticMonitorsEnabled =
     useFeatureFlagEnabled("synthetic-monitors") === true;
   const showMonitoring =
-    syntheticMonitorsEnabled &&
-    (Boolean(suite.schedule) ||
+    (scheduledEvalsEnabled && Boolean(suite.schedule)) ||
+    (syntheticMonitorsEnabled &&
       cases.some((testCase) => isModelFree(testCase.steps)));
 
   // The case-authoring library (with add / delete / run affordances). The split
@@ -230,6 +240,7 @@ export function SuiteDashboard({
       {hasRuns ? (
         <div className="shrink-0">
           <SuiteMetricStrip
+            showCost={false}
             runs={metricRuns}
             allIterations={metricIterations}
             aggregate={metricAggregate}
@@ -258,6 +269,8 @@ export function SuiteDashboard({
         onOpenCaseIteration={onOpenCaseIteration}
         onRunClick={onRunClick}
         showMonitoring={showMonitoring}
+        showScheduledRuns={scheduledEvalsEnabled}
+        showProbeLatency={syntheticMonitorsEnabled}
         selectedRunId={selectedRunId}
         runDetailPane={runDetailPane}
         onExitRun={onExitRun}

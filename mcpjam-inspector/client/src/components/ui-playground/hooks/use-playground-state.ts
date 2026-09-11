@@ -49,7 +49,6 @@ import type {
   EnsureServersReadyResult,
   ServerWithName,
 } from "@/hooks/use-app-state";
-import { useSidebar } from "@/components/ui/sidebar";
 import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
@@ -111,6 +110,8 @@ export interface UsePlaygroundStateOptions {
   isConvexAuthenticated?: boolean;
   isProjectProvisioned?: boolean;
   isClientConfigSyncPending?: boolean;
+  /** False while the Convex servers query is still in flight. */
+  areServersHydrated?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
@@ -183,6 +184,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     isConvexAuthenticated = false,
     isProjectProvisioned = true,
     isClientConfigSyncPending = false,
+    areServersHydrated = true,
     hasSeenFirstRunOnboarding,
     isServerSyncing = false,
     onConnect,
@@ -213,6 +215,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     canPersistRemoteOnboarding: isConvexAuthenticated,
     isProjectProvisioned,
     isClientConfigSyncPending,
+    areServersHydrated,
   });
 
   const firstRunComposerSeed =
@@ -245,12 +248,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   } = useUIPlaygroundStore();
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
 
-  const { setOpen: setMcpSidebarOpen } = useSidebar();
-
   useLayoutEffect(() => {
     onOnboardingChange?.(false);
-    setMcpSidebarOpen(true);
-  }, [onOnboardingChange, setMcpSidebarOpen]);
+  }, [onOnboardingChange]);
 
   useLayoutEffect(() => {
     // NUX: collapse the tools sidebar for the whole first-run connect + guided
@@ -267,13 +267,17 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     }
   }, [onboarding.phase, onboarding.isGuidedPostConnect, setSidebarVisible]);
 
+  // Whether the APP sidebar is open is not this surface's call: entering and
+  // leaving Playground is one of the transitions `SidebarAutoCollapse` owns,
+  // and forcing it open here re-expanded the rail a commit after the policy
+  // had collapsed it (this route mounts lazily, after the policy's effect).
+  // Only the playground-local tools sidebar is restored.
   useLayoutEffect(() => {
     return () => {
       onOnboardingChange?.(false);
       setSidebarVisible(true);
-      setMcpSidebarOpen(true);
     };
-  }, [onOnboardingChange, setMcpSidebarOpen, setSidebarVisible]);
+  }, [onOnboardingChange, setSidebarVisible]);
 
   // Event name `app_builder_tab_viewed` is kept for analytics continuity
   // (the only surface that still mounts this hook is the Playground tab).
@@ -981,6 +985,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   // Playground rather than hanging forever with no escape. See issue #3352.
   const wantsFirstRunSkeleton =
     isResolvingRemoteCompletion ||
+    onboarding.isAwaitingFirstRunServers ||
     isConnectingFirstRunExcalidraw ||
     isBootstrappingFirstRunConnection ||
     isWaitingForServerSync;
@@ -998,6 +1003,12 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     return () => clearTimeout(id);
   }, [wantsFirstRunSkeleton]);
 
+  // Holds the first message until the guided server is up. It lifts once that
+  // happened, so a different offline server can't strand the user, and once the
+  // skeleton gives up, so the timeout above stays a real escape.
+  const firstRunSubmitBlocked =
+    onboarding.phase === "connecting_excalidraw" && !firstRunSkeletonTimedOut;
+
   const shouldMarkFirstRunNuxShown =
     firstRunComposerSeed &&
     onboarding.isGuidedPostConnect &&
@@ -1006,6 +1017,8 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     !isWaitingForServerSync &&
     !!serverConfig;
 
+  // Kept in an effect rather than the send handler so the remote half retries
+  // when Convex auth settles — `markOnboardingShown`'s identity changes then.
   useEffect(() => {
     if (shouldMarkFirstRunNuxShown) {
       onboarding.markOnboardingShown();
@@ -1056,6 +1069,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
     // onboarding
     firstRunComposerSeed,
+    firstRunSubmitBlocked,
     onboarding,
 
     // multi-server

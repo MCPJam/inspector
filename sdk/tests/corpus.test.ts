@@ -619,6 +619,19 @@ describe("toolCalledWith conversion preserves what it cannot express", () => {
     }
   );
 
+  it("keeps an advisory toolCalledWith as a predicate (no matcher expectation)", () => {
+    const assertion = {
+      type: "toolCalledWith",
+      toolName: "issue_refund",
+      args: { args: { orderId: "A1" } },
+      role: "advisory",
+      severity: "warn",
+    };
+    const config = caseWith(assertion);
+    expect(config.expectedToolCalls ?? []).toEqual([]);
+    expect(config.predicates).toEqual([assertion]);
+  });
+
   it("treats explicit defaults as plain", () => {
     const config = caseWith({
       type: "toolCalledWith",

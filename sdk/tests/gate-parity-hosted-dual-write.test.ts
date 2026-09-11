@@ -27,6 +27,7 @@ import {
   type GateReport,
 } from "../src/gates.js";
 import {
+  allGatingScorersPassed,
   definitionHash,
   evaluationConfigHash,
   resolveScoreDefinition,
@@ -524,6 +525,33 @@ describe("gate parity across the enforce flip", () => {
       minimumPassRate: "passed",
     });
     expect(report.outcome).toBe("failed");
+  });
+
+  it("an advisory predicate row never enters allGatingScorersPassed", () => {
+    const advisoryPredicate = resolveScoreDefinition({
+      scorerId: "predicate:contains-advisory",
+      idSource: "platform",
+      scorerVersion: "1",
+      implementationHash: "d".repeat(64),
+      deterministic: true,
+      passThreshold: 1,
+      role: "advisory",
+    });
+    const config: EvaluationConfigSnapshot = {
+      hash: evaluationConfigHash([
+        toolMatchDefinition,
+        advisoryPredicate,
+      ]),
+      definitions: [toolMatchDefinition, advisoryPredicate],
+    };
+    const scores = [
+      row(toolMatchDefinition, { status: "scored", value: 1 }),
+      row(advisoryPredicate, { status: "scored", value: 0 }),
+    ];
+    const verdict = allGatingScorersPassed(scores, config);
+    expect(verdict.passed).toBe(true);
+    expect(verdict.disagreeingScorerIds).toEqual([]);
+    expect(verdict.unresolvedScorerIds).toEqual([]);
   });
 
   it("an ADVISORY row that errors still never gates at enforce", () => {

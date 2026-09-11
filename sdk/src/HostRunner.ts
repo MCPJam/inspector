@@ -19,6 +19,28 @@ import type {
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
+
+/**
+ * The registered custom-provider names, as `parseLLMString` wants them.
+ *
+ * Every parse of a model string on this class passes these. Since a vendor
+ * path with an unknown leading segment now resolves to OpenRouter rather than
+ * throwing, omitting them silently reclassifies a custom provider's model as a
+ * hosted-catalog one.
+ */
+function customProviderNameSet(
+  customProviders:
+    | Map<string, CustomProvider>
+    | Record<string, CustomProvider>
+    | undefined
+): Set<string> | undefined {
+  if (!customProviders) return undefined;
+  return new Set(
+    customProviders instanceof Map
+      ? customProviders.keys()
+      : Object.keys(customProviders)
+  );
+}
 import type { CreateModelOptions } from "./model-factory.js";
 import { modelRejectsTemperature } from "./model-sampling-support.js";
 import { extractToolCalls } from "./tool-extraction.js";
@@ -378,9 +400,17 @@ export class HostRunner implements HostExecutor {
       ? resolveOpenAiCompatCapabilitiesForHostConfig(this.hostSnapshot)
       : undefined;
 
-    // Parse the model string once to extract provider/model metadata
+    // Parse the model string once to extract provider/model metadata.
+    //
+    // WITH the registered custom provider names: without them a
+    // `my-litellm/gpt-4` no longer throws (a vendor path resolves to
+    // OpenRouter), so this would report the provider as `openrouter` and the
+    // model as the whole id instead of falling through to the split below.
     try {
-      const parsed = parseLLMString(resolvedModel);
+      const parsed = parseLLMString(
+        resolvedModel,
+        customProviderNameSet(this.customProviders)
+      );
       this._parsedProvider =
         parsed.type === "builtin" ? parsed.provider : parsed.providerName;
       this._parsedModel = parsed.model;
@@ -727,14 +757,10 @@ export class HostRunner implements HostExecutor {
     // capture (the model itself is constructed below and will surface errors).
     let spanProvider: string | undefined;
     try {
-      const customNames = this.customProviders
-        ? new Set(
-            this.customProviders instanceof Map
-              ? this.customProviders.keys()
-              : Object.keys(this.customProviders)
-          )
-        : undefined;
-      const parsed = parseLLMString(this.model, customNames);
+      const parsed = parseLLMString(
+        this.model,
+        customProviderNameSet(this.customProviders)
+      );
       spanProvider =
         parsed.type === "custom" ? parsed.providerName : parsed.provider;
     } catch {
