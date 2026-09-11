@@ -13,7 +13,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { Check, Circle, Loader2 } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, Circle, Loader2 } from "lucide-react";
 
 /** Time the welcome splash remains visible before it advances to server choice. */
 export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 8_500;
@@ -456,12 +456,10 @@ export function FirstRunOnboardingOverlay({
                   try again or connect your own server instead.
                 </DialogDescription>
               </DialogHeader>
-              <p
-                className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] leading-[1.45] text-destructive"
-                role="alert"
-              >
-                {connectionState.error}
-              </p>
+              <ConnectionFailureNotice
+                key={connectionState.error}
+                error={connectionState.error}
+              />
               <Button
                 type="button"
                 className="mt-4 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
@@ -491,12 +489,10 @@ export function FirstRunOnboardingOverlay({
               </DialogHeader>
 
               {connectionState.status === "failed" ? (
-                <p
-                  className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] leading-[1.45] text-destructive"
-                  role="alert"
-                >
-                  {connectionState.error}
-                </p>
+                <ConnectionFailureNotice
+                  key={connectionState.error}
+                  error={connectionState.error}
+                />
               ) : null}
 
               <div className="mt-[18px] grid gap-3">
@@ -606,6 +602,59 @@ export function FirstRunOnboardingOverlay({
         </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>
+  );
+}
+
+function ConnectionFailureNotice({ error }: { error: string }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const detailsId = "first-run-connection-error-details";
+
+  return (
+    <div
+      className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3"
+      role="alert"
+    >
+      <div className="flex items-start gap-2.5">
+        <span
+          className="flex size-7 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
+          aria-hidden
+        >
+          <AlertCircle className="size-4" strokeWidth={2} />
+        </span>
+        <div className="min-w-0 flex-1 pt-0.5">
+          <p className="text-[12px] leading-4 font-semibold text-card-foreground">
+            Failed to connect to MCP server
+          </p>
+          <Button
+            type="button"
+            variant="link"
+            className="mt-1 h-auto gap-1 p-0 text-[10.5px] font-normal text-muted-foreground underline decoration-border underline-offset-4 hover:text-foreground hover:decoration-primary"
+            aria-expanded={isExpanded}
+            aria-controls={detailsId}
+            onClick={() => setIsExpanded((current) => !current)}
+          >
+            {isExpanded ? "Hide technical details" : "View technical details"}
+            <ChevronDown
+              className={cn(
+                "size-3 transition-transform",
+                isExpanded && "rotate-180",
+              )}
+              aria-hidden
+            />
+          </Button>
+        </div>
+      </div>
+      {isExpanded ? (
+        <div className="mt-3 border-t border-destructive/15 pt-3">
+          <p
+            id={detailsId}
+            className="break-words font-mono text-[10.5px] leading-[1.5] text-muted-foreground"
+          >
+            {error}
+          </p>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
