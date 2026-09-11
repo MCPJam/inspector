@@ -70,6 +70,7 @@ import {
   emitToolOutput,
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import {
   pluginOriginByServerId,
   type RuntimePluginVersion,
@@ -1287,9 +1288,13 @@ export async function runHarnessTurn(
               // via the same shared builder — this projection is the host's
               // MCP tool set for a Codex turn, so a policy that changes how a
               // tool is built has to reach it or it does not exist on this
-              // delivery mode at all. (`needsApproval` is intentionally not in
-              // this set — see `projectSelectedMcpServersAsHostTools`.)
+              // delivery mode at all — `needsApproval` included, since the
+              // turn's `toolApproval` map is derived from it below.
               toolOptions: {
+                needsApproval: needsApprovalFor(
+                  "setting",
+                  requireToolApproval === true,
+                ),
                 modelVisibleMcpToolResults,
                 includeAppOnly: respectToolVisibility === false,
                 tasks,
@@ -2111,6 +2116,37 @@ export async function runHarnessTurn(
         ...hostExecutedMcp.tools,
         ...((builtInTools ?? {}) as Record<string, unknown>),
       } as Record<string, unknown>;
+      // The tools that actually ask, read off the same `needsApproval` the
+      // other two engines read.
+      //
+      // A FUNCTION-form declaration counts as asking. `HarnessAgent`'s map is
+      // name-keyed and built HERE, before the model has produced any input, so
+      // there is no input to evaluate a function against and no per-call hook
+      // to defer to — fail-closed is the only sound reading. Nothing reaches
+      // this map in that shape today and the branch is defence, not policy:
+      // `hostExecutedMcp.tools` are built through `mcpToolOptionsFor`, whose
+      // declaration is a boolean, and `builtInTools` is `resolveHostTools`'
+      // output, every member of which declares a boolean too. The two
+      // function-form families (`server-skill-tools`, `effective-skill-tools`)
+      // reach the emulated engine through `allTools`, which this path does not
+      // consume.
+      //
+      // The adapter capability still gates the whole map — advertise =
+      // enforce, and an adapter that cannot pause on a host tool must not be
+      // handed a map claiming it will. `harnessToolApprovalRefusalReason`
+      // refuses that combination outright at both gate sites; this is the
+      // belt to its braces.
+      const gatedHostExecutedToolNames =
+        harnessAdapter.supportsHostExecutedToolApproval
+          ? Object.entries(hostExecutedTools)
+              .filter(([, definition]) => {
+                const declared = (
+                  definition as { needsApproval?: unknown } | undefined
+                )?.needsApproval;
+                return declared === true || typeof declared === "function";
+              })
+              .map(([name]) => name)
+          : [];
       const agent = new HarnessAgent({
         harness: harnessRuntime,
         sandbox,
@@ -2138,12 +2174,16 @@ export async function runHarnessTurn(
         // WS3: gate host-executed tools (web_search, …) behind approval too —
         // permissionMode only covers the harness's native built-ins. Honors the
         // adapter's declared capability (advertise = enforce).
-        ...(requireToolApproval &&
-        harnessAdapter.supportsHostExecutedToolApproval &&
-        Object.keys(hostExecutedTools).length
+        //
+        // DERIVED from each tool's own declaration, not from the flag plus a
+        // list of every key. Those agreed while the switch was the only thing
+        // that made a host tool ask; they do not now, and asking about a tool
+        // that declares `never` — an exa search, a workspace read — is a pill
+        // for something the other two engines run without one.
+        ...(gatedHostExecutedToolNames.length
           ? {
               toolApproval: Object.fromEntries(
-                Object.keys(hostExecutedTools).map((n) => [n, "user-approval"]),
+                gatedHostExecutedToolNames.map((n) => [n, "user-approval"]),
               ) as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["toolApproval"]
               >,

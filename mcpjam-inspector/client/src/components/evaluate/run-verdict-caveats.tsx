@@ -19,7 +19,10 @@ import {
   decisionVerdictSourceLabel,
   describeDiagnosticsScope,
 } from "../evals/run-decision-summary-presentation";
-import type { EvalRunDecisionSummary } from "@mcpjam/sdk/contract";
+import {
+  measurementUnitLabel,
+  type EvalRunDecisionSummary,
+} from "@mcpjam/sdk/contract";
 
 export function RunVerdictCaveats({
   summary,
@@ -44,13 +47,19 @@ export function RunVerdictCaveats({
 
   if (summary.counts?.measurementUnit === "trial") {
     // The distinction the old card shouted and this one states: a legacy run
-    // counts executions, so its "2 of 3" is not a count of cases.
+    // counts executions, so its "2 of 3" is not a count of case variants.
     lines.push(
-      "Counts are iterations, not cases. A legacy run tallies each execution, so a case that ran twice is counted twice.",
+      `Counts are ${measurementUnitLabel("trial", 0)}, not ${measurementUnitLabel(
+        "caseVariant",
+        0,
+      )}. A legacy run tallies each execution, so a case that ran twice is counted twice.`,
     );
   } else if (summary.counts?.measurementUnit === "caseVariant") {
     lines.push(
-      "Counts are cases. Each case passes when its own iterations clear its threshold, and the run passes when every case does.",
+      `Counts are ${measurementUnitLabel("caseVariant", 0)}. A case variant is one case on one target, it passes when its own ${measurementUnitLabel(
+        "trial",
+        0,
+      )} clear its threshold, and the run passes when every variant does.`,
     );
   }
 

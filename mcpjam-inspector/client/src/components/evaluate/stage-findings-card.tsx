@@ -127,7 +127,7 @@ function Group({
       <p className="text-[11px] text-foreground">
         {/* The count first, then the reason — the same shape the tally line
             above uses, so the two can be checked against each other. */}
-        {group.count} — {group.label}
+        {group.count}. {group.label}
       </p>
       <ul className="mt-1 space-y-1">
         {shown.map((trial) => (
@@ -200,7 +200,7 @@ function ReadyStage({
       ) : null}
       {findings.reconciliationNote ? (
         <p
-          className="mt-0.5 text-[10px] text-amber-700 dark:text-amber-400"
+          className="mt-0.5 text-[10px] text-warning"
           data-testid="stage-findings-reconciliation"
         >
           {findings.reconciliationNote}
@@ -281,8 +281,8 @@ export function StageFindingsCard({
         <p className="text-[10px] text-muted-foreground">
           {/* NOT "no failures". This run has no per-trial diagnostics to join,
               which is a fact about the contract that produced it. */}
-          Per-trial diagnostics are unavailable for this run, so the trials
-          behind these stage counts are not listed here.
+          Per-iteration diagnostics are unavailable for this run, so the
+          iterations behind these stage counts are not listed here.
         </p>
       </div>
     );
@@ -295,7 +295,7 @@ export function StageFindingsCard({
     <>
       {state.provisionalNote ? (
         <p
-          className="mt-2 text-[10px] text-amber-700 dark:text-amber-400"
+          className="mt-2 text-[10px] text-warning"
           data-testid="stage-findings-provisional"
         >
           {state.provisionalNote}

@@ -415,12 +415,20 @@ function classifyMcpError(error: unknown): string | undefined {
 function classifyHttpStatus(status: number): string | undefined {
   if (status === 401) return "auth/http_401";
   if (status === 403) return "auth/http_403";
+  if (status === 429) return "provider/quota";
   return undefined;
 }
 
 function classifyByMessageHttp(message: string): string | undefined {
   if (/\b(?:http|status)[:\s-]*401\b/i.test(message)) return "auth/http_401";
   if (/\b(?:http|status)[:\s-]*403\b/i.test(message)) return "auth/http_403";
+  // A bare 429 needs no http/status prefix — the local-BYOK swarm path drops
+  // the status field and leaves only this wording. Narrower than "rate limit"
+  // on purpose: that also matches MCPJam's own account limit, a different slug.
+  // Not preceded by `:` or `.`, so a port (`127.0.0.1:429`) or a decimal stays
+  // a transport error and keeps reaching `messageSlug`.
+  if (/(?:^|[^\w.:])429\b|too many requests/i.test(message))
+    return "provider/quota";
   return undefined;
 }
 
@@ -485,6 +493,34 @@ function resolveSlug(error: unknown): {
     return { slug: "auth/missing_bearer" };
   }
 
+  // Same shape of problem as the bearer gate above, and the same surface: the
+  // swarm create flow renders `err.message`, so the 429 and its `code` are
+  // gone by the time this runs. Without the pre-check a spent MCPJam
+  // allowance fell through to `internal/unknown` and the card read "Unknown
+  // error", telling the user to file an issue about their own quota.
+  //
+  // The period is read off the limit phrase itself, not from anywhere in the
+  // message: composed copy carries a second sentence about when the allowance
+  // renews, and a loose /monthly/ would classify a daily refusal by it.
+  //
+  // The gap is bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a
+  // message of repeated "mcpjam" with no "model limit" backtracks quadratically,
+  // and this message comes off the wire. Real copy puts one space here.
+  const limitPeriod = /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(
+    message,
+  );
+  if (limitPeriod) {
+    return {
+      slug:
+        limitPeriod[1]!.toLowerCase() === "monthly"
+          ? "provider/mcpjam_limit_monthly"
+          : "provider/mcpjam_limit_daily",
+    };
+  }
+  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
+    return { slug: "provider/mcpjam_limit" };
+  }
+
   // (e) HTTP status field (`statusCode` / `status`).
   const httpStatus = getHttpStatus(error);
   if (httpStatus !== undefined) {
@@ -542,6 +578,17 @@ export type DescribeContext = {
    * their own tokens or bill their own provider keys must pass it.
    */
   credentialOwner?: "user" | "mcpjam";
+  /**
+   * Which boundary the error came back across. Omit when unknown.
+   *
+   * Only `"mcpServer"` changes anything, and only for a 429: the status
+   * arrives in the same shape from an LLM provider and from the MCP server
+   * under test (`StreamableHTTPError` carries it on `.code`), so without this
+   * a server throttling us is reported as the user's provider quota — and the
+   * advice sends them to the wrong dashboard. Callers that know they are
+   * talking to an MCP server should say so.
+   */
+  surface?: "provider" | "mcpServer";
 };
 
 /**
@@ -585,6 +632,26 @@ function applyOriginContext(
   return entry;
 }
 
+/**
+ * A 429 that came back from the MCP server is the SERVER's rate limit, not the
+ * user's LLM provider quota.
+ *
+ * `resolveSlug` cannot tell them apart: both arrive as a bare status on
+ * `.code` / `.statusCode`, so the status alone maps to `provider/quota`. Only
+ * the caller knows which boundary it crossed, so the correction is applied
+ * here rather than by widening the classifier — every caller that does not
+ * pass a surface keeps exactly the behaviour it had.
+ */
+function retargetQuotaForSurface(
+  slug: string,
+  context: DescribeContext | undefined,
+): string {
+  if (slug === "provider/quota" && context?.surface === "mcpServer") {
+    return "server/rate_limited";
+  }
+  return slug;
+}
+
 export function describeError(
   error: unknown,
   context?: DescribeContext,
@@ -592,7 +659,9 @@ export function describeError(
   // Crash-safe: every branch is wrapped so the describer never throws.
   try {
     const rawMessage = redactString(getErrorMessage(error));
-    const { slug, rawCode } = resolveSlug(error);
+    const resolved = resolveSlug(error);
+    const slug = retargetQuotaForSurface(resolved.slug, context);
+    const rawCode = resolved.rawCode;
     const entry = applyOriginContext(
       maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
       slug,

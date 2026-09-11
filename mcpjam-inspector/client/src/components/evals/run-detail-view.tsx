@@ -1077,7 +1077,7 @@ export function RunDetailView({
           pinned; grouping elsewhere keys on the environment id, never this. */}
       {runProjectEnvironmentRef ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className={runDetailMetaLabelClass}>Environment</span>
+          <span className={runDetailMetaLabelClass}>Client</span>
           <span
             className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
             title={runProjectEnvironmentRef.environmentId}
