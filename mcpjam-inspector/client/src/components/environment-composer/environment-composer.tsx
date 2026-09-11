@@ -22,6 +22,7 @@
  */
 import { useCallback, useMemo, type ReactNode } from "react";
 import { useConvexAuth } from "convex/react";
+import { toast } from "@/lib/toast";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
@@ -88,6 +89,7 @@ export function EnvironmentComposer({
   serverInfoText = "Optional shared server group for every client in this setup.",
   environmentsVocabulary = "environment",
   showTargetCount = true,
+  lockedSlots,
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -117,6 +119,16 @@ export function EnvironmentComposer({
    */
   emptyServerLabel?: string;
   serverInfoText?: string;
+  /**
+   * Slots this surface refuses to let anyone change, each with the reason.
+   *
+   * Distinct from `disabled`, which is the strip being busy or unavailable —
+   * this is a standing rule about one control, and the reason is the whole
+   * point. A locked pill stays visible and stays reachable: pressing it says
+   * why rather than doing nothing, which is what a plain greyed-out control
+   * offers someone who does not already know the rule.
+   */
+  lockedSlots?: Partial<Record<"clients" | "servers", string>>;
   /**
    * Evaluate calls the saved-target picker Clients. Other surfaces keep
    * Environments so Swarms and the Environments page stay unchanged.
@@ -207,6 +219,31 @@ export function EnvironmentComposer({
     value.environmentIds,
   ]);
   const slotsDisabled = disabled || stackEditBlock !== null;
+
+  /**
+   * A locked pill, wrapped so the refusal is audible.
+   *
+   * The child is genuinely `disabled`, so it dispatches no click of its own —
+   * `pointer-events-none` hands the press to this wrapper instead, which is
+   * the only way to answer a click on a control that must not act. `button`,
+   * not a div: it is a thing you press and it responds, and a keyboard reaches
+   * it the same way a mouse does.
+   */
+  const renderLocked = (reason: string, pill: ReactNode) => (
+    <button
+      type="button"
+      aria-disabled
+      className="cursor-not-allowed rounded-lg [&>*]:pointer-events-none"
+      onClick={() => toast.error(reason)}
+      title={reason}
+    >
+      {pill}
+    </button>
+  );
+  const withLock = (slot: "clients" | "servers", pill: ReactNode) => {
+    const reason = lockedSlots?.[slot];
+    return reason ? renderLocked(reason, pill) : pill;
+  };
   const testId = (suffix: string) =>
     testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
   const choiceCount = modelChoiceCount(value.stack.modelSelection);
@@ -384,18 +421,21 @@ export function EnvironmentComposer({
             footerSlot={environmentPickerFooter}
           />
         ) : null}
-        {showClientsSlot ? (
-          <ClientsPill
-            projectId={projectId}
-            value={value.stack.hostIds}
-            onChange={(hostIds) => patchStack({ hostIds })}
-            max={maxTargets}
-            disabled={slotsDisabled}
-            testId={testId("clients-picker")}
-            inModal={inModal}
-            budget={budget}
-          />
-        ) : null}
+        {showClientsSlot
+          ? withLock(
+              "clients",
+              <ClientsPill
+                projectId={projectId}
+                value={value.stack.hostIds}
+                onChange={(hostIds) => patchStack({ hostIds })}
+                max={maxTargets}
+                disabled={slotsDisabled || Boolean(lockedSlots?.clients)}
+                testId={testId("clients-picker")}
+                inModal={inModal}
+                budget={budget}
+              />,
+            )
+          : null}
         {modelsEnabled ? (
           <ModelsPill
             projectId={projectId}
@@ -415,19 +455,24 @@ export function EnvironmentComposer({
             clientDefaultLabel={inheritedClientDefaultLabel}
           />
         ) : null}
-        {showServersSlot ? (
-          <ServerGroupPicker
-            projectId={projectId}
-            value={value.stack.serverAttachmentId}
-            onChange={(serverAttachmentId) => patchStack({ serverAttachmentId })}
-            disabled={slotsDisabled}
-            emptyTriggerLabel={emptyServerLabel}
-            infoText={serverInfoText}
-            triggerTestId={testId("servers-picker")}
-            onClearSelection={() => patchStack({ serverAttachmentId: null })}
-            inModal={inModal}
-          />
-        ) : null}
+        {showServersSlot
+          ? withLock(
+              "servers",
+              <ServerGroupPicker
+                projectId={projectId}
+                value={value.stack.serverAttachmentId}
+                onChange={(serverAttachmentId) =>
+                  patchStack({ serverAttachmentId })
+                }
+                disabled={slotsDisabled || Boolean(lockedSlots?.servers)}
+                emptyTriggerLabel={emptyServerLabel}
+                infoText={serverInfoText}
+                triggerTestId={testId("servers-picker")}
+                onClearSelection={() => patchStack({ serverAttachmentId: null })}
+                inModal={inModal}
+              />,
+            )
+          : null}
         {showSkillsSlot ? (
           <SkillsPill
             projectId={projectId}

@@ -271,10 +271,11 @@ const scenario = {
 
 const detail = (
   over: Partial<ScenarioSettings> = {},
-  opts: { editMode?: boolean } = {},
+  opts: { editMode?: boolean; sessionCount?: number } = {},
 ) => (
   <UserTestingScenarioDetail
     scenario={{ ...scenario, ...over } as ScenarioSettings}
+    sessionCount={opts.sessionCount}
     editMode={opts.editMode}
     onBack={vi.fn()}
     onDeleted={vi.fn()}
@@ -283,11 +284,13 @@ const detail = (
 
 const renderDetail = (
   over: Partial<ScenarioSettings> = {},
-  opts: { editMode?: boolean } = {},
+  opts: { editMode?: boolean; sessionCount?: number } = {},
 ) => render(detail(over, opts));
 
-const renderEdit = (over: Partial<ScenarioSettings> = {}) =>
-  renderDetail(over, { editMode: true });
+const renderEdit = (
+  over: Partial<ScenarioSettings> = {},
+  opts: { sessionCount?: number } = {},
+) => renderDetail(over, { ...opts, editMode: true });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -1234,5 +1237,67 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(
       screen.getByTestId("user-testing-settings-tasks"),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * Raised in review: "we're letting them mess up their test configurations —
+ * one might be pointing to Excalidraw and the other to GitHub." Repointing a
+ * study that has already been run leaves one set of results answering a setup
+ * that no longer exists, under the same name, with nothing saying so.
+ */
+describe("UserTestingScenarioDetail — the setup of a study with results", () => {
+  const composerProps = () =>
+    composerMock.mock.calls[composerMock.mock.calls.length - 1][0] as {
+      lockedSlots?: Record<string, string>;
+    };
+
+  const withEnvironment = () => {
+    environmentState.row = {
+      environmentId: "env-1",
+      projectId: "p1",
+      origin: "named",
+      name: "Checkout flow",
+      hostId: "host-1",
+      revision: 1,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+  };
+
+  it("locks the client and the servers once a tester has been through it", () => {
+    withEnvironment();
+    renderEdit(
+      { environmentId: "env-1", environmentName: "Checkout flow" },
+      { sessionCount: 3 },
+    );
+
+    const locks = composerProps().lockedSlots;
+    // Each names ITS OWN control — someone who pressed the servers pill is
+    // asking about servers, and being told about clients is being answered
+    // about something else.
+    expect(locks?.clients).toMatch(/client/i);
+    expect(locks?.servers).toMatch(/servers/i);
+    expect(locks?.clients).toMatch(/already has sessions/i);
+  });
+
+  it("leaves a study nobody has run fully editable", () => {
+    withEnvironment();
+    renderEdit(
+      { environmentId: "env-1", environmentName: "Checkout flow" },
+      { sessionCount: 0 },
+    );
+
+    expect(composerProps().lockedSlots).toBeUndefined();
+  });
+
+  it("stays editable when the backend does not report the count", () => {
+    // `undefined` is "unknown", not "none". Refusing every edit on an
+    // unanswered question would take a working screen away from everyone to
+    // protect a case we cannot see.
+    withEnvironment();
+    renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
+
+    expect(composerProps().lockedSlots).toBeUndefined();
   });
 });

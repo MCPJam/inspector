@@ -88,6 +88,15 @@ import { ActionableFindings } from "@/components/shared/actionable-insights/acti
  */
 interface UserTestingScenarioDetailProps {
   scenario: ScenarioSettings;
+  /**
+   * Tester sessions recorded against this study, from the list row.
+   *
+   * `undefined` on a deployment that does not report the counter — which is
+   * "unknown", not "none". The setup stays editable there: refusing every edit
+   * on an unanswered question would take a working screen away from everyone
+   * to protect a case we cannot see.
+   */
+  sessionCount?: number;
   /** `/user-testing/:id/edit` — the study's settings, no detail tabs. */
   editMode?: boolean;
   onBack: () => void;
@@ -106,6 +115,7 @@ const TAB_OPTIONS: ReadonlyArray<{
 
 export function UserTestingScenarioDetail({
   scenario,
+  sessionCount,
   editMode = false,
   onBack,
   onDeleted,
@@ -211,6 +221,31 @@ export function UserTestingScenarioDetail({
   }, [environment?.environmentId, environment?.revision]);
 
   const composerActive = Boolean(scenario.environmentId && environment);
+
+  /**
+   * A study with results runs on a FIXED setup.
+   *
+   * Reported in review: nothing stopped someone from repointing a study at a
+   * different client or server after testers had already been through it —
+   * which leaves one set of sessions answered against Excalidraw and the next
+   * against GitHub, under one name, with nothing on screen saying the ground
+   * moved. Those results are no longer comparable, and no analysis over them
+   * is honest.
+   *
+   * So the two pills that change where it runs lock once the first tester
+   * session lands. Everything else about the study stays editable — the name,
+   * the access, the tasks, the ratings — because none of that rewrites what
+   * the existing sessions were an answer to.
+   */
+  const hasTesterSessions = (sessionCount ?? 0) > 0;
+  const setupLockedReason = hasTesterSessions
+    ? {
+        clients:
+          "This study already has sessions — changing its client would leave results that answered a different setup. Duplicate the study to test another client.",
+        servers:
+          "This study already has sessions — changing its servers would leave results that answered a different setup. Duplicate the study to test other servers.",
+      }
+    : undefined;
   // Held closed until the NAMED list settles, like the create flow: the
   // resolver reuses a matching named environment, and resolving against an
   // empty not-yet-loaded list would mint an unnamed twin of one that exists.
@@ -652,6 +687,7 @@ export function UserTestingScenarioDetail({
                       onChange={handleComposerChange}
                       maxTargets={1}
                       disabled={isRebinding || !composerReady}
+                      lockedSlots={setupLockedReason}
                       testIdPrefix="user-testing-detail"
                       environmentPickerFooter={
                         canPromoteEnvironment ? (

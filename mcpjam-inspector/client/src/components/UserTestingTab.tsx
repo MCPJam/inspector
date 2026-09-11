@@ -622,6 +622,10 @@ export function UserTestingTab({
     return (
       <UserTestingScenarioDetail
         scenario={scenario}
+        // From the LIST row: the detail query carries no activity counters,
+        // and this only gates an edit — a stale-by-one count cannot lose data
+        // in either direction.
+        sessionCount={scenarioRow?.sessionCount}
         editMode={editOpen}
         onBack={goOverview}
         onDeleted={goOverview}
