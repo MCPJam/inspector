@@ -2014,6 +2014,17 @@ it("hides server authorization when the suite connection is ready", () => {
 
   expect(screen.queryByText("Server authentication")).not.toBeInTheDocument();
   expect(screen.queryByText("Authorize or reconnect")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("combobox", {
+      name: `Server authorization for ${ROW.repoFullName}`,
+    }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Authorize" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Reconnect" }),
+  ).not.toBeInTheDocument();
 });
 
 it("shows Authorize only when the suite OAuth connection needs it", () => {
