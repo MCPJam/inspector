@@ -1,3 +1,4 @@
+import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import fixPath from "fix-path";
@@ -161,6 +162,7 @@ import {
   applySandboxHostPartition,
   assertSandboxIsolation,
 } from "./middleware/sandbox-host-partition";
+import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
 import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
@@ -182,6 +184,7 @@ import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
 import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
+import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
@@ -465,6 +468,14 @@ if (HOSTED_MODE) {
   // the DEPLOY, not about any page: only this process knows which hostnames it
   // was supposed to answer as. Loud, and deliberately not fatal.
   assertSandboxIsolation();
+  // FATAL, unlike the check above, because the alternative is worse than not
+  // starting. Since MJ-001 the agent surfaces dial their first-party MCP
+  // servers through the same egress guard as a caller-supplied URL — no
+  // permanent loopback exemption in those managers — so a deployment whose
+  // platform/docs/spec URL resolves privately would refuse its own connections
+  // mid-turn, one turn at a time, with the reason buried in a per-request
+  // error. This says it once, names the variable, and stops.
+  assertHostedFirstPartyMcpUrls();
 }
 
 // 5. Session authentication (blocks unauthorized API requests)
@@ -633,6 +644,11 @@ app.route("/api/v1", v1Routes);
 // Slack account-link bridge (mirror of the mount in server/app.ts).
 app.route("/api/slack/link", slackLinkRoutes);
 app.route("/api/surface-link", surfaceLinkRoutes);
+
+// Same fail-fast as server/app.ts: refuse a non-loopback `WORKOS_API_BASE_URL`
+// at boot rather than at the first WorkOS call. Unset — every deployment — this
+// is a no-op.
+resolveWorkosApiBaseUrl(process.env);
 
 // Mounted in EVERY runtime, hosted included. AuthKit's `initialize()` makes no
 // network call at all unless the page's own cookies carry `workos-has-session`
@@ -949,6 +965,7 @@ const server = serve({
   port: SERVER_PORT,
   hostname,
 });
+registerBrowserController(`http://127.0.0.1:${SERVER_PORT}`);
 // Count socket-level failures. These die before Node parses a request line,
 // so they emit no `http.request.*` event and are otherwise invisible — the
 // class the 08-11 Cloudflare 502 fell into. Must be attached before traffic

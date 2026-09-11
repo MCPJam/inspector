@@ -94,6 +94,10 @@ const TYPE_ONLY_DAEMON_MODULES = new Set([
 const REQUIRED_NON_DAEMON_INPUTS = [
   "server/services/browserd/protocol.ts",
   "server/services/browserd/frame-stream.ts",
+  // The codec itself, which the BROWSER also reads (V-4b). Named here for the
+  // same reason as the rest: the daemon walk cannot find it, and an edit to the
+  // wire format must never ship unguarded.
+  "shared/browserd-frame-stream.ts",
   "server/services/webmcp-inspector/launch-args.ts",
   "server/services/webmcp-inspector/frame-throttle.ts",
   "server/services/webmcp-inspector/frame-pacer.ts",

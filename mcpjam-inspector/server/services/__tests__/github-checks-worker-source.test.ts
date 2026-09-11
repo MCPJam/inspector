@@ -64,6 +64,10 @@ describe("defaultRunEvalSuite provenance", () => {
         createdByExternalId: "user_x",
         suiteId: "suite-1",
         repoPrivate: false,
+        credentialPolicyVersion: 2,
+        isFork: false,
+        githubCredentialPolicy: "same_repository",
+        allowedBuiltInToolIds: [],
       },
       bearer: "bearer-token",
       serverId: "srv-1",
@@ -76,7 +80,7 @@ describe("defaultRunEvalSuite provenance", () => {
     // The rest of the provenance-bearing contract, pinned alongside it:
     expect(request.idempotencyKey).toBe("trig-src");
     expect(request.suiteRerun).toBe(true);
-    expect(request.refreshSnapshot).toBe(true);
+    expect(request).not.toHaveProperty("refreshSnapshot");
     expect(result.result).toBe("passed");
   });
 
@@ -111,6 +115,10 @@ describe("defaultRunEvalSuite provenance", () => {
           createdByExternalId: "user_x",
           suiteId: "suite-1",
           repoPrivate: false,
+          credentialPolicyVersion: 2,
+          isFork: false,
+          githubCredentialPolicy: "same_repository",
+          allowedBuiltInToolIds: [],
         },
         bearer: "bearer-token",
         serverId: "srv-1",

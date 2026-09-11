@@ -16,6 +16,7 @@
 import { WebMcpBridgeError } from "../browserd/daemon/webmcp-bridge";
 import {
   WebMcpInvocationCancelledError,
+  WebMcpOutcomeUnknownError,
   WebMcpToolGoneError,
 } from "./provider";
 
@@ -36,6 +37,8 @@ export function translateBridgeError(error: unknown, toolName: string): Error {
     return error instanceof Error ? error : new Error(String(error));
   }
   switch (error.failure) {
+    case "webmcp_outcome_unknown":
+      return new WebMcpOutcomeUnknownError(error.message);
     case "webmcp_tool_gone":
       return new WebMcpToolGoneError(
         `The page no longer offers a tool named "${toolName}".`,
