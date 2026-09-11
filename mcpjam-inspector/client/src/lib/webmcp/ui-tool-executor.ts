@@ -19,6 +19,7 @@
  * `uiToolCallNeedsApproval`.
  */
 
+import { assertEvalToolAllowed } from "@/lib/mcpjam-agent/eval-scope";
 import { uiToolCallNeedsApproval } from "@/shared/client-fulfilled-tools.js";
 import type { InspectorCommandErrorCode } from "@/shared/inspector-command.js";
 import { track } from "@/lib/analytics";
@@ -387,6 +388,7 @@ async function executeResolvedUiTool(
   let output: UiToolResult;
   let threw = false;
   try {
+    assertEvalToolAllowed(opts.telemetryScope, toolName);
     const args =
       input && typeof input === "object" && !Array.isArray(input)
         ? (input as Record<string, unknown>)
@@ -460,6 +462,13 @@ export async function handleUiToolCall(
   // re-stash.
   if (deferredUiToolCalls.has(toolCallId)) return true;
 
+  try { assertEvalToolAllowed(opts.telemetryScope, toolName); } catch (error) {
+    settledOrInFlightToolCallIds.add(toolCallId);
+    addToolOutput({ tool: toolName, toolCallId, output: { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Tool is outside eval scope." }] } });
+    return true;
+  }
+
+
   if (!def) {
     // The name was advertised to the server in an earlier snapshot but the
     // tool is gone (HMR teardown, unmount). An output MUST still be
@@ -517,6 +526,10 @@ export async function handleUiToolCall(
   }
 
   if (def.mayNavigate) {
+    try { assertEvalToolAllowed(opts.telemetryScope, toolName); } catch {
+      await executeResolvedUiTool(def, { ...opts, toolName, input }, "not_required");
+      return true;
+    }
     try {
       // Tolerate async callbacks too: a rejection must not surface as an
       // unhandled promise rejection (the contract is fire-and-forget).
@@ -597,6 +610,10 @@ export async function fulfillApprovedUiToolCall(opts: {
   }
 
   if (def.mayNavigate) {
+    try { assertEvalToolAllowed(opts.telemetryScope ?? stashed?.telemetryScope, toolName); } catch {
+      await executeResolvedUiTool(def, { ...opts, toolName, input, telemetryScope: opts.telemetryScope ?? stashed?.telemetryScope }, "approved");
+      return;
+    }
     try {
       // Best-effort, same as the un-gated path (async rejections included).
       void Promise.resolve(opts.onNavigationToolCall?.(toolName)).catch(

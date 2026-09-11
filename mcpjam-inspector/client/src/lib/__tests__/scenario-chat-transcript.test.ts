@@ -70,7 +70,7 @@ describe("scenario chat transcript storage", () => {
     // turn has no thread to append to.
     sessionStorage.setItem(
       KEY,
-      JSON.stringify({ messages: [message("user-1", "hello")] })
+      JSON.stringify({ messages: [message("user-1", "hello")] }),
     );
     expect(readScenarioChatTranscript(SCENARIO_ID)).toBeNull();
     expect(sessionStorage.getItem(KEY)).toBeNull();
@@ -119,7 +119,12 @@ describe("scenario chat transcript storage", () => {
       messages: [message("user-1", "hello")],
     });
 
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    // Node and jsdom can expose different Storage constructors. Patch the
+    // prototype of the storage instance the code actually calls.
+    vi.spyOn(
+      Object.getPrototypeOf(sessionStorage),
+      "setItem",
+    ).mockImplementation(() => {
       throw new DOMException("quota", "QuotaExceededError");
     });
 

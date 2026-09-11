@@ -4,6 +4,7 @@ import { registerWindowListeners } from "./window/window-listeners.js";
 import { registerFileListeners } from "./files/file-listeners.js";
 import { registerUpdateListeners } from "./update/update-listeners.js";
 import { registerLocalHarnessListeners } from "./local-harness/local-harness-listeners.js";
+import { registerAgentBrowserListeners } from "./agent-browser/agent-browser-listeners.js";
 
 export function registerListeners(
   mainWindow: BrowserWindow,
@@ -23,6 +24,11 @@ export function registerListeners(
   registerWindowListeners(mainWindow);
   registerFileListeners(mainWindow);
   registerUpdateListeners(mainWindow);
+  // Unconditional, like the three above: the channels answer "no browser by
+  // that id" and "this Electron cannot do it" for themselves, and a renderer
+  // that has to guess whether a channel exists is a renderer that hangs on an
+  // `invoke` nobody handles.
+  registerAgentBrowserListeners(getMainWindow);
   if (localHarness) {
     registerLocalHarnessListeners(
       getMainWindow,

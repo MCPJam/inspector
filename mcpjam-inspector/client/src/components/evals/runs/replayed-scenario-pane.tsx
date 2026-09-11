@@ -56,7 +56,7 @@ function IterationIdChip({ id }: { id: string }) {
       aria-label={`Copy iteration id ${id}`}
     >
       {copied ? (
-        <Check className="h-2.5 w-2.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+        <Check className="h-2.5 w-2.5 text-success" aria-hidden />
       ) : (
         <Copy className="h-2.5 w-2.5" aria-hidden />
       )}
@@ -99,7 +99,7 @@ export function ReplayedScenarioPane({
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 pb-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] text-muted-foreground">
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
             <History className="h-2.5 w-2.5" aria-hidden />
             Viewing run
           </span>
@@ -125,7 +125,7 @@ export function ReplayedScenarioPane({
                     aria-label="Case changed since this run"
                   >
                     <AlertTriangle
-                      className="h-3 w-3 text-amber-600/80 dark:text-amber-500/80"
+                      className="h-3 w-3 text-warning/80"
                       aria-hidden
                     />
                     Changed

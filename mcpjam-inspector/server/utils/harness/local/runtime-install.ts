@@ -4,12 +4,17 @@
  *
  * ── Why this is a separate, explicit step ────────────────────────────────
  * The pack cannot ship inside the npm package or the DMG (size, and coupling
- * notarization to a vendor binary), so it is downloaded. Downloading is
- * therefore a thing the user asks for and watches, not something a session
- * start does behind their back: `installRuntimePack` is called from the
- * consent flow's "Install local runtime" button or the `harness install`
- * subcommand, and NEVER from a turn. A session that finds no pack refuses with
- * `bundle-absent` and says so.
+ * notarization to a vendor binary), so it is downloaded. The argument this
+ * module was written around was against fetching it UNASKED — at boot, on a
+ * poll, on a component remount, on the way into a turn — and that argument
+ * still holds exactly as it did: none of those is a user asking for 515 MB.
+ *
+ * What has changed is that a user CAN now ask, in one gesture, from the
+ * composer. `startRuntimeInstall` is called from that gesture ("Install &
+ * allow") and from `harness install`, and from nowhere else. A session that
+ * finds no pack still refuses with `bundle-absent` rather than fetching one;
+ * boot still only reports. Downloading on an explicit request is the thing the
+ * user asked for, and is not the thing this module refuses to do.
  *
  * ── The verification chain ───────────────────────────────────────────────
  * Three checks, in this order, each covering the next:
@@ -25,11 +30,26 @@
  * traversal, a symlink, or a truncated write would land, and the tree digest
  * is what every later check compares against.
  *
- * ── Atomicity ────────────────────────────────────────────────────────────
+ * ── Atomicity, and who else is holding the door ──────────────────────────
  * Extraction goes into a sibling `.mcpjam-tmp-*` directory and is renamed into
  * place only after all three checks pass. A crashed or failed install leaves a
- * temp directory to sweep, never a half-written version directory that
+ * temp directory, never a half-written version directory that
  * `resolveManagedBundle` would then try to digest.
+ *
+ * The rename is not the only thing that has to be safe, though, because this
+ * process is not the only one here: another Inspector window, the install CLI,
+ * and a running session all reach the same root. `runtime-lifecycle.ts` owns
+ * that coordination — who is installing, who is using a version directory, and
+ * which staging directories are provably abandoned — and every irreversible
+ * step below asks it, immediately before taking the step rather than once at
+ * the start.
+ *
+ * ── What this module does NOT do ─────────────────────────────────────────
+ * It does not delete old versions. It used to sweep every other version after
+ * activating, which is how a running session lost the tree it had already
+ * verified and was executing from. Verified versions now sit side by side and
+ * cost disk; reclaiming them needs an ownership answer across processes that
+ * spans more than one install, and that is deliberately not in this pass.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
@@ -56,7 +76,29 @@ import { verifyPackManifestSignature } from "./pack-signing-key.js";
 import {
   clearRuntimeVerificationCache,
   computeTreeDigest,
+  resolveManagedBundle,
 } from "./runtime-identity.js";
+import {
+  LOCAL_HARNESS_MANIFEST,
+  type LocalHarnessCompatibility,
+} from "./compatibility.js";
+import {
+  attemptStillOwns,
+  beginInstallAttempt,
+  claimStagingDirectory,
+  operationKeyString,
+  PREVIOUS_SUFFIX,
+  readRuntimeOperation,
+  recoverInterruptedActivation,
+  resetRuntimeLifecycleForTests,
+  runtimeUseState,
+  STAGING_PREFIX,
+  sweepAbandonedStaging,
+  updateInstallAttempt,
+  withRuntimeLifecycleLock,
+  type RuntimeOperationKey,
+  type RuntimeOperationRecord,
+} from "./runtime-lifecycle.js";
 import {
   currentLocalPlatform,
   localPackTarget,
@@ -110,13 +152,67 @@ function targetInstallRoot(target: LocalPackTarget | null): string {
   return join(runtimeInstallRoot(), target ?? packPlatformKey());
 }
 
+/**
+ * Why an install attempt ended, where the cause is actually known.
+ *
+ * Classified rather than guessed: the UI says something different for each,
+ * and "something went wrong" for all four is the copy this replaced. `unknown`
+ * is used honestly — an error whose cause cannot be established says so
+ * instead of being filed under whichever bucket looks plausible.
+ */
+export type RuntimeInstallFailureReason =
+  | "network"
+  | "verification"
+  | "disk"
+  | "unknown";
+
+/**
+ * The state of the RUNTIME, as one value the UI renders from.
+ *
+ * Two different questions are folded into this union, deliberately, because a
+ * caller asking "can a turn run?" needs one answer:
+ *
+ *   - OPERATION states — `downloading`, `verifying`, `failed`, `interrupted` —
+ *     describe an install attempt. They come from the cross-process operation
+ *     record, so a second Inspector sees the first one's progress.
+ *   - RUNTIME-HEALTH states — `absent`, `ready`, `corrupt` — describe what is
+ *     on disk. `corrupt` means a pack IS installed and does not verify, which
+ *     is a repair, not a failed download.
+ *
+ * `failed` and `interrupted` are RETAINED until the next explicit attempt. A
+ * failed download that decayed back to `absent` on the next poll is how the
+ * old shape lost the only thing the user needed to see.
+ */
 export type RuntimeInstallStatus =
   | { state: "unsupported-platform"; message: string }
   | { state: "absent"; packVersion: string }
-  | { state: "downloading"; packVersion: string; percent: number }
-  | { state: "verifying"; packVersion: string }
+  | {
+      state: "downloading";
+      packVersion: string;
+      percent: number;
+      attemptId?: string;
+    }
+  | { state: "verifying"; packVersion: string; attemptId?: string }
   | { state: "ready"; packVersion: string; runtimeRoot: string; digest: string }
-  | { state: "corrupt"; packVersion: string; message: string };
+  /** A pack is installed and does not verify. Repairable, not re-downloadable. */
+  | { state: "corrupt"; packVersion: string; message: string }
+  | {
+      state: "failed";
+      packVersion: string;
+      reason: RuntimeInstallFailureReason;
+      message: string;
+      attemptId?: string;
+    }
+  /** An attempt whose owner went away partway through. Retry resumes from zero. */
+  | { state: "interrupted"; packVersion: string; message: string; attemptId?: string };
+
+/** Is this a state nothing further will happen from without a new gesture? */
+export function isTerminalInstallStatus(status: RuntimeInstallStatus): boolean {
+  return (
+    status.state !== "downloading" &&
+    status.state !== "verifying"
+  );
+}
 
 export interface PackManifest {
   schema: string;
@@ -233,65 +329,289 @@ export function packPlatformKey(
 }
 
 /**
- * Report what is on disk, without touching the network and without a full
- * digest.
+ * Report what is on disk and what an install attempt is doing, cheaply.
  *
- * Deliberately cheap: this runs at startup and on every availability poll, and
- * a status call that digested 515 MB would be a worse version of the problem
- * D8 was about. It answers `ready` from the presence of the activation marker
- * the install wrote after verifying; the session-start path is where the tree
- * is actually re-verified.
+ * Two sources, one answer:
+ *
+ *   - the cross-process OPERATION record, so a poll in this window sees the
+ *     install another window (or the CLI) is running, and so a `failed` or
+ *     `interrupted` attempt stays visible until somebody explicitly retries;
+ *   - the activation MARKER on disk, for `ready` / `absent`.
+ *
+ * Deliberately does not digest: this runs on every availability poll, and a
+ * status call that hashed 515 MB would be a worse version of the problem the
+ * verification cache exists to solve. `readVerifiedRuntimeStatus` below is the
+ * one that actually proves a tree, for the callers that need proof.
  */
 export async function readRuntimeInstallStatus(args: {
   harnessId: SupportedLocalHarnessId;
   platform?: NodeJS.Platform;
   arch?: string;
 }): Promise<RuntimeInstallStatus> {
-  const platform = currentLocalPlatform(args.platform ?? process.platform);
-  if (platform === null) {
-    return {
-      state: "unsupported-platform",
-      message: `${args.platform ?? process.platform} has no local harness runtime`,
-    };
-  }
-  const target = localPackTarget(args.platform, args.arch);
-  const expected =
-    target === null ? null : expectedPackFor(args.harnessId, target);
-  if (expected === null) {
-    return {
-      state: "unsupported-platform",
-      message:
-        `no ${args.harnessId} runtime pack has been built for ` +
-        `${packPlatformKey(args.platform, args.arch)}`,
-    };
-  }
-  const inFlight = active.get(expected.packVersion);
-  if (inFlight !== undefined) return inFlight.status;
+  const resolved = resolveInstallTarget(args);
+  if (!resolved.ok) return resolved.status;
+  const { key, expected, versionRoot } = resolved;
 
-  const root = packVersionRoot(expected.packVersion, target);
+  // Before reading anything: put back a runtime whose activation was
+  // interrupted between its two renames. That machine has a perfectly good
+  // pack and would otherwise report `absent` and be asked to download it
+  // again.
+  await recoverInterruptedActivation({ key, versionRoot });
+
+  const inProcess = active.get(operationKeyString(key));
+  if (inProcess !== undefined) return inProcess.status;
+
+  const record = await readRuntimeOperation(key);
+  if (record !== null && !isRecordTerminal(record)) {
+    return operationRecordStatus(record);
+  }
+
+  const onDisk = await readMarkerStatus({
+    harnessId: args.harnessId,
+    versionRoot,
+    expected,
+  });
+  // A ready runtime outranks a stale failure: another process may have
+  // installed it since, and telling a user their install failed while a usable
+  // pack sits on disk is worse than forgetting the failure.
+  if (onDisk.state === "ready") return onDisk;
+  if (record !== null && isRecordTerminal(record) && record.state !== "ready") {
+    return operationRecordStatus(record);
+  }
+  return onDisk;
+}
+
+/**
+ * The compatibility manifest with the digest this build actually expects.
+ *
+ * `resolveManagedBundle` verifies a tree against `manifest.runtime.bundleDigest`,
+ * which is read from the generated `PACK_TREE_DIGESTS` table. `expectedPackFor`
+ * reads the same table but ALSO honours the development override
+ * (`MCPJAM_LOCAL_HARNESS_PACK_SOURCE` + `MCPJAM_LOCAL_HARNESS_EXPECTED_PACK`) —
+ * so the two disagreed exactly where it mattered most: a developer could
+ * install a locally built pack, and then no turn could ever run from it,
+ * because the session path looked for a digest the static table does not carry
+ * and reported `bundle-absent`.
+ *
+ * One source of truth, then. `expectedPackFor` is a superset of the table (the
+ * generated records and digests are written together and always agree), so
+ * letting it decide costs nothing in a shipped build and makes the documented
+ * development path work end to end.
+ */
+export function manifestWithExpectedBundleDigest<
+  T extends LocalHarnessCompatibility,
+>(manifest: T, harnessId: SupportedLocalHarnessId, target: LocalPackTarget | null): T {
+  if (target === null) return manifest;
+  if (manifest.runtime.source !== "managed-bundle") return manifest;
+  const expected = expectedPackFor(harnessId, target);
+  if (expected === null) return manifest;
+  if (manifest.runtime.bundleDigest[target] === expected.treeDigest) {
+    return manifest;
+  }
+  return {
+    ...manifest,
+    runtime: {
+      ...manifest.runtime,
+      bundleDigest: {
+        ...manifest.runtime.bundleDigest,
+        [target]: expected.treeDigest,
+      },
+    },
+  };
+}
+
+/**
+ * The verified-ready fast path: is there a runtime a turn could actually run,
+ * right now?
+ *
+ * The marker alone cannot answer this. It records what the install verified at
+ * the time, so a pack whose bytes were replaced or truncated afterwards keeps
+ * reporting `ready` from its own marker forever — and the caller that needs
+ * this answer is deciding whether to SKIP a download and mint consent against
+ * the runtime's identity. So this re-resolves the bundle, which re-digests the
+ * tree at most once per process per (root, digest) pair through
+ * `verifyRuntime`'s cache.
+ *
+ * A tree that fails verification comes back `corrupt`, which is a repair path
+ * — reinstall this same version — and not the `failed` of a download that
+ * never landed.
+ */
+export async function readVerifiedRuntimeStatus(args: {
+  harnessId: SupportedLocalHarnessId;
+  platform?: NodeJS.Platform;
+  arch?: string;
+}): Promise<RuntimeInstallStatus> {
+  const status = await readRuntimeInstallStatus(args);
+  if (status.state !== "ready") return status;
+  const platform = currentLocalPlatform(args.platform ?? process.platform);
+  if (platform === null) return status;
+
+  const resolvedBundle = await resolveManagedBundle({
+    manifest: manifestWithExpectedBundleDigest(
+      LOCAL_HARNESS_MANIFEST[args.harnessId],
+      args.harnessId,
+      localPackTarget(args.platform, args.arch),
+    ),
+    runtimeRoot: status.runtimeRoot,
+    platform,
+    ...(args.arch ? { arch: args.arch } : {}),
+  });
+  if (resolvedBundle.ok) return status;
+  return {
+    state: "corrupt",
+    packVersion: status.packVersion,
+    message: resolvedBundle.message,
+  };
+}
+
+/** The marker-only view: `ready`, `corrupt` (wrong digest recorded), `absent`. */
+async function readMarkerStatus(args: {
+  harnessId: SupportedLocalHarnessId;
+  versionRoot: string;
+  expected: { packVersion: string; treeDigest: string };
+}): Promise<RuntimeInstallStatus> {
   try {
     const marker = JSON.parse(
-      await readFile(join(root, INSTALL_MARKER), "utf8"),
+      await readFile(join(args.versionRoot, INSTALL_MARKER), "utf8"),
     ) as { treeDigest?: string };
-    if (marker.treeDigest !== expected.treeDigest) {
+    if (marker.treeDigest !== args.expected.treeDigest) {
       return {
         state: "corrupt",
-        packVersion: expected.packVersion,
+        packVersion: args.expected.packVersion,
         message:
           "the installed runtime pack does not match the digest this " +
           "Inspector expects; reinstall it",
       };
     }
-    await stat(join(root, args.harnessId));
+    await stat(join(args.versionRoot, args.harnessId));
     return {
       state: "ready",
-      packVersion: expected.packVersion,
-      runtimeRoot: root,
-      digest: expected.treeDigest,
+      packVersion: args.expected.packVersion,
+      runtimeRoot: args.versionRoot,
+      digest: args.expected.treeDigest,
     };
   } catch {
-    return { state: "absent", packVersion: expected.packVersion };
+    return { state: "absent", packVersion: args.expected.packVersion };
   }
+}
+
+function isRecordTerminal(record: RuntimeOperationRecord): boolean {
+  return (
+    record.state === "ready" ||
+    record.state === "failed" ||
+    record.state === "interrupted"
+  );
+}
+
+/** One operation record, as the status the UI renders. */
+function operationRecordStatus(
+  record: RuntimeOperationRecord,
+): RuntimeInstallStatus {
+  switch (record.state) {
+    case "reserved":
+    case "downloading":
+      return {
+        state: "downloading",
+        packVersion: record.packVersion,
+        percent: record.percent ?? 0,
+        attemptId: record.attemptId,
+      };
+    case "verifying":
+    case "activating":
+      return {
+        state: "verifying",
+        packVersion: record.packVersion,
+        attemptId: record.attemptId,
+      };
+    case "failed":
+      return {
+        state: "failed",
+        packVersion: record.packVersion,
+        reason: record.reason ?? "unknown",
+        message: record.message ?? "the install did not complete",
+        attemptId: record.attemptId,
+      };
+    case "interrupted":
+      return {
+        state: "interrupted",
+        packVersion: record.packVersion,
+        message:
+          record.message ??
+          "setup was interrupted before it finished",
+        attemptId: record.attemptId,
+      };
+    case "ready":
+      return {
+        state: "ready",
+        packVersion: record.packVersion,
+        runtimeRoot: packVersionRoot(record.packVersion, record.target),
+        digest: record.treeDigest,
+      };
+  }
+}
+
+type ResolvedInstallTarget =
+  | {
+      ok: true;
+      key: RuntimeOperationKey;
+      expected: { packVersion: string; treeDigest: string };
+      target: LocalPackTarget;
+      platform: LocalPlatform;
+      versionRoot: string;
+    }
+  | { ok: false; status: RuntimeInstallStatus };
+
+/**
+ * The platform, target, expected pack and operation key for a call, or the
+ * refusal that stands in for all of them.
+ *
+ * Shared by every entry point below so that "what pack is this machine talking
+ * about?" is answered once. Two callers deriving it separately is how a status
+ * poll and an install can end up discussing different artifacts.
+ */
+function resolveInstallTarget(args: {
+  harnessId: SupportedLocalHarnessId;
+  platform?: NodeJS.Platform;
+  arch?: string;
+}): ResolvedInstallTarget {
+  const platform = currentLocalPlatform(args.platform ?? process.platform);
+  if (platform === null) {
+    return {
+      ok: false,
+      status: {
+        state: "unsupported-platform",
+        message: `${args.platform ?? process.platform} has no local harness runtime`,
+      },
+    };
+  }
+  const target = localPackTarget(args.platform, args.arch);
+  const expected =
+    target === null ? null : expectedPackFor(args.harnessId, target);
+  if (expected === null || target === null) {
+    return {
+      ok: false,
+      status: {
+        state: "unsupported-platform",
+        message:
+          `no ${args.harnessId} runtime pack has been built for ` +
+          `${packPlatformKey(args.platform, args.arch)}`,
+      },
+    };
+  }
+  return {
+    ok: true,
+    platform,
+    target,
+    expected,
+    versionRoot: packVersionRoot(expected.packVersion, target),
+    key: {
+      runtimeRoot: runtimeInstallRoot(),
+      harnessId: args.harnessId,
+      target,
+      packVersion: expected.packVersion,
+      treeDigest: expected.treeDigest,
+    },
+  };
 }
 
 /**
@@ -307,14 +627,36 @@ interface ActiveInstall {
   promise: Promise<RuntimeInstallStatus>;
 }
 
-/** Single-flight, keyed by pack version. Two consent sheets asking to install
- *  at once must not race two extractions into the same directory. */
+/**
+ * In-process single flight, keyed by the full operation identity.
+ *
+ * The cross-process record is what stops a SECOND Inspector from starting a
+ * second extraction; this stops two callers in THIS one from racing to write
+ * it. Keyed by the whole identity rather than the version, for the same reason
+ * the record is: two builds expecting different packs are two operations.
+ */
 const active = new Map<string, ActiveInstall>();
+
+/** Test seam: in-process single flight is module state by design. */
+export function resetRuntimeInstallStateForTests(): void {
+  active.clear();
+  resetRuntimeLifecycleForTests();
+}
 
 export interface InstallRuntimePackOptions {
   harnessId: SupportedLocalHarnessId;
   platform?: NodeJS.Platform;
   arch?: string;
+  /**
+   * The pack the CALLER approved, if it captured one.
+   *
+   * Compared against what this build expects before a byte is downloaded. A
+   * server that updated between the dialog opening and Install & allow being
+   * clicked would otherwise download a different runtime than the one whose
+   * version and digest the user was shown — and consent binds to a runtime
+   * identity, so that is a different thing than the one they approved.
+   */
+  expectedPack?: { packVersion: string; treeDigest: string };
   /** Progress callback for the UI. Called with monotonically increasing
    *  percentages during download only; verification has no meaningful
    *  fraction to report. */
@@ -322,67 +664,292 @@ export interface InstallRuntimePackOptions {
   signal?: AbortSignal;
 }
 
-export async function installRuntimePack(
+export type StartRuntimeInstallResult =
+  /** This call started the work. Poll for progress. */
+  | { kind: "started"; status: RuntimeInstallStatus; attemptId: string }
+  /** Work was already running here or in another process. Poll for progress. */
+  | { kind: "joined"; status: RuntimeInstallStatus; attemptId?: string }
+  /** A verified runtime is already installed. Nothing was downloaded. */
+  | { kind: "ready"; status: RuntimeInstallStatus }
+  /** The request cannot start work at all. */
+  | { kind: "refused"; status: RuntimeInstallStatus; reason: string };
+
+/**
+ * Start — or join — an install, and return as soon as that is decided.
+ *
+ * The shape `startChromiumInstall` established, for the same reason: the
+ * reservation is made before any await that could let a second caller past the
+ * same check. Here the in-process map is claimed synchronously, and only the
+ * short cross-process reservation and the on-disk lookup are awaited — never
+ * the download. The caller gets an acknowledgement in milliseconds and polls.
+ *
+ * The HTTP adapter turns this into 202 + `Location` + `Retry-After` for
+ * `started` and `joined`, and 200 for `ready`.
+ */
+export async function startRuntimeInstall(
   options: InstallRuntimePackOptions,
-): Promise<RuntimeInstallStatus> {
-  const platform = currentLocalPlatform(options.platform ?? process.platform);
-  if (platform === null) {
+): Promise<StartRuntimeInstallResult> {
+  const resolved = resolveInstallTarget(options);
+  if (!resolved.ok) {
     return {
-      state: "unsupported-platform",
-      message: `${options.platform ?? process.platform} has no local harness runtime`,
+      kind: "refused",
+      status: resolved.status,
+      reason:
+        resolved.status.state === "unsupported-platform"
+          ? resolved.status.message
+          : "this machine has no runtime pack to install",
     };
   }
-  const target = localPackTarget(options.platform, options.arch);
-  const expected =
-    target === null ? null : expectedPackFor(options.harnessId, target);
-  if (expected === null) {
+  const { key, expected, versionRoot } = resolved;
+
+  // The approved pack, checked BEFORE anything is fetched.
+  if (
+    options.expectedPack !== undefined &&
+    (options.expectedPack.packVersion !== expected.packVersion ||
+      options.expectedPack.treeDigest !== expected.treeDigest)
+  ) {
     return {
-      state: "unsupported-platform",
-      message:
-        `no ${options.harnessId} runtime pack has been built for ` +
-        `${packPlatformKey(options.platform, options.arch)}`,
+      kind: "refused",
+      reason:
+        "this Inspector now expects a different runtime than the one that " +
+        "was approved, so it will not download it under that approval",
+      status: {
+        state: "failed",
+        packVersion: expected.packVersion,
+        reason: "verification",
+        message:
+          `the approved runtime was ${options.expectedPack.packVersion} ` +
+          `(${options.expectedPack.treeDigest.slice(0, 19)}…) but this ` +
+          `Inspector now expects ${expected.packVersion} ` +
+          `(${expected.treeDigest.slice(0, 19)}…). Authorize the new one.`,
+      },
     };
   }
 
-  const existing = active.get(expected.packVersion);
-  if (existing !== undefined) return existing.promise;
+  // Claimed SYNCHRONOUSLY, before any await. Two clicks, or a click and the
+  // CLI in the same process, must not both get past the "is one running?"
+  // check while a filesystem round trip is in flight.
+  const keyString = operationKeyString(key);
+  const running = active.get(keyString);
+  if (running !== undefined) {
+    return { kind: "joined", status: running.status };
+  }
+
+  await recoverInterruptedActivation({ key, versionRoot });
+
+  // Already installed AND verified: no download, and the answer is as fresh as
+  // the probe that produced it.
+  const verified = await readVerifiedRuntimeStatus(options);
+  if (verified.state === "ready") return { kind: "ready", status: verified };
+
+  const attempt = await beginInstallAttempt(key);
+  if (attempt.kind === "joined") {
+    return {
+      kind: "joined",
+      status: operationRecordStatus(attempt.record),
+      attemptId: attempt.record.attemptId,
+    };
+  }
 
   const record: ActiveInstall = {
-    status: { state: "downloading", packVersion: expected.packVersion, percent: 0 },
+    status: {
+      state: "downloading",
+      packVersion: expected.packVersion,
+      percent: 0,
+      attemptId: attempt.record.attemptId,
+    },
     promise: Promise.resolve({
       state: "absent" as const,
       packVersion: expected.packVersion,
     }),
   };
-  active.set(expected.packVersion, record);
+  active.set(keyString, record);
+  record.promise = runInstallAttempt({
+    options,
+    resolved,
+    attemptId: attempt.record.attemptId,
+    record,
+    keyString,
+  });
+  // Deliberately NOT awaited: the whole point of this entry point is that the
+  // caller is acknowledged now and polls. The rejection path is handled inside
+  // `runInstallAttempt`, so this promise never rejects.
+  void record.promise;
+
+  return {
+    kind: "started",
+    status: record.status,
+    attemptId: attempt.record.attemptId,
+  };
+}
+
+/**
+ * Install to completion.
+ *
+ * The CLI's entry point, and the one tests drive. Starts or joins exactly as
+ * `startRuntimeInstall` does — so a CLI run and a window's install are one
+ * operation — and then waits for the result.
+ */
+export async function installRuntimePack(
+  options: InstallRuntimePackOptions,
+): Promise<RuntimeInstallStatus> {
+  const started = await startRuntimeInstall(options);
+  if (started.kind === "ready" || started.kind === "refused") {
+    return started.status;
+  }
+  const resolved = resolveInstallTarget(options);
+  if (!resolved.ok) return resolved.status;
+  const running = active.get(operationKeyString(resolved.key));
+  if (running !== undefined) return running.promise;
+
+  // Joined an attempt owned by ANOTHER process. There is nothing in this
+  // process to await, so poll the shared record to its terminal state rather
+  // than returning a progress value the caller would read as final.
+  return awaitForeignAttempt(resolved.key, options);
+}
+
+/** Poll another process's attempt to a terminal state. */
+async function awaitForeignAttempt(
+  key: RuntimeOperationKey,
+  options: InstallRuntimePackOptions,
+): Promise<RuntimeInstallStatus> {
+  for (;;) {
+    if (options.signal?.aborted === true) {
+      return readRuntimeInstallStatus(options);
+    }
+    const record = await readRuntimeOperation(key);
+    if (record === null) return readRuntimeInstallStatus(options);
+    if (isRecordTerminal(record)) {
+      // `ready` is answered from disk, not from the record: the other process
+      // says it activated, and the marker is what proves it.
+      return record.state === "ready"
+        ? readRuntimeInstallStatus(options)
+        : operationRecordStatus(record);
+    }
+    options.onProgress?.(operationRecordStatus(record));
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+  }
+}
+
+/**
+ * Run one owned attempt, keeping the shared record and the in-process status
+ * in step, and never rejecting.
+ */
+async function runInstallAttempt(args: {
+  options: InstallRuntimePackOptions;
+  resolved: Extract<ResolvedInstallTarget, { ok: true }>;
+  attemptId: string;
+  record: ActiveInstall;
+  keyString: string;
+}): Promise<RuntimeInstallStatus> {
+  const { options, resolved, attemptId, record, keyString } = args;
+  const { key, expected } = resolved;
 
   const setStatus = (status: RuntimeInstallStatus) => {
     record.status = status;
     options.onProgress?.(status);
+    // Fire-and-forget: the shared record is how ANOTHER process sees progress,
+    // and a percentage that lands a beat late is not worth serializing the
+    // download behind a lock. The states that matter for correctness —
+    // `activating`, and the terminal ones — are awaited below.
+    void updateInstallAttempt(key, attemptId, {
+      state:
+        status.state === "downloading"
+          ? "downloading"
+          : status.state === "verifying"
+            ? "verifying"
+            : "reserved",
+      ...(status.state === "downloading" ? { percent: status.percent } : {}),
+    }).catch(() => {});
   };
 
-  record.promise = (async () => {
-    try {
-      return await performInstall({
-        ...options,
-        platform,
-        expected,
-        setStatus,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.warn("[local-harness] runtime pack install failed", { message });
-      return {
-        state: "corrupt" as const,
-        packVersion: expected.packVersion,
-        message,
-      };
-    } finally {
-      active.delete(expected.packVersion);
-    }
-  })();
+  try {
+    const result = await performInstall({
+      ...options,
+      platform: resolved.platform,
+      expected,
+      key,
+      attemptId,
+      setStatus,
+    });
+    record.status = result;
+    // Best-effort, exactly as the failure path below already is. `record.status`
+    // above has already recorded the true outcome; this write only publishes it
+    // to the shared operation file, and `writeJsonAtomic` can reject on ENOSPC
+    // or EROFS — the very conditions a 515 MB extraction just ran into. Left
+    // unguarded, a successfully installed runtime was reclassified as `failed`
+    // by the `catch` below, and `record.promise` (consumed by `void` in
+    // `startRuntimeInstall`) rejected with nobody attached, which under Node's
+    // default unhandled-rejection policy takes the server down.
+    await updateInstallAttempt(key, attemptId, {
+      state: result.state === "ready" ? "ready" : "failed",
+      ...(result.state === "failed"
+        ? { reason: result.reason, message: result.message }
+        : {}),
+    }).catch(() => {});
+    return result;
+  } catch (error) {
+    const failure = classifyInstallFailure(error, expected.packVersion);
+    logger.warn("[local-harness] runtime pack install failed", {
+      reason: failure.reason,
+      message: failure.message,
+    });
+    record.status = failure;
+    await updateInstallAttempt(key, attemptId, {
+      state: "failed",
+      reason: failure.reason,
+      message: failure.message,
+    }).catch(() => {});
+    return failure;
+  } finally {
+    active.delete(keyString);
+  }
+}
 
-  return record.promise;
+/**
+ * Name the cause where it is knowable.
+ *
+ * Deliberately conservative. Each branch is a message a user can act on
+ * differently — retry the network, reinstall, free some disk — so a guess that
+ * lands in the wrong branch sends them somewhere useless. Anything this cannot
+ * establish is `unknown`, which says so.
+ */
+export function classifyInstallFailure(
+  error: unknown,
+  packVersion: string,
+): Extract<RuntimeInstallStatus, { state: "failed" }> {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  const causeCode = (
+    (error as { cause?: NodeJS.ErrnoException } | undefined)?.cause
+  )?.code;
+
+  const reason: RuntimeInstallFailureReason =
+    code === "ENOSPC" ||
+    code === "EACCES" ||
+    code === "EPERM" ||
+    code === "EROFS" ||
+    code === "EDQUOT"
+      ? "disk"
+      : code === "ENOTFOUND" ||
+          code === "ECONNRESET" ||
+          code === "ETIMEDOUT" ||
+          code === "ECONNREFUSED" ||
+          causeCode === "ENOTFOUND" ||
+          causeCode === "ECONNRESET" ||
+          causeCode === "ETIMEDOUT" ||
+          causeCode === "ECONNREFUSED" ||
+          /could not be downloaded|responded \d{3}|fetch failed|network/i.test(
+            message,
+          )
+        ? "network"
+        : /does not match|signature|signed manifest|no signed manifest|digest|exceeds its size ceiling|has no .* directory at its root/i.test(
+              message,
+            )
+          ? "verification"
+          : "unknown";
+
+  return { state: "failed", packVersion, reason, message };
 }
 
 async function performInstall(args: {
@@ -390,26 +957,38 @@ async function performInstall(args: {
   platform: LocalPlatform;
   arch?: string;
   expected: { packVersion: string; treeDigest: string };
+  key: RuntimeOperationKey;
+  attemptId: string;
   setStatus: (status: RuntimeInstallStatus) => void;
   signal?: AbortSignal;
 }): Promise<RuntimeInstallStatus> {
-  const { expected, setStatus } = args;
+  const { expected, setStatus, key, attemptId } = args;
   const platformKey = packPlatformKey(args.platform, args.arch);
   const target = localPackTarget(args.platform, args.arch);
   const versionRoot = packVersionRoot(expected.packVersion, target);
-  // Per TARGET, so staging and the version sweep below are confined to this
-  // architecture's directory and cannot touch another one's runtime.
+  // Per TARGET, so staging is confined to this architecture's directory and
+  // cannot touch another one's runtime.
   const installRoot = targetInstallRoot(target);
   await mkdir(installRoot, { recursive: true, mode: 0o700 });
 
-  const staging = join(installRoot, `.mcpjam-tmp-${randomUUID()}`);
+  // Reclaim what is PROVABLY abandoned before adding to it. Never by prefix or
+  // age: an extraction that cannot be proven dead belongs to somebody.
+  await sweepAbandonedStaging(key);
+
+  const staging = join(installRoot, `${STAGING_PREFIX}${randomUUID()}`);
   await mkdir(staging, { recursive: true, mode: 0o700 });
+  await claimStagingDirectory({ staging, attemptId });
 
   try {
     const source = packSourceFor(expected.packVersion, platformKey);
     const archivePath = join(staging, "pack.tar.gz");
 
-    setStatus({ state: "downloading", packVersion: expected.packVersion, percent: 0 });
+    setStatus({
+      state: "downloading",
+      packVersion: expected.packVersion,
+      percent: 0,
+      attemptId,
+    });
     const archiveSha = await fetchArchive({
       source,
       destination: archivePath,
@@ -418,11 +997,16 @@ async function performInstall(args: {
           state: "downloading",
           packVersion: expected.packVersion,
           percent,
+          attemptId,
         }),
       ...(args.signal ? { signal: args.signal } : {}),
     });
 
-    setStatus({ state: "verifying", packVersion: expected.packVersion });
+    setStatus({
+      state: "verifying",
+      packVersion: expected.packVersion,
+      attemptId,
+    });
 
     // 1. Signature over the manifest. A local development source is allowed to
     //    skip this, because it names a file the developer built themselves
@@ -503,11 +1087,9 @@ async function performInstall(args: {
     // The ownership marker goes in BEFORE the rename, so the rename is the one
     // and only commit point. Written afterwards, a crash in the window between
     // them left a fully activated ~515 MB version directory that carried no
-    // marker — and `sweepOtherVersions` refuses to delete an unmarked
-    // directory (correctly: it will not reap a tree it cannot prove is ours).
-    // The result was an orphan nothing would ever reclaim. It is a SIBLING of
-    // the digested `<harnessId>/` subtree, not a member of it, so writing it
-    // here cannot disturb the digest that was just verified.
+    // marker, and nothing would ever reclaim it. It is a SIBLING of the
+    // digested `<harnessId>/` subtree, not a member of it, so writing it here
+    // cannot disturb the digest that was just verified.
     await writeFile(
       join(extractRoot, INSTALL_MARKER),
       `${JSON.stringify(
@@ -524,15 +1106,18 @@ async function performInstall(args: {
       { mode: 0o600 },
     );
 
-    // Activate. The rename is the commit point: before it there is no version
-    // directory at all, after it there is a complete, verified, self-identifying
-    // one.
-    await rm(versionRoot, { recursive: true, force: true });
-    await rename(extractRoot, versionRoot);
-
-    // A previous process may have verified a DIFFERENT tree at this path.
-    clearRuntimeVerificationCache();
-    await sweepOtherVersions(installRoot, expected.packVersion);
+    setStatus({
+      state: "verifying",
+      packVersion: expected.packVersion,
+      attemptId,
+    });
+    await updateInstallAttempt(key, attemptId, { state: "activating" });
+    await activateVerifiedPack({
+      key,
+      attemptId,
+      versionRoot,
+      extractRoot,
+    });
 
     logger.info("[local-harness] runtime pack installed", {
       packVersion: expected.packVersion,
@@ -547,6 +1132,78 @@ async function performInstall(args: {
   } finally {
     await rm(staging, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * Move a verified tree into place, without taking a runtime away from anyone.
+ *
+ * Three things happen here that did not before, and each one is a bug that was
+ * reproducible:
+ *
+ *   - ownership is re-checked HERE. A download takes minutes; the reservation
+ *     taken before it says nothing about now, and this is the irreversible
+ *     step;
+ *   - a version directory that another process reserved for USE is not
+ *     replaced. `rm -rf` on it used to delete the tree a running session had
+ *     verified and was executing from;
+ *   - the previous directory is moved ASIDE rather than deleted, so a crash
+ *     between the two renames leaves something to put back
+ *     (`recoverInterruptedActivation`) instead of a machine with no runtime.
+ */
+async function activateVerifiedPack(args: {
+  key: RuntimeOperationKey;
+  attemptId: string;
+  versionRoot: string;
+  extractRoot: string;
+}): Promise<void> {
+  const { key, versionRoot, extractRoot } = args;
+
+  if (!(await attemptStillOwns(key, args.attemptId))) {
+    throw new Error(
+      "another install took over this runtime while this one was " +
+        "downloading, so it was not activated",
+    );
+  }
+
+  const inUse = await runtimeUseState({ key, runtimeRoot: versionRoot });
+  if (inUse.busy) {
+    throw new Error(
+      `this runtime is in use by ${inUse.holders.length} running ` +
+        `session(s) on this machine, so it was not replaced. Stop them and ` +
+        `retry.`,
+    );
+  }
+
+  await withRuntimeLifecycleLock(key, async () => {
+    // Re-asked inside the critical section: a session can start between the
+    // check above and the rename, and the rename is what would pull the tree
+    // out from under it.
+    const stillFree = await runtimeUseState({ key, runtimeRoot: versionRoot });
+    if (stillFree.busy) {
+      throw new Error(
+        "a session started using this runtime while it was being replaced, " +
+          "so it was left alone. Stop it and retry.",
+      );
+    }
+    const previous = `${versionRoot}${PREVIOUS_SUFFIX}`;
+    await rm(previous, { recursive: true, force: true }).catch(() => {});
+    const hasCurrent = await stat(versionRoot).then(
+      () => true,
+      () => false,
+    );
+    if (hasCurrent) await rename(versionRoot, previous);
+    try {
+      await rename(extractRoot, versionRoot);
+    } catch (error) {
+      // Put it back rather than leave the machine with nothing.
+      if (hasCurrent) await rename(previous, versionRoot).catch(() => {});
+      throw error;
+    }
+    await rm(previous, { recursive: true, force: true }).catch(() => {});
+  });
+
+  // A previous process may have verified a DIFFERENT tree at this path.
+  clearRuntimeVerificationCache();
 }
 
 async function assertExtractedSize(root: string): Promise<void> {
@@ -565,48 +1222,6 @@ async function assertExtractedSize(root: string): Promise<void> {
     }
   };
   await walk(root);
-}
-
-/**
- * Remove versions other than the one just activated.
- *
- * Kept simple on purpose: rollback is "install the previous version again",
- * not "keep N around and switch between them". A pack is 515 MB, and a
- * silently-accumulating set of them on a user's disk is a worse failure than
- * a reinstall.
- */
-async function sweepOtherVersions(
-  installRoot: string,
-  keepVersion: string,
-): Promise<void> {
-  let entries: string[];
-  try {
-    entries = await readdir(installRoot);
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (entry === keepVersion) continue;
-    const path = join(installRoot, entry);
-    // Only directories this installer created. `MCPJAM_RUNTIME_ROOT` is an
-    // override — an operator, or a future Electron change, could point it at a
-    // directory holding other application state, and a name-shaped filter
-    // ("looks like a version") would then delete it. A staging directory
-    // carries our prefix; an activated version carries the marker the install
-    // wrote after verifying. Anything else is not ours to remove, whatever it
-    // is called.
-    if (entry.startsWith(".mcpjam-tmp-")) {
-      await rm(path, { recursive: true, force: true }).catch(() => {});
-      continue;
-    }
-    if (!/^[\w.-]+$/.test(entry)) continue;
-    const owned = await readFile(join(path, INSTALL_MARKER), "utf8").then(
-      () => true,
-      () => false,
-    );
-    if (!owned) continue;
-    await rm(path, { recursive: true, force: true }).catch(() => {});
-  }
 }
 
 async function clearQuarantine(root: string): Promise<void> {
@@ -795,9 +1410,13 @@ async function fetchArchive(args: {
  * Mirrors `startLocalBrowserRenderingSetupInBackground`'s shape but not its
  * behaviour — Chromium is a dependency the eval path cannot work without, so
  * fetching it unasked is defensible; a 515 MB agent runtime for a feature
- * behind a flag, a kill switch and a consent grant is not. This exists so the
- * availability route and the UI have an answer without doing work, and so an
- * operator sees in the log whether a pack is present.
+ * behind a flag, a kill switch and a consent grant is not. A user asking for
+ * it in the composer is a different thing entirely, and that is
+ * `startRuntimeInstall`; boot has nobody to ask.
+ *
+ * Boot also deletes nothing. Reading the status recovers an activation that
+ * was interrupted mid-rename — which puts a runtime BACK — but no version
+ * directory and no staging directory is reclaimed here.
  */
 export function reportLocalHarnessRuntimeStatusInBackground(): void {
   void (async () => {

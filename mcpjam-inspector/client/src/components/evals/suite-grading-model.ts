@@ -16,11 +16,11 @@
  *
  * TWO RULES KEEP IT HONEST.
  *
- *   1. The routing is NOT decided here. `PREDICATE_STAGE`, `GRADER_STAGE` and
- *      `GRADER_PRESENTATION_GROUP` come from `@mcpjam/sdk/contract`, where the
- *      analyzer's own selection routing is derived from the same table. A
- *      second copy in the client is a second opinion, and the one that
- *      disagrees with the analyzer is the one on the settings page.
+ *   1. The routing is NOT decided here. `PREDICATE_STAGE` and `GRADER_STAGE`
+ *      come from `@mcpjam/sdk/contract`, where the analyzer's own selection
+ *      routing is derived from the same table. A second copy in the client is
+ *      a second opinion, and the one that disagrees with the analyzer is the
+ *      one on the settings page.
  *   2. Nothing here decides a VERDICT, a stage STATE, or a rate. This is
  *      configuration — "what will be measured" — and the run-state vocabulary
  *      (`STAGE_STATE_LABELS`, and `notMeasured` in particular) describes
@@ -35,7 +35,6 @@
  */
 
 import {
-  GRADER_PRESENTATION_GROUP,
   GRADER_STAGE,
   PREDICATE_STAGE,
   USER_VALUE_STAGES,
@@ -46,7 +45,7 @@ import {
   MATCH_OPTIONS_DEFAULTS,
   resolveMatchOptions,
 } from "@/shared/eval-matching";
-import type { Predicate } from "@mcpjam/sdk/predicates";
+import { checkRole, checkSeverity, type Predicate } from "@mcpjam/sdk/predicates";
 import {
   formatCriterion,
   PREDICATE_KIND_LABELS,
@@ -60,11 +59,10 @@ export type GraderRowKind = "match" | "predicate" | "judge";
 /**
  * One grader, as the settings page shows it.
  *
- * `role` is DERIVED, never authored. Every predicate and every match rule is a
- * gate — that is what it means for the runner to grade against it — and the
- * judge's role is whatever `judgeConfig.goalCompletion.role` says, defaulting
- * to advisory. There is no per-predicate role to read, and inventing one here
- * would put a control on the page that the backend has no field for.
+ * `role` is DERIVED. Match rules are always gates. A predicate's role is
+ * `checkRole(predicate)` — absent means gating; only the literal `"advisory"`
+ * is advisory. The judge's role is whatever `judgeConfig.goalCompletion.role`
+ * says, defaulting to advisory.
  */
 export type GraderRow = {
   /** Stable within one render; used as a React key, not persisted. */
@@ -73,23 +71,19 @@ export type GraderRow = {
   /** One line a reader can match to the control that edits it. */
   label: string;
   role: "gating" | "advisory";
+  /** Authored warn severity, only meaningful on an advisory predicate. */
+  severity?: "warn";
   /** Index into `defaultPredicates`, for a predicate row. */
   predicateIndex?: number;
   /** Which match-options field a `match` row came from. */
   matchField?: "toolCallOrder" | "maxExtraToolCalls" | "argumentMatching";
+  /** Which judge slot a `judge` row came from. */
+  judgeSlot?: "goalCompletion" | "groundedness";
 };
 
 export type SuiteGradingModel = {
   /** Every stage, always — an empty list is the answer "nothing here". */
   byStage: Record<UserValueStage, GraderRow[]>;
-  /**
-   * Token and turn ceilings, lifted out of `userValue` for READING ONLY.
-   *
-   * They file at `userValue` analytically (`GRADER_PRESENTATION_GROUP` is the
-   * source, and it carries no analytical weight); reading them beside "did the
-   * answer contain the right thing" makes neither legible.
-   */
-  budgets: GraderRow[];
 };
 
 const ORDER_LABEL = new Map(
@@ -195,7 +189,6 @@ export function groupGradersByStage(input: {
   judgeConfig?: EvalJudgeConfig;
 }): SuiteGradingModel {
   const byStage = emptyByStage();
-  const budgets: GraderRow[] = [];
 
   for (const row of matchRows(input.matchOptions)) {
     byStage[GRADER_STAGE["toolCalls:match"]].push(row);
@@ -212,21 +205,25 @@ export function groupGradersByStage(input: {
       id: `predicate:${index}`,
       kind: "predicate",
       label,
-      // Every authored check is a gate. There is no per-predicate role on the
-      // backend, so offering one here would be a control with nowhere to go.
-      role: "gating",
+      role: checkRole(predicate),
+      severity: checkSeverity(predicate),
       predicateIndex: index,
     };
-    if (GRADER_PRESENTATION_GROUP[kind] === "budget") {
-      budgets.push(row);
-      return;
-    }
     // An unknown kind files at `userValue` rather than throwing: the last link
     // is where "we could not place this" does the least damage, since it is
     // already the catch-all the contract routes its own unsplit evidence to.
+    //
+    // The token and turn ceilings land here too, now that the Limits tab is
+    // gone. They were only ever split out for PRESENTATION —
+    // `GRADER_PRESENTATION_GROUP` carries no analytical weight — and they
+    // remain fully valid, evaluable checks that the Checks list still shows
+    // and grades.
     byStage[PREDICATE_STAGE[kind] ?? "userValue"].push(row);
   });
 
+  // Always inserted, even when the judge is off. This row is the control
+  // the Pass or fail body lists — it is not a claim that the suite judges.
+  // Read `judgeMode(judgeConfig)` for whether a judge actually runs.
   byStage[GRADER_STAGE["judge:goalCompletion"]].push({
     id: "judge:goalCompletion",
     kind: "judge",
@@ -235,9 +232,19 @@ export function groupGradersByStage(input: {
       input.judgeConfig?.goalCompletion?.role === "gating"
         ? "gating"
         : "advisory",
+    severity: input.judgeConfig?.goalCompletion?.severity,
+    judgeSlot: "goalCompletion",
+  });
+  byStage[GRADER_STAGE["judge:groundedness"]].push({
+    id: "judge:groundedness",
+    kind: "judge",
+    label: "Groundedness judge",
+    role: "advisory",
+    severity: input.judgeConfig?.groundedness?.severity,
+    judgeSlot: "groundedness",
   });
 
-  return { byStage, budgets };
+  return { byStage };
 }
 
 /**
@@ -255,10 +262,16 @@ export function groupGradersByStage(input: {
  * a page that has observed nothing.
  */
 export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
-  connection: "Measured by the runner — nothing to configure",
-  discovery: "Measured by the runner — nothing to configure",
+  // "Nothing to configure" was false in the way that mattered: nothing to
+  // GRADE, but the client and server rows decide whether these stages succeed,
+  // and a reader debugging a failed connection was told to look nowhere. The
+  // card now lists that configuration; this line says where it comes from.
+  connection:
+    "Observed by the runner — decided by the client and server connection settings",
+  discovery:
+    "Observed by the runner — decided by the client's discovery settings",
   selection: "No grader",
-  call: "Measured by the runner — nothing to configure",
+  call: "Observed by the runner — nothing to configure",
   response: "No grader",
   userValue: "No grader",
 };
@@ -266,4 +279,73 @@ export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
 /** True when this stage's empty state is a gap rather than a runner concern. */
 export function stageEmptyIsGap(stage: UserValueStage): boolean {
   return STAGE_EMPTY_COPY[stage] === "No grader";
+}
+
+/**
+ * How the judge is configured, not what a run did.
+ *
+ * Absent config is `manual`: `enabled` defaults on and `autoRun` defaults off,
+ * matching `judges-section.tsx`. `role` is only `gating` when the literal
+ * `"gating"` is stored.
+ */
+export type JudgeMode = "off" | "manual" | "automatic" | "gating";
+
+export function judgeMode(judgeConfig: EvalJudgeConfig | undefined): JudgeMode {
+  const goal = judgeConfig?.goalCompletion;
+  if (goal?.enabled === false) return "off";
+  if (goal?.role === "gating") return "gating";
+  if (goal?.autoRun === true) return "automatic";
+  return "manual";
+}
+
+export type StageConfigState = {
+  stage: UserValueStage;
+  state:
+    | "runner"
+    | "gated"
+    | "gap"
+    | "judgeOnRequest"
+    | "judgeAutomatic"
+    | "judgeOff";
+  /** Deterministic gating rows (match + predicate). The judge is excluded. */
+  gates: number;
+  /** Advisory predicates authored as Warn. The judge is excluded. */
+  warn: number;
+  /** Advisory predicates without warn severity. The judge is excluded. */
+  report: number;
+  /** Only on `userValue`. */
+  judge?: JudgeMode;
+};
+
+export function stageConfigStates(
+  model: SuiteGradingModel,
+  judge: JudgeMode,
+): StageConfigState[] {
+  return USER_VALUE_STAGES.map((stage) => {
+    const rows = model.byStage[stage].filter((row) => row.kind !== "judge");
+    const gates = rows.filter((row) => row.role === "gating").length;
+    const warn = rows.filter(
+      (row) => row.role === "advisory" && row.severity === "warn",
+    ).length;
+    const report = rows.filter(
+      (row) => row.role === "advisory" && row.severity !== "warn",
+    ).length;
+    if (stage !== "userValue") {
+      if (gates >= 1) return { stage, state: "gated", gates, warn, report };
+      if (!stageEmptyIsGap(stage)) {
+        return { stage, state: "runner", gates, warn, report };
+      }
+      return { stage, state: "gap", gates, warn, report };
+    }
+    if (gates >= 1 || judge === "gating") {
+      return { stage, state: "gated", gates, warn, report, judge };
+    }
+    if (judge === "automatic") {
+      return { stage, state: "judgeAutomatic", gates, warn, report, judge };
+    }
+    if (judge === "manual") {
+      return { stage, state: "judgeOnRequest", gates, warn, report, judge };
+    }
+    return { stage, state: "judgeOff", gates, warn, report, judge };
+  });
 }
