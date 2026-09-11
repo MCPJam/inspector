@@ -4,6 +4,15 @@ const state = vi.hoisted(() => ({
   hosted: false,
   user: null as null | { id: string },
   request: vi.fn(),
+  setting: undefined as { enabled: boolean | null } | undefined,
+  queries: vi.fn(),
+}));
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: !!state.user }),
+  useQuery: (name: unknown, args: unknown) => {
+    state.queries(name, args);
+    return state.setting;
+  },
 }));
 vi.mock("@/lib/config", () => ({
   get HOSTED_MODE() {
@@ -22,6 +31,8 @@ beforeEach(() => {
   localStorage.clear();
   state.hosted = false;
   state.user = null;
+  state.setting = undefined;
+  state.queries.mockClear();
   state.request
     .mockReset()
     .mockImplementation(async (url: string) =>
@@ -87,4 +98,42 @@ it("preserves an explicit client opt-out for guests", () => {
   expect(
     renderHook(() => useBrowserToolIds(config, "local")).result.current,
   ).toEqual([]);
+});
+
+it("reads the project setting without any saved/default client and updates reactively", () => {
+  state.user = { id: "member" };
+  state.setting = { enabled: true };
+  const scope = { projectId: "proj_1" };
+  const view = renderHook(() => useBrowserToolIds(null, "local", scope));
+  expect(view.result.current).toEqual(["browser"]);
+  expect(state.queries).toHaveBeenCalledWith(
+    "hosts:getLocalBrowserSettings",
+    scope,
+  );
+  state.setting = { enabled: false };
+  view.rerender();
+  expect(view.result.current).toEqual([]);
+});
+
+it("waits for the named client's setting and respects an opt-out before its DTO loads", () => {
+  state.user = { id: "member" };
+  const scope = { projectId: "proj_1", hostId: "host_1" };
+  const view = renderHook(() => useBrowserToolIds(null, "local", scope));
+  expect(view.result.current).toBeUndefined();
+  state.setting = { enabled: false };
+  view.rerender();
+  expect(view.result.current).toEqual([]);
+  expect(state.queries).toHaveBeenCalledWith(
+    "hosts:getLocalBrowserSettings",
+    scope,
+  );
+});
+
+it("skips local settings for hosted engines and invalid project scopes", () => {
+  state.user = { id: "member" };
+  renderHook(() => useBrowserToolIds(null, "cloud", { projectId: "proj_1" }));
+  renderHook(() => useBrowserToolIds(null, "local", { projectId: "none" }));
+  expect(state.queries.mock.calls.every(([, args]) => args === "skip")).toBe(
+    true,
+  );
 });

@@ -407,7 +407,9 @@ function FlatToolList({
   // state must account for both, or it reports the wrong reason for a list
   // that is not actually empty.
   const hasBuiltin =
-    builtinTools.length > 0 || (browserTools?.tools.length ?? 0) > 0;
+    builtinTools.length > 0 ||
+    (browserTools?.tools.length ?? 0) > 0 ||
+    Boolean(browserTools?.localConsent);
   const uniqueServerIds = [...new Set(entries.map((entry) => entry.serverId))];
   const showServerBadge = uniqueServerIds.length > 1;
   const serversChip =
@@ -451,6 +453,7 @@ function FlatToolList({
                 searchQuery={searchQuery}
                 selectedKey={selectedBrowserKey}
                 onSelect={onSelectBrowser}
+                localConsent={browserTools.localConsent}
               />
             ) : null}
             {entries.length > 0 ? (
