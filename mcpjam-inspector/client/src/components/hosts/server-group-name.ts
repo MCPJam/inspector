@@ -1,5 +1,3 @@
-import type { ConnectionStatus } from "@/state/app-types";
-
 /**
  * Default name for a new server group, derived from its contents.
  *
@@ -8,6 +6,7 @@ import type { ConnectionStatus } from "@/state/app-types";
  * worth more here than usual. Pure so the numbering rule — collisions, case,
  * off-by-one — is testable without a popover and a Convex mock.
  */
+import type { ConnectionStatus } from "@/state/app-types";
 
 /** Trimmed and lowercased, for collision checks that ignore padding and case. */
 function normalize(name: string): string {

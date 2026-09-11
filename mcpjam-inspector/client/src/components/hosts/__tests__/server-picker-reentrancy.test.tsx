@@ -16,6 +16,11 @@
  *
  * Mocking the panel is the whole point rather than a shortcut: it is the
  * boundary the latch defends, and it cannot be crossed through the real one.
+ *
+ * It is also why this file repeats the sibling suite's mocks instead of
+ * sharing them: `vi.mock` is hoisted per FILE, and the panel mock below would
+ * reach the 80-odd tests next door that need the real panel. The duplication
+ * is the cheaper of the two.
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";

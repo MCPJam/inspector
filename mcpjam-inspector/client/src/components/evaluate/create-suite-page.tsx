@@ -469,7 +469,10 @@ export function CreateSuitePage({
                     disabled={isSaving}
                     testIdPrefix="create-suite-servers"
                     slots={EVALS_CREATE_SERVER_SLOTS}
-                    emptyServerLabel="No server group · pick one"
+                    // Not the composer's "Servers · client default": the
+                    // server is REQUIRED here (`serverOptional={false}`), so
+                    // there is no client default to fall back to.
+                    emptyServerLabel="Pick a server or group"
                     serverOptional={false}
                     environmentsVocabulary="client"
                   />

@@ -1,7 +1,6 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { appTsxFiles, parseTsx, readAppFile } from "./support/client-tsx";
 
 /**
  * One picker, guarded by the compiler.
@@ -40,8 +39,6 @@ import { describe, expect, it } from "vitest";
  * - It cannot tell a picker from a list that merely happens to be clickable.
  *   That judgement is why each entry below carries a reason, not just a path.
  */
-const CLIENT_SRC = join(__dirname, "..", "..", "..");
-
 const ALLOWED: Record<string, string> = {
   "components/hosts/server-selection-list.tsx":
     "The shared multi-select leaf (checkbox rows, no data, no popover) that " +
@@ -96,13 +93,7 @@ const ALLOWED: Record<string, string> = {
  * Commented-out code is not in the tree at all, which is the right answer.
  */
 export function rendersClickableServerList(source: string): boolean {
-  const tree = ts.createSourceFile(
-    "f.tsx",
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
+  const tree = parseTsx(source);
   let found = false;
   const visit = (node: ts.Node, inServerMap: boolean) => {
     const mapping =
@@ -128,20 +119,10 @@ export function rendersClickableServerList(source: string): boolean {
   return found;
 }
 
-/** Every app `.tsx` under `client/src`, posix-relative so ALLOWED reads the same everywhere. */
-function appTsxFiles(): string[] {
-  return readdirSync(CLIENT_SRC, { recursive: true })
-    .map(String)
-    .filter((f) => f.endsWith(".tsx") && !f.includes("__tests__"))
-    .map((f) => f.split("\\").join("/"));
-}
-
 describe("one server picker", () => {
   const allTsx = appTsxFiles();
   const found = allTsx
-    .filter((f) =>
-      rendersClickableServerList(readFileSync(join(CLIENT_SRC, f), "utf8")),
-    )
+    .filter((f) => rendersClickableServerList(readAppFile(f)))
     .sort();
 
   it("has no clickable server list outside the declared set", () => {

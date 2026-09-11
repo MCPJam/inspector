@@ -98,17 +98,23 @@ vi.mock("@/components/hosts/server-picker", () => ({
     triggerTestId,
     value,
     onChange,
+    emptyTriggerLabel,
   }: {
     triggerTestId?: string;
     value: string | null;
     onChange: (id: string) => void;
+    emptyTriggerLabel?: string;
   }) => (
     <button
       type="button"
-      data-testid={triggerTestId ?? "server-group-picker"}
+      data-testid={triggerTestId ?? "server-picker"}
+      // Exposed rather than rendered: the page seeds a selection on mount, so
+      // the empty label never reaches the screen here even though it is what
+      // ships for a project with no groups.
+      data-empty-label={emptyTriggerLabel}
       onClick={() => onChange("att-1")}
     >
-      {value ?? "No server group · pick one"}
+      {value ?? emptyTriggerLabel}
     </button>
   ),
 }));
@@ -579,5 +585,30 @@ describe("CreateSuitePage", () => {
         }),
       );
     });
+  });
+});
+
+describe("create suite — what the empty server field says", () => {
+  it("asks for a server or a group, in BB-142's vocabulary", async () => {
+    render(
+      <CreateSuitePage
+        onCancel={vi.fn()}
+        onSubmit={vi.fn()}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+
+    const trigger = await screen.findByTestId(
+      "create-suite-servers-servers-picker",
+    );
+    // "server group" is the vocabulary BB-142 replaced; this surface was the
+    // last caller still passing it, and the composer default it overrides
+    // ("Servers · client default") is wrong here because the server is
+    // REQUIRED — `serverOptional={false}` — so there is no client default to
+    // fall back to.
+    const label = trigger.getAttribute("data-empty-label") ?? "";
+    expect(label).not.toMatch(/server group/i);
+    expect(label).toMatch(/pick a server or group/i);
   });
 });

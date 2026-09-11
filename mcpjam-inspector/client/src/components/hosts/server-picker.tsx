@@ -835,6 +835,10 @@ export function ServerPicker({
       ? "Loading…"
       : emptyTriggerLabel;
 
+  // Bound once: the trigger's class groups and the wrapper below all ask the
+  // same question, and four copies of it can drift apart.
+  const field = variant === "field";
+
   return (
     <Popover
       open={open}
@@ -844,65 +848,76 @@ export function ServerPicker({
         if (next) setTab(initialPickerTab(selection));
       }}
     >
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          // `creating` too: clicking the trigger mid-write closed the popover
-          // out from under the very write `busy` freezes everything else for.
-          disabled={disabled || creating}
-          id={triggerId}
-          data-testid={triggerTestId ?? "server-picker-trigger"}
-          className={cn(
-            "flex items-center gap-1.5 border text-foreground",
-            "outline-none transition-colors",
-            variant === "field"
-              ? "h-9 w-full rounded-md px-3 shadow-xs focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              : "h-8 max-w-[260px] shrink-0 rounded-full px-2.5",
-            variant === "field"
-              ? "border-input bg-transparent hover:bg-muted/30"
-              : resolved
-                ? "border-border/60 bg-muted/40 hover:bg-muted/60"
-                : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
-            disabled && "cursor-not-allowed opacity-50",
-          )}
-        >
-          <Server
+      {/* Who arranges the trigger and its clear control. A `field` trigger is
+          `w-full`, and its only caller stacks it in a `space-y-2` column — as
+          two loose children the X wrapped onto the line below the field. The
+          pill needs no box: every caller already puts it in a flex row, and
+          adding one would change their spacing, so `contents` keeps it
+          exactly as loose as it was. */}
+      <div className={field ? "flex w-full items-center" : "contents"}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            // `creating` too: clicking the trigger mid-write closed the popover
+            // out from under the very write `busy` freezes everything else for.
+            disabled={disabled || creating}
+            id={triggerId}
+            data-testid={triggerTestId ?? "server-picker-trigger"}
             className={cn(
-              "shrink-0 text-muted-foreground",
-              variant === "field" ? "size-4" : "size-3.5",
-            )}
-          />
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate",
-              variant === "field"
-                ? cn("text-left text-sm", !resolved && "text-muted-foreground")
-                : "text-xs font-medium",
+              "flex items-center gap-1.5 border text-foreground",
+              "outline-none transition-colors",
+              field
+                ? "h-9 w-full rounded-md px-3 shadow-xs focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                : "h-8 max-w-[260px] shrink-0 rounded-full px-2.5",
+              field
+                ? "border-input bg-transparent hover:bg-muted/30"
+                : resolved
+                  ? "border-border/60 bg-muted/40 hover:bg-muted/60"
+                  : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
+              disabled && "cursor-not-allowed opacity-50",
             )}
           >
-            {triggerLabel}
-          </span>
-          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-        </button>
-      </PopoverTrigger>
+            <Server
+              className={cn(
+                "shrink-0 text-muted-foreground",
+                field ? "size-4" : "size-3.5",
+              )}
+            />
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate",
+                field
+                  ? cn(
+                      "text-left text-sm",
+                      !resolved && "text-muted-foreground",
+                    )
+                  : "text-xs font-medium",
+              )}
+            >
+              {triggerLabel}
+            </span>
+            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+          </button>
+        </PopoverTrigger>
 
-      {/*
+        {/*
         `selection`, not `resolved`: a dangling id is exactly the one that most
         needs a way out, and the label already falls back for it. Withheld
         while the list is unknown (every row looks dangling then) and while a
         write is in flight (its `onChange` would undo the clear).
       */}
-      {onClearSelection && selection && attachmentsKnown && !busy ? (
-        <button
-          type="button"
-          data-testid="server-picker-clear"
-          aria-label="Clear server selection"
-          onClick={onClearSelection}
-          className="ml-1 flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <X className="size-3" />
-        </button>
-      ) : null}
+        {onClearSelection && selection && attachmentsKnown && !busy ? (
+          <button
+            type="button"
+            data-testid="server-picker-clear"
+            aria-label="Clear server selection"
+            onClick={onClearSelection}
+            className="ml-1 flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="size-3" />
+          </button>
+        ) : null}
+      </div>
 
       <PopoverContent
         className="w-72 p-1.5"

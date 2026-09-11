@@ -1,7 +1,6 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { appTsxFiles, parseTsx, readAppFile } from "./support/client-tsx";
 
 /**
  * `inModal` inside a Dialog, guarded by the compiler.
@@ -26,8 +25,6 @@ import { describe, expect, it } from "vitest";
  * is checked is nesting inside a `<DialogContent>` written in the same file —
  * the shape that actually regressed.
  */
-const CLIENT_SRC = join(__dirname, "..", "..", "..");
-
 /**
  * Whether this element hands portalling off.
  *
@@ -62,13 +59,7 @@ function insideDialog(node: ts.Node): boolean {
 export function serverPickers(
   source: string,
 ): { text: string; portalOff: boolean; inDialog: boolean }[] {
-  const tree = ts.createSourceFile(
-    "f.tsx",
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
+  const tree = parseTsx(source);
   const found: { text: string; portalOff: boolean; inDialog: boolean }[] = [];
   const visit = (node: ts.Node) => {
     if (
@@ -103,10 +94,8 @@ describe("ServerPicker inside a modal Dialog written in the same file", () => {
   it("receives inModal wherever the dialog is written beside it", () => {
     const offenders: string[] = [];
 
-    for (const rel of readdirSync(CLIENT_SRC, { recursive: true })) {
-      const file = String(rel);
-      if (!file.endsWith(".tsx") || file.includes("__tests__")) continue;
-      const source = readFileSync(join(CLIENT_SRC, file), "utf8");
+    for (const file of appTsxFiles()) {
+      const source = readAppFile(file);
       if (!source.includes("<ServerPicker")) continue;
 
       for (const picker of serverPickers(source)) {
