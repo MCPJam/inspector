@@ -50,7 +50,7 @@ function segmentClass(result: CellTrendPoint["result"]): string {
     case "failed":
       return "bg-destructive/70";
     case "partial":
-      return "bg-amber-500/70 dark:bg-amber-400/70";
+      return "bg-warning/70";
     case "pending":
       return "bg-warning/50";
   }

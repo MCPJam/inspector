@@ -1,3 +1,9 @@
+import {
+  capabilityFingerprint as sha256,
+  capabilityMatches,
+  mintCapabilityToken,
+  persistCapabilityState,
+} from "../../local-capability.js";
 /**
  * Workspace grants and local harness consent — the two pieces of local state
  * that decide whether a turn may run on this machine at all.
@@ -33,12 +39,7 @@
  * process, turns that back into a canonical path. A renderer that could submit
  * a path could submit any path.
  */
-import {
-  createHash,
-  randomBytes,
-  randomUUID,
-  timingSafeEqual,
-} from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
@@ -131,10 +132,6 @@ const withGrantLock = createLocalStateMutationLock({
   lockFileName: "grants.lock",
   resourceLabel: "grant store",
 });
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
-}
 
 /** Canonical serialization of a binding — field order is fixed here, so two
  *  bindings that differ anywhere hash differently and a reordered object
@@ -289,10 +286,7 @@ async function writeState(state: PersistedState): Promise<void> {
   const dir = localHarnessStateRoot();
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await chmod(dir, 0o700).catch(() => {});
-  const file = grantsFilePath();
-  const tmp = `${file}.tmp`;
-  await writeFile(tmp, JSON.stringify(state), { mode: 0o600 });
-  await rename(tmp, file);
+  await persistCapabilityState(grantsFilePath(), state);
 }
 
 /**
@@ -370,42 +364,109 @@ export type WorkspaceGrantResult =
  * picker — the Electron main-process dialog, or a loopback-only,
  * session-authenticated route — never from a renderer-submitted string.
  */
+export type WorkspaceCandidate =
+  | { ok: true; canonicalPath: string }
+  | { ok: false; message: string };
+
+/**
+ * Is this canonical path a filesystem root?
+ *
+ * The same rule the launcher applies (`bin/launch-workspace.mjs`), because a
+ * suggestion and a registration must not disagree about what is acceptable.
+ *
+ * Exported for its own test. Comparing against `sep` alone missed Windows —
+ * there it is a backslash, which never equals a drive root like `C:\` or
+ * `C:/` — so a whole volume was accepted as a workspace on a platform the
+ * harness treats as native. That form is unreachable through
+ * `registerWorkspaceGrant` on a Linux runner, where `realpath` refuses it
+ * first, which is why the predicate is separable at all.
+ */
+export function isFilesystemRoot(canonicalPath: string): boolean {
+  return (
+    canonicalPath === sep ||
+    canonicalPath === "/" ||
+    // A drive root: `C:`, `C:\`, `C:/`.
+    /^[A-Za-z]:[\\/]?$/.test(canonicalPath) ||
+    // A UNC share root: `\\server\share` and its trailing-separator form, and
+    // a bare `\\server`. Scoping a session to a whole network share is the
+    // same mistake as scoping it to a whole volume, and the earlier rule
+    // covered only the volume. Anything BELOW the share
+    // (`\\server\share\project`) stays acceptable.
+    //
+    // Matched on the BACKSLASH form only. Accepting `//` here as well read a
+    // POSIX path with a doubled leading slash — `//tmp/project`, which POSIX
+    // expressly permits an implementation to keep — as a share root, and
+    // refused an ordinary directory. Windows has no such ambiguity to trade
+    // against: `realpath` and `path.resolve` both answer `\\server\share`
+    // there, so the canonical path this predicate is given is always the
+    // backslash form.
+    /^\\{2}[^\\/]+([\\/][^\\/]+)?[\\/]?$/.test(canonicalPath)
+  );
+}
+
+/**
+ * Is this path a usable workspace? Reads the filesystem; writes nothing.
+ *
+ * Split out of `registerWorkspaceGrant` because two callers now need the
+ * ANSWER without the side effect. `/availability` suggests the folder the
+ * caller launched from, and suggesting one it would then refuse is a worse
+ * first impression than suggesting nothing; and `POST /workspace-grant
+ * {useSuggested:true}` re-validates before registering rather than trusting
+ * the value it handed out a moment earlier. Neither should mint a grant as a
+ * side effect of asking.
+ *
+ * The rules are the ones a grant is registered under, in one place, so a
+ * suggestion and a registration cannot disagree about what is acceptable:
+ * canonicalize (`realpath`), require a directory, and refuse the two roots
+ * that make the workspace label meaningless.
+ */
+export async function validateWorkspaceCandidate(
+  rawPath: string,
+): Promise<WorkspaceCandidate> {
+  let canonicalPath: string;
+  try {
+    canonicalPath = await realpath(rawPath);
+    const info = await stat(canonicalPath);
+    if (!info.isDirectory()) {
+      return { ok: false, message: "the selection is not a directory" };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: `the selected workspace could not be resolved: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  // Refuse the obviously wrong roots. A home directory or a filesystem root
+  // as "the workspace" makes the workspace label meaningless.
+  // Compare against the RESOLVED home: on a machine where the home
+  // directory is itself a symlink, the raw value never equals the
+  // canonicalized selection and the refusal below would not fire.
+  const home = await realpath(homedir()).catch(() => homedir());
+  if (canonicalPath === home || isFilesystemRoot(canonicalPath)) {
+    return {
+      ok: false,
+      message:
+        "pick a project directory rather than your home directory or the " +
+        "filesystem root — the workspace is what the session is scoped to.",
+    };
+  }
+  return { ok: true, canonicalPath };
+}
+
 export function registerWorkspaceGrant(
   rawPath: string,
 ): Promise<WorkspaceGrantResult> {
   return withGrantLock(async () => {
-    let canonicalPath: string;
-    try {
-      canonicalPath = await realpath(rawPath);
-      const info = await stat(canonicalPath);
-      if (!info.isDirectory()) {
-        return {
-          ok: false as const,
-          message: "the selection is not a directory",
-        };
-      }
-    } catch (error) {
-      return {
-        ok: false as const,
-        message: `the selected workspace could not be resolved: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      };
+    // Validated INSIDE the lock, not before it: the directory can be replaced
+    // between a caller's check and this registration, and what gets recorded
+    // must be what was just canonicalized.
+    const candidate = await validateWorkspaceCandidate(rawPath);
+    if (!candidate.ok) {
+      return { ok: false as const, message: candidate.message };
     }
-    // Refuse the obviously wrong roots. A home directory or a filesystem root
-    // as "the workspace" makes the workspace label meaningless.
-    // Compare against the RESOLVED home: on a machine where the home
-    // directory is itself a symlink, the raw value never equals the
-    // canonicalized selection and the refusal below would not fire.
-    const home = await realpath(homedir()).catch(() => homedir());
-    if (canonicalPath === home || canonicalPath === sep) {
-      return {
-        ok: false as const,
-        message:
-          "pick a project directory rather than your home directory or the " +
-          "filesystem root — the workspace is what the session is scoped to.",
-      };
-    }
+    const canonicalPath = candidate.canonicalPath;
 
     const state = await readState();
     const existing = state.workspaces.find(
@@ -505,7 +566,7 @@ export function grantLocalHarnessConsent(
     // asking for an unattended capability. A shorter grant is strictly safer,
     // so it is honoured as given.
     const ttlMs = Math.min(opts?.ttlMs ?? GRANT_TTL_MS, GRANT_TTL_MS);
-    const token = randomBytes(32).toString("base64url");
+    const token = mintCapabilityToken();
     const grant: PersistedHarnessGrant = {
       grantId: `grant_${randomUUID()}`,
       tokenHash: sha256(token),
@@ -603,13 +664,10 @@ export async function verifyLocalHarnessGrant(
           : "the local harness grant store could not be read",
     };
   }
-  const presented = Buffer.from(sha256(token), "hex");
   const now = opts?.now ?? Date.now();
 
   for (const grant of state.harnessGrants) {
-    const stored = Buffer.from(grant.tokenHash, "hex");
-    if (presented.length !== stored.length) continue;
-    if (!timingSafeEqual(presented, stored)) continue;
+    if (!capabilityMatches(token, grant.tokenHash)) continue;
     if (grant.bindingHash !== bindingHash) {
       return {
         ok: false,

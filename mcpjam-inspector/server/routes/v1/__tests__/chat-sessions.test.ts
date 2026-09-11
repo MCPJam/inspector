@@ -155,6 +155,12 @@ afterEach(() => {
 // ── Detail read ─────────────────────────────────────────────────────────────
 
 describe("GET /v1/chat-sessions/:id", () => {
+  it.each([null, { browserSessionId: "logical", state: "active", internalSecret: "hidden", closedAt: 123 }])("projects only public browser fields: %j", async (browser) => {
+    queryMock.mockResolvedValue(sessionRow({ browser }));
+    serveBlobs({ "https://blob.test/messages": [] });
+    const response = await call("GET", `/api/v1/chat-sessions/${SESSION}`);
+    expect((await response.json()).browser).toEqual(browser ? { browserSessionId: "logical", state: "active" } : null);
+  });
   it("answers 404 — not 403 — for a session in another project", async () => {
     queryMock.mockResolvedValue(sessionRow({ projectId: OTHER_PROJECT }));
     const response = await call(
@@ -428,7 +434,7 @@ describe("POST /v1/chat-sessions/messages", () => {
     const body = await response.json();
     expect(response.status).toBe(409);
     expect(body.details.reason).toBe("TURN_IN_PROGRESS");
-    expect(body.details.retryAfterMs).toBe(4_200);
+    expect(body.details.retryAfterMs).toBe(2_000);
   });
 
   it("rejects a bare model id instead of resolving it to Ollama", async () => {

@@ -526,6 +526,21 @@ describe("ToolList", () => {
       />,
     );
     expect(screen.queryByText("Built-in tools")).not.toBeInTheDocument();
+    expect(screen.getByText("Servers")).toBeInTheDocument();
+  });
+
+  it("does not put a Servers header over a harness-only list", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        toolNames={[]}
+        filteredToolNames={[]}
+        builtinTools={[makeBuiltin("bash", "Bash")]}
+        onSelectBuiltin={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Servers")).not.toBeInTheDocument();
+    expect(screen.getByText("Built-in tools")).toBeInTheDocument();
   });
 
   it("clicking a built-in row selects it via onSelectBuiltin (not onSelectTool)", () => {

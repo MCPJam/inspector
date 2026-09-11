@@ -26,7 +26,7 @@ import { buildFixPrompt, type TriageRow } from "../evals/ai-triage-helpers";
 async function copyPrompt(row: TriageRow) {
   const ok = await copyToClipboard(buildFixPrompt(row));
   if (ok) {
-    toast.success("Fix prompt copied — paste it into your coding agent");
+    toast.success("Fix prompt copied. Paste it into your coding agent");
   } else {
     toast.error("Copy failed");
   }

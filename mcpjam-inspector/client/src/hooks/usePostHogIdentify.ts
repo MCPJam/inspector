@@ -18,11 +18,11 @@ export function usePostHogIdentify() {
   const { isAuthenticated } = useConvexAuth();
   const convexUser = useQuery(
     "users:getCurrentUser" as any,
-    isAuthenticated ? ({} as any) : "skip"
+    isAuthenticated ? ({} as any) : "skip",
   );
   const actorKey = useActorKey();
   const previousActorRef = useRef<{ key: string; wasAuthed: boolean } | null>(
-    null
+    null,
   );
 
   useEffect(() => {
@@ -46,6 +46,7 @@ export function usePostHogIdentify() {
       // flag evaluated between the reset and the next page load would target
       // an unknown deployment.
       posthog.setPersonPropertiesForFlags?.({
+        ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
         deployment: HOSTED_MODE ? "hosted" : "self_hosted",
         platform: detectPlatform(),
       });
