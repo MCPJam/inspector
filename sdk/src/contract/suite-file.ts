@@ -441,9 +441,22 @@ export const evalSuiteFileCaseSchema = z
      */
     steps: stepsSchema.min(1),
     /**
-     * Case-level transcript predicates, from the existing predicate corpus. No
-     * new predicate kinds are introduced by the suite file.
+     * Case-level transcript CHECKS, from the existing predicate corpus. No new
+     * predicate kinds are introduced by the suite file.
+     *
+     * `check` is the user-facing word for this rule everywhere else — the API
+     * field, the UI section, and the SDK's own `CheckPolicy` / `checkRole` /
+     * `checkSeverity` prefix — so a file authored beside the API reads the same
+     * word in both. {@link EvalSuiteFileCase.assertions} is the same list under
+     * its original name and keeps working; a file may set one or the other,
+     * never both.
+     *
+     * NOT the same field as `steps[].assertion`, which is deliberately NOT
+     * renamed: its type is `WidgetAssertion | Predicate`, genuinely broader
+     * than a check.
      */
+    checks: z.array(predicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
+    /** @deprecated Use {@link EvalSuiteFileCase.checks}, which means exactly this. */
     assertions: z.array(predicateSchema).max(MAX_CASE_ASSERTIONS).optional(),
     /** Reference output for judge scorers. */
     expectedOutput: z.string().optional(),
@@ -549,6 +562,20 @@ export const evalSuiteFileSchema = evalSuiteFileObjectSchema.superRefine(
         }
         seenStepIds.add(step.id);
       });
+
+      // Both spellings of the case's check list is a refusal, not a merge or a
+      // precedence rule: two lists are two different gradings of one case, and
+      // silently keeping one would score the file against rules its author
+      // could see in it.
+      if (testCase.checks && testCase.assertions) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["cases", index, "checks"],
+          message:
+            `case "${testCase.id}" sets both \`checks\` and its deprecated ` +
+            `\`assertions\` alias — set one`,
+        });
+      }
 
       // A mapping status with no report to point at is unauditable: it asserts
       // a faithfulness claim while withholding the evidence for it.

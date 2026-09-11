@@ -29,10 +29,13 @@ describe("browserd server adapter (over a real socket)", () => {
     const stack = buildBrowserdStack(stubDriver(), {
       token: TOKEN,
       bodyLimitBytes: 256,
+      profileExport: async () => new Uint8Array([31, 139, 8, 0]),
     });
     server = stack.server;
     bootId = stack.bootId;
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const { port } = server.address() as AddressInfo;
     base = `http://127.0.0.1:${port}`;
   });
@@ -47,11 +50,27 @@ describe("browserd server adapter (over a real socket)", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  it("serves a profile export as raw gzip bytes", async () => {
+    const res = await fetch(`${base}/v1/profile/export`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/gzip");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(
+      new Uint8Array([31, 139, 8, 0]),
+    );
+  });
+
   it("401s a command with no bearer", async () => {
     const res = await fetch(`${base}/v1/commands`, {
       method: "POST",
       body: JSON.stringify({
-        command: { commandId: "c1", source: "chat", action: { kind: "reload" } },
+        command: {
+          commandId: "c1",
+          source: "chat",
+          action: { kind: "reload" },
+        },
       }),
     });
     expect(res.status).toBe(401);
@@ -82,7 +101,11 @@ describe("browserd server adapter (over a real socket)", () => {
       method: "POST",
       headers: { authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify({
-        command: { commandId: "c1", source: "chat", action: { kind: "reload" } },
+        command: {
+          commandId: "c1",
+          source: "chat",
+          action: { kind: "reload" },
+        },
         expectedBootId: "some-old-boot",
       }),
     });
@@ -97,5 +120,92 @@ describe("browserd server adapter (over a real socket)", () => {
       body: "x".repeat(512),
     });
     expect(res.status).toBe(413);
+  });
+});
+
+/**
+ * R-2. A capability the inspector reads before it uses, over a real socket.
+ *
+ * The rule the whole no-forced-relaunch posture rests on: the inspector never
+ * calls a route the daemon did not advertise. A stack built with a recorder
+ * says `record` on `/v1/status` and answers `/v1/record`; one built without
+ * says neither, and its route refuses rather than pretending.
+ */
+describe("browserd server adapter — recording is announced, never assumed", () => {
+  async function withStack(
+    config: Parameters<typeof buildBrowserdStack>[1],
+    run: (base: string) => Promise<void>,
+  ): Promise<void> {
+    const stack = buildBrowserdStack(stubDriver(), config);
+    await new Promise<void>((resolve) =>
+      stack.server.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = stack.server.address() as AddressInfo;
+    try {
+      await run(`http://127.0.0.1:${port}`);
+    } finally {
+      stack.closeStreams();
+      await new Promise<void>((resolve) => stack.server.close(() => resolve()));
+    }
+  }
+
+  const fakeRecorder = () => {
+    const calls: string[] = [];
+    return {
+      calls,
+      recorder: {
+        start: (args: { id: string; fps: number }) => {
+          calls.push(`start:${args.id}@${args.fps}`);
+          return { ok: true as const };
+        },
+        stop: async () => {
+          calls.push("stop");
+          return null;
+        },
+        status: () => ({ active: false }),
+        finalize: async () => {},
+        dispose: () => {},
+      },
+    };
+  };
+
+  it("advertises `record` and serves the route when the box has a recorder", async () => {
+    const { recorder, calls } = fakeRecorder();
+    await withStack(
+      { token: TOKEN, features: ["record"], recorder },
+      async (base) => {
+        const status = await fetch(`${base}/v1/status`, {
+          headers: { authorization: `Bearer ${TOKEN}` },
+        });
+        expect((await status.json()).features).toContain("record");
+
+        const started = await fetch(`${base}/v1/record`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${TOKEN}` },
+          body: JSON.stringify({ action: "start", id: "run-1", fps: 15 }),
+        });
+        expect(started.status).toBe(200);
+        expect(calls).toEqual(["start:run-1@15"]);
+      },
+    );
+  });
+
+  it("advertises nothing and refuses the route when it has none", async () => {
+    await withStack({ token: TOKEN }, async (base) => {
+      const status = await fetch(`${base}/v1/status`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+      expect((await status.json()).features).not.toContain("record");
+
+      const started = await fetch(`${base}/v1/record`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify({ action: "start", id: "run-1" }),
+      });
+      expect(started.status).toBe(503);
+      expect(await started.json()).toMatchObject({
+        error: "record_unavailable",
+      });
+    });
   });
 });

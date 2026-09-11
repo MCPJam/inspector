@@ -112,6 +112,7 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
         cloud: { available: personalCloudAvailable },
       },
       capabilities: {
+        browserConsent: true,
         personalCloudAvailable,
         ephemeralCloudAvailable: localConfigured,
       },

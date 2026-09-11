@@ -3,7 +3,7 @@ import { useAction } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { AlertCircle, ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatDuration, formatRunId, formatTime } from "./helpers";
+import { formatCost, formatDuration, formatRunId, formatTime } from "./helpers";
 import type {
   EvalRunDiff,
   EvalRunDiffCaseStatus,
@@ -29,11 +29,7 @@ type DiffState =
   | { status: "error"; data: null; error: string };
 
 type DiffMetricFormat =
-  | "duration"
-  | "signedDuration"
-  | "number"
-  | "percent"
-  | "cost";
+  "duration" | "signedDuration" | "number" | "percent" | "cost";
 
 export function RunDiffView({
   baseRunId,
@@ -375,8 +371,8 @@ function SkillChangesSection({ skills }: { skills: EvalRunDiff["skills"] }) {
           {skills.base.excluded && skills.compare.excluded
             ? "Both runs ran with skills disabled."
             : skills.base.excluded
-            ? "The base run ran with skills disabled."
-            : "The compared run ran with skills disabled."}
+              ? "The base run ran with skills disabled."
+              : "The compared run ran with skills disabled."}
         </div>
       ) : null}
       <div className="divide-y divide-border/40">
@@ -648,8 +644,8 @@ function DeltaPill({
     neutral || negligible
       ? "bg-muted text-muted-foreground"
       : isGood
-      ? "bg-success/50 text-foreground"
-      : "bg-destructive/50 text-foreground";
+        ? "bg-success/50 text-foreground"
+        : "bg-destructive/50 text-foreground";
 
   const showPercent =
     format !== "percent" && diff.percentDelta !== null && !negligible;
@@ -829,13 +825,4 @@ function formatCompactNumber(value: number): string {
   return value.toLocaleString(undefined, {
     maximumFractionDigits: fractionDigits,
   });
-}
-
-function formatCost(value: number): string {
-  const sign = value < 0 ? "-" : "";
-  const abs = Math.abs(value);
-  if (abs > 0 && abs < 0.01) {
-    return `${sign}$${abs.toFixed(4)}`;
-  }
-  return `${sign}$${abs.toFixed(2)}`;
 }

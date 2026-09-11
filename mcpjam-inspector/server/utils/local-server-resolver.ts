@@ -1605,7 +1605,8 @@ export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
   ) {
     c.header("X-MCP-Auth-Required", "oauth");
   }
-  const normalized = error.normalized ?? describeError(error);
+  const normalized =
+    error.normalized ?? describeError(error, { surface: "mcpServer" });
   // Skip-if-stamped by construction: most callers reach here holding a
   // `WebRouteError` that `mapRuntimeError` already ruled on, and the helper
   // short-circuits on the stamp. The call is still made so the local-mode
@@ -1699,7 +1700,7 @@ export async function executeLocalServerConnect(
         success: false,
         error: "Failed to resolve server config",
         details: error instanceof Error ? error.message : "Unknown error",
-        normalized: describeError(error),
+        normalized: describeError(error, { surface: "mcpServer" }),
       },
       500
     );
@@ -1775,7 +1776,7 @@ export async function executeLocalServerConnect(
               serverName: serverDisplayName,
               serverUrl,
             },
-            describeError(error)
+            describeError(error, { surface: "mcpServer" })
           )
         );
       }
@@ -1800,7 +1801,7 @@ export async function executeLocalServerConnect(
               serverName: serverDisplayName,
               serverUrl,
             },
-            describeError(error)
+            describeError(error, { surface: "mcpServer" })
           )
         );
       }
@@ -1824,7 +1825,7 @@ export async function executeLocalServerConnect(
         error: failureMessage,
         serverName: serverDisplayName,
         details: failureMessage,
-        normalized: describeError(error),
+        normalized: describeError(error, { surface: "mcpServer" }),
       },
       500
     );
