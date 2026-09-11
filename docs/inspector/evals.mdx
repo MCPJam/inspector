@@ -29,18 +29,102 @@ Evals are available to both signed-in users and guests. Guests authenticate auto
 
 ## Authoring a case
 
-Click **New case** in the suite header (or in the empty-state screen when no cases exist yet) to open a blank case editor. The case is a draft until you press **Save** — backing out without saving leaves your suite unchanged.
+Click **New case** in the suite header (or in the empty-state screen when no cases exist yet) to open the case workspace. The case is a draft until you press **Save** — backing out without saving leaves your suite unchanged.
 
-Each case has four moving parts:
+### Case workspace
 
-- **Scenario** — short label so you can find it later ("Draw a rectangle", "Refuses unsafe delete").
-- **Prompt turns** — one or more user messages. Multi-turn is supported; expected tools and checks attach per turn, so you can model "ask, get a result, follow up."
-- **Expected tools** — for each turn, the tool calls the model should make. Arguments can be exact values or typed placeholders (`"string"`, `"number"`) so you're not chasing flaky literals.
-- **Expected output** — optional free-text description of what a good final answer looks like. Used by the judge.
+The case editor is a two-pane workspace. The left column is where you write the case; the right column shows the selected trial — a live run in progress, a persisted iteration from history, a recording session, or a spec preview.
+
+**Left column — the case form**
+
+Every case opens in this form, however it was authored — in the app, through the CLI, or from an SDK suite file. It has four sections:
+
+- **User asks** — the prompt the model receives.
+- **In the app** — interact steps (clicks, typing) recorded against a live widget, shown in the order they run.
+- **Scorers** — everything that grades this case, grouped by the link of the user-value chain it measures, in the same vocabulary the suite's Grading tab uses.
+- **Judge · Goal completion** — the goal sentence, and what the judge will actually do with it.
+
+**Scorers**
+
+One list, one Add menu. Each row says what it checks, who wrote it, and what a miss does:
+
+- **Route** — the first row under Selection. It answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always a Gate.
+- **Step N** — a check written as a step (what the CLI and the SDK produce). It is graded in place, at its position in the run, and is labelled by that position: a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level check.
+- **This case** — a check you added here. It is graded once, over the finished transcript.
+- **Suite** — a default the suite applies to every case. Read-only here, with a link to the suite settings.
+
+A row's **role** says what a miss does: **Gate** fails the trial, **Warn** highlights the miss without failing it, **Report** only records it. The control appears when your deployment supports check policy; otherwise the role still shows, read-only.
+
+Because a failing gate halts the run, a check written as a step can leave later checks unrun. The trial column marks those **Skipped**.
+
+**The route question**
+
+The answer here is what marks a case negative — never an inference from its steps:
+
+- **A named tool** — the case must take that route.
+- **No tool should be called** — a negative case. It passes only if the model called nothing. A check that requires a tool call contradicts this, and the form says so.
+- **Any route** — the case names no route and is graded by its scorers. This is a normal positive case, and it is what most CLI- and SDK-authored cases are.
+
+A brand-new case that asserts nothing at all must answer this question before it can be saved or run: without a check, a goal sentence, or a named tool, it would pass vacuously.
+
+**Judge · Goal completion**
+
+The card shows which model grades this case, against what threshold, how many suite criteria also apply, and whether the judge runs automatically or on request. All of that is the suite's; **Edit in suite settings** goes there.
+
+What the case owns is the goal sentence, and the hint under it says what the judge will actually grade against:
+
+- A **goal sentence** — the judge grades against it, and the suite's criteria still apply.
+- **No sentence, but a route** — the judge grades against the expected route.
+- **Neither, but suite criteria** — the judge grades against those.
+- **None of the above** — the judge grades against the request itself, with its score capped at 0.85.
+
+**Skip the judge for this case** turns the judge off for this case only. It applies to the next saved run.
+
+**Also in this case**
+
+A case can hold steps this form has no section for — a second prompt, or a pinned tool call. Those are listed at the bottom of the column with the turn they belong to. Click **Edit in Steps** to open the full step list.
+
+**Steps**
+
+**Steps** (top right of the column) swaps the form for the flat, ordered step list, in the same workspace with the same trial on the right. **Back to form** returns.
+
+**Right column — the selected trial**
+
+The trial opens on its **Scorecard**: the same scorers the left column lists, in the same order, each with what happened to it on this trial. A row shows its result, its provenance, its role, and — where there is one — the reason, which for a step is the message the runner recorded.
+
+The summary line counts **gates only**: "2 of 2 gates passed · 1 warn". A Warn miss is shown on its row and never counted as a failure, because it did not fail the trial. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
+
+The judge's row hosts the judge panel, so labelling a trial works where the judge sits. Under the rows, **Score rows** expands the raw score contract, including any row the backend could not join.
+
+The other tabs are unchanged: **Chat**, **Tool Calls** and **Trace** show the transcript, and **Steps** shows execution order — now with the same check names the rest of the page uses and the reason under a failed step.
+
+The right column resolves to one of these views, in precedence order:
+
+1. **Explicit history pick** — a trial you selected from History.
+2. **Recording** — a live recording session is active.
+3. **Live run** — a quick run is in progress.
+4. **Latest** — the most recent persisted iteration with a trace.
+5. **Spec preview** — the authored steps rendered as a conversation preview.
+6. **Empty** — no trial yet; start typing a prompt.
 
 <Note>
-  A **negative case** is just a case whose checks say "this tool should *not* fire." Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape.
+  A **negative case** is one you marked **No tool should be called**. Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape. A case that simply names no tool is *not* negative — it is graded by its checks.
 </Note>
+
+### History inspect
+
+Click **History** in the trial header to open a list of past iterations. Selecting one freezes the left form on that trial's snapshot — the exact steps, checks, and settings that were in effect when it ran — so you can compare what you see in the trace against what was authored at the time.
+
+While a trial is frozen, an **Inspecting** banner appears at the top of the left column. If the current draft differs from the frozen snapshot, a **Changed** indicator appears. Click **Edit case** to return to the live draft; the selected trial stays visible on the right.
+
+### Next run sheet
+
+Click the **Model**, **Trials**, or **Host** chip above the form to open the **Next run** sheet. It separates two kinds of settings:
+
+- **Saved with this case** — *Trials* and *Model* are written to the case before every quick run and on Save. Changes here persist.
+- **For this run** — *Host* applies only to the next run and is not saved to the case.
+
+Click **Suite settings** in the sheet to configure hosts and other suite-level defaults.
 
 ## Case attachments
 
@@ -62,7 +146,9 @@ When attachments are present, a note is automatically prepended to the case's fi
 
 If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), you can record real in-widget interactions — clicks and typing — directly into a test case as `interact` steps.
 
-When you arm record mode on a test case, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
+Click **Start recording** in the *In the app* section of the case form. The button is disabled until the prompt is non-empty — type a prompt first, then start recording. Once active, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
+
+Recorded interact steps and widget assertions appear in the **In the app** section in the order they were captured. This order is also the execution order — the runner processes steps sequentially and stops at the first failure.
 
 ### Widget `ui/message` follow-ups
 
@@ -76,6 +162,25 @@ The Chat/Trace tab renders widget tool calls as the same app-attributed cards yo
 
 - **JSON tool results** — Tool outputs that are JSON (including JSON wrapped in a text block) render as structured data in the card's **Data** tab rather than as a raw text block. There is no duplicate result row below the card.
 - **Frozen widget diagnostics** — When a widget was captured as a screenshot during the run, the card's **Sandbox** tab shows the recorded policy: resource URI, CSP declaration, permissions, permissive mode, and any console errors or blocked requests logged during that run. Live-only fields (sandbox attributes, lifecycle, view origin) show as **not recorded** because they are not available after the run completes.
+
+### The screen recording
+
+The **Replay** tab plays a recording of the run beside the screenshot
+filmstrip, and every step that captured an offset seeks the video to it.
+
+Unattended runs on a hosted browser are recorded at **15 fps**. Idle time is
+held rather than dropped, so the file's duration matches the run's wall clock
+even when the page sat still for a minute — the frame count above the player
+is the number of *distinct* frames, which is small on a page that did not move
+and is not a sign of a fault.
+
+Recordings stop at **60 MiB** and say so. A capped take is a complete, playable
+*beginning* of the run, not a corrupt file and not the whole run: the player
+shows a **Stopped at the size limit** badge, so a twelve-minute recording of a
+forty-minute run is never mistaken for the run itself. Long runs that routinely
+cap are the signal to shorten the case rather than to distrust the video.
+
+A run that never uses a browser tool records nothing, and costs nothing.
 
 
 
@@ -99,6 +204,18 @@ Set defaults on the suite; override per case with **inherit** (use suite default
 | **Token budget under N** | Total token usage stayed below the cap. | Case only |
 
 When a check is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other checks are turn-scopable.
+
+<Note>
+**A per-trial token ceiling is not a spend control.** It is set without seeing
+what the suite normally uses, it is in a unit that is not comparable across
+models, and it goes stale on every prompt or model change. `Token budget under
+N` remains a valid check and keeps working wherever it is already authored,
+but for spend, two things replace it: [cost on every run](#cost), which shows
+what a suite actually costs, and `--max-cost-increase-percent`, which fails CI
+when a change makes the suite more expensive relative to its own baseline. For
+a ceiling on what the whole organization may spend, see the [spend
+budget](/hosted/overview#spend-budget).
+</Note>
 
 ### Harness system tools in assertion dropdowns
 
@@ -165,6 +282,10 @@ A run needs three things, all picked from the suite header:
 <Tip>
   If **Run all** is disabled, a connected server is missing, no models are selected, or a run for that suite is already in progress. The header pickers will tell you which condition applies.
 </Tip>
+
+### Run review
+
+When you click **Run** on a suite from the **Suites** landing list, a review sheet opens before the run launches. It shows the suite's current configuration — clients, iteration count, and settings — so you can confirm or adjust before committing. The run only starts when you confirm in the sheet; closing it leaves the suite unchanged.
 
 ### Pre-run credit estimate
 
@@ -254,6 +375,37 @@ The metric label shown in run headers, the runs table, charts, and hero stats fo
 
 On a mixed suite (one that has received both CI and playground runs), the label updates to match the most recent run. Legacy runs without a recorded source fall back to the suite's creation source.
 
+### CI-managed suites
+
+A suite marked **CI** keeps its configuration somewhere other than this app —
+either a suite file committed to a repository (`mcpjam cloud eval run --file`), or a
+suite the MCPJam SDK created when it reported a run. Those suites are
+**read-only here**: name, settings, environments, schedule, models, skills,
+execution config and cases all refuse edits, in the app and through the API
+alike, with `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`.
+
+One caller is exempt, and only one: the suite file itself. A write that sends
+the suite's own `suite.id` as `declaredSuiteId` is the file syncing what it
+already declares, so it is allowed through — which is how `mcpjam cloud eval
+run --file` keeps working. Naming any other id refuses exactly as loudly as
+naming none, so it is not a way in.
+
+That is not a permission problem, and no role change lifts it. The reason is
+that an edit made here would not survive: the file sync deletes any case the
+file does not name, and an SDK suite's cases are regenerated from the next
+report. Before this, such an edit lasted until the next CI run and then vanished
+with nothing recording why.
+
+Two ways forward, both offered on the suite:
+
+- **Edit the test file** in your repository and run it again. The suite keeps its
+  history and its CI wiring.
+- **Duplicate to edit.** The copy is app-owned and fully editable, and CI can
+  never target it.
+
+Everything that is not a configuration edit is unchanged: run it, replay a run,
+compare runs, waive a gate, read every setting.
+
 ### CI-synced test cases
 
 Test cases written by a CI report carry a **CI** chip next to their name in the cases list. Opening such a case in the editor shows a notice: "Synced from CI — the next CI report may overwrite manual edits." Manual edits to these cases are preserved until the next CI ingest, which may overwrite them.
@@ -266,13 +418,13 @@ The delete button in the suite switcher is hidden for any suite that is CI-activ
 
 ### Suite navigation
 
-Opening the Evaluate tab takes you directly into the most recent suite's dashboard. To switch suites, use the **suite switcher** in the breadcrumb — it lists all your suites and lets you jump to one, create a new suite, or delete the current suite. If no suites exist yet, the empty-state create prompt appears instead.
+Opening the Evaluate tab lands on the **Runs** view by default, showing run history across all suites with grouped runs, pass-rate changes, and filters. Switch to **Suites** using the header tabs to see the suites overview. To drill into a suite, click its name; the **suite switcher** in the breadcrumb lets you jump between suites, create a new one, or delete the current one. If no suites exist yet, the same empty-state hero appears on both the Runs and Suites tabs — click **Eval my server: &lt;server name&gt;** to open the create-suite form with that server and a name already filled in, or click **Create suite** to start blank.
 
 ### Suite view
 
 - **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
 - **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole.
-- **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown.
+- **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown. The table shows **Date** first, then **Run**; suite group rows show a date range and a chevron on the left. Client/model pairings are shown inline per run row; when there are more than two, a **+N** badge appears — hover it to see all pairings in a tooltip.
 - **Cases tab** — every case with its latest verdict and a quick replay button.
 - **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
 
@@ -280,13 +432,70 @@ When you run a suite against multiple host configurations at once, the Runs list
 
 The **Runs / Cases** segmented control switches between the run history list and the test-cases overview. **Performance by Model** in the run summary appears only when more than one model was used. To compare two runs, check their boxes in the Runs list and click **Compare**.
 
+Client and server filters on the **Suites** tab live in the column headers rather than as separate filter pills.
+
+#### Where a run came from
+
+Every run carries an origin badge — **UI**, **SDK**, **API**, **CLI**, **MCP**,
+**GitHub**, **Scheduled** — and the Source chips above the Runs table filter on
+it. The filter runs on the server, so an empty result means the project has no
+such runs, not that they were further down the list.
+
+Two different things go into that badge, and the distinction matters if you are
+using it as evidence:
+
+- **Stamped.** The platform decides a run's `source` itself, and a caller cannot
+  set it. That is what makes it trustworthy — and also why everything launched
+  through the public API is `API`: from the server's side, a CLI run, a GitHub
+  Actions job and an agent's MCP call are all API calls.
+- **Declared.** The launching process says which of those it is. The CLI declares
+  `CLI` (or `GitHub` inside an Actions job, with the commit and job filling the
+  CI column); the hosted MCP worker declares `MCP` and names the calling agent.
+  Hovering a declared badge says so.
+
+A declared origin is a label, not proof, so nothing is authorized on the
+strength of it. Alongside both, the platform records the credential the request
+actually authenticated with — which is what lets the **Run by** column say *via
+API key ····3f9a* under the key owner's name, rather than making an automated
+launch look like that person clicking Run.
+
 #### Cross-host matrix
 
 When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
 
+### Cost
+
+Every iteration carries the MCPJam-billed cost of the model work it did,
+priced when the trial finished and stamped with the rates used — so a run's
+cost does not move later when prices change. It rolls up onto cases, runs and
+the metric strip.
+
+A dash (`—`) means **no cost was observed**, never that the trial was free:
+
+| Why | What you see |
+|---|---|
+| Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
+| A harness run (Claude Code, Codex, Cursor) | A harness turn mixes models — sub-agents on cheaper models under a main one — and the trial's totals carry no per-model split, so no honest single figure exists. Harness cost arrives with billed attribution. |
+| No token usage reported | Nothing to price. |
+
+A cost your own SDK runner reported is shown but labelled **runner** — it is
+real, but MCPJam neither computed nor verified it.
+
+When only some of a run's trials were priced, the total says so. That
+distinction matters most in CI: a run that looks cheaper may simply be a run
+we priced less of, which is why the compare API reports coverage counts
+alongside the cost and a cost gate treats partial coverage as non-gateable
+rather than as a pass.
+
 ### Run view
 
-- **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
+The run header shows a **HOLD** or **SHIP** pill for each client/model pairing in the launch. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client that did not pass, and a **SHIP** pill lists every client that did. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. The **Compare runs** and **Run again** buttons are visible directly in the header.
+
+Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts. When a previous launch exists, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. The first launch of a suite shows no deltas.
+
+The **Test cases** section (formerly the matrix) lists every test case with a search box and **Status**, **Client**, and **Model** filters on one row. There is no master pass/fail bar or "RUN RESULTS" eyebrow label in this section.
+
+- **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
   - **Missing** — expected tool calls that were never made
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
@@ -371,6 +580,15 @@ The downloaded file is named `mcpjam-traces-<scope>-<timestamp>.json`.
 ## What to author first
 
 If you're new to the surface, the shortest useful loop is:
+
+1. Connect a server in the Inspector.
+2. On the **Suites** or **Runs** landing, click **Eval my server: &lt;server name&gt;** to open the create-suite form with that server and a name already filled in.
+3. Review the generated cases, confirm the clients and iteration count, then click **Run** to launch.
+4. Open the failures, and decide whether the bug is in your server, your prompt, or the model.
+
+New suites are named **Suite 1**, **Suite 2**, and so on — the form picks the next unused number automatically. You can rename the suite at any time.
+
+Alternatively, click **Create suite** to start from a blank suite and author cases manually:
 
 1. Attach the server you're shipping.
 2. **Generate** a starting set of cases.

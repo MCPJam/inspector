@@ -9,13 +9,13 @@
   "runCompletedAt": 1700000100000,
   "catalogState": "loaded",
   "catalogHash": "hash_golden",
-  "sourceIterationCount": 11,
+  "sourceIterationCount": 14,
   "sourceMaxUpdatedAt": 1700000090000,
   "materializationState": "final",
   "createdAt": 1700000150000,
   "updatedAt": 1700000200000,
-  "totalTrials": 11,
-  "includedTrials": 8,
+  "totalTrials": 14,
+  "includedTrials": 11,
   "exclusions": {
     "cancelled": 1,
     "executionFailed": 1,
@@ -225,6 +225,131 @@
           }
         ],
         "unexpected": [],
+        "substitutions": []
+      }
+    },
+    {
+      "caseVariantKey": "case_c\u0000",
+      "caseKey": "case_c",
+      "routes": {
+        "population": "trial",
+        "totalTrials": 3,
+        "includedTrials": 3,
+        "exclusions": {},
+        "routes": [
+          {
+            "pathKey": "tool_a",
+            "trials": 1,
+            "passed": 1,
+            "failed": 0
+          },
+          {
+            "pathKey": "tool_a→tool_b",
+            "trials": 1,
+            "passed": 0,
+            "failed": 1
+          },
+          {
+            "pathKey": "tool_b",
+            "trials": 1,
+            "passed": 0,
+            "failed": 1
+          }
+        ],
+        "tags": {
+          "noToolCalled": {
+            "state": "measured",
+            "value": 0,
+            "numerator": 0,
+            "denominator": 3,
+            "exclusions": {}
+          },
+          "retried": {
+            "state": "measured",
+            "value": 0.6666666666666666,
+            "numerator": 2,
+            "denominator": 3,
+            "exclusions": {}
+          },
+          "looping": {
+            "state": "measured",
+            "value": 0,
+            "numerator": 0,
+            "denominator": 3,
+            "exclusions": {}
+          }
+        },
+        "loopedOn": [],
+        "endedWithQuestion": {
+          "state": "notMeasured",
+          "value": null,
+          "numerator": 0,
+          "denominator": 0,
+          "exclusions": {}
+        },
+        "frictionSignals": {
+          "identifierSurfacedUnused": {
+            "state": "measured",
+            "value": 0.5,
+            "numerator": 1,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "searchRepeatedAfterIdentifier": {
+            "state": "measured",
+            "value": 0,
+            "numerator": 0,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "identicalRetry": {
+            "state": "measured",
+            "value": 0.6666666666666666,
+            "numerator": 2,
+            "denominator": 3,
+            "exclusions": {}
+          },
+          "changedRetry": {
+            "state": "measured",
+            "value": 0,
+            "numerator": 0,
+            "denominator": 3,
+            "exclusions": {}
+          },
+          "paginationContinuation": {
+            "state": "measured",
+            "value": 0,
+            "numerator": 0,
+            "denominator": 3,
+            "exclusions": {}
+          }
+        }
+      },
+      "mismatch": {
+        "state": "measured",
+        "gradeableTrials": 3,
+        "expected": [
+          {
+            "tool": "tool_a",
+            "expectedIn": 2,
+            "notCalledIn": 0,
+            "notCalledInFailed": 0
+          },
+          {
+            "tool": "tool_b",
+            "expectedIn": 1,
+            "notCalledIn": 0,
+            "notCalledInFailed": 0
+          }
+        ],
+        "unexpected": [
+          {
+            "tool": "tool_b",
+            "calledIn": 1,
+            "calledInFailed": 1,
+            "catalog": "inCatalog"
+          }
+        ],
         "substitutions": []
       }
     }

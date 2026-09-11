@@ -1,3 +1,4 @@
+import { EVAL_DESCRIBE_ONLY_AGENT, evalAgentScopeSchema, evalAgentSystemPrompt, EVAL_AGENT_TOOL_NAMES } from "../../../shared/eval-agent-scope.js";
 /**
  * MCPJam Agent — POST /api/web/mcpjam-agent
  *
@@ -103,6 +104,7 @@ import {
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 
 const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
@@ -272,6 +274,7 @@ const mcpjamAgentSchema = z
       .passthrough(),
     chatSessionId: z.string().min(1),
     projectId: z.string().min(1),
+    evalScope: evalAgentScopeSchema.optional(),
     systemPrompt: z.string().optional(),
     temperature: z.number().optional(),
     requireToolApproval: z.boolean().optional(),
@@ -305,7 +308,17 @@ mcpjamAgent.post("/", async (c) => {
       throw error;
     }
 
-    const platformToolsEnabled = agentPlatformToolsEnabled();
+    if (EVAL_DESCRIBE_ONLY_AGENT && body.evalScope && !body.evalScope.caseId) {
+      return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Ask MCPJam is available only from Describe.");
+    }
+    if (body.evalScope && body.evalScope.projectId !== body.projectId) {
+      return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval scope does not match the active project.");
+    }
+    if (body.chatSessionId.startsWith("eval-") && !body.evalScope) {
+      return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval sessions require an explicit scope.");
+    }
+    if (body.evalScope) validatedUiTools = validatedUiTools.filter(tool => EVAL_AGENT_TOOL_NAMES.has(tool.name));
+    const platformToolsEnabled = !body.evalScope && agentPlatformToolsEnabled();
 
     manager = new MCPClientManager(
       {
@@ -317,6 +330,13 @@ mcpjamAgent.post("/", async (c) => {
       },
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+        // These three URLs are ours, not a caller's, so this is uniformity
+        // rather than a fix: after MJ-001 no hosted manager is constructed
+        // without the guard, which is what lets the static check forbid a bare
+        // `new MCPClientManager` in hosted route files. `MCPJAM_*_MCP_URL`
+        // overrides are classified at boot so a private one fails there
+        // (`assertHostedFirstPartyMcpUrls`) instead of mid-turn.
+        baseFetch: hostedMcpBaseFetch(),
         rpcLogger: rpcCollector.rpcLogger,
         httpLogger: rpcCollector.httpLogger,
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
@@ -334,7 +354,7 @@ mcpjamAgent.post("/", async (c) => {
       // manager, so the later prepare doesn't repeat the round trips. With
       // all down, the turn still runs on web_search + the bare model.
       const mcp = manager;
-      const candidateServerIds = platformToolsEnabled
+      const candidateServerIds = body.evalScope ? [] : platformToolsEnabled
         ? [DOCS_SERVER_ID, SPEC_SERVER_ID, PLATFORM_SERVER_ID]
         : [DOCS_SERVER_ID, SPEC_SERVER_ID];
       const preflights = await Promise.allSettled(
@@ -401,8 +421,8 @@ mcpjamAgent.post("/", async (c) => {
       // job is to behave exactly like the old one. A rollback that leaves
       // the new prompt in place is not a rollback.
       const effectiveSystemPrompt = [
-        body.systemPrompt,
-        platformToolsEnabled ? undefined : AGENT_IDENTITY_PROMPT,
+        body.evalScope ? evalAgentSystemPrompt(body.evalScope) : body.systemPrompt,
+        platformToolsEnabled || body.evalScope ? undefined : AGENT_IDENTITY_PROMPT,
         specToolsAvailable ? SPEC_DOCS_PROMPT : undefined,
         ambientContextPrompt,
       ]
@@ -410,7 +430,7 @@ mcpjamAgent.post("/", async (c) => {
         .join("\n\n");
 
       const authHeader = c.req.header("authorization");
-      const builtInTools = authHeader
+      const builtInTools = authHeader && !body.evalScope
         ? resolveHostTools(
             { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
             {
@@ -564,6 +584,7 @@ mcpjamAgent.post("/widget-content", async (c) => {
       { [PLATFORM_SERVER_ID]: buildPlatformConfig(bearerToken) },
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+        baseFetch: hostedMcpBaseFetch(),
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       }
     );

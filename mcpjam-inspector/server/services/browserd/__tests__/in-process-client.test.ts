@@ -4,7 +4,10 @@ import { ChromiumDriver } from "../daemon/chromium-driver";
 import { HandoffLease } from "../daemon/lease";
 import { createInProcessBrowserdClient } from "../in-process-client";
 import { fakeContext, type FakePage } from "../daemon/__tests__/fake-page";
-import type { BrowserCommand } from "../protocol";
+import {
+  BROWSERD_PROTOCOL_VERSION,
+  type BrowserCommand,
+} from "../protocol";
 
 function stackWith(init: { pages?: FakePage[] } = {}) {
   const lease = new HandoffLease();
@@ -52,7 +55,13 @@ describe("in-process browserd client", () => {
   it("echoes a bootId the caller can pin a retry to", async () => {
     const { client, stack } = stackWith();
     const status = await client.status();
-    expect(status).toEqual({ kind: "ok", bootId: stack.bootId });
+    expect(status).toMatchObject({
+      kind: "ok",
+      bootId: stack.bootId,
+      // The in-process client speaks the same status as the hosted one, so the
+      // reuse ladder reads one shape whichever engine answered.
+      protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    });
 
     const stale = await client.sendCommand(
       command({ kind: "observe", mode: "url" }),

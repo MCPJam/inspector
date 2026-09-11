@@ -183,7 +183,7 @@ export function JudgeGatePanel({
             </p>
           ) : null}
           {judge?.acknowledgement?.current ? (
-            <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">
+            <p className="mt-0.5 text-[11px] text-warning">
               Gating on an owner&apos;s acknowledgement rather than on
               calibration.
             </p>

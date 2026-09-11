@@ -724,6 +724,28 @@ export type EvalCaseVerdictAggregation = z.infer<
   typeof evalCaseVerdictAggregationSchema
 >;
 
+/**
+ * How many passing trials a case needs to meet its threshold.
+ *
+ * The case decision rule above is `passRate.value >= effectivePassThreshold`
+ * (equality passes at every threshold including `0` and `1`). This restates
+ * that rule as a count for display: the smallest `k` such that
+ * `k / configuredTrials` meets the threshold. It does not decide a verdict —
+ * a case with zero eligible trials is inconclusive regardless of this number.
+ */
+export function casePassesNeeded(
+  configuredTrials: number,
+  passThreshold: number
+): number {
+  if (!Number.isFinite(configuredTrials) || configuredTrials <= 0) return 0;
+  if (!Number.isFinite(passThreshold) || passThreshold <= 0) return 0;
+  const n = Math.floor(configuredTrials);
+  const threshold = Math.min(1, passThreshold);
+  let needed = 0;
+  while (needed < n && needed / n < threshold) needed += 1;
+  return needed;
+}
+
 // ── the decision ─────────────────────────────────────────────────────────────
 /** Suite-level trial totals and the two validity rates measured over them. */
 export const evalVerdictValidityStructuralSchema = z

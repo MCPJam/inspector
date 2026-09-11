@@ -189,6 +189,16 @@ describe("browser Playground turn records its execution target", () => {
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.com");
   });
 
+  it.each([
+    { kind: "host", hostId: "host-1" },
+    { kind: "environment", environmentId: "env-1" },
+    { kind: "adhoc" },
+  ])("persists the resolved $kind destination", async (executionTarget) => {
+    expect(await persistedResumeConfig({ executionTarget })).toMatchObject({
+      executionTarget,
+    });
+  });
+
   it("persists the environment it ran in as a resume pin", async () => {
     const resumeConfig = await persistedResumeConfig({
       environmentId: "env_abc123",

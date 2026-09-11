@@ -380,6 +380,35 @@ describe("classifyTurnFailure (exported single source of truth)", () => {
     );
   });
 
+  it("folds a bare 429 / 'too many requests' into rate_limited", () => {
+    // The local-BYOK path re-throws the provider's sentence with no code and
+    // no HTTP status appended, so a throttled user key arrives as prose only.
+    expect(classifyTurnFailure("429 Too Many Requests")).toBe("rate_limited");
+    expect(classifyTurnFailure("Anthropic returned Too Many Requests")).toBe(
+      "rate_limited",
+    );
+    // The wording a real throttle produces: the AI SDK retries three times and
+    // wraps the last provider error in a `RetryError`.
+    expect(
+      classifyTurnFailure(
+        "Failed after 3 attempts. Last error: Too Many Requests",
+      ),
+    ).toBe("rate_limited");
+  });
+
+  it("does NOT read a port or id that merely contains 429 as rate_limited", () => {
+    expect(classifyTurnFailure("connect ECONNREFUSED 127.0.0.1:4291")).toBe(
+      "failed",
+    );
+    expect(classifyTurnFailure("run 14290 aborted")).toBe("failed");
+    // The exact port, not just a longer one: `:429` is the whole number.
+    expect(classifyTurnFailure("connect ECONNREFUSED 127.0.0.1:429")).toBe(
+      "failed",
+    );
+    expect(classifyTurnFailure("listen EADDRINUSE 0.0.0.0:429")).toBe("failed");
+    expect(classifyTurnFailure("turn took 1.429 seconds")).toBe("failed");
+  });
+
   it("does NOT over-match 'capacity'/'recap'/'escape' as rate_limited", () => {
     // `cap` is word-anchored — a provider capacity error is a hard failure.
     expect(classifyTurnFailure("model capacity exceeded")).toBe("failed");
