@@ -219,10 +219,8 @@ describe("useUpdateNotification", () => {
     });
 
     it("removes listener on unmount", () => {
-      const {
-        mockRemoveUpdateStatusListener,
-        mockRemoveUpdateErrorListener,
-      } = setupElectronMock();
+      const { mockRemoveUpdateStatusListener, mockRemoveUpdateErrorListener } =
+        setupElectronMock();
 
       const { unmount } = renderHook(() => useUpdateNotification());
       unmount();
@@ -251,6 +249,42 @@ describe("useUpdateNotification", () => {
       act(() => {
         result.current.restartAndInstall();
       });
+    });
+
+    it("reports the restart as requested so the caller can disable its button", () => {
+      // INSPECTOR-ELECTRON-GT. The main process does not change the status
+      // when it starts an install from `downloaded` — it hands off to Electron
+      // and the app tears down — so only the click distinguishes "ready to
+      // install" from "installing", and without this the button stays live
+      // through the teardown and a second click fires quitAndInstall twice.
+      setupElectronMock();
+
+      const { result } = renderHook(() => useUpdateNotification());
+      expect(result.current.restartRequested).toBe(false);
+
+      act(() => {
+        result.current.restartAndInstall();
+      });
+
+      expect(result.current.restartRequested).toBe(true);
+    });
+
+    it("re-arms after the install fails so the user can try again", () => {
+      const { mockOnUpdateError } = setupElectronMock();
+
+      const { result } = renderHook(() => useUpdateNotification());
+      act(() => {
+        result.current.restartAndInstall();
+      });
+      expect(result.current.restartRequested).toBe(true);
+
+      // The main process broadcasts `update-error` when quitAndInstall throws
+      // (a mis-signed staged build, a corrupted Squirrel staging dir).
+      act(() => {
+        mockOnUpdateError.mock.calls[0][0]();
+      });
+
+      expect(result.current.restartRequested).toBe(false);
     });
   });
 

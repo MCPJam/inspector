@@ -3,6 +3,7 @@
 exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`] = `
 {
   "agentcore/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -43,6 +44,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "agentcore/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -83,6 +85,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "chatgpt/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -264,6 +267,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "chatgpt/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -445,6 +449,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "claude-code/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -494,6 +499,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "claude-code/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -543,6 +549,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "claude-desktop/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -896,6 +903,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "claude-desktop/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -1249,6 +1257,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "claude/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -1606,6 +1615,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "claude/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -1963,6 +1973,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "cline/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {},
@@ -1998,6 +2009,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "cline/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {},
@@ -2033,6 +2045,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "codex/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -2218,6 +2231,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "codex/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -2403,6 +2417,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "copilot/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -2531,6 +2546,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "copilot/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -2659,6 +2675,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "cursor-cli/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -2702,6 +2719,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "cursor-cli/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -2745,6 +2763,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "cursor/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -2874,6 +2893,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "cursor/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -3003,6 +3023,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "goose/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -3252,6 +3273,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "goose/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -3501,6 +3523,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "mcpjam/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -3580,7 +3603,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "--color-background-success": "oklch(0.3 0.07 152)",
           "--color-background-tertiary": "oklch(0.213 0.0078 95.4245)",
           "--color-background-warning": "oklch(0.3 0.09 55)",
-          "--color-border-danger": "oklch(0.74 0.18 25.331)",
+          "--color-border-danger": "oklch(0.6368 0.2078 25.3313)",
           "--color-border-disabled": "oklch(0.4336 0.0113 100.2195 / 0.4)",
           "--color-border-ghost": "oklch(0.3618 0.0101 106.8928 / 0)",
           "--color-border-info": "oklch(0.7 0.18 259)",
@@ -3590,14 +3613,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "--color-border-success": "oklch(0.78 0.16 152)",
           "--color-border-tertiary": "oklch(0.3618 0.0101 106.8928 / 0.6)",
           "--color-border-warning": "oklch(0.6724 0.1308 38.7559)",
-          "--color-ring-danger": "oklch(0.74 0.18 25.331 / 0.5)",
+          "--color-ring-danger": "oklch(0.6368 0.2078 25.3313 / 0.5)",
           "--color-ring-info": "oklch(0.7 0.18 259 / 0.5)",
           "--color-ring-inverse": "oklch(0.2679 0.0036 106.6427 / 0.7)",
           "--color-ring-primary": "oklch(0.6724 0.1308 38.7559)",
           "--color-ring-secondary": "oklch(0.7713 0.0169 99.0657 / 0.5)",
           "--color-ring-success": "oklch(0.78 0.16 152 / 0.5)",
           "--color-ring-warning": "oklch(0.83 0.17 85.3 / 0.5)",
-          "--color-text-danger": "oklch(0.74 0.18 25.331)",
+          "--color-text-danger": "oklch(0.6368 0.2078 25.3313)",
           "--color-text-disabled": "oklch(0.8074 0.0142 93.0137 / 0.5)",
           "--color-text-ghost": "oklch(0.7713 0.0169 99.0657 / 0.5)",
           "--color-text-info": "oklch(0.7 0.18 259)",
@@ -3691,6 +3714,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "mcpjam/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -3770,7 +3794,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "--color-background-success": "oklch(0.94 0.05 152.5)",
           "--color-background-tertiary": "oklch(0.9245 0.0138 92.9892)",
           "--color-background-warning": "oklch(0.95 0.06 85.3)",
-          "--color-border-danger": "oklch(0.627 0.208 25.331)",
+          "--color-border-danger": "oklch(0.6261 0.2077 25.2698)",
           "--color-border-disabled": "oklch(0.7621 0.0156 98.3528 / 0.4)",
           "--color-border-ghost": "oklch(0.8847 0.0069 97.3627 / 0)",
           "--color-border-info": "oklch(0.623 0.214 259)",
@@ -3780,14 +3804,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "--color-border-success": "oklch(0.696 0.17 152.5)",
           "--color-border-tertiary": "oklch(0.8847 0.0069 97.3627 / 0.6)",
           "--color-border-warning": "oklch(0.6832 0.1382 38.744)",
-          "--color-ring-danger": "oklch(0.627 0.208 25.331 / 0.5)",
+          "--color-ring-danger": "oklch(0.6261 0.2077 25.2698 / 0.5)",
           "--color-ring-info": "oklch(0.623 0.214 259 / 0.5)",
           "--color-ring-inverse": "oklch(1 0 0 / 0.7)",
           "--color-ring-primary": "oklch(0.6171 0.1375 39.0427)",
           "--color-ring-secondary": "oklch(0.6059 0.0075 97.4233 / 0.5)",
           "--color-ring-success": "oklch(0.696 0.17 152.5 / 0.5)",
           "--color-ring-warning": "oklch(0.769 0.188 85.3 / 0.5)",
-          "--color-text-danger": "oklch(0.627 0.208 25.331)",
+          "--color-text-danger": "oklch(0.6261 0.2077 25.2698)",
           "--color-text-disabled": "oklch(0.3438 0.0269 95.7226 / 0.5)",
           "--color-text-ghost": "oklch(0.6059 0.0075 97.4233 / 0.5)",
           "--color-text-info": "oklch(0.623 0.214 259)",
@@ -3881,6 +3905,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "mistral/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -4059,6 +4084,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "mistral/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -4237,6 +4263,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "n8n/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {},
@@ -4272,6 +4299,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "n8n/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {},
@@ -4307,6 +4335,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "notion/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {},
@@ -4342,6 +4371,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "notion/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {},
@@ -4377,6 +4407,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 1,
   },
   "perplexity/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {},
@@ -4412,6 +4443,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "perplexity/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {},
@@ -4447,6 +4479,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "slack/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -4680,6 +4713,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "slack/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -4913,6 +4947,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "vscode/dark": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
@@ -5180,6 +5215,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "temperature": 0.7,
   },
   "vscode/light": {
+    "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {

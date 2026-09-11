@@ -14,7 +14,11 @@ import {
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { isMCPJamModelLimitError } from "@/lib/mcpjam-limit";
+import {
+  isMCPJamModelLimitError,
+  isSpendBudgetReachedCode,
+  SPEND_BUDGET_REACHED_MESSAGE,
+} from "@/lib/mcpjam-limit";
 import { cn } from "@/lib/utils";
 
 interface ErrorBoxProps {
@@ -88,13 +92,19 @@ export function ErrorBox({
   // user-driven retry), then everything else falls back to the existing
   // model-limit / generic error rendering.
   const isWalletLocked = walletLocked === true;
+  // The org's admin-set spend budget refused. Terminal like walletLocked
+  // (no retry, no top-up) but with a different fix, so it gets its own
+  // priority slot rather than borrowing the wallet's copy.
+  const isSpendBudgetReached = !isWalletLocked && isSpendBudgetReachedCode(code);
   const isConcurrencyThrottle =
     !isWalletLocked &&
+    !isSpendBudgetReached &&
     code === "user_rate_limit" &&
     limitKind === "concurrency";
 
   const isMCPJamModelLimit =
     !isWalletLocked &&
+    !isSpendBudgetReached &&
     !isConcurrencyThrottle &&
     isMCPJamModelLimitError({
       code,
@@ -163,6 +173,33 @@ export function ErrorBox({
                 Reach out to support
               </a>{" "}
               to get back in.
+            </p>
+          </div>
+          {onResetChat ? (
+            <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" onClick={onResetChat}>
+                Reset chat
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  if (isSpendBudgetReached) {
+    // An owner or admin capped what this organization may spend per billing
+    // window, and the window is spent. Buying credits does not clear it and
+    // retrying sends the same request into the same cap, so this banner
+    // offers neither — it names the one thing that does work.
+    return (
+      <div className="flex flex-col gap-3 border rounded p-4 border-warning bg-warning/20 text-warning-foreground">
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="h-6 w-6 flex-shrink-0 text-warning" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium leading-6">Spend budget reached</p>
+            <p className="text-sm leading-6 opacity-90">
+              {SPEND_BUDGET_REACHED_MESSAGE}
             </p>
           </div>
           {onResetChat ? (
