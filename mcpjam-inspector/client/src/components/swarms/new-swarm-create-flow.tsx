@@ -65,8 +65,9 @@ import {
 } from "@/components/swarms/new-swarm-flow-draft";
 import {
   DEFAULT_SWARM_INTENSITY,
+  MAX_SWARM_ITERATIONS,
+  MIN_SWARM_ITERATIONS,
   SWARM_INTENSITY_PRESETS,
-  type SwarmPushIntensity,
 } from "@/components/swarms/swarm-intensity";
 import {
   SOLO_HERO_CHARACTERS,
@@ -513,9 +514,26 @@ export function NewSwarmCreateFlow({
   const [materializing, setMaterializing] = useState(false);
   /** "Add existing personas" popover. */
   const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
-  const [pushIntensity, setPushIntensity] = useState<SwarmPushIntensity>(
-    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY,
+  // Sizes GENERATION only — how many personas and goals the Describe step
+  // asks for. Confirm no longer picks it: iterations is the control there.
+  const pushIntensity = restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
+  // Seeded from the preset that generated the slate, then owned by the user:
+  // Confirm sets it directly, so the preset never overwrites it afterwards.
+  const [iterations, setIterations] = useState<number>(
+    restoredDraft?.iterations ??
+      SWARM_INTENSITY_PRESETS[DEFAULT_SWARM_INTENSITY].sessionsPerTarget,
   );
+  const handleIterationsChange = useCallback((value: number) => {
+    // A cleared number input reports NaN; hold the last good count rather
+    // than quoting a swarm of zero conversations.
+    if (!Number.isFinite(value)) return;
+    setIterations(
+      Math.min(
+        MAX_SWARM_ITERATIONS,
+        Math.max(MIN_SWARM_ITERATIONS, Math.round(value)),
+      ),
+    );
+  }, []);
   const [reusedIds, setReusedIds] = useState<string[]>(
     restoredDraft?.reusedIds ?? [],
   );
@@ -764,8 +782,8 @@ export function NewSwarmCreateFlow({
     generating || materializing || serverBlock !== null || !hasSwarmName
       ? false
       : wantsGenerate
-      ? canGenerate
-      : reusedIds.length > 0;
+        ? canGenerate
+        : reusedIds.length > 0;
 
   /** Why the primary button is disabled, or a short summary when it isn't. */
   const continueHint = (() => {
@@ -1194,7 +1212,7 @@ export function NewSwarmCreateFlow({
                 ? { environmentIds: envPayload.environmentIds }
                 : {}),
               config: {
-                sessionsPerTarget: preset.sessionsPerTarget,
+                sessionsPerTarget: iterations,
                 maxTurns: preset.maxTurns,
               },
               ...(payload.judgeConfig
@@ -1333,7 +1351,7 @@ export function NewSwarmCreateFlow({
                   hostIds: envPayload!.hostIds,
                   environmentIds: envPayload!.environmentIds,
                   config: {
-                    sessionsPerTarget: preset.sessionsPerTarget,
+                    sessionsPerTarget: iterations,
                     maxTurns: preset.maxTurns,
                   },
                   ...(payload.judgeConfig
@@ -1511,6 +1529,7 @@ export function NewSwarmCreateFlow({
       onCreateJourney,
       onCreatePersona,
       onUpdateJourney,
+      iterations,
       personaList.length,
       preset,
       proposed,
@@ -1576,6 +1595,7 @@ export function NewSwarmCreateFlow({
       resolvedEnvironments,
       createdEnvOverlay,
       pushIntensity,
+      iterations,
       reusedIds,
       proposed,
       launchedRuns,
@@ -1594,6 +1614,7 @@ export function NewSwarmCreateFlow({
     draft,
     generatingSince,
     hasResumableWork,
+    iterations,
     nameEdited,
     launchedRuns,
     projectId,
@@ -1648,10 +1669,7 @@ export function NewSwarmCreateFlow({
 
   const leaveRunning = useCallback(() => {
     clearNewSwarmFlowDraft();
-    onDone(
-      launchedRunLabelsRef.current,
-      persistedRunGroupIdRef.current,
-    );
+    onDone(launchedRunLabelsRef.current, persistedRunGroupIdRef.current);
   }, [onDone]);
 
   // Labels ride along exactly as they do on `leaveRunning`: this is a leave
@@ -1835,9 +1853,8 @@ export function NewSwarmCreateFlow({
             onRemoveReused={(personaId) =>
               setReusedIds((ids) => ids.filter((id) => id !== personaId))
             }
-            preset={preset}
-            pushIntensity={pushIntensity}
-            onPushIntensityChange={setPushIntensity}
+            iterations={iterations}
+            onIterationsChange={handleIterationsChange}
             environmentCount={environmentIds.length}
             environmentLabels={environmentLabels}
             launching={launching}

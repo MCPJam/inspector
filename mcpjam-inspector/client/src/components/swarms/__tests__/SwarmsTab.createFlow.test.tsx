@@ -996,9 +996,11 @@ describe("SwarmsTab — New swarm create flow", () => {
       screen.getAllByLabelText(/Watch Refund Chaser/).length,
     ).toBeGreaterThan(0);
     expect(screen.getByText(/Running: Refund a charge/)).toBeInTheDocument();
-    const swarmRunGroupId = (launchJourneyRunMock.mock.calls[0]![0] as {
-      swarmRunGroupId: string;
-    }).swarmRunGroupId;
+    const swarmRunGroupId = (
+      launchJourneyRunMock.mock.calls[0]![0] as {
+        swarmRunGroupId: string;
+      }
+    ).swarmRunGroupId;
     fireEvent.click(screen.getByTestId("new-swarm-running-open-findings"));
     await waitFor(() =>
       expect(navigateMock).toHaveBeenCalledWith(`/swarms/${swarmRunGroupId}`),
@@ -1210,7 +1212,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       () =>
         new Promise((_resolve, reject) => {
           rejectGenerate = reject;
-        })
+        }),
     );
     openDescribe();
     fillDescribe();
@@ -1218,21 +1220,21 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await waitFor(() =>
       expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
-        /generating/i
-      )
+        /generating/i,
+      ),
     );
 
     rejectGenerate(
       // `limitDialogRaised` is what `postGenerate` sets once the dialog has
       // taken the error over.
-      new SwarmGenerateError(429, "Daily MCPJam model limit reached.", true)
+      new SwarmGenerateError(429, "Daily MCPJam model limit reached.", true),
     );
 
     // Back to idle, so the catch has run and had its chance to set a message.
     await waitFor(() =>
       expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
-        "Continue"
-      )
+        "Continue",
+      ),
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -1518,13 +1520,14 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/1 session/i);
+    ).toHaveTextContent(/1 conversation/i);
   });
 
-  it("keeps a reused journey's own sessions when the intensity changes", async () => {
-    // SUTB-26: a preset may seed a field, never overwrite one the user set.
-    // This journey was saved at 3 sessions and launch does not rewrite a
-    // shared journey's config, so pushing harder must not re-price it.
+  it("keeps a reused journey's own sessions when iterations change", async () => {
+    // SUTB-26: the counter sizes the goals this swarm creates, never one the
+    // user already saved. This journey was saved at 3 sessions and launch does
+    // not rewrite a shared journey's config, so raising iterations must not
+    // re-price it.
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -1542,12 +1545,12 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-reused-personas");
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/3 sessions/i);
+    ).toHaveTextContent(/3 conversations/i);
 
-    fireEvent.click(screen.getByRole("radio", { name: /launch ready/i }));
+    fireEvent.click(screen.getByRole("button", { name: /more iterations/i }));
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/3 sessions/i);
+    ).toHaveTextContent(/3 conversations/i);
 
     fireEvent.click(
       screen.getByRole("button", { name: /^back to describe$/i }),
@@ -1557,7 +1560,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/3 sessions/i);
+    ).toHaveTextContent(/3 conversations/i);
   });
 
   it("surfaces a rejected environment override as a failed launch", async () => {
@@ -2093,16 +2096,16 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     // fail if a later change skipped resolveTargets or routed to the other
     // bail-out. The ensureAdhoc call confirms the ad-hoc resolve path ran at all
     // rather than the preflight guard short-circuiting it.
-    expect(await screen.findByRole("alert")).toHaveTextContent("resolve failed");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "resolve failed",
+    );
     expect(ensureAdhocEnvironmentsMock).toHaveBeenCalled();
     expect(
       screen.queryByTestId("new-swarm-running-step"),
     ).not.toBeInTheDocument();
     // The whole point of moving the latch ahead of the await: the finally
     // re-enabled the exit instead of stranding it disabled with no way out.
-    expect(
-      screen.getByTestId("new-swarm-back-to-swarms"),
-    ).not.toBeDisabled();
+    expect(screen.getByTestId("new-swarm-back-to-swarms")).not.toBeDisabled();
   });
 
   it("names the swarm from the date suggestion, not from the description paragraph", async () => {
@@ -2127,24 +2130,21 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     openDescribe();
     expect(screen.queryByTestId("new-swarm-name")).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("new-swarm-push-intensity"),
+      screen.queryByTestId("new-swarm-iterations"),
     ).not.toBeInTheDocument();
   });
 
-  it("asks for session scope on Confirm after generation", async () => {
+  it("asks for iterations on Confirm after generation", async () => {
     openDescribe();
     fillDescribe();
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
 
-    expect(screen.getByTestId("new-swarm-push-intensity")).toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-iterations")).toHaveValue(1);
+    expect(screen.getByLabelText(/iterations per goal/i)).toBeVisible();
     expect(
-      screen.getByText(/select the total number of sessions for the swarm/i),
-    ).toBeVisible();
-    expect(screen.getByRole("radio", { name: /quick look/i })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+      screen.getByTestId("new-swarm-conversation-equation"),
+    ).toHaveTextContent(/1 iteration/i);
   });
 
   it("lists attached personas as removable rows, not as a checklist", () => {
@@ -2216,7 +2216,7 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the redesigned title and session scope on Confirm", async () => {
+  it("shows the redesigned title and the iterations control on Confirm", async () => {
     await reachConfirm();
 
     expect(
@@ -2229,7 +2229,7 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
         /select a user persona for details, or remove anything that doesn.{0,3}t fit/i,
       ),
     ).toBeVisible();
-    expect(screen.getByTestId("new-swarm-push-intensity")).toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-iterations")).toBeInTheDocument();
     expect(
       screen.queryByText(/run \d+ sessions? total in this swarm/i),
     ).not.toBeInTheDocument();

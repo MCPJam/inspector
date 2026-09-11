@@ -7,12 +7,13 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Minus, Plus, Trash2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -25,11 +26,8 @@ import {
 } from "@/components/swarms/persona-pixel-avatar";
 import {
   estimateLaunchSessions,
-  SWARM_INTENSITY_ORDER,
-  SWARM_INTENSITY_PRESETS,
-  estimateSwarmSessions,
-  type SwarmIntensityPreset,
-  type SwarmPushIntensity,
+  MAX_SWARM_ITERATIONS,
+  MIN_SWARM_ITERATIONS,
 } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
@@ -99,8 +97,7 @@ export type ConfirmLaunchPayload = {
 };
 
 type SelectedPersona =
-  | { kind: "proposed"; key: string }
-  | { kind: "reused"; id: string };
+  { kind: "proposed"; key: string } | { kind: "reused"; id: string };
 
 type ReusedGoal = {
   journeyId: string;
@@ -132,7 +129,7 @@ export type ReusedPersonaDraft = {
 export function diffReusedDraft(
   draft: ReusedPersonaDraft | undefined,
   persona: ReusedPersona,
-  goals: readonly ReusedGoal[]
+  goals: readonly ReusedGoal[],
 ): {
   patch: { name?: string; role?: string; notes?: string };
   goalEdits: { journeyId: string; goal: string }[];
@@ -225,7 +222,7 @@ function CompactPersonaCard({
         onClick={onSelect}
         className={cn(
           "flex w-full cursor-pointer items-start gap-4 rounded-xl border border-border/50 bg-muted/15 p-4 text-left transition-colors hover:bg-muted/25",
-          muted && "opacity-70"
+          muted && "opacity-70",
         )}
       >
         <PersonaPixelAvatar
@@ -238,7 +235,7 @@ function CompactPersonaCard({
           <p
             className={cn(
               "mb-1 line-clamp-1 text-sm font-semibold leading-5",
-              muted ? "text-muted-foreground" : "text-foreground"
+              muted ? "text-muted-foreground" : "text-foreground",
             )}
           >
             {role ? `${name} | ${role}` : name}
@@ -539,7 +536,7 @@ function ReusedPersonaJourneyLoader({
 }) {
   const journeys = useQuery(
     SWARM_QUERIES.listJourneysByPersona as any,
-    { personaRefId: persona._id } as any
+    { personaRefId: persona._id } as any,
   ) as
     | {
         _id: string;
@@ -579,7 +576,7 @@ function ReusedPersonaJourneyLoader({
       })),
       graded: journeys.some(
         (journey) =>
-          (journey.rubric && journey.rubric.length > 0) || journey.judgeConfig
+          (journey.rubric && journey.rubric.length > 0) || journey.judgeConfig,
       ),
     };
   }, [
@@ -649,9 +646,8 @@ export function NewSwarmConfirmStep({
   onProposedChange,
   reusedPersonas,
   onRemoveReused,
-  preset,
-  pushIntensity,
-  onPushIntensityChange,
+  iterations,
+  onIterationsChange,
   environmentCount,
   environmentLabels,
   launching,
@@ -668,9 +664,9 @@ export function NewSwarmConfirmStep({
   onProposedChange: (next: ProposedPersona[]) => void;
   reusedPersonas: ReusedPersona[];
   onRemoveReused: (personaId: string) => void;
-  preset: SwarmIntensityPreset;
-  pushIntensity: SwarmPushIntensity;
-  onPushIntensityChange: (value: SwarmPushIntensity) => void;
+  /** Iterations per goal. Stamped onto every journey this swarm creates. */
+  iterations: number;
+  onIterationsChange: (value: number) => void;
   environmentCount: number;
   /** Display names of the environments this launch will fan out across. */
   environmentLabels: string[];
@@ -690,11 +686,12 @@ export function NewSwarmConfirmStep({
    */
   onSaveReusedPersona: (
     personaRefId: string,
-    patch: { name?: string; role?: string; notes?: string }
+    patch: { name?: string; role?: string; notes?: string },
   ) => Promise<void>;
   /** Persist an edit to an existing journey's goal text. */
   onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
 }) {
+  const iterationsId = useId();
   const [selected, setSelected] = useState<SelectedPersona | null>(null);
   const [reusedResolved, setReusedResolved] = useState<
     Record<string, ReusedResolved>
@@ -718,7 +715,7 @@ export function NewSwarmConfirmStep({
                 // so an id-only comparison would keep quoting a stale number
                 // after someone edits that goal's sessions mid-flow.
                 entry.sessionsPerTarget ===
-                  nextTargets[index]?.sessionsPerTarget
+                  nextTargets[index]?.sessionsPerTarget,
             ));
         const goalsMatch =
           previous != null &&
@@ -726,7 +723,7 @@ export function NewSwarmConfirmStep({
           previous.goals.every(
             (goal, index) =>
               goal.journeyId === data.goals[index]?.journeyId &&
-              goal.label === data.goals[index]?.label
+              goal.label === data.goals[index]?.label,
           );
         if (
           previous &&
@@ -739,7 +736,7 @@ export function NewSwarmConfirmStep({
         return { ...current, [personaId]: data };
       });
     },
-    []
+    [],
   );
 
   const newLocalKey = (prefix: string) =>
@@ -749,17 +746,19 @@ export function NewSwarmConfirmStep({
 
   const patchProposed = (
     key: string,
-    patch: (persona: ProposedPersona) => ProposedPersona
+    patch: (persona: ProposedPersona) => ProposedPersona,
   ) => {
     onProposedChange(
-      proposed.map((persona) => (persona.key === key ? patch(persona) : persona))
+      proposed.map((persona) =>
+        persona.key === key ? patch(persona) : persona,
+      ),
     );
   };
 
   const removePersona = (key: string) => {
     onProposedChange(proposed.filter((persona) => persona.key !== key));
     setSelected((current) =>
-      current?.kind === "proposed" && current.key === key ? null : current
+      current?.kind === "proposed" && current.key === key ? null : current,
     );
   };
   const removeJourney = (personaKey: string, journeyKey: string) => {
@@ -767,7 +766,9 @@ export function NewSwarmConfirmStep({
     // authoring goals. Launch simply skips personas with no journeys.
     patchProposed(personaKey, (persona) => ({
       ...persona,
-      journeys: persona.journeys.filter((journey) => journey.key !== journeyKey),
+      journeys: persona.journeys.filter(
+        (journey) => journey.key !== journeyKey,
+      ),
     }));
   };
   const addPersona = () => {
@@ -799,22 +800,22 @@ export function NewSwarmConfirmStep({
   const removeReused = (personaId: string) => {
     onRemoveReused(personaId);
     setSelected((current) =>
-      current?.kind === "reused" && current.id === personaId ? null : current
+      current?.kind === "reused" && current.id === personaId ? null : current,
     );
   };
 
   const reusedPending = reusedPersonas.some(
-    (persona) => (reusedResolved[persona._id]?.targets ?? null) === null
+    (persona) => (reusedResolved[persona._id]?.targets ?? null) === null,
   );
   const activeReusedTargets = reusedPersonas.flatMap(
-    (persona) => reusedResolved[persona._id]?.targets ?? []
+    (persona) => reusedResolved[persona._id]?.targets ?? [],
   );
   // Empty draft goals stay visible for authoring but don't count toward
   // launch readiness — Create & launch only persists trimmed goals.
   const newJourneyCount = proposed.reduce(
     (sum, persona) =>
       sum + persona.journeys.filter((journey) => journey.goal.trim()).length,
-    0
+    0,
   );
   const journeyCount = newJourneyCount + activeReusedTargets.length;
   // Every journey this launch fans out, not just the newly authored ones —
@@ -822,22 +823,26 @@ export function NewSwarmConfirmStep({
   // journeys are counted at THEIR OWN sessions, which is what launch runs
   // them at; the preset only sizes the journeys this swarm creates.
   const launchSessionEstimate = estimateLaunchSessions({
-    preset,
+    iterations,
     newJourneyCount,
     reusedSessionsPerTarget: activeReusedTargets.map(
-      (target) => target.sessionsPerTarget ?? null
+      (target) => target.sessionsPerTarget ?? null,
     ),
     environmentCount,
   });
+  // The equation multiplies the goals this control sizes; reused goals keep
+  // their own saved iterations, so they are called out beside it instead.
+  const reusedCount = activeReusedTargets.length;
+  const fanoutEnvironmentCount = Math.max(1, environmentCount);
   const canLaunch = journeyCount > 0 && !launching && !reusedPending;
 
   const selectedProposed =
     selected?.kind === "proposed"
-      ? proposed.find((persona) => persona.key === selected.key) ?? null
+      ? (proposed.find((persona) => persona.key === selected.key) ?? null)
       : null;
   const selectedReused =
     selected?.kind === "reused"
-      ? reusedPersonas.find((persona) => persona._id === selected.id) ?? null
+      ? (reusedPersonas.find((persona) => persona._id === selected.id) ?? null)
       : null;
 
   /**
@@ -860,19 +865,17 @@ export function NewSwarmConfirmStep({
       goals: ReusedGoal[],
       patch: Partial<{ name: string; role: string; notes: string }> & {
         goal?: { journeyId: string; text: string };
-      }
+      },
     ) => {
       setReusedDrafts((drafts) => {
-        const current =
-          drafts[persona._id] ??
-          {
-            name: persona.name,
-            role: persona.role,
-            notes: persona.notes ?? "",
-            goals: Object.fromEntries(
-              goals.map((goal) => [goal.journeyId, goal.label])
-            ),
-          };
+        const current = drafts[persona._id] ?? {
+          name: persona.name,
+          role: persona.role,
+          notes: persona.notes ?? "",
+          goals: Object.fromEntries(
+            goals.map((goal) => [goal.journeyId, goal.label]),
+          ),
+        };
         const next = {
           ...current,
           ...(patch.name === undefined ? {} : { name: patch.name }),
@@ -885,7 +888,7 @@ export function NewSwarmConfirmStep({
         return { ...drafts, [persona._id]: next };
       });
     },
-    []
+    [],
   );
 
   const saveReused = useCallback(
@@ -922,13 +925,13 @@ export function NewSwarmConfirmStep({
         toast.error(
           error instanceof Error
             ? error.message
-            : "Couldn't save this persona. Your changes are still here."
+            : "Couldn't save this persona. Your changes are still here.",
         );
       } finally {
         setSavingReusedId(null);
       }
     },
-    [onSaveReusedGoal, onSaveReusedPersona, reusedDrafts]
+    [onSaveReusedGoal, onSaveReusedPersona, reusedDrafts],
   );
 
   /**
@@ -945,7 +948,11 @@ export function NewSwarmConfirmStep({
    */
   const discardReused = useCallback(
     (persona: ReusedPersona, goals: ReusedGoal[]) => {
-      const { dirty } = diffReusedDraft(reusedDrafts[persona._id], persona, goals);
+      const { dirty } = diffReusedDraft(
+        reusedDrafts[persona._id],
+        persona,
+        goals,
+      );
       if (dirty) {
         setReusedDrafts((drafts) => {
           const { [persona._id]: _discarded, ...rest } = drafts;
@@ -955,16 +962,16 @@ export function NewSwarmConfirmStep({
       }
       setSelected(null);
     },
-    [reusedDrafts]
+    [reusedDrafts],
   );
 
   const personasAvailableToAdd = useMemo(
     () =>
       availablePersonas.filter(
         (persona) =>
-          !reusedPersonas.some((chosen) => chosen._id === persona._id)
+          !reusedPersonas.some((chosen) => chosen._id === persona._id),
       ),
-    [availablePersonas, reusedPersonas]
+    [availablePersonas, reusedPersonas],
   );
 
   // Drop stale selection if the persona was removed elsewhere.
@@ -992,10 +999,13 @@ export function NewSwarmConfirmStep({
             Select a user persona for details, or remove anything that
             doesn&rsquo;t fit.
           </p>
-          <p className="sr-only" data-testid="new-swarm-launch-session-estimate">
+          <p
+            className="sr-only"
+            data-testid="new-swarm-launch-session-estimate"
+          >
             This launch will run {launchSessionEstimate}{" "}
-            {launchSessionEstimate === 1 ? "session" : "sessions"} total across{" "}
-            {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
+            {launchSessionEstimate === 1 ? "conversation" : "conversations"}{" "}
+            total across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
           </p>
           {environmentLabels.length > 0 && proposed.length > 0 ? (
             <p
@@ -1061,7 +1071,7 @@ export function NewSwarmConfirmStep({
                           journeys: current.journeys.map((journey) =>
                             journey.key === goalKey
                               ? { ...journey, goal }
-                              : journey
+                              : journey,
                           ),
                         }))
                       }
@@ -1116,8 +1126,7 @@ export function NewSwarmConfirmStep({
                   return (
                     <li key={persona._id}>
                       {(() => {
-                        const goals =
-                          reusedResolved[persona._id]?.goals ?? [];
+                        const goals = reusedResolved[persona._id]?.goals ?? [];
                         const draft = reusedDrafts[persona._id];
                         const goalText = (goal: ReusedGoal) =>
                           draft?.goals[goal.journeyId] ?? goal.label;
@@ -1133,8 +1142,8 @@ export function NewSwarmConfirmStep({
                             }))}
                             graded={reusedResolved[persona._id]?.graded}
                             loadingGoals={
-                              (reusedResolved[persona._id]?.targets ??
-                                null) === null
+                              (reusedResolved[persona._id]?.targets ?? null) ===
+                              null
                             }
                             avatarShape={persona.avatarShape}
                             avatarPalette={persona.avatarPalette}
@@ -1206,64 +1215,79 @@ export function NewSwarmConfirmStep({
 
         <div className="space-y-2">
           <div className="space-y-1">
-            <div
-              id="new-swarm-session-scope-label"
-              className="text-sm font-medium text-foreground"
+            <label
+              htmlFor={iterationsId}
+              className="block text-sm font-medium text-foreground"
             >
-              Select the total number of sessions for the swarm.
+              Iterations per goal
               <RequiredMark />
-            </div>
+            </label>
             <p className="text-sm leading-relaxed text-muted-foreground">
-              We will distribute your user personas equally across the total
-              number of sessions.
+              How many times each goal runs, in every environment you selected.
             </p>
           </div>
-          <div
-            role="radiogroup"
-            aria-labelledby="new-swarm-session-scope-label"
-            data-testid="new-swarm-push-intensity"
-            className="grid grid-cols-1 gap-1 rounded-xl bg-muted/50 p-1 sm:grid-cols-3"
-          >
-            {SWARM_INTENSITY_ORDER.map((value) => {
-              const option = SWARM_INTENSITY_PRESETS[value];
-              const selected = pushIntensity === value;
-              // Once a slate exists, the preset no longer sizes the swarm —
-              // the authored goals and reused targets do. Quote what THIS
-              // option would actually launch, not the preset's defaults.
-              const hasSlate = newJourneyCount + activeReusedTargets.length > 0;
-              const sessions = hasSlate
-                ? estimateLaunchSessions({
-                    preset: option,
-                    newJourneyCount,
-                    reusedSessionsPerTarget: activeReusedTargets.map(
-                      (target) => target.sessionsPerTarget ?? null
-                    ),
-                    environmentCount,
-                  })
-                : estimateSwarmSessions(option, environmentCount);
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => onPushIntensityChange(value)}
-                  className={cn(
-                    "rounded-lg px-3 py-2.5 text-left transition-colors",
-                    selected
-                      ? "bg-background shadow-sm ring-1 ring-border/60"
-                      : "hover:bg-background/60"
-                  )}
-                >
-                  <span className="block text-sm font-semibold text-foreground">
-                    {option.label}
-                  </span>
-                  <span className="mt-0.5 block text-sm leading-relaxed text-muted-foreground">
-                    {sessions} sessions
-                  </span>
-                </button>
-              );
-            })}
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="Fewer iterations"
+              disabled={launching || iterations <= MIN_SWARM_ITERATIONS}
+              onClick={() => onIterationsChange(iterations - 1)}
+            >
+              <Minus className="size-4" />
+            </Button>
+            <Input
+              id={iterationsId}
+              type="number"
+              min={MIN_SWARM_ITERATIONS}
+              max={MAX_SWARM_ITERATIONS}
+              step={1}
+              value={iterations}
+              disabled={launching}
+              data-testid="new-swarm-iterations"
+              onChange={(event) =>
+                onIterationsChange(Number(event.target.value))
+              }
+              className="w-20 text-center font-mono"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="More iterations"
+              disabled={launching || iterations >= MAX_SWARM_ITERATIONS}
+              onClick={() => onIterationsChange(iterations + 1)}
+            >
+              <Plus className="size-4" />
+            </Button>
+          </div>
+          <div className="flex items-baseline justify-between gap-4 rounded-xl bg-muted/50 px-3 py-2.5">
+            <div>
+              <p
+                className="text-sm leading-relaxed text-muted-foreground"
+                data-testid="new-swarm-conversation-equation"
+              >
+                {newJourneyCount} {newJourneyCount === 1 ? "goal" : "goals"} ×{" "}
+                {iterations} {iterations === 1 ? "iteration" : "iterations"} ×{" "}
+                {fanoutEnvironmentCount}{" "}
+                {fanoutEnvironmentCount === 1 ? "environment" : "environments"}
+              </p>
+              {reusedCount > 0 ? (
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Plus {reusedCount} reused{" "}
+                  {reusedCount === 1 ? "goal" : "goals"}, counted at the
+                  iterations already saved on{" "}
+                  {reusedCount === 1 ? "it" : "them"}.
+                </p>
+              ) : null}
+            </div>
+            <p className="shrink-0 font-mono text-xl font-semibold text-foreground">
+              {launchSessionEstimate.toLocaleString()}
+              <span className="ml-1 font-sans text-sm font-normal text-muted-foreground">
+                conversations
+              </span>
+            </p>
           </div>
         </div>
 
