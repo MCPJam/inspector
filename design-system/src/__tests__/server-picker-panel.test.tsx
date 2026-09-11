@@ -163,15 +163,29 @@ describe("ServerPickerPanel — Servers tab", () => {
 });
 
 describe("the create form and an unanswered catalog", () => {
-  it("does not open with nothing to tick", () => {
+  /**
+   * Two reasons to refuse, asserted apart.
+   *
+   * The single test these replace set `servers={[]}` AND `catalogKnown={false}`
+   * at once, so `servers.length === 0` alone kept the button disabled and the
+   * `catalogKnown` half of the guard could be deleted with the suite still
+   * green. Each case below leaves the other condition satisfied, so it fails
+   * when — and only when — its own reason stops being read.
+   */
+  it("stays shut while the catalog is unanswered, though rows are on screen", () => {
+    // Servers come from `panelProps()`, so the list is NOT empty: the only
+    // thing left to disable this is `catalogKnown`.
     render(
-      <ServerPickerPanel
-        {...panelProps()}
-        tab="groups"
-        servers={[]}
-        catalogKnown={false}
-      />,
+      <ServerPickerPanel {...panelProps()} tab="groups" catalogKnown={false} />,
     );
+    expect(
+      screen.getByRole("button", { name: /Create new group/ }),
+    ).toBeDisabled();
+  });
+
+  it("stays shut when the catalog answered with nothing to tick", () => {
+    // The mirror: the catalog HAS answered, and answered empty.
+    render(<ServerPickerPanel {...panelProps()} tab="groups" servers={[]} />);
     expect(
       screen.getByRole("button", { name: /Create new group/ }),
     ).toBeDisabled();

@@ -1497,6 +1497,14 @@ describe("ServerPicker — the consequences of a delete", () => {
     );
 
     await waitFor(() => expect(mockState.deleteSpy).toHaveBeenCalled());
+    // WHICH row, not merely that a delete happened. Without this the picker
+    // can send the selection's id for every click — deleting the row the user
+    // is standing on instead of the one they aimed at — and the whole suite
+    // stays green, because the sibling test that does check an argument picks
+    // the selected row and so cannot tell the two apart.
+    expect(mockState.deleteSpy).toHaveBeenCalledWith({
+      serverAttachmentId: "att_o",
+    });
   });
 
   it("stops holding a bridged row once it has been deleted", async () => {
