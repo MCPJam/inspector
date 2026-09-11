@@ -247,13 +247,12 @@ export function UserTestingScenarioDetail({
    * the existing sessions were an answer to.
    */
   const hasTesterSessions = (sessionCount ?? 0) > 0;
+  // One sentence, the same on both pills: the fact IS the reason, and someone
+  // who just pressed a control they cannot use wants to know why in the time
+  // a toast is on screen.
+  const SETUP_LOCKED = "This study already has sessions.";
   const setupLockedReason = hasTesterSessions
-    ? {
-        clients:
-          "This study already has sessions — changing its client would leave results that answered a different setup. Duplicate the study to test another client.",
-        servers:
-          "This study already has sessions — changing its servers would leave results that answered a different setup. Duplicate the study to test other servers.",
-      }
+    ? { clients: SETUP_LOCKED, servers: SETUP_LOCKED }
     : undefined;
   // Held closed until the NAMED list settles, like the create flow: the
   // resolver reuses a matching named environment, and resolving against an

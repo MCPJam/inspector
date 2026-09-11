@@ -1298,12 +1298,9 @@ describe("UserTestingScenarioDetail — the setup of a study with results", () =
     );
 
     const locks = composerProps().lockedSlots;
-    // Each names ITS OWN control — someone who pressed the servers pill is
-    // asking about servers, and being told about clients is being answered
-    // about something else.
-    expect(locks?.clients).toMatch(/client/i);
-    expect(locks?.servers).toMatch(/servers/i);
-    expect(locks?.clients).toMatch(/already has sessions/i);
+    // One sentence, and the same one on both: the fact is the reason.
+    expect(locks?.clients).toBe("This study already has sessions.");
+    expect(locks?.servers).toBe("This study already has sessions.");
   });
 
   it("leaves a study nobody has run fully editable", () => {
