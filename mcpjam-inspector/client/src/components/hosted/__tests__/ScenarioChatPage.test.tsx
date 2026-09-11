@@ -2321,5 +2321,43 @@ describe("ScenarioChatPage", () => {
       ).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "MCPJam" })).toBeInTheDocument();
     });
+
+    it("routes consent Leave back to the study on the preview surface", async () => {
+      writeSurfaceSession("preview");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Leave" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toBeNull();
+      expect(window.location.pathname).toBe("/user-testing/sbx_1");
+      expect(
+        screen.queryByTestId("scenario-recording-declined"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps the terminal declined panel for a share-link tester who Leaves", async () => {
+      writeSurfaceSession("share_link");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Leave" }),
+      );
+
+      expect(
+        await screen.findByTestId("scenario-recording-declined"),
+      ).toBeInTheDocument();
+      expect(onExit).not.toHaveBeenCalled();
+      expect(readScenarioSession()?.scenarioId).toBe("sbx_1");
+      expect(window.location.pathname).toBe("/");
+    });
   });
 });

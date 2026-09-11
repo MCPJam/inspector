@@ -1153,7 +1153,9 @@ export function ScenarioChatPage({
           showConsent={introGate.showConsent}
           hasTasks={hasScenarioTasks}
           onAcceptConsent={introGate.acceptConsent}
-          onDeclineConsent={introGate.declineConsent}
+          onDeclineConsent={
+            isPreviewSurface ? handleReturnToStudy : introGate.declineConsent
+          }
           showAuthPanel={introGate.showAuthPanel}
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}
