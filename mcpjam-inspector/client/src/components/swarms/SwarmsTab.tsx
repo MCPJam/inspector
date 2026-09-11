@@ -105,6 +105,7 @@ import {
 } from "@/components/swarms/journey-list";
 import { GenerateSwarmDialog } from "@/components/swarms/GenerateSwarmDialog";
 import { NewSwarmCreateFlow } from "@/components/swarms/new-swarm-create-flow";
+import { clearNewSwarmFlowDraft } from "@/components/swarms/new-swarm-flow-draft";
 import {
   formatJourneyRelativeTime,
   journeyRunDisplayStatus,
@@ -305,6 +306,13 @@ export function SwarmsTab({
   const onRunningPersonasChange = useCallback((ids: string[]) => {
     setRunningPersonaIds(ids);
   }, []);
+  // "Create new swarm" always starts a fresh flow. The flow's sessionStorage
+  // draft survives leaving via the sidebar (only its own Leave/Cancel clear it),
+  // and `/swarms/new` would otherwise resume a previous launch's Running step.
+  const startNewSwarm = useCallback(() => {
+    clearNewSwarmFlowDraft();
+    navigate(swarmsCreatePath);
+  }, [navigate]);
   // Restore a copied session deep-link (`/swarms?persona=&run=&host=&session=`).
   // Parse ONCE on mount so later user navigation isn't clobbered by the URL.
   const deepLink = useMemo(
@@ -1066,7 +1074,7 @@ export function SwarmsTab({
         viewOptions={SWARM_VIEW_OPTIONS}
         onViewModeChange={setViewMode}
         creatingSwarm={creatingPersona}
-        onNewSwarm={() => navigate(swarmsCreatePath)}
+        onNewSwarm={startNewSwarm}
       />
       <div className="flex min-h-0 flex-1">
         {viewMode === "overview" ? (
@@ -1076,7 +1084,7 @@ export function SwarmsTab({
               hasPersonas={
                 personas === undefined ? undefined : personas.length > 0
               }
-              onNewSwarm={() => navigate(swarmsCreatePath)}
+              onNewSwarm={startNewSwarm}
               onOpenSwarm={handleOpenSwarm}
             />
           </main>
@@ -1301,9 +1309,7 @@ export function SwarmsTab({
                   Loading…
                 </div>
               ) : personas.length === 0 ? (
-                <SwarmsEmptyHero
-                  onNewSwarm={() => navigate(swarmsCreatePath)}
-                />
+                <SwarmsEmptyHero onNewSwarm={startNewSwarm} />
               ) : !selectedPersona ? (
                 <JourneyNetworkBackdrop />
               ) : (
