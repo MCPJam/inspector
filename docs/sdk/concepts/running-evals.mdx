@@ -176,26 +176,41 @@ See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporti
 
 Predicates express richer pass/fail criteria than tool-call matching — without an LLM judge. Each predicate is a pure function of the iteration transcript, so it produces the same verdict every time, which makes it safe to use as a CI release gate.
 
-Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff **all** predicates pass. An absent or empty list means no predicate gate.
+Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff every **gating** predicate passes — an advisory one is recorded and never fails the case, and neither does one that could not be scored. An absent or empty list means no predicate gate.
 
-The twelve built-in predicate types:
+The built-in predicate types. **Measures** is the link of the [user-value chain](/sdk/concepts/user-value-chain) the check is filed at — nothing files at Connection or Discovery, which the runner decides for you:
 
-| Type | What it checks |
-|------|----------------|
-| `toolCalledWith` | A specific tool was called with matching args (partial/exact/ignore mode) |
-| `toolCalledAtLeastOnce` | A tool was called at least once |
-| `toolNeverCalled` | A forbidden tool was never called |
-| `firstToolWas` | The first tool call in the transcript was a specific tool |
-| `responseContains` | The final assistant message contains a substring |
-| `responseMatches` | The final assistant message matches a regex |
-| `noToolErrors` | No tool produced an error (MCP `isError` or transport failure) |
-| `finalAssistantMessageNonEmpty` | The final assistant message is non-empty |
-| `tokenBudgetUnder` | Total token usage is strictly under a budget |
-| `widgetRendered` | At least one MCP App widget rendered successfully (optionally scoped to one tool) |
-| `widgetRenderLatencyUnder` | Every rendered widget mounted in strictly under a millisecond budget |
-| `widgetNoConsoleErrors` | No widget render captured console errors |
+| Type | Measures | What it checks |
+|------|----------|----------------|
+| `toolCalledWith` | Selection | A specific tool was called with matching args (partial/exact/ignore mode) |
+| `toolCalledAtLeastOnce` | Selection | A tool was called at least once |
+| `toolNeverCalled` | Selection | A forbidden tool was never called |
+| `onlyToolsCalled` | Selection | Every tool called was in an allowed set; an empty set claims no tool was called |
+| `firstToolWas` | Selection | The first tool call in the transcript was a specific tool |
+| `responseContains` | User value | The final assistant message contains a substring |
+| `responseMatches` | User value | The final assistant message matches a regex |
+| `noToolErrors` | Response | No tool produced an error (MCP `isError` or transport failure) |
+| `finalAssistantMessageNonEmpty` | User value | The final assistant message is non-empty |
+| `tokenBudgetUnder` | User value | Total token usage is strictly under a budget |
+| `widgetRendered` | User value | At least one MCP App widget rendered successfully (optionally scoped to one tool) |
+| `widgetRenderLatencyUnder` | User value | Every rendered widget mounted in strictly under a millisecond budget |
+| `widgetNoConsoleErrors` | User value | No widget render captured console errors |
+| `turnCountUnder` | User value | The iteration used strictly fewer than N user turns |
+| `noEndingQuestion` | User value | **Observation.** The final message does not end with a question. Warn/Report only |
+| `toolLatencyUnder` | Response | Every observed call settled under a millisecond ceiling |
+| `toolResultContains` | Response | A tool result contains a substring |
+| `toolResultMatchesSchema` | Response | Every tool result matches an authored JSON Schema (any JSON root) |
+| `toolResultSizeUnder` | Response | Every tool result is under a byte ceiling, measured before our storage cap |
+| `argumentsMatchToolSchema` | Tool call | Every call's arguments validate against the tool's declared inputSchema |
+| `noRepeatedIdenticalCall` | Tool call | **Observation.** No identical call repeated back-to-back. Warn/Report only |
+| `toolCallCountUnder` | Selection | Strictly fewer than N tool calls |
+| `toolCalledBefore` | Selection | Every call to one tool was preceded by a call to another |
+| `noDeprecatedToolCalled` | Selection | **Observation.** No called tool's description marks it deprecated. Warn/Report only |
+| `noDestructiveToolCalled` | Selection | No called tool declares `destructiveHint` |
+| `toolErrorNamesInput` | Response | **Observation.** Tool errors name an input key or a sent value. Warn/Report only |
+| `fullPageHasContinuation` | Response | **Observation.** Full pages carry continuation metadata. Warn/Report only |
 
-When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass — a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example.
+When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass — a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example, and [The user-value chain](/sdk/concepts/user-value-chain) for what a set of checks leaves unmeasured.
 
 ### Suite Results
 

@@ -19,7 +19,10 @@ export {
 export {
   DEFAULT_PLATFORM_API_BASE_URL,
   PlatformApiClient,
+  RUN_LAUNCH_HEADERS,
   type PlatformApiClientOptions,
+  type PlatformCiMetadataOption,
+  type PlatformRunLauncherOption,
 } from "./client.js";
 
 export type {
@@ -105,6 +108,9 @@ export type {
   PlatformEvalCaseModel,
   PlatformEvalCasesGenerated,
   PlatformEvalStep,
+  PlatformEvalStepEvidence,
+  PlatformEvalStepResult,
+  PlatformEvalReplayVideoMeta,
   PlatformEvalIteration,
   PlatformOpenAIReadinessStartBody,
   PlatformReadinessKind,
@@ -131,6 +137,7 @@ export type {
   PlatformEvalDescriptionExperimentProposal,
   PlatformEvalDescriptionExperimentPlan,
   PlatformEvalStageAnalytics,
+  PlatformEvalRunGate,
   PlatformGateWaiver,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
@@ -167,6 +174,8 @@ export type {
   PlatformEvalRunGroupEntry,
   PlatformEvalRunGroupTarget,
   PlatformEvalRunEnvironment,
+  PlatformEvalRunLauncher,
+  PlatformEvalRunAttribution,
   PlatformEvalRunDisclosure,
   PlatformDisclosureRailDestination,
   PlatformManagedRailDisclosure,
@@ -196,6 +205,8 @@ export type {
   PlatformEvalSuiteHost,
   PlatformEvalSuiteSchedule,
   PlatformEvalSuiteSettings,
+  PlatformEvalSuiteGoalCompletionJudge,
+  PlatformEvalSuiteGroundednessJudge,
   PlatformEvalSuiteComputerEnvironment,
   PlatformEnvironment,
   PlatformEnvironmentSecretSelection,
@@ -213,6 +224,9 @@ export type {
   PlatformPersonaDeleted,
   PlatformSecret,
   PlatformSecretDeleted,
+  PlatformCostCoverage,
+  PlatformCostCoverageSide,
+  PlatformSpendBudget,
   PlatformTraceDestination,
   PlatformTraceDestinationBackfillJob,
   PlatformTraceDestinationDeleted,
@@ -336,6 +350,8 @@ export {
   createTunnelOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   deleteImageOperation,
@@ -371,7 +387,9 @@ export {
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
   getEvalDescriptionExperimentOperation,
@@ -750,7 +768,9 @@ export {
   type CompareEvalRunResult,
   type GetEvalRunResult,
   type GetEvalRunStageAnalyticsResult,
+  type GetEvalRunGateResult,
   type GetEvalRunRouteFactsResult,
+  type GetEvalRunServerFactsResult,
   type ProposeEvalDescriptionRewriteInput,
   type ProposeEvalDescriptionRewriteResult,
   type StartEvalDescriptionExperimentInput,
@@ -805,3 +825,11 @@ export {
   type CollectScreenshotsOptions,
   type StepScreenshot,
 } from "./step-evidence.js";
+
+export type { PlatformBrowserToolPolicy, PlatformSessionBrowserInput, PlatformBrowserScreenshot, PlatformSessionBrowser, PlatformSessionBrowserOpened, PlatformSessionBrowserCommand, PlatformSessionBrowserResult, PlatformSessionBrowserTrace, PlatformSessionBrowserOperation, PlatformSessionBrowserOperationResult } from "./types.js";
+
+export { driveChatSessionBrowserOperation, observeChatSessionBrowserOperation, type DriveChatSessionBrowserInput, type ObserveChatSessionBrowserInput } from "./operations.js";
+export { collectSessionScreenshots } from "./browser-evidence.js";
+
+export { platformBrowserToolPolicySchema } from "./browser-policy.js";
+export type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";

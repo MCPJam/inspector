@@ -310,7 +310,7 @@ describe("reasonCount", () => {
     expect(drawn).toHaveLength(FAILURE_FOLD_PER_STAGE + 1);
     expect(reasonCount(folded)).toBe(drawn.length);
     expect(failureGroupsHeader(folded).summary).toBe(
-      `${members.length} failed trials, ${FAILURE_FOLD_PER_STAGE + 1} reasons`,
+      `${members.length} failed iterations, ${FAILURE_FOLD_PER_STAGE + 1} reasons`,
     );
   });
 
@@ -391,7 +391,7 @@ describe("failureGroupsHeader", () => {
       }),
     );
     expect(header.summary).toBe(
-      "60 failed trials, 2 reasons · 10 more not drawn",
+      "60 failed iterations, 2 reasons · 10 more not drawn",
     );
     expect(header.summary).not.toContain("\n");
   });
@@ -431,7 +431,7 @@ describe("failureGroupsHeader", () => {
         ],
       }),
     );
-    expect(header.summary).toBe("14 failed trials, 3 reasons");
+    expect(header.summary).toBe("14 failed iterations, 3 reasons");
     expect(header.noveltyLabel).toBeNull();
   });
 
@@ -470,7 +470,7 @@ describe("failureGroupsHeader", () => {
         ],
       }),
     );
-    expect(header.summary).toBe("14 failed trials, 3 reasons");
+    expect(header.summary).toBe("14 failed iterations, 3 reasons");
     expect(header.noveltyLabel).toBe("1 new");
   });
 });

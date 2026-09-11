@@ -71,6 +71,16 @@ const APP_ONLY: Readonly<Record<string, string>> = {
     "Publishes the guest-token public keys. The standalone server serves this from the hosted deployment's Convex surface instead, so mounting it here would be a second, divergent source for the same key set.",
 };
 
+/**
+ * Registrations that live in ONE entry point on purpose — same contract as the
+ * path maps above: an entry here is a decision, with the reason, not a way to
+ * quiet the test.
+ */
+const INDEX_ONLY_REGISTRATIONS: Readonly<Record<string, string>> = {
+  registerBrowserController:
+    "Records the control plane's own origin so the local browser's egress guard can refuse a self-dial. It needs the BOUND port, which app.ts never learns — the embedder picks it. Electron registers it in src/main.ts right after serve(), and any other embedder must do the same.",
+};
+
 describe("server/index.ts <-> server/app.ts parity", () => {
   const indexSource = read("index.ts");
   const appSource = read("app.ts");
@@ -128,13 +138,30 @@ describe("server/index.ts <-> server/app.ts parity", () => {
         "\n  "
       )}`
     ).toEqual([]);
+
+    const indexRegistrations = registrations(indexSource);
+    const appRegistrations = registrations(appSource);
+    const staleIndexOnlyRegistrations = Object.keys(INDEX_ONLY_REGISTRATIONS)
+      .filter(
+        (name) => !indexRegistrations.has(name) || appRegistrations.has(name)
+      )
+      .sort();
+    expect(
+      staleIndexOnlyRegistrations,
+      `INDEX_ONLY_REGISTRATIONS entries that are gone, or that app.ts now wires too — remove them:\n  ${staleIndexOnlyRegistrations.join(
+        "\n  "
+      )}`
+    ).toEqual([]);
   });
 
   it("wires the same register*/mount* calls", () => {
     const indexRegistrations = registrations(indexSource);
     const appRegistrations = registrations(appSource);
     const onlyIndex = [...indexRegistrations]
-      .filter((name) => !appRegistrations.has(name))
+      .filter(
+        (name) =>
+          !appRegistrations.has(name) && !(name in INDEX_ONLY_REGISTRATIONS)
+      )
       .sort();
     const onlyApp = [...appRegistrations]
       .filter((name) => !indexRegistrations.has(name))
