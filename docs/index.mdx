@@ -1,55 +1,53 @@
 ---
-title: "MCPJam"
-description: "Test, debug, and evaluate MCP servers, MCP apps, and ChatGPT apps."
+title: "MCPJam Docs"
+description: "Test, debug, and evaluate MCP servers, MCP apps, and ChatGPT apps across every major AI client."
 icon: "book-open"
 mode: "wide"
 ---
 
-MCPJam is the development platform for **MCP servers, MCP apps, and ChatGPT apps**. Debug every JSON-RPC message and OAuth exchange, run evaluations across multiple LLMs, and track accuracy over time, so you catch regressions before they ship.
+MCPJam is the open-source testing and evaluations platform for developers shipping **MCP servers, MCP apps, and ChatGPT apps**. Interactively test and debug tools, prompts, resources, and OAuth across 16 client configurations and 170+ LLMs, with every JSON-RPC message visible. Run evals on test cases, track accuracy over time, and gate regressions before they reach production.
 
 <Frame>
   <img
-    className="block"
-    src="/images/mcpjam-new-banner.png"
-    alt="MCPJam Inspector"
+    className="block dark:hidden"
+    src="/images/playground-hero.webp"
+    alt="MCPJam Inspector playground comparing one prompt across Claude, ChatGPT, and Copilot"
+    width="1000"
+  />
+  <img
+    className="hidden dark:block"
+    src="/images/playground-hero-dark.webp"
+    alt="MCPJam Inspector playground comparing one prompt across Claude, ChatGPT, and Copilot"
     width="1000"
   />
 </Frame>
 
-## Start in one command
+## Four ways to get started
 
-<CardGroup cols={3}>
-  <Card title="Web" icon="globe" href="https://app.mcpjam.com">
-    Open [app.mcpjam.com](https://app.mcpjam.com). HTTPS servers, no install, shareable links.
-  </Card>
-  <Card title="Terminal" icon="terminal">
-    ```bash
-    npx @mcpjam/inspector@latest
-    ```
-    HTTP/S and local STDIO.
-  </Card>
-  <Card title="CLI" icon="square-terminal" href="/cli/overview">
-    ```bash
-    npm i -g @mcpjam/cli
-    ```
-    Probe, doctor, OAuth, evals — in CI or your shell.
-  </Card>
-</CardGroup>
-
-## Four surfaces, one product
+Get started by testing with our hosted app, or test locally on your machine.
 
 <CardGroup cols={2}>
   <Card title="Inspector" icon="binoculars" href="/inspector/playground">
-    IDE-style workspace for MCP development. Chat with frontier models, invoke tools by hand, render widgets, compare hosts and models side by side.
+    **On your machine.** An IDE-style workspace for MCP development, with STDIO servers, tunneling, skills, and tasks. Tests local servers over STDIO and HTTP.
+    ```bash
+    npx @mcpjam/inspector@latest
+    ```
+    or [install the desktop app](/installation)
   </Card>
   <Card title="CLI" icon="terminal" href="/cli/overview">
-    Stateless tool for connectivity, OAuth, conformance, and tool execution. JUnit/JSON reporters built for CI.
+    **In your shell or CI.** Connectivity, OAuth, conformance, and tool runs with JUnit/JSON output. Tests local servers over STDIO (`--command`) and HTTP (`--url`).
+    ```bash
+    npm i -g @mcpjam/cli
+    ```
   </Card>
   <Card title="SDK" icon="code" href="/sdk">
-    `@mcpjam/sdk` — TypeScript toolkit for unit tests, e2e tests, and evals. Works inside Jest or Vitest.
+    **In your test suite.** Unit tests, e2e tests, and evals in TypeScript with Jest or Vitest. Spawns local STDIO servers or connects over HTTP.
+    ```bash
+    npm install @mcpjam/sdk
+    ```
   </Card>
-  <Card title="Hosted" icon="cloud" href="/hosted/overview">
-    Run MCPJam in the browser at [app.mcpjam.com](https://app.mcpjam.com). Share servers and sessions with your team.
+  <Card title="Hosted" icon="globe" href="https://app.mcpjam.com">
+    **In your browser.** Open [app.mcpjam.com](https://app.mcpjam.com), click **Add server**, and enter your server's URL. HTTPS only — STDIO and localhost servers need the Inspector.
   </Card>
 </CardGroup>
 

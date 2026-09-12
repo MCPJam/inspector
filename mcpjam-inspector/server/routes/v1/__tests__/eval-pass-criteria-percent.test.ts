@@ -107,7 +107,7 @@ describe("passCriteria is a bounded percent", () => {
       },
     });
     authorEvalSuiteMock.mockResolvedValue({
-      suiteId: "suite_new",
+      suiteId: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
       suiteName: "Fresh suite",
       caseUpsert: { committed: [{ name: "echo works" }], failed: [] },
     });
@@ -219,7 +219,7 @@ describe("passCriteria is a bounded percent", () => {
 
 describe("a v2 suite reports no dead legacy percent", () => {
   const V2_SUITE = {
-    _id: "suite_1",
+    _id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
     projectId: "p1",
     name: "Upgraded suite",
     // Left behind by the upgrade. `applyVerdictPolicySettings` ADDS
@@ -242,7 +242,7 @@ describe("a v2 suite reports no dead legacy percent", () => {
   });
 
   it("reports the live fraction and not the stale percent beside it", async () => {
-    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
@@ -259,7 +259,7 @@ describe("a v2 suite reports no dead legacy percent", () => {
       Promise.resolve(
         name === "testSuites:getTestSuite"
           ? {
-              _id: "suite_1",
+              _id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
               projectId: "p1",
               name: "Legacy suite",
               defaultPassCriteria: { minimumPassRate: 80 },
@@ -268,7 +268,7 @@ describe("a v2 suite reports no dead legacy percent", () => {
       ),
     );
 
-    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
