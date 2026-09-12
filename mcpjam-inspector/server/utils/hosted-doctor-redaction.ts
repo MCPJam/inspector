@@ -22,6 +22,18 @@ const HOSTED_TRANSPORT_FAILURE_DETAIL =
   "The inspector could not establish a connection to this server.";
 
 /**
+ * The one error code every redacted failure collapses to.
+ *
+ * `normalizeServerDoctorError` derives the code from the raw message by
+ * substring, so the code is the message's oracle in miniature: a refused
+ * connect matches `econn` and becomes `SERVER_UNREACHABLE`, an open cleartext
+ * port's TLS record error matches nothing and becomes `INTERNAL_ERROR`, and a
+ * filtered port times out and becomes `TIMEOUT`. Rewriting only the message
+ * left those three outcomes as distinguishable as before.
+ */
+const HOSTED_TRANSPORT_FAILURE_CODE = "SERVER_UNREACHABLE";
+
+/**
  * Strip the open-versus-closed differential out of a HOSTED doctor result.
  *
  * WHAT THIS IS FOR. The pinned transport above stops the private target being
@@ -45,13 +57,30 @@ const HOSTED_TRANSPORT_FAILURE_DETAIL =
  * to have the second one's message pass through with the first's.
  *
  * THE ENVELOPE-LEVEL FIELDS TAKE THE STRICTER GATE. `probe.error`,
- * `connection.detail`, `checks[].detail`, `error.message` and
- * `oauth.discoveryError` summarise the whole run and name no attempt, so a
- * mixed run cannot be resolved per attempt and the summary may well be quoting
- * the refused hop. They survive only when EVERY recorded attempt received a
- * response, the one state in which no socket text existed to be summarised. A
- * run that recorded no attempt at all offers no such proof and is redacted with
- * the rest.
+ * `connection.detail`, `checks[].detail`, `error` and `oauth.discoveryError`
+ * summarise the whole run and name no attempt, so a mixed run cannot be
+ * resolved per attempt and the summary may well be quoting the refused hop.
+ * They survive only when every recorded attempt received a response AND the
+ * doctor's connect leg did not fail. That second condition is not redundant:
+ * the connect leg runs after the probe, records no attempt of its own, and
+ * writes its raw transport error onto `connection.detail`,
+ * `checks.connection.detail` and `error` — so a target that answers the probe
+ * cleanly and then redirects the connect elsewhere had its socket outcome
+ * reflected verbatim under an attempts-only test. A run that recorded no
+ * attempt at all offers no proof either and is redacted with the rest.
+ *
+ * `error.code` GOES WITH `error.message`. It is derived from that message by
+ * substring match, so leaving it behind kept the differential the message lost;
+ * whenever the message is replaced the code collapses too.
+ *
+ * `attempts[].durationMs` IS THE SAME ORACLE WITH A STOPWATCH. A refused port
+ * returns in about a millisecond and a filtered one burns the whole timeout, so
+ * the number separates the outcomes the message no longer does. An attempt that
+ * received a response keeps its real duration — the host is demonstrably open,
+ * so the timing discloses nothing and is the latency figure the doctor exists
+ * to report. An attempt whose error was replaced never got past the socket, so
+ * it collapses to the 0 the probe already writes for an attempt it never
+ * dialled.
  *
  * An egress refusal keeps its own message: `classifyPinnedTransportError`
  * already phrases it without the address the hostname resolved to, so it is a
@@ -74,13 +103,17 @@ export function redactHostedDoctorTransportDetail<T>(result: T): T {
        */
       error?: string;
       transport?: {
-        attempts?: Array<{ response?: unknown; error?: string }>;
+        attempts?: Array<{
+          response?: unknown;
+          error?: string;
+          durationMs?: number;
+        }>;
       };
       oauth?: { discoveryError?: string };
     } | null;
     connection?: { status?: string; detail?: string };
     checks?: Record<string, { status?: string; detail?: string } | undefined>;
-    error?: { message?: string } | null;
+    error?: { code?: string; message?: string } | null;
   };
 
   const attempts = envelope.probe?.transport?.attempts ?? [];
@@ -93,12 +126,16 @@ export function redactHostedDoctorTransportDetail<T>(result: T): T {
       : HOSTED_TRANSPORT_FAILURE_DETAIL;
 
   for (const attempt of attempts) {
-    if (attempt?.error !== undefined && !answered(attempt)) {
-      attempt.error = rewrite(attempt.error);
-    }
+    if (attempt?.error === undefined || answered(attempt)) continue;
+    const redacted = rewrite(attempt.error);
+    if (redacted === attempt.error) continue;
+    attempt.error = redacted;
+    attempt.durationMs = 0;
   }
 
-  if (attempts.length > 0 && attempts.every(answered)) {
+  const everyAttemptAnswered = attempts.length > 0 && attempts.every(answered);
+  const connectLegFailed = envelope.connection?.status === "error";
+  if (everyAttemptAnswered && !connectLegFailed) {
     return result;
   }
 
@@ -119,7 +156,11 @@ export function redactHostedDoctorTransportDetail<T>(result: T): T {
     }
   }
   if (envelope.error?.message !== undefined) {
-    envelope.error.message = rewrite(envelope.error.message);
+    const redacted = rewrite(envelope.error.message);
+    if (redacted !== envelope.error.message) {
+      envelope.error.message = redacted;
+      envelope.error.code = HOSTED_TRANSPORT_FAILURE_CODE;
+    }
   }
   return result;
 }
