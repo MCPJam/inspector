@@ -665,6 +665,45 @@ describe("startNativeUiToolPublisher", () => {
       publisher.stop();
     });
 
+    it("retires a call that settles before queued teardown runs", async () => {
+      let release!: () => void;
+      const running = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const def = makeTool("ui_execute_tool", {
+        execute: vi.fn(async () => {
+          await running;
+          return { content: [{ type: "text" as const, text: "finished" }] };
+        }),
+      });
+      register(def, "global");
+      const first = startNativeUiToolPublisher();
+      await first.whenSettled();
+      const call = fake.invoke("ui_execute_tool", {});
+      // Keep teardown queued while the accepted call settles.
+      for (let i = 0; i < 20; i += 1) {
+        useUiToolsRegistry.setState({ shippedNames: new Set() });
+      }
+      first.stop();
+      const second = startNativeUiToolPublisher();
+      release();
+      await call;
+      await second.whenSettled();
+      expect(fake.names()).toEqual(["ui_execute_tool"]);
+      expect(
+        trackMock.mock.calls.filter(
+          ([event]) => event === "ui_tool_native_registration_failed",
+        ),
+      ).toEqual([]);
+      await expect(fake.invoke("ui_execute_tool", {})).resolves.toEqual({
+        content: [{ type: "text", text: "finished" }],
+      });
+      expect(def.execute).toHaveBeenCalledTimes(2);
+      second.stop();
+      await second.whenSettled();
+      expect(fake.names()).toEqual([]);
+    });
+
     it("republishes the tool when a remount lands mid-call", async () => {
       // The collision the two rules above make between them: the outgoing
       // publisher must leave a registration standing while its call runs

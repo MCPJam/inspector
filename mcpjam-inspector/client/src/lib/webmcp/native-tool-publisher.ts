@@ -273,8 +273,10 @@ export function startNativeUiToolPublisher(): NativeUiToolPublisher {
   async function awaitRetired(entry: NativeRegistration): Promise<void> {
     if (entry.inFlight > 0) {
       await whenIdle(entry);
-      entry.controller.abort();
     }
+    // The call may have settled after markRetired but before this queued
+    // task started. Retirement must abort even when there is no wait left.
+    entry.controller.abort();
     // Wait for the platform to finish with this registration before the name
     // can be claimed again — an overlapping claim is the duplicate-name
     // rejection this whole chain exists to avoid.

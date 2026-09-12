@@ -24,7 +24,7 @@
 
 import { assertEvalToolAllowed } from "@/lib/mcpjam-agent/eval-scope";
 import type { InspectorCommandErrorCode } from "@/shared/inspector-command.js";
-import { boundedJsonString, clampText, MAX_RESULT_CHARS } from "./bounded-size";
+import { boundedJsonString, MAX_RESULT_CHARS } from "./bounded-size";
 import {
   useUiToolsRegistry,
   type UiToolCaller,
@@ -116,10 +116,10 @@ export function structuredErrorCode(output: UiToolResult): string | undefined {
 }
 
 export function uiToolErrorResult(message: string): UiToolResult {
-  return {
-    content: [{ type: "text", text: clampText(message) }],
+  return boundedResult({
+    content: [{ type: "text", text: message }],
     isError: true,
-  };
+  });
 }
 
 /** The message an unresolvable name gets, identical on both transports. */
@@ -152,12 +152,9 @@ function readArguments(
 /**
  * Force a handler's return value into the wire shape, under ONE budget.
  *
- * The first-party handlers already return bounded text (`okResult` /
- * `errorResult` in `groups/shared.ts`), so for every tool in the catalog this
- * is a pass-through that rebuilds an equal object. It exists for the value
- * that ISN'T one of those: a future handler returning a foreign shape, a
- * `content` array holding non-text parts, or text long enough to bloat an
- * agent's context.
+ * Ordinary small results pass through unchanged. Even handlers that bound
+ * their text still need this final envelope budget: part wrappers and JSON
+ * escaping consume space too. Foreign parts are converted to bounded text.
  *
  * The budget is AGGREGATE, across the whole result. A per-part cap bounds
  * nothing — `content` can hold any number of parts, so N parts at the cap is
@@ -169,28 +166,61 @@ function boundedResult(value: unknown): UiToolResult {
   const source = value as Partial<UiToolResult> | undefined;
   const parts = Array.isArray(source?.content) ? source.content : [];
   const content: UiToolResult["content"] = [];
-  let remaining = MAX_RESULT_CHARS;
+  const result: UiToolResult = source?.isError
+    ? { content, isError: true }
+    : { content };
+  const omittedPart = (count: number) => ({
+    type: "text" as const,
+    text: `… [${count} more result part(s) omitted: the result is over ${MAX_RESULT_CHARS} characters]`,
+  });
+  // Reserve the envelope and a final omission notice. Every part costs its
+  // serialized size plus a comma, even when its text is empty. The notice's
+  // actual count cannot be longer than the total count reserved here.
+  let remaining =
+    MAX_RESULT_CHARS -
+    JSON.stringify(result).length -
+    JSON.stringify(omittedPart(parts.length)).length -
+    1;
 
   for (const [index, part] of parts.entries()) {
-    if (remaining <= 0) {
-      content.push({
-        type: "text",
-        text: `… [${parts.length - index} more result part(s) omitted: the result is over ${MAX_RESULT_CHARS} characters]`,
-      });
+    if (remaining < 64) {
+      content.push(omittedPart(parts.length - index));
       break;
     }
     const text = boundedPartText(part, remaining);
-    remaining -= text.length;
-    content.push({ type: "text", text });
+    const fitted = fitSerializedText(text, remaining - 1);
+    remaining -= JSON.stringify(fitted).length + 1;
+    content.push(fitted);
   }
 
   if (content.length === 0) {
     content.push({ type: "text", text: "The tool returned no content." });
   }
-  return source?.isError ? { content, isError: true } : { content };
+  return result;
 }
 
-/** One part's text, never longer than `budget`. */
+/** Include JSON escaping and the part wrapper in the remaining budget. */
+function fitSerializedText(
+  text: string,
+  budget: number,
+): { type: "text"; text: string } {
+  const part = (value: string) => ({ type: "text" as const, text: value });
+  if (JSON.stringify(part(text)).length <= budget) return part(text);
+  const suffix = "… [truncated]";
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (JSON.stringify(part(text.slice(0, mid) + suffix)).length <= budget) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return part(text.slice(0, low) + suffix);
+}
+
+/** Bound the text before measuring JSON escaping; may add a short notice. */
 function boundedPartText(part: unknown, budget: number): string {
   if (
     part &&

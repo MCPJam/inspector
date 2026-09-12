@@ -291,6 +291,84 @@ describe("executeUiToolCall", () => {
   });
 
   describe("result bounding", () => {
+    it.each(["ask_mcpjam", "native_webmcp"] as const)(
+      "bounds serialized empty-part envelopes for %s",
+      async (caller) => {
+        useUiToolsRegistry.getState().registerUiTool(
+          makeTool({
+            execute: async () => ({
+              content: Array.from({ length: 100_000 }, () => ({
+                type: "text" as const,
+                text: "",
+              })),
+              isError: true,
+            }),
+          }),
+        );
+        const { result } = await executeUiToolCall({
+          toolName: "ui_navigate",
+          input: {},
+          caller,
+          invocationId: "bounded",
+        });
+        expect(JSON.stringify(result).length).toBeLessThanOrEqual(
+          MAX_RESULT_CHARS,
+        );
+        expect(result.isError).toBe(true);
+        expect(result.content.at(-1)?.text).toContain(
+          "more result part(s) omitted",
+        );
+      },
+    );
+
+    it("includes JSON escaping in the result budget", async () => {
+      useUiToolsRegistry.getState().registerUiTool(
+        makeTool({
+          execute: async () => ({
+            content: [
+              {
+                type: "text",
+                text: String.fromCharCode(0, 34, 92).repeat(MAX_RESULT_CHARS),
+              },
+            ],
+          }),
+        }),
+      );
+      const { result } = await executeUiToolCall({
+        toolName: "ui_navigate",
+        input: {},
+        caller: "native_webmcp",
+        invocationId: "escaped",
+      });
+      expect(JSON.stringify(result).length).toBeLessThanOrEqual(
+        MAX_RESULT_CHARS,
+      );
+      expect(result.content[0].text).toContain("[truncated]");
+    });
+
+    it("bounds serialized errors from throwing handlers", async () => {
+      useUiToolsRegistry.getState().registerUiTool(
+        makeTool({
+          execute: async () => {
+            throw new Error(
+              String.fromCharCode(0).repeat(MAX_RESULT_CHARS * 2),
+            );
+          },
+        }),
+      );
+      const outcome = await executeUiToolCall({
+        toolName: "ui_navigate",
+        input: {},
+        caller: "native_webmcp",
+        invocationId: "error",
+      });
+      expect(outcome.status).toBe("threw");
+      expect(outcome.result.isError).toBe(true);
+      expect(JSON.stringify(outcome.result).length).toBeLessThanOrEqual(
+        MAX_RESULT_CHARS,
+      );
+    });
+
     it("clamps oversized text", async () => {
       useUiToolsRegistry.getState().registerUiTool(
         makeTool({
