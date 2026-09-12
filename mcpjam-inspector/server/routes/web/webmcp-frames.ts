@@ -366,43 +366,56 @@ export function createWebMcpFramesWsHandler(
           );
         }
 
-        unsubscribe = runtime.hub.subscribe((event) => {
-          if (closed || !runtime.isAuthorized()) return;
-          if (event.type === "frame") {
-            // Base64 → bytes ONCE, here, per send. The in-memory frame stays
-            // base64 so the hub and the SSE route are untouched by this
-            // transport existing.
-            framePacer.push(
-              encodeWebMcpBinaryFrame({
-                deviceWidth: event.frame.deviceWidth,
-                deviceHeight: event.frame.deviceHeight,
-                // Forwarded rather than defaulted here: a frame captured at
-                // two device pixels per CSS pixel and reported as one would
-                // put every click at double its true coordinate.
-                ...(event.frame.scale !== undefined
-                  ? { scale: event.frame.scale }
-                  : {}),
-                ts: event.frame.ts,
-                seq: event.seq,
-                jpeg: Buffer.from(event.frame.data, "base64"),
-              }),
-            );
-            return;
-          }
-          if (
-            event.type === "session" &&
-            (event.session.status === "closed" ||
-              event.session.status === "error")
-          ) {
-            // No further paint is ever coming from a closed or crashed
-            // browser. Closing says so, rather than leaving a socket that
-            // looks live feeding a pane that will never update again; the
-            // client's SSE stream carries the reason.
-            teardown();
-            liveSockets.delete(ws);
-            ws.close(CLOSE_GONE, "That WebMCP session is over.");
-          }
-        }, FRAME_REPLAY);
+        // THROUGH THE REGISTRY, not `runtime.hub` directly. Subscribing to the
+        // hub delivers frames perfectly well but is invisible to
+        // `hasSubscribers`, so a viewer on this binary wire counted as nobody:
+        // the idle sweep could reap a session being watched, and the hosted
+        // tool poll — which deliberately spends no daemon command budget on an
+        // unobserved page — stayed silent for a pane someone had open.
+        unsubscribe = webMcpSessions.subscribeTo(
+          runtime,
+          (event) => {
+            // Authorization is re-checked per event, not just at subscribe:
+            // Browser permission can be revoked mid-stream, and frames must
+            // stop at that instant rather than at the next handshake.
+            if (closed || !runtime.isAuthorized()) return;
+            if (event.type === "frame") {
+              // Base64 → bytes ONCE, here, per send. The in-memory frame stays
+              // base64 so the hub and the SSE route are untouched by this
+              // transport existing.
+              framePacer.push(
+                encodeWebMcpBinaryFrame({
+                  deviceWidth: event.frame.deviceWidth,
+                  deviceHeight: event.frame.deviceHeight,
+                  // Forwarded rather than defaulted here: a frame captured at
+                  // two device pixels per CSS pixel and reported as one would
+                  // put every click at double its true coordinate.
+                  ...(event.frame.scale !== undefined
+                    ? { scale: event.frame.scale }
+                    : {}),
+                  ts: event.frame.ts,
+                  seq: event.seq,
+                  jpeg: Buffer.from(event.frame.data, "base64"),
+                }),
+              );
+              return;
+            }
+            if (
+              event.type === "session" &&
+              (event.session.status === "closed" ||
+                event.session.status === "error")
+            ) {
+              // No further paint is ever coming from a closed or crashed
+              // browser. Closing says so, rather than leaving a socket that
+              // looks live feeding a pane that will never update again; the
+              // client's SSE stream carries the reason.
+              teardown();
+              liveSockets.delete(ws);
+              ws.close(CLOSE_GONE, "That WebMCP session is over.");
+            }
+          },
+          FRAME_REPLAY,
+        );
       },
 
       onMessage: async (evt, ws) => {
@@ -471,8 +484,13 @@ export function createWebMcpFramesWsHandler(
         // registry — is reaped out from under someone looking straight at it.
         // Bounded by the client's own 30s cadence, so it cannot be used to
         // hold a session open faster than a real viewer would.
+        //
+        // It ALSO marks the session watched, which is a stronger claim than
+        // "a stream is attached": the client sends this only while its pane is
+        // the visible tab and the document is visible. For a hosted session
+        // that is what decides whether a metered desktop box is held awake.
         try {
-          webMcpSessions.touch(webMcpSessions.get(sessionId));
+          webMcpSessions.markWatched(sessionId);
         } catch {
           // Already gone; the session-event branch owns the close.
         }
