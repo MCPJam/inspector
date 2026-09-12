@@ -477,11 +477,11 @@ function CredentialClearWarning({
   return (
     <div
       role="alert"
-      className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-2"
+      className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs space-y-2"
     >
       <p className="font-medium">
         {pending.kind === "url-origin"
-          ? "Saving this URL will clear this server's saved credentials"
+          ? "Saving this URL will clear any saved credentials"
           : "Saving this command will clear this server's saved credentials"}
       </p>
       {pending.kind === "url-origin" ? (

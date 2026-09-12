@@ -228,7 +228,7 @@ function ServerUrlChangeHistoryPanel({
                 {formatWhen(event.timestamp)}
               </div>
               {cleared && (
-                <div className="mt-1 text-amber-600 dark:text-amber-500">
+                <div className="mt-1 text-warning">
                   Saved credentials were cleared and need re-entering
                   {clearedKindLabels.length > 0
                     ? `: ${clearedKindLabels.join(", ")}`

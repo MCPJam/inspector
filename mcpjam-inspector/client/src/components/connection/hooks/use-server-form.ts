@@ -76,13 +76,7 @@ function parseCommandInput(input: string): {
       continue;
     }
 
-    if (char === "\\" && i + 1 < input.length) {
-      current += input[i + 1];
-      i += 1;
-      inPart = true;
-      continue;
-    }
-
+    // Outside quotes, preserve literal backslashes in Windows and UNC paths.
     if (/\s/.test(char)) {
       if (inPart) {
         parts.push(current);
@@ -1234,7 +1228,6 @@ export function useServerForm(
   const pendingCredentialClear: PendingCredentialClear | null =
     type === "http"
       ? pendingCredentialClearForUrlEdit({
-          holdsStoredCredential,
           savedUrl,
           nextUrl: url,
         })

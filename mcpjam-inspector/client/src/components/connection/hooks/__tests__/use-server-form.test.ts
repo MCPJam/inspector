@@ -1437,6 +1437,19 @@ describe("useServerForm credential-clear warning", () => {
     expect(result.current.credentialClearBlocksSubmit).toBe(true);
   });
 
+  it("requires acknowledgment when another member's OAuth tokens are absent from runtime state", async () => {
+    const server = {
+      ...httpServer,
+      hasHeaders: false,
+      oauthTokens: undefined,
+      config: { ...httpServer.config, useOAuth: true },
+    };
+    const { result } = renderHook(() => useServerForm(server));
+    await waitFor(() => expect(result.current.url).toBe(httpServer.config.url));
+    act(() => result.current.setUrl("https://elsewhere.example.com/mcp"));
+    expect(result.current.credentialClearBlocksSubmit).toBe(true);
+  });
+
   it("warns and blocks Save on a stdio command swap", async () => {
     // The vector the form was silent about: the row's env secret goes to
     // whatever process this command names, and the backend clears it.
@@ -1532,5 +1545,18 @@ describe("useServerForm credential-clear warning", () => {
 
     expect(result.current.pendingCredentialClear).toBeNull();
     expect(result.current.credentialClearBlocksSubmit).toBe(false);
+  });
+});
+
+describe("pasted command compatibility", () => {
+  it("preserves a pasted Windows path", () => {
+    const { result } = renderHook(() => useServerForm());
+    act(() => {
+      result.current.setType("stdio");
+      result.current.setCommandInput(String.raw`node C:\tools\server.js`);
+    });
+    expect(result.current.buildFormData().args).toEqual([
+      String.raw`C:\tools\server.js`,
+    ]);
   });
 });

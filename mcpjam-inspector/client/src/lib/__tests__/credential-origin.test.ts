@@ -40,7 +40,6 @@ describe("credentialOriginOf", () => {
 
 describe("pendingCredentialClearForUrlEdit", () => {
   const base = {
-    holdsStoredCredential: true,
     savedUrl: "https://owner.example.com/mcp",
   };
 
@@ -89,14 +88,13 @@ describe("pendingCredentialClearForUrlEdit", () => {
     ).not.toBeNull();
   });
 
-  it("stays silent when the row holds no stored credential", () => {
+  it("warns even when this browser cannot see stored OAuth credentials", () => {
     expect(
       pendingCredentialClearForUrlEdit({
-        holdsStoredCredential: false,
         savedUrl: "https://owner.example.com/mcp",
         nextUrl: "https://elsewhere.example.com/mcp",
-      })
-    ).toBeNull();
+      }),
+    ).not.toBeNull();
   });
 
   it("stays silent while the URL is still being typed", () => {
@@ -113,7 +111,6 @@ describe("pendingCredentialClearForUrlEdit", () => {
   it("stays silent on a new server with nothing saved yet", () => {
     expect(
       pendingCredentialClearForUrlEdit({
-        holdsStoredCredential: true,
         savedUrl: null,
         nextUrl: "https://elsewhere.example.com/mcp",
       })

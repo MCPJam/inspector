@@ -158,14 +158,14 @@ export function credentialClearAcknowledgementKey(
  * half-typed URL would fire on almost every keystroke.
  */
 export function pendingCredentialClearForUrlEdit(args: {
-  /** `true` when the row holds any credential a repoint would invalidate. */
-  holdsStoredCredential: boolean;
   /** The URL as saved on the server row. */
   savedUrl: string | null | undefined;
   /** The URL currently in the form. */
   nextUrl: string | null | undefined;
 }): PendingUrlOriginClear | null {
-  if (!args.holdsStoredCredential) return null;
+  // Hosted OAuth credentials belong to individual subjects and may be absent
+  // from this browser's runtime state. Every origin change invalidates them,
+  // so an absent local credential flag must never suppress acknowledgment.
   const previousOrigin = credentialOriginOf(args.savedUrl);
   const nextOrigin = credentialOriginOf(args.nextUrl);
   if (previousOrigin === null || nextOrigin === null) return null;
