@@ -8,7 +8,9 @@
  * in four unrelated subsystems, so the value here is the inventory a reviewer
  * reads, not the edit a script makes. Every actual rename lands in a PR a human
  * reviews against the pinned contract in
- * `docs/evals-vocabulary-consolidation.md`.
+ * `docs/evals-vocabulary-consolidation.md`, which lands in the Wave 0 pull
+ * request rather than in this one — this scanner is independent of it so that
+ * either can merge first.
  *
  * WHY IT PARSES RATHER THAN GREPS. `checks`, `predicates` and `repetitions`
  * appear in prose, in comments, in GitHub-check plumbing, in OAuth conformance,
@@ -35,6 +37,14 @@
  *     reported for human review and does not fail. `evaluatorErrorRate` sits
  *     beside real evaluator code all over the verdict policy; failing on
  *     proximity would make the tool unrunnable and teach everyone to skip it.
+ *
+ * IT FAILS CLOSED, AND A PARSE ERROR IS ONE. `createSourceFile` recovers from
+ * malformed input instead of throwing, so a file the parser could not really
+ * read comes back as a tree with the bad region swallowed — and an identifier
+ * inside that region is simply absent from the report. Every file's
+ * `parseDiagnostics` is therefore checked, and a non-empty one loses the run
+ * rather than the guarantee. The whole tree parses clean today, so this gate
+ * fires on a file that is actually broken.
  *
  * Exit codes: 0 clean report · 1 scan error (fails closed, like the runtime
  * guards) · 2 a protected term or path was proposed for mutation.
@@ -175,6 +185,34 @@ function interestingNodes(text, file) {
     /* setParentNodes */ true,
     scriptKindOf(file)
   );
+
+  // A parse error does NOT throw. `createSourceFile` recovers and hands back a
+  // tree with the malformed region swallowed, so a file containing an
+  // unterminated template followed by `type Y = Scorer` parses "fine" and
+  // reports nothing — the identifier is inside the run-on template as far as
+  // the parser is concerned. That is a hole in the inventory that reads as a
+  // clean file, so the diagnostics are the gate, not the absence of a throw.
+  const diagnostics = source.parseDiagnostics;
+  if (!Array.isArray(diagnostics)) {
+    // `parseDiagnostics` is internal. If a TypeScript upgrade stops exposing
+    // it, the fail-closed guarantee above is gone and every report after that
+    // is silently weaker — so lose the run, loudly, rather than the guarantee.
+    throw new Error(
+      `typescript ${ts.version} exposes no parseDiagnostics array; ` +
+        `the parse-error gate cannot run`
+    );
+  }
+  if (diagnostics.length > 0) {
+    const first = diagnostics[0];
+    throw new Error(
+      `${diagnostics.length} parse diagnostic(s), first at offset ` +
+        `${first.start}: ${ts.flattenDiagnosticMessageText(
+          first.messageText,
+          " "
+        )}`
+    );
+  }
+
   const found = [];
 
   const visit = (node) => {
@@ -210,8 +248,7 @@ function interestingNodes(text, file) {
         (ts.isCallExpression(parent) &&
           (parent.expression.kind === ts.SyntaxKind.ImportKeyword ||
             parent.expression.getText(source) === "require")) ||
-        ts.isImportTypeNode(parent) ||
-        ts.isLiteralTypeNode(parent);
+        ts.isImportTypeNode(parent);
       const isKey =
         (ts.isPropertySignature(parent) ||
           ts.isPropertyAssignment(parent) ||
@@ -223,6 +260,16 @@ function interestingNodes(text, file) {
         start: node.getStart(source),
         isSpecifier,
         isField: isKey,
+        // Matchable wherever it sits. A subpath and a wire field are both
+        // named by strings in places that are neither an import nor a
+        // property key, and those places break just as loudly: the alias keys
+        // and external lists in vite/vitest/tsup configs, a `SuiteSettingsKey`
+        // array element like `["defaultPredicates"]`, a Zod `path:
+        // ["repetitions"]`. Restricting the match to import-like syntax left
+        // every one of them out of an inventory that presents itself as
+        // complete. The shape rides along so a reviewer can tell a
+        // declaration from a reference without opening the file.
+        isString: true,
       });
       return;
     }
@@ -263,11 +310,12 @@ const reviewByHand = [];
  */
 const unreadable = [];
 
-function record(rel, line, lineText, rename, matched) {
+function record(rel, line, lineText, rename, matched, shape) {
   const entry = {
     file: rel,
     line,
     matched,
+    shape,
     from: rename.from,
     to: rename.to,
     scope: rename.scope,
@@ -312,9 +360,10 @@ for (const file of files) {
     try {
       nodes = interestingNodes(text, file);
     } catch (error) {
-      // A file the parser cannot read is a hole in the inventory, and an
-      // inventory with a hole in it is worse than no inventory: it reads as
-      // complete. Fail closed.
+      // A file the parser could not read — including one it "read" while
+      // reporting diagnostics — is a hole in the inventory, and an inventory
+      // with a hole in it is worse than no inventory: it reads as complete.
+      // Fail closed.
       unreadable.push({ file: rel, reason: String(error) });
       continue;
     }
@@ -326,24 +375,49 @@ for (const file of files) {
       if (node.isIdentifier) {
         const rename = identifierRenames.get(node.value);
         if (rename && inAllowedPaths(rel, rename.paths)) {
-          record(rel, line, lineText, rename, node.value);
+          record(rel, line, lineText, rename, node.value, "identifier");
         }
       }
 
-      if (node.isSpecifier) {
+      // Any string that spells the subpath, not just an import of it. A
+      // package subpath is never prose, so there is no noise to trade away
+      // here — and the references that are NOT imports are the ones that
+      // break silently: `{ find: "@mcpjam/sdk/predicates" }` in three vitest
+      // configs, the alias keys in `client/vite.config.ts` and
+      // `server/tsup.config.ts`, and that file's `external` list. Rename the
+      // entry point while following an inventory that omits them and the
+      // builds and tests resolve a subpath that no longer exists.
+      if (node.isSpecifier || node.isString) {
         const rename = subpathRenames.get(node.value);
         // Path-scoped like every other mapping: an override that names `paths`
         // must not report from outside them just because it is a subpath.
         if (rename && inAllowedPaths(rel, rename.paths)) {
-          record(rel, line, lineText, rename, node.value);
+          record(
+            rel,
+            line,
+            lineText,
+            rename,
+            node.value,
+            node.isSpecifier ? "import specifier" : "module reference"
+          );
         }
       }
 
-      if (node.isField) {
+      // A field is also named by the strings that address it. Still bounded by
+      // `paths`, which is what keeps `checks` in prose out of this: inside the
+      // adapter files a string that spells the field IS the field.
+      if (node.isField || node.isString) {
         for (const rename of wireFieldRenames) {
           if (node.value !== rename.from) continue;
           if (!inAllowedPaths(rel, rename.paths)) continue;
-          record(rel, line, lineText, rename, node.value);
+          record(
+            rel,
+            line,
+            lineText,
+            rename,
+            node.value,
+            node.isField ? "field" : "field named in a string"
+          );
         }
       }
     }
@@ -359,7 +433,7 @@ for (const file of files) {
     );
     lines.forEach((lineText, index) => {
       if (flag.test(lineText)) {
-        record(rel, index + 1, lineText, rename, rename.from);
+        record(rel, index + 1, lineText, rename, rename.from, "flag token");
       }
     });
   }
@@ -371,7 +445,7 @@ if (unreadable.length > 0) {
       `written — an inventory with a hole in it reads as complete, and the ` +
       `next person renames from it.\n`
   );
-  for (const entry of unreadable.slice(0, 20)) {
+  for (const entry of unreadable) {
     console.error(`  ✗ ${entry.file}`);
     console.error(`      ${entry.reason}`);
   }
@@ -469,12 +543,14 @@ out.push(
     `applied, and this scanner cannot apply it. ${findings.length} occurrence(s) across ` +
     `${
       new Set(findings.map((f) => f.file)).size
-    } file(s), from ${scanned} scanned.`
+    } file(s), from ${scanned} scanned. Every occurrence is listed below; the ` +
+    `tables are not truncated.`
 );
 out.push("");
 out.push(
-  `The contract these renames implement is \`docs/evals-vocabulary-consolidation.md\`. Anything ` +
-    `not listed there is out of scope for this program.`
+  `The contract these renames implement is \`docs/evals-vocabulary-consolidation.md\`, which lands ` +
+    `in the Wave 0 pull request and may not be in the tree you are reading this from. Anything not ` +
+    `listed there is out of scope for this program.`
 );
 out.push("");
 out.push("## Summary");
@@ -503,15 +579,13 @@ if (reviewByHand.length > 0) {
   out.push("");
   out.push("| file:line | rename | also on this line |");
   out.push("|---|---|---|");
-  for (const entry of reviewByHand.slice(0, 100)) {
+  for (const entry of reviewByHand) {
     out.push(
       `| \`${entry.file}:${entry.line}\` | \`${entry.from} → ${
         entry.to
       }\` | ${entry.nearby.map((n) => `\`${n}\``).join(", ")} |`
     );
   }
-  if (reviewByHand.length > 100)
-    out.push(`| … | ${reviewByHand.length - 100} more | |`);
   out.push("");
 }
 
@@ -525,13 +599,18 @@ for (const [key, entries] of [...grouped].sort(
     out.push(`> ${rename.note}`);
     out.push("");
   }
-  out.push("| file:line | line |");
-  out.push("|---|---|");
-  for (const entry of entries.slice(0, 60)) {
-    out.push(`| \`${entry.file}:${entry.line}\` | ${codeCell(entry.text)} |`);
+  out.push("| file:line | shape | line |");
+  out.push("|---|---|---|");
+  // Every occurrence, not the first N. A truncated list under a stated count
+  // is the worst of both: it reads as the inventory while the renames it
+  // cannot locate are exactly the ones nobody will find by hand.
+  for (const entry of entries) {
+    out.push(
+      `| \`${entry.file}:${entry.line}\` | ${entry.shape ?? "—"} | ${codeCell(
+        entry.text
+      )} |`
+    );
   }
-  if (entries.length > 60)
-    out.push(`| … | ${entries.length - 60} more occurrence(s) |`);
   out.push("");
 }
 

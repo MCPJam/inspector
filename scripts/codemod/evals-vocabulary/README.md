@@ -1,8 +1,15 @@
 # Evaluator-vocabulary codemod
 
-A scanner that proposes the renames in
-[`docs/evals-vocabulary-consolidation.md`](../../../docs/evals-vocabulary-consolidation.md)
+A scanner that proposes the renames in `docs/evals-vocabulary-consolidation.md`
 and refuses to perform them.
+
+That contract is **not in this branch**, and the omission is deliberate rather
+than an oversight: it lands in the Wave 0 pull request
+([#4982](https://github.com/MCPJam/inspector/pull/4982)), which this scanner is
+independent of so that either can merge first. Until Wave 0 lands, read the
+contract there — a reviewer checking `mapping.json` against the model needs the
+document, and a relative link that resolves to nothing in this tree would be
+worse than saying where it is.
 
 ```bash
 npm run codemod:evals-vocabulary:report          # regenerate REPORT.md
@@ -10,11 +17,11 @@ node scripts/codemod/evals-vocabulary/index.mjs --json
 node scripts/codemod/evals-vocabulary/index.mjs --root ../mcpjam-backend
 ```
 
-| exit | meaning |
-|---:|---|
-| 0 | a report was written |
-| 1 | it scanned nothing, or was asked to `--write` |
-| 2 | the mapping proposes to mutate a protected term or path |
+| exit | meaning                                                 |
+| ---: | ------------------------------------------------------- |
+|    0 | a report was written                                    |
+|    1 | it scanned nothing, or was asked to `--write`           |
+|    2 | the mapping proposes to mutate a protected term or path |
 
 ## Why there is no `--write`
 

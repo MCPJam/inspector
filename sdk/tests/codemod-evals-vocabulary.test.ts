@@ -70,6 +70,28 @@ function scan(root: string, mappingOverride?: unknown) {
   };
 }
 
+/** The markdown report, which is what a reviewer actually reads. */
+function render(root: string, mappingOverride?: unknown) {
+  const extra: string[] = [];
+  if (mappingOverride !== undefined) {
+    const path = join(root, "__mapping.json");
+    writeFileSync(path, JSON.stringify(mappingOverride));
+    extra.push("--mapping", path);
+  }
+  const result = spawnSync(
+    process.execPath,
+    [SCANNER, "--root", root, ...extra],
+    {
+      encoding: "utf8",
+    }
+  );
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
 describe("the evaluator-vocabulary scanner", () => {
   it("proposes the renames the contract names, and says where", () => {
     const root = tree({
@@ -299,6 +321,99 @@ describe("the evaluator-vocabulary scanner", () => {
     // nothing, and it looks exactly like a clean run.
     expect(status).toBe(1);
     expect(stderr).toMatch(/refusing to report a clean run/);
+  });
+
+  it("fails closed when the parser reports a diagnostic", () => {
+    const root = tree({
+      "sdk/src/a.ts": "export const a = 1;\n",
+      // `createSourceFile` does NOT throw on this. It recovers, and the
+      // recovery swallows everything after the unterminated template — so
+      // `Scorer` is simply absent from the tree, and a scanner that trusted
+      // the absence of a throw would report this file as clean.
+      "sdk/src/broken.ts": "const a = `unterminated\ntype Y = Scorer;\n",
+    });
+    const { status, stderr } = scan(root);
+
+    expect(status).toBe(1);
+    expect(stderr).toMatch(/could not be inspected/);
+    expect(stderr).toMatch(/parse diagnostic/);
+    expect(stderr).toMatch(/Unterminated template literal/);
+  });
+
+  it("reports a subpath named somewhere other than an import", () => {
+    const root = tree({
+      // The three shapes that broke the builds rather than the imports: an
+      // alias key, an alias `find` value, and an `external` list entry.
+      "mcpjam-inspector/server/tsup.config.ts":
+        `export default { external: ["@mcpjam/sdk/predicates"],\n` +
+        `  alias: { "@mcpjam/sdk/predicates": "../../sdk/src/predicates/index.ts" } };\n`,
+      "mcpjam-inspector/server/vitest.config.ts": `export default { alias: [{ find: "@mcpjam/sdk/predicates", replacement: x }] };\n`,
+      "sdk/src/a.ts": `import "@mcpjam/sdk/predicates";\n`,
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    const subpath = json.findings
+      .filter((f: { scope: string }) => f.scope === "subpath")
+      // Sorted: the walk's order is the filesystem's, and this test is about
+      // what gets reported, not about which directory was listed first.
+      .map(
+        (f: { file: string; line: number; shape: string }) =>
+          `${f.file}:${f.line} ${f.shape}`
+      )
+      .sort();
+    // The shape is told apart, so a reviewer knows which one is an import.
+    expect(subpath).toEqual([
+      "mcpjam-inspector/server/tsup.config.ts:1 module reference",
+      "mcpjam-inspector/server/tsup.config.ts:2 module reference",
+      "mcpjam-inspector/server/vitest.config.ts:1 module reference",
+      "sdk/src/a.ts:1 import specifier",
+    ]);
+  });
+
+  it("reports a wire field named in a string, still bounded by its paths", () => {
+    const root = tree({
+      // A Zod issue path and a settings-key array: both name the field, and
+      // neither is a property declaration.
+      "sdk/src/platform/operations.ts": `const issue = { path: ["repetitions"], message: "x" };\n`,
+      "mcpjam-inspector/client/src/components/evals/rows.ts": `const keys = { checks: ["defaultPredicates"] };\n`,
+      // Same string, outside every allowlist. Path scope still governs.
+      "mcpjam-inspector/client/src/state/app-reducer.ts": `const k = ["repetitions"];\n`,
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .map(
+          (f: { file: string; matched: string; shape: string }) =>
+            `${f.file} ${f.matched} ${f.shape}`
+        )
+        .sort()
+    ).toEqual([
+      "mcpjam-inspector/client/src/components/evals/rows.ts defaultPredicates field named in a string",
+      "sdk/src/platform/operations.ts repetitions field named in a string",
+    ]);
+  });
+
+  it("lists every occurrence rather than the first sixty", () => {
+    // The defect this pins is specific: the committed report stated 74
+    // occurrences of one rename and listed 60, so the 14 a reader most needed
+    // the tool for were the 14 it withheld.
+    const lines = Array.from(
+      { length: 70 },
+      (_, i) => `export const s${i}: Scorer = x;`
+    ).join("\n");
+    const root = tree({ "sdk/src/many.ts": `${lines}\n` });
+    const { status, stdout } = render(root);
+
+    expect(status).toBe(0);
+    const rows = stdout
+      .split("\n")
+      .filter((line) => line.startsWith("| `sdk/src/many.ts:"));
+    expect(rows).toHaveLength(70);
+    expect(stdout).toMatch(/70 occurrence\(s\)/);
+    expect(stdout).not.toMatch(/more occurrence/);
   });
 
   it("has no --write, and says why rather than ignoring the flag", () => {
