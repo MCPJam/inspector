@@ -16,6 +16,16 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { BrowserToolsSection } from "../BrowserToolsSection";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigate,
+}));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { id: "member" } }),
+}));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+
 const TOOLS: SerializedModelRequestTool[] = [
   {
     name: "browser_navigate",
@@ -151,7 +161,9 @@ describe("BrowserToolsSection", () => {
   it("says the model calls them by name, not through a generic verb", () => {
     renderSection();
     expect(
-      screen.getByText(/Available to the model on its next step, by these names/),
+      screen.getByText(
+        /Available to the model on its next step, by these names/,
+      ),
     ).toBeInTheDocument();
     // THE INSTRUCTION ITSELF, not the whole pane. `browser_webmcp_invoke` is a
     // browser verb and belongs in the verb list above; the claim here is that
@@ -255,6 +267,37 @@ describe("BrowserToolsSection", () => {
     }
   });
 
+  it("asks for local Browser permission in WebMCP instead of saying none is running", async () => {
+    const onAllow = vi.fn(async () => true);
+    renderSection({
+      tools: [],
+      page: { ok: false, error: "no_browser_session" },
+      localConsent: { onAllow, settingsHostId: "host_1" },
+    });
+    expect(screen.queryByText(/No browser running yet/)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /^browser$/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(
+      screen.getByText(
+        /Enable browser access from the Browser tab on the right pane/,
+      ),
+    ).toBeInTheDocument();
+    expect(onAllow).not.toHaveBeenCalled();
+  });
+
+  it("links to Browser settings from the enable-access notice", () => {
+    navigate.mockClear();
+    renderSection({
+      tools: [],
+      page: { ok: false, error: "no_browser_session" },
+      localConsent: { onAllow: async () => true, settingsHostId: "host_1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Browser settings" }));
+    expect(navigate).toHaveBeenCalledWith("/hosts/host_1?hostTab=browser");
+  });
+
   it("stays quiet while the first read is in flight", () => {
     // `null` is "still asking". Flashing "no browser running" at a browser
     // that is starting is the wrong answer, briefly, every single time.
@@ -290,5 +333,38 @@ describe("BrowserToolsSection", () => {
     renderSection({ searchQuery: "zzz-nothing" });
     expect(screen.queryByTestId("browser-tools-section")).toBeNull();
   });
+});
 
+it("explains an explicit client opt-out without another permission prompt", () => {
+  renderSection({
+    tools: [],
+    page: null,
+    localConsent: {
+      onAllow: async () => true,
+      settingsHostId: "host_1",
+      disabledForClient: true,
+    },
+  });
+  expect(
+    screen.getByText("Browser tools are disabled for this client."),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+});
+
+it("shows a retry action instead of hiding a failed Browser catalog", () => {
+  const retry = vi.fn();
+  render(
+    <BrowserToolsSection
+      tools={[]}
+      page={null}
+      searchQuery=""
+      catalogError
+      onRetryCatalog={retry}
+    />,
+  );
+  expect(screen.getByRole("status").textContent).toContain(
+    "Couldn't load Browser tools.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(retry).toHaveBeenCalledOnce();
 });
