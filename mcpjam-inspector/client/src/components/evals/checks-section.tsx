@@ -20,9 +20,11 @@
 import {
   createContext,
   useContext,
+  useCallback,
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -124,6 +126,11 @@ export interface ChecksSectionProps {
    * downstream reads it.
    */
   onDraftValidityChange?: (hasInvalidDraft: boolean) => void;
+  /**
+   * Show every row's validation issues, touched or not. Callers turn this on
+   * when the user tries to save with an incomplete check — see `CheckRow`.
+   */
+  showAllErrors?: boolean;
 }
 
 /**
@@ -144,6 +151,50 @@ function useInvalidDraftRegistration(invalid: boolean): void {
   }, [report, editorId, invalid]);
 }
 
+/**
+ * How a `CheckRow` hands its Zod verdict to the fields inside it.
+ *
+ * A blank check fails the schema before anyone has typed — eight kinds start
+ * with a required string empty — and painting that on first render made a
+ * fresh row look broken. So an issue is SHOWN only once its field has been
+ * touched, or when the caller asks for everything (a Save attempt). The field
+ * owns the copy: "Pick a tool" says what to do, where Zod's message says what
+ * went wrong with a string.
+ */
+interface FieldValidation {
+  /** Whether the current predicate has a Zod issue at this top-level path. */
+  isInvalid: (path: string) => boolean;
+  /** Whether an issue at this path should be visible right now. */
+  isShown: (path: string) => boolean;
+  markTouched: (path: string) => void;
+}
+
+const FieldValidationContext = createContext<FieldValidation | null>(null);
+
+/**
+ * Paths whose issue a field renders itself, with its own copy. Any other
+ * issue falls back to the row-level line. Static rather than registered:
+ * the row renders before its fields, so it could not learn the claims of
+ * the same pass any other way.
+ */
+const FIELD_OWNED_PATHS: ReadonlySet<string> = new Set([
+  "toolName",
+  "beforeToolName",
+  "needle",
+  "pattern",
+]);
+
+function useFieldValidation(
+  path: string,
+  message: string,
+): { error: string | null; markTouched: () => void } {
+  const ctx = useContext(FieldValidationContext);
+  const error =
+    ctx && ctx.isInvalid(path) && ctx.isShown(path) ? message : null;
+  const markTouched = useCallback(() => ctx?.markTouched(path), [ctx, path]);
+  return { error, markTouched };
+}
+
 export function ChecksSection({
   value,
   onChange,
@@ -158,6 +209,7 @@ export function ChecksSection({
   allowedKinds,
   globalGatesMenu = false,
   onDraftValidityChange,
+  showAllErrors = false,
 }: ChecksSectionProps & { hideAddButton?: boolean; hideEmptyState?: boolean }) {
   const [invalidDraftIds, setInvalidDraftIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -182,6 +234,22 @@ export function ChecksSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasInvalidDraft]);
 
+  // One stable key per row, so React keeps each `CheckRow` instance — and the
+  // textarea drafts and touched state inside it — with ITS predicate when a
+  // row above is removed. Predicates carry no id, and keying by index handed
+  // row 2's editor to row 3's predicate on every delete. Kept in a ref, not
+  // state: the list is aligned to `value` in render and spliced in the same
+  // handler that splices `value`, so nothing needs to re-render because of it.
+  const rowKeys = useRef<string[]>([]);
+  const mintedRows = useRef(0);
+  const mintRowKey = () => `row-${(mintedRows.current += 1)}`;
+  while (rowKeys.current.length < value.length) {
+    rowKeys.current.push(mintRowKey());
+  }
+  if (rowKeys.current.length > value.length) {
+    rowKeys.current.length = value.length;
+  }
+
   const updateAt = (index: number, next: Predicate) => {
     const copy = value.slice();
     copy[index] = next;
@@ -190,9 +258,11 @@ export function ChecksSection({
   const removeAt = (index: number) => {
     const copy = value.slice();
     copy.splice(index, 1);
+    rowKeys.current.splice(index, 1);
     onChange(copy);
   };
   const addOfKind = (kind: Kind) => {
+    rowKeys.current.push(mintRowKey());
     onChange([...value, blankPredicate(kind)]);
   };
 
@@ -225,7 +295,7 @@ export function ChecksSection({
         ) : (
           <ul className="space-y-2">
             {value.map((predicate, i) => (
-              <li key={i}>
+              <li key={rowKeys.current[i]}>
                 <CheckRow
                   predicate={predicate}
                   onChange={
@@ -252,6 +322,7 @@ export function ChecksSection({
                   globalGate={
                     globalGatesMenu && isGlobalPolicyKind(predicate.type)
                   }
+                  showAllErrors={showAllErrors}
                 />
               </li>
             ))}
@@ -344,6 +415,8 @@ export interface CheckRowProps {
   legacyScenarioGate?: boolean;
   /** Compact whole-run gate row (label + hint in header, minimal fields). */
   globalGate?: boolean;
+  /** Reveal issues on untouched fields too — the Save-attempt case. */
+  showAllErrors?: boolean;
 }
 
 export function CheckRow({
@@ -357,17 +430,60 @@ export function CheckRow({
   embedded = false,
   legacyScenarioGate = false,
   globalGate = false,
+  showAllErrors = false,
 }: CheckRowProps) {
-  // Zod-validate the current row so an in-progress edit (e.g. empty toolName,
-  // malformed args JSON) surfaces an inline error and disables Save up the
-  // tree (callers wire `isAnyCheckInvalid` into their disable state).
-  const validation = useMemo(
-    () => predicateSchema.safeParse(predicate),
-    [predicate],
+  // Zod-validate the current row. Callers gate Save on the same schema via
+  // `areAllChecksValid`; this copy of the verdict is what the fields show,
+  // and only once touched — see `FieldValidation`.
+  const issues = useMemo(() => {
+    const result = predicateSchema.safeParse(predicate);
+    const byPath = new Map<string, string>();
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        const path = String(issue.path[0] ?? "");
+        if (!byPath.has(path)) byPath.set(path, issue.message);
+      }
+    }
+    return byPath;
+  }, [predicate]);
+
+  const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set());
+  const markTouched = useCallback((path: string) => {
+    setTouched((prev) => {
+      if (prev.has(path)) return prev;
+      const next = new Set(prev);
+      next.add(path);
+      return next;
+    });
+  }, []);
+  const isShown = useCallback(
+    (path: string) => showAllErrors || touched.has(path),
+    [showAllErrors, touched],
   );
-  const error = validation.success
-    ? null
-    : validation.error.issues.map((i) => i.message).join("; ");
+  const fieldValidation = useMemo<FieldValidation>(
+    () => ({
+      isInvalid: (path) => issues.has(path),
+      isShown,
+      markTouched,
+    }),
+    [issues, isShown, markTouched],
+  );
+
+  // Issues no field renders itself. Zod's own wording, since we know nothing
+  // more specific about them; shown once the row has been touched anywhere.
+  const rowLevelError = useMemo(() => {
+    const rest = [...issues.entries()]
+      .filter(([path]) => !FIELD_OWNED_PATHS.has(path))
+      .map(([, message]) => message);
+    return rest.length > 0 ? rest.join("; ") : null;
+  }, [issues]);
+  const showRowLevelError =
+    rowLevelError !== null && (showAllErrors || touched.size > 0);
+  const anyErrorShown =
+    showRowLevelError ||
+    [...issues.keys()].some(
+      (path) => FIELD_OWNED_PATHS.has(path) && isShown(path),
+    );
 
   return (
     <div
@@ -376,7 +492,7 @@ export function CheckRow({
           ? "min-w-0 space-y-3"
           : cn(
               "rounded-md border p-3",
-              error
+              anyErrorShown
                 ? "border-destructive/40 bg-destructive/5"
                 : "border-border/60 bg-muted/10",
             ),
@@ -399,18 +515,20 @@ export function CheckRow({
             )
           ) : null}
 
-          <CheckFields
-            predicate={predicate}
-            onChange={onChange}
-            availableTools={availableTools}
-            widgetToolNames={widgetToolNames}
-            toolArgSchemas={toolArgSchemas}
-            readOnly={readOnly}
-            compactGlobalGate={globalGate}
-          />
+          <FieldValidationContext.Provider value={fieldValidation}>
+            <CheckFields
+              predicate={predicate}
+              onChange={onChange}
+              availableTools={availableTools}
+              widgetToolNames={widgetToolNames}
+              toolArgSchemas={toolArgSchemas}
+              readOnly={readOnly}
+              compactGlobalGate={globalGate}
+            />
+          </FieldValidationContext.Provider>
 
-          {error ? (
-            <div className="text-[11px] text-destructive">{error}</div>
+          {showRowLevelError ? (
+            <div className="text-[11px] text-destructive">{rowLevelError}</div>
           ) : null}
           {legacyScenarioGate ? (
             <p className="text-[11px] text-muted-foreground">
@@ -848,6 +966,7 @@ function ToolNameField({
   readOnly,
   label = "Tool",
   compact = false,
+  path = "toolName",
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -861,13 +980,23 @@ function ToolNameField({
    */
   label?: string;
   compact?: boolean;
+  /**
+   * Which predicate field this control edits, for validation. Defaults to
+   * `toolName`; the ordering rule's second field is `beforeToolName`.
+   */
+  path?: "toolName" | "beforeToolName";
 }) {
   const id = useId();
+  const errorId = `${id}-error`;
   // When a suite has attached servers and we know the tool list, prefer a
   // dropdown to prevent typos. Fall back to free text otherwise (legacy
   // suites without an attached server, or for tools the editor doesn't
   // know about yet).
   const useDropdown = availableTools && availableTools.length > 0;
+  const { error, markTouched } = useFieldValidation(
+    path,
+    useDropdown ? "Pick a tool" : "Enter a tool name",
+  );
   return (
     <div
       className={
@@ -880,7 +1009,17 @@ function ToolNameField({
         {label}
       </Label>
       {useDropdown && !readOnly ? (
-        <Select value={value || undefined} onValueChange={onChange}>
+        <Select
+          value={value || undefined}
+          onValueChange={(next) => {
+            markTouched();
+            onChange(next);
+          }}
+          // Closing the menu without choosing is the dropdown's blur.
+          onOpenChange={(open) => {
+            if (!open) markTouched();
+          }}
+        >
           <SelectTrigger
             id={id}
             className={
@@ -889,6 +1028,8 @@ function ToolNameField({
                 : "h-8 text-xs"
             }
             aria-label={label}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
           >
             <SelectValue placeholder="Pick a tool…" />
           </SelectTrigger>
@@ -905,12 +1046,29 @@ function ToolNameField({
           id={id}
           value={value}
           aria-label={label}
-          onChange={(e) => onChange(e.target.value)}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+          onChange={(e) => {
+            markTouched();
+            onChange(e.target.value);
+          }}
+          onBlur={markTouched}
           placeholder="e.g. search"
           className="h-8 text-xs"
           disabled={readOnly}
         />
       )}
+      {error ? (
+        <p
+          id={errorId}
+          className={cn(
+            "text-[11px] text-destructive",
+            compact && "col-start-2",
+          )}
+        >
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1438,33 +1596,26 @@ function RawArgsJsonEditor({
       return "{}";
     }
   };
-  const [draftJson, setDraftJson] = useState(() => formatValue(value));
+  // The draft remembers which `value` it is the text FOR. When the prop
+  // arrives from somewhere other than this textarea's own last parse — the
+  // whole list replaced on a scenario switch, say — the text is re-derived in
+  // render rather than one effect-tick later. A row removed or reordered
+  // above no longer reaches here at all: `ChecksSection` keys rows stably, so
+  // that remounts the editor with its own predicate.
+  const valueKey = JSON.stringify(value ?? {});
+  const [draft, setDraft] = useState(() => ({
+    text: formatValue(value),
+    forValue: valueKey,
+  }));
+  if (draft.forValue !== valueKey) {
+    setDraft({ text: formatValue(value), forValue: valueKey });
+  }
+  const draftJson =
+    draft.forValue === valueKey ? draft.text : formatValue(value);
   // Derived from the text, never stored beside it: a stored flag is one more
   // thing an unrelated edit can leave stale, and this one gates Save.
   const jsonError = useMemo(() => parseArgsDraft(draftJson).error, [draftJson]);
   useInvalidDraftRegistration(jsonError !== null);
-
-  // Resync the draft text when `value` changes from outside this instance
-  // (e.g. switching cases, deleting/reordering checks). Predicate rows are
-  // keyed by index, so the same RawArgsJsonEditor instance is reused with
-  // a different `value` prop — without this, the textarea kept showing the
-  // previous predicate's JSON and the next edit could clobber the new
-  // predicate's args. We compare against the parse of our own draft to
-  // avoid overwriting mid-edit (when the user's draft is the upstream of
-  // `value`, JSON parses equal and we leave the text alone).
-  useEffect(() => {
-    let drift = true;
-    try {
-      const parsed = JSON.parse(draftJson);
-      drift = JSON.stringify(parsed) !== JSON.stringify(value ?? {});
-    } catch {
-      drift = true;
-    }
-    if (drift) {
-      setDraftJson(formatValue(value));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
 
   return (
     <div className="space-y-1">
@@ -1485,8 +1636,14 @@ function RawArgsJsonEditor({
         value={draftJson}
         onChange={(e) => {
           const next = e.target.value;
-          setDraftJson(next);
           const { parsed } = parseArgsDraft(next);
+          // A parse that fails keeps pointing at the value already shown, so
+          // the text survives the re-render; one that succeeds points at the
+          // value it is about to become.
+          setDraft({
+            text: next,
+            forValue: parsed ? JSON.stringify(parsed) : valueKey,
+          });
           if (parsed) onChange(parsed);
         }}
         spellCheck={false}
@@ -1510,6 +1667,10 @@ function ResponseContainsFields({
 }) {
   const needleId = useId();
   const csId = useId();
+  const { error, markTouched } = useFieldValidation(
+    "needle",
+    "Enter the text to look for",
+  );
   return (
     <div className="space-y-2">
       <div className="space-y-1">
@@ -1519,11 +1680,22 @@ function ResponseContainsFields({
         <Input
           id={needleId}
           value={predicate.needle}
-          onChange={(e) => onChange({ ...predicate, needle: e.target.value })}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${needleId}-error` : undefined}
+          onChange={(e) => {
+            markTouched();
+            onChange({ ...predicate, needle: e.target.value });
+          }}
+          onBlur={markTouched}
           placeholder="e.g. refund issued"
           className="h-8 text-xs"
           disabled={readOnly}
         />
+        {error ? (
+          <p id={`${needleId}-error`} className="text-[11px] text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
       <div className="flex items-center gap-2">
         <Switch
@@ -1552,9 +1724,11 @@ function ResponseMatchesFields({
   readOnly: boolean;
 }) {
   const id = useId();
-  // Live-validate the regex on input. An invalid pattern shows inline and the
-  // row-level Zod validation will also flag it (empty pattern). We don't
-  // attempt to detect ReDoS here — the evaluator has its own heuristic guard.
+  // Live-validate the regex on input. An invalid pattern shows inline as soon
+  // as it is typed — the user wrote it, so it is not an untouched-field
+  // message. The empty case goes through the touched rule like every other
+  // required field. We don't attempt to detect ReDoS here — the evaluator has
+  // its own heuristic guard.
   let regexError: string | null = null;
   if (predicate.pattern) {
     try {
@@ -1563,6 +1737,11 @@ function ResponseMatchesFields({
       regexError = e instanceof Error ? e.message : "Invalid regex";
     }
   }
+  const { error: emptyError, markTouched } = useFieldValidation(
+    "pattern",
+    "Enter a pattern",
+  );
+  const error = regexError ?? emptyError;
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
@@ -1571,13 +1750,21 @@ function ResponseMatchesFields({
       <Input
         id={id}
         value={predicate.pattern}
-        onChange={(e) => onChange({ ...predicate, pattern: e.target.value })}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
+        onChange={(e) => {
+          markTouched();
+          onChange({ ...predicate, pattern: e.target.value });
+        }}
+        onBlur={markTouched}
         placeholder="e.g. ^Order #\\d{4} confirmed$"
         className="h-8 font-mono text-xs"
         disabled={readOnly}
       />
-      {regexError ? (
-        <div className="text-[11px] text-destructive">{regexError}</div>
+      {error ? (
+        <div id={`${id}-error`} className="text-[11px] text-destructive">
+          {error}
+        </div>
       ) : null}
     </div>
   );
@@ -1828,6 +2015,7 @@ function ToolOrderFields({
       />
       <ToolNameField
         label="Before this tool"
+        path="beforeToolName"
         value={predicate.beforeToolName}
         onChange={(beforeToolName) =>
           onChange({ ...predicate, beforeToolName })
@@ -1925,6 +2113,10 @@ function ToolResultContainsFields({
   readOnly: boolean;
 }) {
   const id = useId();
+  const { error, markTouched } = useFieldValidation(
+    "needle",
+    "Enter the text the result must contain",
+  );
   return (
     <div className="space-y-2">
       <div className="space-y-1">
@@ -1934,11 +2126,22 @@ function ToolResultContainsFields({
         <Input
           id={id}
           value={predicate.needle}
-          onChange={(e) => onChange({ ...predicate, needle: e.target.value })}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : undefined}
+          onChange={(e) => {
+            markTouched();
+            onChange({ ...predicate, needle: e.target.value });
+          }}
+          onBlur={markTouched}
           placeholder="ISS-4412"
           className="h-8 text-xs"
           disabled={readOnly}
         />
+        {error ? (
+          <p id={`${id}-error`} className="text-[11px] text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
       <ResultToolFilterField
         value={predicate.toolName}
@@ -1979,32 +2182,22 @@ function ToolResultSchemaFields({
   readOnly: boolean;
 }) {
   const id = useId();
-  const [draft, setDraft] = useState(() =>
-    JSON.stringify(predicate.schema ?? {}, null, 2),
-  );
+  // Same draft model as `RawArgsJsonEditor`: the text knows which schema it is
+  // for, and is re-derived in render when the schema arrives from outside.
+  const schemaKey = JSON.stringify(predicate.schema ?? {});
+  const formatSchema = () => JSON.stringify(predicate.schema ?? {}, null, 2);
+  const [draftState, setDraftState] = useState(() => ({
+    text: formatSchema(),
+    forSchema: schemaKey,
+  }));
+  if (draftState.forSchema !== schemaKey) {
+    setDraftState({ text: formatSchema(), forSchema: schemaKey });
+  }
+  const draft =
+    draftState.forSchema === schemaKey ? draftState.text : formatSchema();
   // Derived from the text — see `RawArgsJsonEditor`.
   const error = useMemo(() => parseSchemaDraft(draft).error, [draft]);
   useInvalidDraftRegistration(error !== null);
-  // Resync when `predicate` changes from OUTSIDE this instance. Rows are keyed
-  // by array index, so removing or reordering a row above reuses this same
-  // component with a different predicate — and without this the textarea keeps
-  // showing the previous check's schema, which the next keystroke then writes
-  // onto the current one. Compared against our own draft so a mid-edit value is
-  // left alone; `RawArgsJsonEditor` documents the identical hazard.
-  useEffect(() => {
-    let drift = true;
-    try {
-      drift =
-        JSON.stringify(JSON.parse(draft)) !==
-        JSON.stringify(predicate.schema ?? {});
-    } catch {
-      drift = true;
-    }
-    if (drift) {
-      setDraft(JSON.stringify(predicate.schema ?? {}, null, 2));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [predicate.schema]);
   return (
     <div className="space-y-2">
       <div className="space-y-1">
@@ -2018,14 +2211,17 @@ function ToolResultSchemaFields({
           rows={6}
           onChange={(e) => {
             const next = e.target.value;
-            setDraft(next);
+            const { parsed, ok } = parseSchemaDraft(next);
+            setDraftState({
+              text: next,
+              forSchema: ok ? JSON.stringify(parsed) : schemaKey,
+            });
             // Written through only when it parses: a half-typed schema is not
             // an assertion, and persisting one would make the check
             // unusable-schema on the next run. The row meanwhile HOLDS the
             // last schema that parsed, so the message below says so, and the
             // section reports the unparsable draft upward so a caller can
             // keep Save closed until it parses again.
-            const { parsed, ok } = parseSchemaDraft(next);
             if (ok) onChange({ ...predicate, schema: parsed });
           }}
           className="font-mono text-xs"
