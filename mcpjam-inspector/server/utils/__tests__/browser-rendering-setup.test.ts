@@ -1,11 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ChromiumInstallError,
   ensureLocalChromiumInstalled,
   getChromiumInstallState,
+  InstallOutputCollector,
   resetBrowserRenderingSetupForTests,
   resetChromiumInstallStateForTests,
   shouldAutoInstallChromium,
   startChromiumInstall,
+  summarizeInstallFailure,
 } from "../browser-rendering-setup";
 
 const localEnv = {
@@ -41,11 +44,25 @@ describe("browser rendering setup", () => {
     ).toBe(false);
     expect(shouldAutoInstallChromium(localEnv)).toBe(true);
     expect(
-      shouldAutoInstallChromium({
-        NODE_ENV: "development",
-        ELECTRON_APP: "true",
-      })
+      shouldAutoInstallChromium(
+        {
+          NODE_ENV: "development",
+          ELECTRON_APP: "true",
+        },
+        {},
+      ),
     ).toBe(true);
+  });
+
+  it("does not auto-install inside the desktop app", () => {
+    // The packaged app IS a Chromium and cannot run the Playwright CLI —
+    // `process.execPath` is Electron with the RunAsNode fuse off — so the
+    // install is not merely wasted, it fails. The env var is the wrong
+    // signal: a dev server started with it set is still a Node process.
+    expect(shouldAutoInstallChromium(localEnv, { electron: "39.0.0" })).toBe(
+      false,
+    );
+    expect(shouldAutoInstallChromium(localEnv, {})).toBe(true);
   });
 
   it("installs Chromium once when local rendering is missing it", async () => {
@@ -164,13 +181,16 @@ describe("chromium install — one lock, both doors", () => {
     expect(getChromiumInstallState()).toEqual({ status: "ready" });
   });
 
-  it("reports the cooldown rather than leaving a join at `installing`", async () => {
-    // The path with no install at all: a recent failure means the runner
-    // returns without running anything, and a joiner still needs an answer.
+  it("reports the pending retry rather than leaving a join at `installing`", async () => {
+    // The path with no install at all: a recent failure has a retry booked,
+    // so the runner returns without running anything, and a joiner still
+    // needs an answer — the failure it is waiting behind, countdown included.
     const failing = vi.fn<() => Promise<void>>(async () => {
       throw new Error("network down");
     });
-    const isInstalled = vi.fn<() => Promise<boolean>>().mockResolvedValue(false);
+    const isInstalled = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValue(false);
 
     await ensureLocalChromiumInstalled({
       env: localEnv,
@@ -178,9 +198,8 @@ describe("chromium install — one lock, both doors", () => {
       runInstall: failing,
       logger: silentLogger,
     });
-    resetChromiumInstallStateForTests();
 
-    // Straight back in, inside the cooldown.
+    // Straight back in, while the retry is pending.
     await ensureLocalChromiumInstalled({
       env: localEnv,
       isInstalled,
@@ -189,7 +208,12 @@ describe("chromium install — one lock, both doors", () => {
     });
 
     expect(failing).toHaveBeenCalledTimes(1);
-    expect(getChromiumInstallState().status).toBe("failed");
+    const state = getChromiumInstallState();
+    expect(state.status).toBe("failed");
+    if (state.status === "failed") {
+      expect(state.error).toBe("network down");
+      expect(state.retryAt).toBeGreaterThan(Date.now());
+    }
   });
 
   it("says it is installing again after an earlier attempt failed", async () => {
@@ -276,5 +300,276 @@ describe("chromium install — one lock, both doors", () => {
     expect(state).toEqual({ status: "ready" });
     expect(getChromiumInstallState()).toEqual({ status: "ready" });
     expect(runInstall).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * "exited with code 1" told nobody anything. Playwright prints the reason
+ * right before it exits; the installer has to keep it.
+ */
+describe("chromium install — the reason survives", () => {
+  it("keeps a bounded, plain-text tail and reports the last percentage", () => {
+    const progress: number[] = [];
+    const lines: string[] = [];
+    const collector = new InstallOutputCollector(
+      (p) => progress.push(p),
+      (l) => lines.push(l),
+    );
+    collector.push(
+      "\u001b[1mDownloading Chromium 1234\u001b[0m from https://x\n",
+    );
+    // One chunk, several redraws of the progress bar: only the newest is true.
+    collector.push("|██  | 12% of 168 MiB\r|████| 37% of 168 MiB\r");
+    collector.push("|████████| 100% of 168 MiB\n");
+    collector.push("Chromium 1234 downloaded to /cache\n");
+
+    expect(progress).toEqual([37, 100]);
+    expect(lines).toEqual([
+      "Downloading Chromium 1234 from https://x",
+      "Chromium 1234 downloaded to /cache",
+    ]);
+    expect(collector.output()).toBe(
+      [
+        "Downloading Chromium 1234 from https://x",
+        "|████████| 100% of 168 MiB",
+        "Chromium 1234 downloaded to /cache",
+      ].join("\n"),
+    );
+  });
+
+  it("treats CRLF as a line ending, not a redraw", () => {
+    const lines: string[] = [];
+    const collector = new InstallOutputCollector(
+      () => {},
+      (l) => lines.push(l),
+    );
+    collector.push("Failed to install browsers\r\n");
+    collector.push("Error: EACCES: permission denied\r");
+    collector.push("\n");
+    expect(lines).toEqual([
+      "Failed to install browsers",
+      "Error: EACCES: permission denied",
+    ]);
+  });
+
+  it("bounds the tail", () => {
+    const collector = new InstallOutputCollector(
+      () => {},
+      () => {},
+    );
+    for (let i = 0; i < 500; i += 1)
+      collector.push(`line ${i} ${"x".repeat(40)}\n`);
+    const output = collector.output();
+    expect(output.length).toBeLessThanOrEqual(4096);
+    expect(output.endsWith("line 499 " + "x".repeat(40))).toBe(true);
+  });
+
+  it("uses Playwright's own reason as the one-line error when it printed one", () => {
+    const output = [
+      "Downloading Chromium 1234 from https://playwright.azureedge.net/…",
+      "Failed to install browsers",
+      "Error: Download failed: server returned code 403 body '' URL: https://…",
+      "    at Object.<anonymous> (registry.js:1:1)",
+    ].join("\n");
+    expect(summarizeInstallFailure(1, null, output)).toBe(
+      "Download failed: server returned code 403 body '' URL: https://…",
+    );
+    // Playwright's real shape for a dead network: the sentence ends mid-air
+    // with "caused by", the cause is the next line, and the socket error the
+    // downloader child printed earlier is the part a person can act on.
+    const offline = [
+      "Downloading Chrome for Testing 151.0.7922.34 (playwright chromium v1234) from http://127.0.0.1:9/x.zip",
+      "Error: connect ECONNREFUSED 127.0.0.1:9",
+      "    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16) {",
+      "  errno: -61,",
+      "}",
+      "Failed to install browsers",
+      "Error: Failed to download Chrome for Testing 151.0.7922.34 (playwright chromium v1234), caused by",
+      "Error: Download failure, code=1",
+      "    at ChildProcess.<anonymous> (coreBundle.js:32015:32)",
+    ].join("\n");
+    expect(summarizeInstallFailure(1, null, offline)).toBe(
+      "Failed to download Chrome for Testing 151.0.7922.34 (playwright chromium v1234), caused by Download failure, code=1 (connect ECONNREFUSED 127.0.0.1:9)",
+    );
+    expect(summarizeInstallFailure(1, null, "")).toBe(
+      "playwright install chromium exited with code 1",
+    );
+    expect(summarizeInstallFailure(null, "SIGKILL", "")).toBe(
+      "playwright install chromium exited with signal SIGKILL",
+    );
+  });
+
+  it("publishes the reason and the details on a failure", async () => {
+    const isInstalled = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValue(false);
+    await ensureLocalChromiumInstalled({
+      env: localEnv,
+      isInstalled,
+      runInstall: async () => {
+        throw new ChromiumInstallError(
+          "Download failed: server returned code 403",
+          "Downloading Chromium\nFailed to install browsers\nDownload failed: server returned code 403",
+        );
+      },
+      logger: silentLogger,
+    });
+    expect(getChromiumInstallState()).toMatchObject({
+      status: "failed",
+      error: "Download failed: server returned code 403",
+      details: expect.stringContaining("Failed to install browsers"),
+      attempts: 1,
+    });
+    expect(silentLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Download failed: server returned code 403"),
+    );
+  });
+});
+
+/**
+ * "The inspector will try again shortly" used to be a lie: nothing retried.
+ * Now it books the next attempt and says when.
+ */
+describe("chromium install — automatic retries", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const failingInstall = () =>
+    vi.fn<() => Promise<void>>(async () => {
+      throw new Error("network down");
+    });
+
+  it("books the next attempt at 30s, 2m and 10m, then stops", async () => {
+    const runInstall = failingInstall();
+    const isInstalled = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValue(false);
+    const start = Date.now();
+
+    await ensureLocalChromiumInstalled({
+      env: localEnv,
+      isInstalled,
+      runInstall,
+      logger: silentLogger,
+    });
+    expect(getChromiumInstallState()).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      retryAt: start + 30_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(runInstall).toHaveBeenCalledTimes(2);
+    expect(getChromiumInstallState()).toMatchObject({
+      status: "failed",
+      attempts: 2,
+      retryAt: start + 30_000 + 120_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(runInstall).toHaveBeenCalledTimes(3);
+    expect(getChromiumInstallState()).toMatchObject({
+      status: "failed",
+      attempts: 3,
+      retryAt: start + 30_000 + 120_000 + 600_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(runInstall).toHaveBeenCalledTimes(4);
+    const exhausted = getChromiumInstallState();
+    expect(exhausted).toMatchObject({ status: "failed", attempts: 4 });
+    expect((exhausted as { retryAt?: number }).retryAt).toBeUndefined();
+
+    // Nothing else is booked.
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(runInstall).toHaveBeenCalledTimes(4);
+  });
+
+  it("a retry that succeeds clears the ladder", async () => {
+    const runInstall = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValue(undefined);
+    const isInstalled = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+
+    await ensureLocalChromiumInstalled({
+      env: localEnv,
+      isInstalled,
+      runInstall,
+      logger: silentLogger,
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(getChromiumInstallState()).toEqual({ status: "ready" });
+
+    // A later failure starts the ladder from the first rung again.
+    resetChromiumInstallStateForTests();
+    const again = failingInstall();
+    await ensureLocalChromiumInstalled({
+      env: localEnv,
+      isInstalled: async () => false,
+      runInstall: again,
+      logger: silentLogger,
+    });
+    expect(getChromiumInstallState()).toMatchObject({
+      attempts: 1,
+      retryAt: Date.now() + 30_000,
+    });
+  });
+
+  it("a click cancels the booked retry and starts now", async () => {
+    const auto = failingInstall();
+    const isInstalled = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValue(false);
+    await ensureLocalChromiumInstalled({
+      env: localEnv,
+      isInstalled,
+      runInstall: auto,
+      logger: silentLogger,
+    });
+
+    const explicit = vi.fn<() => Promise<void>>(async () => {});
+    const state = await startChromiumInstall({
+      isInstalled: vi
+        .fn<() => Promise<boolean>>()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValue(true),
+      runInstall: explicit,
+    });
+    expect(state.status).toBe("installing");
+    await vi.waitFor(() =>
+      expect(getChromiumInstallState()).toEqual({ status: "ready" }),
+    );
+    expect(explicit).toHaveBeenCalledTimes(1);
+
+    // The automatic attempt that was booked never runs.
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(auto).toHaveBeenCalledTimes(1);
+  });
+
+  it("a click that fails books its own retry", async () => {
+    const runInstall = failingInstall();
+    await startChromiumInstall({
+      isInstalled: async () => false,
+      runInstall,
+    });
+    await vi.waitFor(() =>
+      expect(getChromiumInstallState().status).toBe("failed"),
+    );
+    const state = getChromiumInstallState();
+    expect(state).toMatchObject({ attempts: 1 });
+    const retryAt = (state as { retryAt?: number }).retryAt ?? 0;
+    expect(retryAt).toBeGreaterThan(Date.now());
+    expect(retryAt).toBeLessThanOrEqual(Date.now() + 30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(runInstall).toHaveBeenCalledTimes(2);
   });
 });
