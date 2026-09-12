@@ -285,6 +285,7 @@ plugin pins whose version no longer exists.
 | `GET .../eval-runs/{runId}/gate-waivers` | The waiver in force over a run, or `null`. Readable by anyone who can view the run |
 | `DELETE .../eval-runs/{runId}/gate-waivers/{waiverId}` | Revoke a waiver, putting the gate back. Idempotent — a second call reports the original revocation rather than restamping it |
 | `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
+| `GET .../eval-runs/{runId}/iterations/{iterationId}/steps` | Per-step verdicts for one iteration: status, reason, and any evidence (screenshots, replay-video offset, widget tool calls). Returns `200` even when the trace blob cannot be loaded — step verdicts still return, and the top-level `evidence` field says whether the evidence read completed (`"resolved"`) or failed (`"unavailable"`). Absent on deployments that predate the field |
 | `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
 | `GET .../eval-suites/{suiteId}/runs` | Recent runs for a suite, newest first |
 
