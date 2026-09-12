@@ -162,10 +162,17 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
+const browserFixture = vi.hoisted(() => ({ guest: false, granted: false }));
+vi.mock("@/hooks/useBrowserEngine", () => ({
+  useBrowserEngine: () => ({
+    engine: "local", selectedEngine: "local", localAvailable: true,
+    consent: { granted: browserFixture.granted, token: browserFixture.granted ? "device-consent" : null },
+  }),
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     signUp: vi.fn(),
-    user: { id: "u1" },
+    user: browserFixture.guest ? null : { id: "u1" },
     isLoading: false,
   }),
 }));
@@ -668,6 +675,8 @@ describe("PlaygroundMain — multi-host render path", () => {
   };
 
   beforeEach(() => {
+    browserFixture.guest = false;
+    browserFixture.granted = false;
     vi.clearAllMocks();
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
     useHostContextStore.setState({
@@ -1238,6 +1247,29 @@ describe("PlaygroundMain — multi-host render path", () => {
       "h-second-claude",
       "h-second-cursor",
     ]);
+  });
+
+  it.each([
+    { guest: true, granted: true, enabled: undefined, expected: ["browser"] },
+    { guest: true, granted: false, enabled: undefined, expected: [] },
+    { guest: true, granted: true, enabled: false, expected: [] },
+    { guest: false, granted: true, enabled: undefined, expected: [] },
+  ])("resolves comparison Browser tools: guest=$guest consent=$granted setting=$enabled", ({ guest, granted, enabled, expected }) => {
+    browserFixture.guest = guest;
+    browserFixture.granted = granted;
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "A" }, { hostId: "h-B", name: "B" }];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "A", { builtInToolIds: [], localBrowserEnabled: enabled }),
+      "h-B": makeHost("h-B", "B", { builtInToolIds: ["web_search"], localBrowserEnabled: enabled }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    render(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      expect(props.executionConfig.builtInToolIds).toEqual(
+        props.compareId === "h-B" ? ["web_search", ...expected] : expected,
+      );
+    }
   });
 
   it("renders one card per resolved host in a multi-host grid", () => {
