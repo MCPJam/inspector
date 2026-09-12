@@ -17,12 +17,15 @@
  * FILED, not where the underlying failure happened. `noToolErrors` files at
  * `response` because that is what analyzer 11 does with it, and the honest
  * reading of any entry here is "this is where the analyzer puts it" rather than
- * "this is what went wrong".
+ * "this is what went wrong". The candidates for a future move are named at the
+ * table, so that a future analyzer bump is a deliberate, versioned change and
+ * not a bug fix someone applies to this file in isolation.
  *
  * ── Why the seed is NOT in this file ─────────────────────────────────────────
  *
- * `RECOMMENDED_DEFAULT_ASSERTIONS` stays declared in `grader-stage.ts`, and
- * this module re-exports it rather than owning it. The backend pins that list
+ * `RECOMMENDED_DEFAULT_PREDICATES` stays declared in `grader-stage.ts`, and
+ * `./index.ts` re-exports it as `RECOMMENDED_DEFAULT_ASSERTIONS`; this module
+ * neither owns nor re-exports it. The backend pins that list
  * through a whole-file `capture` in `convex/lib/mirrors.json` — a regex over the
  * three `{ type, role, severity }` triples, matched against THIS repository's
  * `grader-stage.ts`. A capture that matches nothing hashes to a stable empty
@@ -55,6 +58,25 @@ export const ASSERTION_KINDS = predicateUnion.options.map(
 export type AssertionKind =
   (typeof predicateUnion)["options"][number]["shape"]["type"]["value"];
 
+/**
+ * Where each predicate kind's evidence is filed.
+ *
+ * `toolCalledWith` maps to `selection`. A **gating** `toolCalledWith` is
+ * promoted into `expectedToolCalls` (`stepsToPromptTurns` / corpus
+ * materialization), where the selection MATCHER grades it. An **advisory**
+ * `toolCalledWith` stays a predicate row — promoting it would mint a matcher
+ * expectation that can fail the trial, which Warn/Report must never do. It
+ * belongs in this map anyway, because an author who wrote it is measuring
+ * selection and a settings page must say so — but nothing should read this
+ * entry as licence to re-read a gating residual, which would let a
+ * point-in-time row contradict the adjudicated matcher verdict.
+ *
+ * FUTURE ANALYZER-BUMP CANDIDATES, named so nobody "fixes" them here alone:
+ * the three `widget*` kinds are arguably `response`. Moving any of them
+ * changes where historical failures are attributed, so each is a
+ * `STAGE_ANALYZER_VERSION` bump with a re-derivation, not an edit to this
+ * table. (`noToolErrors` was one of these; analyzer 11 moved it.)
+ */
 export const ASSERTION_STAGE: Record<AssertionKind, UserValueStage> = {
   // ── Selection: which tool the model chose ───────────────────────────────
   toolCalledWith: "selection",
@@ -110,6 +132,12 @@ export const ASSERTION_STAGE: Record<AssertionKind, UserValueStage> = {
   noEndingQuestion: "userValue",
 };
 
+/**
+ * Where each non-predicate grader's evidence is filed.
+ *
+ * Two entries, and both are projections rather than authored predicates: the
+ * tool-call matcher, and the hosted goal-completion judge.
+ */
 export const EVALUATOR_STAGE = {
   "toolCalls:match": "selection",
   "judge:goalCompletion": "userValue",
@@ -120,6 +148,15 @@ export const EVALUATOR_STAGE = {
   "judge:groundedness": "userValue",
 } as const satisfies Record<string, UserValueStage>;
 
+/**
+ * Graders a settings page groups together for PRESENTATION, against the stage
+ * they are actually filed under.
+ *
+ * Budgets are the case: a token ceiling and a turn ceiling both file at
+ * `userValue`, but reading them beside "did the answer contain the right
+ * thing" makes neither legible. Grouping them is a rendering decision and
+ * carries no analytical weight — nothing derives a verdict from this.
+ */
 export const EVALUATOR_PRESENTATION_GROUP: Partial<
   Record<AssertionKind, "budget">
 > = {
