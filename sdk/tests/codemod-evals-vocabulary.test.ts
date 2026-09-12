@@ -420,6 +420,56 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toEqual(["1 checks", "2 predicates"]);
   });
 
+  it("sees an identifier rename destructured out of an import", () => {
+    const root = tree({
+      // The import site is the one line that MUST change when the export is
+      // renamed, and a shorthand binding was being counted as a field only —
+      // so identifier renames pulled in this way were absent from the report
+      // while their call sites in the same file were listed.
+      "sdk/src/a.ts":
+        `const { runScorers } = await import("./scorers/run.js");\n` +
+        `const rows = await runScorers([], ctx);\n`,
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings.map(
+        (f: { line: number; shape: string }) => `${f.line} ${f.shape}`
+      )
+    ).toEqual(["1 identifier", "2 identifier"]);
+  });
+
+  it("reports a subpath named in a manifest or in prose", () => {
+    const root = tree({
+      // No AST for these, so the subpath scope could not see them at all: a
+      // packaging assertion that imports the subpath from inside a shell
+      // string, and a docs example a reader copies.
+      "sdk/package.json": `{ "scripts": { "a": "node -e \\"await import('@mcpjam/sdk/predicates')\\"" } }\n`,
+      "docs/guide.mdx": `Predicates live in \`@mcpjam/sdk/predicates\` today.\n`,
+      // A DIFFERENT module that merely starts with the same text. Renaming it
+      // would be proposing to break it.
+      "docs/other.mdx": `See \`@mcpjam/sdk/predicates-legacy\` for the old shape.\n`,
+      // `checks` in an English sentence is English. Wire fields stay out of
+      // text files, which is the noise this design exists to avoid.
+      "docs/prose.mdx": `The suite runs its checks and reports repetitions.\n`,
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .map(
+          (f: { file: string; line: number; shape: string }) =>
+            `${f.file}:${f.line} ${f.shape}`
+        )
+        .sort()
+    ).toEqual([
+      "docs/guide.mdx:1 text reference",
+      "sdk/package.json:1 text reference",
+    ]);
+  });
+
   it("lists every occurrence rather than the first sixty", () => {
     // The defect this pins is specific: the committed report stated 74
     // occurrences of one rename and listed 60, so the 14 a reader most needed

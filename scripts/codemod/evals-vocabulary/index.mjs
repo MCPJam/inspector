@@ -137,6 +137,15 @@ function walk(dir, out, failures) {
   return out;
 }
 
+/**
+ * The tool's own directory.
+ *
+ * `mapping.json` names every subpath this program renames and `REPORT.md`
+ * quotes them back, so a text scan that included them would report the
+ * instructions as work. They are not rename sites; they are the tool.
+ */
+const TOOL_DIR = "scripts/codemod/evals-vocabulary/";
+
 const isProtectedPath = (rel) =>
   protectedSpec.paths.some((p) => rel === p || rel.startsWith(p)) ||
   protectedSpec.pathSuffixes.some((s) => rel.endsWith(s));
@@ -256,35 +265,47 @@ function interestingNodes(text, file) {
   const visit = (node) => {
     if (ts.isIdentifier(node)) {
       const parent = node.parent;
-      // A destructured field is the PROPERTY read, never the local bound to
-      // it. `const { checks: local } = row` reads `checks` and declares
-      // `local`, so taking `name` blamed the local and lost the field; and
-      // `const [checks] = values` reads a POSITION, so it names no field at
-      // all however its local is spelled.
-      const isBindingField =
-        ts.isBindingElement(parent) &&
-        ts.isObjectBindingPattern(parent.parent) &&
-        (parent.propertyName
-          ? parent.propertyName === node
-          : parent.name === node);
-      const isPropertyName =
-        ((ts.isPropertySignature(parent) ||
+      const inObjectBinding =
+        ts.isBindingElement(parent) && ts.isObjectBindingPattern(parent.parent);
+      // `const { checks: local } = row` reads `checks` and declares `local`.
+      // The property is the field; the local is just a local. Taking the
+      // binding's `name` blamed `local` and lost `checks` entirely. An ARRAY
+      // binding (`const [checks] = values`) reads a POSITION, so it names no
+      // field however its local happens to be spelled.
+      const isAliasedBindingProperty =
+        inObjectBinding && parent.propertyName === node;
+      const isDeclaredPropertyName =
+        (ts.isPropertySignature(parent) ||
           ts.isPropertyAssignment(parent) ||
           ts.isPropertyDeclaration(parent) ||
           ts.isMethodSignature(parent) ||
           ts.isEnumMember(parent)) &&
-          parent.name === node) ||
-        isBindingField;
+        parent.name === node;
       const isMember =
         (ts.isPropertyAccessExpression(parent) || ts.isQualifiedName(parent)) &&
         (parent.name === node || parent.right === node);
-      const isShorthand = ts.isShorthandPropertyAssignment(parent);
+      // A shorthand is ONE identifier doing two jobs, so it belongs to both
+      // scopes rather than to whichever is checked first. `const { runScorers
+      // } = await import(…)` names an export AND binds a local of the same
+      // name; counting it as a field alone hid every identifier rename
+      // imported that way. That is exactly how `predicateScorer`,
+      // `judgeScorer` and `runScorers` came to be absent from the report
+      // while their other uses in the same test file were listed — and the
+      // import site is the one line that has to change.
+      const isShorthand =
+        (inObjectBinding && !parent.propertyName && parent.name === node) ||
+        ts.isShorthandPropertyAssignment(parent);
 
       found.push({
         value: node.text,
         start: node.getStart(source),
-        isIdentifier: !isPropertyName && !isMember && !isShorthand,
-        isField: isPropertyName || isMember || isShorthand,
+        isIdentifier:
+          !isDeclaredPropertyName && !isAliasedBindingProperty && !isMember,
+        isField:
+          isDeclaredPropertyName ||
+          isAliasedBindingProperty ||
+          isMember ||
+          isShorthand,
       });
       return;
     }
@@ -469,6 +490,35 @@ for (const file of files) {
           );
         }
       }
+    }
+  }
+
+  // A package subpath in prose or in a manifest is still a reference to it.
+  // Text files get no AST, so they were invisible to the subpath scope
+  // entirely: the packaging assertion in `sdk/package.json` imports
+  // `@mcpjam/sdk/predicates` from inside a shell string, and three docs pages
+  // show it in examples readers copy. Remove the entry point while following
+  // an inventory that omitted them and the packaging test imports a subpath
+  // that is gone and the published examples teach it.
+  //
+  // Subpaths ONLY here, never wire fields. `@mcpjam/sdk/predicates` is an
+  // unambiguous token that cannot occur by accident; `checks` and
+  // `repetitions` in a Markdown sentence are English, and proposing a rename
+  // against prose is the noise this whole design exists to avoid.
+  if (isText && !rel.startsWith(TOOL_DIR)) {
+    for (const [from, rename] of subpathRenames) {
+      if (!inAllowedPaths(rel, rename.paths)) continue;
+      // A WHOLE subpath: `@mcpjam/sdk/predicates-legacy` and
+      // `@mcpjam/sdk/predicates/deep` are different modules, and proposing to
+      // rename them would be proposing to break them.
+      const token = new RegExp(
+        `${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w/-])`
+      );
+      lines.forEach((lineText, index) => {
+        if (token.test(lineText)) {
+          record(rel, index + 1, lineText, rename, from, "text reference");
+        }
+      });
     }
   }
 
