@@ -7,6 +7,8 @@ import {
   DEFAULT_BROWSERD_USER_DATA_DIR,
   extraArgsFor,
   formatReadyLine,
+  MIN_SCREENSHOT_MAX_BYTES,
+  parseBrowserdFeatures,
   readBrowserdConfig,
 } from "../config";
 
@@ -350,5 +352,50 @@ describe("announcedFeatures", () => {
         MCPJAM_BROWSERD_VIEWPORT_POLICY: "followpane",
       }).viewportPolicy,
     ).toBe("fixed");
+  });
+});
+
+describe("parseBrowserdFeatures", () => {
+  it("leaves every feature off unless it is named", () => {
+    // THE DEFAULT THE WHOLE ROLLOUT RESTS ON. Every flag changes what the model
+    // sees, and eval transcripts are diffed line by line, so an empty bag has
+    // to mean "behave exactly as the last release did".
+    expect(parseBrowserdFeatures({})).toEqual({});
+    expect(parseBrowserdFeatures({ MCPJAM_BROWSERD_FEATURES: "" })).toEqual({});
+  });
+
+  it("turns on exactly the flags it was given, by exact name", () => {
+    expect(
+      parseBrowserdFeatures({
+        MCPJAM_BROWSERD_FEATURES: "a11yFrames, changedA11y",
+      }),
+    ).toEqual({ a11yFrames: true, changedA11y: true });
+  });
+
+  it("ignores a name it does not know rather than refusing to boot", () => {
+    // A box rolled past a flag's removal still has the flag in its environment.
+    // Failing there costs the browser; ignoring it costs nothing.
+    expect(
+      parseBrowserdFeatures({
+        MCPJAM_BROWSERD_FEATURES: "a11yframes,teleport,keystrokeTyping",
+      }),
+    ).toEqual({ keystrokeTyping: true });
+  });
+
+  it("reads a screenshot cap", () => {
+    expect(
+      parseBrowserdFeatures({ MCPJAM_BROWSERD_SCREENSHOT_MAX_BYTES: "120000" }),
+    ).toEqual({ screenshotMaxBytes: 120_000 });
+  });
+
+  it("refuses a nonsensical screenshot cap rather than the boot", () => {
+    // Below the floor no JPEG of a 1024x768 page fits at any quality, so the
+    // capture would walk every tier to learn what one look would have told it.
+    for (const raw of ["", "  ", "nope", "-1", "0", String(MIN_SCREENSHOT_MAX_BYTES - 1)]) {
+      expect(
+        parseBrowserdFeatures({ MCPJAM_BROWSERD_SCREENSHOT_MAX_BYTES: raw }),
+        `"${raw}" should leave the cap unset`,
+      ).toEqual({});
+    }
   });
 });

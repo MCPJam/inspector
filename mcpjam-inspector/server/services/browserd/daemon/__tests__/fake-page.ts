@@ -171,6 +171,19 @@ export function fakePage(init: {
     webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> }
       ? B | null
       : never;
+    /**
+     * The per-frame CDP sessions this page's bridge has attached.
+     *
+     * `hostBackendNodeId` is the fixture's convenience, not the driver's: it
+     * is what `DOM.getFrameOwner` would answer for this frame, so a test can
+     * say "this session belongs to the iframe at node 77" in one place rather
+     * than hand-wiring a reply table per frame.
+     */
+    frameSessions?: Array<{
+      frameId: string;
+      cdp: CdpLike;
+      hostBackendNodeId?: number;
+    }>;
   } = {},
 ): FakePage {
   let url = init.url ?? "about:blank";
@@ -259,6 +272,13 @@ export function fakePage(init: {
     async fillSelector(selector, text) { act(`fill:${selector}:${text}`); },
     async press(key) { act(`press:${key}`); },
     async scrollBy({ dx, dy }) { act(`scroll:${dx},${dy}`); },
+    // Logged DIFFERENTLY from `scrollBy`, which is the whole assertion: a
+    // `scroll` at a ref used to reach `scrollBy` and move the document behind
+    // the element while reporting success, and the two are indistinguishable
+    // in a log that spells them the same.
+    async scrollAt(point, { dx, dy }) {
+      act(`scroll:${dx},${dy}@${point.x},${point.y}`);
+    },
     async dragTo(from, to) { act(`drag:${from.x},${from.y}->${to.x},${to.y}`); },
     async selectOption(selector, value) { act(`select:${selector}:${value}`); },
     async pageText() {
@@ -299,6 +319,11 @@ export function fakePage(init: {
     async cdp() {
       return page.cdpSession === undefined ? defaultCdp : page.cdpSession;
     },
+    // OPTIONAL on purpose: an engine with no child sessions omits the method
+    // entirely (Electron does), which is a different thing from having none.
+    ...(init.frameSessions
+      ? { frameSessions: () => init.frameSessions! }
+      : {}),
 
     setUrl,
     setDom,

@@ -42,6 +42,7 @@ import { validateLocalProjectKey } from "../../../utils/computers/local-machine.
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup.js";
 import { buildBrowserdStack, type BrowserdStack } from "../daemon/server.js";
 import { ChromiumDriver } from "../daemon/chromium-driver.js";
+import { parseBrowserdFeatures } from "../daemon/config.js";
 import { HandoffLease } from "../daemon/lease.js";
 import {
   launchBrowserdContext,
@@ -644,6 +645,11 @@ async function startSession(
   );
   const driver = new ChromiumDriver(context, {
     lease,
+    // Read from the LOCAL process's own environment: this driver runs in the
+    // inspector, not in a sandbox, so there is no boot recipe to forward a
+    // flag through. A developer dogfooding one sets it where they start the
+    // app.
+    features: parseBrowserdFeatures(),
     /**
      * The Playground's browser follows its panel; every other caller does not.
      *

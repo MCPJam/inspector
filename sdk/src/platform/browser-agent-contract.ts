@@ -82,17 +82,32 @@ export type BrowserAgentTarget =
    */
   | { ref: string };
 
-export type BrowserAgentActVerb =
-  | "click"
-  | "type"
-  | "press"
-  | "scroll"
-  | "hover"
-  | "drag"
-  | "select"
+/**
+ * The published act verbs, AS A RUNTIME LIST.
+ *
+ * A list rather than a bare type union because this contract is checked, not
+ * merely declared: `shared/__tests__/browser-agent-contract-parity.test.ts`
+ * walks it against the daemon's own verbs, the `/v1` request schema, the SDK's
+ * allowlist, the OpenAPI enum and the CLI's `--verb` help, and a type union
+ * gives a test nothing to walk. Every one of those surfaces was written out by
+ * hand, and `fill_form` is what happens when they drift: it reached the daemon
+ * and never reached anything else.
+ *
+ * ADDING A VERB HERE PUBLISHES IT. That is the decision the list exists to
+ * make visible — a verb added to the daemon alone stays daemon-only, named in
+ * `DAEMON_ONLY_ACT_VERBS`, until someone puts it here on purpose.
+ */
+export const BROWSER_AGENT_ACT_VERBS = [
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "hover",
+  "drag",
+  "select",
   /** Tab lifecycle rides `act_in_browser`; the protocol already has the verbs. */
-  | "close_tab"
-  | "activate_tab"
+  "close_tab",
+  "activate_tab",
   /**
    * Answer the dialog blocking this page. `accept_dialog` takes a `prompt`
    * reply in `value`.
@@ -102,8 +117,11 @@ export type BrowserAgentActVerb =
    * client with its own rules answers here, and opens its session with the
    * daemon deciding nothing.
    */
-  | "accept_dialog"
-  | "dismiss_dialog";
+  "accept_dialog",
+  "dismiss_dialog",
+] as const;
+
+export type BrowserAgentActVerb = (typeof BROWSER_AGENT_ACT_VERBS)[number];
 
 export type BrowserAgentObserveMode =
   | "a11y"

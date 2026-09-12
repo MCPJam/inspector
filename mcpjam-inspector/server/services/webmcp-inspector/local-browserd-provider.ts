@@ -16,6 +16,7 @@ import type {
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
 import { ChromiumDriver } from "../browserd/daemon/chromium-driver";
+import { parseBrowserdFeatures } from "../browserd/daemon/config";
 import { launchBrowserdContext } from "../browserd/daemon/chromium-launch";
 import {
   buildBrowserdStack,
@@ -249,6 +250,9 @@ export const localBrowserdWebMcpProvider: WebMcpBrowserProvider = {
     }
     driver = new ChromiumDriver(context, {
       webmcpOutputBytes: WEBMCP_RESULT_CAP_BYTES,
+      // The Inspector's Chromium runs in THIS process, so the flags come from
+      // this process's environment rather than from a boot recipe.
+      features: parseBrowserdFeatures(),
       onPopupOpened: options.callbacks.onPopupOpened,
       onTabLimit: () =>
         options.callbacks.onSessionNotice?.(

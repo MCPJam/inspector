@@ -3965,7 +3965,18 @@ describe("ChromiumDriver — acting on a ref", () => {
   async function observedThenActed(
     action: Extract<Parameters<typeof cmd>[0], { kind: "act" }>,
     replies: Record<string, unknown> = {},
-    opts: { navigateBetween?: string } = {},
+    opts: {
+      navigateBetween?: string;
+      /**
+       * Options for the driver under test.
+       *
+       * Present so a flagged behaviour can be exercised through the SAME
+       * sequence as the default one — a ref only exists because an observation
+       * minted it, so a flag test that built its own driver would be testing a
+       * different path as well as a different flag.
+       */
+      driverOptions?: ConstructorParameters<typeof ChromiumDriver>[1];
+    } = {},
   ) {
     // Replies go through `cdpReplies` rather than a hand-built session: the
     // fake's default session carries the baseline every observation needs, and
@@ -3991,6 +4002,10 @@ describe("ChromiumDriver — acting on a ref", () => {
       "DOM.getBoxModel",
       "DOM.focus",
       "Input.insertText",
+      // Recorded because the keystroke typing path sends these INSTEAD of
+      // `Input.insertText`: a test that only watched the insert would read a
+      // keystroke-typed field as a field nothing was typed into.
+      "Input.dispatchKeyEvent",
       "Runtime.callFunctionOn",
     ]) {
       const reply = base[method] ?? {};
@@ -4003,7 +4018,7 @@ describe("ChromiumDriver — acting on a ref", () => {
     }
     const page = fakePage({ url: "https://x.test/", cdpReplies: recorded });
     const { context } = fakeContext({ pages: [page] });
-    const driver = new ChromiumDriver(context);
+    const driver = new ChromiumDriver(context, opts.driverOptions);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
     const observed = await driver.execute(
       cmd({ kind: "observe", mode: "a11y" }),
@@ -4185,6 +4200,114 @@ describe("ChromiumDriver — acting on a ref", () => {
     expect(sent.map((c) => c.method)).toContain("DOM.focus");
     const inserted = sent.find((c) => c.method === "Input.insertText");
     expect(inserted?.params).toMatchObject({ text: "someone@example.com" });
+  });
+
+  it("with keystrokeTyping on, types a ref field as key events and never inserts", async () => {
+    // The flag's whole point: `Input.insertText` fires no keydown, so a page
+    // that reads `event.key` sees a field that changed with nobody typing.
+    const { res, sent } = await observedThenActed(
+      {
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: "e2" },
+        value: "hi",
+      },
+      {},
+      { driverOptions: { features: { keystrokeTyping: true } } },
+    );
+    expect(res.ok).toBe(true);
+    // Still focused and still select-all first: the verb means REPLACE
+    // whichever way the text arrives.
+    expect(sent.map((call) => call.method)).toContain("DOM.focus");
+    expect(sent.some((call) => call.method === "Input.insertText")).toBe(false);
+    expect(
+      sent
+        .filter((call) => call.method === "Input.dispatchKeyEvent")
+        .map((call) => `${String(call.params?.type)}:${String(call.params?.key)}`),
+    ).toEqual(["keyDown:h", "keyUp:h", "keyDown:i", "keyUp:i"]);
+  });
+
+  it("with keystrokeTyping on, falls back to an insert for a grapheme it cannot key", async () => {
+    const { res, sent } = await observedThenActed(
+      {
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: "e2" },
+        value: "a漢",
+      },
+      {},
+      { driverOptions: { features: { keystrokeTyping: true } } },
+    );
+    expect(res.ok).toBe(true);
+    expect(
+      sent.filter((call) => call.method === "Input.insertText").map((c) => c.params),
+    ).toEqual([{ text: "漢" }]);
+    expect(
+      sent.filter((call) => call.method === "Input.dispatchKeyEvent").length,
+    ).toBe(2);
+  });
+
+  it("with keystrokeTyping on, presses Enter for a newline", async () => {
+    const { sent } = await observedThenActed(
+      {
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: "e2" },
+        value: "a\n",
+      },
+      {},
+      { driverOptions: { features: { keystrokeTyping: true } } },
+    );
+    expect(
+      sent
+        .filter((call) => call.method === "Input.dispatchKeyEvent")
+        .map((call) => String(call.params?.key)),
+    ).toEqual(["a", "a", "Enter", "Enter"]);
+  });
+
+  it("stops typing when the browser changes hands mid-word", async () => {
+    // A word typed letter by letter CAN be interrupted, where an insertion
+    // cannot — so the guard runs per grapheme and the rest of the sentence
+    // does not arrive under the person's cursor. Nothing else opens this
+    // window: by the time a test could take the lease itself, an insertion
+    // would already have delivered the whole string.
+    const lease = new HandoffLease();
+    const typed: string[] = [];
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [{ role: "textbox", name: "Email", id: 42 }],
+        }),
+        "DOM.getBoxModel": BOX,
+        "DOM.resolveNode": { object: { objectId: "obj-1" } },
+        "Input.dispatchKeyEvent": (params?: Record<string, unknown>) => {
+          if (params?.type !== "keyDown") return {};
+          typed.push(String(params.key));
+          if (typed.length === 1) lease.acquire("person-1", 60_000);
+          return {};
+        },
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, {
+      lease,
+      features: { keystrokeTyping: true },
+    });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: "e1" },
+        value: "a-long-password",
+      }),
+    );
+    expect(res.ok).toBe(false);
+    // One letter, then stopped — not the whole password under their cursor.
+    expect(typed).toEqual(["a"]);
   });
 
   it("focuses the ref before pressing a key, so Enter lands where it was aimed", async () => {

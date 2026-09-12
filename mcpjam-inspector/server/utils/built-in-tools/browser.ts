@@ -126,6 +126,37 @@ const VIEWPORT_MAX_W = MAX_SESSION_VIEWPORT.width;
 const VIEWPORT_MAX_H = MAX_SESSION_VIEWPORT.height;
 
 /**
+ * The act verbs THE MODEL is offered, written out rather than derived.
+ *
+ * Written out because `z.enum` wants a literal tuple, and derived-and-asserted
+ * because the derivation is the actual rule:
+ *
+ *   published contract − the tab verbs + the daemon-only verbs
+ *
+ * The model gets `tabId` on every call, so `close_tab`/`activate_tab` would be
+ * a second way to say the same thing; `fill_form` goes the other way — the
+ * daemon has it, `/v1` does not yet publish it, and the model has always been
+ * able to use it. `shared/__tests__/browser-agent-contract-parity.test.ts`
+ * checks this list against that formula, so the two cannot drift apart
+ * silently the way they did before anything walked them.
+ */
+export const BROWSER_ACT_TOOL_VERBS = [
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "hover",
+  "drag",
+  "select",
+  "fill_form",
+  "accept_dialog",
+  "dismiss_dialog",
+] as const;
+
+/** The published verbs the model tool deliberately withholds. @see BROWSER_ACT_TOOL_VERBS */
+export const MODEL_WITHHELD_ACT_VERBS = ["close_tab", "activate_tab"] as const;
+
+/**
  * How approval reaches the user for this turn — the thing a surface must
  * attest before it gets interactive browser tools.
  *
@@ -1545,18 +1576,7 @@ export function buildBrowserTools(
         "resized while you work, so take its size from the `viewport` on your " +
         "last observation; a coordinate outside it is refused, not clamped.",
       inputSchema: z.object({
-        verb: z.enum([
-          "click",
-          "type",
-          "press",
-          "scroll",
-          "hover",
-          "drag",
-          "select",
-          "fill_form",
-          "accept_dialog",
-          "dismiss_dialog",
-        ]),
+        verb: z.enum(BROWSER_ACT_TOOL_VERBS),
         selector: z.string().optional().describe("CSS selector to target."),
         x: z
           .number()

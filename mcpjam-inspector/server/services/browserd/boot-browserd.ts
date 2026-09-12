@@ -334,6 +334,21 @@ function buildEnv(
     options.deviceScaleFactor !== 1
       ? { MCPJAM_BROWSERD_DPR: String(options.deviceScaleFactor) }
       : {}),
+    // FORWARDED VERBATIM from the inspector's own environment, not parsed
+    // here. The daemon in the sandbox is the thing that has the features, and
+    // it owns the vocabulary: an inspector that validated the names would have
+    // to be redeployed before a daemon could gain a flag, which is backwards.
+    // Absent variables stay absent, so a box whose operator set nothing runs
+    // exactly as the last release did.
+    ...(process.env.MCPJAM_BROWSERD_FEATURES
+      ? { MCPJAM_BROWSERD_FEATURES: process.env.MCPJAM_BROWSERD_FEATURES }
+      : {}),
+    ...(process.env.MCPJAM_BROWSERD_SCREENSHOT_MAX_BYTES
+      ? {
+          MCPJAM_BROWSERD_SCREENSHOT_MAX_BYTES:
+            process.env.MCPJAM_BROWSERD_SCREENSHOT_MAX_BYTES,
+        }
+      : {}),
   };
   if (options.windowSize) env.MCPJAM_BROWSERD_WINDOW_SIZE = options.windowSize;
   if (options.headless) env.MCPJAM_BROWSERD_HEADLESS = "true";

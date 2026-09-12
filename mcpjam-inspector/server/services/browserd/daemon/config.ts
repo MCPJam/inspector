@@ -107,6 +107,103 @@ export interface BrowserdConfig {
   profileArchivePath?: string;
 }
 
+/**
+ * Behaviour this daemon build has but does not yet do by default.
+ *
+ * ONE RELEASE OFF, every one of them. The browser stack's observations feed
+ * eval transcripts that are diffed line by line, so a change to what the model
+ * sees is a change to every recorded run — and "more robust" is not a reason
+ * to make last month's runs stop matching this month's. Each flag turns on one
+ * measured behaviour, hosted and local dogfood opt in through the environment,
+ * and the default flips only once a release has run with it.
+ *
+ * NOT a general settings bag: everything here is expected to be deleted. A
+ * flag that outlives its rollout is a second code path nobody exercises.
+ */
+export interface BrowserdFeatures {
+  /** Read child frames' accessibility trees and splice them in. */
+  a11yFrames?: boolean;
+  /** Type by key events rather than `Input.insertText`. */
+  keystrokeTyping?: boolean;
+  /**
+   * Keep scroll containers in the tree and mark them `[scrollable]`.
+   *
+   * The MARKER only. Scrolling AT a ref rather than scrolling the document is
+   * a bug fix and is not gated: `scroll` with a ref reported success while
+   * moving the page behind the element.
+   */
+  scrollableMarkers?: boolean;
+  /** Report the lines an act added and removed, beside the full tree. */
+  changedA11y?: boolean;
+  /**
+   * Cap one screenshot's base64 length, stepping quality down to fit.
+   *
+   * `undefined` is today's behaviour — one capture at the fixed quality, no
+   * measurement, no cap.
+   */
+  screenshotMaxBytes?: number;
+}
+
+/** Every flag name `MCPJAM_BROWSERD_FEATURES` accepts. */
+const BROWSERD_FEATURE_NAMES = [
+  "a11yFrames",
+  "keystrokeTyping",
+  "scrollableMarkers",
+  "changedA11y",
+] as const satisfies ReadonlyArray<keyof BrowserdFeatures>;
+
+/**
+ * Read the feature bag from the environment.
+ *
+ * EXACT NAMES ONLY, comma-separated, and an unrecognised one is IGNORED rather
+ * than fatal — matching `kiosk` and `record`, and for the stronger reason: a
+ * box rolled forward past a flag's removal would otherwise fail to boot a
+ * browser because its environment still names a flag that no longer exists.
+ * Nothing is on unless it is named.
+ */
+export function parseBrowserdFeatures(
+  env: NodeJS.ProcessEnv = process.env,
+): BrowserdFeatures {
+  const named = new Set(
+    (env.MCPJAM_BROWSERD_FEATURES ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0),
+  );
+  const features: BrowserdFeatures = {};
+  for (const name of BROWSERD_FEATURE_NAMES) {
+    if (named.has(name)) features[name] = true;
+  }
+  const maxBytes = readScreenshotMaxBytes(env);
+  if (maxBytes !== undefined) features.screenshotMaxBytes = maxBytes;
+  return features;
+}
+
+/**
+ * The screenshot byte cap, or `undefined` for no cap.
+ *
+ * LENIENT, like every other numeric switch here: nonsense refuses the CAP, not
+ * the boot. A daemon that would not start because somebody mistyped a byte
+ * budget has traded every picture for one.
+ *
+ * The floor is a real one rather than `> 0`: below a few kilobytes no JPEG of
+ * a 1024x768 page fits at any quality, so the capture would step down through
+ * every tier and hand back the smallest one anyway — having paid for four
+ * captures to learn what one would have told it.
+ */
+function readScreenshotMaxBytes(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env.MCPJAM_BROWSERD_SCREENSHOT_MAX_BYTES;
+  if (raw === undefined || raw.trim().length === 0) return undefined;
+  const bytes = Number(raw);
+  if (!Number.isFinite(bytes) || bytes < MIN_SCREENSHOT_MAX_BYTES) {
+    return undefined;
+  }
+  return Math.floor(bytes);
+}
+
+/** Under this, no tier fits and the step-down is pure cost. */
+export const MIN_SCREENSHOT_MAX_BYTES = 8 * 1024;
+
 export const DEFAULT_BROWSERD_PORT = 8791;
 export const DEFAULT_BROWSERD_HOST = "0.0.0.0";
 export const DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";

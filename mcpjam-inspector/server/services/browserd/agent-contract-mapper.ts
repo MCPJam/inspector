@@ -315,6 +315,24 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
 }
 
 /**
+ * Daemon act verbs the public contract deliberately does not publish.
+ *
+ * SHRINKING THIS LIST IS THE PUBLISH DECISION. `publishedOpFor` below switches
+ * on `action.kind`, not on the act VERB, so a verb added to `BROWSERD_ACT_VERBS`
+ * compiles, runs, and reaches no published surface — which is exactly how
+ * `fill_form` came to work for the model and for nothing else. The parity test
+ * asserts this list is EXACTLY the daemon's verbs minus the contract's, so a
+ * new daemon verb fails until someone writes it here (stays private) or adds
+ * it to `BROWSER_AGENT_ACT_VERBS` (becomes public, with the `/v1` schema, the
+ * SDK allowlist, the OpenAPI enum and the CLI help to update alongside).
+ *
+ * `fill_form` is here rather than published because publishing it is a real
+ * decision with a schema attached — `fields[]` is a second target shape on a
+ * verb whose target is otherwise one element — and nobody has made it.
+ */
+export const DAEMON_ONLY_ACT_VERBS = ["fill_form"] as const;
+
+/**
  * Which published op covers this daemon action — the REVERSE exhaustive check.
  *
  * Nothing calls this to do work. It exists so that adding a verb to

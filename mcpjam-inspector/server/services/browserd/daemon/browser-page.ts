@@ -71,8 +71,14 @@ export interface DriverPage {
   clickSelector(selector: string): Promise<void>;
   hoverAt(point: ActPoint): Promise<void>;
   hoverSelector(selector: string): Promise<void>;
-  /** Type into the focused element (a click usually precedes this). */
-  typeText(text: string): Promise<void>;
+  /**
+   * Type into the focused element (a click usually precedes this).
+   *
+   * `keystrokes` asks for key EVENTS rather than one insertion, for a page
+   * that reads `event.key`. Optional and additive: an engine that ignores it
+   * types the same text the same way it always has.
+   */
+  typeText(text: string, options?: { keystrokes?: boolean }): Promise<void>;
   /**
    * Type into a specific element, replacing its current value.
    *
@@ -96,6 +102,18 @@ export interface DriverPage {
   /** Press one key or chord ("Enter", "Control+A"). */
   press(key: string): Promise<void>;
   scrollBy(delta: { dx: number; dy: number }): Promise<void>;
+  /**
+   * Scroll AT a point, so a scroll container under it moves instead of the page.
+   *
+   * `scrollBy` moves the document. A wheel delivered at a point moves whichever
+   * scroller is under that point, which is what `scroll` with a ref has always
+   * claimed to do and never did: the ref was resolved, ignored, and the page
+   * behind the element scrolled while the result reported success.
+   *
+   * Optional so an engine can arrive without it; the driver falls back to
+   * `scrollBy` and behaves exactly as it does today.
+   */
+  scrollAt?(point: ActPoint, delta: { dx: number; dy: number }): Promise<void>;
   dragTo(from: ActPoint, to: ActPoint): Promise<void>;
   selectOption(selector: string, value: string): Promise<void>;
   /** Focus this tab in the window (what a human sees, and what `activate_tab` does). */

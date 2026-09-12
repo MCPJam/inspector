@@ -142,6 +142,24 @@ describe("electron page — the keyboard", () => {
     expect(keyEvents(dbg)).toHaveLength(0);
   });
 
+  it("types keystrokes when asked to", async () => {
+    // The twin of the test above, which stays and pins the DEFAULT. Both are
+    // needed: the point of the flag is that the two paths coexist for a
+    // release, and a suite that only covered the new one would not notice the
+    // day the old one stopped working.
+    const { page, dbg } = makePage();
+    await page.typeText("hi", { keystrokes: true });
+    expect(dbg.calls.filter((c) => c.method === "Input.insertText")).toHaveLength(
+      0,
+    );
+    expect(keyEvents(dbg).map((e) => `${e.type}:${e.key}`)).toEqual([
+      "keyDown:h",
+      "keyUp:h",
+      "keyDown:i",
+      "keyUp:i",
+    ]);
+  });
+
   it("presses a key with the text it inserts", async () => {
     const { page, dbg } = makePage();
     await page.press("Enter");

@@ -32,6 +32,7 @@ import type { CdpLike } from "./webmcp-bridge";
 import type { ActPoint } from "./browser-page";
 import type { RefEntry } from "./a11y-refs";
 import { readAxTree } from "./cdp-a11y";
+import { typeByKeystrokes } from "./keyboard";
 import type { A11yNode } from "./observation-budget";
 
 /**
@@ -218,6 +219,21 @@ export async function replaceTextInNode(
   text: string,
   /** Asked immediately before the keystrokes land. See `resolveRefNode`. */
   guard: () => void = () => {},
+  options: {
+    /**
+     * Send the text as KEY EVENTS rather than as one insertion.
+     *
+     * Behind `features.keystrokeTyping` for a release: `Input.insertText`
+     * fires no `keydown`, so a page that reads `event.key` — an autocomplete,
+     * a React controlled input with its own handler — sees a field that
+     * changed with nobody typing, and some of them ignore it entirely. The
+     * fix is strictly better on those pages and strictly more events on every
+     * other, which is a change worth measuring before it becomes the default.
+     *
+     * @see typeByKeystrokes for what the keystroke path does and does not do.
+     */
+    keystrokes?: boolean;
+  } = {},
 ): Promise<void> {
   await focusBackendNodeId(cdp, backendNodeId);
   const objectId = await resolveObjectId(cdp, backendNodeId);
@@ -244,9 +260,18 @@ export async function replaceTextInNode(
   // and what is on the other side of them is an agent's keystrokes going into
   // a page somebody else now has their hands on.
   guard();
-  // Insert even when the selection could not be cleared: typing into a field
+  // Type even when the selection could not be cleared: typing into a field
   // that kept its old value is a visibly wrong result the model can see and
   // correct, and silently doing nothing is not.
+  //
+  // The guard rides INTO the keystroke path as well. An insertion is one
+  // message and cannot be interrupted halfway; a word typed letter by letter
+  // can, and a person who took the browser mid-word should not watch the rest
+  // of the sentence arrive under their cursor.
+  if (options.keystrokes) {
+    await typeByKeystrokes(cdp, text, guard);
+    return;
+  }
   await cdp.send("Input.insertText", { text });
 }
 

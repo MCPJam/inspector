@@ -65,6 +65,7 @@ import {
   type SessionViewportPolicy,
   type ViewportSize,
 } from "../../../../shared/browser-viewport";
+import type { BrowserdFeatures } from "./config";
 import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
@@ -313,6 +314,13 @@ export interface ChromiumDriverOptions {
   /** Byte budget for one `observe {mode:"text"}` (L9). */
   pageTextBytes?: number;
   /**
+   * Behaviour this build has but does not do by default. @see BrowserdFeatures
+   *
+   * Absent means the previous release's behaviour, exactly. Every flag here
+   * changes what the MODEL sees, and eval transcripts are diffed line by line.
+   */
+  features?: BrowserdFeatures;
+  /**
    * How big this session's page is, and whether it may change.
    *
    * Absent means the old behaviour exactly: a `fixed` session at 1024x768 that
@@ -447,6 +455,8 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly dialogPolicy: DialogPolicy;
   private readonly webmcpOutputBudgetBytes: number;
   private readonly pageTextMaxBytes: number;
+  /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
+  private readonly features: BrowserdFeatures;
   private readonly lease:
     | Pick<
         HandoffLease,
@@ -608,6 +618,9 @@ export class ChromiumDriver implements BrowserDriver {
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes =
       options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
+    // An empty bag, never undefined: every read is `features.x === true`, and
+    // a driver built with no options must behave as the last release did.
+    this.features = options.features ?? {};
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
     this.allowPaneResize = options.viewport?.allowPaneResize === true;
@@ -1387,7 +1400,18 @@ export class ChromiumDriver implements BrowserDriver {
         // With a ref or a selector, REPLACE the field's value; without either,
         // type into whatever has focus (the model's previous click).
         if (refNode) {
-          await replaceTextInNode(await needCdp(), refNode.backendNodeId, text);
+          await replaceTextInNode(
+            await needCdp(),
+            refNode.backendNodeId,
+            text,
+            stillOurs,
+            // REF ONLY in this release. `fillSelector` is Playwright's own
+            // fill, which the model is steered away from anyway (a selector is
+            // CSS invented for a page seen as a tree), and changing both at
+            // once would make a regression report ambiguous about which path
+            // caused it.
+            { keystrokes: this.features.keystrokeTyping === true },
+          );
         } else if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
         // ONE settle and ONE observation for what was two commands. The submit
@@ -1488,9 +1512,14 @@ export class ChromiumDriver implements BrowserDriver {
         return page.selectOption(selector, action.value);
       case "close_tab":
       case "activate_tab":
-        // Handled by the caller before dispatch.
+      case "accept_dialog":
+      case "dismiss_dialog":
+        // Handled by the caller before dispatch — `act` returns for all four
+        // above, so none of them reaches here. Listed anyway so the `never`
+        // in `default` is a real exhaustiveness check rather than one that
+        // only passes because these four keep the union non-empty.
         return;
-      default:
+      default: {
         // UNREACHABLE for this build's own union, and the reason it is here
         // anyway: a verb arrives off the WIRE. A newer inspector talking to
         // this daemon (the lazy-upgrade path reuses a running one) would send
@@ -1499,12 +1528,21 @@ export class ChromiumDriver implements BrowserDriver {
         // filled with every field still empty. `BROWSERD_PROTOCOL_VERSION`
         // exists to stop that pairing; this is what it costs if one slips
         // through.
+        //
+        // The `never` is the OTHER half, and it catches the mistake one build
+        // earlier: a verb added to `BROWSERD_ACT_VERBS` with no case above
+        // reaches this arm from THIS build's own union, and that is a
+        // compile error here rather than an `ok: true` for a form nobody
+        // filled. The cast below stays because the runtime value is a real
+        // verb string whatever the type says.
+        const exhaustive: never = action.verb;
         throw new ActError(
           "act_failed",
           `this browser daemon does not support the "${
-            (action as { verb: string }).verb
+            exhaustive as string
           }" verb; it is running an older build`,
         );
+      }
     }
   }
 

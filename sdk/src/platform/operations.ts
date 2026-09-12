@@ -1,4 +1,6 @@
 import { platformBrowserToolPolicySchema } from "./browser-policy.js";
+// DERIVED, not restated. @see BROWSER_AGENT_ACT_VERBS
+import { BROWSER_AGENT_ACT_VERBS } from "./browser-agent-contract.js";
 import type { PlatformSessionBrowserCommand } from "./types.js";
 import type { PlatformSessionBrowserOperationResult } from "./types.js";
 /**
@@ -8848,20 +8850,13 @@ const driveSessionBrowserInput = sessionBrowserInput
     }
     if (input.op === "navigate") require("url", !!input.url);
     if (input.op === "act")
-      require("command.verb", !!input.command &&
-        [
-          "click",
-          "type",
-          "press",
-          "scroll",
-          "hover",
-          "drag",
-          "select",
-          "close_tab",
-          "activate_tab",
-          "accept_dialog",
-          "dismiss_dialog",
-        ].includes(String(input.command.verb)));
+      require(
+        "command.verb",
+        !!input.command &&
+          (BROWSER_AGENT_ACT_VERBS as readonly string[]).includes(
+            String(input.command.verb),
+          ),
+      );
     if (input.op === "invoke") {
       require("toolKey", !!input.toolKey);
       require("input", Object.hasOwn(input, "input"));

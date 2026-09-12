@@ -3937,6 +3937,330 @@ async function resolveBackendNodeId(cdp, selector) {
   }
 }
 
+// server/services/browserd/daemon/key-events.ts
+var MODIFIER_BITS = {
+  Alt: 1,
+  Control: 2,
+  Meta: 4,
+  Shift: 8
+};
+var NAMED_KEYS = {
+  // Modifiers, which are also keys in their own right.
+  Shift: { key: "Shift", code: "ShiftLeft", keyCode: 16, modifier: "Shift" },
+  Control: {
+    key: "Control",
+    code: "ControlLeft",
+    keyCode: 17,
+    modifier: "Control"
+  },
+  Alt: { key: "Alt", code: "AltLeft", keyCode: 18, modifier: "Alt" },
+  Meta: { key: "Meta", code: "MetaLeft", keyCode: 91, modifier: "Meta" },
+  // `text` on Enter and Tab is not decoration: a textarea inserts a newline
+  // from the text, not from the keydown, and the same goes for a tab
+  // character in a field that accepts one.
+  Enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
+  Tab: { key: "Tab", code: "Tab", keyCode: 9, text: "	" },
+  Space: { key: " ", code: "Space", keyCode: 32, text: " " },
+  Backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+  Delete: { key: "Delete", code: "Delete", keyCode: 46 },
+  Escape: { key: "Escape", code: "Escape", keyCode: 27 },
+  Insert: { key: "Insert", code: "Insert", keyCode: 45 },
+  ArrowUp: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+  ArrowDown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+  ArrowLeft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+  ArrowRight: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+  Home: { key: "Home", code: "Home", keyCode: 36 },
+  End: { key: "End", code: "End", keyCode: 35 },
+  PageUp: { key: "PageUp", code: "PageUp", keyCode: 33 },
+  PageDown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+  CapsLock: { key: "CapsLock", code: "CapsLock", keyCode: 20 },
+  NumLock: { key: "NumLock", code: "NumLock", keyCode: 144 },
+  ScrollLock: { key: "ScrollLock", code: "ScrollLock", keyCode: 145 },
+  ContextMenu: { key: "ContextMenu", code: "ContextMenu", keyCode: 93 },
+  // The numpad, which is a DIFFERENT physical key from the one on the main
+  // row: a page listening for `code` tells `Numpad1` from `Digit1`, and a
+  // calculator or a game will act on exactly that difference.
+  NumpadEnter: {
+    key: "Enter",
+    code: "NumpadEnter",
+    keyCode: 13,
+    text: "\r",
+    keypad: true
+  },
+  NumpadAdd: {
+    key: "+",
+    code: "NumpadAdd",
+    keyCode: 107,
+    text: "+",
+    keypad: true
+  },
+  NumpadSubtract: {
+    key: "-",
+    code: "NumpadSubtract",
+    keyCode: 109,
+    text: "-",
+    keypad: true
+  },
+  NumpadMultiply: {
+    key: "*",
+    code: "NumpadMultiply",
+    keyCode: 106,
+    text: "*",
+    keypad: true
+  },
+  NumpadDivide: {
+    key: "/",
+    code: "NumpadDivide",
+    keyCode: 111,
+    text: "/",
+    keypad: true
+  },
+  NumpadDecimal: {
+    key: ".",
+    code: "NumpadDecimal",
+    keyCode: 110,
+    text: ".",
+    keypad: true
+  }
+};
+for (let n = 0; n <= 9; n += 1) {
+  NAMED_KEYS[`Numpad${n}`] = {
+    key: String(n),
+    code: `Numpad${n}`,
+    keyCode: 96 + n,
+    text: String(n),
+    keypad: true
+  };
+}
+for (let n = 1; n <= 12; n += 1) {
+  NAMED_KEYS[`F${n}`] = { key: `F${n}`, code: `F${n}`, keyCode: 111 + n };
+}
+var PUNCTUATION = {
+  "`": { code: "Backquote", keyCode: 192 },
+  "-": { code: "Minus", keyCode: 189 },
+  "=": { code: "Equal", keyCode: 187 },
+  "[": { code: "BracketLeft", keyCode: 219 },
+  "]": { code: "BracketRight", keyCode: 221 },
+  "\\": { code: "Backslash", keyCode: 220 },
+  ";": { code: "Semicolon", keyCode: 186 },
+  "'": { code: "Quote", keyCode: 222 },
+  ",": { code: "Comma", keyCode: 188 },
+  ".": { code: "Period", keyCode: 190 },
+  "/": { code: "Slash", keyCode: 191 },
+  " ": { code: "Space", keyCode: 32 }
+};
+var SHIFTED_FROM = {
+  "~": "`",
+  "!": "1",
+  "@": "2",
+  "#": "3",
+  $: "4",
+  "%": "5",
+  "^": "6",
+  "&": "7",
+  "*": "8",
+  "(": "9",
+  ")": "0",
+  _: "-",
+  "+": "=",
+  "{": "[",
+  "}": "]",
+  "|": "\\",
+  ":": ";",
+  '"': "'",
+  "<": ",",
+  ">": ".",
+  "?": "/"
+};
+function describeKey(name) {
+  const named = NAMED_KEYS[name];
+  if (named) return named;
+  if (/^Key[A-Z]$/.test(name)) {
+    const letter = name.slice(3);
+    return {
+      key: letter.toLowerCase(),
+      code: name,
+      keyCode: letter.charCodeAt(0),
+      text: letter.toLowerCase()
+    };
+  }
+  if (/^Digit[0-9]$/.test(name)) {
+    const digit = name.slice(5);
+    return {
+      key: digit,
+      code: name,
+      keyCode: digit.charCodeAt(0),
+      text: digit
+    };
+  }
+  if (name.length !== 1) return null;
+  if (/[a-z]/.test(name)) {
+    return {
+      key: name,
+      code: `Key${name.toUpperCase()}`,
+      keyCode: name.toUpperCase().charCodeAt(0),
+      text: name
+    };
+  }
+  if (/[A-Z]/.test(name)) {
+    return {
+      key: name,
+      code: `Key${name}`,
+      keyCode: name.charCodeAt(0),
+      text: name
+    };
+  }
+  if (/[0-9]/.test(name)) {
+    return {
+      key: name,
+      code: `Digit${name}`,
+      keyCode: name.charCodeAt(0),
+      text: name
+    };
+  }
+  const plain = PUNCTUATION[name];
+  if (plain)
+    return { key: name, code: plain.code, keyCode: plain.keyCode, text: name };
+  const base = SHIFTED_FROM[name];
+  if (base) {
+    const from = PUNCTUATION[base] ?? {
+      code: `Digit${base}`,
+      keyCode: base.charCodeAt(0)
+    };
+    return { key: name, code: from.code, keyCode: from.keyCode, text: name };
+  }
+  return null;
+}
+function resolveKeyPress(chord) {
+  const raw = chord.split("+");
+  const segments = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const part = raw[i];
+    if (part.length > 0) segments.push(part);
+    else if (i === raw.length - 1 && segments.length > 0) segments.push("+");
+  }
+  if (segments.length === 0) segments.push("+");
+  const last = segments[segments.length - 1];
+  const key = describeKey(last);
+  if (!key) throw new Error(`no element: unknown key "${last}"`);
+  const held = [];
+  let modifiers = 0;
+  for (const name of segments.slice(0, -1)) {
+    const canonical = name === "ControlOrMeta" ? process.platform === "darwin" ? "Meta" : "Control" : name === "Cmd" || name === "Command" ? "Meta" : name === "Ctrl" ? "Control" : name;
+    const described = describeKey(canonical);
+    if (!described?.modifier) {
+      throw new Error(`no element: "${name}" is not a modifier key`);
+    }
+    held.push(described);
+    modifiers |= MODIFIER_BITS[described.modifier];
+  }
+  if (key.modifier) modifiers |= MODIFIER_BITS[key.modifier];
+  const shifted = (modifiers & MODIFIER_BITS.Shift) !== 0 ? shiftedKey(key) : key;
+  return { key: shifted, modifiers, chord: held };
+}
+function shiftedKey(key) {
+  if (key.text === void 0 || key.modifier) return key;
+  if (key.keypad) return key;
+  const upper = key.text.toUpperCase();
+  if (upper !== key.text) return { ...key, key: upper, text: upper };
+  const shiftedChar = SHIFTED_BY_BASE[key.text];
+  if (!shiftedChar) return key;
+  return { ...key, key: shiftedChar, text: shiftedChar };
+}
+var SHIFTED_BY_BASE = Object.fromEntries(
+  Object.entries(SHIFTED_FROM).map(([shiftedChar, base]) => [
+    base,
+    shiftedChar
+  ])
+);
+function insertsText(modifiers) {
+  return (modifiers & (MODIFIER_BITS.Control | MODIFIER_BITS.Alt | MODIFIER_BITS.Meta)) === 0;
+}
+
+// server/services/browserd/daemon/keyboard.ts
+async function pressKeyOn(cdp, chord) {
+  const { key, modifiers, chord: held } = resolveKeyPress(chord);
+  for (const modifier of held) {
+    await cdp.send("Input.dispatchKeyEvent", {
+      type: "rawKeyDown",
+      key: modifier.key,
+      code: modifier.code,
+      windowsVirtualKeyCode: modifier.keyCode,
+      modifiers
+    });
+  }
+  const text = insertsText(modifiers) ? key.text : void 0;
+  await cdp.send("Input.dispatchKeyEvent", {
+    // `keyDown` with text, `rawKeyDown` without: sending `keyDown` and no
+    // text makes Chromium synthesise a `char` event for some keys and not
+    // others, which is how a shortcut ends up typing its own letter.
+    type: text === void 0 ? "rawKeyDown" : "keyDown",
+    key: key.key,
+    code: key.code,
+    windowsVirtualKeyCode: key.keyCode,
+    modifiers,
+    // `code` alone does not reach `KeyboardEvent.location`, so without this
+    // the page sees a keypad press at location 0 — indistinguishable from
+    // the number row to anything that routes them differently.
+    ...key.keypad ? { isKeypad: true } : {},
+    ...text === void 0 ? {} : { text }
+  });
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: key.key,
+    code: key.code,
+    windowsVirtualKeyCode: key.keyCode,
+    modifiers,
+    ...key.keypad ? { isKeypad: true } : {}
+  });
+  for (const modifier of [...held].reverse()) {
+    await cdp.send("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: modifier.key,
+      code: modifier.code,
+      windowsVirtualKeyCode: modifier.keyCode,
+      modifiers: 0
+    });
+  }
+}
+function graphemesOf(text) {
+  const Segmenter = Intl.Segmenter;
+  if (!Segmenter) return Array.from(text);
+  const segmenter = new Segmenter(void 0, { granularity: "grapheme" });
+  return [...segmenter.segment(text)].map((part) => part.segment);
+}
+async function typeByKeystrokes(cdp, text, guard) {
+  for (const grapheme of graphemesOf(text)) {
+    guard();
+    if (grapheme === "\n" || grapheme === "\r") {
+      await pressKeyOn(cdp, "Enter");
+      continue;
+    }
+    if (grapheme === "	") {
+      await cdp.send("Input.insertText", { text: grapheme });
+      continue;
+    }
+    const key = describeKey(grapheme);
+    if (!key) {
+      await cdp.send("Input.insertText", { text: grapheme });
+      continue;
+    }
+    const common = {
+      key: key.key,
+      code: key.code,
+      windowsVirtualKeyCode: key.keyCode,
+      modifiers: 0,
+      ...key.keypad ? { isKeypad: true } : {}
+    };
+    await cdp.send("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      ...common,
+      text: key.text ?? grapheme
+    });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...common });
+  }
+}
+
 // server/services/browserd/daemon/node-target.ts
 async function pointForBackendNodeId(cdp, backendNodeId, label) {
   await cdp.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => {
@@ -4005,7 +4329,7 @@ async function focusBackendNodeId(cdp, backendNodeId) {
   await cdp.send("DOM.focus", { backendNodeId });
 }
 async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
-}) {
+}, options = {}) {
   await focusBackendNodeId(cdp, backendNodeId);
   const objectId = await resolveObjectId(cdp, backendNodeId);
   if (objectId) {
@@ -4027,6 +4351,10 @@ async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
     });
   }
   guard();
+  if (options.keystrokes) {
+    await typeByKeystrokes(cdp, text, guard);
+    return;
+  }
   await cdp.send("Input.insertText", { text });
 }
 async function selectOptionOnNode(cdp, backendNodeId, value, label) {
@@ -6242,7 +6570,7 @@ async function dispatchOne(cdp, event, buttons) {
       return;
     case "key_down":
     case "key_up": {
-      const descriptor = describeKey(event.key, event.code);
+      const descriptor = describeKey2(event.key, event.code);
       await cdp.send("Input.dispatchKeyEvent", {
         type: event.type === "key_down" ? "keyDown" : "keyUp",
         modifiers: event.modifiers ?? 0,
@@ -6268,7 +6596,7 @@ var KEY_CODES = {
   PageUp: { code: "PageUp", windowsVirtualKeyCode: 33 },
   PageDown: { code: "PageDown", windowsVirtualKeyCode: 34 }
 };
-function describeKey(key, code) {
+function describeKey2(key, code) {
   const known = KEY_CODES[key];
   if (known) return known;
   return code ? { code } : {};
@@ -6365,6 +6693,8 @@ var ChromiumDriver = class {
   dialogPolicy;
   webmcpOutputBudgetBytes;
   pageTextMaxBytes;
+  /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
+  features;
   lease;
   tabs = /* @__PURE__ */ new Map();
   /**
@@ -6502,6 +6832,7 @@ var ChromiumDriver = class {
     this.networkBudget = options.network ?? DEFAULT_NETWORK_BUDGET;
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
+    this.features = options.features ?? {};
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
     this.allowPaneResize = options.viewport?.allowPaneResize === true;
@@ -7040,7 +7371,18 @@ var ChromiumDriver = class {
       case "type": {
         const text = action.value ?? "";
         if (refNode) {
-          await replaceTextInNode(await needCdp(), refNode.backendNodeId, text);
+          await replaceTextInNode(
+            await needCdp(),
+            refNode.backendNodeId,
+            text,
+            stillOurs,
+            // REF ONLY in this release. `fillSelector` is Playwright's own
+            // fill, which the model is steered away from anyway (a selector is
+            // CSS invented for a page seen as a tree), and changing both at
+            // once would make a regression report ambiguous about which path
+            // caused it.
+            { keystrokes: this.features.keystrokeTyping === true }
+          );
         } else if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
         if (action.submit) {
@@ -7117,12 +7459,16 @@ var ChromiumDriver = class {
         return page.selectOption(selector, action.value);
       case "close_tab":
       case "activate_tab":
+      case "accept_dialog":
+      case "dismiss_dialog":
         return;
-      default:
+      default: {
+        const exhaustive = action.verb;
         throw new ActError(
           "act_failed",
-          `this browser daemon does not support the "${action.verb}" verb; it is running an older build`
+          `this browser daemon does not support the "${exhaustive}" verb; it is running an older build`
         );
+      }
     }
   }
   /**
@@ -9734,6 +10080,34 @@ async function resizeHostedDisplay(deps, next, previous) {
 // server/services/browserd/daemon/config.ts
 import { createHash as createHash2, randomBytes as randomBytes4 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+var BROWSERD_FEATURE_NAMES = [
+  "a11yFrames",
+  "keystrokeTyping",
+  "scrollableMarkers",
+  "changedA11y"
+];
+function parseBrowserdFeatures(env = process.env) {
+  const named = new Set(
+    (env.MCPJAM_BROWSERD_FEATURES ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0)
+  );
+  const features = {};
+  for (const name of BROWSERD_FEATURE_NAMES) {
+    if (named.has(name)) features[name] = true;
+  }
+  const maxBytes = readScreenshotMaxBytes(env);
+  if (maxBytes !== void 0) features.screenshotMaxBytes = maxBytes;
+  return features;
+}
+function readScreenshotMaxBytes(env) {
+  const raw = env.MCPJAM_BROWSERD_SCREENSHOT_MAX_BYTES;
+  if (raw === void 0 || raw.trim().length === 0) return void 0;
+  const bytes = Number(raw);
+  if (!Number.isFinite(bytes) || bytes < MIN_SCREENSHOT_MAX_BYTES) {
+    return void 0;
+  }
+  return Math.floor(bytes);
+}
+var MIN_SCREENSHOT_MAX_BYTES = 8 * 1024;
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
 var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
@@ -10180,6 +10554,7 @@ async function main() {
   )).exitCode === 0;
   const driver = new ChromiumDriver(context, {
     lease,
+    features: parseBrowserdFeatures(),
     viewport: {
       /**
        * The DAEMON's default is `fixed`, and the door widens it.

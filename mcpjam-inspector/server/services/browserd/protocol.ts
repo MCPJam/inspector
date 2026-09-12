@@ -306,6 +306,34 @@ export function wantsFor(observe: ActObserve | undefined): {
   };
 }
 
+/**
+ * The act verbs THIS DAEMON dispatches, as a runtime list.
+ *
+ * A superset of the published `BROWSER_AGENT_ACT_VERBS`: the daemon's wire is
+ * allowed to run ahead of the public contract, and `DAEMON_ONLY_ACT_VERBS`
+ * (beside `publishedOpFor` in `agent-contract-mapper.ts`) names exactly what
+ * the gap currently is. The parity test walks both lists, so a verb added here
+ * and nowhere else is a failing test rather than a capability that quietly
+ * exists on one surface — which is how `fill_form` ended up daemon-only in the
+ * first place.
+ */
+export const BROWSERD_ACT_VERBS = [
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "hover",
+  "drag",
+  "select",
+  "fill_form",
+  "close_tab",
+  "activate_tab",
+  "accept_dialog",
+  "dismiss_dialog",
+] as const;
+
+export type BrowserdActVerb = (typeof BROWSERD_ACT_VERBS)[number];
+
 export type BrowserAction =
   | {
       kind: "navigate";
@@ -340,33 +368,22 @@ export type BrowserAction =
   | { kind: "reload"; observe?: ActObserve }
   | {
       kind: "act";
-      verb:
-        | "click"
-        | "type"
-        | "press"
-        | "scroll"
-        | "hover"
-        | "drag"
-        | "select"
-        | "fill_form"
-        | "close_tab"
-        | "activate_tab"
-        /**
-         * Answer the dialog this page is blocked on.
-         *
-         * SEPARATE FROM THE DEFAULTS the daemon applies. A default exists so a
-         * tab can never wedge, but it is a guess at what the caller meant —
-         * "Delete this account?" is cancelled because that is the safe answer
-         * for an absent user, not because it is the right one for every
-         * client. A client with its own rules (ask the person, always confirm
-         * a known flow) answers here instead, and runs the daemon with
-         * `dialogPolicy: "ask"` so nothing is decided for it.
-         *
-         * `accept_dialog` takes the prompt's reply in `value`, when the dialog
-         * is a `prompt` and the caller has one.
-         */
-        | "accept_dialog"
-        | "dismiss_dialog";
+      /**
+       * @see BROWSERD_ACT_VERBS for the list, which is what the parity test
+       * walks.
+       *
+       * `accept_dialog` / `dismiss_dialog` are SEPARATE FROM THE DEFAULTS the
+       * daemon applies. A default exists so a tab can never wedge, but it is a
+       * guess at what the caller meant — "Delete this account?" is cancelled
+       * because that is the safe answer for an absent user, not because it is
+       * the right one for every client. A client with its own rules (ask the
+       * person, always confirm a known flow) answers here instead, and runs
+       * the daemon with `dialogPolicy: "ask"` so nothing is decided for it.
+       *
+       * `accept_dialog` takes the prompt's reply in `value`, when the dialog
+       * is a `prompt` and the caller has one.
+       */
+      verb: BrowserdActVerb;
       target?: BrowserActTarget;
       value?: string;
       /**
