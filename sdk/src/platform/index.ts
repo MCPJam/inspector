@@ -110,6 +110,7 @@ export type {
   PlatformEvalStep,
   PlatformEvalStepEvidence,
   PlatformEvalStepResult,
+  PlatformEvalStepsPage,
   PlatformEvalReplayVideoMeta,
   PlatformEvalIteration,
   PlatformOpenAIReadinessStartBody,
