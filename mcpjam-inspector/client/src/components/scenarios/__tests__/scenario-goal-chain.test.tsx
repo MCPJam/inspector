@@ -566,3 +566,63 @@ describe("the Findings tab, once a goal is open", () => {
     expect(mockUseQuery).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The card is about ONE persona: its goal row counts that persona's sessions,
+ * its session list shows them. The chain has to describe the same population
+ * or the reader gets three numbers about two groups — which is exactly what
+ * shipped, and showed up the day chains first derived as a card headed
+ * "2 sessions" whose chain read "failed in 3 of 6 graded sessions".
+ */
+describe("the chain is scoped to the persona, not just the goal", () => {
+  it("asks for the selected persona's sentiment alongside the goal", async () => {
+    mockUseQuery.mockReturnValue(null);
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      "chatSessionStageDerivation:getScenarioStageFunnel",
+      {
+        scenarioId: "scn-1",
+        clusterId: "cluster-export",
+        sentiment: "frustrated",
+      },
+    );
+  });
+
+  it("re-asks when the reader switches persona", async () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        ...drilldownFixture(),
+        sessions: [
+          ...drilldownFixture().sessions,
+          {
+            _id: "sess-9",
+            sentiment: "satisfied" as const,
+            themeClusterId: "cluster-export",
+            themeClusterLabel: "Export the board",
+            outcome: "completed" as const,
+          },
+        ],
+        total: 3,
+      },
+      isLoading: false,
+    });
+    mockUseQuery.mockReturnValue(null);
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+
+    const sentiments = () =>
+      mockUseQuery.mock.calls
+        .map(([, args]) => args as { sentiment?: string } | undefined)
+        .filter((a) => a && "sentiment" in a)
+        .map((a) => a!.sentiment);
+
+    expect(sentiments()).toContain("frustrated");
+    // The same cluster under a different persona is a DIFFERENT population,
+    // so it must not reuse the answer given for the first one.
+    expect(sentiments()).not.toContain("satisfied");
+  });
+});

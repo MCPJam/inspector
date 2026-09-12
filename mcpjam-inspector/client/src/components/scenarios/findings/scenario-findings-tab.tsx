@@ -287,6 +287,10 @@ export function ScenarioFindingsTab({
         <ScenarioGoalChain
           scenarioId={scenarioId}
           goalId={expandedGoalId}
+          // The SAME value the session list is scoped by. The card's count, its
+          // list and its chain all describe one persona, or the reader is shown
+          // three numbers about two different populations.
+          sentiment={personaSentiment}
           onResolved={handleChain}
         />
       ) : null}
