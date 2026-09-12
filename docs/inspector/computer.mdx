@@ -189,7 +189,11 @@ If the conversation's browser is not yet running when you open it, the panel sho
 
 ### Closing the browser pane
 
-Closing the browser panel stops the viewer — it does not hand control back to the agent. If you held the browser (took manual control), that hold stays parked after you close the pane. The agent remains blocked until you explicitly click **Hand back** to release control. A parked hold does not keep a metered cloud browser running indefinitely, but it does keep the agent waiting.
+Closing the browser panel stops the viewer — it does not hand control back to the agent. If you held the browser (took manual control), that hold stays parked after you close the pane. The agent remains blocked until you explicitly click **Hand back** to release control. A parked hold keeps the agent waiting, but does not by itself keep a hosted cloud browser running — a hosted browser box is reclaimed shortly after nobody is actively watching it.
+
+### Hosted browser sleep and wake
+
+A hosted cloud browser box is reclaimed automatically when nobody has the panel open and visible. If you hide the panel or switch away from the tab, the box may be paused within a couple of minutes. When you re-open or re-show the panel, it wakes the box automatically — you will see a brief reconnecting state while it resumes, then the live view returns. No action is needed on your part.
 
 ### Browser panel layout
 
