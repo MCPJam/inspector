@@ -68,7 +68,10 @@ import {
   SWARM_INTENSITY_PRESETS,
   type SwarmPushIntensity,
 } from "@/components/swarms/swarm-intensity";
-import { SwarmHeroCharacters } from "@/components/swarms/swarm-hero-characters";
+import {
+  SOLO_HERO_CHARACTERS,
+  SwarmHeroCharacters,
+} from "@/components/swarms/swarm-hero-characters";
 import {
   SWARM_QUERIES,
   LaunchJourneyRunError,
@@ -1878,8 +1881,31 @@ export function NewSwarmCreateFlow({
                 </p>
               </div>
               <div className="hidden shrink-0 sm:block">
-                <SwarmHeroCharacters />
+                <SwarmHeroCharacters characters={SOLO_HERO_CHARACTERS} />
               </div>
+            </div>
+
+            {/* Above the description: the target grounds the goals it generates. */}
+            <div className="space-y-2">
+              <SwarmTargetComposer
+                projectId={projectId}
+                environments={envList}
+                environmentsLoading={environments === undefined}
+                value={targetState}
+                onChange={setTargetState}
+                draftNameHint={swarmName.trim() || undefined}
+                disabled={generating || materializing}
+                serverBlock={serverBlock}
+                required
+              />
+              {groundingEnvironmentId ? (
+                <ErrorBoundary fallback={null}>
+                  <EnvironmentGroundingHint
+                    projectId={projectId}
+                    environmentId={groundingEnvironmentId}
+                  />
+                </ErrorBoundary>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -1973,28 +1999,6 @@ export function NewSwarmCreateFlow({
                       ),
                   }}
                 />
-              ) : null}
-            </div>
-
-            <div className="space-y-2">
-              <SwarmTargetComposer
-                projectId={projectId}
-                environments={envList}
-                environmentsLoading={environments === undefined}
-                value={targetState}
-                onChange={setTargetState}
-                draftNameHint={swarmName.trim() || undefined}
-                disabled={generating || materializing}
-                serverBlock={serverBlock}
-                required
-              />
-              {groundingEnvironmentId ? (
-                <ErrorBoundary fallback={null}>
-                  <EnvironmentGroundingHint
-                    projectId={projectId}
-                    environmentId={groundingEnvironmentId}
-                  />
-                </ErrorBoundary>
               ) : null}
             </div>
 

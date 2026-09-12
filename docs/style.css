@@ -672,3 +672,13 @@ footer [class*="powered" i],
   color: var(--mcj-ink-muted);
   font-size: 0.8125rem;
 }
+
+/* ── Homepage "Four ways to get started" cards ─────────────────────────────
+   Slightly larger card titles (16px → 20px). Scoped to that CardGroup via
+   its unique href combination so every other card group keeps the default
+   title size.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.card-group:has(a[href="/inspector/playground"]):has(a[href="https://app.mcpjam.com"]) [data-component-part="card-title"] {
+  font-size: 1.25rem !important;
+}

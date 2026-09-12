@@ -8,7 +8,15 @@ import {
   noteWebmcpStats,
   useBrowserPageToolsStore,
 } from "@/stores/browser-page-tools-store";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { BrowserWorkspaceChrome } from "./BrowserWorkspaceChrome";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { PaneMessage } from "@/components/computer/PaneMessage";
@@ -21,6 +29,7 @@ import {
 import { ElectronNativeBody } from "@/components/browser/ElectronNativeBody";
 import { BrowserShell } from "@/components/browser/BrowserShell";
 import { PaneSettingsMenu } from "@/components/browser/PaneControlBar";
+import { BrowserSettingsButton } from "@/components/browser/BrowserSettingsButton";
 import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
 import { useBrowserSession } from "@/lib/browser-shell/use-browser-session";
 import {
@@ -97,13 +106,17 @@ export function LocalBrowserBody({
   sessionId,
   consentGranted,
   consentToken,
+  hostId = null,
   active = true,
+  onSessionReady,
 }: {
   projectId: string | null;
   /** Durable logical session, when this pane belongs to a conversation. */
   sessionId?: string;
   consentGranted: boolean;
   consentToken: string | null;
+  /** Client id for the Browser settings button in the nav bar. */
+  hostId?: string | null;
   /**
    * Is this pane the rail's visible tab?
    *
@@ -114,11 +127,19 @@ export function LocalBrowserBody({
    * idle reap, so a hidden pane must stop claiming somebody is watching.
    */
   active?: boolean;
+  /** Notify comparison chrome when a manual start or an existing session is found. */
+  onSessionReady?: () => void;
 }) {
   const workspaceEnabled = useBrowserWorkspaceEnabled();
+  const comparisonWorkspace = useContext(BrowserWorkspaceChrome);
   const { grant: grantConsent } = useLocalBrowserConsent();
   const [status, setStatus] = useState<LocalBrowserStatus | null>(null);
   const [session, setSession] = useState<{ bootId: string } | null>(null);
+  const sessionReadyRef = useRef(onSessionReady);
+  sessionReadyRef.current = onSessionReady;
+  useEffect(() => {
+    if (session) sessionReadyRef.current?.();
+  }, [session]);
   const [lease, setLease] = useState<LocalBrowserLease>({ state: "free" });
   const [frame, setFrame] = useState<PaneFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -150,7 +171,8 @@ export function LocalBrowserBody({
    * reload, gone when the tab is — the returning pane is recognised as the
    * same hands it was before.
    */
-  const holder = usePaneHolderId();
+  const paneHolder = usePaneHolderId();
+  const holder = comparisonWorkspace?.holderId ?? paneHolder;
   /**
    * The live socket and what it said it could do — see the hosted pane's twin.
    *
@@ -437,6 +459,7 @@ export function LocalBrowserBody({
   // turn into an automatic restart loop.
   useEffect(() => {
     if (
+      comparisonWorkspace ||
       !active ||
       !consentGranted ||
       !projectId ||
@@ -451,6 +474,7 @@ export function LocalBrowserBody({
     autoStartAttempted.current = true;
     void start();
   }, [
+    comparisonWorkspace,
     active,
     consentGranted,
     projectId,
@@ -1297,18 +1321,21 @@ export function LocalBrowserBody({
           // that has gone — replace the page area entirely. @see the prop.
           {...(placeholder ? { placeholder } : {})}
           trailing={
-            <PaneSettingsMenu
-              statsOpen={statsOpen}
-              onToggleStats={onStatsToggle}
-            >
-              {session && sessionId ? (
-                <BrowserProfileSaveButton
-                  projectId={projectId ?? ""}
-                  exportArchive={exportProfile}
-                  disabled={busy}
-                />
-              ) : null}
-            </PaneSettingsMenu>
+            <>
+              {hostId ? <BrowserSettingsButton hostId={hostId} /> : null}
+              <PaneSettingsMenu
+                statsOpen={statsOpen}
+                onToggleStats={onStatsToggle}
+              >
+                {session && sessionId ? (
+                  <BrowserProfileSaveButton
+                    projectId={projectId ?? ""}
+                    exportArchive={exportProfile}
+                    disabled={busy}
+                  />
+                ) : null}
+              </PaneSettingsMenu>
+            </>
           }
         >
           {native ? (

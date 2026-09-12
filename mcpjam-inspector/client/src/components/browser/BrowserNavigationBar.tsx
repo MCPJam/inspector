@@ -11,6 +11,7 @@ import type { BrowserControlState } from "../../../../shared/browser-session-sta
 /** Browser navigation and ownership status. Sending a chat message hands control back. */
 
 export interface BrowserNavigationBarProps {
+  clientName?: string;
   authority?: { kind: "shared" } | { kind: "lease" };
   address: AddressFieldState;
   onAddress: (event: AddressFieldEvent) => void;
@@ -28,6 +29,7 @@ export interface BrowserNavigationBarProps {
 }
 
 export function BrowserNavigationBar({
+  clientName,
   address,
   authority = { kind: "lease" },
   onAddress,
@@ -135,7 +137,9 @@ export function BrowserNavigationBar({
           aria-live="polite"
           className="shrink-0 whitespace-nowrap px-1 text-[11px] text-muted-foreground"
         >
-          {controlSentence(control, holding)}
+          {clientName && control.kind === "agent" && !holding
+            ? `${clientName} is driving`
+            : controlSentence(control, holding)}
         </span>
       ) : null}
       {trailing}

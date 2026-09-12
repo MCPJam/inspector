@@ -11,16 +11,23 @@ import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { usePlaygroundChatHistoryBridge } from "@/components/playground/playground-chat-history-bridge";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserReadinessStore } from "@/stores/browser-readiness-store";
+import { HOSTED_MODE } from "@/lib/config";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 
 export function BrowserRuntimeControls({
   projectId,
   compact = false,
   settings = false,
+  hostId = null,
 }: {
   projectId: string | null;
   compact?: boolean;
   settings?: boolean;
+  /** When set with `compact`, links to this client's Browser settings tab. */
+  hostId?: string | null;
 }) {
+  const navigate = useAppNavigate();
   const engine = useBrowserEngine(
     projectId,
     settings ? "preference" : "conversation",
@@ -40,6 +47,7 @@ export function BrowserRuntimeControls({
     : reason?.replace(/^browser_[a-z_]+:\s*/, "");
   const [pending, setPending] = useState<"local" | "cloud" | null>(null);
   const [starting, setStarting] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
   const choose = (location: "local" | "cloud") => {
     if (location === engine.selectedEngine) return;
     if (sessionId) setPending(location);
@@ -107,7 +115,27 @@ export function BrowserRuntimeControls({
           </Button>
         ) : null}
       </div>
+      {!HOSTED_MODE &&
+      engine.selectedEngine === "local" &&
+      engine.localAvailable &&
+      engine.consent.granted &&
+      !showSetup ? (
+        <Button variant="outline" size="sm" onClick={() => setShowSetup(true)}>
+          Enable for all clients
+        </Button>
+      ) : null}
+      {showSetup && engine.selectedEngine === "local" ? (
+        <LocalBrowserConsentGate
+          location="browser_settings"
+          onAllow={async () => {
+            const ok = await engine.consent.grant();
+            if (ok) setShowSetup(false);
+            return ok;
+          }}
+        />
+      ) : null}
       {settings &&
+      !showSetup &&
       engine.selectedEngine === "local" &&
       engine.localAvailable &&
       !engine.consent.granted ? (
@@ -136,6 +164,18 @@ export function BrowserRuntimeControls({
         <p role="status" className="text-muted-foreground">
           {visibleReason}
         </p>
+      ) : null}
+      {compact && hostId ? (
+        <div className="border-t border-border pt-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto w-full justify-start px-1 py-1 text-xs font-normal text-muted-foreground"
+            onClick={() => navigate(buildHostFocusTabPath(hostId, "browser"))}
+          >
+            Browser settings
+          </Button>
+        </div>
       ) : null}
     </div>
   );

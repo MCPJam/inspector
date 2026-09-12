@@ -34,7 +34,7 @@ import {
   resolveBrowserRollout,
 } from "../../utils/computers/browser-rollout.js";
 import { Hono } from "hono";
-import { LOCAL_BROWSER_ENABLED, LOCAL_COMPUTER_ENABLED } from "../../config.js";
+import { HOSTED_MODE, LOCAL_BROWSER_ENABLED, LOCAL_COMPUTER_ENABLED } from "../../config.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
@@ -113,6 +113,7 @@ import {
 import type { BrowserAgentCommand } from "../../../shared/browser-agent-contract.js";
 import { logger } from "../../utils/logger.js";
 import { browserProfileArchiveResponse } from "../../../shared/browser-session-header.js";
+import { enableLocalBrowserClients } from "../../utils/computers/local-browser-settings.js";
 
 const computers = new Hono();
 
@@ -337,6 +338,25 @@ computers.post("/local-browser/consent/verify", async (c) => {
       typeof body?.token === "string" ? body.token : null,
     ),
   });
+});
+computers.post("/local-browser/enable-clients", async (c) => {
+  if (HOSTED_MODE) return c.json({ error: "Local Browser setup is unavailable here." }, 404);
+  if (!(await verifyLocalBrowserConsent(c.req.header(BROWSER_CONSENT_HEADER)))) {
+    return c.json({ error: "Allow Browser first.", code: "browser_consent_required" }, 403);
+  }
+  // Guests can authorize their own machine, but cannot change shared projects.
+  if (c.get("guestId")) {
+    return c.json({ enabledProjects: 0, skippedProjects: 0, scope: "device" });
+  }
+  try {
+    const bearer = await getConvexBearerForRequest(c);
+    return c.json(await enableLocalBrowserClients(bearer));
+  } catch {
+    return c.json({
+      error: "Browser permission was saved, but clients could not be enabled. Retry setup.",
+      code: "browser_client_setup_failed",
+    }, 503);
+  }
 });
 computers.post("/local-browser/consent/revoke", async (c) => {
   const body = await c.req.json().catch(() => null);

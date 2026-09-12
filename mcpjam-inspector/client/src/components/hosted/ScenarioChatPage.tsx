@@ -29,7 +29,10 @@ import type {
   HostedAccessErrorDetail,
   HostedAccessRecoveryResult,
 } from "@/lib/hosted-runtime-context";
-import { navigateApp } from "@/lib/app-navigation";
+import {
+  buildUserTestingScenarioPath,
+  navigateApp,
+} from "@/lib/app-navigation";
 import {
   isEmbeddedPreview,
   syncScenarioBootstrapHash,
@@ -386,6 +389,14 @@ export function ScenarioChatPage({
    * resume for a scenario this visitor can no longer reach. Takes the scenario
    * id explicitly because the session it belongs to is being torn down in the
    * same breath.
+   *
+   * Every exit path that drops the session goes through here, because this is
+   * the one place that knows the embed rule: inside the same-origin Preview
+   * iframe, never touch sessionStorage — it belongs to the host tab, and
+   * clearing it would wipe the outer dashboard's own scenario session. The
+   * rule is only safe because the embed never runs the post-redeem URL strip
+   * (see `readCurrentSession` above): its URL keeps the share token, so
+   * skipping the clear leaves nothing stale behind and a reload re-redeems.
    */
   const clearCurrentSession = useCallback((scenarioId?: string | null) => {
     if (isEmbeddedPreview()) {
@@ -920,18 +931,29 @@ export function ScenarioChatPage({
     }
   }, [session, shareableToken]);
 
+  const leaveScenario = useCallback(
+    (to: string) => {
+      clearCurrentSession();
+      navigateApp(to, { replace: true });
+      onExitScenarioChat?.();
+    },
+    [clearCurrentSession, onExitScenarioChat],
+  );
+
   const handleOpenMcpJam = useCallback(() => {
-    clearScenarioSession();
-    // Route via the navigation API so React Router's `useLocation`
-    // (consumed by App's pathname-sync effect) sees the new pathname.
-    // A bare `window.history.replaceState` would leave `locationForRoute`
-    // stale on `/scenario/...`, and the sync effect would then redirect
-    // back to `/servers` before the hash-migration shim could pivot.
-    navigateApp("/scenarios", {
-      replace: isEmbeddedPreview() ? true : true,
-    });
-    onExitScenarioChat?.();
-  }, [onExitScenarioChat]);
+    leaveScenario("/scenarios");
+  }, [leaveScenario]);
+
+  const isPreviewSurface = session?.surface === "preview";
+  const previewScenarioId = session?.scenarioId ?? null;
+
+  const handleReturnToStudy = useCallback(() => {
+    leaveScenario(
+      previewScenarioId
+        ? buildUserTestingScenarioPath(previewScenarioId)
+        : "/scenarios",
+    );
+  }, [leaveScenario, previewScenarioId]);
 
   const handleSignIn = useCallback(() => {
     writeScenarioSignInReturnPath(window.location.pathname);
@@ -1139,7 +1161,9 @@ export function ScenarioChatPage({
           showConsent={introGate.showConsent}
           hasTasks={hasScenarioTasks}
           onAcceptConsent={introGate.acceptConsent}
-          onDeclineConsent={introGate.declineConsent}
+          onDeclineConsent={
+            isPreviewSurface ? handleReturnToStudy : introGate.declineConsent
+          }
           showAuthPanel={introGate.showAuthPanel}
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}
@@ -1229,6 +1253,17 @@ export function ScenarioChatPage({
                           />
                         </button>
                         <div className="flex flex-1 items-center justify-end gap-1.5">
+                          {sessionForCurrentLink && isPreviewSurface ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground"
+                              onClick={handleReturnToStudy}
+                              data-testid="scenario-preview-back-to-study"
+                            >
+                              Back to study
+                            </Button>
+                          ) : null}
                           {session && shareableToken ? (
                             <Button
                               variant="ghost"

@@ -1,12 +1,12 @@
 /**
- * What tools does the page in this project's browser offer, RIGHT NOW, without
+ * What tools does the page in this turn's browser offer, RIGHT NOW, without
  * starting anything?
  *
  * A chat turn needs the answer before it builds its toolset, and the one thing
  * it must not do is create a browser to find out. So this walks the read-only
  * half of the session chain and stops at the first "nothing there":
  *
- *   status(project) → lookup(session row) → daemon status → observe
+ *   resolve owner → lookup(session row) → daemon status → observe
  *
  * WHAT IT DELIBERATELY NEVER DOES, and why each one would be a real bug:
  *
@@ -39,7 +39,11 @@ import { logger } from "../../utils/logger.js";
 import { convexGetDesktopComputerStatus } from "../../utils/computers/convex-environment-client.js";
 import { BrowserdClient } from "./browserd-client.js";
 import { lookupBrowserSession } from "./browser-sessions-client.js";
-import { findLocalBrowserSessionForProject } from "./local/local-browser-session.js";
+import {
+  findLocalBrowserSessionForProject,
+  findLocalBrowserSessionForSession,
+} from "./local/local-browser-session.js";
+import { BrowserSessionService } from "./session-service.js";
 import { webmcpToolsObserveCommand } from "./page-tools.js";
 import { browserdBundleHash } from "./live-session-deps.js";
 import type { BrowserdCommandResponse } from "./browserd-codec.js";
@@ -92,6 +96,8 @@ const NONE: PageToolsPeek = { tools: [] };
 export interface PeekPageToolsArgs {
   engine: "hosted" | "local";
   projectId: string;
+  /** Same durable owner as execution. A missing owner never falls back to the project browser. */
+  conversationId?: string;
   /** Required for the hosted engine; the local one reads an in-process map. */
   bearer?: string;
   /** A per-run disposable box, when the turn brought one. */
@@ -159,7 +165,10 @@ async function peekLocal(
 ): Promise<PageToolsPeek> {
   let session: ReturnType<typeof findLocalBrowserSessionForProject>;
   try {
-    session = findLocalBrowserSessionForProject(args.projectId);
+    session =
+      args.conversationId !== undefined
+        ? findLocalBrowserSessionForSession(args.projectId, args.conversationId)
+        : findLocalBrowserSessionForProject(args.projectId);
   } catch {
     // An invalid project key is the caller's problem, not a browser fault.
     return { tools: [], reason: "no_browser_session" };
@@ -185,19 +194,22 @@ async function peekHosted(
 
   // A per-run box is looked up directly; there is no project computer behind
   // it and asking about one would answer for the wrong browser entirely.
-  const lookup = args.sandboxRowId
-    ? await lookupBrowserSession({
-        sandboxRowId: args.sandboxRowId,
-        expectedBundleHash: browserdBundleHash(),
-        // MATCHES `tryReuse`. Without it a bundle-only deploy leaves rows whose
-        // recorded protocol version this build cannot speak looking reusable,
-        // and the peek reports "no tools" for a browser that is running fine
-        // until something restarts it.
-        expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION,
-        expectedContextMode: "any",
-        signal,
-      })
-    : await lookupProjectComputerSession(args, signal);
+  const lookup =
+    args.conversationId !== undefined
+      ? await lookupConversationSession(args, signal)
+      : args.sandboxRowId
+        ? await lookupBrowserSession({
+            sandboxRowId: args.sandboxRowId,
+            expectedBundleHash: browserdBundleHash(),
+            // MATCHES `tryReuse`. Without it a bundle-only deploy leaves rows whose
+            // recorded protocol version this build cannot speak looking reusable,
+            // and the peek reports "no tools" for a browser that is running fine
+            // until something restarts it.
+            expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION,
+            expectedContextMode: "any",
+            signal,
+          })
+        : await lookupProjectComputerSession(args, signal);
   const session = lookup?.session;
   if (!session) return { tools: [], reason: "no_browser_session" };
 
@@ -227,6 +239,49 @@ async function peekHosted(
     // the model with no way to reach the page at all.
     status.features?.includes("webmcp-binding") === true,
   );
+}
+
+async function lookupConversationSession(
+  args: PeekPageToolsArgs,
+  signal: AbortSignal,
+) {
+  const owner = await new BrowserSessionService().getConversationSession({
+    projectId: args.projectId,
+    conversationId: args.conversationId!,
+    bearer: args.bearer!,
+    signal,
+  });
+  // A conversation's box is authoritative even when the caller also has a
+  // project computer or sandbox. Never borrow either on a miss.
+  if (
+    !owner ||
+    owner.state !== "active" ||
+    owner.engine !== "hosted" ||
+    !owner.box ||
+    "localKey" in owner.box
+  )
+    return null;
+  const options = {
+    expectedBundleHash: browserdBundleHash(),
+    expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION,
+    expectedContextMode: "any" as const,
+    signal,
+  };
+  const lookup =
+    "sandboxRowId" in owner.box
+      ? await lookupBrowserSession({
+          sandboxRowId: owner.box.sandboxRowId,
+          watched: true,
+          ...options,
+        })
+      : await lookupBrowserSession({
+          computerId: owner.box.computerId,
+          ...options,
+        });
+  // The box may have been rebound since the owner lookup. Check the logical
+  // identity just as the browser viewer does before using daemon credentials.
+  if (lookup.session?.logicalSessionId !== owner.sessionId) return null;
+  return lookup;
 }
 
 async function lookupProjectComputerSession(
@@ -377,6 +432,7 @@ export async function peekPageToolsForChatTurn(args: {
   hasV1PageTools: boolean;
   engine: "hosted" | "local";
   projectId: string | undefined;
+  conversationId?: string;
   bearer?: string;
   sandboxRowId?: string;
   signal?: AbortSignal;
@@ -389,6 +445,9 @@ export async function peekPageToolsForChatTurn(args: {
   return peekPageTools({
     engine: args.engine,
     projectId: args.projectId,
+    ...(args.conversationId !== undefined
+      ? { conversationId: args.conversationId }
+      : {}),
     ...(args.bearer ? { bearer: args.bearer } : {}),
     ...(args.sandboxRowId ? { sandboxRowId: args.sandboxRowId } : {}),
     ...(args.signal ? { signal: args.signal } : {}),

@@ -1,4 +1,5 @@
 import type { Edge } from "@xyflow/react";
+import { HOSTED_MODE } from "@/lib/config";
 import { getModelById } from "@/shared/types";
 import { findHostStyle, getCompatRuntimeForStyle } from "@/lib/client-styles";
 import {
@@ -933,7 +934,8 @@ export function buildRedesignedHostCanvas(
     });
   }
 
-  const browserEnabled = draft.builtInToolIds.includes("browser");
+  const browserEnabled = !HOSTED_MODE && draft.localBrowserEnabled !== undefined
+    ? draft.localBrowserEnabled : draft.builtInToolIds.includes("browser");
   if (context.browsersEnabled || browserEnabled || draft.browserProfileId) {
     const y = ISLAND_Y + 180;
     nodes.push({

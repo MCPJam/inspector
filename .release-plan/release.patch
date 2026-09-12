@@ -1,82 +1,74 @@
-diff --git a/.changeset/browser-navigation-tabs.md b/.changeset/browser-navigation-tabs.md
+diff --git a/.changeset/columns-share-browser-resolution.md b/.changeset/columns-share-browser-resolution.md
 deleted file mode 100644
-index 5b3f61de1..000000000
---- a/.changeset/browser-navigation-tabs.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Add browser-style URL/search navigation, Back, Forward, Reload and managed popup tabs to WebMCP and Playground. Browser tabs share one daemon registry across local, cloud and Electron. Node WebMCP uses the shared daemon at pane-sized DPR 1 by default; Electron WebMCP uses native WebContentsView surfaces. Preserve opener relationships and tool invocation bindings across tab changes.
-diff --git a/.changeset/fix-local-electron-build.md b/.changeset/fix-local-electron-build.md
-deleted file mode 100644
-index d036e0410..000000000
---- a/.changeset/fix-local-electron-build.md
-+++ /dev/null
-@@ -1,7 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Make the local Electron build and dev run work off a clean checkout: raise the
--main-process build's heap ceiling to match CI, pull in a `node-abi` that knows
--Electron 43, and keep `ws`'s optional native accelerators out of the bundle.
-diff --git a/.changeset/local-browser-ga-security.md b/.changeset/local-browser-ga-security.md
-deleted file mode 100644
-index 8e60d8593..000000000
---- a/.changeset/local-browser-ga-security.md
-+++ /dev/null
-@@ -1,15 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Harden the local Browser and WebMCP runtimes: local Node and Electron engines
--now enforce navigation and DNS-checked egress policy and refuse MCPJam's own
--controller listeners; browser operations, viewers, retained CDP handles and
--downloads end with the consent that authorized them; WebMCP sessions are bound
--to a verified owner and project with single-use frame-stream nonces, and
--Electron profiles are isolated per actor and project; Electron downloads
--require native approval and are staged privately under bounded resources.
--Electron is pinned to 43.6.0.
--
--Local Browser stays behind its rollout flag, and this release does not enable
--it.
-diff --git a/.changeset/webmcp-dev-scroll.md b/.changeset/webmcp-dev-scroll.md
-deleted file mode 100644
-index 390db5c4e..000000000
---- a/.changeset/webmcp-dev-scroll.md
+index dc4fedf54..000000000
+--- a/.changeset/columns-share-browser-resolution.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Fix WebMCP scrolling and keyboard/mouse input in development mode by keeping the input forwarder alive when React Strict Mode replays effect setup.
+-Comparison columns now resolve Browser through the same hook the single chat pane uses, instead of an inline copy of its logic. A column previously ignored the saved per-client Browser setting an authenticated user had made, and could settle on "no Browser" before that setting had loaded — so the same client could drive a browser on its own and refuse to in a column. Local Browser also follows an explicit device grant for anyone with no shared setting to read, which now covers a signed-in user on a local-only project as well as a guest; a project that never enabled Browser still keeps its answer.
+diff --git a/.changeset/guest-columns-browse.md b/.changeset/guest-columns-browse.md
+deleted file mode 100644
+index 93fb1d54a..000000000
+--- a/.changeset/guest-columns-browse.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Fix comparison columns leaving Browser tools off for a guest who had already granted browser permission on the device. A column with no explicit per-client setting now follows that device consent for guests, while an authenticated user's columns keep following their saved client setting.
+diff --git a/.changeset/local-browser-real-machine-identity.md b/.changeset/local-browser-real-machine-identity.md
+deleted file mode 100644
+index 428e66f51..000000000
+--- a/.changeset/local-browser-real-machine-identity.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Stop the local browser from impersonating the hosted sandbox, which is what put a captcha in front of it on most sites.
+-
+-The local engine reused browserd's hosted launch pins verbatim, so a browser running on a user's own machine claimed to be a GPU-less Linux box in UTC: an `X11; Linux x86_64` UA (with an `MCPJam-Browser/1.0` product token) beside macOS/Windows client hints, SwiftShader WebGL on a machine with a real GPU, and a pinned UTC timezone and `en-US` locale regardless of where the request came from. Bot scoring reads that pile of contradictions as automation.
+-
+-Launches now declare a surface. The hosted sandbox is unchanged — every pin there is a true statement about the box. A local browser keeps only the observation viewport (the model's coordinate space) and lets Chromium answer with the truth about everything else, correcting just the UA string, via Chromium's own `--user-agent` switch, so headless does not announce `HeadlessChrome` while the real client hints stay intact. The Electron engine's agent partition likewise drops the `Electron/…` and app-name tokens from its UA.
+diff --git a/.changeset/plenty-panes-settle.md b/.changeset/plenty-panes-settle.md
+deleted file mode 100644
+index 124877d0d..000000000
+--- a/.changeset/plenty-panes-settle.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Move the Browser settings entry point into the browser pane itself. The pane's nav bar now carries a Browser settings button that opens the client's Browser tab, the compact runtime-controls menu links there too, and the duplicate button in the Playground right rail and browser panel header is gone. Consent copy is now shared across the dialog, the inline prompt, and onboarding so the three no longer drift.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 251cc7ba5..d818a10ac 100644
+index 4153102a2..dab4544a9 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.4.1",
-+  "version": "3.5.0",
+-  "version": "3.5.3",
++  "version": "3.5.4",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index 327275340..947bfe495 100644
+index f9687ff91..5e0598e2f 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -400,7 +400,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.4.1",
-+      "version": "3.5.0",
+-      "version": "3.5.3",
++      "version": "3.5.4",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
