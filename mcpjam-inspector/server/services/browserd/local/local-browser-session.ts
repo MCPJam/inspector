@@ -595,6 +595,13 @@ async function startSession(
             // fingerprint that public sites recognise and block.
             channel: "chromium",
             contextMode,
+            // THIS machine, not the hosted sandbox. The determinism pins the
+            // hosted desktop launches with (a Linux UA, software GL, UTC) are
+            // true statements there and false ones here, and a browser whose
+            // headers disagree with its own JavaScript is what bot scoring is
+            // built to catch — which is why this engine met captchas
+            // everywhere. See `BROWSERD_LOCAL_CONTEXT_OPTIONS`.
+            surface: "local",
           });
     } catch (error) {
       securityPolicy?.dispose?.();
