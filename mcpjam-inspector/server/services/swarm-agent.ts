@@ -7,6 +7,7 @@ import type {
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
+import { runnerCapabilities } from "./evals/runner-capabilities.js";
 
 /**
  * Inspector-side adapter for the backend swarm (journey-execution)
@@ -472,6 +473,13 @@ export async function createJourneyRun(
       ...(args.environmentIds?.length
         ? { environmentIds: args.environmentIds }
         : {}),
+      // ASSERTED BY THIS PROCESS, never taken from a caller: we are the runner,
+      // so we are the only honest source for what we can execute — the same
+      // rule `eval-disclosure.ts` states for the suite side. A backend that
+      // predates the arg ignores it; one that reads it uses it to decide
+      // whether an environment's materialized secrets make the wave
+      // unrunnable. @see services/evals/runner-capabilities.ts
+      runnerCapabilities: [...runnerCapabilities()],
     },
     NON_LLM_TIMEOUT_MS,
   );

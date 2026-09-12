@@ -111,3 +111,29 @@ Brokered names are threaded through `browserBrokeredSecretNames` but no surface
 fills them in: listing them costs a second Convex query per turn to improve one
 error message, and a caller that passes nothing gets `secret_unknown` instead —
 the safe direction.
+
+## The backend gate
+
+Four backend gates refuse to launch or provision an eval or journey run whose
+environment selects a materialized secret, because those runs receive none and
+would score with the credential silently absent. They now read a capability the
+runner declares:
+
+```
+browser-materialized-secrets
+```
+
+`server/services/evals/runner-capabilities.ts` declares it **only while
+`MCPJAM_BROWSER_SECRET_PLACEHOLDERS` is on** — with the flag off,
+`resolveBrowserSecrets` returns nothing and every placeholder is refused, so
+claiming it would be claiming a delivery this process does not have.
+
+The name is narrower than the refusals' own wording on purpose. It says the
+runner can put a materialized secret **into a browser**, and nothing more: the
+box's shell and any harness on it still receive none. A run launched under this
+declaration can sign into a page and still cannot `curl` with the same
+credential. A runner that declares it is accepting that position.
+
+Silence is still a refusal. A runner that declares nothing — every build before
+this — is refused exactly as it is today, and so is one that declares `[]` or an
+unrelated capability.
