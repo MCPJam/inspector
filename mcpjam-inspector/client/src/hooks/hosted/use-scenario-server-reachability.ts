@@ -204,6 +204,23 @@ export function useScenarioServerReachability(
             // probe down says nothing about the server.
             if (isUnmountedRef.current) return;
 
+            // StrictMode aborts this probe on the first cleanup and then
+            // replays the effect, which skips the server because
+            // `probedServerIdsRef` already holds its id — so this rejection is
+            // the only thing left that can retry. It arrives after the replay
+            // has reset `isUnmountedRef`, so the check above does not catch it.
+            // Counting it as a wire failure spends one of PROBE_ATTEMPTS
+            // before any request reached the server, leaving a single
+            // transient failure enough to call a healthy server unreachable.
+            // The timeout aborts too, and that one IS evidence, so it is
+            // excluded rather than retried for free.
+            if (
+              controller.signal.aborted &&
+              !(error instanceof ProbeTimeoutError)
+            ) {
+              continue;
+            }
+
             const isBootstrap = error instanceof BootstrapNotReadyError;
             const exhausted =
               error instanceof ProbeTimeoutError ||
