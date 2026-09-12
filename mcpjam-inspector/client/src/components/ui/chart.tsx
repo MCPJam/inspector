@@ -81,8 +81,7 @@ function ChartContainer({
   >["children"];
 }) {
   const uniqueId = React.useId();
-  const safeId = id && CSS_IDENT.test(id) ? id : undefined;
-  const chartId = `chart-${safeId || uniqueId.replace(/:/g, "")}`;
+  const chartId = `chart-${id || uniqueId.replace(/:/g, "")}`;
 
   return (
     <ChartContext.Provider value={{ config }}>
@@ -105,6 +104,14 @@ function ChartContainer({
 }
 
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
+  // The id lands unquoted in `[data-chart=...]`, so it has to clear the same
+  // charset as the keys. Checked here rather than in ChartContainer: this
+  // component is exported, and the caller is not the sink.
+  if (!CSS_IDENT.test(id)) {
+    warnDroppedChartValue("chart id", id);
+    return null;
+  }
+
   const colorConfig = Object.entries(config).filter(([key, config]) => {
     if (!(config.theme || config.color)) return false;
     if (!CSS_IDENT.test(key)) {

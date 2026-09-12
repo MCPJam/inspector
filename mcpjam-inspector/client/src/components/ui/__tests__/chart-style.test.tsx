@@ -1,6 +1,6 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ChartContainer, ChartStyle } from "@/components/ui/chart";
+import { ChartStyle } from "@/components/ui/chart";
 import type { ChartConfig } from "@/components/ui/chart";
 
 function styleText(container: HTMLElement): string {
@@ -105,12 +105,10 @@ describe("ChartStyle CSS injection", () => {
 
   it("ignores an id that would break out of the attribute selector", () => {
     const { container } = render(
-      <ChartContainer
+      <ChartStyle
         id="x] { background-image: url(https://evil.test) } [data-chart=y"
         config={{ passRate: { label: "Pass rate", color: "var(--chart-1)" } }}
-      >
-        <div />
-      </ChartContainer>,
+      />,
     );
     expect(styleText(container)).not.toContain("evil.test");
   });
