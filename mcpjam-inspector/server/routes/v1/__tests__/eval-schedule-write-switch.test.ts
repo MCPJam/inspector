@@ -52,7 +52,7 @@ vi.mock("convex/browser", () => ({
 import v1Routes from "../index.js";
 
 const SUITE_DOC = {
-  _id: "suite_1",
+  _id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
   projectId: "p1",
   createdBy: "user_1",
   workspaceId: "ws_1",
@@ -70,7 +70,7 @@ function patchSchedule(body: Record<string, unknown>): Promise<Response> {
   const app = new Hono();
   app.route("/api/v1", v1Routes);
   return Promise.resolve(
-    app.request("/api/v1/projects/p1/eval-suites/suite_1/schedule", {
+    app.request("/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule", {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -127,7 +127,7 @@ describe("scheduled-eval writes — deployment switch", () => {
     const res = await patchSchedule({ enabled: false });
     expect(res.status).toBe(200);
     expect(scheduleMutation()?.[1]).toMatchObject({
-      suiteId: "suite_1",
+      suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       enabled: false,
     });
   });
@@ -137,7 +137,7 @@ describe("scheduled-eval writes — deployment switch", () => {
     const res = await patchSchedule({ enabled: true, intervalMinutes: 60 });
     expect(res.status).toBe(200);
     expect(scheduleMutation()?.[1]).toMatchObject({
-      suiteId: "suite_1",
+      suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       enabled: true,
       intervalMinutes: 60,
     });
