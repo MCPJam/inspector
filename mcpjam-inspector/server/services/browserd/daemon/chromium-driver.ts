@@ -47,6 +47,7 @@ import {
   coveringElementAt,
   focusBackendNodeId,
   pointForBackendNodeId,
+  pointForRefAcrossFrames,
   replaceTextInNode,
   resolveRefNode,
   selectOptionOnNode,
@@ -84,6 +85,8 @@ import {
   PAGE_TEXT_RETRIEVAL_HINT,
 } from "./page-text";
 import {
+  readAxForest,
+  type FrameTopology,
   readAxTree,
   readScrollableNodes,
   resolveBackendNodeId,
@@ -1170,7 +1173,13 @@ export class ChromiumDriver implements BrowserDriver {
             "resolved; nothing was run and nothing was observed",
         );
       }
-      await this.dispatchVerb(page, action, permit, refNode);
+      await this.dispatchVerb(
+        page,
+        action,
+        permit,
+        refNode,
+        this.refs.get(tabId),
+      );
     } catch (error) {
       // A target that cannot be resolved is a NORMAL answer the model must be
       // able to act on ("the button isn't there"), not a daemon fault — and
@@ -1356,11 +1365,47 @@ export class ChromiumDriver implements BrowserDriver {
         "this browser cannot resolve refs; use a selector or coordinates",
       );
     }
+    // WHICH SESSION OWNS THIS NODE. A backend node id is meaningful only to
+    // the session that issued it, so an element inside an out-of-process
+    // iframe has to be resolved, focused and asked about on ITS session —
+    // asking the page's would answer "no such node" for an element that is
+    // plainly there.
+    //
+    // Absent `sessionFrameId` is the page's own session, which is every
+    // element on a page without cross-origin frames and every element of a
+    // same-process child (which shares its parent's session).
+    const owner = known.sessionFrameId
+      ? entry.page
+          .frameSessions?.()
+          .find((session) => session.frameId === known.sessionFrameId)?.cdp
+      : cdp;
+    if (!owner) {
+      // The frame was attached when the tree was read and is gone now — it
+      // navigated, or its target went away. `stale_ref` rather than
+      // `target_not_found`: the element is not missing from a page we can see,
+      // the whole document it lived in has left.
+      throw new ActError(
+        "stale_ref",
+        `the frame that held ${raw} has gone away; observe again and use a ` +
+          "ref from the new tree",
+      );
+    }
     try {
       // The recovery path RE-READS THE PAGE's accessibility tree, which is an
       // observation — and the lease forbids observing as firmly as it forbids
       // acting. Asked here because the lookup above is an await.
-      return await resolveRefNode(cdp, parsed!, known, permit);
+      //
+      // On the OWNER session: a recovery that re-read the page would look for
+      // the element in the wrong document and either miss it or find a
+      // same-named one outside the frame.
+      const resolved = await resolveRefNode(owner, parsed!, known, permit);
+      return {
+        ...resolved,
+        ...(owner === cdp ? {} : { cdp: owner }),
+        ...(known.sessionFrameId
+          ? { sessionFrameId: known.sessionFrameId }
+          : {}),
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new ActError("stale_ref", message.replace(/^stale_ref:\s*/, ""));
@@ -1382,19 +1427,43 @@ export class ChromiumDriver implements BrowserDriver {
     refNode: ResolvedRefNode,
     label: string,
     check: "occlusion" | "none",
+    /** This tab's ref map, for translating a point out of a frame. */
+    refs?: RefMap,
   ): Promise<ActPoint> {
-    const cdp = await page.cdp();
-    if (!cdp) {
+    const pageCdp = await page.cdp();
+    if (!pageCdp) {
       throw new ActError(
         "unsupported_target",
         "this browser cannot resolve refs; use a selector or coordinates",
       );
     }
-    const point = await pointForBackendNodeId(
-      cdp,
-      refNode.backendNodeId,
-      label,
-    );
+    // The element's OWN session, which for an out-of-process iframe is not the
+    // page's. @see resolveActRef
+    const cdp = refNode.cdp ?? pageCdp;
+    // ACROSS THE FRAME BOUNDARY, when there is one to cross.
+    //
+    // `DOM.getBoxModel` answers in the TOP frame's viewport — but only for a
+    // node in the session it was asked on. An OOPIF is a different target, so
+    // its session's viewport is the iframe's own box with its origin at
+    // (0, 0); a point read there and dispatched to the page lands wherever
+    // that offset puts it. A SAME-PROCESS child needs none of this, which is
+    // why this only fires for a node with its own session.
+    const point =
+      refNode.cdp && refNode.sessionFrameId && refs?.frames
+        ? await pointForRefAcrossFrames({
+            cdp,
+            backendNodeId: refNode.backendNodeId,
+            label,
+            sessionFrameId: refNode.sessionFrameId,
+            frames: refs.frames,
+            sessionFor: (frameId: string | undefined) =>
+              frameId === undefined
+                ? pageCdp
+                : page
+                    .frameSessions?.()
+                    .find((session) => session.frameId === frameId)?.cdp,
+          })
+        : await pointForBackendNodeId(cdp, refNode.backendNodeId, label);
     if (!this.inViewport(point.x, point.y)) {
       // Scrolled and still outside: a fixed-position element parked off-screen,
       // or a box the layout put beyond the viewport. Clicking those pixels
@@ -1426,6 +1495,8 @@ export class ChromiumDriver implements BrowserDriver {
     action: Extract<BrowserAction, { kind: "act" }>,
     permit: () => boolean = () => true,
     refNode?: ResolvedRefNode,
+    /** This tab's ref map, for translating a point out of a frame. */
+    refs?: RefMap,
   ): Promise<void> {
     /** Refuse the NEXT page write when the browser changed hands. */
     const stillOurs = () => {
@@ -1455,6 +1526,14 @@ export class ChromiumDriver implements BrowserDriver {
     // the tab identity a ref is scoped to. Here it is just a live node id.
     const refLabel =
       target && "a11yRef" in target ? target.a11yRef : "the target";
+    /**
+     * The PAGE's session — where INPUT goes.
+     *
+     * Keyboard input is dispatched to the page whatever document the focused
+     * element is in: `Input.dispatchKeyEvent` and `Input.insertText` go to
+     * whatever has focus in the browser, and an OOPIF's session does not own
+     * the browser's focus. Sending them to a frame session types into nothing.
+     */
     const needCdp = async () => {
       const cdp = await page.cdp();
       if (!cdp) {
@@ -1465,6 +1544,14 @@ export class ChromiumDriver implements BrowserDriver {
       }
       return cdp;
     };
+    /**
+     * The session that owns the REF'd NODE — where DOM calls go.
+     *
+     * `DOM.focus`, `DOM.resolveNode` and `Runtime.callFunctionOn` all take a
+     * backend node id, which only the session that issued it can resolve. The
+     * page's own for everything but an element inside an out-of-process frame.
+     */
+    const needOwnerCdp = async () => refNode?.cdp ?? (await needCdp());
 
     switch (action.verb) {
       case "click":
@@ -1474,6 +1561,7 @@ export class ChromiumDriver implements BrowserDriver {
             refNode,
             refLabel,
             "occlusion",
+            refs,
           );
           // IMMEDIATELY BEFORE THE WRITE. Measuring the target is three round
           // trips, and a person can take the browser inside them.
@@ -1492,6 +1580,7 @@ export class ChromiumDriver implements BrowserDriver {
             refNode,
             refLabel,
             "occlusion",
+            refs,
           );
           stillOurs();
           return page.hoverAt(at);
@@ -1507,7 +1596,8 @@ export class ChromiumDriver implements BrowserDriver {
         // type into whatever has focus (the model's previous click).
         if (refNode) {
           await replaceTextInNode(
-            await needCdp(),
+            // THE OWNER for focus and select-all, which are node-id calls.
+            await needOwnerCdp(),
             refNode.backendNodeId,
             text,
             stillOurs,
@@ -1516,7 +1606,15 @@ export class ChromiumDriver implements BrowserDriver {
             // CSS invented for a page seen as a tree), and changing both at
             // once would make a regression report ambiguous about which path
             // caused it.
-            { keystrokes: this.features.keystrokeTyping === true },
+            {
+              keystrokes: this.features.keystrokeTyping === true,
+              // …AND THE PAGE for the text itself. Input goes to whatever has
+              // focus in the BROWSER, and an out-of-process frame's session
+              // does not own the browser's focus — keystrokes sent there type
+              // into nothing. Only set when the two actually differ, so a page
+              // without cross-origin frames sends exactly what it sent before.
+              ...(refNode.cdp ? { inputCdp: await needCdp() } : {}),
+            },
           );
         } else if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
@@ -1566,7 +1664,10 @@ export class ChromiumDriver implements BrowserDriver {
         // happened to be — the difference between Enter submitting the form
         // the model meant and Enter submitting whatever it clicked last.
         if (refNode) {
-          const cdp = await needCdp();
+          // Focus is a node-id call and goes to the OWNER; `page.press` goes
+          // through the engine to the browser's focused element, which is what
+          // this focus just made it.
+          const cdp = await needOwnerCdp();
           stillOurs();
           await focusBackendNodeId(cdp, refNode.backendNodeId);
           stillOurs();
@@ -1593,7 +1694,7 @@ export class ChromiumDriver implements BrowserDriver {
                 // scroller regardless — refusing here would refuse the case
                 // this exists for. `"none"` still refuses a target that is
                 // off-viewport, where a wheel would land on nothing.
-                await this.pointForRef(page, refNode, refLabel, "none")
+                await this.pointForRef(page, refNode, refLabel, "none", refs)
               : point;
           if (refNode) stillOurs();
           if (at && page.scrollAt) return page.scrollAt(at, { dx, dy });
@@ -1604,7 +1705,7 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "drag": {
         const from = refNode
-          ? await this.pointForRef(page, refNode, refLabel, "occlusion")
+          ? await this.pointForRef(page, refNode, refLabel, "occlusion", refs)
           : point;
         if (refNode) stillOurs();
         if (!from) throw new Error("drag needs a ref or start coordinates");
@@ -1629,7 +1730,9 @@ export class ChromiumDriver implements BrowserDriver {
           throw new Error("select needs the option value in `value`");
         }
         if (refNode) {
-          const cdp = await needCdp();
+          // `DOM.resolveNode` + `Runtime.callFunctionOn`: both node-id calls,
+          // both to the session that issued the id.
+          const cdp = await needOwnerCdp();
           stillOurs();
           return selectOptionOnNode(
             cdp,
@@ -2205,7 +2308,7 @@ export class ChromiumDriver implements BrowserDriver {
           frame,
           permit,
         );
-        this.commitRefs(tabId, result, rendered.refMap);
+        this.commitRefs(tabId, result, rendered.refMap, rendered.frames);
         this.rememberRender(tabId, action, rendered.fields, result);
         return result;
       }
@@ -3168,6 +3271,8 @@ export class ChromiumDriver implements BrowserDriver {
         ok: true;
         fields: Record<string, unknown>;
         refMap: Map<string, RefEntry>;
+        /** Where each out-of-process frame sits. @see FrameTopology */
+        frames?: Map<string, FrameTopology>;
       }
     | { ok: false; error: BrowserCommandResult }
   > {
@@ -3196,8 +3301,14 @@ export class ChromiumDriver implements BrowserDriver {
           ]),
         ),
         ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
+        // OUTSIDE the untrusted fence, and a number: a page cannot write a
+        // sentence into a count. It is there so a model reading a page with
+        // thirty ad iframes knows the tree is incomplete rather than
+        // concluding the frames are empty.
+        ...(raw.framesOmitted ? { framesOmitted: raw.framesOmitted } : {}),
       },
       refMap: refs,
+      ...(raw.frames ? { frames: raw.frames } : {}),
     };
   }
 
@@ -3308,12 +3419,21 @@ export class ChromiumDriver implements BrowserDriver {
     tabId: string,
     result: BrowserCommandResult,
     refMap: Map<string, RefEntry> | undefined,
+    /** The frame topology the SAME read produced. @see FrameTopology */
+    frames?: Map<string, FrameTopology>,
   ): void {
     if (!result.ok || !refMap) {
       this.refs.delete(tabId);
       return;
     }
-    this.refs.set(tabId, { stateToken: result.stateToken, entries: refMap });
+    this.refs.set(tabId, {
+      stateToken: result.stateToken,
+      entries: refMap,
+      // BOUND TO THE SAME TOKEN as the entries, because a frame tree is a fact
+      // about one document: translating a coordinate through a topology from a
+      // different page walks the wrong chain of hosts.
+      ...(frames && frames.size > 0 ? { frames } : {}),
+    });
   }
 
   /**
@@ -3370,6 +3490,7 @@ export class ChromiumDriver implements BrowserDriver {
       : undefined;
     let a11yFields: Record<string, unknown> = {};
     let refMap: Map<string, RefEntry> | undefined;
+    let refFrames: Map<string, FrameTopology> | undefined;
     if (wants.a11y) {
       // `.catch` as well as the `ok:false` arm: `renderA11y` READS the page
       // (a CDP attach, an AX tree walk), and a navigation or a closing tab
@@ -3381,6 +3502,7 @@ export class ChromiumDriver implements BrowserDriver {
       if (rendered.ok) {
         a11yFields = rendered.fields;
         refMap = rendered.refMap;
+        refFrames = rendered.frames;
       } else {
         // NON-FATAL, deliberately. A page that cannot answer a tree — a PDF, a
         // page whose CDP session went away, a `chrome://` surface — must not
@@ -3537,7 +3659,7 @@ export class ChromiumDriver implements BrowserDriver {
     // is the right answer there. An act that never asked about the tree keeps
     // whatever the tab held: refs are meant to survive a DOM mutation, and
     // this capture proved stable.
-    if (wants.a11y) this.commitRefs(tabId, result, refMap);
+    if (wants.a11y) this.commitRefs(tabId, result, refMap, refFrames);
     // AFTER the diff above, which needed the previous one. An act's post-act
     // tree is always page-scoped (`afterAct` never takes a root), so it is
     // recorded the same way an `observe {mode:"a11y"}` is.
@@ -3587,7 +3709,15 @@ export class ChromiumDriver implements BrowserDriver {
       filter?: "interactive" | "all";
     },
   ): Promise<
-    | { ok: true; tree: A11yNode | null; filter: "interactive" | "all" }
+    | {
+        ok: true;
+        tree: A11yNode | null;
+        filter: "interactive" | "all";
+        /** Child frames this read could not describe. @see readAxForest */
+        framesOmitted?: number;
+        /** Where each out-of-process frame sits. @see FrameTopology */
+        frames?: Map<string, FrameTopology>;
+      }
     | { ok: false; error: BrowserCommandResult }
   > {
     const filter = action.filter ?? "interactive";
@@ -3660,11 +3790,29 @@ export class ChromiumDriver implements BrowserDriver {
     const scrollable = this.features.scrollableMarkers
       ? await readScrollableNodes(cdp)
       : undefined;
-    const read = await readAxTree(
-      cdp,
-      rootBackendNodeId,
-      scrollable ? { scrollable } : {},
-    );
+    // PAST THE IFRAMES, when the flag is on and the read is page-scoped.
+    //
+    // A document's AX tree does not descend into child documents, so without
+    // this an `<iframe>` is a leaf and the model cannot see one control inside
+    // it. Scoped to the whole page because a `rootRef`/`rootSelector` read is
+    // asking about one subtree — splicing frames into it would answer a
+    // question nobody asked, and cost a `Page.getFrameTree` to do it.
+    //
+    // Costs NOTHING on a page with no iframes: `readAxForest` reads the root
+    // tree exactly as `readAxTree` does and returns immediately when it
+    // contains no `Iframe` node.
+    const read =
+      this.features.a11yFrames && rootBackendNodeId === undefined
+        ? await readAxForest(
+            cdp,
+            entry.page.frameSessions?.() ?? [],
+            scrollable ? { scrollable } : {},
+          )
+        : await readAxTree(
+            cdp,
+            rootBackendNodeId,
+            scrollable ? { scrollable } : {},
+          );
     if (!read.ok) {
       return {
         ok: false,
@@ -3690,7 +3838,20 @@ export class ChromiumDriver implements BrowserDriver {
         },
       };
     }
-    return { ok: true, tree: read.tree, filter };
+    return {
+      ok: true,
+      tree: read.tree,
+      filter,
+      // Only when there is something to say. `framesOmitted: 0` on every
+      // observation would be a new key on every result to report nothing,
+      // and the frame map is empty on every page without an OOPIF.
+      ...("framesOmitted" in read && read.framesOmitted > 0
+        ? { framesOmitted: read.framesOmitted }
+        : {}),
+      ...("frames" in read && read.frames.size > 0
+        ? { frames: read.frames }
+        : {}),
+    };
   }
 
   /**

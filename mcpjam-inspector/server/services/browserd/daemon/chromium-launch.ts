@@ -342,6 +342,8 @@ export function wrapPage(
   // rather than attaching its own — a page serving both a tool call and the
   // pane would otherwise hold two.
   let webmcpPromise: Promise<WebMcpBridge | null> | null = null;
+  /** The resolved bridge, for the synchronous `frameSessions()` reader. */
+  let attachedBridge: WebMcpBridge | null = null;
   // The CDP session itself is memoized separately and shared: the WebMCP
   // bridge and the viewport both want one, and attaching twice to the same
   // page gives two sessions whose events interleave unpredictably.
@@ -525,9 +527,12 @@ export function wrapPage(
         // ONE attach. Two sessions on a page is two of everything the CDP
         // domains keep per session, for one page's worth of truth.
         const session = await adapted.cdp();
-        return session
-          ? attachWebMcp(page, session, localSecurity, localBudget)
+        const bridge = session
+          ? await attachWebMcp(page, session, localSecurity, localBudget)
           : null;
+        // Held so `frameSessions()` can stay synchronous — see its note.
+        attachedBridge = bridge;
+        return bridge;
       })();
       return webmcpPromise;
     },
@@ -538,6 +543,16 @@ export function wrapPage(
         return attach.page().catch(() => null);
       })();
       return cdpPromise;
+    },
+    frameSessions() {
+      // READ OFF THE BRIDGE, and only if it has already been built. This is
+      // SYNCHRONOUS on purpose: the a11y read is on the hot path of every
+      // observation, and `webmcp()` attaches a session — awaiting it here
+      // would make reading a tree attach a CDP session to every tab that never
+      // asked for one. The bridge is attached eagerly at tab creation
+      // (`chromium-driver.ts` calls `webmcp()` there), so by the time anything
+      // observes, this promise has almost always resolved.
+      return attachedBridge?.attachedFrameSessions() ?? [];
     },
   };
   return adapted;

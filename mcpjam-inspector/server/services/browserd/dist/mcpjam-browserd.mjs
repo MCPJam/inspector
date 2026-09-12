@@ -3887,6 +3887,113 @@ function dialogRefusal(dialog) {
   return `dialog_pending: a JavaScript ${dialog.kind} dialog is blocking this page${quoted}. The page cannot be read or acted on until it is answered \u2014 answer it with \`accept_dialog\` or \`dismiss_dialog\`, hand the browser back so a person can, or close the tab.`;
 }
 
+// server/services/browserd/daemon/observation-budget.ts
+var DEFAULT_A11Y_BUDGET = { maxNodes: 400, maxDepth: 12 };
+var MAX_A11Y_FRAMES = 32;
+var MAX_A11Y_FRAME_DEPTH = 8;
+function countNodes(node) {
+  let total = 0;
+  const stack = [node];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    total += 1;
+    const children = current.children;
+    if (children) {
+      for (const child of children) stack.push(child);
+    }
+  }
+  return total;
+}
+function omissionMarker(_node, hiddenNodes) {
+  return { role: "omitted", hiddenNodes };
+}
+function capA11yTree(root, budget = DEFAULT_A11Y_BUDGET) {
+  if (!root) return { tree: null, omittedSubtrees: 0, totalNodes: 0 };
+  const totalNodes = countNodes(root);
+  let remaining = Math.max(1, budget.maxNodes);
+  let omittedSubtrees = 0;
+  const visit = (node, depth) => {
+    remaining -= 1;
+    const { children, ...rest } = node;
+    if (!children || children.length === 0) return { ...rest };
+    if (depth >= budget.maxDepth || remaining <= 0) {
+      omittedSubtrees += 1;
+      const hidden = children.reduce((sum, child) => sum + countNodes(child), 0);
+      return { ...rest, children: [omissionMarker(node, hidden)] };
+    }
+    const kept = [];
+    for (let index = 0; index < children.length; index += 1) {
+      if (remaining <= 0) {
+        omittedSubtrees += 1;
+        const hidden = children.slice(index).reduce((sum, child) => sum + countNodes(child), 0);
+        kept.push(omissionMarker(node, hidden));
+        break;
+      }
+      kept.push(visit(children[index], depth + 1));
+    }
+    return { ...rest, children: kept };
+  };
+  return { tree: visit(root, 0), omittedSubtrees, totalNodes };
+}
+function truncationMarker(shownBytes, totalBytes, retrieval) {
+  return `
+\u2026[truncated: showing ${shownBytes} of ${totalBytes} bytes` + (retrieval ? `; ${retrieval}` : "") + "]";
+}
+function capText(text, maxBytes, retrieval) {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  if (bytes.byteLength <= maxBytes) return text;
+  const reserve = encoder.encode(
+    truncationMarker(maxBytes, bytes.byteLength, retrieval)
+  ).byteLength;
+  if (maxBytes < reserve) {
+    return decodeUpTo(bytes, maxBytes);
+  }
+  const head = decodeUpTo(bytes, maxBytes - reserve);
+  return head + truncationMarker(encoder.encode(head).byteLength, bytes.byteLength, retrieval);
+}
+function decodeUpTo(bytes, limit) {
+  let end = Math.max(0, Math.min(limit, bytes.byteLength));
+  while (end > 0 && (bytes[end] & 192) === 128) end -= 1;
+  return new TextDecoder("utf-8").decode(bytes.subarray(0, end));
+}
+var DEFAULT_CONSOLE_BUDGET = {
+  maxEntries: 50,
+  maxEntryBytes: 2e3
+};
+function capConsole(entries, budget = DEFAULT_CONSOLE_BUDGET) {
+  const kept = entries.slice(-budget.maxEntries);
+  return {
+    entries: kept.map((entry) => ({
+      ...entry,
+      text: redactForModel(capText(entry.text, budget.maxEntryBytes))
+    })),
+    omitted: Math.max(0, entries.length - kept.length)
+  };
+}
+function capToolOutput(output, maxBytes) {
+  if (typeof output === "string") {
+    const capped = capText(output, maxBytes);
+    return { output: capped, omitted: capped !== output };
+  }
+  let serialized;
+  try {
+    serialized = JSON.stringify(output) ?? "null";
+  } catch {
+    return {
+      output: "[output could not be serialized]",
+      omitted: true
+    };
+  }
+  if (new TextEncoder().encode(serialized).byteLength <= maxBytes) {
+    return { output, omitted: false };
+  }
+  return {
+    output: `[tool output omitted: ${serialized.length} chars exceeds the ${maxBytes}-byte budget \u2014 have the page return a smaller result, or read the rendered page instead]`,
+    omitted: true
+  };
+}
+
 // server/services/browserd/daemon/cdp-a11y.ts
 var UNINTERESTING_ROLES = /* @__PURE__ */ new Set([
   "generic",
@@ -3922,22 +4029,28 @@ async function readAxTree(cdp, rootBackendNodeId, options = {}) {
   try {
     await cdp.send("Accessibility.enable");
     const response = await cdp.send("Accessibility.getFullAXTree");
-    const nodes = response?.nodes;
-    if (!nodes || nodes.length === 0) return { ok: false };
-    const byId = /* @__PURE__ */ new Map();
-    for (const node of nodes) byId.set(node.nodeId, node);
-    const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
-    if (!root) return { ok: true, tree: null };
-    const seen = /* @__PURE__ */ new Set();
-    const built = build(root, byId, seen, options.scrollable);
-    if (built.length === 0) return { ok: true, tree: null };
-    return {
-      ok: true,
-      tree: built.length === 1 ? built[0] : { role: "RootWebArea", children: built }
-    };
+    return buildFromNodes(
+      response?.nodes,
+      rootBackendNodeId,
+      options.scrollable
+    );
   } catch {
     return { ok: false };
   }
+}
+function buildFromNodes(nodes, rootBackendNodeId, scrollable) {
+  if (!nodes || nodes.length === 0) return { ok: false };
+  const byId = /* @__PURE__ */ new Map();
+  for (const node of nodes) byId.set(node.nodeId, node);
+  const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
+  if (!root) return { ok: true, tree: null };
+  const seen = /* @__PURE__ */ new Set();
+  const built = build(root, byId, seen, scrollable);
+  if (built.length === 0) return { ok: true, tree: null };
+  return {
+    ok: true,
+    tree: built.length === 1 ? built[0] : { role: "RootWebArea", children: built }
+  };
 }
 function build(node, byId, seen, scrollable) {
   if (seen.has(node.nodeId)) return [];
@@ -4019,6 +4132,115 @@ async function resolveBackendNodeId(cdp, selector) {
   } catch {
     return null;
   }
+}
+async function readAxForest(root, frames, options = {}) {
+  const read = await readAxTree(root, void 0, options);
+  const frames_ = /* @__PURE__ */ new Map();
+  if (!read.ok)
+    return { ok: false, tree: null, framesOmitted: 0, frames: frames_ };
+  if (!read.tree)
+    return { ok: true, tree: null, framesOmitted: 0, frames: frames_ };
+  const hosts = iframeNodesByBackendId(read.tree);
+  if (hosts.size === 0)
+    return { ok: true, tree: read.tree, framesOmitted: 0, frames: frames_ };
+  const tree = await root.send("Page.getFrameTree").catch(() => void 0);
+  const frameTree = tree?.frameTree;
+  if (!frameTree)
+    return { ok: true, tree: read.tree, framesOmitted: 0, frames: frames_ };
+  const sessionByFrame = new Map(frames.map((f) => [f.frameId, f.cdp]));
+  const maxFrames = options.maxFrames ?? MAX_A11Y_FRAMES;
+  const maxDepth = options.maxDepth ?? MAX_A11Y_FRAME_DEPTH;
+  let framesOmitted = 0;
+  let read_ = 0;
+  const walk = async (parent, ownerCdp, ownerFrameId, depth) => {
+    if (depth > maxDepth) {
+      framesOmitted += countFrames(parent);
+      return;
+    }
+    for (const child of parent.childFrames ?? []) {
+      const childId = child.frame?.id;
+      if (!childId) continue;
+      if (read_ >= maxFrames) {
+        framesOmitted += 1 + countFrames(child);
+        continue;
+      }
+      const ownSession = sessionByFrame.get(childId);
+      const owner = await ownerCdp.send("DOM.getFrameOwner", { frameId: childId }).catch(() => void 0);
+      const hostNode = typeof owner?.backendNodeId === "number" ? hosts.get(owner.backendNodeId) : void 0;
+      if (!hostNode) {
+        framesOmitted += 1 + countFrames(child);
+        continue;
+      }
+      const childRead = ownSession ? await readAxTree(ownSession, void 0, options) : await readAxTreeForFrame(ownerCdp, childId, options);
+      read_ += 1;
+      if (!childRead.ok || !childRead.tree) {
+        framesOmitted += 1 + countFrames(child);
+        continue;
+      }
+      const childSessionFrameId = ownSession ? childId : ownerFrameId;
+      if (ownSession) {
+        frames_.set(childId, {
+          hostBackendNodeId: owner.backendNodeId,
+          ...ownerFrameId !== void 0 ? { parentSessionFrameId: ownerFrameId } : {},
+          frameId: childId
+        });
+      }
+      stampFrame(childRead.tree, childId, childSessionFrameId);
+      hostNode.children = [childRead.tree];
+      await walk(
+        child,
+        ownSession ?? ownerCdp,
+        childSessionFrameId,
+        depth + 1
+      );
+    }
+  };
+  await walk(frameTree, root, void 0, 1);
+  return { ok: true, tree: read.tree, framesOmitted, frames: frames_ };
+}
+async function readAxTreeForFrame(cdp, frameId, options) {
+  try {
+    await cdp.send("Accessibility.enable");
+    const response = await cdp.send("Accessibility.getFullAXTree", {
+      frameId
+    });
+    return buildFromNodes(response?.nodes, void 0, options.scrollable);
+  } catch {
+    return { ok: false };
+  }
+}
+function iframeNodesByBackendId(root) {
+  const found = /* @__PURE__ */ new Map();
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node.role === "Iframe" && typeof node.backendDOMNodeId === "number") {
+      found.set(node.backendDOMNodeId, node);
+    }
+    for (const child of node.children ?? []) stack.push(child);
+  }
+  return found;
+}
+function stampFrame(root, frameId, sessionFrameId) {
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    node.frameId = frameId;
+    if (sessionFrameId !== void 0) node.sessionFrameId = sessionFrameId;
+    for (const child of node.children ?? []) stack.push(child);
+  }
+}
+function countFrames(node) {
+  let total = 0;
+  const stack = [node];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    for (const child of current.childFrames ?? []) {
+      total += 1;
+      stack.push(child);
+    }
+  }
+  return total;
 }
 
 // server/services/browserd/daemon/key-events.ts
@@ -4414,6 +4636,7 @@ async function focusBackendNodeId(cdp, backendNodeId) {
 }
 async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
 }, options = {}) {
+  const input = options.inputCdp ?? cdp;
   await focusBackendNodeId(cdp, backendNodeId);
   const objectId = await resolveObjectId(cdp, backendNodeId);
   if (objectId) {
@@ -4436,10 +4659,10 @@ async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
   }
   guard();
   if (options.keystrokes) {
-    await typeByKeystrokes(cdp, text, guard);
+    await typeByKeystrokes(input, text, guard);
     return;
   }
-  await cdp.send("Input.insertText", { text });
+  await input.send("Input.insertText", { text });
 }
 async function selectOptionOnNode(cdp, backendNodeId, value, label) {
   const objectId = await resolveObjectId(cdp, backendNodeId);
@@ -4561,6 +4784,68 @@ async function resolveObjectId(cdp, backendNodeId) {
   const resolved = await cdp.send("DOM.resolveNode", { backendNodeId }).catch(() => void 0);
   return resolved?.object?.objectId;
 }
+async function pointForRefAcrossFrames(args) {
+  const local = await pointForBackendNodeId(
+    args.cdp,
+    args.backendNodeId,
+    args.label
+  );
+  let point = local;
+  let current = args.sessionFrameId;
+  for (let hop = 0; hop < 16 && current !== void 0; hop += 1) {
+    const frame = args.frames.get(current);
+    if (!frame) {
+      throw new ActError(
+        "stale_ref",
+        `${args.label} is inside a frame this observation no longer describes; observe again and use a ref from the new tree`
+      );
+    }
+    const parentSession = args.sessionFor(frame.parentSessionFrameId);
+    if (!parentSession) {
+      throw new ActError(
+        "stale_ref",
+        `the frame that held ${args.label} has gone away; observe again and use a ref from the new tree`
+      );
+    }
+    const host2 = await hostQuad(parentSession, frame.hostBackendNodeId);
+    if (!host2) {
+      throw new ActError(
+        "target_not_found",
+        `${args.label} is inside a frame that has no visible box to aim at; observe again and pick a target that is showing`
+      );
+    }
+    if (point.x < 0 || point.y < 0 || point.x > host2.width || point.y > host2.height) {
+      throw new ActError(
+        "target_not_found",
+        `${args.label} is scrolled out of view inside its frame; scroll the frame first, then observe again`
+      );
+    }
+    point = { x: Math.round(point.x + host2.x), y: Math.round(point.y + host2.y) };
+    current = frame.parentSessionFrameId;
+  }
+  return point;
+}
+async function hostQuad(cdp, backendNodeId) {
+  const box = await cdp.send("DOM.getBoxModel", { backendNodeId }).catch(() => void 0);
+  const quad = box?.model?.content;
+  if (!quad || quad.length < 8) return null;
+  const xs = [quad[0], quad[2], quad[4], quad[6]];
+  const ys = [quad[1], quad[3], quad[5], quad[7]];
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return {
+    x,
+    y,
+    width: Math.max(...xs) - x,
+    height: Math.max(...ys) - y
+  };
+}
+var ActError = class extends Error {
+  constructor(code, detail) {
+    super(`${code}: ${detail}`);
+    this.name = "ActError";
+  }
+};
 
 // server/services/browserd/daemon/session-barrier.ts
 var DEFAULT_DEBOUNCE_MS = 150;
@@ -4823,111 +5108,6 @@ function diffA11yLines(previous, next) {
   return { added, removed };
 }
 
-// server/services/browserd/daemon/observation-budget.ts
-var DEFAULT_A11Y_BUDGET = { maxNodes: 400, maxDepth: 12 };
-function countNodes(node) {
-  let total = 0;
-  const stack = [node];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    total += 1;
-    const children = current.children;
-    if (children) {
-      for (const child of children) stack.push(child);
-    }
-  }
-  return total;
-}
-function omissionMarker(_node, hiddenNodes) {
-  return { role: "omitted", hiddenNodes };
-}
-function capA11yTree(root, budget = DEFAULT_A11Y_BUDGET) {
-  if (!root) return { tree: null, omittedSubtrees: 0, totalNodes: 0 };
-  const totalNodes = countNodes(root);
-  let remaining = Math.max(1, budget.maxNodes);
-  let omittedSubtrees = 0;
-  const visit = (node, depth) => {
-    remaining -= 1;
-    const { children, ...rest } = node;
-    if (!children || children.length === 0) return { ...rest };
-    if (depth >= budget.maxDepth || remaining <= 0) {
-      omittedSubtrees += 1;
-      const hidden = children.reduce((sum, child) => sum + countNodes(child), 0);
-      return { ...rest, children: [omissionMarker(node, hidden)] };
-    }
-    const kept = [];
-    for (let index = 0; index < children.length; index += 1) {
-      if (remaining <= 0) {
-        omittedSubtrees += 1;
-        const hidden = children.slice(index).reduce((sum, child) => sum + countNodes(child), 0);
-        kept.push(omissionMarker(node, hidden));
-        break;
-      }
-      kept.push(visit(children[index], depth + 1));
-    }
-    return { ...rest, children: kept };
-  };
-  return { tree: visit(root, 0), omittedSubtrees, totalNodes };
-}
-function truncationMarker(shownBytes, totalBytes, retrieval) {
-  return `
-\u2026[truncated: showing ${shownBytes} of ${totalBytes} bytes` + (retrieval ? `; ${retrieval}` : "") + "]";
-}
-function capText(text, maxBytes, retrieval) {
-  const encoder = new TextEncoder();
-  const bytes = encoder.encode(text);
-  if (bytes.byteLength <= maxBytes) return text;
-  const reserve = encoder.encode(
-    truncationMarker(maxBytes, bytes.byteLength, retrieval)
-  ).byteLength;
-  if (maxBytes < reserve) {
-    return decodeUpTo(bytes, maxBytes);
-  }
-  const head = decodeUpTo(bytes, maxBytes - reserve);
-  return head + truncationMarker(encoder.encode(head).byteLength, bytes.byteLength, retrieval);
-}
-function decodeUpTo(bytes, limit) {
-  let end = Math.max(0, Math.min(limit, bytes.byteLength));
-  while (end > 0 && (bytes[end] & 192) === 128) end -= 1;
-  return new TextDecoder("utf-8").decode(bytes.subarray(0, end));
-}
-var DEFAULT_CONSOLE_BUDGET = {
-  maxEntries: 50,
-  maxEntryBytes: 2e3
-};
-function capConsole(entries, budget = DEFAULT_CONSOLE_BUDGET) {
-  const kept = entries.slice(-budget.maxEntries);
-  return {
-    entries: kept.map((entry) => ({
-      ...entry,
-      text: redactForModel(capText(entry.text, budget.maxEntryBytes))
-    })),
-    omitted: Math.max(0, entries.length - kept.length)
-  };
-}
-function capToolOutput(output, maxBytes) {
-  if (typeof output === "string") {
-    const capped = capText(output, maxBytes);
-    return { output: capped, omitted: capped !== output };
-  }
-  let serialized;
-  try {
-    serialized = JSON.stringify(output) ?? "null";
-  } catch {
-    return {
-      output: "[output could not be serialized]",
-      omitted: true
-    };
-  }
-  if (new TextEncoder().encode(serialized).byteLength <= maxBytes) {
-    return { output, omitted: false };
-  }
-  return {
-    output: `[tool output omitted: ${serialized.length} chars exceeds the ${maxBytes}-byte budget \u2014 have the page return a smaller result, or read the rendered page instead]`,
-    omitted: true
-  };
-}
-
 // server/services/browserd/daemon/page-text.ts
 var PAGE_TEXT_FN = `() => {
   const SKIP = new Set(["SCRIPT","STYLE","NOSCRIPT","SVG","HEAD","TEMPLATE","CANVAS","OBJECT","EMBED","IFRAME","FRAME","MAP","AREA","LINK","META"]);
@@ -5174,7 +5354,12 @@ function assignRefs(root) {
         ...typeof node.backendDOMNodeId === "number" ? { backendDOMNodeId: node.backendDOMNodeId } : {},
         role,
         name,
-        ...(seen.get(key) ?? 0) > 1 ? { nth: index } : {}
+        ...(seen.get(key) ?? 0) > 1 ? { nth: index } : {},
+        // Stamped by `readAxForest` during the splice; absent on every node of
+        // a page with no frames, which is what keeps those entries identical
+        // to what they were before any of this existed.
+        ...typeof node.frameId === "string" ? { frameId: node.frameId } : {},
+        ...typeof node.sessionFrameId === "string" ? { sessionFrameId: node.sessionFrameId } : {}
       });
     }
     for (const child of node.children ?? []) visit(child);
@@ -5804,6 +5989,25 @@ var WebMcpBridge = class {
   /** Frame ids with their own attached session. Exists for tests and logging. */
   attachedFrameIds() {
     return [...this.sessions.values()].filter((session) => !session.isMain).map((session) => session.frameId);
+  }
+  /**
+   * The attached CHILD-FRAME sessions, for a reader outside this bridge.
+   *
+   * READ-ONLY, and never the page's own session: the caller already has that
+   * one (it is how it reached this bridge), and handing it back under a frame
+   * id would invite a reader to treat the main document as a child.
+   *
+   * WHY A BRIDGE METHOD AT ALL. These sessions exist because the WebMCP
+   * bridge needs them, and it attaches them eagerly at tab creation. The
+   * accessibility reader needs exactly the same set — a document's AX tree
+   * does not descend into child documents, so without them NO iframe content
+   * is visible to the model at all — and the alternative, hoisting a shared
+   * frame-session registry out of this class, would re-wire the one piece of
+   * frame plumbing that has measured OOPIF semantics and a large test surface.
+   * This method NEVER triggers an attach; it reports what is already there.
+   */
+  attachedFrameSessions() {
+    return [...this.sessions.values()].filter((session) => !session.isMain).map((session) => ({ frameId: session.frameId, cdp: session.cdp }));
   }
   /** Record a session's frame URLs, for origins we missed by attaching late. */
   async seedFrames(cdp) {
@@ -6755,7 +6959,7 @@ async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
 
 // server/services/browserd/daemon/chromium-driver.ts
 var DEFAULT_TAB = DEFAULT_QUEUE_KEY;
-var ActError = class extends Error {
+var ActError2 = class extends Error {
   constructor(code, message) {
     super(message);
     this.code = code;
@@ -7324,7 +7528,13 @@ var ChromiumDriver = class {
           "a person took control of this browser while its target was being resolved; nothing was run and nothing was observed"
         );
       }
-      await this.dispatchVerb(page, action, permit, refNode);
+      await this.dispatchVerb(
+        page,
+        action,
+        permit,
+        refNode,
+        this.refs.get(tabId)
+      );
     } catch (error) {
       if (error instanceof LeaseTakenMidAct) {
         return this.leaseBlockedResult(
@@ -7332,7 +7542,7 @@ var ChromiumDriver = class {
         );
       }
       const message = error instanceof Error ? error.message : String(error);
-      const kind = error instanceof ActError ? error.code : /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
+      const kind = error instanceof ActError2 ? error.code : /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
       const fresh = await this.afterAct(
         tabId,
         entry,
@@ -7422,7 +7632,7 @@ var ChromiumDriver = class {
     const map = this.refs.get(tabId);
     if (map && !this.refsStillDescribe(tabId, entry, map)) {
       this.refs.delete(tabId);
-      throw new ActError(
+      throw new ActError2(
         "stale_ref",
         `${raw} was issued for a page this tab has since left; observe again and use a ref from the new page`
       );
@@ -7430,23 +7640,35 @@ var ChromiumDriver = class {
     const parsed = parseRef(raw);
     const known = parsed ? map?.entries.get(parsed) : void 0;
     if (!known) {
-      throw new ActError(
+      throw new ActError2(
         "unknown_ref",
         `${raw} is not a ref from this tab's last observation; observe again and use a ref it names`
       );
     }
     const cdp = await entry.page.cdp();
     if (!cdp) {
-      throw new ActError(
+      throw new ActError2(
         "unsupported_target",
         "this browser cannot resolve refs; use a selector or coordinates"
       );
     }
+    const owner = known.sessionFrameId ? entry.page.frameSessions?.().find((session) => session.frameId === known.sessionFrameId)?.cdp : cdp;
+    if (!owner) {
+      throw new ActError2(
+        "stale_ref",
+        `the frame that held ${raw} has gone away; observe again and use a ref from the new tree`
+      );
+    }
     try {
-      return await resolveRefNode(cdp, parsed, known, permit);
+      const resolved = await resolveRefNode(owner, parsed, known, permit);
+      return {
+        ...resolved,
+        ...owner === cdp ? {} : { cdp: owner },
+        ...known.sessionFrameId ? { sessionFrameId: known.sessionFrameId } : {}
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new ActError("stale_ref", message.replace(/^stale_ref:\s*/, ""));
+      throw new ActError2("stale_ref", message.replace(/^stale_ref:\s*/, ""));
     }
   }
   /**
@@ -7459,21 +7681,25 @@ var ChromiumDriver = class {
    * clicked by coordinate, so nothing else is checking — and a coordinate that
    * lands on a consent banner reports a click that "worked".
    */
-  async pointForRef(page, refNode, label, check) {
-    const cdp = await page.cdp();
-    if (!cdp) {
-      throw new ActError(
+  async pointForRef(page, refNode, label, check, refs) {
+    const pageCdp = await page.cdp();
+    if (!pageCdp) {
+      throw new ActError2(
         "unsupported_target",
         "this browser cannot resolve refs; use a selector or coordinates"
       );
     }
-    const point = await pointForBackendNodeId(
+    const cdp = refNode.cdp ?? pageCdp;
+    const point = refNode.cdp && refNode.sessionFrameId && refs?.frames ? await pointForRefAcrossFrames({
       cdp,
-      refNode.backendNodeId,
-      label
-    );
+      backendNodeId: refNode.backendNodeId,
+      label,
+      sessionFrameId: refNode.sessionFrameId,
+      frames: refs.frames,
+      sessionFor: (frameId) => frameId === void 0 ? pageCdp : page.frameSessions?.().find((session) => session.frameId === frameId)?.cdp
+    }) : await pointForBackendNodeId(cdp, refNode.backendNodeId, label);
     if (!this.inViewport(point.x, point.y)) {
-      throw new ActError(
+      throw new ActError2(
         "target_not_found",
         `${label} is at (${point.x}, ${point.y}), outside the ${this.viewportLabel} viewport even after scrolling; observe again to see where it is now`
       );
@@ -7481,7 +7707,7 @@ var ChromiumDriver = class {
     if (check === "occlusion") {
       const covering = await coveringElementAt(cdp, refNode.backendNodeId);
       if (covering) {
-        throw new ActError(
+        throw new ActError2(
           "target_covered",
           `${label} is covered by ${covering} at its click point, so the input would land on that element instead. Dismiss or interact with the covering element first (it is often a dialog, banner, or sticky header).`
         );
@@ -7489,7 +7715,7 @@ var ChromiumDriver = class {
     }
     return point;
   }
-  async dispatchVerb(page, action, permit = () => true, refNode) {
+  async dispatchVerb(page, action, permit = () => true, refNode, refs) {
     const stillOurs = () => {
       if (!permit()) throw new LeaseTakenMidAct("lease taken mid-act");
     };
@@ -7505,13 +7731,14 @@ var ChromiumDriver = class {
     const needCdp = async () => {
       const cdp = await page.cdp();
       if (!cdp) {
-        throw new ActError(
+        throw new ActError2(
           "unsupported_target",
           "this browser cannot resolve refs; use a selector or coordinates"
         );
       }
       return cdp;
     };
+    const needOwnerCdp = async () => refNode?.cdp ?? await needCdp();
     switch (action.verb) {
       case "click":
         if (refNode) {
@@ -7519,7 +7746,8 @@ var ChromiumDriver = class {
             page,
             refNode,
             refLabel,
-            "occlusion"
+            "occlusion",
+            refs
           );
           stillOurs();
           return page.clickAt(at);
@@ -7535,7 +7763,8 @@ var ChromiumDriver = class {
             page,
             refNode,
             refLabel,
-            "occlusion"
+            "occlusion",
+            refs
           );
           stillOurs();
           return page.hoverAt(at);
@@ -7549,7 +7778,8 @@ var ChromiumDriver = class {
         const text = action.value ?? "";
         if (refNode) {
           await replaceTextInNode(
-            await needCdp(),
+            // THE OWNER for focus and select-all, which are node-id calls.
+            await needOwnerCdp(),
             refNode.backendNodeId,
             text,
             stillOurs,
@@ -7558,7 +7788,15 @@ var ChromiumDriver = class {
             // CSS invented for a page seen as a tree), and changing both at
             // once would make a regression report ambiguous about which path
             // caused it.
-            { keystrokes: this.features.keystrokeTyping === true }
+            {
+              keystrokes: this.features.keystrokeTyping === true,
+              // …AND THE PAGE for the text itself. Input goes to whatever has
+              // focus in the BROWSER, and an out-of-process frame's session
+              // does not own the browser's focus — keystrokes sent there type
+              // into nothing. Only set when the two actually differ, so a page
+              // without cross-origin frames sends exactly what it sent before.
+              ...refNode.cdp ? { inputCdp: await needCdp() } : {}
+            }
           );
         } else if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
@@ -7573,7 +7811,7 @@ var ChromiumDriver = class {
         if (!Array.isArray(fields) || fields.length === 0 || fields.some(
           (field) => typeof field?.selector !== "string" || !field.selector || typeof field?.value !== "string"
         )) {
-          throw new ActError(
+          throw new ActError2(
             "act_failed",
             "fill_form needs fields: [{selector, value}]"
           );
@@ -7591,7 +7829,7 @@ var ChromiumDriver = class {
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
         if (refNode) {
-          const cdp = await needCdp();
+          const cdp = await needOwnerCdp();
           stillOurs();
           await focusBackendNodeId(cdp, refNode.backendNodeId);
           stillOurs();
@@ -7606,7 +7844,7 @@ var ChromiumDriver = class {
             // scroller regardless — refusing here would refuse the case
             // this exists for. `"none"` still refuses a target that is
             // off-viewport, where a wheel would land on nothing.
-            await this.pointForRef(page, refNode, refLabel, "none")
+            await this.pointForRef(page, refNode, refLabel, "none", refs)
           ) : point;
           if (refNode) stillOurs();
           if (at && page.scrollAt) return page.scrollAt(at, { dx, dy });
@@ -7614,7 +7852,7 @@ var ChromiumDriver = class {
         return page.scrollBy({ dx, dy });
       }
       case "drag": {
-        const from = refNode ? await this.pointForRef(page, refNode, refLabel, "occlusion") : point;
+        const from = refNode ? await this.pointForRef(page, refNode, refLabel, "occlusion", refs) : point;
         if (refNode) stillOurs();
         if (!from) throw new Error("drag needs a ref or start coordinates");
         const to = parsePoint(action.value);
@@ -7635,7 +7873,7 @@ var ChromiumDriver = class {
           throw new Error("select needs the option value in `value`");
         }
         if (refNode) {
-          const cdp = await needCdp();
+          const cdp = await needOwnerCdp();
           stillOurs();
           return selectOptionOnNode(
             cdp,
@@ -7653,7 +7891,7 @@ var ChromiumDriver = class {
         return;
       default: {
         const exhaustive = action.verb;
-        throw new ActError(
+        throw new ActError2(
           "act_failed",
           `this browser daemon does not support the "${exhaustive}" verb; it is running an older build`
         );
@@ -7694,7 +7932,7 @@ var ChromiumDriver = class {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!isNotAnInputRefusal(message)) {
-        throw new ActError(
+        throw new ActError2(
           "fill_form_failed",
           `field ${index + 1} (${field.selector}): ${message.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
         );
@@ -7704,7 +7942,7 @@ var ChromiumDriver = class {
         await page.selectOption(field.selector, field.value);
       } catch (selectError) {
         const detail = selectError instanceof Error ? selectError.message : String(selectError);
-        throw new ActError(
+        throw new ActError2(
           "fill_form_failed",
           `field ${index + 1} (${field.selector}): ${detail.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
         );
@@ -7996,7 +8234,7 @@ var ChromiumDriver = class {
           frame,
           permit
         );
-        this.commitRefs(tabId, result, rendered.refMap);
+        this.commitRefs(tabId, result, rendered.refMap, rendered.frames);
         this.rememberRender(tabId, action, rendered.fields, result);
         return result;
       }
@@ -8701,9 +8939,15 @@ var ChromiumDriver = class {
             { role: entryValue.role, name: entryValue.name }
           ])
         ),
-        ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
+        ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {},
+        // OUTSIDE the untrusted fence, and a number: a page cannot write a
+        // sentence into a count. It is there so a model reading a page with
+        // thirty ad iframes knows the tree is incomplete rather than
+        // concluding the frames are empty.
+        ...raw.framesOmitted ? { framesOmitted: raw.framesOmitted } : {}
       },
-      refMap: refs
+      refMap: refs,
+      ...raw.frames ? { frames: raw.frames } : {}
     };
   }
   /**
@@ -8781,12 +9025,19 @@ var ChromiumDriver = class {
     }
     return this.features.screenshotMaxBytes;
   }
-  commitRefs(tabId, result, refMap) {
+  commitRefs(tabId, result, refMap, frames) {
     if (!result.ok || !refMap) {
       this.refs.delete(tabId);
       return;
     }
-    this.refs.set(tabId, { stateToken: result.stateToken, entries: refMap });
+    this.refs.set(tabId, {
+      stateToken: result.stateToken,
+      entries: refMap,
+      // BOUND TO THE SAME TOKEN as the entries, because a frame tree is a fact
+      // about one document: translating a coordinate through a topology from a
+      // different page walks the wrong chain of hosts.
+      ...frames && frames.size > 0 ? { frames } : {}
+    });
   }
   /**
    * THE ONE FUNNEL for "what does the page look like now that something
@@ -8814,6 +9065,7 @@ var ChromiumDriver = class {
     const pre = captures ? await this.snapshot(page).catch(() => void 0) : void 0;
     let a11yFields = {};
     let refMap;
+    let refFrames;
     if (wants.a11y) {
       const rendered = await this.renderA11y(tabId, entry, {
         filter: "interactive"
@@ -8821,6 +9073,7 @@ var ChromiumDriver = class {
       if (rendered.ok) {
         a11yFields = rendered.fields;
         refMap = rendered.refMap;
+        refFrames = rendered.frames;
       } else {
         a11yFields = { a11yUnavailable: true };
       }
@@ -8892,7 +9145,7 @@ var ChromiumDriver = class {
       permit,
       blockedDetail
     );
-    if (wants.a11y) this.commitRefs(tabId, result, refMap);
+    if (wants.a11y) this.commitRefs(tabId, result, refMap, refFrames);
     if (wants.a11y) {
       this.rememberRender(tabId, { filter: "interactive" }, a11yFields, result);
     }
@@ -8975,7 +9228,11 @@ var ChromiumDriver = class {
       rootBackendNodeId = resolved;
     }
     const scrollable = this.features.scrollableMarkers ? await readScrollableNodes(cdp) : void 0;
-    const read = await readAxTree(
+    const read = this.features.a11yFrames && rootBackendNodeId === void 0 ? await readAxForest(
+      cdp,
+      entry.page.frameSessions?.() ?? [],
+      scrollable ? { scrollable } : {}
+    ) : await readAxTree(
       cdp,
       rootBackendNodeId,
       scrollable ? { scrollable } : {}
@@ -8998,7 +9255,16 @@ var ChromiumDriver = class {
         }
       };
     }
-    return { ok: true, tree: read.tree, filter };
+    return {
+      ok: true,
+      tree: read.tree,
+      filter,
+      // Only when there is something to say. `framesOmitted: 0` on every
+      // observation would be a new key on every result to report nothing,
+      // and the frame map is empty on every page without an OOPIF.
+      ..."framesOmitted" in read && read.framesOmitted > 0 ? { framesOmitted: read.framesOmitted } : {},
+      ..."frames" in read && read.frames.size > 0 ? { frames: read.frames } : {}
+    };
   }
   /**
    * Do this tab's refs still describe the page it is on?
@@ -9889,6 +10155,7 @@ function wrapPage(page, localSecurity = false, localBudget) {
     if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
   });
   let webmcpPromise = null;
+  let attachedBridge = null;
   let cdpPromise = null;
   const adapted = {
     async goto(url) {
@@ -10023,7 +10290,9 @@ function wrapPage(page, localSecurity = false, localBudget) {
     webmcp() {
       webmcpPromise ??= (async () => {
         const session = await adapted.cdp();
-        return session ? attachWebMcp(page, session, localSecurity, localBudget) : null;
+        const bridge = session ? await attachWebMcp(page, session, localSecurity, localBudget) : null;
+        attachedBridge = bridge;
+        return bridge;
       })();
       return webmcpPromise;
     },
@@ -10034,6 +10303,9 @@ function wrapPage(page, localSecurity = false, localBudget) {
         return attach.page().catch(() => null);
       })();
       return cdpPromise;
+    },
+    frameSessions() {
+      return attachedBridge?.attachedFrameSessions() ?? [];
     }
   };
   return adapted;

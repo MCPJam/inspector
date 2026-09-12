@@ -111,6 +111,24 @@ export interface RefEntry {
   name: string;
   /** Index among nodes sharing this role+name, set ONLY when it is ambiguous. */
   nth?: number;
+  /**
+   * The frame this element lives in. ABSENT on the main document.
+   *
+   * Absent rather than a sentinel because it is what keeps a ref map from a
+   * page without frames byte-identical to what it was before frames were read
+   * at all — which is what the eval transcripts rest on.
+   */
+  frameId?: string;
+  /**
+   * The frame whose SESSION can resolve this node's id, absent when the page
+   * session can.
+   *
+   * A node id is meaningful only to the session that issued it, so an act
+   * aimed here has to be dispatched on that session. For a same-process child
+   * this is absent even though `frameId` is set: the frame lives inside the
+   * page's session.
+   */
+  sessionFrameId?: string;
 }
 
 export interface RefMap {
@@ -121,6 +139,26 @@ export interface RefMap {
    */
   stateToken?: ObservationStateToken;
   entries: Map<string, RefEntry>;
+  /**
+   * The frame topology this observation saw, keyed by SESSION frame id.
+   *
+   * Bound to the same `stateToken` as the entries, and for the same reason: a
+   * frame tree is a fact about one document, and acting on a ref from a
+   * previous page through a topology from a different one would translate a
+   * coordinate through the wrong chain of hosts.
+   *
+   * Absent when nothing was spliced.
+   */
+  frames?: Map<
+    string,
+    {
+      /** The DOM node of the `<iframe>` that hosts it, in the PARENT document. */
+      hostBackendNodeId: number;
+      /** Its parent's session frame id, absent when the parent is the page. */
+      parentSessionFrameId?: string;
+      frameId: string;
+    }
+  >;
 }
 
 /**
@@ -230,6 +268,13 @@ export function assignRefs(root: A11yNode | null): Map<string, RefEntry> {
         role,
         name,
         ...((seen.get(key) ?? 0) > 1 ? { nth: index } : {}),
+        // Stamped by `readAxForest` during the splice; absent on every node of
+        // a page with no frames, which is what keeps those entries identical
+        // to what they were before any of this existed.
+        ...(typeof node.frameId === "string" ? { frameId: node.frameId } : {}),
+        ...(typeof node.sessionFrameId === "string"
+          ? { sessionFrameId: node.sessionFrameId }
+          : {}),
       });
     }
     for (const child of node.children ?? []) visit(child);

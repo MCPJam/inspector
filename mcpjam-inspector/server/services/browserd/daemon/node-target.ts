@@ -46,6 +46,20 @@ import type { A11yNode } from "./observation-budget";
 export interface ResolvedRefNode {
   backendNodeId: number;
   recovered: boolean;
+  /**
+   * The session that can resolve this node id, when it is NOT the page's.
+   *
+   * A backend node id is meaningful only to the session that issued it, so an
+   * element inside an out-of-process iframe has to be focused, resolved and
+   * asked about on ITS session. Absent means the page's own, which is every
+   * element on a page without cross-origin frames.
+   */
+  cdp?: CdpLike;
+  /**
+   * The frame this node lives in, for translating its box into the top frame's
+   * coordinate space. Absent on the main document.
+   */
+  sessionFrameId?: string;
 }
 
 /**
@@ -233,8 +247,20 @@ export async function replaceTextInNode(
      * @see typeByKeystrokes for what the keystroke path does and does not do.
      */
     keystrokes?: boolean;
+    /**
+     * Where the TEXT goes, when that is not where the node lives.
+     *
+     * Input is dispatched to whatever has focus in the BROWSER, and an
+     * out-of-process frame's session does not own the browser's focus — so a
+     * keystroke sent to the frame session types into nothing. The focus and
+     * select-all above are node-id calls and stay on the node's own session;
+     * only the typing moves. Absent means they are the same session, which is
+     * every page without cross-origin frames.
+     */
+    inputCdp?: CdpLike;
   } = {},
 ): Promise<void> {
+  const input = options.inputCdp ?? cdp;
   await focusBackendNodeId(cdp, backendNodeId);
   const objectId = await resolveObjectId(cdp, backendNodeId);
   if (objectId) {
@@ -269,10 +295,10 @@ export async function replaceTextInNode(
   // can, and a person who took the browser mid-word should not watch the rest
   // of the sentence arrive under their cursor.
   if (options.keystrokes) {
-    await typeByKeystrokes(cdp, text, guard);
+    await typeByKeystrokes(input, text, guard);
     return;
   }
-  await cdp.send("Input.insertText", { text });
+  await input.send("Input.insertText", { text });
 }
 
 /**
@@ -439,4 +465,141 @@ async function resolveObjectId(
     .send("DOM.resolveNode", { backendNodeId })
     .catch(() => undefined)) as { object?: { objectId?: string } } | undefined;
   return resolved?.object?.objectId;
+}
+
+/**
+ * Where to CLICK an element that lives inside an out-of-process iframe.
+ *
+ * The two coordinate spaces at the top of this file are the whole problem.
+ * `DOM.getBoxModel` answers in the TOP frame's viewport — but only for a node
+ * in the session it was asked on. An OOPIF is a different target, so its
+ * session's idea of "the viewport" is the IFRAME's own box with its origin at
+ * (0, 0), and a point read there and dispatched to the page lands wherever
+ * that offset happens to put it: near the top-left of the window, on whatever
+ * is there.
+ *
+ * A SAME-PROCESS child needs none of this. It shares its parent's session, and
+ * that session's `getBoxModel` already answers in the top frame's space — which
+ * is why the caller only reaches this function for a frame that has a session
+ * of its own.
+ *
+ * So the point is translated up the chain: each host `<iframe>` element's own
+ * content-quad top-left, asked on the session that CONTAINS that element,
+ * added in turn. Refuses rather than guessing when a link in the chain is
+ * missing, or when the translated point leaves the host's box — an element
+ * scrolled out of view inside an iframe is not clickable at the coordinates
+ * arithmetic would produce for it.
+ */
+export async function pointForRefAcrossFrames(
+  args: {
+    /** The session the element itself lives in. */
+    cdp: CdpLike;
+    backendNodeId: number;
+    label: string;
+    /** The element's own frame, and the chain up to the page. */
+    sessionFrameId: string;
+    frames: ReadonlyMap<
+      string,
+      {
+        hostBackendNodeId: number;
+        parentSessionFrameId?: string;
+        frameId: string;
+      }
+    >;
+    /** Resolve a session by its frame id; the page session for `undefined`. */
+    sessionFor: (sessionFrameId: string | undefined) => CdpLike | undefined;
+  },
+): Promise<ActPoint> {
+  const local = await pointForBackendNodeId(
+    args.cdp,
+    args.backendNodeId,
+    args.label,
+  );
+  let point = local;
+  let current: string | undefined = args.sessionFrameId;
+  // BOUNDED, like every other walk over page-controlled structure here: a
+  // cyclic `frames` map (which a hostile page cannot produce, but a bug
+  // could) must not spin.
+  for (let hop = 0; hop < 16 && current !== undefined; hop += 1) {
+    const frame = args.frames.get(current);
+    if (!frame) {
+      throw new ActError(
+        "stale_ref",
+        `${args.label} is inside a frame this observation no longer describes; ` +
+          "observe again and use a ref from the new tree",
+      );
+    }
+    const parentSession = args.sessionFor(frame.parentSessionFrameId);
+    if (!parentSession) {
+      throw new ActError(
+        "stale_ref",
+        `the frame that held ${args.label} has gone away; observe again and ` +
+          "use a ref from the new tree",
+      );
+    }
+    const host = await hostQuad(parentSession, frame.hostBackendNodeId);
+    if (!host) {
+      throw new ActError(
+        "target_not_found",
+        `${args.label} is inside a frame that has no visible box to aim at; ` +
+          "observe again and pick a target that is showing",
+      );
+    }
+    // INSIDE THE HOST'S BOX, or the arithmetic has produced a point that is
+    // not on the element. An element scrolled out of view inside an iframe
+    // yields a local point past the frame's height, and adding the offset
+    // would aim at whatever sits below the iframe on the page.
+    if (
+      point.x < 0 ||
+      point.y < 0 ||
+      point.x > host.width ||
+      point.y > host.height
+    ) {
+      throw new ActError(
+        "target_not_found",
+        `${args.label} is scrolled out of view inside its frame; scroll the ` +
+          "frame first, then observe again",
+      );
+    }
+    point = { x: Math.round(point.x + host.x), y: Math.round(point.y + host.y) };
+    current = frame.parentSessionFrameId;
+  }
+  return point;
+}
+
+/** A frame host element's content box, in its own session's viewport. */
+async function hostQuad(
+  cdp: CdpLike,
+  backendNodeId: number,
+): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  const box = (await cdp
+    .send("DOM.getBoxModel", { backendNodeId })
+    .catch(() => undefined)) as { model?: { content?: number[] } } | undefined;
+  const quad = box?.model?.content;
+  if (!quad || quad.length < 8) return null;
+  const xs = [quad[0]!, quad[2]!, quad[4]!, quad[6]!];
+  const ys = [quad[1]!, quad[3]!, quad[5]!, quad[7]!];
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return {
+    x,
+    y,
+    width: Math.max(...xs) - x,
+    height: Math.max(...ys) - y,
+  };
+}
+
+/**
+ * The error shape this module throws for a classified failure.
+ *
+ * Declared here rather than imported from `chromium-driver.ts`: that module
+ * imports this one, and the reverse import would be a cycle. The driver
+ * classifies by the message prefix (`formatBrowserdError`'s wire form), which
+ * is the same contract every other throw in this file already meets.
+ */
+class ActError extends Error {
+  constructor(code: string, detail: string) {
+    super(`${code}: ${detail}`);
+    this.name = "ActError";
+  }
 }

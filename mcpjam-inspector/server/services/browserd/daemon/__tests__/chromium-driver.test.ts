@@ -5156,3 +5156,240 @@ describe("ChromiumDriver — the screenshot byte budget", () => {
     expect(res.output).toMatchObject({ screenshotCompressed: true });
   });
 });
+
+describe("ChromiumDriver — acting inside a frame", () => {
+  /** The page's own tree: one button, one iframe at node 77. */
+  const PAGE = {
+    nodes: [
+      { nodeId: "1", role: { value: "RootWebArea" }, childIds: ["2", "3"] },
+      {
+        nodeId: "2",
+        backendDOMNodeId: 10,
+        role: { value: "button" },
+        name: { value: "Outside" },
+        properties: [],
+        childIds: [],
+      },
+      {
+        nodeId: "3",
+        backendDOMNodeId: 77,
+        role: { value: "Iframe" },
+        name: { value: "Payment" },
+        properties: [],
+        childIds: [],
+      },
+    ],
+  };
+  /** The OOPIF's own tree: one field, at node 500 in ITS session. */
+  const CHILD = {
+    nodes: [
+      { nodeId: "1", role: { value: "RootWebArea" }, childIds: ["2"] },
+      {
+        nodeId: "2",
+        backendDOMNodeId: 500,
+        role: { value: "textbox" },
+        name: { value: "Card number" },
+        properties: [],
+        childIds: [],
+      },
+    ],
+  };
+  const FRAME_TREE = {
+    frameTree: {
+      frame: { id: "main" },
+      childFrames: [{ frame: { id: "child-1", parentId: "main" } }],
+    },
+  };
+
+  /**
+   * A page with one out-of-process frame.
+   *
+   * The frame's element sits at (20, 30) INSIDE its own session's viewport,
+   * and the iframe element sits at (100, 200) in the page's — so a correctly
+   * translated click lands at (120, 230) and an untranslated one at (20, 30),
+   * which is near the top-left corner of the window.
+   */
+  function framedPage() {
+    const childSent: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const pageSent: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const childCdp = {
+      async send(method: string, params?: Record<string, unknown>) {
+        childSent.push({ method, ...(params ? { params } : {}) });
+        if (method === "Accessibility.getFullAXTree") return CHILD;
+        if (method === "DOM.getBoxModel") {
+          // (20,30) to (60,50) in the FRAME's own space.
+          return { model: { content: [20, 30, 60, 30, 60, 50, 20, 50] } };
+        }
+        if (method === "DOM.resolveNode") return { object: { objectId: "obj-c" } };
+        return {};
+      },
+      on() {},
+    };
+    const page = fakePage({
+      url: "https://x.test/",
+      frameSessions: [{ frameId: "child-1", cdp: childCdp as never }],
+      cdpReplies: {
+        "Accessibility.getFullAXTree": PAGE,
+        "Page.getFrameTree": FRAME_TREE,
+        "DOM.getFrameOwner": { backendNodeId: 77 },
+        "DOM.getBoxModel": (params?: Record<string, unknown>) => {
+          pageSent.push({ method: "DOM.getBoxModel", ...(params ? { params } : {}) });
+          // The IFRAME element, at (100,200) to (400,500) on the page.
+          if (params?.backendNodeId === 77) {
+            return { model: { content: [100, 200, 400, 200, 400, 500, 100, 500] } };
+          }
+          return { model: { content: [10, 10, 50, 10, 50, 30, 10, 30] } };
+        },
+        "DOM.resolveNode": { object: { objectId: "obj-p" } },
+        "Input.dispatchKeyEvent": (params?: Record<string, unknown>) => {
+          pageSent.push({ method: "Input.dispatchKeyEvent", ...(params ? { params } : {}) });
+          return {};
+        },
+        "Input.insertText": (params?: Record<string, unknown>) => {
+          pageSent.push({ method: "Input.insertText", ...(params ? { params } : {}) });
+          return {};
+        },
+      },
+    });
+    return { page, childSent, pageSent, childCdp };
+  }
+
+  async function observedFramedPage() {
+    const fixture = framedPage();
+    const { context } = fakeContext({ pages: [fixture.page] });
+    const driver = new ChromiumDriver(context, {
+      features: { a11yFrames: true },
+    });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const observed = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    return { ...fixture, driver, observed };
+  }
+
+  it("shows the frame's controls indented under its Iframe line", async () => {
+    // Without this the model sees an `Iframe` leaf and cannot see a single
+    // control inside it — a login form, a payment field, an embedded app, all
+    // invisible with nothing saying so.
+    const { observed } = await observedFramedPage();
+    const output = observed.output as { a11y: string };
+    expect(output.a11y).toContain('- Iframe "Payment"');
+    expect(output.a11y).toContain("Card number");
+    // One deeper: the child's own `RootWebArea` is transparent, so its
+    // children land directly under the iframe line.
+    const lines = output.a11y.split("\n");
+    const iframeLine = lines.findIndex((line) => line.includes("Iframe"));
+    expect(lines[iframeLine + 1]).toMatch(/^\s+- textbox "Card number"/);
+  });
+
+  it("clicks a frame ref at the HOST-TRANSLATED point", async () => {
+    // (20,30)+(40,20)/2 inside the frame → centre (40,40); plus the host's
+    // top-left (100,200) → (140,240). An untranslated click would land at
+    // (40,40), near the top-left corner of the window, on whatever is there.
+    const { driver, page } = await observedFramedPage();
+    const refs = (
+      (await driver.execute(cmd({ kind: "observe", mode: "a11y" })))
+        .output as { refs: Record<string, { name: string }> }
+    ).refs;
+    const frameRef = Object.entries(refs).find(
+      ([, value]) => value.name === "Card number",
+    )![0];
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { a11yRef: frameRef } }),
+    );
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("click:140,240");
+  });
+
+  it("resolves a frame ref on the FRAME's session, not the page's", async () => {
+    // A backend node id is meaningful only to the session that issued it.
+    const { driver, childSent } = await observedFramedPage();
+    const refs = (
+      (await driver.execute(cmd({ kind: "observe", mode: "a11y" })))
+        .output as { refs: Record<string, { name: string }> }
+    ).refs;
+    const frameRef = Object.entries(refs).find(
+      ([, value]) => value.name === "Card number",
+    )![0];
+    childSent.length = 0;
+    await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { a11yRef: frameRef } }),
+    );
+    expect(childSent.map((call) => call.method)).toContain("DOM.describeNode");
+  });
+
+  it("types into a frame ref: focus on the FRAME, text on the PAGE", async () => {
+    // Input is dispatched to whatever has focus in the BROWSER, and an
+    // out-of-process frame's session does not own the browser's focus —
+    // keystrokes sent there type into nothing.
+    const { driver, childSent, pageSent } = await observedFramedPage();
+    const refs = (
+      (await driver.execute(cmd({ kind: "observe", mode: "a11y" })))
+        .output as { refs: Record<string, { name: string }> }
+    ).refs;
+    const frameRef = Object.entries(refs).find(
+      ([, value]) => value.name === "Card number",
+    )![0];
+    childSent.length = 0;
+    pageSent.length = 0;
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: frameRef },
+        value: "4242",
+      }),
+    );
+    expect(res.ok).toBe(true);
+    expect(childSent.map((call) => call.method)).toContain("DOM.focus");
+    expect(pageSent.map((call) => call.method)).toContain("Input.insertText");
+    expect(childSent.map((call) => call.method)).not.toContain(
+      "Input.insertText",
+    );
+  });
+
+  it("refuses a frame ref whose session is GONE, as stale_ref", async () => {
+    // The whole document it lived in has left — not an element missing from a
+    // page we can still see.
+    const fixture = framedPage();
+    const { context } = fakeContext({ pages: [fixture.page] });
+    const driver = new ChromiumDriver(context, {
+      features: { a11yFrames: true },
+    });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y" }),
+    );
+    const refs = (observed.output as { refs: Record<string, { name: string }> })
+      .refs;
+    const frameRef = Object.entries(refs).find(
+      ([, value]) => value.name === "Card number",
+    )![0];
+    // The frame's target goes away between the observation and the act.
+    (fixture.page as { frameSessions?: unknown }).frameSessions = () => [];
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { a11yRef: frameRef } }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/^stale_ref:/);
+    expect(res.error).toContain("has gone away");
+  });
+
+  it("renders a page with an iframe BYTE-IDENTICALLY with the flag off", async () => {
+    // The compatibility guarantee the eval transcripts rest on: with the flag
+    // off the iframe stays a leaf and every line is what it was.
+    const fixture = framedPage();
+    const { context } = fakeContext({ pages: [fixture.page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y" }),
+    );
+    const output = observed.output as { a11y: string };
+    expect(output.a11y).toBe(
+      [
+        '- button "Outside" [ref=e1]',
+        '- Iframe "Payment" [ref=e2]',
+      ].join("\n"),
+    );
+    expect(output).not.toHaveProperty("framesOmitted");
+  });
+});

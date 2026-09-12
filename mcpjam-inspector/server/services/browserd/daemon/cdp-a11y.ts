@@ -14,7 +14,11 @@
  * Pure CDP and dependency-free: unit-testable against a fake `CdpLike`.
  */
 
-import type { A11yNode } from "./observation-budget";
+import {
+  MAX_A11Y_FRAMES,
+  MAX_A11Y_FRAME_DEPTH,
+  type A11yNode,
+} from "./observation-budget";
 import type { CdpLike } from "./webmcp-bridge";
 
 /**
@@ -146,38 +150,57 @@ export async function readAxTree(
     await cdp.send("Accessibility.enable");
     const response = (await cdp.send("Accessibility.getFullAXTree")) as
       { nodes?: AxNode[] } | undefined;
-    const nodes = response?.nodes;
-    // No nodes at all is the page failing to answer, not a page with nothing
-    // in it: every document has at least a root.
-    if (!nodes || nodes.length === 0) return { ok: false };
-
-    const byId = new Map<string, AxNode>();
-    for (const node of nodes) byId.set(node.nodeId, node);
-
-    const root = rootBackendNodeId
-      ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId)
-      : nodes[0];
-    // A requested root that is not in the tree ANSWERED — with "that element
-    // is gone". The whole-document case cannot reach this.
-    if (!root) return { ok: true, tree: null };
-
-    // `getFullAXTree` answers a flat list joined by ids, and a malformed or
-    // cyclic set would otherwise walk forever. Visiting each id once bounds it.
-    const seen = new Set<string>();
-    const built = build(root, byId, seen, options.scrollable);
-    // A root that folds away entirely (a bare `generic` wrapper) still has to
-    // answer with its children rather than with nothing.
-    if (built.length === 0) return { ok: true, tree: null };
-    return {
-      ok: true,
-      tree:
-        built.length === 1
-          ? built[0]!
-          : { role: "RootWebArea", children: built },
-    };
+    return buildFromNodes(
+      response?.nodes,
+      rootBackendNodeId,
+      options.scrollable,
+    );
   } catch {
     return { ok: false };
   }
+}
+
+/**
+ * Turn CDP's flat, id-joined node list into a tree.
+ *
+ * Extracted so a FRAME-SCOPED read (`readAxTreeForFrame`, below) builds
+ * through exactly the same code. Two builders would be two sets of folding
+ * rules, and a frame's subtree that folded differently from the page it sits
+ * in would be visibly inconsistent in one rendered tree.
+ */
+function buildFromNodes(
+  nodes: AxNode[] | undefined,
+  rootBackendNodeId: number | undefined,
+  scrollable: ReadonlySet<number> | undefined,
+): AxTreeRead {
+  // No nodes at all is the page failing to answer, not a page with nothing
+  // in it: every document has at least a root.
+  if (!nodes || nodes.length === 0) return { ok: false };
+
+  const byId = new Map<string, AxNode>();
+  for (const node of nodes) byId.set(node.nodeId, node);
+
+  const root = rootBackendNodeId
+    ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId)
+    : nodes[0];
+  // A requested root that is not in the tree ANSWERED — with "that element
+  // is gone". The whole-document case cannot reach this.
+  if (!root) return { ok: true, tree: null };
+
+  // `getFullAXTree` answers a flat list joined by ids, and a malformed or
+  // cyclic set would otherwise walk forever. Visiting each id once bounds it.
+  const seen = new Set<string>();
+  const built = build(root, byId, seen, scrollable);
+  // A root that folds away entirely (a bare `generic` wrapper) still has to
+  // answer with its children rather than with nothing.
+  if (built.length === 0) return { ok: true, tree: null };
+  return {
+    ok: true,
+    tree:
+      built.length === 1
+        ? built[0]!
+        : { role: "RootWebArea", children: built },
+  };
 }
 
 /**
@@ -366,4 +389,280 @@ export async function resolveBackendNodeId(
   } catch {
     return null;
   }
+}
+
+/**
+ * READING PAST AN IFRAME.
+ *
+ * `Accessibility.getFullAXTree` answers for ONE document. A document's AX tree
+ * does NOT descend into a child document — same-origin or cross-origin, it
+ * makes no difference — so today an `<iframe>` is a leaf node with a ref and
+ * the model cannot see a single control inside it. A login form, a payment
+ * field, an embedded app: all invisible, with nothing saying so.
+ *
+ * The fix is to read each child frame's own tree and splice it in at the
+ * `Iframe` node that owns it. Two mechanisms, and which one applies depends on
+ * whether Chromium gave the frame its own target:
+ *
+ *   - A SAME-PROCESS child is inside its parent's session, so its tree is read
+ *     on that session with `{frameId}`.
+ *   - An OOPIF is a separate target with its own session, and its tree is read
+ *     there with NO `frameId` — it is that session's own root document, and
+ *     passing an id its session has never heard of answers nothing.
+ *
+ * THERE IS NO UNSCOPED RETRY. A frame-scoped read that fails must leave the
+ * iframe line as it is: falling back to a plain `getFullAXTree` on the owner
+ * session would re-read the WHOLE PAGE and splice it under its own iframe node,
+ * producing a tree that contains itself.
+ */
+
+/** The frame sessions a reader was given. @see DriverPage.frameSessions */
+export interface FrameSession {
+  frameId: string;
+  cdp: CdpLike;
+}
+
+/** A node's provenance, stamped during the splice. @see readAxForest */
+export interface FrameStamp {
+  /** The CDP frame this node lives in. Absent on the main document. */
+  frameId?: string;
+  /**
+   * The frame whose SESSION answered for it, absent when the page session did.
+   *
+   * Different from `frameId` for a same-process child: it lives in frame X and
+   * was read on the page's session. An act aimed at it has to be dispatched on
+   * the session that can resolve its node id, which is this one.
+   */
+  sessionFrameId?: string;
+}
+
+/** Where one spliced frame sits, so an act can translate a point out of it. */
+export interface FrameTopology {
+  /** The `<iframe>` DOM node that hosts it, IN THE PARENT document. */
+  hostBackendNodeId: number;
+  /** Its parent's session frame id; absent when the parent is the page. */
+  parentSessionFrameId?: string;
+  frameId: string;
+}
+
+export interface AxForestRead {
+  ok: boolean;
+  tree: A11yNode | null;
+  /** Child frames that could not be read, or that the caps refused. */
+  framesOmitted: number;
+  /**
+   * The frames that got their OWN SESSION, keyed by session frame id.
+   *
+   * Only those: a same-process child shares its parent's session, so its
+   * coordinates already arrive in the top frame's space and there is nothing
+   * to translate. Empty for a page with no out-of-process frames, which is why
+   * `RefMap.frames` stays absent on almost every observation.
+   */
+  frames: Map<string, FrameTopology>;
+}
+
+/** One entry of `Page.getFrameTree`'s recursive answer. */
+interface CdpFrameTree {
+  frame?: { id?: string; parentId?: string };
+  childFrames?: CdpFrameTree[];
+}
+
+/**
+ * The page's tree with every readable child frame spliced into it.
+ *
+ * ZERO EXTRA CDP CALLS for a page with no iframes, which is most pages: the
+ * root tree is read exactly as `readAxTree` reads it, and if it contains no
+ * `Iframe` node this returns immediately.
+ *
+ * Any single frame's failure costs that frame and nothing else — its `Iframe`
+ * line stays exactly as it is today and `framesOmitted` counts it — because
+ * the alternative is an observation that fails because an advertisement would
+ * not answer.
+ */
+export async function readAxForest(
+  root: CdpLike,
+  frames: ReadonlyArray<FrameSession>,
+  options: {
+    scrollable?: ReadonlySet<number>;
+    maxFrames?: number;
+    maxDepth?: number;
+  } = {},
+): Promise<AxForestRead> {
+  const read = await readAxTree(root, undefined, options);
+  const frames_ = new Map<string, FrameTopology>();
+  if (!read.ok)
+    return { ok: false, tree: null, framesOmitted: 0, frames: frames_ };
+  if (!read.tree)
+    return { ok: true, tree: null, framesOmitted: 0, frames: frames_ };
+
+  // The iframe nodes we could splice into, by the DOM node that owns them.
+  const hosts = iframeNodesByBackendId(read.tree);
+  // NOTHING TO DO, and nothing spent finding that out. An `Iframe` node is the
+  // only place a child tree can attach, so a page without one cannot have a
+  // frame worth reading.
+  if (hosts.size === 0)
+    return { ok: true, tree: read.tree, framesOmitted: 0, frames: frames_ };
+
+  const tree = await root
+    .send("Page.getFrameTree")
+    .catch(() => undefined) as { frameTree?: CdpFrameTree } | undefined;
+  const frameTree = tree?.frameTree;
+  if (!frameTree)
+    return { ok: true, tree: read.tree, framesOmitted: 0, frames: frames_ };
+
+  const sessionByFrame = new Map(frames.map((f) => [f.frameId, f.cdp]));
+  const maxFrames = options.maxFrames ?? MAX_A11Y_FRAMES;
+  const maxDepth = options.maxDepth ?? MAX_A11Y_FRAME_DEPTH;
+  let framesOmitted = 0;
+  let read_ = 0;
+
+  /**
+   * Splice every child of `parent` into the tree, depth-first.
+   *
+   * `ownerCdp` is the session that answers for `parent`'s children: an OOPIF's
+   * own session if it has one, otherwise whatever answered for `parent`.
+   */
+  const walk = async (
+    parent: CdpFrameTree,
+    ownerCdp: CdpLike,
+    ownerFrameId: string | undefined,
+    depth: number,
+  ): Promise<void> => {
+    if (depth > maxDepth) {
+      framesOmitted += countFrames(parent);
+      return;
+    }
+    for (const child of parent.childFrames ?? []) {
+      const childId = child.frame?.id;
+      if (!childId) continue;
+      if (read_ >= maxFrames) {
+        framesOmitted += 1 + countFrames(child);
+        continue;
+      }
+      const ownSession = sessionByFrame.get(childId);
+      // WHICH ELEMENT HOSTS IT, asked on the PARENT's owner session — the only
+      // session that has the host element in its DOM. Without a host we cannot
+      // say where the tree goes, and guessing would splice a frame's content
+      // under an unrelated element.
+      const owner = (await ownerCdp
+        .send("DOM.getFrameOwner", { frameId: childId })
+        .catch(() => undefined)) as { backendNodeId?: number } | undefined;
+      const hostNode =
+        typeof owner?.backendNodeId === "number"
+          ? hosts.get(owner.backendNodeId)
+          : undefined;
+      if (!hostNode) {
+        framesOmitted += 1 + countFrames(child);
+        continue;
+      }
+      // An OOPIF reads on its OWN session with no params: the frame is that
+      // session's root document, and an id it has never heard of answers
+      // nothing. A same-process child reads on the owner's session, scoped.
+      const childRead = ownSession
+        ? await readAxTree(ownSession, undefined, options)
+        : await readAxTreeForFrame(ownerCdp, childId, options);
+      read_ += 1;
+      if (!childRead.ok || !childRead.tree) {
+        // NO UNSCOPED RETRY. See this section's header: falling back to a
+        // whole-document read here splices the page under its own iframe.
+        framesOmitted += 1 + countFrames(child);
+        continue;
+      }
+      const childSessionFrameId = ownSession ? childId : ownerFrameId;
+      if (ownSession) {
+        // ONLY a frame with its own session goes in the topology: a
+        // same-process child's coordinates already arrive in the top frame's
+        // space, so there is nothing for an act to translate.
+        frames_.set(childId, {
+          hostBackendNodeId: owner!.backendNodeId!,
+          ...(ownerFrameId !== undefined
+            ? { parentSessionFrameId: ownerFrameId }
+            : {}),
+          frameId: childId,
+        });
+      }
+      stampFrame(childRead.tree, childId, childSessionFrameId);
+      // AT THE NODE, not merged into it: the child's own `RootWebArea` is
+      // transparent to the renderer, so its children land one indent under the
+      // `- Iframe "…"` line and read as being inside it.
+      hostNode.children = [childRead.tree];
+      await walk(
+        child,
+        ownSession ?? ownerCdp,
+        childSessionFrameId,
+        depth + 1,
+      );
+    }
+  };
+
+  await walk(frameTree, root, undefined, 1);
+  return { ok: true, tree: read.tree, framesOmitted, frames: frames_ };
+}
+
+/** Read ONE frame's tree on a session that contains it. */
+async function readAxTreeForFrame(
+  cdp: CdpLike,
+  frameId: string,
+  options: { scrollable?: ReadonlySet<number> },
+): Promise<AxTreeRead> {
+  try {
+    await cdp.send("Accessibility.enable");
+    const response = (await cdp.send("Accessibility.getFullAXTree", {
+      frameId,
+    })) as { nodes?: AxNode[] } | undefined;
+    return buildFromNodes(response?.nodes, undefined, options.scrollable);
+  } catch {
+    return { ok: false };
+  }
+}
+
+/** Every `Iframe` node in a tree, keyed by the DOM node it renders. */
+function iframeNodesByBackendId(root: A11yNode): Map<number, A11yNode> {
+  const found = new Map<number, A11yNode>();
+  // ITERATIVE: a hostile or merely deep page must not end the daemon with a
+  // stack overflow on a walk it asked for.
+  const stack: A11yNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (
+      node.role === "Iframe" &&
+      typeof node.backendDOMNodeId === "number"
+    ) {
+      found.set(node.backendDOMNodeId, node);
+    }
+    for (const child of node.children ?? []) stack.push(child);
+  }
+  return found;
+}
+
+/** Mark a spliced subtree with where it came from and who can answer for it. */
+function stampFrame(
+  root: A11yNode,
+  frameId: string,
+  sessionFrameId: string | undefined,
+): void {
+  const stack: A11yNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    node.frameId = frameId;
+    // `undefined` means the PAGE session, which is the common case for a
+    // same-process child — so it is left off rather than written as a
+    // sentinel.
+    if (sessionFrameId !== undefined) node.sessionFrameId = sessionFrameId;
+    for (const child of node.children ?? []) stack.push(child);
+  }
+}
+
+/** How many frames a subtree contains, for an honest `framesOmitted`. */
+function countFrames(node: CdpFrameTree): number {
+  let total = 0;
+  const stack: CdpFrameTree[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    for (const child of current.childFrames ?? []) {
+      total += 1;
+      stack.push(child);
+    }
+  }
+  return total;
 }

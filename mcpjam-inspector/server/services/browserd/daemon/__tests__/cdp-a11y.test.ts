@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  readAxForest,
   readAxTree,
   readScrollableNodes,
   resolveBackendNodeId,
@@ -349,5 +350,241 @@ describe("readScrollableNodes", () => {
   it("survives a page that answers a document with nothing in it", async () => {
     const { cdp } = fakeCdp({ "DOM.getDocument": {} });
     expect(await readScrollableNodes(cdp)).toEqual(new Set());
+  });
+});
+
+describe("readAxForest — reading past an iframe", () => {
+  /** A page tree with one `<iframe>` at backend node 77. */
+  const PAGE_WITH_IFRAME = {
+    nodes: [
+      { nodeId: "1", role: { value: "RootWebArea" }, childIds: ["2", "3"] },
+      {
+        nodeId: "2",
+        backendDOMNodeId: 10,
+        role: { value: "button" },
+        name: { value: "Outside" },
+      },
+      {
+        nodeId: "3",
+        backendDOMNodeId: 77,
+        role: { value: "Iframe" },
+        name: { value: "Payment" },
+      },
+    ],
+  };
+
+  const CHILD_TREE = {
+    nodes: [
+      { nodeId: "1", role: { value: "RootWebArea" }, childIds: ["2"] },
+      {
+        nodeId: "2",
+        backendDOMNodeId: 500,
+        role: { value: "textbox" },
+        name: { value: "Card number" },
+      },
+    ],
+  };
+
+  const FRAME_TREE = {
+    frameTree: {
+      frame: { id: "main" },
+      childFrames: [{ frame: { id: "child-1", parentId: "main" } }],
+    },
+  };
+
+  it("issues NO frame calls for a page without iframes", async () => {
+    // Most pages. The root read is what it has always been, and a
+    // `Page.getFrameTree` on every observation would be a round trip bought
+    // for nothing.
+    const { cdp, sent } = fakeCdp({
+      "Accessibility.getFullAXTree": {
+        nodes: [{ nodeId: "1", role: { value: "RootWebArea" } }],
+      },
+    });
+    const forest = await readAxForest(cdp, []);
+    expect(forest.ok).toBe(true);
+    expect(sent).toEqual(["Accessibility.enable", "Accessibility.getFullAXTree"]);
+  });
+
+  it("splices a SAME-PROCESS frame's tree under its Iframe node", async () => {
+    // A same-process child lives inside its parent's session, so its tree is
+    // read there with `{frameId}`.
+    const asked: Array<Record<string, unknown> | undefined> = [];
+    let call = 0;
+    const cdp: CdpLike = {
+      async send(method, params) {
+        if (method === "Accessibility.getFullAXTree") {
+          asked.push(params);
+          return call++ === 0 ? PAGE_WITH_IFRAME : CHILD_TREE;
+        }
+        if (method === "Page.getFrameTree") return FRAME_TREE;
+        if (method === "DOM.getFrameOwner") return { backendNodeId: 77 };
+        return {};
+      },
+      on() {},
+    };
+    const forest = await readAxForest(cdp, []);
+    const iframe = forest.tree?.children?.find((n) => n.role === "Iframe");
+    expect(iframe?.children?.[0]).toMatchObject({
+      role: "RootWebArea",
+      children: [{ role: "textbox", name: "Card number" }],
+    });
+    // Scoped by frame id, which is how a same-process child is addressed.
+    expect(asked[1]).toEqual({ frameId: "child-1" });
+    // No session of its own, so the PAGE session answers for it.
+    expect(iframe?.children?.[0]?.frameId).toBe("child-1");
+    expect(iframe?.children?.[0]?.sessionFrameId).toBeUndefined();
+    // Nothing to translate: it shares the page's coordinate space.
+    expect(forest.frames.size).toBe(0);
+  });
+
+  it("reads an OOPIF on its OWN session, and never sends it a frameId", async () => {
+    // An out-of-process frame is that session's ROOT document. Passing an id
+    // its session has never heard of answers nothing.
+    const childAsked: Array<Record<string, unknown> | undefined> = [];
+    const childCdp: CdpLike = {
+      async send(method, params) {
+        if (method === "Accessibility.getFullAXTree") {
+          childAsked.push(params);
+          return CHILD_TREE;
+        }
+        return {};
+      },
+      on() {},
+    };
+    const cdp: CdpLike = {
+      async send(method) {
+        if (method === "Accessibility.getFullAXTree") return PAGE_WITH_IFRAME;
+        if (method === "Page.getFrameTree") return FRAME_TREE;
+        if (method === "DOM.getFrameOwner") return { backendNodeId: 77 };
+        return {};
+      },
+      on() {},
+    };
+    const forest = await readAxForest(cdp, [
+      { frameId: "child-1", cdp: childCdp },
+    ]);
+    expect(childAsked).toEqual([undefined]);
+    const iframe = forest.tree?.children?.find((n) => n.role === "Iframe");
+    expect(iframe?.children?.[0]?.sessionFrameId).toBe("child-1");
+    // It HAS its own coordinate space, so the topology records where it sits.
+    expect(forest.frames.get("child-1")).toEqual({
+      hostBackendNodeId: 77,
+      frameId: "child-1",
+    });
+  });
+
+  it("skips a frame whose host is not in the tree, and counts it", async () => {
+    // Without a host element there is nowhere to put the subtree, and guessing
+    // would splice a frame's content under an unrelated node.
+    const cdp: CdpLike = {
+      async send(method) {
+        if (method === "Accessibility.getFullAXTree") return PAGE_WITH_IFRAME;
+        if (method === "Page.getFrameTree") return FRAME_TREE;
+        if (method === "DOM.getFrameOwner") return { backendNodeId: 999 };
+        return {};
+      },
+      on() {},
+    };
+    const forest = await readAxForest(cdp, []);
+    expect(forest.framesOmitted).toBe(1);
+    const iframe = forest.tree?.children?.find((n) => n.role === "Iframe");
+    expect(iframe?.children).toBeUndefined();
+  });
+
+  it("leaves the iframe line AS IT WAS when the frame read is rejected", async () => {
+    // NO UNSCOPED RETRY: falling back to a whole-document read here would
+    // splice the page under its own iframe and produce a tree containing
+    // itself.
+    let call = 0;
+    const cdp: CdpLike = {
+      async send(method) {
+        if (method === "Accessibility.getFullAXTree") {
+          if (call++ === 0) return PAGE_WITH_IFRAME;
+          throw new Error("Frame is not available");
+        }
+        if (method === "Page.getFrameTree") return FRAME_TREE;
+        if (method === "DOM.getFrameOwner") return { backendNodeId: 77 };
+        return {};
+      },
+      on() {},
+    };
+    const forest = await readAxForest(cdp, []);
+    expect(forest.ok).toBe(true);
+    expect(forest.framesOmitted).toBe(1);
+    const iframe = forest.tree?.children?.find((n) => n.role === "Iframe");
+    expect(iframe).toMatchObject({ role: "Iframe", name: "Payment" });
+    expect(iframe?.children).toBeUndefined();
+    // And the rest of the page is untouched — one frame's failure costs that
+    // frame and nothing else.
+    expect(forest.tree?.children?.[0]).toMatchObject({ name: "Outside" });
+  });
+
+  it("stops at the frame cap and says how many it skipped", async () => {
+    const children = Array.from({ length: 5 }, (_, i) => ({
+      frame: { id: `child-${i}`, parentId: "main" },
+    }));
+    const cdp: CdpLike = {
+      async send(method) {
+        if (method === "Accessibility.getFullAXTree") return PAGE_WITH_IFRAME;
+        if (method === "Page.getFrameTree")
+          return { frameTree: { frame: { id: "main" }, childFrames: children } };
+        if (method === "DOM.getFrameOwner") return { backendNodeId: 77 };
+        return {};
+      },
+      on() {},
+    };
+    const forest = await readAxForest(cdp, [], { maxFrames: 2 });
+    expect(forest.framesOmitted).toBe(3);
+  });
+
+  it("refuses to descend past the depth cap", async () => {
+    const deep = {
+      frameTree: {
+        frame: { id: "main" },
+        childFrames: [
+          {
+            frame: { id: "a" },
+            childFrames: [{ frame: { id: "b" } }],
+          },
+        ],
+      },
+    };
+    const cdp: CdpLike = {
+      async send(method) {
+        if (method === "Accessibility.getFullAXTree") return PAGE_WITH_IFRAME;
+        if (method === "Page.getFrameTree") return deep;
+        if (method === "DOM.getFrameOwner") return { backendNodeId: 77 };
+        return {};
+      },
+      on() {},
+    };
+    const forest = await readAxForest(cdp, [], { maxDepth: 0 });
+    // The whole subtree is refused, and counted.
+    expect(forest.framesOmitted).toBe(2);
+  });
+
+  it("survives a page that cannot answer a frame tree", async () => {
+    const cdp: CdpLike = {
+      async send(method) {
+        if (method === "Accessibility.getFullAXTree") return PAGE_WITH_IFRAME;
+        if (method === "Page.getFrameTree") throw new Error("Session closed");
+        return {};
+      },
+      on() {},
+    };
+    const forest = await readAxForest(cdp, []);
+    expect(forest.ok).toBe(true);
+    expect(forest.tree?.children).toHaveLength(2);
+  });
+
+  it("reports the page's own failure as a failure", async () => {
+    const { cdp } = fakeCdp({
+      "Accessibility.getFullAXTree": new Error("Session closed"),
+    });
+    expect(await readAxForest(cdp, [])).toMatchObject({
+      ok: false,
+      tree: null,
+    });
   });
 });

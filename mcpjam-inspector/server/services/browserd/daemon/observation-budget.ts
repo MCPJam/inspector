@@ -32,6 +32,25 @@ export interface A11yBudget {
 
 export const DEFAULT_A11Y_BUDGET: A11yBudget = { maxNodes: 400, maxDepth: 12 };
 
+/**
+ * How many child frames one observation will read.
+ *
+ * An ad-heavy page routinely carries dozens of iframes, each one a CDP round
+ * trip. The cap bounds the WORST case rather than the normal one — a page with
+ * three frames pays for three — and a page past it reports how many it
+ * skipped rather than pretending it read them all.
+ */
+export const MAX_A11Y_FRAMES = 32;
+
+/**
+ * How deep the frame nesting goes before a subtree is left as a bare line.
+ *
+ * Separate from `maxDepth`, which bounds NODES: a frame at depth 8 is eight
+ * documents down, which is a page doing something unusual and not a page a
+ * model is going to read its way out of.
+ */
+export const MAX_A11Y_FRAME_DEPTH = 8;
+
 export interface CappedA11yTree {
   tree: A11yNode | null;
   /** How many subtrees were omitted (each replaced by a marker node). */

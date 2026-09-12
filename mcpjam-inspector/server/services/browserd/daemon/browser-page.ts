@@ -206,6 +206,22 @@ export interface DriverPage {
    * `webContents.debugger` — none of which share anything else.
    */
   cdp(): Promise<CdpLike | null>;
+  /**
+   * The CDP sessions this page's CHILD FRAMES have of their own, if any.
+   *
+   * WHY THIS EXISTS. `Accessibility.getFullAXTree` answers for ONE document
+   * and does not descend into child documents, so without these the model sees
+   * an `Iframe` leaf and nothing inside it — same-origin or cross-origin
+   * alike. The WebMCP bridge already attaches exactly this set, eagerly, at
+   * tab creation; this reports what is already attached and never triggers
+   * one.
+   *
+   * OPTIONAL, and absence is not emptiness: an engine that omits the method is
+   * saying "I have no per-frame sessions to offer" (Electron, today), which
+   * the reader answers by reading the page session alone — exactly as it does
+   * now.
+   */
+  frameSessions?(): ReadonlyArray<{ frameId: string; cdp: CdpLike }>;
   /** Resolve after a brief window with no in-flight requests, or on abort. */
   waitForNetworkIdle(signal: AbortSignal): Promise<void>;
   /** Resolve after one rendered frame, or on abort. */
