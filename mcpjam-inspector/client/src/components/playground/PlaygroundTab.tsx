@@ -549,6 +549,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           >
                             <PlaygroundBrowserPanel
                               projectId={projectScope}
+                              hostId={previewedHostId ?? null}
                               // MOUNTED but not claiming while the panel is off
                               // screen. Dropping the socket would stop the
                               // screencast and lose whatever the agent was
