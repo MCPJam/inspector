@@ -4,9 +4,14 @@
  * — a light card with accent orbs on the right. The orbs use the `primary`
  * role token; literal hex is forbidden by AGENTS.md.
  *
- * The summary arrives as lines, not one headline: the reader needs the goal,
- * the persona, the stage and the feeling, and that does not fit on one line.
- * The first line leads at display size; the rest support it.
+ * The summary arrives as SENTENCES and renders as ONE PARAGRAPH.
+ *
+ * It still needs to name the goal, the persona, the stage and the feeling, so
+ * the composers keep producing those as separate strings — each one is tested
+ * on its own, and a joined blob would be far harder to assert against. The
+ * joining happens here, at the presentation layer, because that is what it is:
+ * Vignesh asked for one flowing paragraph rather than the stacked lines this
+ * card used to render (standup, 2026-09-12).
  */
 
 export function FindingsSummaryCard({
@@ -15,11 +20,17 @@ export function FindingsSummaryCard({
   footnotes,
 }: {
   sessionCount: number;
-  /** 1–4 short lines. The first is the lead. */
+  /** 1–4 sentences, joined into one paragraph here. */
   summary: readonly string[];
   footnotes: readonly string[];
 }) {
-  const [lead, ...rest] = summary;
+  // Filtered before joining so an empty or whitespace-only sentence cannot
+  // leave a double space mid-paragraph. The composers do not emit one today;
+  // this costs nothing and means they never have to promise not to.
+  const paragraph = summary
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <section
@@ -46,20 +57,8 @@ export function FindingsSummaryCard({
             className="mt-1.5 text-pretty text-2xl font-semibold leading-[1.25] tracking-[-0.02em] text-foreground"
             data-testid="findings-headline"
           >
-            {lead}
+            {paragraph}
           </h2>
-          {rest.length > 0 ? (
-            <div className="mt-2 space-y-1">
-              {rest.map((line) => (
-                <p
-                  key={line}
-                  className="text-pretty text-base leading-snug text-muted-foreground"
-                >
-                  {line}
-                </p>
-              ))}
-            </div>
-          ) : null}
         </div>
         {footnotes.length > 0 ? (
           <div

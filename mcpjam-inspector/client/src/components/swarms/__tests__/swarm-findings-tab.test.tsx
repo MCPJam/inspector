@@ -518,14 +518,21 @@ describe("SwarmFindingsTab", () => {
         personas={personas}
       />
     );
-    // The lead names the goal, the stage and the persona; the supporting
-    // lines carry the cause and the feeling.
-    expect(screen.getByTestId("findings-headline").textContent).toBe(
-      '"Export the board" broke at discovery for Maya Chen.'
+    // ONE paragraph, in ONE element. The composer still answers the four
+    // questions as separate sentences — goal, cause, persona, feeling — and
+    // the card joins them, so the exact text is pinned here rather than in
+    // fragments: a sentence that stopped being joined would still satisfy
+    // every `toContain` while rendering as a stacked line again.
+    const headline = screen.getByTestId("findings-headline");
+    expect(headline.textContent).toBe(
+      '"Export the board" broke at discovery for Maya Chen. Agents invented a tool named "listSkills" in 2 sessions. Maya Chen left lost.'
     );
-    const summary = screen.getByTestId("findings-summary").textContent ?? "";
-    expect(summary).toContain("Maya Chen left lost.");
-    expect(summary).not.toContain("No findings yet");
+    // The supporting sentences used to render as siblings BELOW the headline.
+    // Asserting on the card's text would pass either way, so the check is that
+    // the summary block holds nothing but that one heading.
+    const summary = screen.getByTestId("findings-summary");
+    expect(summary.querySelectorAll("p")).toHaveLength(0);
+    expect(summary.textContent).not.toContain("No findings yet");
     expect(screen.getByText(/Choose a persona/i)).toBeInTheDocument();
   });
 });
