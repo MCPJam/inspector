@@ -946,7 +946,7 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBeUndefined();
   });
 
-  it("does not let the background screenshot poll clear an error banner", async () => {
+  it("clears the error banner, because a person pressed the button", async () => {
     await openSession();
     useWebmcpInspectorStore.setState({
       error: { message: "That page could not be reached." },
@@ -957,32 +957,23 @@ describe("webmcp inspector store", () => {
       }),
     );
 
-    await useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
-    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("shot");
-    // The poll runs once a second. Clearing here would wipe a navigation or
-    // invocation failure within a second of it appearing — usually before
-    // anyone had read it.
-    expect(useWebmcpInspectorStore.getState().error?.message).toBe(
-      "That page could not be reached.",
-    );
-
-    // The MANUAL button still clears it: that is a person acting on the banner.
+    // Every capture is a person acting on the banner now. The `silent` mode
+    // that kept the once-a-second poll out of it went with the poll: nothing
+    // else calls this, so nothing can wipe a navigation or invocation failure
+    // before anyone has read it.
     await useWebmcpInspectorStore.getState().captureScreenshot();
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("shot");
     expect(useWebmcpInspectorStore.getState().error).toBeUndefined();
   });
 
-  it("does not land a poll's screenshot in the session that replaced it", async () => {
+  it("does not land a capture in the session that replaced it", async () => {
     await openSession();
     const { fetchSpy, release } = deferredFetch();
 
-    const polling = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const capturing = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
-    // The poll runs once a second and its request outlives a close, so the
-    // session turning over underneath one is routine, not exotic.
+    // A capture's request outlives a close, so the session turning over
+    // underneath one is routine: press Screenshot, then close the page.
     useWebmcpInspectorStore.setState({
       session: { ...SESSION, sessionId: "session-2" },
     });
@@ -991,12 +982,12 @@ describe("webmcp inspector store", () => {
         status: 200,
       }),
     );
-    await polling;
+    await capturing;
 
     // The pane falls back to `lastScreenshot` before its first frame, so this
     // would hang the PREVIOUS page's paint in the new session's live view —
-    // where no later poll would correct it, because it is not stale, it is
-    // simply the wrong page.
+    // where nothing would correct it, because it is not stale, it is simply
+    // the wrong page.
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBeUndefined();
   });
 
@@ -1059,15 +1050,11 @@ describe("webmcp inspector store", () => {
         }),
     );
 
-    // Two captures in flight at once — routine, because the poll keeps its
-    // once-a-second cadence rather than queueing behind a slow capture.
-    const first = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    // Two captures in flight at once — a second press while the first is
+    // still out, which a slow page makes easy to do.
+    const first = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(1));
-    const second = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const second = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(2));
 
     // The NEWER one answers first…
@@ -1086,8 +1073,8 @@ describe("webmcp inspector store", () => {
       }),
     );
     await first;
-    // Applying it would step the pane backwards a frame, and a manual capture
-    // someone just asked for is exactly what a slow poll would overwrite.
+    // Applying it would step the pane backwards a picture, onto the page as
+    // it was before the one the person is already looking at.
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("newer");
   });
 
@@ -1101,17 +1088,12 @@ describe("webmcp inspector store", () => {
         }),
     );
 
-    const first = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const first = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(1));
-    const second = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const second = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(2));
 
-    // The newer capture FAILS — a poll hitting a blip, which is why the poll
-    // exists once a second rather than once.
+    // The newer capture FAILS — a blip on the second press.
     releases[1](new Response("{}", { status: 500 }));
     await second;
     releases[0](
@@ -1127,62 +1109,7 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("older");
   });
 
-  it("carries the server's capture time beside the picture", async () => {
-    await openSession();
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      async () =>
-        new Response(
-          JSON.stringify({ screenshotBase64: "shot", capturedAt: 1_234 }),
-          { status: 200 },
-        ),
-    );
-
-    await useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
-
-    // The measurement needs the same definition of "captured" a streamed
-    // frame's `ts` carries. Timed from arrival here instead, the poll's
-    // percentile would exclude the capture and the round trip — a different
-    // quantity sharing a table with the socket's.
-    const state = useWebmcpInspectorStore.getState();
-    expect(state.lastScreenshot).toBe("shot");
-    expect(state.lastScreenshotAt).toBe(1_234);
-  });
-
-  it("dates the poll's picture and not the button's", async () => {
-    await openSession();
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      async () =>
-        new Response(
-          JSON.stringify({
-            ok: true,
-            screenshotBase64: "shot",
-            capturedAt: 1_234,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-    );
-
-    await useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
-    expect(useWebmcpInspectorStore.getState().lastScreenshotAt).toBe(1_234);
-
-    // Somebody presses the Screenshot button. The picture changes; the poll
-    // timestamp must not survive it, and the manual capture must not acquire
-    // one — what the measurement records is a TRANSPORT, and a person pressing
-    // a button is not the pane polling. Left dated, a session that never
-    // polled would grow a `byTransport.poll` bucket, and a headless one —
-    // where the button is the only way to see the page — would report every
-    // capture as polling.
-    await useWebmcpInspectorStore.getState().captureScreenshot();
-
-    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("shot");
-    expect(useWebmcpInspectorStore.getState().lastScreenshotAt).toBeUndefined();
-  });
-
-  it("keeps the picture when a poll answers without one", async () => {
+  it("keeps the picture when a capture answers without one", async () => {
     await openSession();
     const releases: Array<(response: Response) => void> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
@@ -1192,26 +1119,20 @@ describe("webmcp inspector store", () => {
         }),
     );
 
-    const first = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const first = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(1));
-    const second = useWebmcpInspectorStore
-      .getState()
-      .captureScreenshot({ silent: true });
+    const second = useWebmcpInspectorStore.getState().captureScreenshot();
     await vi.waitFor(() => expect(releases).toHaveLength(2));
 
     // 200, and no picture: the provider holds outstanding captures at one, so
-    // a browser slower than the poll's one-second cadence answers the next
-    // tick this way. It is "nothing to show you right now", NOT "the page is
-    // blank".
+    // the second press answers this way while the first is still out. It is
+    // "nothing to show you right now", NOT "the page is blank".
     releases[1](new Response("{}", { status: 200 }));
     await second;
 
     // The real capture, still on its way when that landed. Had the empty
-    // answer claimed the slot, this would be rejected as stale — and with a
-    // browser that stays slow, so would every one after it, leaving the pane
-    // blank for as long as it lasted.
+    // answer claimed the slot, this would be rejected as stale and the pane
+    // would stay blank until somebody pressed again.
     releases[0](
       new Response(JSON.stringify({ screenshotBase64: "real" }), {
         status: 200,

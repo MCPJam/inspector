@@ -32,9 +32,26 @@ beforeEach(() => {
   });
 });
 
-/** Let a decode (and any record queued behind it) settle. */
+/**
+ * Drain microtasks until something arrives.
+ *
+ * A fixed turn count would be pinned to the reader's internal promise-chain
+ * depth — `onFrame` fires from a `then`, and the record queued behind it
+ * starts from a `finally` — so a chain one turn longer would silently
+ * under-wait and assert against a picture that had not landed yet.
+ */
+async function until(done: () => boolean, turns = 50): Promise<void> {
+  for (let i = 0; i < turns && !done(); i += 1) await Promise.resolve();
+}
+
+/**
+ * Let a decode (and any record queued behind it) settle.
+ *
+ * For the assertions that something did NOT arrive, where no predicate can
+ * ever succeed and a bounded drain is the only honest wait.
+ */
 async function decoded(): Promise<void> {
-  for (let i = 0; i < 4; i += 1) await Promise.resolve();
+  for (let i = 0; i < 8; i += 1) await Promise.resolve();
 }
 
 function harness() {
@@ -109,7 +126,7 @@ describe("Node WebMCP frame connection", () => {
     // other.
     for (let i = 1; i <= 30; i++) h.frame(i);
     expect(h.onFrame).not.toHaveBeenCalled();
-    await decoded();
+    await until(() => h.onFrame.mock.calls.at(-1)?.[0].seq === 30);
     const delivered = h.onFrame.mock.calls.map((call) => call[0].seq);
     expect(delivered.length).toBeLessThan(30);
     expect(delivered.at(-1)).toBe(30);
@@ -119,8 +136,10 @@ describe("Node WebMCP frame connection", () => {
   it("drops a record older than the picture already delivered", async () => {
     const h = harness();
     h.frame(10);
-    await decoded();
+    await until(() => h.onFrame.mock.calls.length === 1);
     h.frame(9);
+    // Negative from here: seq 9 must never be delivered, so there is nothing
+    // to wait FOR — only a bounded drain to prove nothing came.
     await decoded();
     expect(h.onFrame.mock.calls.map((call) => call[0].seq)).toEqual([10]);
     h.connection.close();
@@ -129,9 +148,9 @@ describe("Node WebMCP frame connection", () => {
   it("closes the bitmap a newer frame replaces, and the last one on close", async () => {
     const h = harness();
     h.frame(1);
-    await decoded();
+    await until(() => bitmaps.length === 1);
     h.frame(2);
-    await decoded();
+    await until(() => bitmaps.length === 2);
     // An ImageBitmap holds a decoded surface the garbage collector cannot see
     // the cost of. The CONNECTION owns them, because it is the thing that
     // knows when the stream is over.
@@ -143,7 +162,7 @@ describe("Node WebMCP frame connection", () => {
   it("releases the held bitmap when live view stops, without closing the socket", async () => {
     const h = harness();
     h.frame(1);
-    await decoded();
+    await until(() => bitmaps.length === 1);
     h.connection.clearFrame();
     expect(bitmaps.every((b) => b.closed)).toBe(true);
     // A screencast toggle follows tab visibility; a handshake per flip is pure

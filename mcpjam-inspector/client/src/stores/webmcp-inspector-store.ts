@@ -191,7 +191,6 @@ interface WebMcpInspectorState {
    * streamed frame needs the same definition of "captured" that a frame's `ts`
    * carries.
    */
-  lastScreenshotAt: number | undefined;
   /**
    * Whether chat turns may use this page's tools. Off by default and reset when
    * a session closes: a chat should never silently acquire tools because a
@@ -239,11 +238,11 @@ interface WebMcpInspectorState {
   /**
    * Capture the page into `lastScreenshot`.
    *
-   * `silent` is for the background poll: it neither sets nor clears `error`, so
-   * a once-a-second capture cannot erase the banner from a navigation or
-   * invocation failure before anyone has read it.
+   * A person pressing the button, and nothing else: the once-a-second poll
+   * that used to share this action is gone, along with the `silent` mode that
+   * kept it out of the error banner.
    */
-  captureScreenshot(options?: { silent?: boolean }): Promise<void>;
+  captureScreenshot(): Promise<void>;
   /**
    * Ask the server to start or stop streaming the viewport.
    *
@@ -484,13 +483,12 @@ let commandTail: Promise<unknown> = Promise.resolve();
 
 /**
  * Ordering for screenshot captures, which — unlike commands — are deliberately
- * NOT serialized: the poll must keep its cadence rather than queue behind a
- * slow capture.
+ * NOT serialized: a second press must not queue behind a slow capture.
  *
  * So they can overlap, and a capture that started earlier can answer later. The
- * ticket says which picture is newer; without it a slow poll lands on top of a
- * manual capture someone just asked for, and the pane shows the older page
- * until the next tick.
+ * ticket says which picture is newer; without it the slower of two presses
+ * lands on top of the one that answered second, and the pane shows the older
+ * page until somebody presses again.
  */
 let captureIssued = 0;
 let captureApplied = 0;
@@ -667,7 +665,6 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
               tools: [],
               pending: [],
               lastScreenshot: undefined,
-              lastScreenshotAt: undefined,
             });
             // The stream that fed it is gone, so the picture is a lie the
             // moment we stop being told it is current.
@@ -1035,7 +1032,6 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       error: undefined,
       frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
-      lastScreenshotAt: undefined,
       chatEnabled: false,
 
       setChatEnabled(enabled) {
@@ -1079,7 +1075,6 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // first frame arrives, so keeping it would present the previous
           // site's picture as this session's live view.
           lastScreenshot: undefined,
-          lastScreenshotAt: undefined,
         });
         const result = await request<WebMcpSessionPublic>("/sessions", {
           method: "POST",
@@ -1136,7 +1131,6 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           pending: [],
           chatEnabled: false,
           lastScreenshot: undefined,
-          lastScreenshotAt: undefined,
         });
         if (sessionId) {
           const result = await request(`/sessions/${sessionId}`, {
@@ -1336,7 +1330,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         await get().sendCommand({ type: "cancel_invocation", invokeId });
       },
 
-      async captureScreenshot(options) {
+      async captureScreenshot() {
+        const sessionId = get().session?.sessionId;
+        if (!sessionId) return;
         const ticket = ++captureIssued;
         /**
          * Claim the slot for this capture, if nothing newer has taken it.
@@ -1359,54 +1355,24 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
          * byte budget, or another capture was already outstanding and the
          * provider holds those at one. Writing it would replace a good picture
          * with an empty pane, and — because a write claims the slot — would
-         * also reject the real capture still on its way. The poll runs once a
-         * second, so a browser that takes longer than that per capture would
-         * discard EVERY successful result and leave the pane blank for as long
-         * as it stayed slow.
+         * also reject the real capture still on its way.
          *
          * Same reasoning as the failure case above, one step further in: a
          * successful response is not the same thing as a picture.
          */
         const applies = (shot: string | undefined) =>
           shot !== undefined && newest();
-        if (!options?.silent) {
-          const result = (await get().sendCommand({
-            type: "capture_screenshot",
-          })) as { screenshotBase64?: string; capturedAt?: number } | undefined;
-          if (applies(result?.screenshotBase64)) {
-            set({
-              lastScreenshot: result?.screenshotBase64,
-              // Cleared, not carried: this picture is new, and pairing it with
-              // the previous POLL's timestamp would measure a paint that
-              // happened seconds ago. See the field — a manual capture is not
-              // a transport sample.
-              lastScreenshotAt: undefined,
-            });
-          }
-          return;
-        }
-        // The polling path, which runs once a second and must be INVISIBLE in
-        // the error banner. `sendCommand` clears `error` on every success, so
-        // polling through it would wipe a navigation or invocation failure
-        // within a second of it appearing — usually before anyone read it.
-        const sessionId = get().session?.sessionId;
-        if (!sessionId) return;
-        const result = await request<{
-          screenshotBase64?: string;
-          capturedAt?: number;
-        }>(`/sessions/${sessionId}/command`, {
-          method: "POST",
-          body: JSON.stringify({ type: "capture_screenshot" }),
-        });
-        // The poll runs every second and the request outlives a close: landing
-        // this write after the session changed would hang the OLD page's paint
-        // in the new session's pane, where nothing would ever correct it.
+        const result = (await get().sendCommand({
+          type: "capture_screenshot",
+        })) as { screenshotBase64?: string } | undefined;
+        // A capture OUTLIVES the session it was asked for: the request is in
+        // flight while somebody closes the page or opens another. Landing this
+        // write afterwards would hang the old page's picture in the new
+        // session's pane, where nothing would ever correct it — it is not
+        // stale, it is simply the wrong page.
         if (get().session?.sessionId !== sessionId) return;
-        if (result.ok && applies(result.data.screenshotBase64)) {
-          set({
-            lastScreenshot: result.data.screenshotBase64,
-            lastScreenshotAt: result.data.capturedAt,
-          });
+        if (applies(result?.screenshotBase64)) {
+          set({ lastScreenshot: result?.screenshotBase64 });
         }
       },
 

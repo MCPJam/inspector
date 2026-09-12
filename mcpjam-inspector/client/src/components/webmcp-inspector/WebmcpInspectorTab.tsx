@@ -713,7 +713,7 @@ function WebMcpBrowserShell(
 function SubscribedViewportPane(
   props: Omit<
     Parameters<typeof ViewportPane>[0],
-    "frame" | "fallbackScreenshot" | "fallbackScreenshotAt"
+    "frame" | "fallbackScreenshot"
   >,
 ) {
   // The picture comes off its own channel, not the store: a frame arriving
@@ -723,15 +723,11 @@ function SubscribedViewportPane(
   const fallbackScreenshot = useWebmcpInspectorStore(
     (state) => state.lastScreenshot,
   );
-  const fallbackScreenshotAt = useWebmcpInspectorStore(
-    (state) => state.lastScreenshotAt,
-  );
   return (
     <ViewportPane
       {...props}
       frame={frame}
       fallbackScreenshot={fallbackScreenshot}
-      fallbackScreenshotAt={fallbackScreenshotAt}
     />
   );
 }
@@ -739,7 +735,6 @@ function SubscribedViewportPane(
 function ViewportPane({
   frame,
   fallbackScreenshot,
-  fallbackScreenshotAt,
   streaming,
   transport,
   behaviour,
@@ -748,8 +743,6 @@ function ViewportPane({
   /** Decoded by the socket, which owns the bitmap; this only draws it. */
   frame: PaneFrame | null;
   fallbackScreenshot: string | undefined;
-  /** When the server had `fallbackScreenshot`; see the store's field. */
-  fallbackScreenshotAt: number | undefined;
   streaming: boolean;
   transport: WebMcpViewportTransport | undefined;
   behaviour: ViewportBehaviour;
@@ -809,26 +802,18 @@ function ViewportPane({
         deviceWidth: surface.width,
         deviceHeight: surface.height,
         scale: 1,
-        ts: fallbackScreenshotAt ?? Date.now(),
+        ts: Date.now(),
         seq: -1,
       };
     return null;
-  }, [
-    frame,
-    streaming,
-    fallbackScreenshot,
-    fallbackScreenshotAt,
-    surface.width,
-    surface.height,
-  ]);
+  }, [frame, streaming, fallbackScreenshot, surface.width, surface.height]);
   const painted = useCallback(() => {
-    // A manual screenshot carries no `seq`: it is not a frame of the stream,
-    // and filing it as one would put a number in the percentiles that no
+    // Only a streamed frame is measured. A screenshot someone pressed for is
+    // not a sample of the transport, and it carries no capture time to measure
+    // against — filing it here would put a number in the percentiles that no
     // gesture is waiting on.
     if (frame) notePainted({ ts: frame.ts, seq: frame.seq, rung: "ws" });
-    else if (fallbackScreenshotAt !== undefined)
-      notePainted({ ts: fallbackScreenshotAt });
-  }, [frame, fallbackScreenshotAt]);
+  }, [frame]);
   return (
     <figure className="m-0 flex h-full min-h-0 flex-col bg-muted/20 p-3">
       <BrowserPaneSurface
