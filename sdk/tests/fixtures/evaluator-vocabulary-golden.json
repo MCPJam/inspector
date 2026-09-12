@@ -1,0 +1,283 @@
+{
+  "__readme": "Golden EvaluationConfigSnapshots captured from UNCHANGED code before the evaluator-vocabulary program. Each row is an authored case and the snapshot it must keep producing, however it is authored. The test asserts deep equality AND each definition's scorerId/idSource literally, so an ordinal shift fails even when the aggregate hash coincidentally matches. NEVER regenerate this file to make a rename pass — a green test bought by editing both the producer and the expected payload proves nothing.",
+  "cases": [
+    {
+      "label": "bare test — no expectations, no assertions",
+      "snapshot": {
+        "hash": "638a0932bbd19b85fbdf5786ed156198806173fdedc54410667b4ddcb787e433",
+        "definitions": [
+          {
+            "scorerId": "legacy:test",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "4e671f4627b3d66accaebabc6df72885a59c9f9adc9db9e47af371210468015c",
+            "label": "test()",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "tool-match",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "0bc72b69047c95a508d975471f9cb330b2fe2137eea30fcba8e425f087613b74",
+            "label": "expected tool calls",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "label": "two assertions of the same type — positional ordinals must differ",
+      "snapshot": {
+        "hash": "ebf22fe47e0cf19ddd038ff3f6211aa284bf39d403845af3e85a192eb08fa5dd",
+        "definitions": [
+          {
+            "scorerId": "legacy:test",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "4e671f4627b3d66accaebabc6df72885a59c9f9adc9db9e47af371210468015c",
+            "label": "test()",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "tool-match",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "0bc72b69047c95a508d975471f9cb330b2fe2137eea30fcba8e425f087613b74",
+            "label": "expected tool calls",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "predicate:responseContains#0",
+            "idSource": "generated",
+            "scorerVersion": "1",
+            "implementationHash": "1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1",
+            "label": "responseContains",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "predicate:responseContains#1",
+            "idSource": "generated",
+            "scorerVersion": "1",
+            "implementationHash": "4626bace1bf919080f1fe266ead20162809600ea0f82541ad1bc2b5d26170cfa",
+            "label": "responseContains",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "label": "assertions plus a custom advisory evaluator",
+      "snapshot": {
+        "hash": "72ee7114d35647a999e4c58f3fca08826af51c2d796dc96d5f36e44c44d2882a",
+        "definitions": [
+          {
+            "scorerId": "legacy:test",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "4e671f4627b3d66accaebabc6df72885a59c9f9adc9db9e47af371210468015c",
+            "label": "test()",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "tool-match",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "0bc72b69047c95a508d975471f9cb330b2fe2137eea30fcba8e425f087613b74",
+            "label": "expected tool calls",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "predicate:noToolErrors#0",
+            "idSource": "generated",
+            "scorerVersion": "1",
+            "implementationHash": "c41bce037b27a48947f07b2fa20a96fee23a59c24bc0b82b10c547147289b744",
+            "label": "noToolErrors",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "custom:tone",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "fixedhash-tone-v1",
+            "label": "tone",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "role": "advisory",
+            "model": "anthropic/claude-sonnet-4-6",
+            "onError": "ignore",
+            "onSkipped": "ignore"
+          }
+        ]
+      }
+    },
+    {
+      "label": "negative case with no expectations — tool-match is applicable and gating",
+      "snapshot": {
+        "hash": "04a19ad1a6c68b6d6741ef8406f16a452b9125dcfedb5bbd76ee4e0806e659a2",
+        "definitions": [
+          {
+            "scorerId": "legacy:test",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "4e671f4627b3d66accaebabc6df72885a59c9f9adc9db9e47af371210468015c",
+            "label": "test()",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "tool-match",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "86df40f091e99985079d0e9abb8b409a59219e8443e26209b88e4421a0732584",
+            "label": "expected tool calls",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "label": "explicit-id assertion through scorers",
+      "snapshot": {
+        "hash": "f7288a70e1a8987ba28d3180a3af64158c1b5fcf18580ea094751d419ce4a940",
+        "definitions": [
+          {
+            "scorerId": "legacy:test",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "4e671f4627b3d66accaebabc6df72885a59c9f9adc9db9e47af371210468015c",
+            "label": "test()",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "tool-match",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "0bc72b69047c95a508d975471f9cb330b2fe2137eea30fcba8e425f087613b74",
+            "label": "expected tool calls",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "nonempty-answer",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "f86dfa9ba537434b159ed77202eaf1ae197646e371191b32c91a1cb11dbf1ae8",
+            "label": "finalAssistantMessageNonEmpty",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "label": "expectations plus assertions — full definition order",
+      "snapshot": {
+        "hash": "76eca85134772e209966feebf87c2c5512881e5aab7e8e03331d85e40a42d715",
+        "definitions": [
+          {
+            "scorerId": "legacy:test",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "4e671f4627b3d66accaebabc6df72885a59c9f9adc9db9e47af371210468015c",
+            "label": "test()",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "tool-match",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "cb2b50310076a4af5a83abe0b96ab7f405e013845d464361bf969c98fa84697d",
+            "label": "expected tool calls",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "predicate:responseContains#0",
+            "idSource": "generated",
+            "scorerVersion": "1",
+            "implementationHash": "1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1",
+            "label": "responseContains",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "custom:tone",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "fixedhash-tone-v1",
+            "label": "tone",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "role": "advisory",
+            "model": "anthropic/claude-sonnet-4-6",
+            "onError": "ignore",
+            "onSkipped": "ignore"
+          }
+        ]
+      }
+    }
+  ]
+}
