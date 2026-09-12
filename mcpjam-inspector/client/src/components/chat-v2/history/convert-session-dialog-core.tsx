@@ -40,7 +40,7 @@ import {
 } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
 import type { HostAttachmentDraft } from "@/components/evals/client-attachments-editor";
-import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { HostPicker } from "@/components/hosts/HostPicker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -578,7 +578,7 @@ function ConvertSessionDialogCoreInner({
   // attachments/hosts available. Mirrors CreateSuiteDialog: pick the first
   // standalone serverAttachment; hosts prefer `defaultHostId` when it names
   // a live project host. Either can be swapped from its own picker, but only
-  // `ServerGroupPicker` can CREATE from there — `HostPicker` has none, which
+  // `ServerPicker` can CREATE from there — `HostPicker` has none, which
   // is what the empty-state button on the Client column below stands in for.
   useEffect(() => {
     if (!attachmentPickersEnabled) return;
@@ -928,7 +928,7 @@ function ConvertSessionDialogCoreInner({
                 stays empty, `newSuiteRequirementsMet` is false, and submit is
                 dead behind an empty dropdown that explains nothing. The editor
                 this replaced carried both an empty state and an inline create;
-                `ServerGroupPicker` still does, so the asymmetry was an
+                `ServerPicker` still does, so the asymmetry was an
                 oversight, not a decision. */}
             {!projectHostsLoading && projectHosts.length === 0 ? (
               <div className="space-y-1.5">
@@ -955,11 +955,10 @@ function ConvertSessionDialogCoreInner({
           </div>
           <div className="min-w-0 space-y-2">
             <Label htmlFor="promote-new-suite-server">Server</Label>
-            <ServerAttachmentPicker
+            <ServerPicker
               projectId={effectiveProjectId}
               value={serverAttachmentId}
               onChange={setServerAttachmentId}
-              onClearSelection={() => setServerAttachmentId(null)}
               disabled={isSubmitting}
               variant="field"
               triggerId="promote-new-suite-server"

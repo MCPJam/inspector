@@ -108,11 +108,11 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 }));
 
 // The button is the handle the mid-flight test needs to retarget the dialog.
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: ({ onChange }: { onChange: (id: string) => void }) => (
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({ onChange }: { onChange: (id: string) => void }) => (
     <button
       type="button"
-      data-testid="generate-server-group-picker"
+      data-testid="generate-server-picker"
       onClick={() => onChange("att-other")}
     >
       server group
@@ -353,7 +353,7 @@ describe("SwarmsTab — generate persona", () => {
     });
 
     // Retarget the dialog while the generation request is still in flight.
-    fireEvent.click(screen.getByTestId("generate-server-group-picker"));
+    fireEvent.click(screen.getByTestId("generate-server-picker"));
 
     releaseGenerate({
       persona: { name: "P", role: "R" },

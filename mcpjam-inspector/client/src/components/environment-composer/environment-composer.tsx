@@ -23,7 +23,7 @@
 import { useCallback, useMemo, type ReactNode } from "react";
 import { useConvexAuth } from "convex/react";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import { ModelsPill } from "@/components/environment-composer/models-pill";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
@@ -50,12 +50,7 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
 
 export type ComposerSlot =
-  | "environments"
-  | "clients"
-  | "servers"
-  | "skills"
-  | "computers"
-  | "models";
+  "environments" | "clients" | "servers" | "skills" | "computers" | "models";
 
 /** Default strip: no models slot. Evals opt in via `slots`. */
 export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
@@ -84,8 +79,8 @@ export function EnvironmentComposer({
   className,
   slots = DEFAULT_COMPOSER_SLOTS,
   clientDefaultLabel,
-  emptyServerLabel = "Server group · client default",
-  serverInfoText = "Optional shared server group for every client in this setup.",
+  emptyServerLabel = "Servers · client default",
+  serverOptional = true,
   environmentsVocabulary = "environment",
   showTargetCount = true,
 }: {
@@ -110,13 +105,18 @@ export function EnvironmentComposer({
    */
   clientDefaultLabel?: string | null;
   /**
-   * Empty-state label and info tooltip for the servers pill. The defaults are
+   * Empty-state label for the servers pill. The default is
    * the strip's own wording, where the group is genuinely optional; a surface
    * that makes it REQUIRED (evals create) must say so itself rather than
    * offering "client default" for a choice it will then block on.
    */
   emptyServerLabel?: string;
-  serverInfoText?: string;
+  /**
+   * Whether this surface accepts no server at all. Surfaces that gate submit
+   * on one pass `false`, and lose the clear control — offering it there empties
+   * a field the form will not take.
+   */
+  serverOptional?: boolean;
   /**
    * Evaluate calls the saved-target picker Clients. Other surfaces keep
    * Environments so Swarms and the Environments page stay unchanged.
@@ -134,7 +134,7 @@ export function EnvironmentComposer({
    * Dialog. A portalled popover lands outside the dialog, where the modal
    * overlay's `pointer-events: none` swallows every click — so without this a
    * dialog's environment picker looks present and cannot be used. Same escape
-   * hatch, same name, as `EnvironmentPicker` and `ServerGroupPicker`.
+   * hatch, same name, as `EnvironmentPicker` and `ServerPicker`.
    */
   inModal?: boolean;
   /** Forwarded into the environment picker's popover footer. */
@@ -147,7 +147,7 @@ export function EnvironmentComposer({
   const { isAuthenticated } = useConvexAuth();
   const modelsOptedIn = slots.includes("models");
   const modelMatrix = useModelMatrixCapability(
-    modelsOptedIn ? projectId : null
+    modelsOptedIn ? projectId : null,
   );
   const modelsEnabled = modelsOptedIn && modelMatrix === true;
   const { hosts } = useHostList({
@@ -166,7 +166,7 @@ export function EnvironmentComposer({
 
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
-    [environments]
+    [environments],
   );
   /**
    * The selection cannot be round-tripped through a stack, so slot edits are
@@ -217,7 +217,7 @@ export function EnvironmentComposer({
       ...new Set(
         hosts
           .filter((host) => selected.has(host.hostId) && host.modelId)
-          .map((host) => host.modelId)
+          .map((host) => host.modelId),
       ),
     ];
     return modelIds.length === 1 ? modelIds[0] : null;
@@ -237,7 +237,7 @@ export function EnvironmentComposer({
         stack: { ...value.stack, ...patch },
       });
     },
-    [onChange, value]
+    [onChange, value],
   );
 
   const handleEnvironmentsChange = useCallback(
@@ -306,15 +306,15 @@ export function EnvironmentComposer({
       const keptHosts = new Set(remaining.map((e) => e.hostId));
       const removedHosts = new Set(
         resolve(value.environmentIds.filter((id) => !ids.includes(id))).map(
-          (e) => e.hostId
-        )
+          (e) => e.hostId,
+        ),
       );
       onChange({
         environmentIds: ids,
         stack: {
           ...value.stack,
           hostIds: value.stack.hostIds.filter(
-            (hostId) => !removedHosts.has(hostId) || keptHosts.has(hostId)
+            (hostId) => !removedHosts.has(hostId) || keptHosts.has(hostId),
           ),
         },
         customized: true,
@@ -330,7 +330,7 @@ export function EnvironmentComposer({
       value.environmentIds,
       value.customized,
       value.stack,
-    ]
+    ],
   );
 
   return (
@@ -349,7 +349,7 @@ export function EnvironmentComposer({
             }
             onChange={(next: string | string[] | null) =>
               handleEnvironmentsChange(
-                Array.isArray(next) ? next : next ? [next] : []
+                Array.isArray(next) ? next : next ? [next] : [],
               )
             }
             multi={maxTargets > 1}
@@ -416,15 +416,20 @@ export function EnvironmentComposer({
           />
         ) : null}
         {showServersSlot ? (
-          <ServerGroupPicker
+          <ServerPicker
             projectId={projectId}
             value={value.stack.serverAttachmentId}
-            onChange={(serverAttachmentId) => patchStack({ serverAttachmentId })}
+            onChange={(serverAttachmentId) =>
+              patchStack({ serverAttachmentId })
+            }
             disabled={slotsDisabled}
             emptyTriggerLabel={emptyServerLabel}
-            infoText={serverInfoText}
             triggerTestId={testId("servers-picker")}
-            onClearSelection={() => patchStack({ serverAttachmentId: null })}
+            onClearSelection={
+              serverOptional
+                ? () => patchStack({ serverAttachmentId: null })
+                : undefined
+            }
             inModal={inModal}
           />
         ) : null}
@@ -467,10 +472,13 @@ export function EnvironmentComposer({
             ? "This selection pins plugin versions, which this strip can't carry — editing the stack would run without them. Change the environment selection instead."
             : stackEditBlock === "models"
               ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
-            : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
+              : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
         </p>
       ) : null}
-      {modelsEnabled && slots.includes("models") && showTargetCount && !disabled ? (
+      {modelsEnabled &&
+      slots.includes("models") &&
+      showTargetCount &&
+      !disabled ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("target-count")}

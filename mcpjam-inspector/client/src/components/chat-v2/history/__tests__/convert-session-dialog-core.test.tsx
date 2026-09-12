@@ -63,8 +63,8 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 // Surface the picker VALUES the core wires in, without the heavy editors.
-vi.mock("@/components/evals/server-attachment-picker", () => ({
-  ServerAttachmentPicker: ({
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({
     value,
     triggerId,
   }: {
@@ -74,7 +74,7 @@ vi.mock("@/components/evals/server-attachment-picker", () => ({
     <button
       type="button"
       id={triggerId}
-      data-testid="server-attachment-picker"
+      data-testid="server-picker"
       data-value={value ?? ""}
     />
   ),
@@ -574,7 +574,7 @@ describe("ConvertSessionDialogCore", () => {
     expect(screen.queryByRole("radiogroup")).toBeNull();
     expect(screen.getByLabelText("Suite name")).toBeTruthy();
     expect(screen.getByTestId("client-picker")).toBeTruthy();
-    expect(screen.getByTestId("server-attachment-picker")).toBeTruthy();
+    expect(screen.getByTestId("server-picker")).toBeTruthy();
   });
 
   it("skips the suite subscription while the database user is not ready", () => {
@@ -701,7 +701,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
   it("does NOT ask for client or server on the existing-suite branch", () => {
     renderWithSuites();
     expect(screen.queryByTestId("client-picker")).toBeNull();
-    expect(screen.queryByTestId("server-attachment-picker")).toBeNull();
+    expect(screen.queryByTestId("server-picker")).toBeNull();
     expect(screen.queryByLabelText("Suite name")).toBeNull();
   });
 
@@ -711,7 +711,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
 
     expect(screen.getByLabelText("Suite name")).toBeTruthy();
     expect(screen.getByTestId("client-picker")).toBeTruthy();
-    expect(screen.getByTestId("server-attachment-picker")).toBeTruthy();
+    expect(screen.getByTestId("server-picker")).toBeTruthy();
     // ...and the existing branch's picker folds away with it.
     expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
   });
@@ -727,7 +727,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
       screen.getByTestId("client-picker"),
     );
     expect(screen.getByLabelText("Server")).toBe(
-      screen.getByTestId("server-attachment-picker"),
+      screen.getByTestId("server-picker"),
     );
   });
 

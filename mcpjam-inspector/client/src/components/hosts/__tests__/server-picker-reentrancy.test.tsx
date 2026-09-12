@@ -1,0 +1,202 @@
+/**
+ * The `writing` latch, at the only level it is reachable.
+ *
+ * Every control that reaches these handlers carries `disabled={busy}`, and
+ * React flushes a discrete event synchronously — so the sibling suite's
+ * "freezes the rows" tests prove the FREEZE, and pass with the latch deleted.
+ *
+ * The latch guards the other side of that door: `ServerPicker` hands three
+ * async callbacks to a component in another package, and nothing in its types
+ * says that component will freeze anything. So the panel is replaced with one
+ * that does not, and the callbacks are called twice before the write lands.
+ *
+ * This file repeats the sibling's mocks because `vi.mock` is hoisted per FILE:
+ * the panel mock below would reach the 80-odd tests next door that need the
+ * real panel.
+ */
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockState } = vi.hoisted(() => ({
+  mockState: {
+    attachments: [] as any[],
+    createSpy: vi.fn(),
+    deleteSpy: vi.fn(),
+    panel: null as Record<string, any> | null,
+  },
+}));
+
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useMutation: (name: string) =>
+    name.includes("delete") ? mockState.deleteSpy : mockState.createSpy,
+}));
+
+vi.mock("@/hooks/useViews", () => ({
+  useProjectServerAttachments: () => ({
+    serverAttachments: mockState.attachments,
+    isLoading: false,
+    isBootstrapping: false,
+  }),
+  useProjectServers: () => ({
+    servers: [{ _id: "srv_1", name: "alpha" }],
+    isLoading: false,
+    isBootstrapping: false,
+  }),
+}));
+
+vi.mock("@/state/app-state-context", () => ({
+  useOptionalSharedAppState: () => ({
+    servers: { alpha: { connectionStatus: "connected" } },
+  }),
+}));
+
+vi.mock("@/state/server-actions-context", () => ({
+  useServerActionsOptional: () => null,
+}));
+
+vi.mock("@/lib/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock("@/lib/app-navigation", () => ({
+  navigateApp: vi.fn(),
+  routePaths: { servers: "/servers" },
+}));
+
+// A panel that freezes nothing, and renders nothing: the test calls the
+// callbacks directly, as a panel with a broken `disabled` would.
+vi.mock("@mcpjam/design-system/server-picker-panel", () => ({
+  ServerPickerPanel: (props: Record<string, any>) => {
+    mockState.panel = props;
+    return null;
+  },
+}));
+
+import { createDeferred } from "@/test/utils";
+import { ServerPicker } from "../server-picker";
+
+const GROUP = {
+  _id: "att_1",
+  name: "group one",
+  serverIds: ["srv_1"],
+  resolvedServerNames: ["alpha"],
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockState.attachments = [];
+  mockState.panel = null;
+  // Never settles: the first call is still in flight when the second arrives.
+  mockState.createSpy = vi.fn(() => new Promise(() => {}));
+  mockState.deleteSpy = vi.fn(() => new Promise(() => {}));
+});
+
+/** Render, open the popover so the panel mounts, and hand back its props. */
+function panel(onChange = vi.fn(() => new Promise(() => {}))) {
+  render(
+    <ServerPicker
+      projectId="p_1"
+      value={null}
+      onChange={onChange as any}
+      onClearSelection={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByTestId("server-picker-trigger"));
+  if (!mockState.panel) throw new Error("panel never rendered");
+  return mockState.panel;
+}
+
+describe("ServerPicker — a panel that does not freeze its own controls", () => {
+  it("mints once when onSelectServer fires twice before the write lands", async () => {
+    const { onSelectServer } = panel();
+
+    await act(async () => {
+      onSelectServer("srv_1");
+      onSelectServer("srv_1");
+    });
+
+    // Twice would write the duplicate row the backend then rejects on its name.
+    expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports one selection when onSelectGroup fires twice", async () => {
+    mockState.attachments = [GROUP, { ...GROUP, _id: "att_2", name: "two" }];
+    const onChange = vi.fn(() => new Promise(() => {}));
+    const { onSelectGroup } = panel(onChange);
+
+    await act(async () => {
+      onSelectGroup("att_1");
+      onSelectGroup("att_2");
+    });
+
+    // The second would land last and overwrite the first.
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith("att_1", expect.anything());
+  });
+
+  it("deletes once when onDeleteGroup fires twice", async () => {
+    mockState.attachments = [GROUP];
+    const { onDeleteGroup } = panel();
+
+    await act(async () => {
+      onDeleteGroup("att_1");
+      onDeleteGroup("att_1");
+    });
+
+    expect(mockState.deleteSpy).toHaveBeenCalledTimes(1);
+    expect(mockState.deleteSpy).toHaveBeenCalledWith({
+      serverAttachmentId: "att_1",
+    });
+  });
+
+  it("refuses a SERVER pick while a GROUP pick is still in flight", async () => {
+    mockState.attachments = [GROUP];
+    const onChange = vi.fn(() => new Promise(() => {}));
+    const p = panel(onChange);
+
+    await act(async () => {
+      p.onSelectGroup("att_1");
+      // A different handler: in the real panel only `busy` separates them.
+      p.onSelectServer("srv_1");
+    });
+
+    expect(mockState.createSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("ServerPicker — a stale write does not let go of a newer one's latch", () => {
+  it("keeps refusing a create while the write started here is in flight", async () => {
+    // Only `handleCreateGroup` reads the latch without `busy` in front of it,
+    // so it is the one place a dropped latch shows.
+    mockState.attachments = [GROUP];
+    const commit = createDeferred<undefined>();
+    const onChange = vi.fn(() => commit.promise);
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
+    const props = {
+      value: null,
+      onChange: onChange as any,
+      onClearSelection: vi.fn(),
+    };
+    const { rerender } = render(<ServerPicker projectId="p_1" {...props} />);
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await act(async () => {
+      mockState.panel!.onSelectGroup("att_1");
+    });
+
+    rerender(<ServerPicker projectId="p_2" {...props} />);
+    await act(async () => {
+      mockState.panel!.onSelectServer("srv_1");
+    });
+    expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      commit.resolve(undefined);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const attempt = mockState.panel!.onCreateGroup("x", ["srv_1"]);
+    expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+    await expect(attempt).rejects.toThrow();
+  });
+});
