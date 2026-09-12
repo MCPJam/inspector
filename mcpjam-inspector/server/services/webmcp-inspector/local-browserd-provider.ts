@@ -33,7 +33,10 @@ import {
   type CreateWebMcpSessionOptions,
   type WebMcpBrowserProvider,
 } from "./provider";
-import { ensureLocalChromiumInstalled } from "../../utils/browser-rendering-setup";
+import {
+  ensureLocalChromiumInstalled,
+  getChromiumInstallState,
+} from "../../utils/browser-rendering-setup";
 
 export class LocalBrowserdWebMcpSession extends BrowserdWebMcpSession {
   private unsubscribe?: () => void;
@@ -190,7 +193,7 @@ export const localBrowserdWebMcpProvider: WebMcpBrowserProvider = {
     const native =
       process.env.ELECTRON_APP === "true" &&
       options.viewportMode === "embedded";
-    if (!native) await ensureLocalChromiumInstalled();
+    if (!native) await ensureLocalChromiumInstalled({ reason: "webmcp" });
     let driver: ChromiumDriver | undefined;
     const surface = native
       ? createContextSurface({
@@ -225,10 +228,19 @@ export const localBrowserdWebMcpProvider: WebMcpBrowserProvider = {
             deviceScaleFactor: options.devicePixelRatio ?? 1,
           });
     } catch (error) {
-      if (/Executable.*doesn.t exist/i.test(String(error)))
+      if (/Executable.*doesn.t exist/i.test(String(error))) {
+        // The install that should have put it there may have just failed;
+        // say why, because "not installed" after an automatic install
+        // attempt reads as a mystery, and the reason is one call away.
+        const install = getChromiumInstallState();
+        const reason =
+          install.status === "failed"
+            ? ` The download failed: ${install.error}.`
+            : "";
         throw new WebMcpChromiumNotInstalledError(
-          "Chromium is not installed. Run npx playwright install chromium and retry.",
+          `Chromium is not installed.${reason} Run npx playwright install chromium and retry.`,
         );
+      }
       if (/XServer|Missing X server|DISPLAY/i.test(String(error)))
         throw new WebMcpNoDisplayError(
           "No display is available. Use the embedded browser or set MCPJAM_WEBMCP_HEADLESS=true.",
