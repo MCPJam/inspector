@@ -18,7 +18,10 @@ import {
 import { useComputersDataPlaneConfig } from "./useProjectComputer";
 
 /** Selection is independent of consent and readiness: never silently move a browser. */
-export function useBrowserEngine(projectId: string | null) {
+export function useBrowserEngine(
+  projectId: string | null,
+  scope: "conversation" | "preference" = "conversation",
+) {
   const { user } = useAuth();
   const config = useComputersDataPlaneConfig();
   const consent = useLocalBrowserConsent();
@@ -26,7 +29,8 @@ export function useBrowserEngine(projectId: string | null) {
   const hostedEnabled = useHostedBrowserEnabled();
   const [environmentId] = usePreviewedEnvironmentId(projectId);
   const environmentsEnabled = useProjectEnvironmentsEnabled();
-  const environmentMode = environmentsEnabled && Boolean(environmentId);
+  const environmentMode =
+    scope === "conversation" && environmentsEnabled && Boolean(environmentId);
   const boundLocation = useActiveChatSessionStore((state) =>
     state.browserLocation?.projectId === projectId &&
     state.browserLocation.sessionId === state.sessionId
@@ -63,7 +67,7 @@ export function useBrowserEngine(projectId: string | null) {
   const selectedEngine: BrowserEngineChoice =
     HOSTED_MODE || environmentMode
       ? "cloud"
-      : boundLocation ??
+      : (scope === "conversation" ? boundLocation : null) ??
         preference ??
         (enabled && localAvailable ? "local" : "cloud");
   const cloudAvailable =
@@ -75,7 +79,11 @@ export function useBrowserEngine(projectId: string | null) {
     resolved: config !== undefined,
     localAvailable,
     cloudAvailable,
-    toggleVisible: !HOSTED_MODE && !environmentMode,
+    // Same rule as the Computer tab: a location picker only exists when
+    // both engines are real options. `cloudAvailable` already includes the
+    // hosted-browser rollout, so a local-only launch never offers Cloud.
+    toggleVisible:
+      !HOSTED_MODE && !environmentMode && localAvailable && cloudAvailable,
     environmentMode,
     consent,
   };

@@ -1,3 +1,8 @@
+import { installElectronLocalSecurity } from "./local-security.js";
+import {
+  secureDriverContext,
+  type LocalBrowserSecurityPolicy,
+} from "../local/security-policy.js";
 /**
  * A `DriverContext` over Electron `WebContentsView`s on a hidden holder window.
  *
@@ -61,6 +66,7 @@ import type {
 export const ELECTRON_TAB_CAP = 8;
 
 export interface LaunchElectronContextOptions {
+  securityPolicy?: LocalBrowserSecurityPolicy;
   /**
    * `persistent` keeps a profile across boots, which is what a playground
    * login depends on; `ephemeral` gets an in-memory partition that dies with
@@ -154,6 +160,22 @@ export interface ElectronWindowLike {
 export async function launchElectronContext(
   options: LaunchElectronContextOptions = {},
 ): Promise<DriverContext> {
+  const policy = options.securityPolicy;
+  if (
+    policy &&
+    (process.getuid?.() === 0 ||
+      process.env.ELECTRON_DISABLE_SANDBOX === "1" ||
+      process.argv.some((arg) =>
+        /^--(?:no-sandbox|disable-setuid-sandbox|disable-web-security)(?:=|$)/.test(
+          arg,
+        ),
+      ))
+  ) {
+    throw new Error(
+      "Local browser requires the Chromium sandbox and a non-root account.",
+    );
+  }
+  await policy?.assertActive();
   const electron = options.electron ?? (await loadElectron());
   const contextMode = options.contextMode ?? "persistent";
 
@@ -165,7 +187,9 @@ export async function launchElectronContext(
     options.partition ??
     (contextMode === "persistent"
       ? `persist:mcpjam-browser-${options.partitionKey ?? "default"}`
-      : `mcpjam-browser-ephemeral-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      : `mcpjam-browser-ephemeral-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2)}`);
 
   // Deny-all, matching the WebMCP surface's handler in `src/main.ts`. The agent
   // browses whatever a page links to; "the developer's own site" stops being
@@ -181,6 +205,12 @@ export async function launchElectronContext(
   }) as never);
   partitionSession.setPermissionCheckHandler?.((() => false) as never);
 
+  const removePolicy = policy
+    ? await installElectronLocalSecurity(
+        partitionSession as unknown as import("electron").Session,
+        policy,
+      )
+    : undefined;
   const windows = new Set<ElectronWindowLike>();
   let closed = false;
   const listeners = new Set<
@@ -352,8 +382,25 @@ export async function launchElectronContext(
   }
 
   function adopt(window: ElectronWindowLike): DriverPage {
+    if (policy) {
+      const prevent = (...args: unknown[]) => {
+        const event = args[0] as { preventDefault(): void; url?: string };
+        const target = typeof args[1] === "string" ? args[1] : event.url;
+        if (target === "about:blank") return;
+        try {
+          policy.assertNavigation(target ?? "");
+        } catch {
+          event.preventDefault();
+        }
+      };
+      window.webContents.on("will-navigate", prevent);
+      window.webContents.on("will-frame-navigate", prevent);
+      window.webContents.on("will-redirect", prevent);
+    }
     window.webContents.on("destroyed", () => forget(window));
     const page = createElectronPage(window.webContents, {
+      localSecurity: Boolean(options.securityPolicy),
+      localBudget: policy?.discoveryBudget,
       onClose() {
         forget(window);
         if (!window.isDestroyed()) window.destroy();
@@ -368,7 +415,12 @@ export async function launchElectronContext(
     });
 
     window.webContents.setWindowOpenHandler?.((details) => {
-      if (closed || windows.size >= ELECTRON_TAB_CAP || listeners.size === 0)
+      if (
+        closed ||
+        (policy && !policy.allowsRequest(details.url)) ||
+        windows.size >= ELECTRON_TAB_CAP ||
+        listeners.size === 0
+      )
         return { action: "deny" };
       return {
         action: "allow",
@@ -397,7 +449,7 @@ export async function launchElectronContext(
     return page;
   }
 
-  return {
+  const context: DriverContext = {
     onPageCreated(listener) {
       listeners.add(listener);
       return () => {
@@ -430,6 +482,7 @@ export async function launchElectronContext(
     isConnected: () => !closed,
     async close() {
       closed = true;
+      removePolicy?.();
       for (const window of [...windows]) {
         forget(window);
         try {
@@ -454,6 +507,7 @@ export async function launchElectronContext(
       }
     },
   };
+  return policy ? secureDriverContext(context, policy) : context;
 }
 
 /**

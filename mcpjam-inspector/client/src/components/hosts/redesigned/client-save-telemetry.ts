@@ -244,6 +244,10 @@ const CLIENT_SETTING_DETECTORS = {
     (config) => config.optionalServerIds,
   ),
   builtInToolIds: one("built_in_tools", (config) => config.builtInToolIds),
+  localBrowserEnabled: one(
+    "built_in_tools",
+    (config) => config.localBrowserEnabled,
+  ),
   computer: one("computer", (config) => config.computer),
   browserProfileId: one("browser_profile", (config) => config.browserProfileId),
   harness: one("harness", (config) => config.harness),

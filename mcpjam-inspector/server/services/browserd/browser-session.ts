@@ -99,7 +99,7 @@ export const BROWSERD_PROFILE_ARCHIVE_PATH =
  * needs `sendCommand` still satisfies this.
  */
 export interface SessionClient {
-  status(): Promise<BrowserdStatus>;
+  status(options?: { signal?: AbortSignal }): Promise<BrowserdStatus>;
   sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
@@ -290,6 +290,7 @@ export interface EnsureBrowserSessionArgs {
         sandboxRowId: string;
         sandboxId: string;
         watched?: boolean;
+        record?: boolean;
       };
   /**
    * Persistent Chrome profile (playground/inspector) unless stated.
@@ -319,8 +320,7 @@ export interface EnsureBrowserSessionArgs {
  * return the hosted member specifically, so hosted call sites need no narrow.
  */
 export type BrowserSessionHandle =
-  | HostedBrowserSessionHandle
-  | LocalBrowserSessionHandle;
+  HostedBrowserSessionHandle | LocalBrowserSessionHandle;
 
 interface HostedBrowserSessionHandleCommon {
   engine: "hosted";
@@ -376,8 +376,7 @@ export interface SandboxHostedBrowserSessionHandle
 }
 
 export type HostedBrowserSessionHandle =
-  | ComputerHostedBrowserSessionHandle
-  | SandboxHostedBrowserSessionHandle;
+  ComputerHostedBrowserSessionHandle | SandboxHostedBrowserSessionHandle;
 
 /**
  * A browserd running INSIDE this inspector process — the npm engine's
@@ -933,7 +932,7 @@ function withActivityTouches(
   // `BrowserdClient` INSTANCE, whose methods live on the prototype and would
   // not survive `{ ...client }`.
   return {
-    status: () => client.status(),
+    status: (options) => client.status(options),
     sendCommand: (command, expectedBootId) => {
       // UNTHROTTLED on purpose: this one is load-bearing. It advances the
       // browser session's own clock and, for a sandbox box, that box's

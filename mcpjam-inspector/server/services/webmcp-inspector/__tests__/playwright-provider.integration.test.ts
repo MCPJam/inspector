@@ -18,6 +18,13 @@ import {
   vi,
 } from "vitest";
 import { chromium } from "playwright";
+
+// Every test and every hook here launches, drives, and disposes a real
+// Chromium, which the 30s defaults do not cover on a loaded CI runner — the
+// shard has failed on both a test and an `afterEach` overrunning them. Browser
+// teardown can take longer than a test while Chromium drains navigation work,
+// so give hooks separate headroom.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 120_000 });
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
 import { startWebMcpSession, WebMcpSessionRegistry } from "../session-registry";
 import { localBrowserdWebMcpProvider } from "../local-browserd-provider";

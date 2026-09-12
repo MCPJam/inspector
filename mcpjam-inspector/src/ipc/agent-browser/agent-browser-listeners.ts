@@ -81,6 +81,10 @@ export interface AgentBrowserViewportResult {
  * layout glitch cannot ask for a view a million pixels wide.
  */
 const MAX_DIMENSION = 20_000;
+let rendererOrigin: string | undefined;
+export function setAgentBrowserRendererOrigin(url: string): void {
+  rendererOrigin = new URL(url).origin;
+}
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
@@ -137,6 +141,7 @@ export function resolveViewportBounds(
 
 /** Everything the handlers touch, injectable so a test needs no Electron. */
 export interface AgentBrowserDeps {
+  rendererOrigin?: string;
   verifyConsent?: typeof verifyLocalBrowserConsent;
   surfaceFor?: (bootId: string) => ContextSurface | undefined;
   /** Does this Electron have the constructors the native surface needs? */
@@ -149,6 +154,7 @@ export function registerAgentBrowserListeners(
   deps: AgentBrowserDeps = {},
 ): void {
   const consentWatches = new Map<string, ReturnType<typeof setInterval>>();
+  const latestViewport = new WeakMap<ContextSurface, object>();
   const verifyConsent = deps.verifyConsent ?? verifyLocalBrowserConsent;
   const surfaceFor = deps.surfaceFor ?? contextSurfaceFor;
   const ipc = deps.ipc ?? ipcMain;
@@ -161,9 +167,25 @@ export function registerAgentBrowserListeners(
     (() => typeof WebContentsView === "function");
 
   /** Is this event from the window we put the UI in, or from a stray frame? */
-  const trusted = (event: { sender: { id: number } }, channel: string) => {
+  const trusted = (
+    event: { sender: { id: number }; senderFrame?: { url: string } | null },
+    channel: string,
+  ) => {
     const mainWindow = getMainWindow();
-    if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
+    let origin: string | undefined;
+    try {
+      origin = event.senderFrame
+        ? new URL(event.senderFrame.url).origin
+        : undefined;
+    } catch {}
+    if (
+      !mainWindow ||
+      event.sender.id !== mainWindow.webContents.id ||
+      !event.senderFrame ||
+      event.senderFrame !== mainWindow.webContents.mainFrame ||
+      !origin ||
+      origin !== (deps.rendererOrigin ?? rendererOrigin)
+    ) {
       log.warn(
         `Ignoring ${channel} from untrusted sender (id: ${event.sender.id})`,
       );
@@ -213,9 +235,23 @@ export function registerAgentBrowserListeners(
       // frames, not to show an error over a browser that is simply not there.
       if (!surface) return refused("unknown");
 
-      if (!(await verifyConsent(request.consentToken))) {
+      // Consent checks can finish out of order. A pane's teardown must
+      // supersede an earlier show, or that show resurrects the native view.
+      const revision = {};
+      latestViewport.set(surface, revision);
+      const valid = await verifyConsent(request.consentToken);
+      if (latestViewport.get(surface) !== revision) {
+        return { shown: surface.isShown(), inputAllowed: surface.inputAllowed() };
+      }
+      if (!valid) {
         surface.hide();
         return refused("consent");
+      }
+      // Consent verification yields; a navigation in that interval must not
+      // inherit the main frame's previous authorization.
+      if (!trusted(event, "agent-browser:set-viewport")) {
+        surface.hide();
+        return refused("no_window");
       }
       const priorWatch = consentWatches.get(bootId);
       if (priorWatch) clearInterval(priorWatch);

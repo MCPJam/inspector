@@ -46,6 +46,7 @@ vi.mock("@/hooks/useBrowserTools", () => ({
     tools: [],
     page: null,
     refreshPage: vi.fn(),
+    invokePage: vi.fn(),
   }),
 }));
 

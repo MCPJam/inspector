@@ -1,3 +1,4 @@
+import { inspectionPartition } from "./local-authorization.js";
 import {
   createContextSurface,
   registerContextSurface,
@@ -5,10 +6,7 @@ import {
   type ContextSurface,
 } from "../browserd/electron/agent-surface";
 import { launchElectronContext } from "../browserd/electron/electron-context";
-import {
-  WEBMCP_BROWSER_PARTITION,
-  WEBMCP_RESULT_CAP_BYTES,
-} from "@/shared/webmcp-inspector-protocol";
+import { WEBMCP_RESULT_CAP_BYTES } from "@/shared/webmcp-inspector-protocol";
 /** WebMCP inspection over the same in-process daemon used by Playground. */
 import { randomUUID } from "node:crypto";
 import type { BrowserPaneCommand } from "@/shared/browser-pane-command";
@@ -93,7 +91,7 @@ export class LocalBrowserdWebMcpSession extends BrowserdWebMcpSession {
     if (!result.ok)
       throw new Error(
         result.reason === "failed"
-          ? (result.detail ?? "Browser command failed")
+          ? result.detail ?? "Browser command failed"
           : result.reason,
       );
     await this.refreshTools();
@@ -119,9 +117,7 @@ export class LocalBrowserdWebMcpSession extends BrowserdWebMcpSession {
     const request = ++this.streamRequest;
     const state = await this.browserState();
     if (request !== this.streamRequest) return;
-    const tabId = this.streaming
-      ? (state?.activeTabId ?? undefined)
-      : undefined;
+    const tabId = this.streaming ? state?.activeTabId ?? undefined : undefined;
     const url = state?.tabs.find((tab) => tab.id === tabId)?.url;
     if (tabId === this.streamTab && url === this.streamUrl) return;
     this.streamUrl = url;
@@ -208,11 +204,19 @@ export const localBrowserdWebMcpProvider: WebMcpBrowserProvider = {
     try {
       context = native
         ? await launchElectronContext({
-            partition: WEBMCP_BROWSER_PARTITION,
+            ...(options.securityPolicy
+              ? { securityPolicy: options.securityPolicy }
+              : {}),
+            ...(options.localScope
+              ? { partition: inspectionPartition(options.localScope) }
+              : { contextMode: "ephemeral" as const }),
             nativeSurface: true,
             surface,
           })
         : await launchBrowserdContext({
+            ...(options.securityPolicy
+              ? { securityPolicy: options.securityPolicy }
+              : {}),
             userDataDir: "",
             contextMode: "ephemeral",
             headless,

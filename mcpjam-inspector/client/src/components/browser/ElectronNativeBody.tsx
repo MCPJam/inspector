@@ -120,7 +120,7 @@ export function ElectronNativeBody({
   const bootIdRef = useRef<string | null>(null);
   bootIdRef.current = session?.bootId ?? null;
   /**
-   * The browser this pane last asked to have ON SCREEN.
+   * The browser this pane last asked to have ON SCREEN, including pending IPC.
    *
    * Tracked separately from `bootIdRef` because a view that is parented into
    * the window can only be taken out BY NAME, and by the time the pane knows
@@ -130,6 +130,7 @@ export function ElectronNativeBody({
    * next, and nothing short of an unmount removes it.
    */
   const shownRef = useRef<string | null>(null);
+  const requestRevision = useRef(0);
   const takeoverRef = useRef(chrome === "none");
   takeoverRef.current = chrome === "none";
   const holderRef = useRef(holder);
@@ -144,6 +145,7 @@ export function ElectronNativeBody({
   const push = useCallback(() => {
     const api = window.electronAPI?.agentBrowser;
     if (!api) return;
+    const revision = ++requestRevision.current;
     const bootId = bootIdRef.current;
     // A browser we are no longer looking at comes out FIRST, and by its own
     // name — this is the only moment its id is still known.
@@ -168,6 +170,8 @@ export function ElectronNativeBody({
     // does — and it is applied in the MAIN process, which is the side that
     // actually knows it.
     const rect = element?.getBoundingClientRect();
+    // Remember pending placement too: teardown may run before IPC responds.
+    if (visible) shownRef.current = bootId;
     if (visible && rect && rect.width > 0 && rect.height > 0) {
       onViewportSizeRef.current?.({ width: rect.width, height: rect.height });
     }
@@ -190,9 +194,8 @@ export function ElectronNativeBody({
           : {}),
       })
       .then((result) => {
-        // What is PARENTED, not what was asked for: a refused ask leaves
-        // nothing in the window, and remembering it would send a pointless
-        // hide for a view that is not there.
+        if (requestRevision.current !== revision) return;
+        // Once the latest ask settles, remember only what was parented.
         shownRef.current = result.shown ? bootId : null;
         setPlaced(
           result.reason
@@ -201,6 +204,7 @@ export function ElectronNativeBody({
         );
       })
       .catch(() => {
+        if (requestRevision.current !== revision) return;
         shownRef.current = null;
         // A channel that is not there, or a main process mid-teardown. The
         // pane says nothing rather than showing an error over a browser that
@@ -263,6 +267,7 @@ export function ElectronNativeBody({
    */
   useEffect(() => {
     return () => {
+      ++requestRevision.current;
       const api = window.electronAPI?.agentBrowser;
       // Whatever is actually in the window — which is not necessarily the
       // session this render knows about, and is the only thing worth hiding.

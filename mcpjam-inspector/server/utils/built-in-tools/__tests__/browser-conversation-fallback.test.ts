@@ -37,7 +37,7 @@ vi.mock("../../../services/browserd/session-service.js", () => ({
   },
 }));
 
-import { buildBrowserTools } from "../browser";
+import { buildBrowserTools, ensureHostedConversationSession } from "../browser";
 
 /** A live daemon handle, shaped as the computer arm returns one. */
 function computerHandle() {
@@ -181,5 +181,14 @@ describe("an unscoped hosted turn", () => {
     expect(hoisted.resolveSession).not.toHaveBeenCalled();
     expect(hoisted.provision).not.toHaveBeenCalled();
     expect(hoisted.ensureLive).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("unattended recording targets", () => {
+  it.each(["eval_iteration", "swarm_attempt"] as const)("preserves recording opt-in for %s", async ownerKind => {
+    await ensureHostedConversationSession({ bearer: "Bearer user", projectId: "project-1", logicalSessionId: "run", ownerKind, contextMode: "ephemeral", target: { kind: "sandbox", sandboxRowId: "row", sandboxId: "box", record: true } });
+    expect(hoisted.ensureLive).toHaveBeenCalledWith(expect.objectContaining({ target: expect.objectContaining({ record: true }) }));
+    expect(hoisted.provision).not.toHaveBeenCalled();
   });
 });

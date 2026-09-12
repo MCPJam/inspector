@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { useBrowserComparisonStore } from "./browser-comparison-store";
 
 export const DEFAULT_BROWSER_PANEL_SIZE = 60;
 export const MIN_BROWSER_PANEL_SIZE = 25;
@@ -10,6 +11,14 @@ export interface BrowserWorkspaceState {
   conversations: Record<string, { open: boolean; expanded: boolean }>;
   size: number;
   collapsedRailForBrowser: boolean;
+  /**
+   * A live browser tool just started. The workspace panel opens from
+   * `conversations[id].open`; the right-rail fallback tab watches this
+   * sequence so it can switch to Browser without yanking someone who
+   * already left that tab.
+   */
+  revealSeq: number;
+  revealConversationId: string | null;
   openBrowser: (conversationId: string) => void;
   closeBrowser: (conversationId: string) => void;
   setExpanded: (conversationId: string, expanded: boolean) => void;
@@ -23,16 +32,27 @@ export const useBrowserWorkspaceStore = create<BrowserWorkspaceState>()(
       conversations: {},
       size: DEFAULT_BROWSER_PANEL_SIZE,
       collapsedRailForBrowser: false,
-      openBrowser: (id) =>
+      revealSeq: 0,
+      revealConversationId: null,
+      openBrowser: (conversationId) => {
+        const id = useBrowserComparisonStore
+          .getState()
+          .noteBrowsing(conversationId);
         set((state) => {
-          if (!id || state.conversations[id]?.open) return state;
+          if (!id) return state;
+          const alreadyOpen = state.conversations[id]?.open;
           return {
-            conversations: {
-              ...state.conversations,
-              [id]: { open: true, expanded: false },
-            },
+            conversations: alreadyOpen
+              ? state.conversations
+              : {
+                  ...state.conversations,
+                  [id]: { open: true, expanded: false },
+                },
+            revealSeq: state.revealSeq + 1,
+            revealConversationId: id,
           };
-        }),
+        });
+      },
       closeBrowser: (id) =>
         set((state) => {
           if (

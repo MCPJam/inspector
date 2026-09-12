@@ -173,6 +173,8 @@ export const EMPTY_BROWSER_SESSION_STATE: BrowserSessionState = {
  * assessment with "live" every time one arrived.
  */
 export interface BrowserStateSnapshot {
+  /** Cached page-tool change signal for viewers without a frame stream. */
+  webmcp?: { revision: number; hash: string; count: number; url?: string };
   seq: number;
   tabs: BrowserTabState[];
   activeTabId: string | null;

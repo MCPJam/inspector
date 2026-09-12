@@ -1,3 +1,8 @@
+import type { JpegDeliveryStats } from "@/shared/browser-viewport-policy";
+import {
+  releaseBrowserForChat,
+  useBrowserChatHandoff,
+} from "@/lib/browser-shell/chat-handoff";
 import { useBrowserWorkspaceEnabled } from "@/hooks/useComputersEnabled";
 import {
   browserPageToolsKey,
@@ -336,6 +341,8 @@ export function HostedBrowserBody({
           return;
         if (cause instanceof HostedBrowserError && cause.status === 409) {
           // No browser on this computer yet — an offer, not a failure.
+          setHolding(false);
+          setLease({ state: "free" });
           setSession(null);
           setUnavailable(null);
           setError(null);
@@ -432,6 +439,31 @@ export function HostedBrowserBody({
     [tokens, session],
   );
 
+  useBrowserChatHandoff({
+    projectId,
+    sessionId,
+    holding: holding,
+    release: async (isCurrent) => {
+      if (!tokens || !session) return true;
+      const mine = generation.current;
+      try {
+        const outcome = await actOnHostedBrowserLease(tokens, {
+          action: "resume",
+        });
+        if (isCurrent() && generation.current === mine) {
+          setLease(outcome.lease);
+          setHolding(outcome.yours);
+          setStreamAttempt((n) => n + 1);
+        }
+        return outcome.took;
+      } catch (cause) {
+        if (cause instanceof HostedBrowserError && cause.status === 409)
+          return true;
+        throw cause;
+      }
+    },
+  });
+
   // Keep a held lease alive. It expires into `parked` on purpose — a timer
   // running out is not evidence the private moment ended — and a person
   // mid-login should not have to re-take a browser they never let go of.
@@ -488,8 +520,9 @@ export function HostedBrowserBody({
 
   const exportProfile = useCallback(async () => {
     if (!tokens) throw new Error("The hosted browser is not ready yet.");
+    await releaseBrowserForChat(projectId, sessionId);
     return fetchHostedBrowserProfileArchive(tokens);
-  }, [tokens]);
+  }, [tokens, projectId, sessionId]);
 
   const placeholder = (() => {
     if (!projectId) {
@@ -562,15 +595,6 @@ export function HostedBrowserBody({
       },
     };
   }, [tokens, session, setLeaseAction]);
-
-  useEffect(() => {
-    if (!workspaceEnabled && tokens && session)
-      void reportHostedPaneViewport(tokens, {
-        width: 1024,
-        height: 768,
-        policy: "fixed",
-      });
-  }, [workspaceEnabled, tokens, session?.bootId]);
 
   const shell = useBrowserSession({
     transport: shellTransport,
@@ -645,6 +669,7 @@ export function HostedBrowserBody({
     let lastBitmap: ImageBitmap | undefined;
     /** Built on the first access unit; null on a stream that stays JPEG. */
     let video: ReturnType<typeof createPaneVideoDecoder> | null = null;
+    let videoAgreed = false;
     /**
      * Record what the box says is on screen, and say so when it moves.
      *
@@ -694,6 +719,7 @@ export function HostedBrowserBody({
         token,
         tabId: shell.state.activeTabId ?? undefined,
         wire: "binary",
+        sharp: true,
         ...(wantsVideo ? { codec: "h264" as const } : {}),
       });
       stream = opened;
@@ -905,7 +931,7 @@ export function HostedBrowserBody({
             opened.close();
           },
         },
-        { video: wantsVideo },
+        { video: wantsVideo, sharp: true },
       );
       openedSocket = opened.socket;
       socketRef.current = opened.socket;
@@ -927,6 +953,7 @@ export function HostedBrowserBody({
           const parsed = JSON.parse(raw) as {
             type?: string;
             frame?: PaneFrame;
+            jpegDelivery?: JpegDeliveryStats;
             t?: number;
             framesIn?: number;
             framesOut?: number;
@@ -942,6 +969,8 @@ export function HostedBrowserBody({
               ? ((parsed as { features: unknown[] }).features as unknown[])
               : [];
             socketInputRef.current = features.includes("input");
+            videoAgreed =
+              wantsVideo && (parsed as { codec?: string }).codec === "h264";
             return;
           }
           if (parsed.type === "input_ack") {
@@ -998,22 +1027,26 @@ export function HostedBrowserBody({
             // this pane painted: a pane that dropped a frame because a tab was
             // hidden is not a link that cannot carry the stream.
             const before = tierController.current.current();
-            const next = tierController.current.observe({
-              ...(parsed.framesIn !== undefined
-                ? { framesIn: parsed.framesIn }
-                : {}),
-              ...(parsed.dropped !== undefined
-                ? { dropped: parsed.dropped }
-                : {}),
-              ...(rttRef.current !== undefined ? { rtt: rttRef.current } : {}),
-              ...(typeof (parsed.daemon as { encoderIdle?: boolean })
-                ?.encoderIdle === "boolean"
-                ? {
-                    encoderIdle: (parsed.daemon as { encoderIdle: boolean })
-                      .encoderIdle,
-                  }
-                : {}),
-            });
+            const next = videoAgreed
+              ? tierController.current.observe({
+                  ...(parsed.framesIn !== undefined
+                    ? { framesIn: parsed.framesIn }
+                    : {}),
+                  ...(parsed.dropped !== undefined
+                    ? { dropped: parsed.dropped }
+                    : {}),
+                  ...(rttRef.current !== undefined
+                    ? { rtt: rttRef.current }
+                    : {}),
+                  ...(typeof (parsed.daemon as { encoderIdle?: boolean })
+                    ?.encoderIdle === "boolean"
+                    ? {
+                        encoderIdle: (parsed.daemon as { encoderIdle: boolean })
+                          .encoderIdle,
+                      }
+                    : {}),
+                })
+              : before;
             setTier(next);
             paneFrameStats.noteTier(next);
             // TELL THE DAEMON. Auto used to move only the pane's own state,
@@ -1040,6 +1073,7 @@ export function HostedBrowserBody({
                 ?.tabs,
             );
             paneFrameStats.noteRelayStats({
+              jpegDelivery: parsed.jpegDelivery,
               framesIn: parsed.framesIn ?? 0,
               ...(parsed.framesOut !== undefined
                 ? { framesOut: parsed.framesOut }
@@ -1300,9 +1334,7 @@ export function HostedBrowserBody({
         ...(lease.state === "parked" ? { parked: true } : {}),
       }}
       onCommand={shell.run}
-      {...(session && holding ? { onResumeAgent: shell.resume } : {})}
-      resuming={shell.resuming}
-      onViewportMeasured={workspaceEnabled ? shell.reportViewport : undefined}
+      onViewportMeasured={shell.reportViewport}
       // Not just "is there a browser": an engine too old to answer pane
       // commands has a perfectly real session, and controls that look live
       // and swallow every click read as broken rather than old.
@@ -1316,22 +1348,21 @@ export function HostedBrowserBody({
       error={error ?? shell.error}
       {...(placeholder ? { placeholder } : {})}
       trailing={
-        <>
+        <PaneSettingsMenu
+          statsOpen={statsOpen}
+          onToggleStats={onStatsToggle}
+          tier={tierPreference}
+          tiers={HOSTED_TIERS}
+          onTier={onTier}
+        >
           {session && sessionId ? (
             <BrowserProfileSaveButton
               projectId={projectId ?? ""}
               exportArchive={exportProfile}
-              disabled={holding || busy}
+              disabled={busy}
             />
           ) : null}
-          <PaneSettingsMenu
-            statsOpen={statsOpen}
-            onToggleStats={onStatsToggle}
-            tier={tierPreference}
-            tiers={HOSTED_TIERS}
-            onTier={onTier}
-          />
-        </>
+        </PaneSettingsMenu>
       }
     >
       <BrowserPaneSurface

@@ -1,78 +1,42 @@
-# Drive a cloud browser from a coding agent
+# Drive a Playground session browser from a coding agent
 
-The `browser` CLI commands accept `--cloud`. Each `open` creates a separate,
-blank browser profile in a metered desktop. No project computer attachment or
-host configuration is required. The caller must be a project member, and the
-cloud deployment needs its desktop template, rate and browser JWT keys configured.
+Use `mcpjam cloud sessions send --browser` for model-driven browsing and `mcpjam cloud sessions browser <verb>` for direct commands against the same persistent browser. API transcripts open view-only in the Playground; the owning user can take over the live browser and select **Resume agent**.
 
-Use your existing `mcpjam cloud login` or `MCPJAM_API_KEY`. Select staging with
-`MCPJAM_API_URL=https://staging.mcpjam.com/api/v1`; credentials must belong to that
-deployment. Local consent is never sent to the cloud.
+## Setup and first turn
+
+Use `mcpjam cloud login` or `MCPJAM_API_KEY`. For a preview deployment, set `MCPJAM_API_URL` to its Inspector `/api/v1` endpoint. Its backend must have desktop admission configured, and the serving Inspector replica needs `HOSTED_BROWSER_TOOLS_ENABLED=1` plus a positive browser exposure verdict. Existing organization browser/computer and browser workspace gates still apply.
 
 ```sh
-export MCPJAM_API_URL=https://staging.mcpjam.com/api/v1
-mcpjam browser open --cloud --project PROJECT_ID --run-key my-task --mode allow_all
-mcpjam browser navigate https://example.com --cloud --project PROJECT_ID --command-id first-navigation
-mcpjam browser observe --cloud --project PROJECT_ID --mode a11y
-mcpjam browser act --cloud --project PROJECT_ID --verb click --ref e3 --command-id click-one
-mcpjam browser observe --cloud --project PROJECT_ID --mode screenshot
-mcpjam browser observe --cloud --project PROJECT_ID --mode page_tools
-mcpjam browser invoke TOOL_KEY --input '{}' --cloud --project PROJECT_ID --command-id tool-call-one
-mcpjam browser trace --cloud --project PROJECT_ID
-mcpjam browser sessions --cloud --project PROJECT_ID
-mcpjam browser close --cloud --project PROJECT_ID
+mcpjam cloud sessions send --project PROJECT_ID --model PROVIDER/MODEL \
+  --server SERVER_ID --tool-mode auto --browser --browser-mode allowlist \
+  --browser-origins https://example.com --message "Open the site and read its heading" \
+  --idempotency-key first-browser-turn
+mcpjam cloud sessions show --session SESSION_ID
+mcpjam cloud sessions trace --session SESSION_ID
+mcpjam cloud sessions browser observe --session SESSION_ID --mode screenshot --download ./shots
+mcpjam cloud sessions browser navigate https://example.com --session SESSION_ID --command-id navigate-home
+mcpjam cloud sessions send --session SESSION_ID --browser --message "Read the page again" --idempotency-key second-turn
+mcpjam cloud sessions browser close --session SESSION_ID
 ```
 
-The CLI remembers the last session separately for each deployment and project.
-Pass `--session SESSION_ID` on commands to select another. `open --run-key KEY`
-reattaches the same agent session with the same policy; omit the key for a fresh
-session. A closed key cannot be reopened: use a new key. `close` in cloud mode
-ends the session and releases its desktop (unlike local participant-only close).
+The initial policy and profile are fixed. `--browser-profile` selects a saved profile at creation. Current host restrictions and a pinned `read_only` tool mode can further narrow permissions. The turn response reports the stored grant in `policy` and the actual tool/origin intersection in `effectivePolicy`; an empty list means no permissions. Continuations opt in with `--browser`; omitted attachment does not wake a metered desktop.
 
-A policy is stored when the session opens. `--mode read_only` permits observation
-only. `--mode allowlist --origin https://example.com` restricts navigation and
-returned observations. The same daemon handoff protections apply: taking human
-control blocks agent commands until control is handed back.
+`cloud sessions browser open --project PROJECT_ID --browser-mode read_only --idempotency-key empty-session` (the idempotency key is required) creates a durable API shell without a model call. Supply its model and server configuration on the first send. Only the public `sessionId` is accepted by commands; returned wire UUIDs are for minted links.
 
-A browser sleeps through the existing Playground idle lifecycle and wakes when
-its agent next issues a command. Profile state lasts within that session, subject
-to the existing retention policy. Cloud sessions currently start blank; saved
-profile selection and joining a Playground-owned browser are not exposed here.
-Cloud `--profile ephemeral`, `--attach require`, initial `--observe`, and capture
-configuration flags are rejected rather than silently changing their meaning.
+## Retry, takeover, and evidence
 
-## Retry and history contract
+Keep a stable idempotency key for each model-turn intent and a stable command ID for each direct action. The CLI waits the returned retry delay for an active model turn and retries with the same key. Active duplicate requests do not re-run; interrupted commands return an unknown outcome to inspect. A pre-model capacity refusal can be retried with the same key after closing a desktop. The default per-user cap is two active conversation desktops across projects; terminal leaked reservation records do not permanently consume that cap. Eval and swarm admission remains separate.
 
-Use a stable `--command-id` for mutating commands. Admission is persisted before
-execution. A completed retry returns the saved result; an in-flight or interrupted
-claim returns `unknown` and is never executed again. Check `trace` before deciding
-what to do next. Never retry an unknown action under a new ID without checking the
-page: the original action may have happened. Reusing an ID with different input
-is rejected. A history write failure is reported on the result.
+Human takeover parks browser model calls for at most 15 seconds across the turn. A timeout returns `browser_in_use`. On release, the tool returns a fresh observation; the stale blocked action is never replayed. Observe before deciding what to do next.
 
-Screenshots are downloaded to files by default. The cloud stores at most 512,000
-base64 characters per screenshot and 64,000 JSON characters per result; oversized
-pictures report an omission. History is bounded to 10,000 commands per session.
-Trace lists at most 100 entries; continue with `--after-seq`. Screenshots are
-fetched separately and are not embedded in trace listings.
+Evidence is stored per tool call or direct command, keyed by turn, tool-call ID, and step. Responses and transcripts contain pointers, not raw screenshot pixels. Trace and artifact reads resolve stored URLs; unavailable evidence is reported explicitly. Conversation boxes do not record video. Eval and swarm recording remains explicitly enabled.
 
-## API and rollout
+## Additive rollout
 
-`POST /api/v1/browser-sessions/{session,sessions,command,trace,note,artifact,close}`
-uses the existing public bearer authentication. Requests include `projectId`, and
-all operations other than open/list include `sessionId`. Command bodies use the
-existing browser agent contract (`navigate`, `back`, `forward`, `reload`, `act`, `observe`,
-`invoke_page_tool`, `cancel_page_tool`); outcomes are
-`executed`, `refused`, or `unknown`, returned in-band with HTTP 200. Protocol and
-authorization failures use the standard v1 error envelope.
+Deploy the backend additions before Inspector, then SDK/CLI/MCP consumers. Ship the Playground restoration changes before advertising the new links broadly. The legacy `/browser-sessions/*`, SDK `browserSession`, and `browser --cloud` entry points remain temporarily for rolling compatibility. Their deletion is a separate drain-confirmed change; new conversation browsers cannot be driven through that legacy identity lookup.
 
-Deploy the backend changes first (`browserAgentSessions`, `browserAgentCommands`
-and `/agent-browser/*`), then Inspector. Publish the SDK containing
-`PlatformApiClient.browserSession` before publishing the CLI that consumes it.
-A mismatched backend refuses before any desktop is provisioned.
+Validate against a preview backend before release: desktop boot/sleep/wake, same-user takeover, saved profiles, cap refusal and lease reuse, screenshot downloads, and eval/swarm recording require real infrastructure. Local unit tests do not establish these runtime checks.
 
-Verification covers the real CLI against a loopback cloud endpoint, the Inspector
-route against mocked control-plane/daemon transports, and Convex mutations with
-its test database. Live E2B provisioning must still be smoke-tested on staging:
-open two keys, navigate them independently, sleep/wake one, and close both while
-checking their desktop usage records.
+Browser provisioning has a separate 120-second budget. The model execution budget is 150 seconds for browser turns and 90 seconds for plain turns. Screenshot uploads receive a bounded retry after transcript persistence and at terminal cleanup; failed uploads are reported as unavailable.
+
+The temporary legacy cloud door retains its original command vocabulary. Use session commands and `browser_*` / `webmcp:<name>` allowlists for new automation; policies are not interchangeable between the two doors.
