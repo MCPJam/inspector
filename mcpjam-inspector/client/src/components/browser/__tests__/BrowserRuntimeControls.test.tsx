@@ -34,6 +34,11 @@ vi.mock("@/stores/browser-readiness-store", () => ({
   useBrowserReadinessStore: (select: (s: unknown) => unknown) =>
     select({ reasons: {} }),
 }));
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigate,
+}));
 import { BrowserRuntimeControls } from "../BrowserRuntimeControls";
 beforeEach(() => {
   vi.clearAllMocks();
@@ -82,6 +87,13 @@ it("keeps runtime controls in the compact options menu", async () => {
   expect(await screen.findByLabelText("Browser location")).toBeVisible();
   fireEvent.click(screen.getByText("Revoke Browser"));
   expect(state.revoke).toHaveBeenCalledOnce();
+});
+
+it("links to client Browser settings inside the compact options menu", async () => {
+  render(<BrowserRuntimeControls projectId="p" compact hostId="host-1" />);
+  fireEvent.click(screen.getByRole("button", { name: "Browser options" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Browser settings" }));
+  expect(navigate).toHaveBeenCalledWith("/hosts/host-1?hostTab=browser");
 });
 
 it("changes the personal preference without resetting or starting a chat", () => {
