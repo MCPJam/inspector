@@ -458,8 +458,9 @@ describe("startNativeUiToolPublisher", () => {
 
       first.stop();
       const second = startNativeUiToolPublisher();
-      await second.whenSettled();
-      // Only now does the first publisher's registration get its answer.
+      // Only now does the first publisher's registration get its answer. The
+      // replacement is queued BEHIND it — settling `second` first would wait
+      // on work this test is deliberately holding shut.
       release();
       await first.whenSettled();
       await second.whenSettled();
@@ -662,6 +663,61 @@ describe("startNativeUiToolPublisher", () => {
       await publisher.whenSettled();
       expect(fake.names()).toEqual([]);
       publisher.stop();
+    });
+
+    it("republishes the tool when a remount lands mid-call", async () => {
+      // The collision the two rules above make between them: the outgoing
+      // publisher must leave a registration standing while its call runs
+      // (race 3), and the browser rejects the replacement's claim on a name
+      // it still holds (race 1). Nothing retries a rejected registration, so
+      // a replacement that did not wait would leave the tool published by
+      // NOBODY for the rest of the page — the agent silently loses it.
+      let release!: () => void;
+      const running = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const def = makeTool("ui_execute_tool", {
+        execute: vi.fn(async () => {
+          await running;
+          return { content: [{ type: "text" as const, text: "finished" }] };
+        }),
+      });
+      register(def, "global");
+      const first = startNativeUiToolPublisher();
+      await first.whenSettled();
+      const call = fake.invoke("ui_execute_tool", {});
+
+      // The remount: cleanup stops the old publisher, setup starts the new
+      // one, both while the agent's call is still running.
+      first.stop();
+      const second = startNativeUiToolPublisher();
+      // Every chance to collide, and it must not take it: while the outgoing
+      // registration is still standing for its call, the name is not free.
+      for (let tick = 0; tick < 5; tick += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(fake.attempts).toEqual(["ui_execute_tool"]);
+
+      release();
+      await expect(call).resolves.toEqual({
+        content: [{ type: "text", text: "finished" }],
+      });
+      await second.whenSettled();
+
+      // Published again, by the publisher that is actually live…
+      expect(fake.names()).toEqual(["ui_execute_tool"]);
+      expect(
+        trackMock.mock.calls.filter(
+          ([event]) => event === "ui_tool_native_registration_failed",
+        ),
+      ).toEqual([]);
+      // …and it works: the new registration reaches the handler rather than
+      // answering for a tool that has gone away.
+      await expect(fake.invoke("ui_execute_tool", {})).resolves.toEqual({
+        content: [{ type: "text", text: "finished" }],
+      });
+      expect(def.execute).toHaveBeenCalledTimes(2);
+      second.stop();
     });
   });
 });

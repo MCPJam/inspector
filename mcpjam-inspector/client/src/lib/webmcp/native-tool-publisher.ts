@@ -24,7 +24,11 @@
  * 1. **Duplicate names.** Chromium rejects `registerTool` for a name it
  *    already holds, so a replacement CANNOT overlap its predecessor. Work for
  *    one name is therefore serialized on a per-name chain: retire, wait for
- *    the platform to acknowledge, then register.
+ *    the platform to acknowledge, then register. The chains belong to the
+ *    model context, not to a publisher, because the namespace they protect
+ *    does: a publisher that stops while one of its tools is mid-call leaves
+ *    that registration standing (race 3), and its replacement has to queue
+ *    behind that retirement rather than collide with it.
  *
  * 2. **Registration results that arrive late.** `registerTool` is async, and
  *    StrictMode, HMR and a fast navigation can all replace a registration
@@ -53,6 +57,7 @@ import { track } from "@/lib/analytics";
 import {
   nativeDescriptorFor,
   resolveNativeModelContext,
+  type NativeModelContext,
   type NativeModelContextHome,
   type NativeToolDescriptor,
 } from "./native-model-context";
@@ -79,6 +84,34 @@ import {
  * its own failure long before this fires.
  */
 const TEARDOWN_GRACE_MS = 30_000;
+
+/**
+ * Per-name work queues, keyed by the model context that owns the tool names.
+ *
+ * Keyed by the API object rather than held per publisher, because a name is
+ * unique to the browser's registry and not to whoever registered it. Two
+ * publishers overlap whenever one is torn down while a call it accepted is
+ * still running: the old registration is deliberately left standing until
+ * that call settles, so a replacement that registered the same name straight
+ * away would be rejected as a duplicate and — nothing retries a registration
+ * — the tool would be missing for the rest of the page's life. Sharing the
+ * chain makes the replacement wait for the retirement instead.
+ *
+ * Weak so a discarded context (a test's fake, a torn-down document) takes its
+ * queues with it.
+ */
+const chainsByContext = new WeakMap<
+  NativeModelContext,
+  Map<string, Promise<void>>
+>();
+
+function chainsFor(api: NativeModelContext): Map<string, Promise<void>> {
+  const existing = chainsByContext.get(api);
+  if (existing) return existing;
+  const created = new Map<string, Promise<void>>();
+  chainsByContext.set(api, created);
+  return created;
+}
 
 interface NativeRegistration {
   name: string;
@@ -176,8 +209,12 @@ export function startNativeUiToolPublisher(): NativeUiToolPublisher {
   const { api, home } = resolved;
 
   const live = new Map<string, NativeRegistration>();
-  /** Per-name serialization: see race 1 in the module comment. */
-  const chains = new Map<string, Promise<void>>();
+  /**
+   * Per-name serialization: see race 1 in the module comment. Shared with any
+   * other publisher on this same model context, so a remount queues behind
+   * the outgoing publisher's retirements instead of racing them.
+   */
+  const chains = chainsFor(api);
   let stopped = false;
   let announced = false;
 
