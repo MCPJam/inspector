@@ -78,8 +78,14 @@ vi.mock("@/components/hosts/ServerGroupPicker", () => ({
   ),
 }));
 vi.mock("@/components/project-environments/environment-picker", () => ({
-  EnvironmentPicker: ({ triggerTestId }: { triggerTestId?: string }) => (
-    <button type="button" data-testid={triggerTestId}>
+  EnvironmentPicker: ({
+    triggerTestId,
+    disabled,
+  }: {
+    triggerTestId?: string;
+    disabled?: boolean;
+  }) => (
+    <button type="button" data-testid={triggerTestId} disabled={disabled}>
       environments
     </button>
   ),
@@ -254,6 +260,47 @@ describe("EnvironmentComposer locked slots", () => {
 
     fireEvent.click(screen.getByTestId("strip-clients-picker"));
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("locks the environment picker too — it re-seeds the other two", () => {
+    // Caught in review: picking a saved environment reseeds `hostIds` and
+    // `serverAttachmentId`, so a lock that skipped this pill locked nothing.
+    render(
+      <Harness
+        environments={[]}
+        lockedSlots={{
+          clients: "This study already has sessions.",
+          servers: "This study already has sessions.",
+          environments: "This study already has sessions.",
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("strip-environments-picker")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("strip-environments-picker"));
+
+    expect(toastError).toHaveBeenCalledWith("This study already has sessions.");
+  });
+
+  it("answers a locked pill from the keyboard as well as the mouse", () => {
+    render(<Harness lockedSlots={{ clients: "Locked." }} />);
+
+    const wrapper = screen.getByTestId("strip-clients-picker").parentElement!;
+    fireEvent.keyDown(wrapper, { key: "Enter" });
+
+    expect(toastError).toHaveBeenCalledWith("Locked.");
+  });
+
+  it("does not nest the wrapper inside or around another button", () => {
+    // `button > button` is invalid HTML and two interactive roles for a screen
+    // reader to reconcile. The wrapper carries the role on a span instead.
+    render(<Harness lockedSlots={{ clients: "Locked." }} />);
+
+    const wrapper = screen.getByTestId("strip-clients-picker").parentElement!;
+    expect(wrapper.tagName).toBe("SPAN");
+    expect(wrapper).toHaveAttribute("role", "button");
+    expect(wrapper.closest("button")).toBeNull();
   });
 
   it("leaves an unlocked strip alone", () => {

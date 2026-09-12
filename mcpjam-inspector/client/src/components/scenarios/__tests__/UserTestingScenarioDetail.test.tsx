@@ -1298,9 +1298,12 @@ describe("UserTestingScenarioDetail — the setup of a study with results", () =
     );
 
     const locks = composerProps().lockedSlots;
-    // One sentence, and the same one on both: the fact is the reason.
+    // One sentence, and the same one on all three: the fact is the reason.
     expect(locks?.clients).toBe("This study already has sessions.");
     expect(locks?.servers).toBe("This study already has sessions.");
+    // The environment picker included — it re-seeds the other two, so leaving
+    // it open would have left the whole lock bypassable (caught in review).
+    expect(locks?.environments).toBe("This study already has sessions.");
   });
 
   it("leaves a study nobody has run fully editable", () => {

@@ -155,9 +155,12 @@ export function ScenarioGradingSection({
     >
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <h3 className="text-base font-medium tracking-tight text-foreground">
+          {/* `h2`, like every other Settings card: this one is their peer, and
+              an `h3` would file it under whichever card precedes it for anyone
+              navigating by heading. */}
+          <h2 className="text-base font-medium tracking-tight text-foreground">
             Grading
-          </h3>
+          </h2>
           <p className="text-xs text-muted-foreground">
             Grade a sample of real tester sessions against checks after they go
             quiet. Verdicts appear on each session and in Insights.

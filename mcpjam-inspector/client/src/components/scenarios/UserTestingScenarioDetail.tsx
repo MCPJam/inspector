@@ -251,8 +251,16 @@ export function UserTestingScenarioDetail({
   // who just pressed a control they cannot use wants to know why in the time
   // a toast is on screen.
   const SETUP_LOCKED = "This study already has sessions.";
+  // The environment picker too, and not as belt-and-braces: picking a saved
+  // environment RE-SEEDS the client and the server group, so locking those two
+  // and leaving this one open locks nothing — the same change is one pill to
+  // the left (caught in review).
   const setupLockedReason = hasTesterSessions
-    ? { clients: SETUP_LOCKED, servers: SETUP_LOCKED }
+    ? {
+        clients: SETUP_LOCKED,
+        servers: SETUP_LOCKED,
+        environments: SETUP_LOCKED,
+      }
     : undefined;
   // Held closed until the NAMED list settles, like the create flow: the
   // resolver reuses a matching named environment, and resolving against an
