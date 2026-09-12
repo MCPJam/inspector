@@ -27,7 +27,7 @@ import {
   type InProcessPaneClient,
 } from "../browserd/in-process-client";
 import { BrowserdWebMcpSession } from "./browserd-provider";
-import { buildWebMcpLaunchArgs, webMcpHeadlessRequested } from "./launch-args";
+import { webMcpHeadlessRequested } from "./launch-args";
 import {
   WebMcpNoDisplayError,
   WebMcpChromiumNotInstalledError,
@@ -225,7 +225,22 @@ export const localBrowserdWebMcpProvider: WebMcpBrowserProvider = {
             contextMode: "ephemeral",
             headless,
             channel: "chromium",
-            extraArgs: buildWebMcpLaunchArgs(),
+            // THIS MACHINE, not the hosted desktop. Without it the Inspector's
+            // local Chromium took the sandbox pins — `--disable-gpu` and
+            // `--use-angle=swiftshader-webgl`, which are right for a GPU-less
+            // E2B box and a lie on a laptop — and skipped the UA correction
+            // that keeps a headless run from announcing `HeadlessChrome` to
+            // sites that block it.
+            surface: "local",
+            // NO `extraArgs: buildWebMcpLaunchArgs()`. The WebMCP feature flag
+            // and `--disable-dev-shm-usage` are already in the shared args
+            // `buildBrowserdLaunchArgs` builds from `WEBMCP_LAUNCH_ARGS`, and
+            // passing them again emitted a SECOND `--enable-features=WebMCP`
+            // last — which Chromium honours in place of the first, discarding
+            // `CDPScreenshotNewSurface` and moving every capture back to the
+            // legacy screenshot surface. Folding now also happens in
+            // `buildBrowserdLaunchArgs`, so this is belt and braces; not
+            // passing what is already there is the honest fix.
             deviceScaleFactor: options.devicePixelRatio ?? 1,
           });
     } catch (error) {

@@ -333,11 +333,11 @@ export async function localChromeUserAgent(
  * `--window-size` matched to the X screen geometry, supplied by the boot recipe
  * once it knows the display). Order is stable for test assertions.
  *
- * Feature switches from `WEBMCP_LAUNCH_ARGS` are folded into
- * `BROWSERD_ENABLED_FEATURES` rather than passed through, so exactly one
- * `--enable-features` ever reaches Chromium; every other shared arg passes
- * through untouched, so adding a non-feature arg upstream is not silently
- * dropped here.
+ * Feature switches are folded into `BROWSERD_ENABLED_FEATURES` rather than
+ * passed through — from `WEBMCP_LAUNCH_ARGS` AND from `extra` — so exactly one
+ * `--enable-features` ever reaches Chromium. Every other arg passes through
+ * untouched, so adding a non-feature arg upstream is not silently dropped
+ * here.
  */
 export function buildBrowserdLaunchArgs(
   extra: readonly string[] = [],
@@ -347,12 +347,27 @@ export function buildBrowserdLaunchArgs(
   const passthrough = WEBMCP_LAUNCH_ARGS.filter(
     (arg) => !arg.startsWith(ENABLE_FEATURES),
   );
+  // FOLDED, not passed through, for the same reason the shared args are — and
+  // this half was missing. An `--enable-features` in `extra` is emitted LAST,
+  // and by this module's own rule at the top of the file Chromium honours the
+  // last occurrence and discards every earlier one. So a caller that passed
+  // `--enable-features=WebMCP` alongside these args got WebMCP and lost
+  // `CDPScreenshotNewSurface` — quietly moving every capture back to the
+  // legacy screenshot surface. The WebMCP Inspector's local Chromium did
+  // exactly that.
+  //
+  // Deduped while preserving first-seen order, so the emitted switch is stable
+  // for a test to assert and a caller restating a feature we already have
+  // changes nothing.
+  const enabled = [
+    ...new Set([...BROWSERD_ENABLED_FEATURES, ...featuresEnabledBy(extra)]),
+  ];
   const args = [
     ...passthrough,
-    `${ENABLE_FEATURES}${BROWSERD_ENABLED_FEATURES.join(",")}`,
+    `${ENABLE_FEATURES}${enabled.join(",")}`,
     ...hardeningArgsFor(surface),
     ...(options.userAgent ? [`--user-agent=${options.userAgent}`] : []),
-    ...extra,
+    ...extra.filter((arg) => !arg.startsWith(ENABLE_FEATURES)),
   ];
   // Enforced, not merely documented: a `--disable-features` reaching Chromium
   // from anywhere — a future hardening entry, or a boot recipe's extra arg —

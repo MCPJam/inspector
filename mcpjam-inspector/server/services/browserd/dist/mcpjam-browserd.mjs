@@ -9389,12 +9389,15 @@ function buildBrowserdLaunchArgs(extra = [], options = {}) {
   const passthrough = WEBMCP_LAUNCH_ARGS.filter(
     (arg) => !arg.startsWith(ENABLE_FEATURES)
   );
+  const enabled = [
+    .../* @__PURE__ */ new Set([...BROWSERD_ENABLED_FEATURES, ...featuresEnabledBy(extra)])
+  ];
   const args = [
     ...passthrough,
-    `${ENABLE_FEATURES}${BROWSERD_ENABLED_FEATURES.join(",")}`,
+    `${ENABLE_FEATURES}${enabled.join(",")}`,
     ...hardeningArgsFor(surface),
     ...options.userAgent ? [`--user-agent=${options.userAgent}`] : [],
-    ...extra
+    ...extra.filter((arg) => !arg.startsWith(ENABLE_FEATURES))
   ];
   const clobbering = args.find((arg) => arg.startsWith(DISABLE_FEATURES));
   if (clobbering) {
