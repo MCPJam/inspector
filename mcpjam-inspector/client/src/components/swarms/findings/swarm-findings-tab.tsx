@@ -60,6 +60,12 @@ export function SwarmFindingsTab({
       }),
     [model, waveSignals, wave.runs]
   );
+  // Swarm keys a goal by its run, so the scope is just the project. Memoized
+  // because it reaches a query's arguments through the goal inspect panel.
+  const sessionScope = useMemo(
+    () => (projectId ? ({ kind: "swarm", projectId } as const) : undefined),
+    [projectId]
+  );
   const footnotes = useMemo(
     () =>
       deriveHonestyFootnotes({
@@ -155,7 +161,7 @@ export function SwarmFindingsTab({
             : undefined
         }
         onOpenSession={onOpenSession}
-        projectId={projectId}
+        sessionScope={sessionScope}
       />
     </div>
   );

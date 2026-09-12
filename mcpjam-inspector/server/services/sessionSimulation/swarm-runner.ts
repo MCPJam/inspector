@@ -100,7 +100,9 @@ const ATTEMPT_ARTIFACT_FLUSH_TIMEOUT_MS = 30_000;
  * the release. Rejections are swallowed for the same reason: this is a
  * terminal path observing an outcome, never deciding one.
  */
-async function withArtifactFlushDeadline(work: Promise<unknown>): Promise<void> {
+async function withArtifactFlushDeadline(
+  work: Promise<unknown>,
+): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
@@ -207,7 +209,7 @@ export function getRunningJourneyRunCount(): number {
 
 /** Active run stream hub, if the runner is still in-process. */
 export function getRunningJourneyStreamHub(
-  runId: string
+  runId: string,
 ): JourneyRunStreamHub | undefined {
   return runningJourneyRuns.get(runId)?.hub;
 }
@@ -218,14 +220,14 @@ export function getRunningJourneyStreamHub(
  * best-effort finalizes remaining pending attempts) up to `timeoutMs`.
  */
 export async function shutdownRunningJourneyRuns(
-  timeoutMs: number = DEFAULT_SHUTDOWN_TIMEOUT_MS
+  timeoutMs: number = DEFAULT_SHUTDOWN_TIMEOUT_MS,
 ): Promise<void> {
   const handles = Array.from(runningJourneyRuns.values());
   for (const handle of handles) {
     handle.abort();
   }
   const timeoutPromise = new Promise<void>((resolve) =>
-    setTimeout(resolve, timeoutMs)
+    setTimeout(resolve, timeoutMs),
   );
   await Promise.race([
     Promise.allSettled(handles.map((h) => h.done)),
@@ -256,7 +258,7 @@ function composeAbortSignals(
  * `setImmediate`) — the HTTP 202 already returned.
  */
 export async function startJourneyRun(
-  opts: StartJourneyRunOptions
+  opts: StartJourneyRunOptions,
 ): Promise<void> {
   const controller = new AbortController();
   const composed = composeAbortSignals(opts.abortSignal, controller.signal);
@@ -297,7 +299,7 @@ export async function startJourneyRun(
 function terminalForOutcome(
   outcome: "succeeded" | "failed" | "rate_limited",
   errorMessage: string | undefined,
-  errorReason?: string
+  errorReason?: string,
 ): { status: SwarmAttemptStatus; errorCode?: string; errorMessage?: string } {
   if (outcome === "succeeded") {
     return { status: "succeeded" };
@@ -350,7 +352,7 @@ function terminalForOutcome(
  * `spend_budget_reached` still escalates: `isAccountLimit` matches its code.
  */
 export function classifyRateLimit(
-  message: string | undefined
+  message: string | undefined,
 ): "org_spend_cap" | "provider_rate_limit" {
   if (!message) return "provider_rate_limit";
   if (isAccountLimit(message)) return "org_spend_cap";
@@ -363,14 +365,14 @@ export function classifyRateLimit(
 /** Concise structured log — ids + status only; NEVER prompts/transcripts/keys. */
 function logEvent(
   event: string,
-  fields: Record<string, string | number | boolean | undefined>
+  fields: Record<string, string | number | boolean | undefined>,
 ): void {
   logger.info(`[swarm.runner] ${event}`, fields);
 }
 
 function bindSessionEmit(
   hub: JourneyRunStreamHub,
-  envelope: SwarmStreamEnvelope
+  envelope: SwarmStreamEnvelope,
 ): (payload: SwarmStreamPayload) => void {
   return (payload) => {
     hub.emit({ ...envelope, ...payload } as SwarmStreamEvent);
@@ -389,9 +391,7 @@ function bindSessionEmit(
  *
  * Built from what the target ACTUALLY declares rather than from a first
  * matching branch, because the combinations are not exclusive: `bash` and
- * `browser` conflict on a host config only while a deployment has NOT accepted
- * the co-tenancy boundary (`allowComputerToolCoTenancy`), and a harness can
- * accompany either. A target that lost its box lost every one of them, so the
+ * `browser` may coexist, and a harness can accompany either. A target that lost its box lost every one of them, so the
  * sentence names every one of them.
  *
  * The `toolId` is the capability that DECIDED the image, because that is the
@@ -425,7 +425,7 @@ function describeSandboxConsumer(
 }
 
 async function runJourneyFanOut(
-  opts: StartJourneyRunOptions & { hub: JourneyRunStreamHub }
+  opts: StartJourneyRunOptions & { hub: JourneyRunStreamHub },
 ): Promise<void> {
   const {
     runId,
@@ -468,7 +468,7 @@ async function runJourneyFanOut(
     // runner.
     getBearer()
       .then((bearer) =>
-        heartbeatJourneyRun(convexHttpUrl, bearer, { projectId, runId })
+        heartbeatJourneyRun(convexHttpUrl, bearer, { projectId, runId }),
       )
       .catch((err) => {
         logger.warn("[swarm.runner] heartbeat failed", {
@@ -678,27 +678,27 @@ async function runJourneyFanOut(
         harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined
           : !targetWantsHarnessBox(target)
-          ? "This target runs the " +
-            target.harness +
-            " harness but has no computer attached, so there is nothing to run " +
-            "it on. Attach a computer to this host."
-          : harnessAvailability && !harnessAvailability.ok
-          ? "This target runs the " +
-            target.harness +
-            " harness, which isn't available: " +
-            harnessAvailability.reason +
-            "."
-          : harnessTargetIntent?.kind === "skip"
-          ? "This target runs the " +
-            target.harness +
-            " harness, which needs a disposable sandbox per session. " +
-            // An intent with no reason is a pre-B-isolation run snapshot: the
-            // backend never resolved an image because it did not know how to.
-            // Silent is right for bash (it simply goes missing); a harness
-            // cannot run at all, so the session must say something true.
-            (harnessTargetIntent.reason ??
-              "This run pinned no computer image, so one cannot be created.")
-          : undefined;
+            ? "This target runs the " +
+              target.harness +
+              " harness but has no computer attached, so there is nothing to run " +
+              "it on. Attach a computer to this host."
+            : harnessAvailability && !harnessAvailability.ok
+              ? "This target runs the " +
+                target.harness +
+                " harness, which isn't available: " +
+                harnessAvailability.reason +
+                "."
+              : harnessTargetIntent?.kind === "skip"
+                ? "This target runs the " +
+                  target.harness +
+                  " harness, which needs a disposable sandbox per session. " +
+                  // An intent with no reason is a pre-B-isolation run snapshot: the
+                  // backend never resolved an image because it did not know how to.
+                  // Silent is right for bash (it simply goes missing); a harness
+                  // cannot run at all, so the session must say something true.
+                  (harnessTargetIntent.reason ??
+                    "This run pinned no computer image, so one cannot be created.")
+                : undefined;
       } catch (err) {
         // Fail CLOSED and name what happened. We do not know WHICH rule threw,
         // so the message stays honest about that rather than guessing.
@@ -714,7 +714,7 @@ async function runJourneyFanOut(
             hostId,
             targetId,
             error: err instanceof Error ? err.message : String(err),
-          }
+          },
         );
       }
 
@@ -759,7 +759,7 @@ async function runJourneyFanOut(
         const chatSessionId = swarmAttemptChatSessionId(
           runId,
           targetSessionIdentity(target),
-          sessionIdx
+          sessionIdx,
         );
         // Attempt-scoped: per-turn widget capture walks the FULL accumulated
         // transcript, so without this an early widget is re-fetched and
@@ -802,7 +802,7 @@ async function runJourneyFanOut(
               targetId,
               sessionIdx,
               error: err instanceof Error ? err.message : String(err),
-            }
+            },
           );
           continue;
         }
@@ -819,7 +819,7 @@ async function runJourneyFanOut(
         if (!claim.applied) {
           logger.warn(
             "[swarm.runner] attempt already claimed by another runner; skipping session",
-            { runId, hostId, sessionIdx }
+            { runId, hostId, sessionIdx },
           );
           continue;
         }
@@ -896,7 +896,7 @@ async function runJourneyFanOut(
                 runId,
                 targetId,
                 sessionIdx,
-              }
+              },
             );
             emit({
               type: "session_notice",
@@ -927,7 +927,7 @@ async function runJourneyFanOut(
                   targetId,
                   sessionIdx,
                   error: err instanceof Error ? err.message : String(err),
-                }
+                },
               );
             });
             logEvent("attempt.finish", {
@@ -994,7 +994,7 @@ async function runJourneyFanOut(
                 errorCode: provisioned.code,
                 errorMessage: provisioned.message.slice(
                   0,
-                  MAX_ATTEMPT_ERROR_CHARS
+                  MAX_ATTEMPT_ERROR_CHARS,
                 ),
               };
               emit({
@@ -1026,7 +1026,7 @@ async function runJourneyFanOut(
                     targetId,
                     sessionIdx,
                     error: err instanceof Error ? err.message : String(err),
-                  }
+                  },
                 );
               });
               // Same terminal accounting as every other exit, so attempts that
@@ -1054,13 +1054,13 @@ async function runJourneyFanOut(
         // personal computer.
         const harnessBlockedReason = !harnessNeedsBox
           ? undefined
-          : harnessTargetBlockedReason ??
+          : (harnessTargetBlockedReason ??
             (attemptSandbox
               ? undefined
               : "This session could not get a disposable sandbox for its " +
                 `${target.harness} harness. A swarm harness never falls back ` +
                 "to the launcher's shared project computer, so this session " +
-                "cannot run.");
+                "cannot run."));
 
         try {
           // Execute the session via the shared core. It owns manager lifecycle +
@@ -1086,6 +1086,11 @@ async function runJourneyFanOut(
               // runner parses it into an approval delivery, and without one
               // `buildBrowserTools` advertises nothing.
               browserToolPolicy: target.browserToolPolicy,
+              browserProfileId: target.browserProfileId,
+              browserSessionScope: {
+                kind: "swarm_attempt",
+                sessionId: chatSessionId,
+              },
               modelVisibleMcpToolResults: target.modelVisibleMcpToolResults,
               mcpToolResultImageRendering: target.mcpToolResultImageRendering,
               computer: target.computer,
@@ -1209,7 +1214,7 @@ async function runJourneyFanOut(
                   ? {
                       errorMessage: spendCapMessage.slice(
                         0,
-                        MAX_ATTEMPT_ERROR_CHARS
+                        MAX_ATTEMPT_ERROR_CHARS,
                       ),
                     }
                   : {}),
@@ -1363,7 +1368,7 @@ async function runJourneyFanOut(
             await markRemainingTargetAttemptsRateLimited(
               { convexHttpUrl, bearer, projectId, runId, target },
               sessionIdx + 1,
-              sessionsPerTarget
+              sessionsPerTarget,
             );
             return;
           }
@@ -1461,7 +1466,7 @@ async function runJourneyFanOut(
             targetId,
             sessionIdx,
             error: err instanceof Error ? err.message : String(err),
-          }
+          },
         );
         return;
       }
@@ -1474,7 +1479,7 @@ async function runJourneyFanOut(
           targetId,
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
-        }
+        },
       );
       // Finalize this target's not-yet-terminal attempts `[sessionIdx..N)`: the
       // sweep re-claims the in-flight attempt (if the throw landed after a
@@ -1487,18 +1492,19 @@ async function runJourneyFanOut(
       // rather than throwing out of the catch, which would take the worker (and
       // with it the other targets and the run-level finalize) down. The
       // stale-run cron is the backstop for what stays pending.
-      const cleanupBearer = bearer ?? (await getBearer().catch(() => undefined));
+      const cleanupBearer =
+        bearer ?? (await getBearer().catch(() => undefined));
       if (!cleanupBearer) {
         logger.error(
           "[swarm.runner] no credential to finalize this target's attempts; leaving them for the stale-run sweep",
-          { runId, hostId, targetId, sessionIdx }
+          { runId, hostId, targetId, sessionIdx },
         );
         return;
       }
       await markRemainingTargetAttemptsFailed(
         { convexHttpUrl, bearer: cleanupBearer, projectId, runId, target },
         sessionIdx,
-        sessionsPerTarget
+        sessionsPerTarget,
       );
     }
   };
@@ -1548,14 +1554,14 @@ async function runJourneyFanOut(
             runId,
             reason: finalizeTerminal.errorCode,
             error: error instanceof Error ? error.message : String(error),
-          }
+          },
         );
         return undefined;
       });
       if (finalizeBearer) {
         await finalizeRun(
           { convexHttpUrl, bearer: finalizeBearer, projectId, runId },
-          finalizeTerminal
+          finalizeTerminal,
         );
       }
     }
@@ -1625,13 +1631,13 @@ async function resolveTargetPinnedSkills(args: {
     Array.isArray(hostSelection.skillIds) &&
     hostSelection.skillIds.length > 0;
   const unionIsAuthoritative = meta.some(
-    (m) => Array.isArray(m.channels) && m.channels.length > 0
+    (m) => Array.isArray(m.channels) && m.channels.length > 0,
   );
   if (hostWantsSkills && !unionIsAuthoritative) {
     throw new Error(
       "Snapshot target carries a host skillSelection but its pinnedSkills " +
         "union has no channel provenance (pre-P0.2 backend) — refusing to run " +
-        "with a silently dropped host skill channel"
+        "with a silently dropped host skill channel",
     );
   }
   // Provenance EXISTING is not the same as the host channel being present: a
@@ -1641,7 +1647,7 @@ async function resolveTargetPinnedSkills(args: {
     throw new Error(
       "Snapshot target carries a host skillSelection but no pinned entry is " +
         "tagged with the `host` channel — refusing to run with a silently " +
-        "dropped host skill channel"
+        "dropped host skill channel",
     );
   }
   // Stronger check when the union is fully identified: every host-selected id
@@ -1653,14 +1659,14 @@ async function resolveTargetPinnedSkills(args: {
   if (hostWantsSkills && meta.length > 0 && meta.every((m) => !!m.skillId)) {
     const pinnedSkillIds = new Set(meta.map((m) => m.skillId));
     const missing = hostSelection!.skillIds.filter(
-      (id) => !pinnedSkillIds.has(id)
+      (id) => !pinnedSkillIds.has(id),
     );
     if (missing.length > 0) {
       throw new Error(
         `Snapshot target's host skillSelection is not represented in its ` +
           `pinnedSkills union (missing ${missing.length} of ${
             hostSelection!.skillIds.length
-          }) — refusing to run with a partially dropped host skill channel`
+          }) — refusing to run with a partially dropped host skill channel`,
       );
     }
   }
@@ -1673,7 +1679,7 @@ async function resolveTargetPinnedSkills(args: {
   if (isEnvTarget && !target.targetId) {
     throw new Error(
       "Environment snapshot target has no targetId — refusing to run with " +
-        "host-only identity (per-target attribution would be lost)"
+        "host-only identity (per-target attribution would be lost)",
     );
   }
 
@@ -1681,7 +1687,7 @@ async function resolveTargetPinnedSkills(args: {
   const targetId = target.targetId;
   if (!targetId) {
     throw new Error(
-      "Snapshot target has pinned skills but no targetId — cannot fetch pinned bodies"
+      "Snapshot target has pinned skills but no targetId — cannot fetch pinned bodies",
     );
   }
 
@@ -1731,7 +1737,7 @@ async function markRemainingTargetAttemptsRateLimited(
     target: PinnedHostExecutionSpec;
   },
   fromIdx: number,
-  toIdx: number
+  toIdx: number,
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
   const { hostId, targetId } = target;
@@ -1739,7 +1745,7 @@ async function markRemainingTargetAttemptsRateLimited(
     const chatSessionId = swarmAttemptChatSessionId(
       runId,
       targetSessionIdentity(target),
-      sessionIdx
+      sessionIdx,
     );
     try {
       await reportAttempt(convexHttpUrl, bearer, {
@@ -1770,7 +1776,7 @@ async function markRemainingTargetAttemptsRateLimited(
           targetId,
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
-        }
+        },
       );
     }
   }
@@ -1796,7 +1802,7 @@ async function markRemainingTargetAttemptsFailed(
     target: PinnedHostExecutionSpec;
   },
   fromIdx: number,
-  toIdx: number
+  toIdx: number,
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
   const { hostId, targetId } = target;
@@ -1804,7 +1810,7 @@ async function markRemainingTargetAttemptsFailed(
     const chatSessionId = swarmAttemptChatSessionId(
       runId,
       targetSessionIdentity(target),
-      sessionIdx
+      sessionIdx,
     );
     try {
       await reportAttempt(convexHttpUrl, bearer, {
@@ -1835,7 +1841,7 @@ async function markRemainingTargetAttemptsFailed(
           targetId,
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
-        }
+        },
       );
     }
   }
@@ -1853,7 +1859,7 @@ async function finalizeRun(
     terminalStatus?: Exclude<SwarmAttemptStatus, "pending" | "running">;
     errorCode?: string;
     errorMessage?: string;
-  }
+  },
 ): Promise<void> {
   try {
     await finalizePendingAttempts(ctx.convexHttpUrl, ctx.bearer, {

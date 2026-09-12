@@ -1,3 +1,7 @@
+import {
+  jpegFrameLimit,
+  SHARP_STREAM_FEATURE,
+} from "@/shared/browser-viewport-policy";
 /**
  * The hosted browser's frame socket (`/api/web/computers/browser/frames`).
  *
@@ -42,7 +46,10 @@ import {
   isComputersDataPlaneConfigured,
   touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionCommand,
+} from "../../utils/computers/activity-touch.js";
 import {
   lookupBrowserSession,
   touchBrowserSession,
@@ -118,6 +125,7 @@ export interface BrowserFramesDeps {
     holder: string;
     tabId?: string;
     codec?: "jpeg" | "h264";
+    sharp?: boolean;
     signal: AbortSignal;
     /**
      * One frame, as the DAEMON produced it — raw JPEG bytes, not base64.
@@ -222,6 +230,7 @@ export function createComputerBrowserFramesWsHandler(
         holder: args.holder,
         ...(args.tabId ? { tabId: args.tabId } : {}),
         ...(args.codec ? { codec: args.codec } : {}),
+        ...(args.sharp ? { sharp: true } : {}),
         ...(args.onVideo
           ? {
               onVideo: (record) =>
@@ -287,6 +296,8 @@ export function createComputerBrowserFramesWsHandler(
      * this safe while an old bundle is still cached in somebody's tab.
      */
     const binaryWire = c.req.query("wire") === "binary";
+    const wantsSharp = c.req.query("sharp") === "1";
+    let sharpAgreed = false;
     /**
      * Did this pane ask for video, and can it take it?
      *
@@ -317,7 +328,10 @@ export function createComputerBrowserFramesWsHandler(
       if (!claims) {
         refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
       } else {
-        const info = await sandboxInfo({ computerId: claims.computerId });
+        const target = claims.computerId
+          ? { computerId: claims.computerId }
+          : { sandboxRowId: claims.sandboxRowId };
+        const info = await sandboxInfo(target);
         if (!info.ok) {
           refusal = { code: CLOSE_UNAVAILABLE, reason: "computer unavailable" };
         } else if (
@@ -330,7 +344,8 @@ export function createComputerBrowserFramesWsHandler(
         } else {
           viewerId = claims.userId;
           const lookup = await lookupSession({
-            computerId: claims.computerId,
+            ...target,
+            ...(claims.sandboxRowId ? { watched: true } : {}),
             expectedBundleHash: bundleHash(),
             // `"any"`: a pane watches whatever browser this computer is
             // running, which is the same question the panel's own lookup asks.
@@ -339,14 +354,25 @@ export function createComputerBrowserFramesWsHandler(
           session = lookup.session;
           if (!session) {
             refusal = { code: CLOSE_NOT_FOUND, reason: "no_browser_session" };
-          } else if (wantsVideo) {
+          } else if (
+            claims.sessionId &&
+            session.logicalSessionId !== claims.sessionId
+          ) {
+            refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
+          } else if (wantsVideo || wantsSharp) {
             // ANNOUNCED, never assumed. A daemon too old to encode would answer
             // an error stream, and a reader cannot tell that apart from a dead
             // browser — so the relay asks first and simply serves JPEG when the
             // answer is no.
             const status = await daemonStatus(session).catch(() => null);
             videoAgreed =
-              status?.kind === "ok" && (status.features ?? []).includes("h264");
+              wantsVideo &&
+              status?.kind === "ok" &&
+              (status.features ?? []).includes("h264");
+            sharpAgreed =
+              wantsSharp &&
+              status?.kind === "ok" &&
+              (status.features ?? []).includes(SHARP_STREAM_FEATURE);
           }
         }
       }
@@ -456,16 +482,28 @@ export function createComputerBrowserFramesWsHandler(
             // enough, which is exactly the case for somebody who took control
             // to solve a CAPTCHA and issues no agent commands at all.
             //
-            // Throttled through the shared per-computer window — input arrives
-            // twenty times a second and a touch is a control-plane write — and
-            // only on a dispatch that actually landed.
+            // BOTH touches are throttled, each on its OWN key, and only on a
+            // dispatch that actually landed. `onDispatched` fires per landed
+            // flush — tens a second through a drag — and every touch is a
+            // control-plane write.
+            //
+            // The session touch is keyed by SESSION because that is the row it
+            // patches, and because a sandbox target has no computer id to key
+            // on; the computer touch stays keyed by COMPUTER. Both are
+            // leading-edge, so the first input after a pause writes at once and
+            // nothing is slept out from under somebody who just came back.
             if (closed) return;
-            if (!shouldTouchActivity(live.computerId)) return;
-            void touchSession({
-              sessionId: live.sessionId,
-              kind: "command",
-            }).catch(() => {});
-            void touchActivity({ computerId: live.computerId }).catch(() => {});
+            if (shouldTouchSessionCommand(live.sessionId)) {
+              void touchSession({
+                sessionId: live.sessionId,
+                kind: "command",
+              }).catch(() => {});
+            }
+            const computerId =
+              live.target === "sandbox" ? undefined : live.computerId;
+            if (computerId && shouldTouchActivity(computerId)) {
+              void touchActivity({ computerId }).catch(() => {});
+            }
           },
         });
 
@@ -476,7 +514,10 @@ export function createComputerBrowserFramesWsHandler(
           ws.send(
             JSON.stringify({
               type: "hello",
-              features: ["input"],
+              features: [
+                "input",
+                ...(sharpAgreed ? [SHARP_STREAM_FEATURE] : []),
+              ],
               // What this stream will actually carry. `"h264"` appears only
               // when the pane asked AND the daemon said it could — a pane that
               // asked and does not see it keeps its JPEG path, which is the
@@ -516,10 +557,12 @@ export function createComputerBrowserFramesWsHandler(
               // up, and touching then keeps a computer awake for a socket that
               // is gone.
               if (closed || !counted) return;
-              if (!shouldTouchActivity(live.computerId)) return;
-              void touchActivity({ computerId: live.computerId }).catch(
-                () => {},
-              );
+              const computerId =
+                live.target === "sandbox" ? undefined : live.computerId;
+              if (!computerId || !shouldTouchActivity(computerId)) {
+                return;
+              }
+              void touchActivity({ computerId }).catch(() => {});
             })
             .catch(() => {});
         };
@@ -545,6 +588,7 @@ export function createComputerBrowserFramesWsHandler(
           holder: viewerId,
           ...(tabId ? { tabId } : {}),
           ...(videoAgreed ? { codec: "h264" as const } : {}),
+          ...(sharpAgreed ? { sharp: true } : {}),
           ...(videoAgreed
             ? {
                 onVideo: (record) => {
@@ -573,6 +617,10 @@ export function createComputerBrowserFramesWsHandler(
             : {}),
           signal: abort.signal,
           onFrame: (frame) => {
+            if (frame.jpeg.byteLength > jpegFrameLimit(sharpAgreed)) {
+              stats?.countDrop();
+              return;
+            }
             if (closed) {
               stats?.countDrop();
               return;
@@ -599,7 +647,7 @@ export function createComputerBrowserFramesWsHandler(
               // output already is one, but its type is widened by the shared
               // module's `Uint8Array<ArrayBufferLike>`.
               const view = new Uint8Array(bytes);
-              stats?.offer(view.byteLength, () => ws.send(view));
+              stats?.offerJpeg(view.byteLength, () => ws.send(view));
               return;
             }
             const payload = JSON.stringify({
@@ -616,7 +664,7 @@ export function createComputerBrowserFramesWsHandler(
                 relayTs: Date.now(),
               },
             });
-            stats?.offer(payload.length, () => ws.send(payload));
+            stats?.offerJpeg(payload.length, () => ws.send(payload));
           },
           // The daemon's side of the accounting, merged into the same `stats`
           // message the relay's own counters go out on. One shape for the pane,
@@ -643,7 +691,8 @@ export function createComputerBrowserFramesWsHandler(
         if (!started.ok) {
           detach();
           logger.warn("[computers] browser frame stream refused", {
-            computerId: live.computerId,
+            browserTarget:
+              live.target === "computer" ? live.computerId : live.sandboxRowId,
             status: started.status,
           });
           ws.close(

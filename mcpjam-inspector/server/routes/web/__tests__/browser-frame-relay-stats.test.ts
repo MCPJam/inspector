@@ -10,12 +10,11 @@
  * two machines).
  */
 import { describe, expect, it, vi } from "vitest";
-import {
-  createFrameRelayStats,
-  pongFor,
-} from "../browser-frame-relay-stats";
+import { createFrameRelayStats, pongFor } from "../browser-frame-relay-stats";
 
-function build(over: Parameters<typeof createFrameRelayStats>[0] | object = {}) {
+function build(
+  over: Parameters<typeof createFrameRelayStats>[0] | object = {},
+) {
   const sent: string[] = [];
   let fire: (() => void) | undefined;
   const stats = createFrameRelayStats({
@@ -190,5 +189,87 @@ describe("telemetry under congestion", () => {
     buffered = 0;
     tick();
     expect(sent).toHaveLength(2);
+  });
+});
+
+describe("JPEG delivery under backpressure", () => {
+  it("delivers the final static frame after drain, replacing older pending frames", () => {
+    vi.useFakeTimers();
+    try {
+      let buffered = 600_000;
+      const written: number[] = [];
+      const stats = createFrameRelayStats({
+        send: () => {},
+        bufferedAmount: () => buffered,
+      });
+      stats.offerJpeg(300_000, () => written.push(1));
+      stats.offerJpeg(400_000, () => written.push(2));
+      expect(written).toEqual([]);
+      buffered = 0;
+      vi.advanceTimersByTime(25);
+      expect(written).toEqual([2]);
+      expect(stats.snapshot()).toMatchObject({
+        framesIn: 2,
+        framesOut: 1,
+        dropped: 1,
+        bytes: 400_000,
+      });
+      stats.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("permits a large negotiated frame on an empty socket and cancels pending delivery on close", () => {
+    vi.useFakeTimers();
+    try {
+      let buffered = 0;
+      const write = vi.fn(() => {
+        buffered += 2 * 1024 * 1024;
+      });
+      const stats = createFrameRelayStats({
+        send: () => {},
+        bufferedAmount: () => buffered,
+      });
+      expect(stats.offerJpeg(2 * 1024 * 1024, write)).toBe(true);
+      expect(stats.offerJpeg(2 * 1024 * 1024, write)).toBe(false);
+      stats.stop();
+      buffered = 0;
+      vi.advanceTimersByTime(500);
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("slows only the congested viewer and restores its rate after five healthy samples", () => {
+    vi.useFakeTimers();
+    try {
+      let buffered = 600_000;
+      const slow = createFrameRelayStats({
+        send: () => {},
+        bufferedAmount: () => buffered,
+      });
+      const fast = createFrameRelayStats({ send: () => {} });
+      slow.start();
+      for (let i = 0; i < 3; i++) {
+        slow.offerJpeg(100, () => {});
+        vi.advanceTimersByTime(1000);
+      }
+      buffered = 0;
+      vi.advanceTimersByTime(25);
+      expect(slow.offerJpeg(100, () => {})).toBe(false);
+      expect(fast.offerJpeg(100, () => {})).toBe(true);
+      vi.advanceTimersByTime(200);
+      for (let i = 0; i < 5; i++) {
+        slow.offerJpeg(100, () => {});
+        vi.advanceTimersByTime(1000);
+      }
+      expect(slow.offerJpeg(100, () => {})).toBe(true);
+      expect(slow.offerJpeg(100, () => {})).toBe(true);
+      slow.stop();
+      fast.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 /**
  * The hosted pane.
  *
@@ -19,6 +20,11 @@ import {
 import userEvent from "@testing-library/user-event";
 
 const api = vi.hoisted(() => ({
+  workspaceEnabled: true,
+  exportProfile: vi.fn(async () => ({
+    archive: new Blob(),
+    savedFrom: "profile-chat",
+  })),
   /** What `/session` answers, or an error to throw. */
   session: null as unknown,
   sessionError: null as { status: number } | null,
@@ -28,6 +34,10 @@ const api = vi.hoisted(() => ({
   mints: 0,
   invalidations: 0,
   streamArgs: [] as unknown[],
+  /** What the shell's state poll answers. Null is "cannot say". */
+  state: null as unknown,
+  /** Every pane command the shell sent, in order. */
+  paneCommands: [] as unknown[],
   sockets: [] as Array<{
     readyState: number;
     sent: string[];
@@ -39,12 +49,17 @@ const api = vi.hoisted(() => ({
   }>,
 }));
 
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useBrowserWorkspaceEnabled: () => api.workspaceEnabled,
+}));
+
 vi.mock("@/lib/hosted-browser/client", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/hosted-browser/client")
   >("@/lib/hosted-browser/client");
   return {
     ...actual,
+    fetchHostedBrowserProfileArchive: api.exportProfile,
     createBrowserTokenCache: () => ({
       get: async () => {
         api.mints += 1;
@@ -53,6 +68,36 @@ vi.mock("@/lib/hosted-browser/client", async () => {
       invalidate: () => {
         api.invalidations += 1;
       },
+    }),
+    // The shell's three calls. Answered rather than left to the real module,
+    // which would reach the network and leave the shell permanently
+    // reconnecting.
+    fetchHostedBrowserState: async () =>
+      api.state ?? {
+        seq: 1,
+        tabs: [
+          {
+            id: "t1",
+            url: "https://example.test",
+            title: "Example",
+            loading: false,
+            navCounter: 0,
+          },
+        ],
+        activeTabId: "t1",
+        canGoBack: false,
+        canGoForward: false,
+        viewport: { width: 1024, height: 768, revision: 0 },
+        policy: "fixed",
+        control: { kind: "agent" },
+      },
+    sendHostedPaneCommand: async (_tokens: unknown, args: any) => {
+      api.paneCommands.push(args.command);
+      return { ok: true as const };
+    },
+    reportHostedPaneViewport: async (_tokens: unknown, size: any) => ({
+      ...size,
+      revision: 1,
     }),
     fetchHostedBrowserSession: async () => {
       if (api.sessionError) {
@@ -107,6 +152,7 @@ const RUNNING = {
 };
 
 beforeEach(() => {
+  api.workspaceEnabled = true;
   api.session = RUNNING;
   api.sessionError = null;
   api.lease = { took: true, lease: { state: "held" }, yours: true };
@@ -116,6 +162,8 @@ beforeEach(() => {
   api.invalidations = 0;
   api.sockets = [];
   api.streamArgs = [];
+  api.state = null;
+  api.paneCommands = [];
 });
 
 // Restored HERE rather than at the end of each test body: an assertion that
@@ -125,6 +173,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 const mintToken = async () => ({ token: "t", expiresAt: Date.now() + 60_000 });
@@ -212,8 +261,8 @@ describe("the hosted pane — who has control", () => {
       yours: true,
     };
     renderBody();
-    expect(await screen.findByText("You have control")).toBeTruthy();
-    expect(screen.getByText("Hand back")).toBeTruthy();
+    expect(await screen.findByText("You’re in control (paused)")).toBeTruthy();
+    expect(screen.queryByText(/let agent browse/i)).toBeNull();
   });
 
   it("does not offer to take a browser somebody else holds", async () => {
@@ -223,8 +272,10 @@ describe("the hosted pane — who has control", () => {
       yours: false,
     };
     renderBody();
-    expect(await screen.findByText("Someone else has control")).toBeTruthy();
-    expect(screen.queryByText("Take control")).toBeNull();
+    expect(await screen.findByText("Someone else is driving")).toBeTruthy();
+    // There is no button to withhold any more: using the browser is what
+    // takes it, and the server refuses a click into somebody else's hold.
+    expect(screen.queryByText(/let agent browse/i)).toBeNull();
   });
 
   it("takes control and reopens the stream the take just revoked", async () => {
@@ -232,10 +283,13 @@ describe("the hosted pane — who has control", () => {
     // this pane's own stream. Without the reopen the person who just took
     // control watches a frozen picture.
     renderBody();
-    await deliverFrame();
+    const image = await deliverFrame();
+    image.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
     const before = api.sockets.length;
-    await userEvent.click(await screen.findByText("Take control"));
-    expect(api.leaseCalls).toEqual(["acquire"]);
+    // Clicking the page IS taking it. There is no button.
+    fireEvent.click(image, { clientX: 10, clientY: 10 });
+    await waitFor(() => expect(api.leaseCalls).toEqual(["acquire"]));
     await waitFor(() => expect(api.sockets.length).toBeGreaterThan(before));
   });
 
@@ -243,8 +297,9 @@ describe("the hosted pane — who has control", () => {
     api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
     api.lease = { took: true, lease: { state: "free" }, yours: false };
     renderBody();
-    await userEvent.click(await screen.findByText("Hand back"));
-    expect(api.leaseCalls).toEqual(["resume"]);
+    await screen.findByText("You’re in control");
+    await act(async () => releaseBrowserForChat("proj-1"));
+    await waitFor(() => expect(api.leaseCalls).toEqual(["resume"]));
     await screen.findByText("The agent is driving");
   });
 });
@@ -399,7 +454,7 @@ describe("the hosted pane — a lease that changes underneath it", () => {
   it("asks again when the picture comes back after somebody else had it", async () => {
     // A 4409 says they took it; NOTHING says they handed it back. Without
     // this, the pane reconnects and shows frames again while still reporting
-    // "Someone else has control" with no way to take it — until a reload.
+    // "Someone else is driving" with no way to take it — until a reload.
     vi.useFakeTimers();
     try {
       api.session = {
@@ -434,8 +489,10 @@ describe("the hosted pane — a lease that changes underneath it", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10);
       });
+      // Back to a browser this pane may drive: the status says so, and there
+      // is no button to look for — clicking the picture is what takes it.
       expect(screen.getByText("The agent is driving")).toBeTruthy();
-      expect(screen.getByText("Take control")).toBeTruthy();
+      expect(screen.queryByText("Someone else is driving")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -453,7 +510,7 @@ describe("the hosted pane — a lease that changes underneath it", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10);
       });
-      expect(screen.getByText("You have control")).toBeTruthy();
+      expect(screen.getByText("You’re in control")).toBeTruthy();
 
       api.lease = {
         took: false,
@@ -464,7 +521,7 @@ describe("the hosted pane — a lease that changes underneath it", () => {
         await vi.advanceTimersByTimeAsync(31_000);
       });
       expect(api.leaseCalls).toContain("heartbeat");
-      expect(screen.getByText("Someone else has control")).toBeTruthy();
+      expect(screen.getByText("Someone else is driving")).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
@@ -496,7 +553,7 @@ describe("the hosted pane — a lease that changes underneath it", () => {
     }
   });
 
-  it("HANDS THE BROWSER BACK when the pane goes away", async () => {
+  it("keeps human control parked when the pane goes away", async () => {
     // `pagehide` covers the tab closing, not this component unmounting — which
     // the rail does on every engine switch. A hold that stops being
     // heartbeaten PARKS rather than frees, on purpose, so the agent stayed
@@ -504,10 +561,10 @@ describe("the hosted pane — a lease that changes underneath it", () => {
     // one back.
     api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
     const view = renderBody();
-    expect(await screen.findByText("You have control")).toBeTruthy();
+    expect(await screen.findByText("You’re in control")).toBeTruthy();
     api.leaseCalls = [];
     view.unmount();
-    await waitFor(() => expect(api.leaseCalls).toEqual(["resume"]));
+    expect(api.leaseCalls).toEqual([]);
   });
 });
 
@@ -546,11 +603,10 @@ describe("the hosted pane — what keeps the box awake", () => {
       .spyOn(document, "visibilityState", "get")
       .mockReturnValue("hidden");
     renderBody({ active: true });
-    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
-    expect(socket().sent).toHaveLength(0);
+    expect(api.sockets).toHaveLength(0);
     hidden.mockRestore();
     vi.useRealTimers();
   });
@@ -569,11 +625,30 @@ describe("the hosted pane — driving it", () => {
     });
   });
 
-  it("sends nothing while the agent is driving", async () => {
+  it("TAKES the browser when somebody types while the agent is driving", async () => {
+    // It used to drop the keystroke, which was the honest UI of a rule the
+    // server enforces anyway. Now using the browser is what takes it: the
+    // keystroke acquires the lease first and is then delivered, once.
+    api.lease = { took: true, lease: { state: "held" }, yours: true };
     renderBody();
     const image = await deliverFrame();
     (image.parentElement as HTMLElement).focus();
     await userEvent.keyboard("k");
+    await waitFor(() => expect(api.leaseCalls).toEqual(["acquire"]));
+    await waitFor(() => expect(api.inputs).toHaveLength(1));
+    expect(api.inputs[0]).toMatchObject({
+      events: [{ type: "text", text: "k" }],
+    });
+  });
+
+  it("does not take the browser for a lone modifier", async () => {
+    // A resting hand, or a host shortcut beginning. Taking the agent's browser
+    // for one would be the keyboard's version of taking it on a hover.
+    renderBody();
+    const image = await deliverFrame();
+    (image.parentElement as HTMLElement).focus();
+    await userEvent.keyboard("{Shift>}");
+    expect(api.leaseCalls).toEqual([]);
     expect(api.inputs).toHaveLength(0);
   });
 
@@ -732,29 +807,50 @@ describe("the hosted pane — which tab is on screen", () => {
     });
   }
 
-  it("draws the strip Chromium's kiosk mode removed", async () => {
-    renderBody();
-    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
-    beat({
-      active: "b",
-      list: [
-        { id: "a", url: "https://example.com/one" },
-        { id: "b", url: "https://other.test/two" },
+  it("draws the COMPLETE strip, from the state read rather than the heartbeat", async () => {
+    // The heartbeat's list is budgeted to a few kilobytes shared with the
+    // encoder's counters and drops tabs from the end, which is right for a
+    // caption over a video and wrong for a strip where the dropped tab is the
+    // one somebody is looking for.
+    api.state = {
+      seq: 3,
+      tabs: [
+        { id: "a", url: "https://example.com/one", title: "One" },
+        { id: "b", url: "https://other.test/two", title: "Two" },
       ],
-    });
-    const strip = await screen.findByTestId("pane-tab-strip");
-    // The HOST, not the path: a strip is a few characters wide, and a path
-    // carries reset tokens and account ids that have no business on screen.
-    expect(strip.textContent).toContain("example.com");
-    expect(strip.textContent).toContain("other.test");
-    expect(strip.textContent).not.toContain("/two");
+      activeTabId: "b",
+      canGoBack: false,
+      canGoForward: false,
+      control: { kind: "agent" },
+      viewport: { width: 1024, height: 768, revision: 0 },
+      policy: "fixed",
+    };
+    renderBody();
+    const tabs = await screen.findAllByTestId("browser-tab");
+    expect(tabs).toHaveLength(2);
+    // The TITLE now, which is what every browser shows and what a person
+    // scans for. The address field still shows the host at rest.
+    expect(tabs[0]?.textContent).toContain("One");
+    expect(tabs[1]?.textContent).toContain("Two");
+    expect(tabs[1]).toHaveAttribute("aria-selected", "true");
   });
 
-  it("stays out of the way when there is only one tab", async () => {
+  it("keeps the strip for a single tab", async () => {
+    // A bar that appears when you open a second tab makes the page jump under
+    // the pointer at the moment somebody is aiming at something.
+    api.state = {
+      seq: 1,
+      tabs: [{ id: "a", url: "https://example.com/", title: "One" }],
+      activeTabId: "a",
+      canGoBack: false,
+      canGoForward: false,
+      control: { kind: "agent" },
+      viewport: { width: 1024, height: 768, revision: 0 },
+      policy: "fixed",
+    };
     renderBody();
-    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
-    beat({ active: "a", list: [{ id: "a", url: "https://example.com/" }] });
-    expect(screen.queryByTestId("pane-tab-strip")).toBeNull();
+    expect(await screen.findByTestId("browser-tab-strip")).toBeTruthy();
+    expect(await screen.findAllByTestId("browser-tab")).toHaveLength(1);
   });
 
   it("says so when the agent switches the tab under a watcher", async () => {
@@ -767,9 +863,10 @@ describe("the hosted pane — which tab is on screen", () => {
     // The first reading is not a switch: naming the tab somebody just opened
     // the pane on would be a notification about nothing.
     beat({ active: "a", list: tabs });
-    expect(screen.queryByTestId("pane-notice")).toBeNull();
+    expect(screen.queryByTestId("browser-notice")).toBeNull();
     beat({ active: "b", list: tabs });
-    const notice = (await screen.findByTestId("pane-notice")).textContent ?? "";
+    const notice =
+      (await screen.findByTestId("browser-notice")).textContent ?? "";
     // The HOST, not the URL. A path carries reset tokens, share links and
     // account ids, and this notice is the one thing on screen large enough to
     // read from the next desk.
@@ -821,35 +918,44 @@ describe("the hosted pane — quality tiers", () => {
     await waitFor(() => expect(api.sockets.length).toBeGreaterThan(before));
   });
 
-  it("tells the DAEMON when auto steps the quality down", async () => {
-    // Auto used to move only the pane's own state, so a viewer on a link that
-    // could not carry the stream was labelled "Data saver" while the encoder
-    // went on producing exactly the bitrate that was being dropped.
-    renderBody();
-    await deliverFrame();
-    // Three consecutive readings, because the controller refuses to act on
-    // one: half the frames offered are dropped each second.
-    for (let n = 1; n <= 4; n += 1) {
+  it.each(["h264", "jpeg"])(
+    "auto changes the encoder only for negotiated video (%s)",
+    async (codec) => {
+      // Auto used to move only the pane's own state, so a viewer on a link that
+      // could not carry the stream was labelled "Data saver" while the encoder
+      // went on producing exactly the bitrate that was being dropped.
+      vi.stubGlobal("VideoDecoder", class {});
+      renderBody();
+      await deliverFrame();
       act(() => {
         socket().onmessage?.({
-          data: JSON.stringify({
-            type: "stats",
-            framesIn: n * 20,
-            dropped: n * 10,
-            bytes: 0,
-            subscribers: 1,
-          }),
+          data: JSON.stringify({ type: "hello", features: ["input"], codec }),
         });
       });
-    }
-    await waitFor(() =>
-      expect(
-        socket()
-          .sent.map((raw) => JSON.parse(raw))
-          .some((m) => m.type === "quality" && m.tier === "saver"),
-      ).toBe(true),
-    );
-  });
+      // Three consecutive readings, because the controller refuses to act on
+      // one: half the frames offered are dropped each second.
+      for (let n = 1; n <= 4; n += 1) {
+        act(() => {
+          socket().onmessage?.({
+            data: JSON.stringify({
+              type: "stats",
+              framesIn: n * 20,
+              dropped: n * 10,
+              bytes: 0,
+              subscribers: 1,
+            }),
+          });
+        });
+      }
+      await waitFor(() =>
+        expect(
+          socket()
+            .sent.map((raw) => JSON.parse(raw))
+            .some((m) => m.type === "quality" && m.tier === "saver"),
+        ).toBe(codec === "h264"),
+      );
+    },
+  );
 
   it("falls back to JPEG when the box says it cannot encode video", async () => {
     // A generic drop is worth retrying as-is; this one is not — retrying asks
@@ -880,4 +986,76 @@ describe("the hosted pane — quality tiers", () => {
     expect(await screen.findByTestId("vnc-panel")).toBeTruthy();
     expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
   });
+});
+
+it("keeps hosted navigation when the workspace flag is off", async () => {
+  api.workspaceEnabled = false;
+  renderBody();
+  await deliverFrame();
+  expect(await screen.findByTestId("browser-new-tab")).toBeInTheDocument();
+  expect(screen.getByTestId("browser-address")).toBeInTheDocument();
+});
+
+it("keeps profile saving in settings rather than the browser toolbar", async () => {
+  renderBody({ sessionId: "profile-chat" });
+  await waitFor(() =>
+    expect(screen.getByTestId("browser-new-tab")).not.toBeDisabled(),
+  );
+  expect(screen.queryByRole("button", { name: "Save profile" })).toBeNull();
+  expect(screen.queryByText("Save profile for other chats…")).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Browser view settings" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Save profile for other chats…",
+    }),
+  ).toBeVisible();
+});
+
+vi.mock("@/lib/browser-profiles/client", () => ({
+  saveBrowserProfile: vi.fn(),
+}));
+
+it("returns control before exporting a profile after the user signs in", async () => {
+  api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+  api.lease = { took: true, lease: { state: "free" }, yours: false };
+  api.exportProfile.mockClear();
+  const prompt = vi.spyOn(window, "prompt").mockReturnValue("Signed in");
+  try {
+    renderBody({ sessionId: "profile-chat" });
+    await screen.findByText("You’re in control");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Browser view settings" }),
+    );
+    const item = await screen.findByRole("menuitem", {
+      name: "Save profile for other chats…",
+    });
+    expect(item).not.toHaveAttribute("data-disabled");
+    await userEvent.click(item);
+    await waitFor(() => expect(api.exportProfile).toHaveBeenCalledOnce());
+    expect(api.leaseCalls).toEqual(["resume"]);
+  } finally {
+    prompt.mockRestore();
+  }
+});
+
+it("clears automatic handoff when a previously held browser disappears", async () => {
+  api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+  const view = renderBody();
+  await screen.findByText("You’re in control");
+  api.sessionError = { status: 409 };
+  view.rerender(
+    <HostedBrowserBody
+      projectId="proj-1"
+      mintToken={mintToken}
+      active={false}
+    />,
+  );
+  view.rerender(
+    <HostedBrowserBody projectId="proj-1" mintToken={mintToken} active />,
+  );
+  await screen.findByTestId("hosted-browser-idle");
+  await act(async () => releaseBrowserForChat("proj-1"));
+  expect(api.leaseCalls).toEqual([]);
 });

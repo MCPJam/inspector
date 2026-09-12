@@ -6,6 +6,10 @@
  */
 // `node:*` builtins are the one import class the bundler allows here; the
 // artifact runs on a box with nothing but its own bytes.
+import {
+  parseViewportPolicy,
+  type SessionViewportPolicy,
+} from "../../../../shared/browser-viewport";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 
@@ -37,6 +41,22 @@ export interface BrowserdConfig {
    * picture.
    */
   kiosk: boolean;
+  /**
+   * May this session's page change size?
+   *
+   * `fixed` unless a deployment says otherwise, which keeps every existing
+   * opener — an eval, a swarm, a CLI run, an SDK consumer — on the 1024x768
+   * session it has always had. A daemon that defaulted the other way would
+   * silently change the size of every recorded eval the first time somebody
+   * dragged a panel.
+   *
+   * Read from the environment rather than negotiated per caller because it is
+   * a property of the BOX: the display, the kiosk browser and the encoder all
+   * move together, so one session's resize is every caller's resize. The
+   * per-caller half of the question — may THIS client cope with a page that
+   * changes size — is `negotiateViewport`, one layer up.
+   */
+  viewportPolicy: SessionViewportPolicy;
   /**
    * Device pixels per CSS pixel for the browser.
    *
@@ -83,6 +103,8 @@ export interface BrowserdConfig {
   tokenFile?: string;
   /** Did the box start this daemon, or did an inspector replica? */
   startedBy: "prelaunch" | "inspector";
+  /** One-shot profile archive to unpack before launching Chromium. */
+  profileArchivePath?: string;
 }
 
 export const DEFAULT_BROWSERD_PORT = 8791;
@@ -159,6 +181,12 @@ export function readBrowserdConfig(
     // contradictory rather than merely unusual, so the one that decides
     // whether there is a picture wins.
     kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
+    // NEVER WITHOUT KIOSK on a hosted box, and the guard is the same shape as
+    // kiosk's own: a display that resized under a Chromium that is not filling
+    // it leaves the page one size and the capture another, which is the exact
+    // disagreement between the number and the picture this whole path exists
+    // to prevent.
+    viewportPolicy: parseViewportPolicy(env.MCPJAM_BROWSERD_VIEWPORT_POLICY),
     deviceScaleFactor: readDeviceScaleFactor(env),
     recordDir:
       env.MCPJAM_BROWSERD_RECORD_DIR?.trim() ||
@@ -168,6 +196,9 @@ export function readBrowserdConfig(
     // typo must not silently cost a run its evidence.
     recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...(tokenFile ? { tokenFile } : {}),
+    ...(env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim()
+      ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() }
+      : {}),
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector",
   };
@@ -201,7 +232,8 @@ function readRecordMaxBytes(env: NodeJS.ProcessEnv): number {
   // `< 1`, not `<= 0`: a positive fraction floors to zero, and `-fs 0` tells
   // ffmpeg to stop at the first byte — a switch meant to bound a recording
   // would silently abolish it. A cap under one byte cannot be meant.
-  if (!Number.isFinite(raw) || raw < 1) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  if (!Number.isFinite(raw) || raw < 1)
+    return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
   return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 

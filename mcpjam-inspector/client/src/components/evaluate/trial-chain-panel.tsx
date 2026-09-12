@@ -137,7 +137,9 @@ export function TrialChainPanel({
               {...(nextAction && selectedRow.stage === chain.firstFailedStage
                 ? { nextAction }
                 : {})}
-            />
+            >
+              {stageFooter?.(selectedRow.stage)}
+            </TrialStageDetailCard>
           ) : (
             <p className="p-4 text-xs text-muted-foreground">
               Select a stage to inspect its recorded evidence.
@@ -165,8 +167,9 @@ export function TrialChainPanel({
             {...(nextAction && selectedRow.stage === chain.firstFailedStage
               ? { nextAction }
               : {})}
-          />
-          {stageFooter?.(selectedRow.stage)}
+          >
+            {stageFooter?.(selectedRow.stage)}
+          </TrialStageDetailCard>
         </>
       ) : null}
     </div>

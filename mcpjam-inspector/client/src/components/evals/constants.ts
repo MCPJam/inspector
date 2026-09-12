@@ -17,14 +17,12 @@ export const RUN_FILTER_ALL = "all";
 export const RUN_FILTER_LEGACY = "legacy";
 
 export type RunFilterValue =
-  | typeof RUN_FILTER_ALL
-  | typeof RUN_FILTER_LEGACY
-  | string;
+  typeof RUN_FILTER_ALL | typeof RUN_FILTER_LEGACY | string;
 
 // Default values
 export const DEFAULTS = {
   MIN_PASS_RATE: 100,
-  RUNS_PER_TEST: 1,
+  RUNS_PER_TEST: 5,
   CHART_HEIGHT: "h-32",
   MAX_QUERY_DISPLAY_LENGTH: 100,
   BATCH_DELETE_CONFIRMATION_DELAY: 0,
@@ -99,8 +97,7 @@ export const EVAL_DESTRUCTIVE_BUTTON_CLASS =
 export const EVAL_FAIL_BAR_CLASS = "bg-destructive/50";
 
 /** Compact failed-outcome badges — pastel surface `/50`, neutral foreground. */
-export const EVAL_FAILED_BADGE_CLASS =
-  "bg-destructive/50 text-foreground";
+export const EVAL_FAILED_BADGE_CLASS = "bg-destructive/50 text-foreground";
 
 /**
  * Tint + role-token text for pass/fail chips. Hue comes from `--success` /
@@ -111,8 +108,7 @@ export const EVAL_PASSED_BADGE_STRONG_CLASS = "bg-success/15 text-success";
 export const EVAL_FAILED_BADGE_STRONG_CLASS =
   "bg-destructive/15 text-destructive";
 /** Authored Warn/Report severity — not a computed verdict. */
-export const EVAL_WARN_BADGE_STRONG_CLASS =
-  "bg-warning/15 text-warning";
+export const EVAL_WARN_BADGE_STRONG_CLASS = "bg-warning/15 text-warning";
 
 // UI configuration
 export const UI_CONFIG = {

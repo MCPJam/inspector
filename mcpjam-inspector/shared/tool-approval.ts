@@ -5,14 +5,27 @@
  * module is where the value comes from. There is exactly one input besides the
  * tool's own nature: the host's `requireToolApproval` switch.
  *
- * THE SWITCH RAISES. It can never lower. That is the whole semantics, and it
- * is what makes the two facts a user needs to hold in their head small enough
- * to hold: some actions always ask, and the switch makes everything else ask
- * too. A family that must ask (a shell on your own machine, a click on a live
- * signed-in page, a third party's instructions entering the turn) asks whether
- * the switch is on or off. A family that never needs to (looking at something,
- * listing your own projects, the discovery meta-tools) never asks, because
- * pausing an observation buys no safety and costs a click.
+ * THE SWITCH DECIDES, for every tool the model calls to ACT. One setting, one
+ * answer, and a user who turns it off sees no approval pill — on an MCP
+ * server's tool, on a page's `webmcp_*` tool, on a browser verb, on a shell.
+ *
+ * It used to raise only. Several families sat at `always` and ignored it, so
+ * "Tool Approval: off" still paused on the most common thing anyone does with
+ * this product — open a page and click something. A switch that does not
+ * govern the tools a person actually watches is not a switch, and the rule
+ * "off means off" is worth more than a per-family judgement they cannot see.
+ *
+ * What is left at `never` is not a carve-out from that rule so much as the
+ * absence of anything to decide: looking at something, listing your own
+ * projects, the discovery meta-tools. Pausing an observation buys no safety
+ * and costs a click, and it is what the setting's own copy promises.
+ *
+ * `always` survives for a family that must ask whatever the switch says.
+ * Nothing sits there today as a FLOOR; the one thing that still asks
+ * unconditionally declares it as a function, because the answer depends on
+ * which value the model named — a third party's instructions entering the turn
+ * (`computers/effective-skill-tools.ts`), which is a trust boundary rather
+ * than a preference.
  *
  * WHY A FLOOR RATHER THAN A BOOLEAN AT EACH BUILDER. Before this, each builder
  * wrote its own expression — `isLocal ? true : opts.requireToolApproval ===
@@ -27,9 +40,10 @@
  * What a tool family needs from the user, before the switch is consulted.
  *
  *  - `never`   — asking buys nothing. Reads, observations, discovery.
- *  - `setting` — the ordinary case: the user's switch decides.
- *  - `always`  — asks whatever the switch says. Reserved for actions whose
- *                blast radius is outside anything the turn can undo.
+ *  - `setting` — every tool that acts: the user's switch decides.
+ *  - `always`  — asks whatever the switch says. See the header: no family
+ *                declares this as a floor today, and one that wants it should
+ *                have to argue why the user's own switch does not apply.
  */
 export type ApprovalFloor = "never" | "setting" | "always";
 

@@ -161,7 +161,10 @@ export function SingleRunContent({
 
   const pairings = useMemo(() => {
     const names = hostNamesById ?? new Map();
-    const modelId = run.effectiveModelId ?? "Client default";
+    // Identity and label stay separate: the twin lookup keys on the run's
+    // own effective model, so a fallback label must not leak into the key.
+    const modelId = run.effectiveModelId ?? "";
+    const modelLabel = run.effectiveModelId ?? "Client default";
     return buildHeroPairings({
       targets: [
         {
@@ -172,7 +175,7 @@ export function SingleRunContent({
               `Client …${run.namedHostId.slice(-6)}`)
             : "Suite client",
           modelId,
-          model: compactModelIdTail(modelId),
+          model: compactModelIdTail(modelLabel),
           iterations,
         },
       ],

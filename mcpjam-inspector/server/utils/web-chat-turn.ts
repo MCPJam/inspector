@@ -23,6 +23,7 @@
  *   - Throwing/propagating errors; the caller is expected to catch and run
  *     its own OAuth-error enrichment if applicable.
  */
+import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
 import type { Context } from "hono";
@@ -283,6 +284,7 @@ export interface WebChatTurnPersistContext {
    * turn is safe.
    */
   environmentId?: string;
+  executionTarget?: ResumeExecutionTarget;
   /**
    * This turn's MATERIALIZED secrets, when the ROUTE already resolved them.
    *
@@ -1117,6 +1119,9 @@ export async function streamWebChatTurn(
               directVisibility: persist.directVisibility,
               ...(persist.rewind ? { rewind: persist.rewind } : {}),
               resumeConfig: {
+                ...(persist.executionTarget
+                  ? { executionTarget: persist.executionTarget }
+                  : {}),
                 systemPrompt: persist.systemPrompt,
                 temperature: persist.temperature,
                 requireToolApproval: persist.requireToolApproval,
