@@ -539,6 +539,34 @@ describe("chromium install — automatic retries", () => {
     expect(runInstall).toHaveBeenCalledTimes(5);
   });
 
+  it("lets a Chromium installed by hand clear a spent cap", async () => {
+    const runInstall = failingInstall();
+    const isInstalled = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValue(false);
+    const attempt = () =>
+      ensureLocalChromiumInstalled({
+        env: localEnv,
+        isInstalled,
+        runInstall,
+        logger: silentLogger,
+      });
+
+    await attempt();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(runInstall).toHaveBeenCalledTimes(4);
+
+    // Someone ran `npx playwright install chromium` themselves. The probe
+    // runs BEFORE the suppression gate for exactly this reason: a cap that
+    // outlived the problem it was capping would be a bug of its own.
+    isInstalled.mockResolvedValue(true);
+    await expect(attempt()).resolves.toBe(true);
+    expect(getChromiumInstallState()).toEqual({ status: "ready" });
+    expect(runInstall).toHaveBeenCalledTimes(4);
+  });
+
   it("a retry that succeeds clears the ladder", async () => {
     const runInstall = vi
       .fn<() => Promise<void>>()
