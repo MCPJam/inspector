@@ -173,7 +173,14 @@ export interface PlatformApiClientOptions {
    * A token naming the calling PROGRAM, prefixed onto this client's own
    * `mcpjam-sdk/<version>` rather than replacing it — see
    * {@link DEFAULT_PLATFORM_USER_AGENT}. Omit it and the SDK still identifies
-   * itself. Ignored by browsers, where the header is forbidden.
+   * itself outside a browser.
+   *
+   * In a browser (a global `window` and `document`) neither the suffix nor the
+   * default is added, and a value given here is sent as-is. Browsers disagree
+   * on the header: Chromium silently drops a script-set `User-Agent`, but
+   * Firefox sends it, because the Fetch spec no longer forbids it. A page
+   * usually bundles the SDK from source, where the version is `unknown`, so a
+   * default there would only log browser users as `mcpjam-sdk/unknown`.
    */
   userAgent?: string;
   /**
@@ -518,6 +525,21 @@ function stripTrailingSlashes(url: string): string {
  */
 export const DEFAULT_PLATFORM_USER_AGENT = `mcpjam-sdk/${readSdkVersion()}`;
 
+/**
+ * Whether this client is running in a browser page, where the default
+ * user-agent must not be sent (see {@link PlatformApiClientOptions.userAgent}).
+ *
+ * Keyed on `window` AND `document`, never on `navigator`: Node 21+, Deno, Bun
+ * and Cloudflare Workers all define `navigator` (in Workers its `userAgent` is
+ * `"Cloudflare-Workers"`), and none of them has a `document`. Requiring both
+ * also keeps Deno 1.x, which defined `window` but no `document`, on the
+ * server side.
+ */
+function isBrowserPage(): boolean {
+  const scope = globalThis as { window?: unknown; document?: unknown };
+  return scope.window !== undefined && scope.document !== undefined;
+}
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
@@ -545,9 +567,11 @@ export class PlatformApiClient {
     // client instance, which throws "Illegal invocation" in Workers/browsers.
     this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.userAgent = options.userAgent
-      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
-      : DEFAULT_PLATFORM_USER_AGENT;
+    this.userAgent = isBrowserPage()
+      ? options.userAgent
+      : options.userAgent
+        ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+        : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's

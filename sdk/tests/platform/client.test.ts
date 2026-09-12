@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_PLATFORM_API_BASE_URL,
   DEFAULT_PLATFORM_USER_AGENT,
@@ -398,6 +398,59 @@ describe("PlatformApiClient", () => {
     expect(header(0)).toBe(DEFAULT_PLATFORM_USER_AGENT);
     // Prefixed, not replaced: which program is calling AND which SDK it links.
     expect(header(1)).toBe(`mcpjam-cli/1.0 ${DEFAULT_PLATFORM_USER_AGENT}`);
+  });
+
+  describe("in a browser", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    const header = (fetchMock: FetchMock) =>
+      new Headers(requestOf(fetchMock, 0).init.headers as HeadersInit).get(
+        "user-agent"
+      );
+
+    it("sets no default user-agent where a page could send it", async () => {
+      // Firefox lets a script set `User-Agent` (the Fetch spec no longer
+      // forbids it), and the inspector bundles the SDK from source, where the
+      // version is `unknown` — so a default here would log every Firefox user
+      // as `mcpjam-sdk/unknown`.
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("document", {});
+      const fetchMock = vi.fn(async () => jsonResponse({}));
+      await makeClient(fetchMock).getMe();
+
+      expect(header(fetchMock)).toBeNull();
+    });
+
+    it("still sends a caller's own user-agent unchanged", async () => {
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("document", {});
+      const fetchMock = vi.fn(async () => jsonResponse({}));
+      await makeClient(fetchMock, { userAgent: "mcpjam-cli/1.0" }).getMe();
+
+      expect(header(fetchMock)).toBe("mcpjam-cli/1.0");
+    });
+
+    it("does not mistake a Workers runtime, which has only `navigator`, for one", async () => {
+      vi.stubGlobal("window", undefined);
+      vi.stubGlobal("document", undefined);
+      vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" });
+      const fetchMock = vi.fn(async () => jsonResponse({}));
+      await makeClient(fetchMock).getMe();
+
+      expect(header(fetchMock)).toBe(DEFAULT_PLATFORM_USER_AGENT);
+    });
+
+    it("sends the default in Node", async () => {
+      expect(typeof (globalThis as { window?: unknown }).window).toBe(
+        "undefined"
+      );
+      const fetchMock = vi.fn(async () => jsonResponse({}));
+      await makeClient(fetchMock).getMe();
+
+      expect(header(fetchMock)).toBe(DEFAULT_PLATFORM_USER_AGENT);
+    });
   });
 
   it("names a version rather than claiming one it was not given", () => {
