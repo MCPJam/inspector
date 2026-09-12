@@ -162,12 +162,32 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
-const browserFixture = vi.hoisted(() => ({ guest: false, granted: false }));
+// `setting` is the MEMBER's stored answer, the one `useBrowserToolIds` reads
+// from `hosts:getLocalBrowserSettings` (see the convex mock below). A guest
+// never reaches that query, so guest rows drive the host config's
+// `localBrowserEnabled` instead.
+const browserFixture = vi.hoisted(() => ({
+  guest: false,
+  granted: false,
+  setting: null as boolean | null,
+}));
+const browserConsent = vi.hoisted(() => () => ({
+  status: browserFixture.granted ? "granted" : "absent",
+  granted: browserFixture.granted,
+  token: browserFixture.granted ? "device-consent" : null,
+  grant: async () => true,
+  revoke: async () => {},
+}));
 vi.mock("@/hooks/useBrowserEngine", () => ({
   useBrowserEngine: () => ({
     engine: "local", selectedEngine: "local", localAvailable: true,
-    consent: { granted: browserFixture.granted, token: browserFixture.granted ? "device-consent" : null },
+    consent: browserConsent(),
   }),
+}));
+// The same store the engine hook reads — `useBrowserToolIds` subscribes to it
+// directly, and the two must not be able to disagree about one device grant.
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => browserConsent(),
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
@@ -182,8 +202,15 @@ vi.mock("convex/react", () => ({
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
-  useQuery: (_name: string, args: unknown) =>
-    args === "skip" ? undefined : null,
+  useQuery: (name: string, args: unknown) => {
+    if (args === "skip") return undefined;
+    // Shaped like the real query: an object whose `enabled` is null when the
+    // member has stored nothing. Returning a bare null would read as "still
+    // loading" and mask what these tests are asserting.
+    if (name === "hosts:getLocalBrowserSettings")
+      return { enabled: browserFixture.setting };
+    return null;
+  },
   useMutation: () => () => Promise.resolve(),
   // COMP-14: useComputerAttachmentUpload pulls in useMintTerminalToken (a
   // Convex action). The flag mock keeps the flow inert; this keeps it mountable.
@@ -677,6 +704,7 @@ describe("PlaygroundMain — multi-host render path", () => {
   beforeEach(() => {
     browserFixture.guest = false;
     browserFixture.granted = false;
+    browserFixture.setting = null;
     vi.clearAllMocks();
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
     useHostContextStore.setState({
@@ -1249,12 +1277,19 @@ describe("PlaygroundMain — multi-host render path", () => {
     ]);
   });
 
+  // EVERY COLUMN ANSWERS LIKE THE SINGLE PANE. The grid resolves each column
+  // through `useBrowserToolIds` — the same hook the pane uses — so the rule
+  // itself is pinned at that hook's altitude (a member's stored setting needs
+  // a queryable project scope, which this harness deliberately does not have).
+  // What matters here is that the grid asks the question at all, per column,
+  // and does not re-answer it with a copy that drifts.
   it.each([
     { guest: true, granted: true, enabled: undefined, expected: ["browser"] },
     { guest: true, granted: false, enabled: undefined, expected: [] },
     { guest: true, granted: true, enabled: false, expected: [] },
-    { guest: false, granted: true, enabled: undefined, expected: [] },
-  ])("resolves comparison Browser tools: guest=$guest consent=$granted setting=$enabled", ({ guest, granted, enabled, expected }) => {
+    { guest: false, granted: true, enabled: undefined, expected: ["browser"] },
+    { guest: false, granted: true, enabled: false, expected: [] },
+  ])("resolves comparison Browser tools: guest=$guest consent=$granted host=$enabled", ({ guest, granted, enabled, expected }) => {
     browserFixture.guest = guest;
     browserFixture.granted = granted;
     multiHostFixture.hostList = [{ hostId: "h-A", name: "A" }, { hostId: "h-B", name: "B" }];
