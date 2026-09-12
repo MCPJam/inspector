@@ -8,13 +8,12 @@ vi.mock("@/hooks/useLocalBrowserConsent", () => ({
 import { StrictMode } from "react";
 import { waitFor } from "@testing-library/react";
 /**
- * The pane's two jobs: ask for frames only while someone is looking, and show
- * SOMETHING whatever the server can do.
+ * The pane's two jobs: ask for frames only while someone is looking, and tell
+ * the viewer what to do when none arrive.
  *
- * The fallback is the part worth pinning down. A server too old to know
- * `set_screencast` answers 400, and the person running it should see their page
- * via the screenshot poll rather than an empty box and an error about a command
- * they never typed.
+ * There is no screenshot poll behind the stream any more. A session whose
+ * frames never come says so in the shell's notice strip and points at the
+ * Screenshot button, rather than sitting on "Waiting for the first frame…".
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ReactNode } from "react";

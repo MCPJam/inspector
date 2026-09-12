@@ -14,15 +14,6 @@ import {
   writeLastWebMcpUrl,
 } from "@/lib/webmcp-inspector/last-url";
 import { useCallback, useEffect, useMemo, useState } from "react";
-
-/**
- * How long "Waiting for the first frame…" is allowed to be the whole story.
- *
- * Long enough to cover a daemon selecting its first tab and the health tick
- * that re-subscribes behind it; short enough that somebody staring at an empty
- * pane is told what to do instead of guessing.
- */
-const FRAME_STALL_MS = 5_000;
 import { useShallow } from "zustand/react/shallow";
 import { Globe } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -42,6 +33,7 @@ import {
 import {
   parseHostedSessionId,
   WEBMCP_VIEWPORT,
+  webMcpServerPaints,
 } from "@/shared/webmcp-inspector-protocol";
 import { createInputForwarder, type PaneFrame } from "@/lib/browser-pane/input";
 import { fromBrowserPaneInput } from "@/shared/webmcp-input";
@@ -57,6 +49,15 @@ import { notePainted } from "@/lib/webmcp-inspector/frame-stats";
 import { BrowserPanel } from "@/components/computer/BrowserPanel";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyWebMcpDiagnostics } from "@/lib/webmcp-inspector/diagnostics";
+
+/**
+ * How long "Waiting for the first frame…" is allowed to be the whole story.
+ *
+ * Long enough to cover a daemon selecting its first tab and the health tick
+ * that re-subscribes behind it; short enough that somebody staring at an empty
+ * pane is told what to do instead of guessing.
+ */
+const FRAME_STALL_MS = 5_000;
 
 /**
  * How long to wait for React to commit the embedded pane.
@@ -233,7 +234,7 @@ export function WebmcpInspectorTab() {
    * `electron-native` is the kind that makes this more than a rename: its
    * surface paints itself, so "streaming" is false for it no matter what the
    * Live view toggle or the document's visibility say — there is no stream to
-   * turn on, and asking for one would start a poll that overwrites nothing.
+   * turn on, and asking for one would request frames nothing will carry.
    */
   const streaming =
     live &&
@@ -483,6 +484,8 @@ export function WebmcpInspectorTab() {
    * watches for the FIRST picture and then lets go.
    */
   const [framesStalled, setFramesStalled] = useState(false);
+  // `frame-stream` only: that is the pane rendered inside the browser shell,
+  // whose notice strip carries this. A mirrored window has no strip.
   const framesExpected = transportKind === "frame-stream" && streaming;
   useEffect(() => {
     setFramesStalled(false);
@@ -664,10 +667,9 @@ export function WebmcpInspectorTab() {
  * The page, as a picture.
  *
  * Three sources in strict order, because they degrade rather than compete: the
- * live frame if one has arrived, the last manual/polled screenshot if not, and
- * a line of text if neither. The middle rung is what makes an older server, a
- * hosted session, and the first few hundred milliseconds of a new one all show
- * something rather than a hole.
+ * live frame if one has arrived, the last manual screenshot if not, and a line
+ * of text if neither. The middle rung is what keeps a pane whose stream is
+ * unavailable showing the page someone asked to see, rather than a hole.
  *
  * The frame carries its own device dimensions, so the box is sized from the
  * frame rather than from a viewport constant: the two would only ever disagree
@@ -1005,14 +1007,13 @@ function ErrorBanner({
  */
 interface ViewportBehaviour {
   /**
-   * The SERVER produces this session's picture — as a frame stream, as polled
-   * screenshots, or not at all.
+   * The SERVER produces this session's picture, over the frame socket.
    *
    * False means the surface paints itself where the viewer already is, so
-   * nothing here should ask for frames, poll, or forward input.
+   * nothing here should ask for frames or forward input. Always taken from
+   * `webMcpServerPaints`, which the store also opens its socket on.
    */
   serverPaints: boolean;
-  /** Poll screenshots instead of asking for a stream; nothing streams here. */
   /** The stream is the ONLY view, so "Live view: off" must not be offered. */
   streamRequired: boolean;
   /** Whether the pane forwards the viewer's input to the page. */
@@ -1031,8 +1032,10 @@ interface ViewportBehaviour {
   embedsBrowserPanel?: boolean;
 }
 
-const NATIVE_WINDOW_BEHAVIOUR: ViewportBehaviour = {
-  serverPaints: true,
+/** A kind's own answers; `serverPaints` is added from the shared predicate. */
+type TransportBehaviour = Omit<ViewportBehaviour, "serverPaints">;
+
+const NATIVE_WINDOW_BEHAVIOUR: TransportBehaviour = {
   streamRequired: false,
   // View-only on purpose: the person already has the real page in front of
   // them, and forwarding pane input would drive it a SECOND time — every click
@@ -1045,6 +1048,15 @@ const NATIVE_WINDOW_BEHAVIOUR: ViewportBehaviour = {
 function viewportBehaviour(
   kind: WebMcpViewportTransport["kind"] | undefined,
 ): ViewportBehaviour {
+  return {
+    ...transportBehaviour(kind),
+    serverPaints: webMcpServerPaints(kind),
+  };
+}
+
+function transportBehaviour(
+  kind: WebMcpViewportTransport["kind"] | undefined,
+): TransportBehaviour {
   switch (kind) {
     // No session yet, so nothing is being shown. The window arm is the safe
     // answer: it asks for a stream that a started session would accept, and
@@ -1065,7 +1077,6 @@ function viewportBehaviour(
         // screencast on this side of the daemon to ask for, and the
         // once-a-second screenshot it used to fall back to was proof of life
         // rather than a picture anyone could work with.
-        serverPaints: false,
         embedsBrowserPanel: true,
         viewOnlyCaption:
           "A live view of your MCPJam computer's browser. Take control to sign in or answer a challenge.",
@@ -1084,9 +1095,8 @@ function viewportBehaviour(
       return {
         // The one kind the client owns. Its pixels are a real Chromium surface
         // already on this screen, so there is nothing to encode, nothing to
-        // poll, and no input to forward — the surface takes the viewer's mouse
+        // stream, and no input to forward — the surface takes the viewer's mouse
         // and keyboard natively, which is the entire point of it.
-        serverPaints: false,
         streamRequired: false,
         drivesPage: false,
         viewOnlyCaption: "The page is running natively in this pane.",

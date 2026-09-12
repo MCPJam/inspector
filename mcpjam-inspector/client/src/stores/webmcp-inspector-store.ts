@@ -32,6 +32,7 @@ import type {
   WebMcpSessionPublic,
   WebMcpToolDescriptor,
 } from "@/shared/webmcp-inspector-protocol";
+import { webMcpServerPaints } from "@/shared/webmcp-inspector-protocol";
 import { createFrameChannel } from "@/lib/browser-pane/frame-channel";
 import type { DecodedFrame } from "@/lib/browser-pane/frame-wire";
 import {
@@ -302,7 +303,6 @@ let frameSocket: FrameStreamConnection | undefined;
 let frameRetryTimer: ReturnType<typeof setTimeout> | undefined;
 /** Attempts made for THIS session, initial included. */
 let frameAttempts = 0;
-/** Set once we stop trying: this session has no live picture from here on. */
 /**
  * Does the pane still want pixels?
  *
@@ -344,12 +344,12 @@ const FRAME_WS_RETRY_DELAYS_MS = [500, 1_000, 2_000];
 let connectionGeneration = 0;
 
 /**
- * The newest frame seq applied, across BOTH transports.
+ * The newest frame seq applied to the pane.
  *
- * Both paths drop anything at or below it. The case this exists for is the
- * transport switch: while the ladder flips SSE frames back on, a frame already
- * in the SSE pipe can land after a newer one from the socket, and painting it
- * would drag the pane backwards to an older picture.
+ * Anything at or below it is dropped, so a straggler cannot drag the pane back
+ * to an older picture. Kept beside the reader's own guard because the input
+ * measurements read the same counter, and the two must agree on what the
+ * newest picture is.
  */
 let lastAppliedFrameSeq = 0;
 
@@ -957,15 +957,17 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       const streaming = isHostedMode() ? hostedStream : source;
       if (streaming && sourceSessionId === sessionId) return;
       disconnectStream();
-      // Only a `frame-stream` session has pixels to carry. A native-window
-      // session drives its own real browser and a hosted one paints in a
-      // datacenter; opening a socket for either would be a connection with
-      // nothing to say.
+      // Every session whose picture the server paints gets the socket — a
+      // native-window or headless session is mirrored into the pane too, and
+      // the socket is the only transport that carries pixels. A remote or
+      // Electron-native surface paints itself, so it has nothing to say.
       //
       // The token check is not belt-and-braces: it IS the auth on that socket,
       // so without one the handshake could only ever be refused.
+      const session = get().session;
       const binaryFrames =
-        get().session?.viewportTransport.kind === "frame-stream" &&
+        session !== undefined &&
+        webMcpServerPaints(session.viewportTransport.kind) &&
         hasSessionToken();
       openEventSource(sessionId);
       if (binaryFrames) openFrameSocket(sessionId, connectionGeneration);
@@ -1363,7 +1365,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
          * Called at the point of WRITING, never before the result is known: a
          * failed capture that claimed the slot on its way to writing nothing
          * would then reject the older successful one behind it, and a single
-         * transient poll failure would strand the pane on a stale picture.
+         * transient failure would strand the pane on a stale picture.
          */
         const newest = () => {
           if (ticket < captureApplied) return false;

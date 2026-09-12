@@ -1415,13 +1415,33 @@ describe("webmcp inspector store — frame transport", () => {
     expect(ws.binaryType).toBe("arraybuffer");
   });
 
-  it("opens no socket, and no frames param, for any other session", async () => {
-    // A native-window session drives a real browser the person is looking at,
-    // and a hosted one paints in a datacenter. Neither has pixels to carry.
-    const sse = await openSession();
-    expect(FakeWebSocket.instances).toHaveLength(0);
-    expect(sse.url).not.toContain("frames=");
-  });
+  it.each([{ kind: "native-window" as const }, { kind: "headless" as const }])(
+    "streams a $kind session's live view over the socket too",
+    async (viewportTransport) => {
+      // The server paints these as well — the pane mirrors the page — and the
+      // socket is now the only thing that carries pixels. Keyed on
+      // `frame-stream` alone, these panes would wait forever.
+      const sse = await openSession({ ...SESSION, viewportTransport });
+      expect(sse.url).not.toContain("frames");
+      const ws = FakeWebSocket.instances.at(-1);
+      expect(ws).toBeDefined();
+      ws!.open();
+      await ws!.emitFrame(binaryFrame(3));
+      expect(webmcpFrameChannel.latest()).toMatchObject({ seq: 3 });
+    },
+  );
+
+  it.each([
+    { kind: "remote-interactive-url" as const, url: "https://computer.test/" },
+    { kind: "electron-native" as const, bootId: "boot-1" },
+  ])(
+    "opens no socket for a $kind session, which paints itself",
+    async (viewportTransport) => {
+      const sse = await openSession({ ...SESSION, viewportTransport });
+      expect(FakeWebSocket.instances).toHaveLength(0);
+      expect(sse.url).not.toContain("frames=");
+    },
+  );
 
   it("decodes a frame through the shared reader and publishes it, not a store update", async () => {
     const { ws } = await openFrameSession();

@@ -176,6 +176,35 @@ export type WebMcpViewportTransport =
   /** Main-owned WebContentsView, placed through the existing native surface IPC. */
   | { kind: "electron-native"; bootId: string };
 
+/**
+ * Whether the SERVER paints this session's picture into the pane.
+ *
+ * One answer for both sides of the client: the store opens the frame socket on
+ * it, and the pane asks for a stream on it. Two copies are how a pane ends up
+ * requesting frames that no transport carries.
+ *
+ * A `native-window` or `headless` session is mirrored into the pane just as a
+ * `frame-stream` one is — the difference is only whether the pane drives it.
+ * `undefined` (no session yet) answers like the window arm.
+ */
+export function webMcpServerPaints(
+  kind: WebMcpViewportTransport["kind"] | undefined,
+): boolean {
+  switch (kind) {
+    case undefined:
+    case "native-window":
+    case "headless":
+    case "frame-stream":
+      return true;
+    case "remote-interactive-url":
+    case "electron-native":
+      return false;
+    default:
+      kind satisfies never;
+      return false;
+  }
+}
+
 /** Retain WebMCP's existing persistent Electron profile across the ownership migration. */
 export const WEBMCP_BROWSER_PARTITION = "persist:webmcp-inspector";
 
