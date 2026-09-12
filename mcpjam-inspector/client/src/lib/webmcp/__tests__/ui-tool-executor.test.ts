@@ -47,7 +47,7 @@ describe("handleUiToolCall", () => {
     expect(handled).toBe(true);
     expect(def.execute).toHaveBeenCalledWith(
       { target: "playground" },
-      { toolCallId: "tc-1" }
+      { toolCallId: "tc-1", caller: "ask_mcpjam" },
     );
     expect(addToolOutput).toHaveBeenCalledWith({
       tool: "ui_navigate",
@@ -73,7 +73,7 @@ describe("handleUiToolCall", () => {
 
     expect(def.execute).toHaveBeenCalledWith(
       { target: "playground" },
-      { toolCallId: "tc-scoped", scope: "session-a" }
+      { toolCallId: "tc-scoped", caller: "ask_mcpjam", scope: "session-a" },
     );
   });
 
@@ -211,7 +211,7 @@ describe("handleUiToolCall", () => {
     expect(def.execute).toHaveBeenCalledTimes(1);
     expect(def.execute).toHaveBeenCalledWith(
       { target: "servers" },
-      { toolCallId: "tc-appr" }
+      { toolCallId: "tc-appr", caller: "ask_mcpjam" },
     );
     expect(addToolOutput).toHaveBeenCalledTimes(1);
     expect(listDeferredUiToolCalls()).toEqual([]);
@@ -233,10 +233,10 @@ describe("handleUiToolCall", () => {
 
     expect(def.execute).toHaveBeenCalledWith(
       { target: "evals" },
-      { toolCallId: "tc-reload" }
+      { toolCallId: "tc-reload", caller: "ask_mcpjam" },
     );
     expect(addToolOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ toolCallId: "tc-reload" })
+      expect.objectContaining({ toolCallId: "tc-reload" }),
     );
   });
 
@@ -317,23 +317,57 @@ describe("handleUiToolCall", () => {
     expect(handled).toBe(true);
     expect(def.execute).toHaveBeenCalled();
     expect(addToolOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ toolCallId: "tc-throw" })
+      expect.objectContaining({ toolCallId: "tc-throw" }),
     );
   });
 
-  it("coerces non-object input to empty args", async () => {
+  it("rejects non-object input instead of substituting empty args", async () => {
+    // Shared execution validates the arguments (`ui-tool-execution.ts`), so
+    // both transports say the same thing about a malformed call. Silently
+    // running with `{}` used to report whichever required field went missing
+    // — an error about the wrong problem.
     const def = makeTool();
     useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
 
     await handleUiToolCall({
       toolName: "ui_navigate",
       toolCallId: "tc-1",
       input: "garbage",
+      addToolOutput,
+    });
+
+    expect(def.execute).not.toHaveBeenCalled();
+    expect(addToolOutput).toHaveBeenCalledWith({
+      tool: "ui_navigate",
+      toolCallId: "tc-1",
+      output: {
+        content: [
+          {
+            type: "text",
+            text: "ui_navigate: Arguments must be a JSON object, got a string.",
+          },
+        ],
+        isError: true,
+      },
+    });
+  });
+
+  it("treats a missing payload as a no-argument call", async () => {
+    // `ui_snapshot_app` and friends legitimately take nothing.
+    const def = makeTool();
+    useUiToolsRegistry.getState().registerUiTool(def);
+
+    await handleUiToolCall({
+      toolName: "ui_navigate",
+      toolCallId: "tc-empty",
+      input: undefined,
       addToolOutput: vi.fn(),
     });
+
     expect(def.execute).toHaveBeenCalledWith(
       {},
-      { toolCallId: "tc-1" }
+      { toolCallId: "tc-empty", caller: "ask_mcpjam" },
     );
   });
 
@@ -385,7 +419,10 @@ describe("handleUiToolCall", () => {
       toolCallId: "tc-1",
       output: {
         content: [
-          { type: "text", text: 'UI tool "ui_navigate" is no longer available.' },
+          {
+            type: "text",
+            text: 'UI tool "ui_navigate" is no longer available.',
+          },
         ],
         isError: true,
       },
@@ -402,7 +439,7 @@ describe("handleUiToolCall", () => {
         toolName,
         toolCallId: "tc-1",
         input: {},
-          addToolOutput,
+        addToolOutput,
       });
       expect(handled).toBe(false);
     }

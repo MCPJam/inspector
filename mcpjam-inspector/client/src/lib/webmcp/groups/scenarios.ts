@@ -34,7 +34,12 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
+import {
+  PUBLISH_NATIVE,
+  asOptionalString,
+  errorResult,
+  fromActionResult,
+} from "./shared";
 
 const ACCESS_VALUES = ["invited_only", "link_guests", "project"] as const;
 type AccessValue = (typeof ACCESS_VALUES)[number];
@@ -78,6 +83,7 @@ export function buildScenariosUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         // Validate strictly here, loosely in the schema (Chrome): the errors
         // are what let the model correct itself on the next turn.
@@ -132,6 +138,7 @@ export function buildScenariosUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       execute: async (args) => {
         const scenario = asOptionalString(args.scenario);
         if (!scenario) {

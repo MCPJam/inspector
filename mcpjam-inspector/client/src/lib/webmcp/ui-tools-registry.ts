@@ -1,24 +1,32 @@
 /**
- * MCPJam `ui_*` tools registry — the in-app agent's browser-side tool set.
+ * MCPJam `ui_*` tools registry — the browser-side tool set for MCPJam's own
+ * inspector actions.
  *
- * Holds the tools the in-app "Ask MCPJam" agent resolves IN THE PAGE rather
- * than on the server. Two kinds, and the name covers both:
+ * Holds the tools that are resolved IN THE PAGE rather than on the server.
+ * Two kinds, and the name covers both:
  *   - driving the inspector UI — navigate, select servers, run a tool in the
  *     playground — where the user watches the action happen, and
  *   - collecting input from it — `ui_ask_user` paints a question card and
  *     parks the turn until the user answers.
  *
- * WebMCP-*shaped*, but not WebMCP: these are deliberately NOT exposed to
- * browser-native agents (`document.modelContext` / `navigator.modelContext`).
- * The shared shape buys familiarity and a clean annotations contract, nothing
- * more. The registry is the enumerable source of truth for the agent's
- * transport and executor — its sole consumer.
+ * TWO ACCESS PATHS, ONE CATALOG. The registry is the single source of truth
+ * for both agents that can reach these tools:
+ *   - the in-app "Ask MCPJam" agent, over MCPJam's own transport
+ *     (`snapshotForChatBody()` at chat POST time, `resolve()` from the chat
+ *     executor), and
+ *   - a browser-native WebMCP agent, over `document.modelContext`
+ *     (`native-tool-publisher.ts` subscribes here and mirrors the eligible
+ *     tools out; both paths execute through `ui-tool-execution.ts`).
  *
- * The registry serves two callers, mirroring `app-tools-registry.ts`:
- *   - `snapshotForChatBody()` — drained at chat POST time so the server can
- *     register no-execute AI SDK tools that the model can pick.
- *   - `resolve(name)` — looked up by `useChat.onToolCall` (via
- *     `ui-tool-executor.ts`) to execute the tool in-page.
+ * Eligibility is per definition and explicit: `nativePublication`. Tools that
+ * need an MCPJam conversation to mean anything (`ui_ask_user`, the scoped
+ * eval-authoring tools) stay internal; ordinary inspector actions publish.
+ * Absent metadata is read as INTERNAL — a new tool is never published by
+ * accident.
+ *
+ * NOT the same thing as the `page_*` namespace: those are tools a real
+ * third-party page registered, which MCPJam INSPECTS over CDP (see
+ * `shared/client-fulfilled-tools.ts`). `ui_*` is what MCPJam itself offers.
  *
  * Dispatch is gated on registry membership (`resolve`) — never on the `ui_`
  * prefix alone — so a genuine MCP server tool that happens to be named
@@ -39,25 +47,73 @@ export interface UiToolResult {
 }
 
 /**
- * Per-call context handed to `execute`, for the few tools that need to know
- * WHICH call they are rather than just their arguments.
+ * Which agent asked for this call.
+ *
+ * Load bearing rather than decorative: `ask_mcpjam` calls carry a
+ * conversation (a transcript to render into, a session to scope a parked
+ * question to, MCPJam's own approval pill), and `native_webmcp` calls carry
+ * none of that — the browser owns that agent's approval flow, and there is no
+ * conversation to create. A tool that needs one reads this instead of
+ * guessing from the absence of a `scope`.
+ */
+export type UiToolCaller = "ask_mcpjam" | "native_webmcp";
+
+/**
+ * Per-call context handed to `execute`, for the tools that need to know WHICH
+ * call they are — and on whose behalf — rather than just their arguments.
  *
  * Optional on the signature so the catalog's ordinary tools — and the tests
- * that invoke them directly — keep working with a single argument. Only the
- * executor supplies it.
+ * that invoke them directly — keep working with a single argument. Only
+ * `executeUiToolCall` (`ui-tool-execution.ts`) supplies it, for both
+ * transports.
  */
 export interface UiToolExecuteContext {
   /**
-   * The streamed tool-call id. Required by tools that park on user input
-   * (`ui_ask_user`): it's the key the rendered card resolves against.
+   * This invocation's identity: the streamed tool-call id for an Ask MCPJam
+   * call, a minted id for a native one. Required by tools that park on user
+   * input (`ui_ask_user`): it's the key the rendered card resolves against.
    */
   toolCallId: string;
   /**
-   * The caller's chatSessionId. Lets a parked tool be cancelled per
-   * conversation instead of globally.
+   * The caller's chatSessionId — Ask MCPJam only. Lets a parked tool be
+   * cancelled per conversation instead of globally, and carries the eval
+   * scope. A native call has no conversation, so it has no scope.
    */
   scope?: string;
+  /** Which agent asked. */
+  caller: UiToolCaller;
+  /**
+   * Cancellation for this call, when the transport has any. Today only the
+   * native publisher supplies one (it aborts when the tool's registration is
+   * torn down). Handlers that reach something cancellable should forward it;
+   * aborting NEVER un-does an action that already happened.
+   */
+  signal?: AbortSignal;
 }
+
+/**
+ * Whether a tool definition may be published to browser-native WebMCP agents
+ * (`document.modelContext`), and — when it is — whether its RESULT can carry
+ * content MCPJam did not author.
+ *
+ * Explicit per definition, and shaped like the surface manifest's
+ * `agentTools` opt-out, for the same reason: staying out of a channel is a
+ * decision with a reason, not an omission. Absent metadata is read as
+ * internal by `shouldPublishNatively`, so a new tool is never published by
+ * accident.
+ */
+export type UiToolNativePublication =
+  | {
+      readonly kind: "publish";
+      /**
+       * True when the result can contain bytes from somewhere else — a
+       * third-party MCP server's tool output, a registry listing, a page.
+       * Published as WebMCP's `untrustedContentHint` so an external agent
+       * knows to treat the payload as data rather than instructions.
+       */
+      readonly untrustedContent: boolean;
+    }
+  | { readonly kind: "internal"; readonly reason: string };
 
 export interface UiToolDefinition {
   /** Model-facing tool name. Must match `UI_TOOL_NAME_REGEX` (`ui_*`). */
@@ -87,6 +143,14 @@ export interface UiToolDefinition {
    * it to the server.
    */
   mayNavigate?: boolean;
+  /**
+   * Whether browser-native WebMCP agents get this tool, and why not when they
+   * don't. Client-only metadata — `snapshotForChatBody` never ships it to the
+   * server. Absent reads as internal (see `shouldPublishNatively`); the
+   * agent-tool coverage test requires every first-party definition to state
+   * it outright.
+   */
+  nativePublication?: UiToolNativePublication;
   execute: (
     args: Record<string, unknown>,
     ctx?: UiToolExecuteContext,
@@ -293,3 +357,16 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
 
   wasShipped: (name) => get().shippedNames.has(name),
 }));
+
+/**
+ * Whether a definition is eligible for browser-native publication.
+ *
+ * Default-deny: a definition that says nothing stays internal. The cost of
+ * that default is a tool an external agent cannot see until someone declares
+ * it; the cost of the other default is a conversation-only tool published to
+ * an agent that has no conversation, which fails at the far end of a call the
+ * user cannot see. The first is a missing feature, the second is a bug.
+ */
+export function shouldPublishNatively(def: UiToolDefinition): boolean {
+  return def.nativePublication?.kind === "publish";
+}

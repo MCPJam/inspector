@@ -42,7 +42,22 @@ export function boundedJsonByteLength(
     });
     return { bytes: emitted, truncated: false };
   } catch (e) {
-    if (e === OVER) return { bytes: Math.min(emitted, cap) || cap, truncated: true };
+    if (e === OVER)
+      return { bytes: Math.min(emitted, cap) || cap, truncated: true };
     return { bytes: 0, truncated: false };
   }
+}
+
+/**
+ * The per-result text budget for a `ui_*` tool, shared by the group helpers
+ * that build results (`groups/shared.ts`) and the executor that bounds
+ * whatever a handler returns (`ui-tool-execution.ts`). One definition,
+ * because a result clamped to one number and checked against another is a
+ * silent truncation bug.
+ */
+export const MAX_RESULT_CHARS = 16 * 1024;
+
+export function clampText(text: string): string {
+  if (text.length <= MAX_RESULT_CHARS) return text;
+  return `${text.slice(0, MAX_RESULT_CHARS)}… [truncated]`;
 }

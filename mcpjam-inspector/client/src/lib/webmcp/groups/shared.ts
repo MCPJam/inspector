@@ -5,21 +5,63 @@
 
 import { hasInspectorCommandHandler } from "@/lib/inspector-command-handlers";
 import type { InspectorCommandType } from "@/shared/inspector-command.js";
-import type { UiToolResult } from "../ui-tools-registry";
+import type {
+  UiToolNativePublication,
+  UiToolResult,
+} from "../ui-tools-registry";
 import { openPlaygroundAction, type UiActionResult } from "../ui-actions";
+import { clampText, MAX_RESULT_CHARS } from "../bounded-size";
 
-/** Keep serialized results well under context-bloating sizes. */
-export const MAX_RESULT_CHARS = 16 * 1024;
+// --- Native publication (browser-native WebMCP agents) -----------------
+//
+// Every first-party definition states one of these. Shared constants rather
+// than inline literals so the decision reads as a decision at each tool, and
+// so the whole published set is one grep away.
+
+/**
+ * Publish this tool to browser-native WebMCP agents. Its result is MCPJam's
+ * own reporting — a command outcome, a status, an id — so nothing in it came
+ * from a third party.
+ */
+export const PUBLISH_NATIVE: UiToolNativePublication = {
+  kind: "publish",
+  untrustedContent: false,
+};
+
+/**
+ * Publish, and say that the RESULT can carry somebody else's bytes: an MCP
+ * server's tool output, a registry listing, an OAuth server's metadata, a
+ * snapshot of a screen showing any of those. Chrome's guidance is to label
+ * such payloads so an agent treats them as data rather than instructions
+ * (https://developer.chrome.com/docs/ai/webmcp/secure-tools) — over-claiming
+ * here is cheap, under-claiming is the failure that matters.
+ */
+export const PUBLISH_NATIVE_UNTRUSTED: UiToolNativePublication = {
+  kind: "publish",
+  untrustedContent: true,
+};
+
+/**
+ * Keep this tool off the native surface, with the reason stated. Reserved for
+ * tools whose meaning depends on an MCPJam conversation — there is no
+ * conversation behind a native call, so publishing one would advertise a
+ * capability that cannot work.
+ */
+export function nativeInternal(reason: string): UiToolNativePublication {
+  return { kind: "internal", reason };
+}
+
+/**
+ * Keep serialized results well under context-bloating sizes. Defined in
+ * `bounded-size.ts` and re-exported here because both the builders below and
+ * `ui-tool-execution.ts`'s backstop must clamp to the SAME number.
+ */
+export { MAX_RESULT_CHARS, clampText } from "../bounded-size";
 // Stop serializing well before we've built a multi-megabyte string: a tool
 // result can carry arbitrary provider content (e.g. a large resource read).
 // The replacer throws once the running length passes this budget, so we never
 // materialize the whole thing just to clamp it afterwards.
 const SERIALIZE_BUDGET = MAX_RESULT_CHARS * 2;
-
-export function clampText(text: string): string {
-  if (text.length <= MAX_RESULT_CHARS) return text;
-  return `${text.slice(0, MAX_RESULT_CHARS)}… [truncated]`;
-}
 
 /** JSON.stringify that aborts once it has emitted more than SERIALIZE_BUDGET. */
 function budgetedStringify(value: unknown): string {
