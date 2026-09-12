@@ -43,7 +43,7 @@ import type {
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
   PlatformEvalSuiteRevision,
-  PlatformEvalStepResult,
+  PlatformEvalStepsPage,
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
@@ -2998,7 +2998,7 @@ export class PlatformApiClient {
   getEvalRunSteps(
     params: { projectId: string; runId: string; iterationId: string },
     options?: RequestOptions
-  ): Promise<PlatformPage<PlatformEvalStepResult>> {
+  ): Promise<PlatformEvalStepsPage> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(

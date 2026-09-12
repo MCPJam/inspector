@@ -8913,7 +8913,7 @@ var BROWSERD_ENABLED_FEATURES = [
   // version's own default rather than to change it.
   "CDPScreenshotNewSurface"
 ];
-var BROWSERD_HARDENING_ARGS = [
+var BROWSERD_SHARED_HARDENING_ARGS = [
   // Crash-avoidance in a container with a small /dev/shm. Its ABSENCE is exactly
   // what reads as "E2B is flaky" under load. (Local inspector carries this too.)
   "--disable-dev-shm-usage",
@@ -8943,9 +8943,9 @@ var BROWSERD_HARDENING_ARGS = [
   // Force desktop hover / fine-pointer semantics. Without it, sites that gate
   // menus on `@media (hover: hover)` behave as touch devices and hover-triggered
   // navigation is unreachable by synthetic input.
-  "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
-  // Software GL that still RUNS WebGL content instead of failing it (no GPU in
-  // the sandbox).
+  "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"
+];
+var BROWSERD_SOFTWARE_GL_ARGS = [
   "--disable-gpu",
   "--use-angle=swiftshader-webgl"
 ];
@@ -8958,14 +8958,66 @@ var BROWSERD_CONTEXT_OPTIONS = {
   colorScheme: "light",
   userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 MCPJam-Browser/1.0"
 };
-function buildBrowserdLaunchArgs(extra = []) {
+var BROWSERD_LOCAL_CONTEXT_OPTIONS = {
+  viewport: BROWSERD_OBSERVATION_VIEWPORT,
+  deviceScaleFactor: 1
+};
+function hardeningArgsFor(surface = "sandbox") {
+  return surface === "local" ? BROWSERD_SHARED_HARDENING_ARGS : [...BROWSERD_SHARED_HARDENING_ARGS, ...BROWSERD_SOFTWARE_GL_ARGS];
+}
+var BROWSERD_HARDENING_ARGS = hardeningArgsFor("sandbox");
+function chromePlatformToken(platform) {
+  if (platform === "darwin") return "Macintosh; Intel Mac OS X 10_15_7";
+  if (platform === "win32") return "Windows NT 10.0; Win64; x64";
+  return "X11; Linux x86_64";
+}
+function chromeUserAgent(platform, majorVersion) {
+  return `Mozilla/5.0 (${chromePlatformToken(platform)}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${majorVersion}.0.0.0 Safari/537.36`;
+}
+function chromiumMajorFromManifest(raw) {
+  try {
+    const manifest = JSON.parse(raw);
+    const entry = manifest.browsers?.find((b) => b.name === "chromium");
+    const major = Number.parseInt(entry?.browserVersion ?? "", 10);
+    return Number.isFinite(major) && major > 0 ? major : null;
+  } catch {
+    return null;
+  }
+}
+var bundledMajor;
+async function bundledChromiumMajorVersion() {
+  if (bundledMajor !== void 0) return bundledMajor;
+  let resolved = null;
+  try {
+    const { createRequire } = await import("node:module");
+    const { readFileSync: readFileSync2 } = await import("node:fs");
+    const { dirname, join: join4 } = await import("node:path");
+    const require_ = createRequire(import.meta.url);
+    const root = dirname(require_.resolve("playwright-core/package.json"));
+    resolved = chromiumMajorFromManifest(
+      readFileSync2(join4(root, "browsers.json"), "utf8")
+    );
+  } catch {
+  }
+  bundledMajor = resolved;
+  return resolved;
+}
+async function localChromeUserAgent(options = {}) {
+  if (options.customExecutable) return void 0;
+  const major = await bundledChromiumMajorVersion();
+  if (major === null) return void 0;
+  return chromeUserAgent(options.platform ?? process.platform, major);
+}
+function buildBrowserdLaunchArgs(extra = [], options = {}) {
+  const surface = options.surface ?? "sandbox";
   const passthrough = WEBMCP_LAUNCH_ARGS.filter(
     (arg) => !arg.startsWith(ENABLE_FEATURES)
   );
   const args = [
     ...passthrough,
     `${ENABLE_FEATURES}${BROWSERD_ENABLED_FEATURES.join(",")}`,
-    ...BROWSERD_HARDENING_ARGS,
+    ...hardeningArgsFor(surface),
+    ...options.userAgent ? [`--user-agent=${options.userAgent}`] : [],
     ...extra
   ];
   const clobbering = args.find((arg) => arg.startsWith(DISABLE_FEATURES));
@@ -9399,11 +9451,12 @@ function registerCdpAttacher(page, attach, attachFrame) {
   });
 }
 function contextOptionsFor(options) {
+  const base = options.surface === "local" ? BROWSERD_LOCAL_CONTEXT_OPTIONS : BROWSERD_CONTEXT_OPTIONS;
   const dpr = options.deviceScaleFactor ?? 1;
   if (options.contextMode !== "persistent" || dpr === 1) {
-    return BROWSERD_CONTEXT_OPTIONS;
+    return base;
   }
-  return { ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: dpr };
+  return { ...base, deviceScaleFactor: dpr };
 }
 async function launchBrowserdContext(options) {
   const policy = options.securityPolicy;
@@ -9463,7 +9516,11 @@ async function launchBrowserdContext(options) {
       throw error;
     }
   };
+  const surface = options.surface ?? "sandbox";
   try {
+    const userAgent = surface === "local" ? await localChromeUserAgent({
+      customExecutable: Boolean(options.executablePath)
+    }) : void 0;
     const launchArgs = {
       ...proxy ? { proxy: proxy.proxy } : {},
       headless: options.headless ?? false,
@@ -9472,7 +9529,10 @@ async function launchBrowserdContext(options) {
       // Chromium cannot start its renderer sandbox as uid 0 (the image builds
       // as root), so it is disabled only in that case.
       chromiumSandbox: process.getuid?.() !== 0,
-      args: buildBrowserdLaunchArgs(options.extraArgs)
+      args: buildBrowserdLaunchArgs(options.extraArgs, {
+        surface,
+        ...userAgent ? { userAgent } : {}
+      })
     };
     if (options.contextMode === "ephemeral") {
       const browser = await chromium.launch(launchArgs);
@@ -9483,7 +9543,7 @@ async function launchBrowserdContext(options) {
           permissions: [],
           // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
           // whatever the box says, so eval captures match across hosts.
-          ...contextOptionsFor({ contextMode: "ephemeral" }),
+          ...contextOptionsFor({ contextMode: "ephemeral", surface }),
           deviceScaleFactor: options.deviceScaleFactor ?? 1
         });
       } catch (error) {
@@ -9507,6 +9567,7 @@ async function launchBrowserdContext(options) {
         permissions: [],
         ...contextOptionsFor({
           contextMode: "persistent",
+          surface,
           ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
         })
       }
