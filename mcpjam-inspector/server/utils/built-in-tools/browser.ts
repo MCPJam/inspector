@@ -56,7 +56,12 @@ import {
 } from "@/shared/client-fulfilled-tools";
 import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
-import { webmcpPageToolsMode } from "../../config.js";
+import {
+  browserShapeRedactionEnabled,
+  webmcpPageToolsMode,
+} from "../../config.js";
+import { redactSecretShapes } from "@/shared/secret-shape-redaction";
+import { capText } from "../../services/browserd/daemon/observation-budget.js";
 import { logger } from "../logger.js";
 import { observedToolBinding } from "../../services/browser-tool-binding";
 import { parkForHandoff } from "./browser-handoff.js";
@@ -125,6 +130,31 @@ export { BROWSER_BUILT_IN_TOOL_ID };
  * host-configuration hash — so dragging a panel would invalidate every cached
  * tool manifest, several times a second.
  */
+/** Bound on a daemon error string before it reaches a model's context. */
+const MODEL_ERROR_MAX_BYTES = 4_000;
+
+/**
+ * A message we did NOT write, on its way into the model's context.
+ *
+ * Two things, in this order:
+ *
+ *  1. BOUNDED. A daemon error can be a whole Playwright stack trace, and an
+ *     unbounded one spends a model's context on a failure.
+ *  2. SCRUBBED of credential shapes. The daemon scrubs its own strings now,
+ *     but the hosted fleet REUSES running daemons across deploys — a new
+ *     server routinely talks to an old daemon, which is exactly the daemon
+ *     that has no scrub.
+ *
+ * Capped before scrubbed, so a cut cannot slice a replacement in half and
+ * leave `[reda` at the end of the line.
+ *
+ * Applied to ERRORS, never to page content. @see shared/secret-shape-redaction
+ */
+function forModel(text: string): string {
+  const capped = capText(text, MODEL_ERROR_MAX_BYTES);
+  return browserShapeRedactionEnabled() ? redactSecretShapes(capped) : capped;
+}
+
 const VIEWPORT_MAX_W = MAX_SESSION_VIEWPORT.width;
 const VIEWPORT_MAX_H = MAX_SESSION_VIEWPORT.height;
 
@@ -549,7 +579,15 @@ function unwrapCommand(response: {
   if (!result.ok) {
     return {
       ok: false,
-      error: result.error ?? "the browser could not complete the action",
+      // CAPPED THEN SCRUBBED, and both are for a string we did not write. A
+      // daemon error can be a whole Playwright stack trace, and it routinely
+      // quotes the URL that failed — query string, `?api_key=…` and all. The
+      // daemon scrubs its own, so this is what covers a daemon OLDER than the
+      // scrub: the hosted fleet reuses running daemons across deploys, so
+      // "the server is new" never implies "the daemon is".
+      error: forModel(
+        result.error ?? "the browser could not complete the action",
+      ),
       stateToken: result.stateToken,
       output: result.output,
       ...(result.webmcpTools ? { webmcpTools: result.webmcpTools } : {}),
@@ -2851,9 +2889,9 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
       value: [{ type: "text", text: JSON.stringify(output ?? null) }],
     };
   }
-  const rest: Record<string, unknown> = {
+  const rest: Record<string, unknown> = scrubPageMessages({
     ...(output as Record<string, unknown>),
-  };
+  });
   const shot = takeScreenshot(rest);
   if (shot) {
     value.push({
@@ -2873,6 +2911,56 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
     value.push({ type: "text", text: fencePageContent(page, originOf(rest)) });
   }
   return { type: "content", value };
+}
+
+/**
+ * Scrub credential shapes out of the two MESSAGE fields a page can write.
+ *
+ * `console[].text` and `network[].failure`, and nothing else. Both are
+ * page-authored or upstream-authored strings that nobody reads for their
+ * content, and both are where a credential actually shows up in practice: a
+ * failed fetch logs its own URL with the query string on it, and an SDK logs
+ * the token it just refreshed.
+ *
+ * NOT `a11y`, `text`, `dom`, `dialog` or `result`. Those are the page, and the
+ * model is reading them to decide what to do; a false positive there hides the
+ * content instead of protecting anything — a field whose visible value happens
+ * to look like a key would come back `[redacted]` and the model would type
+ * over it.
+ *
+ * THE DAEMON ALREADY DOES THIS. This exists because the hosted fleet reuses
+ * RUNNING daemons across deploys, so a new server routinely talks to a daemon
+ * built before the scrub existed. It is idempotent, so doing it twice costs a
+ * pass over strings that no longer match.
+ */
+function scrubPageMessages(
+  rest: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!browserShapeRedactionEnabled()) return rest;
+  const console_ = rest.console;
+  if (Array.isArray(console_)) {
+    rest.console = console_.map((entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { text?: unknown }).text === "string"
+        ? { ...entry, text: redactSecretShapes((entry as { text: string }).text) }
+        : entry,
+    );
+  }
+  const network = rest.network;
+  if (Array.isArray(network)) {
+    rest.network = network.map((row) =>
+      typeof row === "object" &&
+      row !== null &&
+      typeof (row as { failure?: unknown }).failure === "string"
+        ? {
+            ...row,
+            failure: redactSecretShapes((row as { failure: string }).failure),
+          }
+        : row,
+    );
+  }
+  return rest;
 }
 
 /**
@@ -3081,7 +3169,10 @@ function present(
 ): Record<string, unknown> {
   if (!outcome.ok) {
     return {
-      error: outcome.error,
+      // Belt to `unwrapCommand`'s braces: errors reach this function from the
+      // tool's own catch blocks and from the refusal paths too, not only from
+      // a daemon result.
+      error: forModel(outcome.error),
       ...(outcome.output !== undefined ? { page: outcome.output } : {}),
     };
   }

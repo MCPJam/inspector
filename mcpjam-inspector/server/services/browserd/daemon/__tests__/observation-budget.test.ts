@@ -254,3 +254,44 @@ describe("observation budgets — pathological inputs (review follow-up)", () =>
     }
   });
 });
+
+describe("capConsole — credential shapes", () => {
+  it("redacts a token shape in a console line", () => {
+    // A page's own console is the most reliable place in the browser to find a
+    // credential printed in full: a failed fetch logs its URL with the query
+    // on it, an SDK logs the token it just refreshed. `capConsole` only ever
+    // TRUNCATED, which keeps the first two thousand bytes of exactly that.
+    const { entries } = capConsole([
+      {
+        type: "error",
+        text: "GET https://api.test/me?api_key=sk-live-abcdefghijklmnop 401",
+        at: 1,
+      },
+    ]);
+    expect(entries[0]!.text).not.toContain("sk-live-abcdefghijklmnop");
+    expect(entries[0]!.text).toContain("api_key=[redacted]");
+    // The rest of the line survives, because a model debugging a 401 needs to
+    // see which endpoint it was.
+    expect(entries[0]!.text).toContain("https://api.test/me");
+  });
+
+  it("leaves an ordinary console line byte-identical", () => {
+    const text = "Uncaught TypeError: Cannot read properties of null";
+    const { entries } = capConsole([{ type: "error", text, at: 1 }]);
+    expect(entries[0]!.text).toBe(text);
+  });
+
+  it("caps BEFORE it redacts, so a cut cannot slice a replacement in half", () => {
+    // The order matters in one direction only: redact-then-cut could leave
+    // `[reda` at the end of the line, which reads as page content.
+    const { entries } = capConsole(
+      [{ type: "log", text: "x".repeat(4000) + "?token=abcdef123456", at: 1 }],
+      { maxEntries: 50, maxEntryBytes: 100 },
+    );
+    expect(entries[0]!.text.startsWith("x".repeat(20))).toBe(true);
+    // The secret was past the cut, so it is gone by truncation rather than by
+    // redaction — and no half-written marker is left behind.
+    expect(entries[0]!.text).not.toContain("abcdef123456");
+    expect(entries[0]!.text).not.toMatch(/\[reda(?!cted])/);
+  });
+});

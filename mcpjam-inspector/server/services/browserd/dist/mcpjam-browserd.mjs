@@ -3196,10 +3196,36 @@ function parseViewportPolicy(value) {
   return value === "followPane" ? "followPane" : "fixed";
 }
 
+// shared/secret-shape-redaction.ts
+var authHeaderLike = () => /\b(authorization["']?\s*:\s*)["']?[^\n\r"'`]+/gi;
+var tokenLike = () => /\bBearer\s+[A-Za-z0-9._\-+/=]+\b/gi;
+var skKeyLike = () => /\bsk-(?:[A-Za-z0-9]+-)*[A-Za-z0-9]{16,}\b/g;
+var jwtLike = () => /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
+var secretParamLike = () => /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|authorization|secret|password|passwd|pwd|token|auth|key|sig|signature)\s*[=:]\s*["']?)[^&\s"'`]+/gi;
+var urlBasicAuthLike = () => /(\/\/[^\s/:@]+:)[^\s@/]+@/g;
+function redactSecretShapes(text, replacement = "[redacted]") {
+  if (!text) return text;
+  return text.replace(authHeaderLike(), `$1${replacement}`).replace(tokenLike(), `Bearer ${replacement}`).replace(jwtLike(), replacement).replace(urlBasicAuthLike(), `$1${replacement}@`).replace(skKeyLike(), replacement).replace(secretParamLike(), `$1${replacement}`);
+}
+
+// server/services/browserd/daemon/shape-redaction.ts
+var ENABLED = process.env.MCPJAM_BROWSER_SHAPE_REDACTION !== "0";
+function redactForModel(text) {
+  return ENABLED ? redactSecretShapes(text) : text;
+}
+
 // server/services/browserd/daemon/browser-driver.ts
 function stateTokensMatch(a, b) {
   const viewportAgrees = a.viewportRevision === void 0 || b.viewportRevision === void 0 || a.viewportRevision === b.viewportRevision;
   return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash && viewportAgrees;
+}
+function guardErrorShapes(executor) {
+  return async (command) => {
+    const result = await executor(command);
+    if (typeof result.error !== "string") return result;
+    const scrubbed = redactForModel(result.error);
+    return scrubbed === result.error ? result : { ...result, error: scrubbed };
+  };
 }
 function guardStaleness(driver, lease) {
   return async (command) => {
@@ -3367,7 +3393,9 @@ function buildBrowserdStack(driver, config) {
   const ledger = new CommandLedger({ bootId });
   const lease = config.lease ?? new HandoffLease();
   const queue = new CommandQueue(
-    config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease)),
+    guardErrorShapes(
+      config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease))
+    ),
     bootId
   );
   const handler = new BrowserdRequestHandler({
@@ -3801,7 +3829,7 @@ var NetworkRing = class {
     if (update.statusText) row.statusText = update.statusText;
     if (update.mimeType) row.mimeType = update.mimeType;
     if (update.bytes !== void 0) row.bytes = update.bytes;
-    if (update.failure) row.failure = update.failure;
+    if (update.failure) row.failure = redactForModel(update.failure);
     const headers = retainHeaders(update.headers);
     if (headers) row.headers = headers;
     row.durationMs = Math.max(0, Date.now() - row.at);
@@ -4837,7 +4865,7 @@ function capConsole(entries, budget = DEFAULT_CONSOLE_BUDGET) {
   return {
     entries: kept.map((entry) => ({
       ...entry,
-      text: capText(entry.text, budget.maxEntryBytes)
+      text: redactForModel(capText(entry.text, budget.maxEntryBytes))
     })),
     omitted: Math.max(0, entries.length - kept.length)
   };

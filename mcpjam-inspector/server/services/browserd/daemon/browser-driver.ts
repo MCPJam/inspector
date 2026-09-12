@@ -1,4 +1,5 @@
 import { negotiateViewport } from "../../../../shared/browser-viewport";
+import { redactForModel } from "./shape-redaction";
 /**
  * The seam between the daemon's control plane (queue + HTTP) and the real
  * browser. The control plane owns ordering, de-duplication, auth, and boot
@@ -205,6 +206,32 @@ export function stateTokensMatch(
  * The check lives here, above the driver, so it is pure and testable with a
  * fake driver: the real driver never has to special-case staleness.
  */
+/**
+ * Scrub a credential SHAPE out of every result's `error` on the way back.
+ *
+ * The outermost wrapper, and the last thing that touches a result before the
+ * queue retains it and `recordRow` writes it to the ledger — which is the
+ * whole point of putting it here rather than at the HTTP boundary. A result
+ * scrubbed on its way out of the server is a result that was already written
+ * down in `/v1/trace` and in the durable mirror.
+ *
+ * `error` ONLY. `output` is what the model is reading — the accessibility
+ * tree, the page's text, a page tool's result — and a false positive there
+ * hides the content rather than protecting anything. An `error` is a message
+ * nobody reads for its content, and is where an upstream string that quotes a
+ * whole URL (query string included) actually arrives.
+ */
+export function guardErrorShapes(executor: CommandExecutor): CommandExecutor {
+  return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
+    const result = await executor(command);
+    if (typeof result.error !== "string") return result;
+    const scrubbed = redactForModel(result.error);
+    // Identity when nothing matched, which is almost every result: a new
+    // object per command would be pure garbage for the collector.
+    return scrubbed === result.error ? result : { ...result, error: scrubbed };
+  };
+}
+
 export function guardStaleness(
   driver: BrowserDriver,
   lease?: Pick<HandoffLease, "state">,

@@ -16,6 +16,7 @@ vi.mock("../../computers/browser-consent.js", () => ({
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { BrowserProtocolMismatchError } from "../../../services/browserd/browser-session.js";
+import { toBrowserModelOutput } from "../browser";
 import {
   buildBrowserTools,
   BrowserTokenMemory,
@@ -3844,5 +3845,119 @@ describe("buildBrowserTools — a daemon speaking the wrong wire", () => {
     await expect(
       run(result!.tools, "browser_navigate", { url: "https://example.com" }),
     ).rejects.toThrow(/hibernating/);
+  });
+});
+
+describe("buildBrowserTools — credential shapes on the way to the model", () => {
+  it("an error containing an api_key reaches the model as [redacted]", async () => {
+    // A daemon error is an UPSTREAM string and routinely quotes the URL that
+    // failed, query string and all. It passed verbatim into the tool result,
+    // the model's context, the transcript and the eval trace.
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: {
+        ok: false,
+        error:
+          "act_failed: page.goto: net::ERR_ABORTED at " +
+          "https://api.test/v1/me?api_key=sk-live-abcdefghijklmnop",
+      },
+    }));
+    const out = await run(result!.tools, "browser_observe", {});
+    expect(out.error).not.toContain("sk-live-abcdefghijklmnop");
+    expect(out.error).toContain("api_key=[redacted]");
+    // And still says what went wrong, which is the whole value of the string.
+    expect(out.error).toContain("net::ERR_ABORTED");
+  });
+
+  it("a11y text with a token-shaped word is NOT altered", async () => {
+    // THE HALF THAT KEEPS THIS SAFE ON BY DEFAULT. The tree is what the model
+    // is reading to decide what to do; a false positive there hides the field
+    // it is trying to fill rather than protecting anything.
+    const line = '- textbox "API key" [ref=e1]: "sk-live-abcdefghijklmnop"';
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: {
+        ok: true,
+        output: { url: "https://x.test/", a11y: line },
+        settled: true,
+      },
+    }));
+    const out = await run(result!.tools, "browser_observe", { mode: "a11y" });
+    expect(JSON.stringify(out)).toContain("sk-live-abcdefghijklmnop");
+  });
+
+  it("scrubs a console line an OLD daemon sent unscrubbed", async () => {
+    // The daemon scrubs its own now — but the hosted fleet reuses RUNNING
+    // daemons across deploys, so a new server routinely talks to a daemon
+    // built before the scrub existed.
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: {
+        ok: true,
+        output: {
+          url: "https://x.test/",
+          console: [
+            {
+              type: "error",
+              text: "GET https://api.test/me?api_key=sk-live-abcdefghijklmnop 401",
+              at: 1,
+            },
+          ],
+        },
+        settled: true,
+      },
+    }));
+    const out = await run(result!.tools, "browser_observe", { mode: "console" });
+    const model = toBrowserModelOutput({ output: out });
+    const text = JSON.stringify(model.value);
+    expect(text).not.toContain("sk-live-abcdefghijklmnop");
+    expect(text).toContain("api_key=[redacted]");
+  });
+
+  it("scrubs a network failure an OLD daemon sent unscrubbed", async () => {
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: {
+        ok: true,
+        output: {
+          url: "https://x.test/",
+          network: [
+            {
+              url: "https://api.test/me",
+              at: 1,
+              failure:
+                "net::ERR_ABORTED at https://api.test/me?api_key=sk-live-abcdefghijklmnop",
+            },
+          ],
+        },
+        settled: true,
+      },
+    }));
+    const out = await run(result!.tools, "browser_observe", { mode: "network" });
+    const text = JSON.stringify(toBrowserModelOutput({ output: out }).value);
+    expect(text).not.toContain("sk-live-abcdefghijklmnop");
+  });
+
+  it("leaves the a11y half of the same result alone", async () => {
+    // The two fields travel in one object, so the scrub has to be able to tell
+    // them apart rather than walking the whole thing.
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: {
+        ok: true,
+        output: {
+          url: "https://x.test/",
+          a11y: '- textbox "Key" [ref=e1]: "?api_key=keep-me-visible"',
+          console: [
+            { type: "log", text: "?api_key=scrub-me-please", at: 1 },
+          ],
+        },
+        settled: true,
+      },
+    }));
+    const out = await run(result!.tools, "browser_observe", { mode: "a11y" });
+    const text = JSON.stringify(toBrowserModelOutput({ output: out }).value);
+    expect(text).toContain("keep-me-visible");
+    expect(text).not.toContain("scrub-me-please");
   });
 });

@@ -200,6 +200,26 @@ export function hostedBrowserEnabled(
  * per-process in staging and per-test, and a module constant would freeze
  * whatever the environment said when this module first loaded.
  */
+/**
+ * Redact credential-SHAPED strings on their way to the model from a browser.
+ *
+ * DEFAULTS ON, which is safe precisely because of what it touches: it alters a
+ * string only when a credential shape is actually present, and it is applied
+ * only to MESSAGES — a daemon error, a console line, a network failure —
+ * never to the accessibility tree, the page text, the DOM or a page tool's
+ * result, where a false positive would hide the content the model is reading.
+ *
+ * `MCPJAM_BROWSER_SHAPE_REDACTION=0` is the rollback: one environment
+ * variable, no deploy, and every one of those strings passes verbatim again.
+ *
+ * @see shared/secret-shape-redaction.ts
+ */
+export function browserShapeRedactionEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.MCPJAM_BROWSER_SHAPE_REDACTION !== "0";
+}
+
 export type WebmcpPageToolsMode = "verbs" | "first_class";
 
 export function webmcpPageToolsMode(

@@ -21,6 +21,7 @@ import {
 } from "./frame-stream-route";
 import {
   guardLease,
+  guardErrorShapes,
   guardStaleness,
   type BrowserDriver,
 } from "./browser-driver";
@@ -261,10 +262,16 @@ export function buildBrowserdStack(
   // The lease check wraps the staleness guard rather than the other way round:
   // reading a tab's current state token to compare it IS an observation of the
   // page, so it must not happen for a command the lease is about to refuse.
+  // OUTERMOST, so it also covers the refusals the guards themselves produce
+  // and, more importantly, so it runs INSIDE the queue: the result the queue
+  // retains for a duplicate command and the row `recordRow` writes are both
+  // taken from what comes out of here.
   const queue = new CommandQueue(
-    config.authority === "shared"
-      ? guardStaleness(driver)
-      : guardLease(lease, guardStaleness(driver, lease)),
+    guardErrorShapes(
+      config.authority === "shared"
+        ? guardStaleness(driver)
+        : guardLease(lease, guardStaleness(driver, lease)),
+    ),
     bootId,
   );
   const handler = new BrowserdRequestHandler({

@@ -11,6 +11,7 @@
  *
  * Pure policy, no browser: every budget here is unit-tested directly.
  */
+import { redactForModel } from "./shape-redaction";
 
 /** A node of the accessibility tree, as Playwright's snapshot yields it. */
 export interface A11yNode {
@@ -211,7 +212,19 @@ export const DEFAULT_CONSOLE_BUDGET: ConsoleBudget = {
   maxEntryBytes: 2_000,
 };
 
-/** Take the NEWEST entries within budget, each byte-capped. */
+/**
+ * Take the NEWEST entries within budget, each byte-capped and shape-scrubbed.
+ *
+ * SCRUBBED HERE because this is the one place every console line the model
+ * sees passes through. A page's own console is the most reliable place in the
+ * browser to find a credential printed in full — a failed fetch logs its URL
+ * with the query string on it, an SDK logs the token it just refreshed — and
+ * until now this function only TRUNCATED, which keeps the first two thousand
+ * bytes of exactly that.
+ *
+ * After the truncation, not before: scrubbing first and cutting second could
+ * slice a replacement in half and leave `[reda` on the line.
+ */
 export function capConsole(
   entries: readonly ConsoleEntry[],
   budget: ConsoleBudget = DEFAULT_CONSOLE_BUDGET,
@@ -220,7 +233,7 @@ export function capConsole(
   return {
     entries: kept.map((entry) => ({
       ...entry,
-      text: capText(entry.text, budget.maxEntryBytes),
+      text: redactForModel(capText(entry.text, budget.maxEntryBytes)),
     })),
     omitted: Math.max(0, entries.length - kept.length),
   };

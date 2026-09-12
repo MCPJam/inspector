@@ -349,6 +349,13 @@ function buildEnv(
             process.env.MCPJAM_BROWSERD_SCREENSHOT_MAX_BYTES,
         }
       : {}),
+    // The credential-shape scrub is ON by default on both sides, so only the
+    // KILL SWITCH travels — and it travels because a rollback that turned the
+    // scrub off in the server while leaving it on in the daemon would not be
+    // a rollback at all.
+    ...(process.env.MCPJAM_BROWSER_SHAPE_REDACTION === "0"
+      ? { MCPJAM_BROWSER_SHAPE_REDACTION: "0" }
+      : {}),
   };
   if (options.windowSize) env.MCPJAM_BROWSERD_WINDOW_SIZE = options.windowSize;
   if (options.headless) env.MCPJAM_BROWSERD_HEADLESS = "true";

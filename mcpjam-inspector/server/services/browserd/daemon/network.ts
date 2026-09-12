@@ -20,6 +20,7 @@
  * nothing copies them in. A body is readable only LIVE, through an explicit
  * per-request read, and even then it is capped and never stored.
  */
+import { redactForModel } from "./shape-redaction";
 
 /** One request, folded together with its response as they arrive. */
 export interface NetworkEntry {
@@ -207,7 +208,12 @@ export class NetworkRing {
     if (update.statusText) row.statusText = update.statusText;
     if (update.mimeType) row.mimeType = update.mimeType;
     if (update.bytes !== undefined) row.bytes = update.bytes;
-    if (update.failure) row.failure = update.failure;
+    // SCRUBBED ON INSERT, not on read: the ring is what `dropNetworkSince`
+    // hands back and what a later observation re-reads, so a value stored raw
+    // is a value that survives every filter downstream of it. A failure
+    // message is an upstream string and routinely quotes the whole URL,
+    // query string included.
+    if (update.failure) row.failure = redactForModel(update.failure);
     const headers = retainHeaders(update.headers);
     if (headers) row.headers = headers;
     row.durationMs = Math.max(0, Date.now() - row.at);
