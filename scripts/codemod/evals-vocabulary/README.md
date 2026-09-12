@@ -44,20 +44,44 @@ note.** `evaluatorErrorRate` sits beside genuine evaluator code throughout the
 verdict policy; failing on proximity would make the tool unrunnable, and a tool
 nobody runs protects nothing.
 
-## Why it tokenizes
+## Why it parses
 
 `checks`, `predicates` and `repetitions` appear in prose, in comments, in four
 other subsystems and in test fixtures. A line-based grep reports all of them,
 the reviewer stops reading at the fiftieth false positive, and the report has
-bought nothing. TypeScript's scanner is already installed for the build, so
-telling an identifier from a word inside a comment costs no new dependency and
-no lockfile entry — which matters when the report has to run identically in CI
-and on a laptop mid-stack.
+bought nothing.
 
-An object key is an identifier or string followed by `:`; a property read is one
-preceded by `.`. Both are the field. Neither is the same as the word appearing
-in a sentence, which is the distinction that makes `checks → assertions`
-reviewable at all.
+It uses TypeScript's **parser**, not its raw scanner, and the difference is not
+academic — the first version of this tool used the scanner and got two things
+wrong that a reviewer caught:
+
+- A bare scanner has no parser context, so the text after an interpolation in a
+  template literal comes back as ordinary identifier tokens, and so does JSX
+  text. The first generated report proposed renaming `Scorer` out of two error
+  messages on that basis.
+- The token lookahead recognized a wire field only as `name:`, so it missed
+  `repetitions?: number`, `{ checks }`, a destructured binding, and
+  `row?.checks` — four of the five shapes a field actually takes. Fixing it
+  moved the inventory from 422 occurrences to 732, which is the difference
+  between an inventory and a sample.
+
+TypeScript is already installed for the build, so this costs no new dependency
+and no lockfile entry — which matters when the report has to run identically in
+CI and on a laptop mid-stack.
+
+## Why it fails closed
+
+Three ways it refuses to produce a report rather than produce a misleading one:
+
+- A path it cannot walk, stat or read is fatal. An inventory with a hole in it
+  reads as complete, and the next person renames from it.
+- Reading zero SOURCE files is fatal, even from a root full of other things. A
+  clean empty report is otherwise indistinguishable from a clean real one.
+- Generation writes to a temporary file and moves it into place only on success,
+  so a protected-match exit leaves the committed report intact. Shell
+  redirection truncates its target before the program starts, which meant the
+  first version emptied `REPORT.md` on precisely the failure the tool exists to
+  surface.
 
 ## The tables
 

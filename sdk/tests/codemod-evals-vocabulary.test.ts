@@ -10,7 +10,13 @@
  * moved a file.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,12 +30,13 @@ const SCANNER = join(
   "scripts",
   "codemod",
   "evals-vocabulary",
-  "index.mjs",
+  "index.mjs"
 );
 
 const trees: string[] = [];
 afterEach(() => {
-  for (const tree of trees.splice(0)) rmSync(tree, { recursive: true, force: true });
+  for (const tree of trees.splice(0))
+    rmSync(tree, { recursive: true, force: true });
 });
 
 function tree(files: Record<string, string>): string {
@@ -53,7 +60,7 @@ function scan(root: string, mappingOverride?: unknown) {
   const result = spawnSync(
     process.execPath,
     [SCANNER, "--root", root, "--json", ...extra],
-    { encoding: "utf8" },
+    { encoding: "utf8" }
   );
   return {
     status: result.status,
@@ -92,7 +99,7 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(json.status).toBe("protected");
     expect(json.violations[0].reason).toBe("protected path");
     expect(json.violations[0].file).toBe(
-      "mcpjam-inspector/server/routes/v1/eval-checks.ts",
+      "mcpjam-inspector/server/routes/v1/eval-checks.ts"
     );
   });
 
@@ -120,8 +127,7 @@ describe("the evaluator-vocabulary scanner", () => {
       // Both words on one line in an adapter the mapping covers. The first is
       // in scope, the second is not, and they are told apart by the token
       // rather than by the line — so this reports rather than refusing.
-      "sdk/src/platform/types.ts":
-        `export type Row = { checks: string[]; checkRunId: number };\n`,
+      "sdk/src/platform/types.ts": `export type Row = { checks: string[]; checkRunId: number };\n`,
     });
     const { status, json } = scan(root);
 
@@ -160,13 +166,123 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(json.findings).toHaveLength(0);
   });
 
+  it("leaves prose alone when it follows an interpolation", () => {
+    const root = tree({
+      // The regression that sent the first report wrong. A raw token scanner
+      // has no parser context, so everything after `${...}` in a template came
+      // back as ordinary identifiers — and the committed report proposed
+      // renaming `Scorer` out of two error messages.
+      "sdk/src/scorers/collide.ts":
+        "export const message = (id: string) =>\n" +
+        '  `Scorer id "${id}" is already used. Scorer ids must be unique.`;\n',
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    expect(json.findings).toHaveLength(0);
+  });
+
+  it("leaves JSX text alone", () => {
+    const root = tree({
+      "mcpjam-inspector/client/src/components/evals/Row.tsx":
+        "export const Row = () => <div>No Scorer configured</div>;\n",
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    expect(json.findings).toHaveLength(0);
+  });
+
+  it("finds a wire field however it is declared or read", () => {
+    const root = tree({
+      "sdk/src/platform/types.ts":
+        "export type A = { repetitions?: number };\n" +
+        "export type B = { repetitions: number };\n" +
+        "export const readOptional = (row: A) => row?.repetitions;\n" +
+        "export const readPlain = (row: B) => row.repetitions;\n" +
+        "export const shorthand = (repetitions: number) => ({ repetitions });\n",
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    // Five shapes, five findings. The token lookahead this replaced saw only
+    // the required declaration, which is why `repetitions?: number` in the
+    // platform types was missing from the inventory it exists to produce.
+    expect(
+      json.findings.filter((f: { from: string }) => f.from === "repetitions")
+    ).toHaveLength(5);
+  });
+
+  it("matches a whole flag, not a prefix of one", () => {
+    const root = tree({
+      "cli/src/commands/eval.ts":
+        `const a = "--repetitions";\n` +
+        `const b = "--repetitions=3";\n` +
+        `const c = "--repetitions-old";\n`,
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    // `--repetitions-old` is a DIFFERENT flag. Proposing to rename it would be
+    // proposing to break it.
+    const lines = json.findings
+      .filter((f: { from: string }) => f.from === "--repetitions")
+      .map((f: { line: number }) => f.line);
+    expect(lines).toEqual([1, 2]);
+  });
+
+  it("keeps a subpath rename inside its own allowlist", () => {
+    const root = tree({
+      "cli/src/a.ts": `import "@mcpjam/sdk/predicates";\n`,
+      "sdk/src/b.ts": `import "@mcpjam/sdk/predicates";\n`,
+    });
+    const { status, json } = scan(root, {
+      renames: [
+        {
+          from: "@mcpjam/sdk/predicates",
+          to: "@mcpjam/sdk/assertions",
+          scope: "subpath",
+          paths: ["sdk/"],
+        },
+      ],
+    });
+
+    expect(status).toBe(0);
+    expect(json.findings.map((f: { file: string }) => f.file)).toEqual([
+      "sdk/src/b.ts",
+    ]);
+  });
+
+  it("fails closed when a path cannot be inspected", () => {
+    const root = tree({ "sdk/src/a.ts": "export const a = 1;\n" });
+    // A dangling symlink: an entry the walk can list and cannot stat. Chmod
+    // would not do — the suite may run as a user for whom no file is
+    // unreadable, and a guard that only fires for some users is not a guard.
+    symlinkSync(join(root, "sdk/src/gone.ts"), join(root, "sdk/src/b.ts"));
+    const { status, stderr } = scan(root);
+
+    // An inventory with a hole in it reads as complete, and the next person
+    // renames from it.
+    expect(status).toBe(1);
+    expect(stderr).toMatch(/could not be inspected/);
+  });
+
+  it("fails closed when it read nothing, even from a non-empty root", () => {
+    const root = tree({ "assets/logo.png": "not really a png" });
+    const { status, stderr } = scan(root);
+
+    // The walk found a file. It read no SOURCE, so a clean empty report here
+    // would be indistinguishable from a clean real one.
+    expect(status).toBe(1);
+    expect(stderr).toMatch(/No supported files were read/);
+  });
+
   it("does not propose a wire-field rename outside the adapters that own it", () => {
     const root = tree({
       // `checks` as an object key, but in a file the mapping does not list —
       // GitHub check settings, conformance results, a UI reducer. Out of scope
       // is out of scope; it is not a finding and not a failure.
-      "mcpjam-inspector/client/src/state/app-reducer.ts":
-        `export const state = { checks: [] as string[] };\n`,
+      "mcpjam-inspector/client/src/state/app-reducer.ts": `export const state = { checks: [] as string[] };\n`,
     });
     const { status, json } = scan(root);
 
@@ -187,9 +303,13 @@ describe("the evaluator-vocabulary scanner", () => {
 
   it("has no --write, and says why rather than ignoring the flag", () => {
     const root = tree({ "sdk/src/a.ts": "export const a = 1;\n" });
-    const result = spawnSync(process.execPath, [SCANNER, "--root", root, "--write"], {
-      encoding: "utf8",
-    });
+    const result = spawnSync(
+      process.execPath,
+      [SCANNER, "--root", root, "--write"],
+      {
+        encoding: "utf8",
+      }
+    );
 
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/no --write/);
