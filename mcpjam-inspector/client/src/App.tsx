@@ -1,3 +1,4 @@
+import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
@@ -3106,6 +3107,10 @@ export default function App() {
   // on auth-scope changes: WorkOS navigation can redirect before that effect
   // gets a chance to run.
   const disconnectRuntimeServersForAuthExit = useCallback(async () => {
+    const inspection = useWebmcpInspectorStore.getState();
+    if (inspection.session && !inspection.session.sessionId.startsWith("hosted:")) {
+      await inspection.closeSession();
+    }
     const serverNames = Object.keys(appState.servers);
     const cleanupPromise = Promise.allSettled([
       Promise.allSettled(

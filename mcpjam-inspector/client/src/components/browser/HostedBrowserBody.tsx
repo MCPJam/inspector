@@ -1,4 +1,8 @@
 import type { JpegDeliveryStats } from "@/shared/browser-viewport-policy";
+import {
+  releaseBrowserForChat,
+  useBrowserChatHandoff,
+} from "@/lib/browser-shell/chat-handoff";
 import { useBrowserWorkspaceEnabled } from "@/hooks/useComputersEnabled";
 import {
   browserPageToolsKey,
@@ -26,6 +30,7 @@ import {
   labelFor,
 } from "@/components/browser/PaneControlBar";
 import { BrowserPanel } from "@/components/computer/BrowserPanel";
+import { BrowserSettingsButton } from "@/components/browser/BrowserSettingsButton";
 import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
 import {
   createTierController,
@@ -133,6 +138,7 @@ export function HostedBrowserBody({
   projectId,
   sessionId,
   mintToken,
+  hostId = null,
   active = true,
 }: {
   projectId: string | null;
@@ -143,6 +149,8 @@ export function HostedBrowserBody({
     token: string;
     expiresAt: number;
   }>;
+  /** Client id for the Browser settings button in the nav bar. */
+  hostId?: string | null;
   /**
    * Is this pane the rail's visible tab?
    *
@@ -347,6 +355,8 @@ export function HostedBrowserBody({
           return;
         if (cause instanceof HostedBrowserError && cause.status === 409) {
           // No browser on this computer yet — an offer, not a failure.
+          setHolding(false);
+          setLease({ state: "free" });
           setSession(null);
           setUnavailable(null);
           setError(null);
@@ -443,6 +453,31 @@ export function HostedBrowserBody({
     [tokens, session],
   );
 
+  useBrowserChatHandoff({
+    projectId,
+    sessionId,
+    holding: holding,
+    release: async (isCurrent) => {
+      if (!tokens || !session) return true;
+      const mine = generation.current;
+      try {
+        const outcome = await actOnHostedBrowserLease(tokens, {
+          action: "resume",
+        });
+        if (isCurrent() && generation.current === mine) {
+          setLease(outcome.lease);
+          setHolding(outcome.yours);
+          setStreamAttempt((n) => n + 1);
+        }
+        return outcome.took;
+      } catch (cause) {
+        if (cause instanceof HostedBrowserError && cause.status === 409)
+          return true;
+        throw cause;
+      }
+    },
+  });
+
   // Keep a held lease alive. It expires into `parked` on purpose — a timer
   // running out is not evidence the private moment ended — and a person
   // mid-login should not have to re-take a browser they never let go of.
@@ -499,8 +534,9 @@ export function HostedBrowserBody({
 
   const exportProfile = useCallback(async () => {
     if (!tokens) throw new Error("The hosted browser is not ready yet.");
+    await releaseBrowserForChat(projectId, sessionId);
     return fetchHostedBrowserProfileArchive(tokens);
-  }, [tokens]);
+  }, [tokens, projectId, sessionId]);
 
   const placeholder = (() => {
     if (!projectId) {
@@ -573,15 +609,6 @@ export function HostedBrowserBody({
       },
     };
   }, [tokens, session, setLeaseAction]);
-
-  useEffect(() => {
-    if (!workspaceEnabled && tokens && session)
-      void reportHostedPaneViewport(tokens, {
-        width: 1024,
-        height: 768,
-        policy: "fixed",
-      });
-  }, [workspaceEnabled, tokens, session?.bootId]);
 
   const shell = useBrowserSession({
     transport: shellTransport,
@@ -940,8 +967,8 @@ export function HostedBrowserBody({
           const parsed = JSON.parse(raw) as {
             type?: string;
             frame?: PaneFrame;
-            t?: number;
             jpegDelivery?: JpegDeliveryStats;
+            t?: number;
             framesIn?: number;
             framesOut?: number;
             bytes?: number;
@@ -992,7 +1019,10 @@ export function HostedBrowserBody({
             if (typeof parsed.t === "number") {
               const rtt = Date.now() - parsed.t;
               paneFrameStats.noteRtt(rtt);
-              // Retain round-trip diagnostics without treating latency alone as loss.
+              // Kept for the tier controller, which reads loss AND latency: a
+              // link that drops nothing but answers in half a second is still
+              // a link somebody is waiting on, and without this the whole
+              // latency half of the auto rule never fired.
               rttRef.current = rtt;
             }
             return;
@@ -1338,9 +1368,7 @@ export function HostedBrowserBody({
         ...(lease.state === "parked" ? { parked: true } : {}),
       }}
       onCommand={shell.run}
-      {...(session && holding ? { onResumeAgent: shell.resume } : {})}
-      resuming={shell.resuming}
-      onViewportMeasured={workspaceEnabled ? shell.reportViewport : undefined}
+      onViewportMeasured={shell.reportViewport}
       // Not just "is there a browser": an engine too old to answer pane
       // commands has a perfectly real session, and controls that look live
       // and swallow every click read as broken rather than old.
@@ -1355,20 +1383,22 @@ export function HostedBrowserBody({
       {...(placeholder ? { placeholder } : {})}
       trailing={
         <>
-          {session && sessionId ? (
-            <BrowserProfileSaveButton
-              projectId={projectId ?? ""}
-              exportArchive={exportProfile}
-              disabled={holding || busy}
-            />
-          ) : null}
+          {hostId ? <BrowserSettingsButton hostId={hostId} /> : null}
           <PaneSettingsMenu
             statsOpen={statsOpen}
             onToggleStats={onStatsToggle}
             tier={tierPreference}
             tiers={HOSTED_TIERS}
             onTier={onTier}
-          />
+          >
+            {session && sessionId ? (
+              <BrowserProfileSaveButton
+                projectId={projectId ?? ""}
+                exportArchive={exportProfile}
+                disabled={busy}
+              />
+            ) : null}
+          </PaneSettingsMenu>
         </>
       }
     >

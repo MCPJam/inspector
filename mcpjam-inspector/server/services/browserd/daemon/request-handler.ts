@@ -719,12 +719,14 @@ export class BrowserdRequestHandler {
       };
     }
     const snapshot = await this.driver.stateSnapshot();
+    const webmcp = this.webmcpSnapshot(snapshot.activeTabId ?? undefined);
     const lease = this.lease.state();
     return {
       status: 200,
       body: {
         bootId: this.bootId,
         ...snapshot,
+        ...(webmcp ? { webmcp } : {}),
         control:
           lease.state === "free"
             ? { kind: "agent" }

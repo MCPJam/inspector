@@ -39,6 +39,8 @@ export interface ChatV2Request {
    */
   environmentOverrides?: EnvironmentOverrides;
   chatSessionId?: string;
+  /** Bind browser discovery and execution to this chatSessionId. */
+  browserScope?: "conversation";
   /** Lineage for a new session created by editing an earlier user message. */
   rewind?: ChatRewind;
   /** Userless retry of a tool call suspended for SEP-2350 authorization. */

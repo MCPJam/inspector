@@ -17,10 +17,16 @@ import {
   getToolVisibility,
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
 import { BrowserToolsSection } from "@/components/playground/BrowserToolsSection";
+import { ToolSourceHeader } from "@/components/playground/ToolSourceHeader";
+import { WEBMCP_TOOL_NAME_PREFIX } from "@/shared/declared-tools";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 
@@ -52,10 +58,12 @@ interface ToolListProps {
   onSelectBuiltin?: (key: string) => void;
   /**
    * The agent browser's tools (the six `browser_*` plus the current page's
-   * WebMCP ones), when the previewed host attaches a browser. Display-only —
-   * see `BrowserToolsSection` for why there is no Run here.
+   * WebMCP ones), when the previewed host attaches a browser. Selecting a
+   * row opens the same detail + Run flow as a server tool; Run asks the agent.
    */
   browserTools?: BrowserToolsState;
+  selectedBrowserKey?: string | null;
+  onSelectBrowser?: (key: string) => void;
   /**
    * Whether at least one MCP server is connected. When false, the empty state
    * says so and offers a way out instead of blaming a server that isn't there.
@@ -84,6 +92,8 @@ export function ToolList({
   builtinToolsRunLocally = false,
   onSelectBuiltin,
   browserTools,
+  selectedBrowserKey = null,
+  onSelectBrowser,
   hasConnectedServer = true,
   onAddServerRequested,
 }: ToolListProps) {
@@ -95,7 +105,7 @@ export function ToolList({
     useShallow((s) => ({
       aliases: s.aliases,
       instancesByBridgeId: s.instancesByBridgeId,
-    }))
+    })),
   );
   const appEntries = useMemo<AppEntry[]>(() => {
     const aliasByBridgeAndName = new Map<string, string>();
@@ -105,7 +115,9 @@ export function ToolList({
     const out: AppEntry[] = [];
     for (const inst of instancesByBridgeId.values()) {
       for (const tool of inst.tools) {
-        const alias = aliasByBridgeAndName.get(`${inst.bridgeId}\0${tool.name}`);
+        const alias = aliasByBridgeAndName.get(
+          `${inst.bridgeId}\0${tool.name}`,
+        );
         if (!alias) continue;
         out.push({
           alias,
@@ -159,11 +171,31 @@ export function ToolList({
     ).length;
   }, [browserTools, searchQuery]);
 
+  const filteredPageCount = useMemo(() => {
+    const pageTools = browserTools?.page?.ok ? browserTools.page.tools : [];
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return pageTools.length;
+    return pageTools.filter((tool) =>
+      `${WEBMCP_TOOL_NAME_PREFIX}${tool.name} ${tool.name} ${tool.description ?? ""}`
+        .toLowerCase()
+        .includes(q),
+    ).length;
+  }, [browserTools, searchQuery]);
+
+  // Local Browser permission is a row of its own: until it is granted the
+  // browser's tools are withheld, and the section is where Allow lives.
+  const browserConsentShown =
+    (browserTools?.localConsent || browserTools?.catalogError) &&
+    !searchQuery.trim()
+      ? 1
+      : 0;
   const totalShown =
+    browserConsentShown +
     filteredToolNames.length +
     filteredAppEntries.length +
     filteredBuiltinCount +
-    filteredBrowserCount;
+    filteredBrowserCount +
+    filteredPageCount;
   // Mirrors every source `totalShown` counts, unfiltered — built-ins and the
   // browser included. Omitting them let a search that hides a harness's
   // built-ins fall through to the no-server copy, which would be reporting the
@@ -174,7 +206,9 @@ export function ToolList({
     toolNames.length === 0 &&
     appEntries.length === 0 &&
     builtinTools.length === 0 &&
-    (browserTools?.tools.length ?? 0) === 0;
+    (browserTools?.tools.length ?? 0) === 0 &&
+    !browserTools?.localConsent &&
+    !browserTools?.catalogError;
 
   return (
     <div className="h-full flex flex-col">
@@ -200,8 +234,8 @@ export function ToolList({
               {!hasNoTools
                 ? "No tools match your search"
                 : hasConnectedServer
-                ? "No tools found. Try refreshing and make sure the server is running."
-                : "No server connected yet. Connect one to load its tools and use them in chat."}
+                  ? "No tools found. Try refreshing and make sure the server is running."
+                  : "No server connected yet. Connect one to load its tools and use them in chat."}
             </p>
             {hasNoTools && !hasConnectedServer && (
               <Button
@@ -221,137 +255,157 @@ export function ToolList({
             )}
           </div>
         ) : (
-          <div className="space-y-0.5">
-            {filteredToolNames.map((name) => {
-              const tool = tools[name];
-              const isSelected = selectedToolName === name;
-              const uiType = detectUIType(tool._meta, undefined);
-              const visibility = getToolVisibility(
-                tool._meta as Record<string, unknown> | undefined,
-              );
-              const visibilityLabel = `[${visibility
-                .map((v) => `"${v}"`)
-                .join(", ")}]`;
+          <div className="space-y-3">
+            {browserTools ? (
+              <BrowserToolsSection
+                tools={browserTools.tools}
+                page={browserTools.page}
+                searchQuery={searchQuery}
+                selectedKey={selectedBrowserKey}
+                onSelect={onSelectBrowser}
+                localConsent={browserTools.localConsent}
+                catalogError={browserTools.catalogError}
+                onRetryCatalog={browserTools.refreshPage}
+              />
+            ) : null}
+            {filteredToolNames.length > 0 || filteredAppEntries.length > 0 ? (
+              <ToolSourceHeader title="Servers">
+                <div className="space-y-0.5">
+                  {filteredToolNames.map((name) => {
+                    const tool = tools[name];
+                    const isSelected = selectedToolName === name;
+                    const uiType = detectUIType(tool._meta, undefined);
+                    const visibility = getToolVisibility(
+                      tool._meta as Record<string, unknown> | undefined,
+                    );
+                    const visibilityLabel = `[${visibility
+                      .map((v) => `"${v}"`)
+                      .join(", ")}]`;
 
-              return (
-                <button
-                  key={name}
-                  onClick={() => {
-                    if (isSelected) {
-                      onCollapseList();
-                    } else {
-                      onSelectTool(name);
-                    }
-                  }}
-                  className={`w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1 ${
-                    isSelected
-                      ? "cursor-pointer bg-primary/10"
-                      : "cursor-pointer hover:bg-muted/50"
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <code className="text-xs font-mono font-medium truncate flex-1">
-                      {name}
-                    </code>
-                  </div>
-                  {tool.description && (
-                    <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
-                      {tool.description}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-1.5 mt-2">
-                    {(uiType === UIType.OPENAI_SDK ||
-                      uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div className="flex items-center">
-                            <img
-                              src="/openai_logo.png"
-                              alt="ChatGPT Apps"
-                              className="h-3.5 w-3.5 object-contain opacity-60"
-                            />
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs">ChatGPT Apps</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                    {(uiType === UIType.MCP_APPS ||
-                      uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
-                      uiType === UIType.MCP_UI) && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div className="flex items-center">
-                            <img
-                              src="/mcp.svg"
-                              alt="MCP Apps"
-                              className="h-3.5 w-3.5 object-contain opacity-60"
-                            />
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs">
-                            {uiType === UIType.MCP_UI ? "MCP UI" : "MCP Apps"}
+                    return (
+                      <button
+                        key={name}
+                        onClick={() => {
+                          if (isSelected) {
+                            onCollapseList();
+                          } else {
+                            onSelectTool(name);
+                          }
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1 ${
+                          isSelected
+                            ? "cursor-pointer bg-primary/10"
+                            : "cursor-pointer hover:bg-muted/50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <code className="text-xs font-mono font-medium truncate flex-1">
+                            {name}
+                          </code>
+                        </div>
+                        {tool.description && (
+                          <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
+                            {tool.description}
                           </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                    <span
-                      className="font-mono text-[10px] text-muted-foreground"
-                      title={`SEP-1865 visibility: ${visibilityLabel}`}
-                    >
-                      visibility: {visibilityLabel}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-            {filteredAppEntries.map((entry) => {
-                const isSelected = selectedToolName === entry.alias;
-                return (
-                  <button
-                    key={entry.alias}
-                    onClick={() => {
-                      if (isSelected) {
-                        onCollapseList();
-                      } else {
-                        onSelectTool(entry.alias);
-                      }
-                    }}
-                    className={`w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1 ${
-                      isSelected
-                        ? "cursor-pointer bg-primary/10"
-                        : "cursor-pointer hover:bg-muted/50"
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                      <code className="text-xs font-mono font-medium truncate">
-                        {entry.rawName}
-                      </code>
-                      <span
-                        className="font-mono text-[10px] bg-accent text-accent-foreground px-1.5 py-[1px] rounded"
-                        title={`App-provided by ${entry.appName} (alias: ${entry.alias})`}
+                        )}
+                        <div className="flex items-center gap-1.5 mt-2">
+                          {(uiType === UIType.OPENAI_SDK ||
+                            uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <div className="flex items-center">
+                                  <img
+                                    src="/openai_logo.png"
+                                    alt="ChatGPT Apps"
+                                    className="h-3.5 w-3.5 object-contain opacity-60"
+                                  />
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p className="text-xs">ChatGPT Apps</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                          {(uiType === UIType.MCP_APPS ||
+                            uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
+                            uiType === UIType.MCP_UI) && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <div className="flex items-center">
+                                  <img
+                                    src="/mcp.svg"
+                                    alt="MCP Apps"
+                                    className="h-3.5 w-3.5 object-contain opacity-60"
+                                  />
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p className="text-xs">
+                                  {uiType === UIType.MCP_UI
+                                    ? "MCP UI"
+                                    : "MCP Apps"}
+                                </p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                          <span
+                            className="font-mono text-[10px] text-muted-foreground"
+                            title={`SEP-1865 visibility: ${visibilityLabel}`}
+                          >
+                            visibility: {visibilityLabel}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {filteredAppEntries.map((entry) => {
+                    const isSelected = selectedToolName === entry.alias;
+                    return (
+                      <button
+                        key={entry.alias}
+                        onClick={() => {
+                          if (isSelected) {
+                            onCollapseList();
+                          } else {
+                            onSelectTool(entry.alias);
+                          }
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1 ${
+                          isSelected
+                            ? "cursor-pointer bg-primary/10"
+                            : "cursor-pointer hover:bg-muted/50"
+                        }`}
                       >
-                        from {entry.appName}
-                      </span>
-                    </div>
-                    {entry.description && (
-                      <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
-                        {entry.description}
-                      </p>
-                    )}
-                    <div className="flex items-center gap-1.5 mt-2">
-                      <span
-                        className="font-mono text-[10px] text-muted-foreground"
-                        title="SEP-1865 app-provided tool"
-                      >
-                        readOnly: {entry.readOnly ? "true" : "false"}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
+                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                          <code className="text-xs font-mono font-medium truncate">
+                            {entry.rawName}
+                          </code>
+                          <span
+                            className="font-mono text-[10px] bg-accent text-accent-foreground px-1.5 py-[1px] rounded"
+                            title={`App-provided by ${entry.appName} (alias: ${entry.alias})`}
+                          >
+                            from {entry.appName}
+                          </span>
+                        </div>
+                        {entry.description && (
+                          <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
+                            {entry.description}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-1.5 mt-2">
+                          <span
+                            className="font-mono text-[10px] text-muted-foreground"
+                            title="SEP-1865 app-provided tool"
+                          >
+                            readOnly: {entry.readOnly ? "true" : "false"}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </ToolSourceHeader>
+            ) : null}
             {onSelectBuiltin && (
               <HarnessBuiltinToolsSection
                 tools={builtinTools}
@@ -361,16 +415,6 @@ export function ToolList({
                 localExecution={builtinToolsRunLocally}
               />
             )}
-            {browserTools ? (
-              <BrowserToolsSection
-                tools={browserTools.tools}
-                page={browserTools.page}
-                live={browserTools.live}
-                engine={browserTools.engine}
-                searchQuery={searchQuery}
-                onRefreshPage={browserTools.refreshPage}
-              />
-            ) : null}
           </div>
         )}
       </div>

@@ -73,6 +73,7 @@ export type ControlPlaneResult<T> =
       resource?: string;
       /** Server-provided retry hint, normalized to milliseconds. */
       retryAfterMs?: number;
+      limit?: number;
     };
 
 export function getConvexHttpUrl(): string | null {
@@ -173,6 +174,7 @@ async function postJson<T>(
       status: response.status,
       error,
       ...(code ? { code } : {}),
+      ...(typeof body?.limit === "number" ? { limit: body.limit } : {}),
       // WHICH budget a 503 hit (`run` | `desktop` | `org` | `global`), when
       // the control plane said. Lets a caller word its wait notice — "waiting
       // on desktop capacity" is a different sentence, and a different wait,

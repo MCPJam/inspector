@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { cn } from "@mcpjam/design-system/cn";
 import { Loader2 } from "lucide-react";
 import { PaneMessage } from "@/components/computer/PaneMessage";
 import {
@@ -601,7 +602,10 @@ export function BrowserPaneSurface({
       <div
         ref={paneRef}
         aria-label={interactionLabel}
-        className="relative flex min-h-0 flex-1 items-center justify-center px-3 pb-3 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className={cn(
+          "relative flex min-h-0 flex-1 items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          chrome !== "none" && "px-3 pb-3",
+        )}
         // FOCUSABLE EVEN WHEN THE AGENT IS DRIVING, because typing is now one
         // of the things that takes the browser. It used to be `-1` while not
         // holding, which was right when taking control was a button: there was

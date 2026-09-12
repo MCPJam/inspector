@@ -11,6 +11,7 @@
  *   GET  /page-tools         → the WebMCP tools the current page declares, read
  *                              with the same observation the model's
  *                              the chat turn's page-tool peek sends (Tools pane)
+ *   POST /page-tools/invoke  → run one of those tools as this person (manual)
  *
  * Auth mirrors `computer-upload.ts`: the browser mints a ~60s Convex browser
  * token (`projectComputers.mintBrowserToken`) and sends it as
@@ -64,7 +65,10 @@ import {
   parsePaneCommand,
 } from "../../services/browserd/daemon/pane-command.js";
 import {
+  pageToolInvokeFromBody,
+  pageToolInvokeFromCommandResponse,
   pageToolsFromCommandResponse,
+  sendPageToolInvoke,
   webmcpToolsObserveCommand,
 } from "../../services/browserd/page-tools.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
@@ -1035,6 +1039,73 @@ export function createComputerBrowserPanelRoutes(
       }
       reportRouteFailure("browser panel page-tools read failed", error, {
         source: "computer-browser-panel.page-tools",
+        hop: "mcpjam_internal",
+        context: { browserTarget: id },
+      });
+      return c.json({ ok: false, error: "unreachable" }, 502);
+    }
+  });
+
+  /**
+   * Invoke a page tool the Tools pane is showing.
+   *
+   * A person clicked Run on a tool they can see. Same hop as the read:
+   * `inspector` first so it runs while the agent is driving, then this
+   * caller's `manual` if they hold the lease. Never a body-supplied source.
+   * Counts as real use (unlike the read): the command touches the page.
+   */
+  app.post("/page-tools/invoke", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const { userId } = auth.claims;
+    const target = browserTarget(auth.claims);
+    const id = targetId(auth.claims);
+    const parsed = pageToolInvokeFromBody(await c.req.json().catch(() => null));
+    if (!parsed.ok) {
+      return c.json({ ok: false, error: parsed.error }, 400);
+    }
+
+    try {
+      const session = await currentSession(target, auth.claims.sessionId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      const client = createClient(session);
+      const response = await sendPageToolInvoke(
+        (command, bootId) => client.sendCommand(command, bootId),
+        {
+          toolKey: parsed.toolKey,
+          input: parsed.input,
+          holder: userId,
+          bootId: session.bootId,
+          ...(parsed.frameId ? { frameId: parsed.frameId } : {}),
+          ...(parsed.tabId ? { tabId: parsed.tabId } : {}),
+        },
+      );
+      const mapped = pageToolInvokeFromCommandResponse(response);
+      if (mapped.status === 200) {
+        if (shouldTouchSessionCommand(session.sessionId)) {
+          void touchSession({
+            sessionId: session.sessionId,
+            kind: "command",
+          }).catch(() => {});
+        }
+        if (
+          auth.claims.computerId &&
+          shouldTouchActivity(auth.claims.computerId)
+        ) {
+          void touchActivity({ computerId: auth.claims.computerId }).catch(
+            () => {},
+          );
+        }
+      }
+      return c.json(mapped.body, mapped.status);
+    } catch (error) {
+      if (error instanceof BrowserdClientError) {
+        return c.json({ ok: false, error: "unreachable" }, 502);
+      }
+      reportRouteFailure("browser panel page-tools invoke failed", error, {
+        source: "computer-browser-panel.page-tools-invoke",
         hop: "mcpjam_internal",
         context: { browserTarget: id },
       });

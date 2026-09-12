@@ -72,6 +72,8 @@ export interface ResumeConfig {
  * contract change.
  */
 export interface ChatHistoryDetailSession extends ChatHistorySession {
+  origin?: string;
+  browser?: { browserSessionId: string; state: string } | null;
   messagesBlobUrl: string | null;
   usedServerIds?: string[];
   resumeConfig?: ResumeConfig;

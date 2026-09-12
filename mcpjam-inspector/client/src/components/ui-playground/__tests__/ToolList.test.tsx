@@ -526,6 +526,21 @@ describe("ToolList", () => {
       />,
     );
     expect(screen.queryByText("Built-in tools")).not.toBeInTheDocument();
+    expect(screen.getByText("Servers")).toBeInTheDocument();
+  });
+
+  it("does not put a Servers header over a harness-only list", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        toolNames={[]}
+        filteredToolNames={[]}
+        builtinTools={[makeBuiltin("bash", "Bash")]}
+        onSelectBuiltin={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Servers")).not.toBeInTheDocument();
+    expect(screen.getByText("Built-in tools")).toBeInTheDocument();
   });
 
   it("clicking a built-in row selects it via onSelectBuiltin (not onSelectTool)", () => {
@@ -554,7 +569,10 @@ describe("ToolList", () => {
         toolNames={[]}
         filteredToolNames={[]}
         searchQuery="grep"
-        builtinTools={[makeBuiltin("bash", "Bash"), makeBuiltin("grep", "Grep")]}
+        builtinTools={[
+          makeBuiltin("bash", "Bash"),
+          makeBuiltin("grep", "Grep"),
+        ]}
         onSelectBuiltin={vi.fn()}
       />,
     );
@@ -576,4 +594,15 @@ describe("ToolList", () => {
     );
     expect(screen.queryByText("Source:")).not.toBeInTheDocument();
   });
+});
+
+it("keeps catalog recovery visible when there are no server tools", () => {
+  const refreshPage = vi.fn();
+  render(<ToolList {...defaultProps} browserTools={{
+    attached: true, engine: "local", tools: [], page: null,
+    catalogError: true, refreshPage,
+    invokePage: async () => ({ ok: false, error: "no_browser_session" }),
+  }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(refreshPage).toHaveBeenCalledOnce();
 });

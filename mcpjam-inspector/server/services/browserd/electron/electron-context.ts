@@ -1,3 +1,8 @@
+import { installElectronLocalSecurity } from "./local-security.js";
+import {
+  secureDriverContext,
+  type LocalBrowserSecurityPolicy,
+} from "../local/security-policy.js";
 /**
  * A `DriverContext` over Electron `WebContentsView`s on a hidden holder window.
  *
@@ -36,6 +41,7 @@
 
 import type { DriverContext, DriverPage } from "../daemon/browser-page";
 import { BROWSERD_OBSERVATION_VIEWPORT } from "../protocol";
+import { chromeUserAgent } from "../daemon/launch-args";
 import {
   createElectronInputShield,
   type ShieldViewConstructor,
@@ -61,6 +67,7 @@ import type {
 export const ELECTRON_TAB_CAP = 8;
 
 export interface LaunchElectronContextOptions {
+  securityPolicy?: LocalBrowserSecurityPolicy;
   /**
    * `persistent` keeps a profile across boots, which is what a playground
    * login depends on; `ephemeral` gets an in-memory partition that dies with
@@ -122,6 +129,8 @@ export interface ElectronLike {
       setPermissionCheckHandler?(
         handler: ((...args: never[]) => void) | null,
       ): void;
+      /** Optional so a fake — and an Electron too old to have it — skips it. */
+      setUserAgent?(userAgent: string, acceptLanguages?: string): void;
     };
   };
 }
@@ -154,6 +163,22 @@ export interface ElectronWindowLike {
 export async function launchElectronContext(
   options: LaunchElectronContextOptions = {},
 ): Promise<DriverContext> {
+  const policy = options.securityPolicy;
+  if (
+    policy &&
+    (process.getuid?.() === 0 ||
+      process.env.ELECTRON_DISABLE_SANDBOX === "1" ||
+      process.argv.some((arg) =>
+        /^--(?:no-sandbox|disable-setuid-sandbox|disable-web-security)(?:=|$)/.test(
+          arg,
+        ),
+      ))
+  ) {
+    throw new Error(
+      "Local browser requires the Chromium sandbox and a non-root account.",
+    );
+  }
+  await policy?.assertActive();
   const electron = options.electron ?? (await loadElectron());
   const contextMode = options.contextMode ?? "persistent";
 
@@ -165,7 +190,9 @@ export async function launchElectronContext(
     options.partition ??
     (contextMode === "persistent"
       ? `persist:mcpjam-browser-${options.partitionKey ?? "default"}`
-      : `mcpjam-browser-ephemeral-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      : `mcpjam-browser-ephemeral-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2)}`);
 
   // Deny-all, matching the WebMCP surface's handler in `src/main.ts`. The agent
   // browses whatever a page links to; "the developer's own site" stops being
@@ -181,6 +208,31 @@ export async function launchElectronContext(
   }) as never);
   partitionSession.setPermissionCheckHandler?.((() => false) as never);
 
+  // Electron's default UA announces the runtime AND this app —
+  // `… mcpjam-inspector/3.x Chrome/140.0.0.0 Electron/43.6.0 Safari/…` — which
+  // is a one-token match for every bot rule on public HTTPS, and the reason the
+  // desktop engine met captchas the Playwright engine did not. Replace it with
+  // the UA a stock Chrome of the SAME Chromium major sends: the version stays
+  // honest (it is this binary's own), only the runtime tokens go.
+  //
+  // Scoped to the agent's partition, so the app's own windows are untouched.
+  //
+  // NOT A COMPLETE DISGUISE, and not meant as one: Electron still carries its
+  // own brand in `Sec-CH-UA`, which only a CDP metadata override could change.
+  // This removes the signal that was actually being matched on.
+  const chromeMajor = Number.parseInt(process.versions.chrome ?? "", 10);
+  if (Number.isFinite(chromeMajor) && chromeMajor > 0) {
+    partitionSession.setUserAgent?.(
+      chromeUserAgent(process.platform, chromeMajor),
+    );
+  }
+
+  const removePolicy = policy
+    ? await installElectronLocalSecurity(
+        partitionSession as unknown as import("electron").Session,
+        policy,
+      )
+    : undefined;
   const windows = new Set<ElectronWindowLike>();
   let closed = false;
   const listeners = new Set<
@@ -352,8 +404,25 @@ export async function launchElectronContext(
   }
 
   function adopt(window: ElectronWindowLike): DriverPage {
+    if (policy) {
+      const prevent = (...args: unknown[]) => {
+        const event = args[0] as { preventDefault(): void; url?: string };
+        const target = typeof args[1] === "string" ? args[1] : event.url;
+        if (target === "about:blank") return;
+        try {
+          policy.assertNavigation(target ?? "");
+        } catch {
+          event.preventDefault();
+        }
+      };
+      window.webContents.on("will-navigate", prevent);
+      window.webContents.on("will-frame-navigate", prevent);
+      window.webContents.on("will-redirect", prevent);
+    }
     window.webContents.on("destroyed", () => forget(window));
     const page = createElectronPage(window.webContents, {
+      localSecurity: Boolean(options.securityPolicy),
+      localBudget: policy?.discoveryBudget,
       onClose() {
         forget(window);
         if (!window.isDestroyed()) window.destroy();
@@ -368,7 +437,12 @@ export async function launchElectronContext(
     });
 
     window.webContents.setWindowOpenHandler?.((details) => {
-      if (closed || windows.size >= ELECTRON_TAB_CAP || listeners.size === 0)
+      if (
+        closed ||
+        (policy && !policy.allowsRequest(details.url)) ||
+        windows.size >= ELECTRON_TAB_CAP ||
+        listeners.size === 0
+      )
         return { action: "deny" };
       return {
         action: "allow",
@@ -397,7 +471,7 @@ export async function launchElectronContext(
     return page;
   }
 
-  return {
+  const context: DriverContext = {
     onPageCreated(listener) {
       listeners.add(listener);
       return () => {
@@ -430,6 +504,7 @@ export async function launchElectronContext(
     isConnected: () => !closed,
     async close() {
       closed = true;
+      removePolicy?.();
       for (const window of [...windows]) {
         forget(window);
         try {
@@ -454,6 +529,7 @@ export async function launchElectronContext(
       }
     },
   };
+  return policy ? secureDriverContext(context, policy) : context;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { LocalBrowserOnboarding } from "@/components/browser/LocalBrowserOnboarding";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -35,7 +36,10 @@ import {
   PlaygroundBrowserPanel,
 } from "@/components/playground/PlaygroundBrowserPanel";
 import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
+import { railShouldOpenForBrowse } from "@/hooks/useOpenBrowserOnBrowsing";
+import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 import {
   useBrowserWorkspaceEnabledState,
   useBrowserEnabledState,
@@ -247,7 +251,19 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // The browser panel's own layout, which is a STORE rather than state here
   // because three unrelated things move it: the agent starting to browse, the
   // person dragging the divider, and the panel's own controls.
+  const restorationPending = useActiveChatSessionStore(
+    (state) => state.restorationPending,
+  );
   const conversationId = useActiveChatSessionStore((state) => state.sessionId);
+  const restoredHasBrowser = useActiveChatSessionStore(
+    (state) => !!state.restoredSession?.browser,
+  );
+  const comparisonHasBrowser = useBrowserComparisonStore((state) =>
+    Object.values(state.clients).some(
+      (client) => client.workspaceId === conversationId && client.started,
+    ),
+  );
+  const sessionHasBrowser = restoredHasBrowser || comparisonHasBrowser;
   const browserOpen = useBrowserWorkspaceStore((state) =>
     conversationId ? !!state.conversations[conversationId]?.open : false,
   );
@@ -268,10 +284,19 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const noteRailCollapsed = useBrowserWorkspaceStore(
     (state) => state.noteRailCollapsed,
   );
+  const browseRevealSeq = useBrowserWorkspaceStore((state) => state.revealSeq);
+  const browseRevealId = useBrowserWorkspaceStore(
+    (state) => state.revealConversationId,
+  );
 
   const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
   const browsersEnabled = useBrowserEnabledState();
   const browserEngine = useBrowserEngine(projectScope);
+  const browserToolIds = useBrowserToolIds(
+    effectiveHostConfig,
+    browserEngine.selectedEngine,
+    { projectId: projectScope, hostId: previewedHostId },
+  );
   // Polled only on the local engine, where the question means something: on
   // hosted this route describes a machine that is not the one running the
   // browser.
@@ -289,8 +314,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     workspaceState === true &&
     browsersEnabled === true &&
     browserPanelAvailable({
-      hostHasBrowser:
-        !!effectiveHostConfig?.builtInToolIds?.includes("browser"),
+      sessionHasBrowser,
+      hostHasBrowser: !!browserToolIds?.includes("browser"),
       selectedEngine: browserEngine.selectedEngine,
       isAuthenticated: isConvexAuthenticated,
       localBrowserRunning,
@@ -317,13 +342,43 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     // during that window was closed again the moment this ran — and the
     // auto-open effect does not fire a second time when the flags land,
     // because nothing it watches changed. The browser simply never appeared.
-    if (browserOpen && canBrowseResolved && !canBrowse) closeBrowser();
-  }, [browserOpen, canBrowse, canBrowseResolved, closeBrowser]);
+    if (!restorationPending && browserOpen && canBrowseResolved && !canBrowse)
+      closeBrowser();
+  }, [
+    restorationPending,
+    browserOpen,
+    canBrowse,
+    canBrowseResolved,
+    closeBrowser,
+  ]);
 
   // Panel handles let us programmatically expand a collapsed rail when the
   // user clicks the corresponding `CollapsedPanelStrip` peek button.
   const leftPanelRef = useRef<ImperativePanelHandle | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
+  const pendingRailReveal = useRef(false);
+
+  // The rail starts collapsed. A tab switch inside an unmounted rail is how
+  // "open the browser when they navigate" silently did nothing.
+  useEffect(() => {
+    if (
+      !railShouldOpenForBrowse({
+        conversationId,
+        revealConversationId: browseRevealId,
+        workspacePanelVisible: workspaceState === true,
+      })
+    ) {
+      return;
+    }
+    pendingRailReveal.current = true;
+    setIsRightRailVisible(true);
+  }, [browseRevealSeq, browseRevealId, conversationId, workspaceState]);
+
+  useEffect(() => {
+    if (!isRightRailVisible || !pendingRailReveal.current) return;
+    pendingRailReveal.current = false;
+    rightPanelRef.current?.expand();
+  }, [isRightRailVisible]);
 
   if (playgroundState.loadingState.kind === "skeleton") {
     return (
@@ -365,6 +420,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                     dropdown in the global header) and re-snapshots its
                     persisted config into the chip stores when it changes.
                     Renders nothing. */}
+                    <LocalBrowserOnboarding
+                      projectId={projectScope}
+                      authReady={
+                        !props.isWorkOsAuthLoading &&
+                        (!props.isSignedInWithWorkOs || isConvexAuthenticated)
+                      }
+                    />
                     <PlaygroundPreviewedClientSync
                       projectId={
                         props.sharedProjectId ?? props.activeProjectId ?? null
@@ -487,6 +549,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           >
                             <PlaygroundBrowserPanel
                               projectId={projectScope}
+                              hostId={previewedHostId ?? null}
                               // MOUNTED but not claiming while the panel is off
                               // screen. Dropping the socket would stop the
                               // screencast and lose whatever the agent was

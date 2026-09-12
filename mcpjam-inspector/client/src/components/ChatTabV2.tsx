@@ -1,3 +1,4 @@
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import {
   FormEvent,
   useMemo,
@@ -498,6 +499,11 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
     },
   });
+  useEffect(() => {
+    if (chatSessionId) {
+      useActiveChatSessionStore.getState().setApprovalSetting(chatSessionId, requireToolApproval);
+    }
+  }, [chatSessionId, requireToolApproval]);
 
   // Chat history handlers
   const showHistoryRail = Boolean(

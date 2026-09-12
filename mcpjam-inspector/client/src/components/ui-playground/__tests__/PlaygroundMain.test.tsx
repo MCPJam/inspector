@@ -1,3 +1,4 @@
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
@@ -345,7 +346,11 @@ vi.mock("@/components/chat-v2/thread", () => ({
     editDisabled,
     sendFollowUpMessage,
     onFullscreenChange,
+    interactive,
+    onToolApprovalResponse,
   }: {
+    interactive?: boolean;
+    onToolApprovalResponse?: (response: any) => unknown;
     messages: any[];
     isLoading: boolean;
     loadingIndicatorVariant?: string;
@@ -367,6 +372,8 @@ vi.mock("@/components/chat-v2/thread", () => ({
         editDisabled,
         sendFollowUpMessage,
         onFullscreenChange,
+        interactive,
+        onToolApprovalResponse,
       });
       return (
         <div data-testid="thread">
@@ -748,6 +755,7 @@ describe("PlaygroundMain", () => {
   };
 
   beforeEach(() => {
+    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false });
     vi.clearAllMocks();
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
@@ -2038,6 +2046,38 @@ describe("PlaygroundMain", () => {
   });
 
   describe("multi-model chat", () => {
+    it("connects model browsers to the parent workspace in comparison order", () => {
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic" },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          activeProjectId="project-1"
+          enableMultiModelChat={true}
+        />
+      );
+
+      for (const [order, model] of mockUseChatSession.availableModels.entries()) {
+        const props = mockMultiModelPlaygroundCard.mock.calls
+          .map(([props]) => props)
+          .find((props) => props.compareId === model.id);
+        expect(props).toMatchObject({
+          compareKind: "model",
+          compareLabel: model.name,
+          browserWorkspace: {
+            id: "chat-session-1",
+            order,
+            clientCount: 2,
+          },
+        });
+      }
+    });
+
     it("shows centered starter layout, hidden compare grid, and composer like Chat tab when multi-model Chat is empty", () => {
       mockUseChatSession.availableModels = [
         {
@@ -3286,6 +3326,18 @@ describe("PlaygroundMain", () => {
       // Module-level store, not reset by the global `beforeEach`; the overlay
       // tests below change it and every other test assumes the default.
       mockUIPlaygroundStore.deviceType = "mobile";
+    });
+
+    it.each([null, { browserSessionId: "logical", state: "active" }])("makes API history view-only and describes available control: %j", async (browser) => {
+      mockUseChatSession.messages = [{ id: "m1", role: "assistant", parts: [{ type: "text", text: "Saved response" }] }];
+      render(<PlaygroundMain {...defaultProps} />);
+      act(() => useActiveChatSessionStore.getState().setRestoredSession({ sessionId: mockUseChatSession.chatSessionId, origin: "api", browser }));
+      expect(screen.getByText(/This conversation is driven by an agent/)).toBeInTheDocument();
+      expect(!!screen.queryByText(/You can take over its browser here/)).toBe(!!browser);
+      const thread = mockThread.mock.calls.at(-1)![0];
+      expect(thread.interactive).toBe(false);
+      await thread.onToolApprovalResponse({ id: "approval", approved: true });
+      expect(mockUseChatSession.addToolApprovalResponse).not.toHaveBeenCalled();
     });
 
     it("says nothing about a live chat the user started here", () => {

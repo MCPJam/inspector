@@ -907,22 +907,21 @@ guest, `will-attach-webview` enforcement, real debugger traffic, permission
 denial, popups, packaged behaviour and the latency itself are all integration
 facts — so these two passes are part of "done", not extra credit.
 
-**In dev.** Run it with `NODE_ENV` set explicitly:
+**In dev.** Run it:
 
 ```bash
-NODE_ENV=development npm run electron:start
+npm run electron:dev
 ```
 
-The variable is a TIMING problem, not a missing one. `startHonoServer` does set
-`NODE_ENV=development` when the app is unpackaged — but `src/main.ts` reads it
-into `isDev` at module load, before that assignment runs. So a bare
-`electron:start` leaves `isDev` false for the life of the process:
-`createMainWindow` loads the embedded server instead of forge's Vite renderer,
-and that server (unpackaged Electron) 307s every front-end route to the
-hardcoded `http://localhost:8080` from `getInspectorFrontendUrl`. Setting the
-variable on the command line is what makes `isDev` true early enough; the window
-then loads forge's renderer and `/api` proxies to `:6274` (the log says which
-port).
+This used to need a `NODE_ENV=development` prefix; it no longer does.
+`src/main.ts` derives dev mode from forge's renderer dev-server define
+(`MAIN_WINDOW_VITE_DEV_SERVER_URL`) instead of from a module-load-time NODE_ENV
+read, so the window loads forge's renderer and `/api` proxies to `:6274` (the
+log says which port) with no prefix. The old symptom, recorded for recognition
+if it ever returns: a blank white window, because on unpackaged Electron the
+embedded server 307s every front-end route to a hardcoded
+`http://localhost:8080`.
+
 Then: WebMCP tab → In app →
 `https://googlechromelabs.github.io/webmcp-tools/demos/explainer/`. What to look
 for, in order — scrolling and typing that feel native rather than streamed

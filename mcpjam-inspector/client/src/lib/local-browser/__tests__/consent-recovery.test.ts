@@ -4,6 +4,7 @@ import {
   clearStoredLocalBrowserConsent,
   loadStoredLocalBrowserConsent,
   persistLocalBrowserConsent,
+  localBrowserSetupPending,
   subscribeLocalBrowserConsent,
 } from "@/lib/local-browser-consent";
 import { ensureLocalBrowser } from "../client";
@@ -29,20 +30,28 @@ beforeEach(() => {
 afterEach(() => clearStoredLocalBrowserConsent());
 
 describe("local browser consent recovery", () => {
-  it("clears the rejected grant and notifies the consent gate", async () => {
-    vi.mocked(authFetch).mockResolvedValue(refused());
-    const changed = vi.fn();
-    const unsubscribe = subscribeLocalBrowserConsent(changed);
-    try {
-      await expect(ensureLocalBrowser("project", oldToken)).rejects.toThrow(
-        "Browser permission is required. Allow Browser in the Browser panel.",
-      );
-      expect(loadStoredLocalBrowserConsent()).toBeNull();
-      expect(changed).toHaveBeenCalledOnce();
-    } finally {
-      unsubscribe();
-    }
-  });
+  it.each([false, true])(
+    "clears the rejected grant and notifies once (setup pending: %s)",
+    async (setupPending) => {
+      vi.mocked(authFetch).mockResolvedValue(refused());
+      if (setupPending)
+        localStorage.setItem("mcp-local-browser-setup-pending-v1", "true");
+      const changed = vi.fn(() => {
+        expect(loadStoredLocalBrowserConsent()).toBeNull();
+        expect(localBrowserSetupPending()).toBe(false);
+      });
+      const unsubscribe = subscribeLocalBrowserConsent(changed);
+      try {
+        await expect(ensureLocalBrowser("project", oldToken)).rejects.toThrow(
+          "Browser permission is required. Allow Browser in the Browser panel.",
+        );
+        expect(loadStoredLocalBrowserConsent()).toBeNull();
+        expect(changed).toHaveBeenCalledOnce();
+      } finally {
+        unsubscribe();
+      }
+    },
+  );
 
   it("preserves a newer grant when an old request is rejected", async () => {
     vi.mocked(authFetch).mockImplementation(async () => {
