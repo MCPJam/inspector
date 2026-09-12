@@ -408,7 +408,7 @@ export function wrapPage(
     domStructureSignal() {
       return page.evaluate<string>(`(${DOM_SIGNAL_FN})()`);
     },
-    async screenshotBase64() {
+    async screenshotBase64(options) {
       // JPEG, not PNG. Every act and navigate result carries a capture, and a
       // full-viewport PNG of a real page runs 100–400 KB — which becomes tens
       // of thousands of tokens once it reaches the model as image content. At
@@ -416,7 +416,7 @@ export function wrapPage(
       // aiming a click, and roughly an order of magnitude cheaper.
       const buffer = await page.screenshot({
         type: "jpeg",
-        quality: SCREENSHOT_JPEG_QUALITY,
+        quality: options?.quality ?? SCREENSHOT_JPEG_QUALITY,
         // CSS PIXELS, always — the model's coordinate space (L5). Without
         // this, Playwright captures at the device scale factor, so raising the
         // display's sharpness would silently hand the model a 1536×1152 or

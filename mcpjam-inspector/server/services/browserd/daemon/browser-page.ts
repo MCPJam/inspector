@@ -223,7 +223,17 @@ export interface DriverPage {
    * contract — but a comment that names the wrong one invites a "fix" that
    * makes two engines disagree.
    */
-  screenshotBase64(): Promise<string>;
+  screenshotBase64(options?: {
+    /**
+     * JPEG quality, when the caller is trying to fit a byte budget.
+     *
+     * ADDITIVE, and absent is this engine's own default — the quality every
+     * capture has always used. An engine that ignores it answers exactly what
+     * it answered before, which is what makes `captureScreenshotWithinBudget`
+     * safe to call unconditionally.
+     */
+    quality?: number;
+  }): Promise<string>;
   url(): string;
   close(): Promise<void>;
   isClosed(): boolean;

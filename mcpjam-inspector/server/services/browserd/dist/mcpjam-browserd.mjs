@@ -4788,6 +4788,41 @@ async function readTabMetadata(cdp, fallbackUrl, options = {}) {
   };
 }
 
+// server/services/browserd/daemon/a11y-diff.ts
+var REF_ATTR = /\bref=e\d+/g;
+function keyOf(line2) {
+  return line2.replace(REF_ATTR, "ref=\u2022");
+}
+function stripRefs(line2) {
+  return line2.replace(REF_ATTR, "ref=gone");
+}
+var MAX_CHANGED_LINES = 200;
+function diffA11yLines(previous, next) {
+  const previousKeys = new Set(previous.split("\n").map(keyOf));
+  const nextKeys = new Set(next.split("\n").map(keyOf));
+  const added = [];
+  const seenAdded = /* @__PURE__ */ new Set();
+  for (const line2 of next.split("\n")) {
+    const key = keyOf(line2);
+    if (previousKeys.has(key) || seenAdded.has(key)) continue;
+    seenAdded.add(key);
+    added.push(line2);
+  }
+  const removed = [];
+  const seenRemoved = /* @__PURE__ */ new Set();
+  for (const line2 of previous.split("\n")) {
+    const key = keyOf(line2);
+    if (nextKeys.has(key) || seenRemoved.has(key)) continue;
+    seenRemoved.add(key);
+    removed.push(stripRefs(line2));
+  }
+  if (added.length > MAX_CHANGED_LINES || removed.length > MAX_CHANGED_LINES) {
+    return null;
+  }
+  if (added.length === 0 && removed.length === 0) return null;
+  return { added, removed };
+}
+
 // server/services/browserd/daemon/observation-budget.ts
 var DEFAULT_A11Y_BUDGET = { maxNodes: 400, maxDepth: 12 };
 function countNodes(node) {
@@ -6750,6 +6785,30 @@ function emptyWebmcpState() {
 var MAX_TRACKED_INVOCATIONS = 256;
 var MAX_PENDING_CANCELS = 64;
 var PENDING_CANCEL_TTL_MS = 6e4;
+var SCREENSHOT_QUALITY_LADDER = [70, 40, 25, 10];
+async function captureScreenshotWithinBudget(page, maxBytes) {
+  if (maxBytes === void 0) {
+    const shot = await page.screenshotBase64().catch(() => void 0);
+    return shot === void 0 ? void 0 : { screenshot: shot, compressed: false };
+  }
+  let last;
+  for (const [index, quality] of SCREENSHOT_QUALITY_LADDER.entries()) {
+    const shot = await page.screenshotBase64({ quality }).catch(() => void 0);
+    if (shot === void 0) break;
+    last = shot;
+    if (Buffer.byteLength(shot) <= maxBytes) {
+      return { screenshot: shot, compressed: index > 0 };
+    }
+  }
+  return last === void 0 ? void 0 : { screenshot: last, compressed: true };
+}
+function screenshotFields(captured) {
+  if (!captured) return {};
+  return {
+    screenshot: captured.screenshot,
+    ...captured.compressed ? { screenshotCompressed: true } : {}
+  };
+}
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
 function parsePoint(value) {
   if (!value) return null;
@@ -6816,6 +6875,18 @@ var ChromiumDriver = class {
    * that minted them can tell the difference.
    */
   refs = /* @__PURE__ */ new Map();
+  /**
+   * The last PAGE-SCOPED a11y render per tab, so an act can say what changed.
+   *
+   * Page-scoped only: a `rootRef`/`rootSelector` render describes a subtree,
+   * and diffing a whole page against one would report the rest of the page as
+   * removed. `filter` is recorded for the same reason — an `interactive` tree
+   * and an `all` tree of the same page differ on almost every line.
+   *
+   * Written at BOTH commit sites (an `observe {mode:"a11y"}` and an act's own
+   * post-capture), because the two alternate: observe, act, act, observe.
+   */
+  lastRender = /* @__PURE__ */ new Map();
   /**
    * What was decided about a dialog, waiting to ride the next observation.
    *
@@ -7221,7 +7292,10 @@ var ChromiumDriver = class {
         tabId,
         entry,
         permit,
-        wantsFor(action.observe)
+        wantsFor(action.observe),
+        void 0,
+        void 0,
+        action
       );
       return observed2.ok ? { settled: settledAfter, ...observed2 } : observed2;
     }
@@ -7259,7 +7333,15 @@ var ChromiumDriver = class {
       }
       const message = error instanceof Error ? error.message : String(error);
       const kind = error instanceof ActError ? error.code : /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
-      const fresh = await this.afterAct(tabId, entry, permit, wants, before);
+      const fresh = await this.afterAct(
+        tabId,
+        entry,
+        permit,
+        wants,
+        before,
+        void 0,
+        action
+      );
       if (fresh.leaseBlocked) return fresh;
       return {
         ok: false,
@@ -7305,7 +7387,8 @@ var ChromiumDriver = class {
       permit,
       wants,
       before,
-      "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
+      "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
+      action
     );
     return observed.ok ? { settled, ...observed } : observed;
   }
@@ -7898,7 +7981,7 @@ var ChromiumDriver = class {
         );
       }
       case "screenshot":
-        return this.observeScreenshot(tabId, entry, permit);
+        return this.observeScreenshot(tabId, entry, permit, action);
       case "text": {
         return this.observeText(tabId, entry, permit);
       }
@@ -7914,6 +7997,7 @@ var ChromiumDriver = class {
           permit
         );
         this.commitRefs(tabId, result, rendered.refMap);
+        this.rememberRender(tabId, action, rendered.fields, result);
         return result;
       }
       case "dialog": {
@@ -8071,7 +8155,7 @@ var ChromiumDriver = class {
    * `settled: false` (its token from the post-capture read) so the caller
    * re-observes rather than pinning an act to it.
    */
-  async observeScreenshot(tabId, entry, permit) {
+  async observeScreenshot(tabId, entry, permit, action) {
     const STABLE_ATTEMPTS = 2;
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt++) {
       if (!permit()) {
@@ -8080,10 +8164,19 @@ var ChromiumDriver = class {
         );
       }
       const before = await this.snapshot(entry.page);
-      const screenshot2 = await entry.page.screenshotBase64();
+      const captured2 = await captureScreenshotWithinBudget(
+        entry.page,
+        this.screenshotMaxBytes(action)
+      );
       const after2 = await this.snapshot(entry.page);
       if (before.url === after2.url && before.domSignal === after2.domSignal) {
-        return this.observation(tabId, entry, { screenshot: screenshot2 }, after2, permit);
+        return this.observation(
+          tabId,
+          entry,
+          screenshotFields(captured2),
+          after2,
+          permit
+        );
       }
     }
     if (!permit()) {
@@ -8091,10 +8184,19 @@ var ChromiumDriver = class {
         "a person has taken control of this browser; nothing was observed"
       );
     }
-    const screenshot = await entry.page.screenshotBase64();
+    const captured = await captureScreenshotWithinBudget(
+      entry.page,
+      this.screenshotMaxBytes(action)
+    );
     const after = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { screenshot }, after, permit),
+      ...this.observation(
+        tabId,
+        entry,
+        screenshotFields(captured),
+        after,
+        permit
+      ),
       settled: false
     };
   }
@@ -8619,6 +8721,66 @@ var ChromiumDriver = class {
    * carries, so a ref used after the page moved is refused rather than
    * resolved by name against whatever is there now.
    */
+  /**
+     * Record this render so the NEXT act can say what changed, or forget it.
+     *
+     * Forgetting is the important half and it happens on every path that is not
+     * a clean page-scoped render: a scoped read, a failed observation, a
+     * different filter. A stale `lastRender` is worse than none — it produces a
+     * confident `changed` describing a transition that did not happen.
+     */
+  rememberRender(tabId, action, fields, result) {
+    const lines = fields.a11y;
+    if (!result.ok || typeof lines !== "string" || action.rootRef !== void 0 || action.rootSelector !== void 0) {
+      this.lastRender.delete(tabId);
+      return;
+    }
+    this.lastRender.set(tabId, {
+      lines,
+      stateToken: result.stateToken,
+      filter: action.filter === "all" ? "all" : "interactive"
+    });
+  }
+  /**
+   * The lines this act added and removed, when that can be said honestly.
+   *
+   * Returns nothing — and the act's result carries no `changed` — unless ALL
+   * of these hold. Each is a way the section would otherwise lie:
+   *
+   *  - a previous PAGE-SCOPED render exists, at the same filter;
+   *  - it describes the SAME DOCUMENT (`refsStillDescribe`: same tab, same
+   *    navigation, same URL). After a navigation every line differs and
+   *    "everything changed" is noise;
+   *  - the diff is non-empty and within `MAX_CHANGED_LINES` on both sides.
+   */
+  changedSince(tabId, entry, fields, filter) {
+    const previous = this.lastRender.get(tabId);
+    const lines = fields.a11y;
+    if (!previous || typeof lines !== "string") return void 0;
+    if (previous.filter !== filter) return void 0;
+    if (!previous.stateToken || !this.refsStillDescribe(tabId, entry, {
+      stateToken: previous.stateToken,
+      entries: /* @__PURE__ */ new Map()
+    })) {
+      return void 0;
+    }
+    return diffA11yLines(previous.lines, lines) ?? void 0;
+  }
+  /**
+   * The byte cap for this capture: the command's, else the daemon's, else none.
+   *
+   * PER-COMMAND WINS, because a caller that knows its own context budget knows
+   * it better than the box does — an eval iteration streaming to a small model
+   * and a Playground turn on the same daemon want different answers. Neither
+   * set means today's behaviour exactly: one capture, no measurement.
+   */
+  screenshotMaxBytes(action) {
+    const requested = action?.maxScreenshotBytes;
+    if (typeof requested === "number" && Number.isFinite(requested) && requested > 0) {
+      return Math.floor(requested);
+    }
+    return this.features.screenshotMaxBytes;
+  }
   commitRefs(tabId, result, refMap) {
     if (!result.ok || !refMap) {
       this.refs.delete(tabId);
@@ -8641,7 +8803,7 @@ var ChromiumDriver = class {
    * reported only when the act actually moved the page, because a URL repeated
    * on every result is noise the model has to read past.
    */
-  async afterAct(tabId, entry, permit, wants, before, blockedDetail) {
+  async afterAct(tabId, entry, permit, wants, before, blockedDetail, action) {
     if (!permit()) {
       return this.leaseBlockedResult(
         blockedDetail ?? "a person has taken control of this browser; nothing was observed"
@@ -8663,7 +8825,11 @@ var ChromiumDriver = class {
         a11yFields = { a11yUnavailable: true };
       }
     }
-    const screenshot = wants.screenshot ? await page.screenshotBase64().catch(() => void 0) : void 0;
+    const captured = wants.screenshot ? await captureScreenshotWithinBudget(
+      page,
+      this.screenshotMaxBytes(action)
+    ) : void 0;
+    const screenshot = captured?.screenshot;
     const frame = await this.snapshot(page).catch(() => void 0);
     if (!frame) {
       if (!permit()) {
@@ -8692,7 +8858,7 @@ var ChromiumDriver = class {
       // on every act.
       ...before && before.url !== frame.url ? { previousUrl: before.url } : {},
       ...a11yFields,
-      ...screenshot ? { screenshot } : {}
+      ...screenshotFields(captured)
     };
     const held = !captures || pre !== void 0 && pre.url === frame.url && pre.domSignal === frame.domSignal;
     if (!held) {
@@ -8711,8 +8877,25 @@ var ChromiumDriver = class {
         settled: false
       };
     }
-    const result = blockedDetail === void 0 ? this.observation(tabId, entry, output, frame, permit) : this.observation(tabId, entry, output, frame, permit, blockedDetail);
+    const changed = this.features.changedA11y && wants.a11y && held ? this.changedSince(tabId, entry, a11yFields, "interactive") : void 0;
+    const result = blockedDetail === void 0 ? this.observation(
+      tabId,
+      entry,
+      changed ? { ...output, changed } : output,
+      frame,
+      permit
+    ) : this.observation(
+      tabId,
+      entry,
+      changed ? { ...output, changed } : output,
+      frame,
+      permit,
+      blockedDetail
+    );
     if (wants.a11y) this.commitRefs(tabId, result, refMap);
+    if (wants.a11y) {
+      this.rememberRender(tabId, { filter: "interactive" }, a11yFields, result);
+    }
     return result;
   }
   /**
@@ -9752,10 +9935,10 @@ function wrapPage(page, localSecurity = false, localBudget) {
     domStructureSignal() {
       return page.evaluate(`(${DOM_SIGNAL_FN})()`);
     },
-    async screenshotBase64() {
+    async screenshotBase64(options) {
       const buffer = await page.screenshot({
         type: "jpeg",
-        quality: SCREENSHOT_JPEG_QUALITY,
+        quality: options?.quality ?? SCREENSHOT_JPEG_QUALITY,
         // CSS PIXELS, always — the model's coordinate space (L5). Without
         // this, Playwright captures at the device scale factor, so raising the
         // display's sharpness would silently hand the model a 1536×1152 or

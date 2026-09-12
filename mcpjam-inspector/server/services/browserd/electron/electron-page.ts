@@ -1308,14 +1308,14 @@ export function createElectronPage(
       const signal = await wc.executeJavaScript(`(${DOM_SIGNAL_FN})()`);
       return typeof signal === "string" ? signal : "";
     },
-    async screenshotBase64() {
+    async screenshotBase64(options) {
       const cdp = await needCdp();
       // Through CDP rather than `capturePage`: a hidden window has nothing on
       // screen for `capturePage` to read, and every window this engine opens
       // is hidden.
       const shot = (await cdp.send("Page.captureScreenshot", {
         format: "jpeg",
-        quality: SCREENSHOT_JPEG_QUALITY,
+        quality: options?.quality ?? SCREENSHOT_JPEG_QUALITY,
       })) as { data?: string };
       return shot?.data ?? "";
     },

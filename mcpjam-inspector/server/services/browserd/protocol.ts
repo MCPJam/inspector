@@ -384,6 +384,15 @@ export type BrowserAction =
        * is a `prompt` and the caller has one.
        */
       verb: BrowserdActVerb;
+      /**
+       * Cap this act's screenshot, in base64 bytes.
+       *
+       * Ignored by a daemon that predates it, which is exactly the right
+       * failure: the caller gets the picture it would have got anyway, at
+       * today's fixed quality. Absent means the daemon's own setting, which
+       * is usually no cap at all.
+       */
+      maxScreenshotBytes?: number;
       target?: BrowserActTarget;
       value?: string;
       /**
@@ -487,6 +496,10 @@ export type BrowserAction =
        * paragraphs is a budget not spent on the controls.
        */
       filter?: "interactive" | "all";
+      /**
+       * `screenshot` only: cap the capture, in base64 bytes. @see the act arm.
+       */
+      maxScreenshotBytes?: number;
     }
   | {
       kind: "webmcp_invoke";
