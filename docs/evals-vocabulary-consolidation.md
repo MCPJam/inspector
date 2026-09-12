@@ -297,6 +297,20 @@ makes migration incremental.
 Two evaluators with the same id and identical content collapse into one definition, as the snapshot
 builder already does. That is not an error; it is one definition named once.
 
+That collapse is narrower than it sounds, and the order matters. Three cases, three outcomes:
+
+| Case | Outcome |
+|---|---|
+| the same id on two definitions that differ | refused by the snapshot builder — one id cannot mean two evaluations |
+| the same id on two IDENTICAL definitions | collapses to one row |
+| an id already owned by a built-in (`legacy:test`, `tool-match`, a positional `predicate:<type>#<n>`) | refused **before** the builder runs, whether or not the content matches |
+
+The third is the one a reader would otherwise get wrong. `EvalTest` builds its reserved-id set first
+and refuses a custom evaluator that reuses one, because a built-in row minted against the wrong
+definition would carry a hash that joins to nothing — and the gate engine's fail-closed join reads
+an unjoinable row as tampering. So "identical content collapses" holds only outside the reserved
+set, and a suite default counts toward the case's ids for the same reason.
+
 ## The wire
 
 Requests and responses negotiate with a header rather than a version path:

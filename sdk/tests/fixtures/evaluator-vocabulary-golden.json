@@ -1,5 +1,5 @@
 {
-  "__readme": "Golden EvaluationConfigSnapshots captured from UNCHANGED code before the evaluator-vocabulary program. Each row is an authored case and the snapshot it must keep producing, however it is authored. The test asserts deep equality AND each definition's scorerId/idSource literally, so an ordinal shift fails even when the aggregate hash coincidentally matches. NEVER regenerate this file to make a rename pass — a green test bought by editing both the producer and the expected payload proves nothing.",
+  "__readme": "Golden EvaluationConfigSnapshots captured from UNCHANGED code before the evaluator-vocabulary program. Each row is an authored case and the snapshot it must keep producing, however it is authored. The test asserts deep equality AND each definition's scorerId/idSource literally, so an ordinal shift fails even when the aggregate hash coincidentally matches. Two rows exist specifically to close holes a reviewer found: an ANONYMOUS assertion, whose id is derived from rule content rather than position, and a REAL judge built through judgeScorer, whose implementationHash covers the rubric, the prompt template version and the model. Without the second, a later judge() could change the template version and leave this whole gate green. NEVER regenerate this file to make a rename pass — a green test bought by editing both the producer and the expected payload proves nothing.",
   "cases": [
     {
       "label": "bare test — no expectations, no assertions",
@@ -269,6 +269,94 @@
             "scorerVersion": "1",
             "implementationHash": "fixedhash-tone-v1",
             "label": "tone",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "role": "advisory",
+            "model": "anthropic/claude-sonnet-4-6",
+            "onError": "ignore",
+            "onSkipped": "ignore"
+          }
+        ]
+      }
+    },
+    {
+      "label": "anonymous assertion through scorers — the content-derived id",
+      "snapshot": {
+        "hash": "b63baf9e34749dffa1a9ecab0cdf70028f1a6211460ed4b8138b0e27632b623e",
+        "definitions": [
+          {
+            "scorerId": "legacy:test",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "4e671f4627b3d66accaebabc6df72885a59c9f9adc9db9e47af371210468015c",
+            "label": "test()",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "tool-match",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "0bc72b69047c95a508d975471f9cb330b2fe2137eea30fcba8e425f087613b74",
+            "label": "expected tool calls",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "predicate:responseContains#1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1",
+            "idSource": "generated",
+            "scorerVersion": "1",
+            "implementationHash": "1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1",
+            "label": "responseContains",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "label": "a real judge — the rubric-and-template implementation hash",
+      "snapshot": {
+        "hash": "f6a6f4dfd7b4bc6a1c3bb9b14ae06b637088e0f5cb4bf53de6542446f598d2fd",
+        "definitions": [
+          {
+            "scorerId": "legacy:test",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "4e671f4627b3d66accaebabc6df72885a59c9f9adc9db9e47af371210468015c",
+            "label": "test()",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "tool-match",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "0bc72b69047c95a508d975471f9cb330b2fe2137eea30fcba8e425f087613b74",
+            "label": "expected tool calls",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "policy-grounding",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "0a46637f7717d8fd081781c851b614d4ef166ad72ee527b644b706d985be1aa1",
             "deterministic": false,
             "passThreshold": 0.7,
             "role": "advisory",
