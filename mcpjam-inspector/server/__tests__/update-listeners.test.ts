@@ -516,9 +516,10 @@ describe("update-listeners", () => {
   });
 
   it("does not re-report a silent install after the retry throws", async () => {
-    // First click no-ops and arms the quit watchdog; the retry throws and
-    // reports right away. The armed watchdog must not fire a second error for
-    // a request that already failed.
+    // The first click no-ops; the watchdog reports it and clears the quitting
+    // flag, which is what lets the retry past the repeat-click guard. That
+    // retry throws and reports right away — and must not be reported a second
+    // time by a watchdog left armed behind it.
     vi.useFakeTimers();
     try {
       const window = createWindow();
@@ -531,18 +532,19 @@ describe("update-listeners", () => {
       emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
 
       ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
-      vi.advanceTimersByTime(400);
+      vi.advanceTimersByTime(1_000);
+      expect(errorBroadcastCount(window)).toBe(1);
 
       quitAndInstallMock.mockImplementationOnce(() => {
         throw new Error("squirrel: staging dir missing");
       });
       ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
 
-      expect(errorBroadcastCount(window)).toBe(1);
+      expect(errorBroadcastCount(window)).toBe(2);
 
       vi.advanceTimersByTime(5_000);
 
-      expect(errorBroadcastCount(window)).toBe(1);
+      expect(errorBroadcastCount(window)).toBe(2);
     } finally {
       vi.useRealTimers();
     }
