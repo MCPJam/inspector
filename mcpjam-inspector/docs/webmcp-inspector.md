@@ -343,7 +343,7 @@ a window opened.
 | Server kill switch | `MCPJAM_WEBMCP_INSPECTOR_ENABLED` (default on)        | same                                                                     |
 | Reachability       | —                                                     | `MCPJAM_WEBMCP_INSPECTOR_HOSTED_ENABLED=1`                               |
 | Backend verdict    | —                                                     | `desktopProvisionable` from the runtime-config bootstrap                 |
-| Client visibility  | `local-browser-enabled` (PostHog)                   | `hosted-browser-enabled` (PostHog)                                       |
+| Client visibility  | `local-browser-enabled` (PostHog)                     | `hosted-browser-enabled` (PostHog)                                       |
 
 Off means **404, not 403**: a disabled capability should not be discoverable.
 The nav item's flag key must stay in `SIDEBAR_RESOLVED_FLAG_KEYS` or the item is
@@ -530,9 +530,29 @@ Two clocks, both touched from the route: the session row's (`kind: "command"` pe
 command, `kind: "panel"` on stream presence) and the computer's, throttled to
 once a minute per computer by `utils/computers/activity-touch.ts`. The backend
 applies its own 2-hour ceiling to presence touches, so a tab left open over a
-weekend cannot hold a machine awake indefinitely. Closing the tab does **not**
-hibernate: only the 30-minute sweep does, because there is no browser-close hook
-the way there is for a terminal.
+weekend cannot hold a machine awake indefinitely. It also cascades a counted
+touch onto the computer's own clock in the same transaction, so the touch above
+is belt to that braces rather than the only wiring.
+
+**The touch IS the lease.** There is still no browser-close hook — a session row
+is one row per box, shared by every pane, every replica and the model, so there
+is no per-attachment record to close — but a hosted browser box is no longer
+held to the 30-minute sweep either. The control plane reclaims a `desktop-browser`
+box about a minute after the last counted touch, so what keeps it alive is
+sending them, and what reclaims it is stopping. Two consequences for this route:
+
+- **Presence means somebody is LOOKING, not that a socket is open.** A pane
+  stays connected behind another tab on purpose. The frame socket only touches
+  when the pane has pinged since the last tick, and the WebMCP stream now asks
+  `webMcpSessions.isWatched(...)` before reporting presence — attachment alone
+  used to hold a box awake for the full 2-hour ceiling. A taken or beaten lease
+  counts too: on the VNC tier no frame socket exists, and a lease holder may be
+  mid-login.
+- **A paused box closes the frame socket with 4410, not 4503.** The socket
+  cannot wake anything; `GET /session?ensure=1` does, through
+  `POST /computers/wake`. The pane re-ensures on 4410 only while it is visible
+  and active — a hidden pane is why the box was reclaimed, so waking it from
+  there would undo the reclaim for nobody.
 
 A per-run box has no hibernation clock of its own, but it does have a REAPER
 that decides by activity — and the only things that touch one are a bash exec
