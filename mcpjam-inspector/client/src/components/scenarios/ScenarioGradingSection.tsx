@@ -7,9 +7,14 @@
  *
  * Editing model mirrors `JourneyGradingEditor` (swarms/journey-list.tsx):
  * local draft seeded from the live-subscription prop ONCE per scenario (a
- * reseed mid-edit would discard unsaved checks), explicit Save, and Save
- * gated on `areAllChecksValid` so a half-finished row can't reach the backend
- * validator and lose the whole edit.
+ * reseed mid-edit would discard unsaved checks) and explicit Save.
+ *
+ * An incomplete check does not disable Save: a fresh row is incomplete by
+ * construction, and a disabled button gives the user nothing to act on. The
+ * click runs `areAllChecksValid`, and when that fails it reveals every
+ * field's message and sends nothing. A raw-JSON draft that does not parse is
+ * the exception and keeps Save disabled — the user typed that text and its
+ * error is already inline under it.
  *
  * Sampling is authored as a percentage but stored as a [0, 1] fraction —
  * convert at the wire, never store the percent.
@@ -76,6 +81,10 @@ export function ScenarioGradingSection({
   const [draft, setDraft] = useState<Draft>(() => draftFromSettings(scenario));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [hasInvalidDraft, setHasInvalidDraft] = useState(false);
+  // Set by a Save attempt that found an incomplete check; stays on so a field
+  // the user blanks again is flagged as they do it.
+  const [showAllErrors, setShowAllErrors] = useState(false);
 
   // Reseed only when the SCENARIO changes, never on subscription churn of the
   // same row — the draft is the user's unsaved work.
@@ -84,6 +93,7 @@ export function ScenarioGradingSection({
     seededFor.current = scenario.scenarioId;
     setDraft(draftFromSettings(scenario));
     setDirty(false);
+    setShowAllErrors(false);
   }
 
   // The draft as of this render, readable from inside an in-flight save's
@@ -116,9 +126,15 @@ export function ScenarioGradingSection({
   // backend rejects; gate the button on the same rule so the error is
   // impossible rather than toasted.
   const enabledButEmpty = draft.enabled && draft.rubric.length === 0;
-  const canSave = dirty && samplingValid && rubricValid && !enabledButEmpty;
+  const canSave =
+    dirty && samplingValid && !hasInvalidDraft && !enabledButEmpty;
+  const blockedByIncompleteCheck = showAllErrors && !rubricValid;
 
   const save = async () => {
+    if (!rubricValid) {
+      setShowAllErrors(true);
+      return;
+    }
     // What this save actually persists. Compared by identity after the await
     // so an edit made DURING the request keeps the form dirty — clearing it
     // unconditionally would disable Save over changes that were never sent.
@@ -179,9 +195,7 @@ export function ScenarioGradingSection({
           className="h-7 w-16 text-xs"
           inputMode="numeric"
           value={draft.samplingPercent}
-          onChange={(event) =>
-            update({ samplingPercent: event.target.value })
-          }
+          onChange={(event) => update({ samplingPercent: event.target.value })}
           aria-invalid={!samplingValid}
         />
         <span className="text-xs text-muted-foreground">
@@ -197,6 +211,8 @@ export function ScenarioGradingSection({
       <JourneyRubricEditor
         value={draft.rubric}
         onChange={(next) => update({ rubric: next })}
+        onDraftValidityChange={setHasInvalidDraft}
+        showAllErrors={showAllErrors}
       />
       {enabledButEmpty ? (
         <p className="text-xs text-destructive">
@@ -204,7 +220,15 @@ export function ScenarioGradingSection({
         </p>
       ) : null}
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-3">
+        {blockedByIncompleteCheck ? (
+          <p
+            className="text-xs text-destructive"
+            data-testid="scenario-grading-incomplete"
+          >
+            Fix the highlighted check to save.
+          </p>
+        ) : null}
         <Button
           size="sm"
           onClick={save}
