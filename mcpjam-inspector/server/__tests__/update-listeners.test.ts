@@ -42,7 +42,7 @@ const {
     ipcHandleMock: vi.fn(
       (channel: string, handler: (...args: any[]) => any) => {
         ipcHandlers.set(channel, handler);
-      },
+      }
     ),
     ipcOnMock: vi.fn((channel: string, handler: (...args: any[]) => void) => {
       ipcListeners.set(channel, handler);
@@ -115,8 +115,7 @@ function emitAppEvent(event: string, ...args: any[]) {
   }
 }
 
-type UpdateListenersModule =
-  typeof import("../../src/ipc/update/update-listeners.js");
+type UpdateListenersModule = typeof import("../../src/ipc/update/update-listeners.js");
 let lastLoadedModule: UpdateListenersModule | null = null;
 
 async function loadUpdateListeners() {
@@ -164,7 +163,7 @@ describe("update-listeners", () => {
       installRequested: false,
     });
     expect(
-      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } })
     ).toEqual({ kind: "pending", installRequested: false });
   });
 
@@ -579,16 +578,86 @@ describe("update-listeners", () => {
       mod.registerUpdateListeners(window as any);
       emitAutoUpdaterEvent("update-available");
       emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+
+      // Production ordering: `quitAndInstall()` reaches `app.quit()` inside the
+      // call, so `before-quit` is emitted and gone before the statement after
+      // it runs. An all-clear that only exists once the call returns is spent
+      // on nothing.
+      quitAndInstallMock.mockImplementationOnce(() => {
+        emitAppEvent("before-quit");
+      });
       ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
 
-      // Squirrel took the request and the shutdown sequence began.
-      emitAppEvent("before-quit");
+      // `main.ts` answers `before-quit` with preventDefault() and defers the
+      // real `app.quit()` behind an async browser teardown, so the window is
+      // still up well past the deadline on an install that is working fine.
       vi.advanceTimersByTime(5_000);
 
       expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not hand the deferred quit a second quitAndInstall", async () => {
+    // The watchdog used to clear `isQuittingForUpdate` before looking at
+    // anything. That flag is the only thing stopping `installUpdateOnQuit()`
+    // from calling `quitAndInstall()` again when the deferred `app.quit()`
+    // re-enters `before-quit` — and a second call re-registers the same
+    // WindowList observer, which is INSPECTOR-ELECTRON-GT.
+    vi.useFakeTimers();
+    try {
+      appState.isPackaged = true;
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setInstallQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+
+      quitAndInstallMock.mockImplementationOnce(() => {
+        emitAppEvent("before-quit");
+      });
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+      expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(5_000);
+
+      // Teardown finishes and `app.quit()` re-fires `before-quit`.
+      expect(mod.installUpdateOnQuit()).toBe(false);
+      expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not replay a windowless download failure to the next window", async () => {
+    // Only the install watchdog holds a failure for the window the user
+    // reopens. A download failure that arrived with every window closed has no
+    // such claim: replaying it toasts a stale error, and marking it reported
+    // would make the error handler swallow the next real Squirrel failure.
+    appState.isPackaged = true;
+    const window = createWindow();
+    windows.push(window);
+    const mod = await loadUpdateListeners();
+
+    mod.registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+
+    windows.splice(0, windows.length);
+    emitAutoUpdaterEvent("error", new Error("download failed"));
+
+    const reopened = createWindow(2);
+    windows.push(reopened);
+    mod.registerUpdateListeners(reopened as any);
+
+    expect(errorBroadcastCount(reopened)).toBe(0);
+
+    emitAutoUpdaterEvent("error", new Error("squirrel: Team ID mismatch"));
+
+    expect(errorBroadcastCount(reopened)).toBe(1);
   });
 
   it("still catches a silent refusal that happens after the windows close", async () => {
