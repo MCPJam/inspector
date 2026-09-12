@@ -214,7 +214,6 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(setScreencast).toHaveBeenLastCalledWith(false);
   });
 
-  
   it("neither streams nor polls for a hosted session — it has a live view", async () => {
     useWebmcpInspectorStore.setState({
       session: session({
@@ -261,7 +260,6 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(screen.getByText(/Live view is off/)).toBeInTheDocument();
   });
 
-  
   it("stops asking once Live view is switched off", async () => {
     const { setScreencast } = stubViewportActions({ screencastAccepted: true });
     render(<WebmcpInspectorTab />);
@@ -296,7 +294,6 @@ describe("WebmcpInspectorTab — viewport", () => {
     view.unmount();
   });
 
-  
   it("says it is waiting when there is nothing to show yet", async () => {
     stubViewportActions({ screencastAccepted: true });
     render(<WebmcpInspectorTab />);
@@ -361,7 +358,7 @@ describe("WebmcpInspectorTab — viewport", () => {
       name: "Live view of the inspected page",
     });
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
+      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
 
     await act(async () => {
       mouseDown(image, { clientX: 640, clientY: 400, button: 0 });
@@ -426,10 +423,51 @@ describe("WebmcpInspectorTab — viewport", () => {
         screen.getByText(/Live view is unavailable for this session/),
       ).toBeInTheDocument();
     });
+
+    it("says the same when nothing ever paints, socket or no socket", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        // The ladder is fine and the socket is carrying: this is the session
+        // whose daemon never selects a tab, so `set_screencast` keeps coming
+        // back refused. Waiting it out is right — but not forever, and
+        // "Waiting for the first frame…" offers nothing to click.
+        await renderWith({ rung: "ws", attempts: 0, latched: false });
+        expect(screen.queryByText(/Live view is unavailable/)).toBeNull();
+
+        await act(async () => {
+          vi.advanceTimersByTime(6_000);
+        });
+        expect(
+          screen.getByText(/Live view is unavailable for this session/),
+        ).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("stays quiet when a frame arrives before the wait is up", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        await renderWith({ rung: "ws", attempts: 0, latched: false });
+        await act(async () => {
+          webmcpFrameChannel.publish({
+            bitmap: undefined,
+            data: "painted",
+            deviceWidth: 1280,
+            deviceHeight: 800,
+            scale: 1,
+            ts: 1,
+            seq: 1,
+          });
+          vi.advanceTimersByTime(6_000);
+        });
+        expect(screen.queryByText(/Live view is unavailable/)).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
-  
-  
   it("does not stop the replacement session's stream on the way out", async () => {
     // Both sessions stream fine. What is under test is the CLEANUP a session
     // change triggers, which runs while the store already holds the new
@@ -543,7 +581,7 @@ describe("WebmcpInspectorTab — viewport", () => {
       name: "Live view of the inspected page",
     });
     canvas.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
+      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
     const wheel = new WheelEvent("wheel", {
       bubbles: true,
       cancelable: true,

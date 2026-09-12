@@ -1851,6 +1851,44 @@ describe("webmcp inspector store — frame transport", () => {
     expect(ws.closedByClient).toBe(false);
   });
 
+  it("ignores a frame that was already on the wire when live view stopped", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    await ws.emitFrame(binaryFrame(2));
+    expect(webmcpFrameChannel.latest()?.seq).toBe(2);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ streaming: false }), { status: 200 }),
+    );
+    await useWebmcpInspectorStore.getState().setScreencast(false);
+    expect(webmcpFrameChannel.latest()).toBeNull();
+
+    // Written to the socket BEFORE the stop reached the server, so it lands
+    // after the toggle has been answered. The seq guard would wave it through
+    // — its number is newer — and the pane would sit on a page it has been
+    // told it is no longer watching, with nothing coming to replace it.
+    await ws.emitFrame(binaryFrame(3));
+    expect(webmcpFrameChannel.latest()).toBeNull();
+  });
+
+  it("takes frames again once live view is asked for", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ streaming: false }), { status: 200 }),
+    );
+    await useWebmcpInspectorStore.getState().setScreencast(false);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ streaming: true }), { status: 200 }),
+    );
+    await useWebmcpInspectorStore.getState().setScreencast(true);
+    // The toggle follows tab visibility, so coming back must paint rather than
+    // leave a pane that refuses every frame for the rest of the session.
+    await ws.emitFrame(binaryFrame(4));
+    expect(webmcpFrameChannel.latest()?.seq).toBe(4);
+  });
+
   it("does not resurrect a frame still decoding when live view stops", async () => {
     const { ws } = await openFrameSession();
     ws.open();

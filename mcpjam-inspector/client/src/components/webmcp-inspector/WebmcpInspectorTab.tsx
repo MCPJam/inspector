@@ -14,6 +14,15 @@ import {
   writeLastWebMcpUrl,
 } from "@/lib/webmcp-inspector/last-url";
 import { useCallback, useEffect, useMemo, useState } from "react";
+
+/**
+ * How long "Waiting for the first frame…" is allowed to be the whole story.
+ *
+ * Long enough to cover a daemon selecting its first tab and the health tick
+ * that re-subscribes behind it; short enough that somebody staring at an empty
+ * pane is told what to do instead of guessing.
+ */
+const FRAME_STALL_MS = 5_000;
 import { useShallow } from "zustand/react/shallow";
 import { Globe } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -460,7 +469,45 @@ export function WebmcpInspectorTab() {
   ];
 
   /**
-   * The socket gave up, and there is nothing underneath it.
+   * Streaming was asked for, and nothing ever painted.
+   *
+   * The other half of dropping the screenshot poll. A refused `set_screencast`
+   * is waited out rather than worked around, because it is normally transient
+   * — but "wait" cannot mean forever, and without this a session whose daemon
+   * never does select a tab sits on "Waiting for the first frame…" with no
+   * remedy offered and nothing to click.
+   *
+   * The channel is READ, not subscribed to per frame: a subscription here
+   * would re-render this whole workspace thirty times a second, which is the
+   * coupling the frame channel exists to remove. One narrow subscription
+   * watches for the FIRST picture and then lets go.
+   */
+  const [framesStalled, setFramesStalled] = useState(false);
+  const framesExpected = transportKind === "frame-stream" && streaming;
+  useEffect(() => {
+    setFramesStalled(false);
+    if (!framesExpected) return;
+    if (webmcpFrameChannel.latest()) return;
+    let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+      timer = undefined;
+      setFramesStalled(true);
+    }, FRAME_STALL_MS);
+    const stop = { unsubscribe: () => {} };
+    stop.unsubscribe = webmcpFrameChannel.subscribe(() => {
+      if (!webmcpFrameChannel.latest()) return;
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+      setFramesStalled(false);
+      stop.unsubscribe();
+    });
+    return () => {
+      if (timer !== undefined) clearTimeout(timer);
+      stop.unsubscribe();
+    };
+  }, [framesExpected, streamSessionId]);
+
+  /**
+   * The socket gave up, or nothing ever painted.
    *
    * Said once, plainly, rather than left as a pane that quietly stops
    * updating: the Screenshot button still works, and that is the remedy worth
@@ -469,10 +516,9 @@ export function WebmcpInspectorTab() {
    * off across a reconnect would be worse than the gap it describes.
    */
   const framesUnavailable =
-    transportKind === "frame-stream" &&
-    streaming &&
-    frameTransport.latched &&
-    frameTransport.rung === "none";
+    framesExpected &&
+    ((frameTransport.latched && frameTransport.rung === "none") ||
+      framesStalled);
 
   const showViewport = live;
   const hostedBlocked = HOSTED_MODE && !hostedReady;

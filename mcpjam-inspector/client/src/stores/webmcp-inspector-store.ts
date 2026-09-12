@@ -303,6 +303,20 @@ let frameRetryTimer: ReturnType<typeof setTimeout> | undefined;
 /** Attempts made for THIS session, initial included. */
 let frameAttempts = 0;
 /** Set once we stop trying: this session has no live picture from here on. */
+/**
+ * Does the pane still want pixels?
+ *
+ * True from the moment it opens a frame socket, because opening one IS the
+ * request; false only when it explicitly says stop. Set from the request
+ * rather than its answer, since a refused `set_screencast` is transient — the
+ * daemon has no tab selected yet and its own health tick re-subscribes — so
+ * the pane is still waiting and must take the picture that follows.
+ *
+ * Not gated on an explicit start: a second pane opening onto a session that is
+ * ALREADY streaming would otherwise drop every frame until its own toggle
+ * completed a round trip, which is a blank pane for no reason.
+ */
+let screencastWanted = false;
 let frameSocketLatched = false;
 /** What is carrying pixels right now. */
 let ladderRung: "ws" | "none" = "none";
@@ -613,6 +627,12 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
      * what the newest picture is.
      */
     function applyFrame(frame: DecodedFrame) {
+      // Nobody asked for this picture. A frame already ON THE WIRE when live
+      // view was switched off still arrives after the toggle answers, and the
+      // seq guard waves it through because its number is newer — leaving the
+      // pane showing a page it has been told it is no longer watching, with
+      // nothing coming to replace it.
+      if (!screencastWanted) return;
       if (frame.seq <= lastAppliedFrameSeq) return;
       lastAppliedFrameSeq = frame.seq;
       webmcpFrameChannel.publish({
@@ -819,6 +839,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
      */
     async function openFrameSocket(sessionId: string, generation: number) {
       if (frameSocketLatched) return;
+      // Opening the socket is the request for pixels; an explicit stop is the
+      // only thing that withdraws it.
+      screencastWanted = true;
       frameAttempts += 1;
       publishFrameTransport();
       const auth = await request<{ nonce: string }>(
@@ -1006,6 +1029,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       frameSocket = undefined;
       frameAttempts = 0;
       frameSocketLatched = false;
+      screencastWanted = false;
       ladderRung = "none";
       lastAppliedFrameSeq = 0;
       source?.close();
@@ -1453,6 +1477,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // Same reasoning as `sendInput`: a toggle queued for one session must
           // not start or stop the stream of whichever session replaced it.
           if (!sessionId || sessionId !== aimedAt) return false;
+          screencastWanted = enabled;
           // Not routed through `sendCommand`: this is a lifecycle toggle the
           // pane sends on every mount and visibility change, and a refusal is
           // a fact for the caller to act on rather than an error to show the
