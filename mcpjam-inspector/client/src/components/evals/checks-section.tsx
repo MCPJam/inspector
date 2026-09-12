@@ -23,6 +23,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -182,6 +183,22 @@ export function ChecksSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasInvalidDraft]);
 
+  // One stable key per row, so React keeps each `CheckRow` instance — and the
+  // textarea drafts and touched state inside it — with ITS predicate when a
+  // row above is removed. Predicates carry no id, and keying by index handed
+  // row 2's editor to row 3's predicate on every delete. Kept in a ref, not
+  // state: the list is aligned to `value` in render and spliced in the same
+  // handler that splices `value`, so nothing needs to re-render because of it.
+  const rowKeys = useRef<string[]>([]);
+  const mintedRows = useRef(0);
+  const mintRowKey = () => `row-${(mintedRows.current += 1)}`;
+  while (rowKeys.current.length < value.length) {
+    rowKeys.current.push(mintRowKey());
+  }
+  if (rowKeys.current.length > value.length) {
+    rowKeys.current.length = value.length;
+  }
+
   const updateAt = (index: number, next: Predicate) => {
     const copy = value.slice();
     copy[index] = next;
@@ -190,9 +207,11 @@ export function ChecksSection({
   const removeAt = (index: number) => {
     const copy = value.slice();
     copy.splice(index, 1);
+    rowKeys.current.splice(index, 1);
     onChange(copy);
   };
   const addOfKind = (kind: Kind) => {
+    rowKeys.current.push(mintRowKey());
     onChange([...value, blankPredicate(kind)]);
   };
 
@@ -225,7 +244,7 @@ export function ChecksSection({
         ) : (
           <ul className="space-y-2">
             {value.map((predicate, i) => (
-              <li key={i}>
+              <li key={rowKeys.current[i]}>
                 <CheckRow
                   predicate={predicate}
                   onChange={
@@ -1438,33 +1457,26 @@ function RawArgsJsonEditor({
       return "{}";
     }
   };
-  const [draftJson, setDraftJson] = useState(() => formatValue(value));
+  // The draft remembers which `value` it is the text FOR. When the prop
+  // arrives from somewhere other than this textarea's own last parse — the
+  // whole list replaced on a scenario switch, say — the text is re-derived in
+  // render rather than one effect-tick later. A row removed or reordered
+  // above no longer reaches here at all: `ChecksSection` keys rows stably, so
+  // that remounts the editor with its own predicate.
+  const valueKey = JSON.stringify(value ?? {});
+  const [draft, setDraft] = useState(() => ({
+    text: formatValue(value),
+    forValue: valueKey,
+  }));
+  if (draft.forValue !== valueKey) {
+    setDraft({ text: formatValue(value), forValue: valueKey });
+  }
+  const draftJson =
+    draft.forValue === valueKey ? draft.text : formatValue(value);
   // Derived from the text, never stored beside it: a stored flag is one more
   // thing an unrelated edit can leave stale, and this one gates Save.
   const jsonError = useMemo(() => parseArgsDraft(draftJson).error, [draftJson]);
   useInvalidDraftRegistration(jsonError !== null);
-
-  // Resync the draft text when `value` changes from outside this instance
-  // (e.g. switching cases, deleting/reordering checks). Predicate rows are
-  // keyed by index, so the same RawArgsJsonEditor instance is reused with
-  // a different `value` prop — without this, the textarea kept showing the
-  // previous predicate's JSON and the next edit could clobber the new
-  // predicate's args. We compare against the parse of our own draft to
-  // avoid overwriting mid-edit (when the user's draft is the upstream of
-  // `value`, JSON parses equal and we leave the text alone).
-  useEffect(() => {
-    let drift = true;
-    try {
-      const parsed = JSON.parse(draftJson);
-      drift = JSON.stringify(parsed) !== JSON.stringify(value ?? {});
-    } catch {
-      drift = true;
-    }
-    if (drift) {
-      setDraftJson(formatValue(value));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
 
   return (
     <div className="space-y-1">
@@ -1485,8 +1497,14 @@ function RawArgsJsonEditor({
         value={draftJson}
         onChange={(e) => {
           const next = e.target.value;
-          setDraftJson(next);
           const { parsed } = parseArgsDraft(next);
+          // A parse that fails keeps pointing at the value already shown, so
+          // the text survives the re-render; one that succeeds points at the
+          // value it is about to become.
+          setDraft({
+            text: next,
+            forValue: parsed ? JSON.stringify(parsed) : valueKey,
+          });
           if (parsed) onChange(parsed);
         }}
         spellCheck={false}
@@ -1979,32 +1997,22 @@ function ToolResultSchemaFields({
   readOnly: boolean;
 }) {
   const id = useId();
-  const [draft, setDraft] = useState(() =>
-    JSON.stringify(predicate.schema ?? {}, null, 2),
-  );
+  // Same draft model as `RawArgsJsonEditor`: the text knows which schema it is
+  // for, and is re-derived in render when the schema arrives from outside.
+  const schemaKey = JSON.stringify(predicate.schema ?? {});
+  const formatSchema = () => JSON.stringify(predicate.schema ?? {}, null, 2);
+  const [draftState, setDraftState] = useState(() => ({
+    text: formatSchema(),
+    forSchema: schemaKey,
+  }));
+  if (draftState.forSchema !== schemaKey) {
+    setDraftState({ text: formatSchema(), forSchema: schemaKey });
+  }
+  const draft =
+    draftState.forSchema === schemaKey ? draftState.text : formatSchema();
   // Derived from the text — see `RawArgsJsonEditor`.
   const error = useMemo(() => parseSchemaDraft(draft).error, [draft]);
   useInvalidDraftRegistration(error !== null);
-  // Resync when `predicate` changes from OUTSIDE this instance. Rows are keyed
-  // by array index, so removing or reordering a row above reuses this same
-  // component with a different predicate — and without this the textarea keeps
-  // showing the previous check's schema, which the next keystroke then writes
-  // onto the current one. Compared against our own draft so a mid-edit value is
-  // left alone; `RawArgsJsonEditor` documents the identical hazard.
-  useEffect(() => {
-    let drift = true;
-    try {
-      drift =
-        JSON.stringify(JSON.parse(draft)) !==
-        JSON.stringify(predicate.schema ?? {});
-    } catch {
-      drift = true;
-    }
-    if (drift) {
-      setDraft(JSON.stringify(predicate.schema ?? {}, null, 2));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [predicate.schema]);
   return (
     <div className="space-y-2">
       <div className="space-y-1">
@@ -2018,14 +2026,17 @@ function ToolResultSchemaFields({
           rows={6}
           onChange={(e) => {
             const next = e.target.value;
-            setDraft(next);
+            const { parsed, ok } = parseSchemaDraft(next);
+            setDraftState({
+              text: next,
+              forSchema: ok ? JSON.stringify(parsed) : schemaKey,
+            });
             // Written through only when it parses: a half-typed schema is not
             // an assertion, and persisting one would make the check
             // unusable-schema on the next run. The row meanwhile HOLDS the
             // last schema that parsed, so the message below says so, and the
             // section reports the unparsable draft upward so a caller can
             // keep Save closed until it parses again.
-            const { parsed, ok } = parseSchemaDraft(next);
             if (ok) onChange({ ...predicate, schema: parsed });
           }}
           className="font-mono text-xs"
