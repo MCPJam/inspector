@@ -101,6 +101,13 @@ const SOMEBODY_ELSE_HAS_IT =
 /** How often to ask again while somebody else is holding the browser. */
 const LEASE_RECHECK_MS = 5_000;
 
+/** "~30s" / "~2m" for a countdown that the poll refreshes every few seconds. */
+function describeDelay(at: number): string {
+  const seconds = Math.max(0, Math.round((at - Date.now()) / 1000));
+  if (seconds < 60) return `~${seconds}s`;
+  return `~${Math.round(seconds / 60)}m`;
+}
+
 export function LocalBrowserBody({
   projectId,
   sessionId,
@@ -255,23 +262,36 @@ export function LocalBrowserBody({
     };
   }, []);
 
-  // While Chromium downloads, poll: it is hundreds of megabytes and a screen
-  // that looks frozen for several minutes reads as broken.
+  // Until this machine has a Chromium, poll. Fast while it downloads — it is
+  // hundreds of megabytes and a screen that looks frozen for several minutes
+  // reads as broken — and slowly otherwise, because the server retries a
+  // failed download on its own and a startup install this pane never saw
+  // begin still finishes; a pane that only polled while it happened to
+  // observe `installing` sat on a stale answer forever.
+  const installPollMs =
+    status && !status.installed
+      ? status.install.status === "installing"
+        ? 1_000
+        : 5_000
+      : null;
   useEffect(() => {
-    if (status?.install.status !== "installing") return;
+    if (installPollMs === null) return;
     const timer = setInterval(() => {
       void fetchLocalBrowserStatus()
         .then(setStatus)
         .catch(() => {});
-    }, 1_000);
+    }, installPollMs);
     return () => clearInterval(timer);
-  }, [status?.install.status]);
+  }, [installPollMs]);
 
   const install = useCallback(async () => {
     setError(null);
     try {
       const { install: state } = await startLocalBrowserInstall(consentToken);
       setStatus((prev) => (prev ? { ...prev, install: state } : prev));
+      // `ready` straight from the click means the browser was already there;
+      // the install response carries no `installed`, so ask for the rest.
+      if (state.status === "ready") setStatus(await fetchLocalBrowserStatus());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -781,11 +801,37 @@ export function LocalBrowserBody({
             </span>
           ) : (
             <Button size="sm" onClick={() => void install()}>
-              Install Chromium
+              {state.status === "failed" ? "Retry now" : "Install Chromium"}
             </Button>
           )}
           {state.status === "failed" ? (
-            <span className="text-destructive">{state.error}</span>
+            <>
+              <span
+                className="text-destructive"
+                data-testid="rail-browser-install-error"
+              >
+                {state.error}
+              </span>
+              {state.retryAt !== undefined && state.retryAt > Date.now() ? (
+                <span
+                  className="text-xs text-muted-foreground"
+                  data-testid="rail-browser-install-retry"
+                >
+                  Retrying automatically in {describeDelay(state.retryAt)}
+                </span>
+              ) : null}
+              {state.details ? (
+                <details className="max-w-full text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">Details</summary>
+                  <pre
+                    className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-left font-mono"
+                    data-testid="rail-browser-install-details"
+                  >
+                    {state.details}
+                  </pre>
+                </details>
+              ) : null}
+            </>
           ) : null}
         </PaneMessage>
       );

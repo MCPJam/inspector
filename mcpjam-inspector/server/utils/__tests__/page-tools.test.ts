@@ -136,6 +136,7 @@ describe("buildPageTools", () => {
     expect(description).toContain("WebMCP page tool");
     expect(description).toContain("https://shop.test");
     expect(description).toContain("Add an item to the cart");
+    expect(description).toContain("add_to_cart");
   });
 
   it("falls back to the raw tool name when the page gave no description", () => {
