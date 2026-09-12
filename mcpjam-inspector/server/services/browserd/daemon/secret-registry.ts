@@ -53,6 +53,28 @@ export interface BrowserSecretRegistry {
    * one control, so an exact match there is not a coincidence.
    */
   maskedValues(): ReadonlyMap<string, string>;
+  /**
+   * Remember that a value was typed into the page showing `url`.
+   *
+   * THE PAGE, not the session. A value typed into a form is on screen for
+   * exactly as long as that form is, and the screenshot suppression this feeds
+   * has to lift when the page moves on — a login flow where every picture
+   * after the password field is blank would be a worse agent, not a safer one.
+   *
+   * An empty or absent `url` means the typing could not be attributed to a
+   * page, and is treated as exposure everywhere for the rest of the boot: it
+   * happens only when the act that carried the secret could not read the page
+   * it typed into, and "somewhere" is the only honest answer then.
+   */
+  markTyped(url: string | undefined): void;
+  /**
+   * Could a registered value still be rendered on the page at `url`?
+   *
+   * `undefined` — a result that carried no URL — answers the same as an
+   * unattributable typing: yes, if anything has been typed at all. A capture
+   * nobody can place is a capture nobody can clear.
+   */
+  exposedAt(url: string | undefined): boolean;
   /** How many values are registered — for tests and diagnostics. */
   readonly size: number;
 }
@@ -65,6 +87,10 @@ export function createBrowserSecretRegistry(): BrowserSecretRegistry {
   const byValue = new Map<string, string>();
   let scrubber: SecretScrubber | null = null;
   let stale = false;
+  /** URLs a value has been typed into. @see markTyped */
+  const typedInto = new Set<string>();
+  /** A typing that could not be placed on a page. @see markTyped */
+  let typedSomewhere = false;
 
   return {
     register(secrets) {
@@ -89,6 +115,17 @@ export function createBrowserSecretRegistry(): BrowserSecretRegistry {
         stale = false;
       }
       return scrubber;
+    },
+    markTyped(url) {
+      if (url) typedInto.add(url);
+      else typedSomewhere = true;
+    },
+    exposedAt(url) {
+      if (typedSomewhere) return true;
+      if (typedInto.size === 0) return false;
+      // A result with no URL is placed nowhere, so nothing can say the page it
+      // shows is not the page a value was typed into.
+      return url === undefined || url === "" || typedInto.has(url);
     },
     maskedValues() {
       const short = new Map<string, string>();

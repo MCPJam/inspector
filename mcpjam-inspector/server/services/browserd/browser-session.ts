@@ -989,6 +989,15 @@ interface EnsureDiagnostics {
     stale?: string;
     source: "reuse" | "adopt" | "lookup";
   };
+  /**
+   * A replacement daemon came up speaking the wire this build speaks.
+   *
+   * Written by `bootAndPublish` the moment the boot returns, which is the only
+   * place that learns it, and read by `namingProtocolMismatch` to tell a
+   * relaunch that never landed from one that landed and then failed at
+   * something else. @see namingProtocolMismatch
+   */
+  protocolRecovered?: boolean;
 }
 
 /**
@@ -1069,6 +1078,15 @@ export class BrowserProtocolMismatchError extends Error {
  * when no mismatch was recorded: a boot that failed for its own reasons must
  * keep reporting its own reason, or this helper becomes a wrapper that hides
  * whatever actually went wrong.
+ *
+ * AND WHEN THE REPLACEMENT ALREADY SPOKE OUR WIRE. `relaunch` is not only a
+ * boot: the daemon comes up, and then the session row is written, the logical
+ * boot is recorded and the stream is started — any of which can fail on its
+ * own. By then the mismatch is RECOVERED, a daemon on the expected protocol is
+ * running, and naming it would report a solved problem as the cause of a live
+ * one: it dresses a transient publication failure as the single thing a retry
+ * cannot fix, and buries the error that could actually be acted on.
+ * `protocolRecovered` is how the two phases are told apart.
  */
 async function namingProtocolMismatch<T>(
   diagnostics: EnsureDiagnostics,
@@ -1079,6 +1097,15 @@ async function namingProtocolMismatch<T>(
   } catch (error) {
     const mismatch = diagnostics.protocolMismatch;
     if (!mismatch) throw error;
+    if (diagnostics.protocolRecovered) {
+      // The replacement is up and speaks our wire. Whatever went wrong after
+      // that travels unchanged, so it can say what it was.
+      logger.warn("[browser-session] browser.protocol_mismatch_recovered", {
+        ...mismatch,
+        publishError: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
     logger.warn("[browser-session] browser.protocol_mismatch_unrecovered", {
       ...mismatch,
       bootError: error instanceof Error ? error.message : String(error),
@@ -1530,6 +1557,14 @@ async function bootAndPublish<THandle>(
     publish: (booted: BrowserdHandle) => Promise<BrowserSessionRecordResult>;
     /** Stop the daemon we booted, on the way to adopting somebody else's. */
     onAdopt?: () => void;
+    /**
+     * The ensure's diagnostics bag, when one is being kept.
+     *
+     * WRITE-ONLY from here, and one key: a boot that reaches the expected
+     * protocol is the fact `namingProtocolMismatch` needs and the only place
+     * it can be learned. @see EnsureDiagnostics.protocolRecovered
+     */
+    diagnostics?: EnsureDiagnostics;
   },
 ): Promise<BootOutcome<THandle>> {
   if (args.profileArchive) {
@@ -1562,6 +1597,15 @@ async function bootAndPublish<THandle>(
     const raced = await args.reuseAgain();
     if (raced) return { kind: "adopted", handle: raced };
     throw bootError;
+  }
+  // BEFORE PUBLICATION, because that is the point of it: everything below can
+  // fail for reasons that have nothing to do with the wire, and this is the
+  // line that says the wire is no longer the problem.
+  if (
+    args.diagnostics &&
+    booted.protocolVersion === BROWSERD_PROTOCOL_VERSION
+  ) {
+    args.diagnostics.protocolRecovered = true;
   }
 
   const recorded = await args.publish(booted);
@@ -1806,6 +1850,7 @@ async function ensureOnSandbox(
       bootAndPublish<SandboxHostedBrowserSessionHandle>(deps, {
         sandbox,
         contextMode,
+        diagnostics,
         ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
         reuseAgain,
         publish: async (booted) => {
@@ -2129,6 +2174,7 @@ async function ensureOnComputer(
       bootAndPublish<ComputerHostedBrowserSessionHandle>(deps, {
         sandbox,
         contextMode,
+        diagnostics,
         ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
         reuseAgain: async () =>
           tryReuse(

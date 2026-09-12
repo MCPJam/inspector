@@ -1109,7 +1109,12 @@ export function buildBrowserTools(
       ? " To fill in a credential you have not been given, write " +
         `{{secret:NAME}} — available: ${secretNames.join(", ")}. The value is ` +
         "substituted inside the browser and never shown to you; it works on " +
-        "`type` and `fill_form` only."
+        "`type` and `fill_form` only. While a page you typed one into is " +
+        "still open, its screenshots come back as `screenshotSuppressed: " +
+        "true` with no image — a site that does not mask the field would " +
+        "draw the value into the picture, where no scrub can reach it. Read " +
+        "the tree instead: it names the field and says `{{secret:NAME}}`. " +
+        "Pictures resume once the page moves on."
       : "";
   /**
    * THE SERVER'S OWN BELT, over the daemon's braces.

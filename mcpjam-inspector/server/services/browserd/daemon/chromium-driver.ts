@@ -1149,6 +1149,14 @@ export class ChromiumDriver implements BrowserDriver {
         // credential into holds nothing and scrubs nothing.
         if (resolved !== action && context?.secrets?.length) {
           this.secrets.register(context.secrets);
+          // AND WHERE, read BEFORE the verb runs. The value is about to be
+          // typed into the page showing this URL, and a submit may move the
+          // tab before anyone can ask again — so the page that RECEIVES it is
+          // recorded while that is still knowable. `withSecretScrub` reads it
+          // back to decide whether a later screenshot would be a picture of
+          // the credential. @see BrowserSecretRegistry.markTyped
+          const typedPage = this.tabs.get(tabId)?.page;
+          this.secrets.markTyped(typedPage ? safeUrl(typedPage) : undefined);
         }
         return this.act(tabId, resolved, permit, command.source);
       }

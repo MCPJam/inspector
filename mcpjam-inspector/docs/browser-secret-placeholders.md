@@ -86,10 +86,26 @@ as a wrong password.
 - **No escape syntax.** There is no way to type a literal `{{secret:X}}` into a
   page. An escape is a second thing to get right in a security-relevant parser,
   to serve a case nobody has.
-- **No screenshot after a substitution.** An act that resolved a placeholder is
-  downgraded to `observe: "a11y"`. The scrub is a string replacement and a
-  picture is not a string: a site that does not mask the field renders the value
-  into the image, where nothing can take it back out.
+- **No screenshot of a page holding a value.** The act that resolved a
+  placeholder is downgraded to `observe: "a11y"`, and every command afterwards
+  comes back with `screenshotSuppressed: true` and no image for as long as the
+  tab is still showing the page the value went into. The scrub is a string
+  replacement and a picture is not a string: a site that does not mask the field
+  renders the value into the image, where nothing can take it back out — and
+  `browser_observe {mode:"screenshot"}` one command later would carry that image
+  into the model's context, the ledger row and the eval trace.
+
+  The suppression is per PAGE, not per session: the daemon records the URL the
+  value was typed into (`BrowserSecretRegistry.markTyped`) and `withSecretScrub`
+  drops the picture only while a result names that URL. A login's submit
+  navigates, so the screenshot the model most needs — did it work? — arrives
+  normally. A result carrying no URL at all is treated as still-exposed: the
+  observation funnel attaches one to everything it can read, so its absence
+  means the page could not be read, which is not evidence that it moved.
+
+  The live pane is unaffected. It draws from the frame stream, and its own
+  commands ask for `observe: "none"`; the person holding the browser is looking
+  at the screen already.
 - **No delivery into a box's environment.** This is a different path from
   `runtimeSecrets` → `secretEnv`, which is what a sandbox's `bash` and a harness
   read. Nothing here becomes an environment variable. See

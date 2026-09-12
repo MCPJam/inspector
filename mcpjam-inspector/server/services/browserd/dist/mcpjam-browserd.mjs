@@ -3331,22 +3331,34 @@ function withSecretScrub(registry, executor) {
   return async (command, context) => {
     const result = await executor(command, context);
     const scrubber = registry.scrubber();
-    if (!scrubber) return result;
     const output = result.output;
+    const record = typeof output === "object" && output !== null ? output : void 0;
+    const suppress = record?.screenshot !== void 0 && registry.exposedAt(
+      typeof record.url === "string" ? record.url : void 0
+    );
+    if (!scrubber && !suppress) return result;
     let scrubbedOutput = output;
-    if (typeof output === "object" && output !== null) {
-      const { screenshot, ...rest } = output;
-      scrubbedOutput = {
-        ...scrubber.scrubDeep(rest),
-        ...screenshot === void 0 ? {} : { screenshot }
-      };
-    } else if (typeof output === "string") {
+    if (record !== void 0) {
+      const { screenshot, ...rest } = record;
+      if (suppress) {
+        const { screenshotCompressed: _wentWithIt, ...noPicture } = rest;
+        scrubbedOutput = {
+          ...scrubber ? scrubber.scrubDeep(noPicture) : noPicture,
+          screenshotSuppressed: true
+        };
+      } else {
+        scrubbedOutput = {
+          ...scrubber ? scrubber.scrubDeep(rest) : rest,
+          ...screenshot === void 0 ? {} : { screenshot }
+        };
+      }
+    } else if (typeof output === "string" && scrubber) {
       scrubbedOutput = scrubber.scrubString(output);
     }
     return {
       ...result,
       ...output === void 0 ? {} : { output: scrubbedOutput },
-      ...typeof result.error === "string" ? { error: scrubber.scrubString(result.error) } : {}
+      ...scrubber && typeof result.error === "string" ? { error: scrubber.scrubString(result.error) } : {}
     };
   };
 }
@@ -3519,7 +3531,8 @@ function buildBrowserdStack(driver, config) {
   const ledger = new CommandLedger({ bootId });
   const lease = config.lease ?? new HandoffLease();
   const secrets = {
-    scrubber: () => driver.secretRegistry?.().scrubber() ?? null
+    scrubber: () => driver.secretRegistry?.().scrubber() ?? null,
+    exposedAt: (url) => driver.secretRegistry?.().exposedAt(url) ?? false
   };
   const queue = new CommandQueue(
     guardErrorShapes(
@@ -5418,6 +5431,8 @@ function createBrowserSecretRegistry() {
   const byValue = /* @__PURE__ */ new Map();
   let scrubber = null;
   let stale = false;
+  const typedInto = /* @__PURE__ */ new Set();
+  let typedSomewhere = false;
   return {
     register(secrets) {
       for (const secret of secrets) {
@@ -5441,6 +5456,15 @@ function createBrowserSecretRegistry() {
         stale = false;
       }
       return scrubber;
+    },
+    markTyped(url) {
+      if (url) typedInto.add(url);
+      else typedSomewhere = true;
+    },
+    exposedAt(url) {
+      if (typedSomewhere) return true;
+      if (typedInto.size === 0) return false;
+      return url === void 0 || url === "" || typedInto.has(url);
     },
     maskedValues() {
       const short = /* @__PURE__ */ new Map();
@@ -7890,6 +7914,8 @@ var ChromiumDriver = class {
         }
         if (resolved !== action && context?.secrets?.length) {
           this.secrets.register(context.secrets);
+          const typedPage = this.tabs.get(tabId)?.page;
+          this.secrets.markTyped(typedPage ? safeUrl(typedPage) : void 0);
         }
         return this.act(tabId, resolved, permit, command.source);
       }

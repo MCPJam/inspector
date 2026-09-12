@@ -268,15 +268,32 @@ export function guardErrorShapes(executor: CommandExecutor): CommandExecutor {
  * out of here. A scrub at the boundary would be a scrub of a value that was
  * already recorded.
  *
- * `screenshot` is skipped: it is base64 image data, a registered value cannot
- * meaningfully occur in it, and scanning a megabyte of it per observation for
- * a needle that cannot be there is pure cost. (The tool layer downgrades an
- * act that resolved a secret to `observe: "a11y"` anyway — a picture of a
- * non-password field is a picture of the secret, and no string scrub can do
- * anything about that.)
+ * `screenshot` is never SCRUBBED: it is base64 image data, a registered value
+ * cannot meaningfully occur in it, and scanning a megabyte of it per
+ * observation for a needle that cannot be there is pure cost.
+ *
+ * It is DROPPED instead, while the page it shows is one a value was typed
+ * into. A string scrub is powerless against pixels: a site that does not mask
+ * its field renders the credential, and `observe {mode:"screenshot"}` one
+ * command later — or the `/v1` `capture_screenshot` that maps to it — carries
+ * that picture into the model's context, the ledger row and the eval trace,
+ * past every scrub in this file. The act that TYPED it already comes back
+ * without one (the tool layer downgrades it to `observe: "a11y"`); this is the
+ * same rule applied to every command after it, for as long as the value can
+ * still be on screen.
+ *
+ * NOT a session-wide blackout. `exposedAt` answers per URL, so pictures come
+ * back the moment the page moves on — which for a login is the submit, the one
+ * navigation a model most needs to see the result of. And a suppressed result
+ * says `screenshotSuppressed: true` rather than quietly missing a key, because
+ * a model that asked for a picture and got nothing would reasonably ask again.
+ *
+ * The live pane is untouched: it draws from the frame stream, and its own
+ * commands ask for `observe: "none"`. The person holding the browser is
+ * looking at the screen already — this is about what leaves for a model.
  */
 export function withSecretScrub(
-  registry: Pick<BrowserSecretRegistry, "scrubber">,
+  registry: Pick<BrowserSecretRegistry, "scrubber" | "exposedAt">,
   executor: CommandExecutor,
 ): CommandExecutor {
   return async (
@@ -285,24 +302,45 @@ export function withSecretScrub(
   ): Promise<BrowserCommandResult> => {
     const result = await executor(command, context);
     const scrubber = registry.scrubber();
-    // NOTHING REGISTERED is the overwhelmingly common case — a session nobody
-    // has typed a credential into — and it costs one map lookup.
-    if (!scrubber) return result;
     const output = result.output;
+    const record =
+      typeof output === "object" && output !== null
+        ? (output as Record<string, unknown>)
+        : undefined;
+    const suppress =
+      record?.screenshot !== undefined &&
+      registry.exposedAt(
+        typeof record.url === "string" ? record.url : undefined,
+      );
+    // NOTHING REGISTERED is the overwhelmingly common case — a session nobody
+    // has typed a credential into — and it costs one map lookup. `suppress`
+    // cannot be true without one, so a session that uses none still gets the
+    // driver's own object back, byte for byte.
+    if (!scrubber && !suppress) return result;
     let scrubbedOutput = output;
-    if (typeof output === "object" && output !== null) {
-      const { screenshot, ...rest } = output as Record<string, unknown>;
-      scrubbedOutput = {
-        ...scrubber.scrubDeep(rest),
-        ...(screenshot === undefined ? {} : { screenshot }),
-      };
-    } else if (typeof output === "string") {
+    if (record !== undefined) {
+      const { screenshot, ...rest } = record;
+      if (suppress) {
+        // `screenshotCompressed` goes with it: it describes a picture that is
+        // no longer here, and a quality note about nothing reads like a bug.
+        const { screenshotCompressed: _wentWithIt, ...noPicture } = rest;
+        scrubbedOutput = {
+          ...(scrubber ? scrubber.scrubDeep(noPicture) : noPicture),
+          screenshotSuppressed: true,
+        };
+      } else {
+        scrubbedOutput = {
+          ...(scrubber ? scrubber.scrubDeep(rest) : rest),
+          ...(screenshot === undefined ? {} : { screenshot }),
+        };
+      }
+    } else if (typeof output === "string" && scrubber) {
       scrubbedOutput = scrubber.scrubString(output);
     }
     return {
       ...result,
       ...(output === undefined ? {} : { output: scrubbedOutput }),
-      ...(typeof result.error === "string"
+      ...(scrubber && typeof result.error === "string"
         ? { error: scrubber.scrubString(result.error) }
         : {}),
     };

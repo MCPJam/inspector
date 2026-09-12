@@ -287,6 +287,8 @@ export function buildBrowserdStack(
   // engine that types nothing) yields `null` and the wrapper does nothing.
   const secrets = {
     scrubber: () => driver.secretRegistry?.().scrubber() ?? null,
+    exposedAt: (url: string | undefined) =>
+      driver.secretRegistry?.().exposedAt(url) ?? false,
   };
   const queue = new CommandQueue(
     guardErrorShapes(

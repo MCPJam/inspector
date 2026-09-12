@@ -1798,6 +1798,32 @@ describe("ensureBrowserSession — compatibility and the lazy upgrade", () => {
     expect(mismatch.message).toContain(mismatch.hint);
   });
 
+  it("rethrows the PUBLICATION error when the replacement daemon did come up", async () => {
+    // The mismatch is RECOVERED here: a daemon on the expected wire is
+    // running, and what failed afterwards — the stream, the row, the logical
+    // boot — has nothing to do with the protocol. Naming the wire would report
+    // a solved problem as the cause of a live one, and dress a transient
+    // failure as the single thing a retry cannot fix.
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({
+        kind: "ok",
+        bootId: ROW.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+        bundleHash: HASH,
+        ...BUSY,
+      }),
+      streamError: new Error("the stream would not start"),
+    });
+
+    const error = await ensureBrowserSession(f.deps, ARGS).catch(
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).not.toBeInstanceOf(BrowserProtocolMismatchError);
+    expect((error as Error).message).toBe("the stream would not start");
+  });
+
   it("rethrows the raw boot error when the relaunch fails with no mismatch observed", async () => {
     // The other half, and the one that keeps this from becoming a wrapper that
     // hides real faults: a boot that failed for its own reasons must keep
