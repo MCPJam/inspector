@@ -254,6 +254,11 @@ func childInsidePack(exe string, self string) (string, error) {
 		return "", fmt.Errorf("resolving this launcher's own image: %w", err)
 	}
 	bin := filepath.Dir(resolvedSelf)
+	// `bin` is the layout the TypeScript side writes and resolves: see
+	// `server/utils/harness/local/compatibility.ts:201`
+	// (`jobLauncherRelativePath: "bin/mcpjam-job-launcher.exe"`) and
+	// `scripts/build-local-harness-pack.mjs:638`. Moving the launcher means
+	// moving all three together.
 	if !strings.EqualFold(filepath.Base(bin), "bin") {
 		return "", fmt.Errorf(
 			"refusing to start %q: this launcher runs from %q, which is not the "+

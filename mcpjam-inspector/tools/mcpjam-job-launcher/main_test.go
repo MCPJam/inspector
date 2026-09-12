@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -175,13 +176,20 @@ func TestChildInsidePackRejectsALauncherOutsideBin(t *testing.T) {
 	}
 }
 
-// symlinkOrSkip creates a symlink, skipping the test when the runner lacks the
-// privilege Windows requires for one. Skipping rather than failing, because the
-// behaviour under test is the launcher's, not the runner's account rights.
-func symlinkOrSkip(t *testing.T, target string, link string) {
+// junction creates a Windows directory junction at link pointing at target.
+//
+// A junction rather than `os.Symlink`, because creating a symlink needs
+// SeCreateSymbolicLinkPrivilege, which the GitHub `windows-latest` runners do
+// not hold: the two tests below would skip there, and the `EvalSymlinks`
+// behaviour the whole containment check rests on would have no coverage in CI
+// at all. A junction is a reparse point too, so `EvalSymlinks` collapses it the
+// same way, and any account can create one. Failing rather than skipping, so
+// that coverage cannot go quiet again.
+func junction(t *testing.T, target string, link string) {
 	t.Helper()
-	if err := os.Symlink(target, link); err != nil {
-		t.Skipf("cannot create a symlink on this runner: %v", err)
+	out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
+	if err != nil {
+		t.Fatalf("mklink /J %q %q: %v: %s", link, target, err, out)
 	}
 }
 
@@ -190,14 +198,11 @@ func symlinkOrSkip(t *testing.T, target string, link string) {
 // the pack the launcher actually lives in.
 func TestChildInsidePackResolvesASymlinkedLauncher(t *testing.T) {
 	_, root := packLayout(t)
+	// The launcher as the supervisor would see it: a path that is not inside
+	// the pack, reaching the pack's real launcher through a link.
 	linkedBin := filepath.Join(t.TempDir(), "bin")
-	if err := os.MkdirAll(linkedBin, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	// The launcher as the supervisor would see it: a link in a directory that
-	// is not inside the pack, pointing at the pack's real launcher.
+	junction(t, filepath.Join(root, "bin"), linkedBin)
 	link := filepath.Join(linkedBin, "mcpjam-job-launcher.exe")
-	symlinkOrSkip(t, filepath.Join(root, "bin", "mcpjam-job-launcher.exe"), link)
 	node := filepath.Join(root, "bin", "node.exe")
 
 	got, err := childInsidePack(node, link)
@@ -222,8 +227,9 @@ func TestChildInsidePackRejectsALinkInsideThePackPointingOut(t *testing.T) {
 	if err := os.WriteFile(attacker, []byte("stub"), 0o755); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	link := filepath.Join(root, "bin", "node-shim.exe")
-	symlinkOrSkip(t, attacker, link)
+	shim := filepath.Join(root, "bin", "shim")
+	junction(t, outside, shim)
+	link := filepath.Join(shim, "payload.exe")
 
 	if _, err := childInsidePack(link, self); err == nil {
 		t.Fatalf("childInsidePack(%q) accepted a link inside the pack whose target is %q",
