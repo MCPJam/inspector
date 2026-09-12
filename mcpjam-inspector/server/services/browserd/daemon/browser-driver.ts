@@ -1,5 +1,6 @@
 import { negotiateViewport } from "../../../../shared/browser-viewport";
 import { redactForModel } from "./shape-redaction";
+import type { BrowserSecretRegistry } from "./secret-registry";
 /**
  * The seam between the daemon's control plane (queue + HTTP) and the real
  * browser. The control plane owns ordering, de-duplication, auth, and boot
@@ -17,7 +18,7 @@ import {
   formatBrowserdError,
   wantsFor,
 } from "../protocol";
-import type { CommandExecutor } from "./command-queue";
+import type { CommandContext, CommandExecutor } from "./command-queue";
 import type { TabViewport } from "./viewport";
 import { leaseRefusalFor, type HandoffLease, type LeaseRefusal } from "./lease";
 import type {
@@ -41,7 +42,24 @@ export interface BrowserDriver {
    * exactly the `CommandExecutor` the queue drives; the queue owns idempotency,
    * so the driver may assume it is asked to run a given commandId at most once.
    */
-  execute(command: BrowserCommand): Promise<BrowserCommandResult>;
+  execute(
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult>;
+  /**
+   * Where this driver remembers the values it has typed into a page.
+   *
+   * Read by {@link withSecretScrub} so the wrapper and the driver share ONE
+   * registry BY CONSTRUCTION. Two instances would mean the wrapper scrubbing
+   * for values nobody typed while the driver types values nobody scrubs — the
+   * exact failure the feature exists to prevent — and sharing by accessor is
+   * the only arrangement in which that cannot be got wrong at a call site.
+   *
+   * Optional, like `viewport`: a driver that never substitutes a placeholder
+   * (a unit fake, an engine with no typing) has nothing to register, and the
+   * wrapper degrades to doing nothing at all.
+   */
+  secretRegistry?(): BrowserSecretRegistry;
   /**
    * The current rendered-state token for a tab (L3), or undefined if the tab is
    * unknown. Read WITHOUT mutating the page, so the staleness guard can compare
@@ -222,8 +240,11 @@ export function stateTokensMatch(
  * whole URL (query string included) actually arrives.
  */
 export function guardErrorShapes(executor: CommandExecutor): CommandExecutor {
-  return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
-    const result = await executor(command);
+  return async (
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> => {
+    const result = await executor(command, context);
     if (typeof result.error !== "string") return result;
     const scrubbed = redactForModel(result.error);
     // Identity when nothing matched, which is almost every result: a new
@@ -232,11 +253,87 @@ export function guardErrorShapes(executor: CommandExecutor): CommandExecutor {
   };
 }
 
+/**
+ * Replace every value this boot has typed into a page, on the way back out.
+ *
+ * A secret typed into a form does not stay in the form: it comes back in the
+ * accessibility tree, in the page text, in the DOM signal, in a console line
+ * the page logged, and in the URL after a GET submit. Substituting at the last
+ * moment kept it off the WIRE; this is what keeps it out of everything the
+ * page hands back afterwards.
+ *
+ * INSIDE THE QUEUE, which is the whole reason it is an executor wrapper and
+ * not an HTTP filter. The result the queue RETAINS for a duplicate command,
+ * and the row `recordRow` writes to the ledger, are both taken from what comes
+ * out of here. A scrub at the boundary would be a scrub of a value that was
+ * already recorded.
+ *
+ * `screenshot` is skipped: it is base64 image data, a registered value cannot
+ * meaningfully occur in it, and scanning a megabyte of it per observation for
+ * a needle that cannot be there is pure cost. (The tool layer downgrades an
+ * act that resolved a secret to `observe: "a11y"` anyway — a picture of a
+ * non-password field is a picture of the secret, and no string scrub can do
+ * anything about that.)
+ */
+export function withSecretScrub(
+  registry: Pick<BrowserSecretRegistry, "scrubber">,
+  executor: CommandExecutor,
+): CommandExecutor {
+  return async (
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> => {
+    const result = await executor(command, context);
+    const scrubber = registry.scrubber();
+    // NOTHING REGISTERED is the overwhelmingly common case — a session nobody
+    // has typed a credential into — and it costs one map lookup.
+    if (!scrubber) return result;
+    const output = result.output;
+    let scrubbedOutput = output;
+    if (typeof output === "object" && output !== null) {
+      const { screenshot, ...rest } = output as Record<string, unknown>;
+      scrubbedOutput = {
+        ...scrubber.scrubDeep(rest),
+        ...(screenshot === undefined ? {} : { screenshot }),
+      };
+    } else if (typeof output === "string") {
+      scrubbedOutput = scrubber.scrubString(output);
+    }
+    return {
+      ...result,
+      ...(output === undefined ? {} : { output: scrubbedOutput }),
+      ...(typeof result.error === "string"
+        ? { error: scrubber.scrubString(result.error) }
+        : {}),
+    };
+  };
+}
+
+/**
+ * Run the driver, passing a context only when there IS one.
+ *
+ * `execute(command)` and `execute(command, undefined)` are the same call to
+ * every implementation and a DIFFERENT call to anything counting arguments —
+ * and a command carrying no secret is every command a browser has run until
+ * now. Keeping the shape identical is what makes this feature invisible
+ * wherever it is not engaged, which is the bar the rest of it is held to.
+ */
+function runDriver(
+  driver: BrowserDriver,
+  command: BrowserCommand,
+  context: CommandContext | undefined,
+): Promise<BrowserCommandResult> {
+  return context ? driver.execute(command, context) : driver.execute(command);
+}
+
 export function guardStaleness(
   driver: BrowserDriver,
   lease?: Pick<HandoffLease, "state">,
 ): CommandExecutor {
-  return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
+  return async (
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> => {
     const { action } = command;
     if (
       command.source !== "manual" &&
@@ -251,7 +348,7 @@ export function guardStaleness(
       };
     }
     if (action.kind !== "act" || action.expectedState === undefined) {
-      return driver.execute(command);
+      return runDriver(driver, command, context);
     }
     const current = await driver.currentStateToken(command.tabId);
     // Re-asked AFTER the await. Reading the token touches the page (its URL
@@ -313,7 +410,7 @@ export function guardStaleness(
           : {}),
       };
     }
-    return driver.execute(command);
+    return runDriver(driver, command, context);
   };
 }
 
@@ -353,9 +450,12 @@ export function guardLease(
   lease: Pick<HandoffLease, "state">,
   executor: CommandExecutor,
 ): CommandExecutor {
-  return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
+  return async (
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> => {
     const refusal = leaseRefusalFor(lease.state(), command);
     if (refusal) return leaseBlockedResult(refusal);
-    return executor(command);
+    return executor(command, context);
   };
 }

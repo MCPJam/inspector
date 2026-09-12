@@ -102,6 +102,21 @@ export const BROWSERD_PROTOCOL_VERSION = 2;
 export const BROWSERD_WEBMCP_FEATURES = [
   "webmcp-eager",
   "webmcp-binding",
+  /**
+   * `POST /v1/commands` accepts a `secrets` array beside the command, and the
+   * driver substitutes `{{secret:NAME}}` from it.
+   *
+   * A FEATURE STRING RATHER THAN A PROTOCOL BUMP, for the reason above: the
+   * addition is strictly additive on the wire (an older daemon ignores an
+   * unknown body field), and bumping the version would kill every live hosted
+   * browser on deploy — a session somebody was signing into included — to gain
+   * a capability the server can simply ask about.
+   *
+   * A server talking to a daemon WITHOUT this must refuse the placeholder
+   * rather than send it: an old daemon would ignore `secrets` and type the
+   * literal `{{secret:NAME}}` into the field.
+   */
+  "secret-placeholders",
 ] as const;
 
 /**
@@ -863,6 +878,16 @@ export const BROWSERD_ERROR_CODES = [
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
   /**
+   * A `{{secret:NAME}}` reached the browser with no value for it.
+   *
+   * NOTHING WAS TYPED, which is the point. The server's planner refuses an
+   * unusable name before the command is sent, but it is not the only caller
+   * that reaches the driver — the `/v1` routes and the CLI do too — and a
+   * daemon that typed a literal `{{secret:GITHUB_PASSWORD}}` into a login form
+   * would report success while the model read the failure as a wrong password.
+   */
+  "secret_unresolved",
+  /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.
    *
@@ -901,6 +926,20 @@ export const BROWSERD_ERROR_CODES = [
   "origin_not_allowed",
   /** The session policy does not admit this command. */
   "tool_not_allowed",
+  // --- secret placeholders, refused BEFORE the daemon ---------------------
+  // Every one of these is decided by the server: the daemon never sees the
+  // command at all, because the alternative is a literal `{{secret:NAME}}`
+  // typed into a real field on a real site.
+  /** No secret by that name is available to this turn. */
+  "secret_unknown",
+  /** The name exists but is BROKERED — its value never enters this process. */
+  "secret_not_typeable",
+  /** A placeholder on a verb that types nothing (`click`, `press`, `scroll`). */
+  "secret_verb_refused",
+  /** The running daemon is too old to accept secrets beside a command. */
+  "secret_unsupported_daemon",
+  /** This engine does not deliver secrets to a browser (phase 1: the local one). */
+  "secret_engine_unsupported",
   /**
    * The sender and this daemon do not speak the same wire.
    *

@@ -220,6 +220,28 @@ export function browserShapeRedactionEnabled(
   return env.MCPJAM_BROWSER_SHAPE_REDACTION !== "0";
 }
 
+/**
+ * Let a model type a credential it has not been shown: `{{secret:NAME}}`.
+ *
+ * DEFAULTS OFF, for one release, and the reason is not caution about the
+ * mechanism — it is that turning it on CHANGES WHAT THE MODEL READS. A turn
+ * whose project has secrets gets extra wording on two `browser_act` fields,
+ * and eval transcripts are diffed line by line. Off, every description is
+ * byte-identical to the release before this existed and no surface can deliver
+ * a value, whatever it has wired.
+ *
+ * `MCPJAM_BROWSER_SECRET_PLACEHOLDERS=1` turns it on: one environment
+ * variable, no deploy. READ AT CALL TIME, like the flags around it, so it can
+ * be flipped per-process in staging and per-test.
+ *
+ * @see server/utils/secrets/secret-placeholders.ts
+ */
+export function browserSecretPlaceholdersEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.MCPJAM_BROWSER_SECRET_PLACEHOLDERS === "1";
+}
+
 export type WebmcpPageToolsMode = "verbs" | "first_class";
 
 export function webmcpPageToolsMode(

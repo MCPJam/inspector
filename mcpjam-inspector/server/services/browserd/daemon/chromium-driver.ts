@@ -68,6 +68,12 @@ import {
   type ViewportSize,
 } from "../../../../shared/browser-viewport";
 import type { BrowserdFeatures } from "./config";
+import type { CommandContext } from "./command-queue";
+import {
+  createBrowserSecretRegistry,
+  type BrowserSecretRegistry,
+} from "./secret-registry";
+import { resolveActSecrets } from "./secret-substitution";
 import { diffA11yLines } from "./a11y-diff";
 import type { A11yNode } from "./observation-budget";
 import {
@@ -330,6 +336,15 @@ export interface ChromiumDriverOptions {
    */
   features?: BrowserdFeatures;
   /**
+   * Where typed secrets are remembered, so observations can be scrubbed.
+   *
+   * Constructed here when absent, and exposed again by `secretRegistry()` —
+   * the executor wrapper reads it off the driver rather than being handed one,
+   * so the two cannot end up with different instances. Injectable only so a
+   * test can pre-register a value or read back what a command registered.
+   */
+  secrets?: BrowserSecretRegistry;
+  /**
    * How big this session's page is, and whether it may change.
    *
    * Absent means the old behaviour exactly: a `fixed` session at 1024x768 that
@@ -535,6 +550,13 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly pageTextMaxBytes: number;
   /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
   private readonly features: BrowserdFeatures;
+  /**
+   * Values this boot has typed into a page, and what to show instead.
+   *
+   * Always constructed, never populated except by a command that CARRIED a
+   * secret — so a session nobody has typed a credential into pays nothing.
+   */
+  private readonly secrets: BrowserSecretRegistry;
   private readonly lease:
     | Pick<
         HandoffLease,
@@ -718,6 +740,7 @@ export class ChromiumDriver implements BrowserDriver {
     // An empty bag, never undefined: every read is `features.x === true`, and
     // a driver built with no options must behave as the last release did.
     this.features = options.features ?? {};
+    this.secrets = options.secrets ?? createBrowserSecretRegistry();
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
     this.allowPaneResize = options.viewport?.allowPaneResize === true;
@@ -750,6 +773,16 @@ export class ChromiumDriver implements BrowserDriver {
    */
   sessionViewportPolicy(): SessionViewportPolicy {
     return this.viewportPolicy;
+  }
+
+  /**
+   * The values this boot has typed, for the scrub on the way back out.
+   *
+   * @see BrowserDriver.secretRegistry — shared by accessor so the stack's
+   * scrub wrapper and this driver can never hold different instances.
+   */
+  secretRegistry(): BrowserSecretRegistry {
+    return this.secrets;
   }
 
   async requestViewport(
@@ -912,12 +945,16 @@ export class ChromiumDriver implements BrowserDriver {
    * verb passes through is what makes "never resize midway through an action"
    * true for all of them at once — including the ones added later.
    */
-  async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
-    return this.barrier.run(() => this.executeInBarrier(command));
+  async execute(
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> {
+    return this.barrier.run(() => this.executeInBarrier(command, context));
   }
 
   private async executeInBarrier(
     command: BrowserCommand,
+    context?: CommandContext,
   ): Promise<BrowserCommandResult> {
     // Recheck after waiting for a resize, not only at queue admission.
     if (
@@ -1042,8 +1079,31 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "observe":
         return this.observe(tabId, action, permit);
-      case "act":
-        return this.act(tabId, action, permit, command.source);
+      case "act": {
+        // SUBSTITUTED HERE, at the last moment before the verb runs, and never
+        // earlier: the action that reaches the ledger, `/v1/trace` and the
+        // durable mirror is the one the caller sent, placeholders and all.
+        //
+        // `resolveActSecrets` throws when a placeholder has no value, so a
+        // literal `{{secret:NAME}}` is never typed into somebody's login form
+        // even when the SERVER-side planner was bypassed — the `/v1` routes
+        // reach this same code, and so will whatever is written next.
+        let resolved = action;
+        try {
+          resolved = resolveActSecrets(action, context?.secrets);
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+        // REGISTERED ONLY IF SOMETHING RESOLVED. A daemon nobody has typed a
+        // credential into holds nothing and scrubs nothing.
+        if (resolved !== action && context?.secrets?.length) {
+          this.secrets.register(context.secrets);
+        }
+        return this.act(tabId, resolved, permit, command.source);
+      }
       case "webmcp_invoke":
         return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
@@ -3287,8 +3347,14 @@ export class ChromiumDriver implements BrowserDriver {
       this.a11yBudget,
     );
     const refs = assignRefs(tree);
+    // The BELT to the scrub wrapper's braces, and it only ever holds the
+    // values that wrapper cannot safely touch: a secret too short for a text
+    // scrubber to replace without corrupting unrelated page text. Empty for
+    // every session that has typed no credential, which is almost all of them.
+    const masked = this.secrets.maskedValues();
     const rendered = renderA11yTree(tree, {
       interactiveOnly: raw.filter === "interactive",
+      ...(masked.size > 0 ? { maskedValues: masked } : {}),
     });
     return {
       ok: true,

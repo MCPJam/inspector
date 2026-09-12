@@ -117,6 +117,7 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
+import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 
 export interface SimulationManagerFactory {
   /**
@@ -662,12 +663,31 @@ export async function runSyntheticHostSession(
           })
         : undefined,
     );
+    // WHAT THIS ATTEMPT'S BROWSER MAY TYPE.
+    //
+    // This runner delivers no materialized secrets on either path (see the
+    // `runtimeSecrets` note further down) and that is unchanged: these values
+    // never become an environment variable. They travel beside one browser
+    // command, are substituted inside the daemon, and are scrubbed back out of
+    // everything the page returns.
+    //
+    // Asked only when the run declared a browser policy, and not asked at all
+    // while the placeholder flag is off.
+    const browserSecrets = browserApprovalDelivery
+      ? await resolveBrowserSecrets({
+          bearer: authHeader,
+          projectId,
+          ...(environmentId ? { environmentId } : {}),
+          chatSessionId,
+        })
+      : [];
     const builtInTools = resolveHostTools(
       { builtInToolIds, computer },
       {
         authHeader,
         projectId,
         chatSessionId,
+        ...(browserSecrets.length > 0 ? { browserSecrets } : {}),
         isScenarioSession: true,
         // Journey (swarm) surface: WITHOUT a sandbox binding the resolver
         // suppresses computer-backed tools here, because every session in a run

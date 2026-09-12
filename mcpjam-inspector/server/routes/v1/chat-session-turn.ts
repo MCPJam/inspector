@@ -109,6 +109,8 @@ import {
 } from "../../services/environments/runtime.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { logger } from "../../utils/logger.js";
+import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
+import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
 import {
   buildLiveEffectiveCapabilities,
@@ -1442,6 +1444,16 @@ async function handleTurn(c: Context): Promise<Response> {
         toolMode: pins.toolMode,
       });
       effectiveBrowserPolicy = resolved.effectivePolicy;
+      // WHAT THE BROWSER MAY TYPE. This surface delivers no materialized
+      // secrets into a box, and this does not change that: the values here
+      // reach one browser command and nothing else. Costs nothing — not even a
+      // round trip — while the placeholder flag is off.
+      const browserSecrets = await resolveBrowserSecrets({
+        bearer: authHeader,
+        projectId,
+        ...(pins.environmentId ? { environmentId: pins.environmentId } : {}),
+        chatSessionId: runtimeChatSessionId,
+      });
       const context: BuiltInToolContext = {
         authHeader,
         projectId,
@@ -1473,6 +1485,20 @@ async function handleTurn(c: Context): Promise<Response> {
           chatSessionId: runtimeChatSessionId,
           turnId: leaseTurnId,
         },
+        ...(browserSecrets.length > 0
+          ? {
+              browserSecrets,
+              onBrowserSecretDelivered: () => {
+                void markRuntimeSecretsDelivered(authHeader, {
+                  projectId,
+                  ...(pins.environmentId
+                    ? { environmentId: pins.environmentId }
+                    : {}),
+                  secretCount: browserSecrets.length,
+                });
+              },
+            }
+          : {}),
       };
       const eligible = resolveHostTools(
         { builtInToolIds: ["browser"] },

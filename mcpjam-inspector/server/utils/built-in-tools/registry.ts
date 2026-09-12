@@ -53,7 +53,11 @@ import { requireGithubToolSelection } from "../../services/github-checks/credent
 import type { ToolSet } from "ai";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
-import { LOCAL_BROWSER_ENABLED, hostedBrowserEnabled } from "../../config.js";
+import {
+  LOCAL_BROWSER_ENABLED,
+  browserSecretPlaceholdersEnabled,
+  hostedBrowserEnabled,
+} from "../../config.js";
 import {
   isHostedBrowserExposable,
   isHostedBrowserRefused,
@@ -275,6 +279,30 @@ export interface BuiltInToolContext {
    * from a MODEL command could be read and not traced back to why it happened.
    */
   browserCorrelation?: Parameters<typeof buildBrowserTools>[0]["correlation"];
+  /**
+   * MATERIALIZED project secrets this turn's browser may TYPE into a page,
+   * without the model ever reading one.
+   *
+   * A SEPARATE field from {@link secretEnv}, which is the same list for a
+   * different destination — and the separation is the policy, not a wiring
+   * accident. `secretEnv` is delivered only alongside a sandbox binding,
+   * because a shell that echoes its environment is the leak it guards against;
+   * the browser's gate is a different one (an ephemeral or member-owned
+   * Chromium, the hosted engine only), so a field that meant both would make
+   * one of the two gates unstatable.
+   *
+   * Threaded per surface for the same reason `browserCorrelation` is: only the
+   * surface knows what this turn is allowed to hold. ABSENT MEANS NO
+   * PLACEHOLDER RESOLVES — a surface that has not wired this refuses every
+   * name rather than silently typing one.
+   */
+  browserSecrets?: NonNullable<
+    Parameters<typeof buildBrowserTools>[0]["secrets"]
+  >["available"];
+  /** Names that exist for this environment but are BROKERED, never typeable. */
+  browserBrokeredSecretNames?: readonly string[];
+  /** Fired with the NAMES that actually reached a browser. Never values. */
+  onBrowserSecretDelivered?: (names: readonly string[]) => void;
   browserHandoffMaxWaitMs?: number;
   onBrowserHandoffWaiting?: Parameters<
     typeof buildBrowserTools
@@ -802,6 +830,22 @@ export function resolveHostTools(
           : {}),
         ...(ctx.browserCorrelation
           ? { correlation: ctx.browserCorrelation }
+          : {}),
+        // GATED HERE, once, rather than at each of the four surfaces. Off, the
+        // builder sees no secrets, advertises the wording it always did, and
+        // refuses every placeholder — whatever a surface has wired.
+        ...(browserSecretPlaceholdersEnabled() && ctx.browserSecrets?.length
+          ? {
+              secrets: {
+                available: ctx.browserSecrets,
+                ...(ctx.browserBrokeredSecretNames?.length
+                  ? { brokered: ctx.browserBrokeredSecretNames }
+                  : {}),
+                ...(ctx.onBrowserSecretDelivered
+                  ? { onDelivered: ctx.onBrowserSecretDelivered }
+                  : {}),
+              },
+            }
           : {}),
         ...(ctx.onBrowserNotice
           ? { onBrowserNotice: ctx.onBrowserNotice }

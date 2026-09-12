@@ -38,7 +38,29 @@ import {
  */
 export type CommandExecutor = (
   command: BrowserCommand,
+  /**
+   * What travels WITH this command but not INSIDE it.
+   *
+   * A separate argument rather than a field on `BrowserCommand`, because the
+   * command envelope is echoed onto the ledger row, into `/v1/trace` and into
+   * the durable mirror. A secret value on the envelope would be written to all
+   * three before anything had a chance to scrub it; as a sibling it is
+   * structurally impossible for it to land there.
+   */
+  context?: CommandContext,
 ) => Promise<BrowserCommandResult>;
+
+/** @see CommandExecutor */
+export interface CommandContext {
+  /**
+   * Values for the `{{secret:NAME}}` placeholders this command carries.
+   *
+   * Sent per command and only for the names the command references: the daemon
+   * registers what it is given, so delivering the turn's whole set would start
+   * it scrubbing observations for credentials nobody typed.
+   */
+  secrets?: ReadonlyArray<{ name: string; value: string }>;
+}
 
 /**
  * Is this a control message rather than work on the page?
@@ -177,7 +199,10 @@ export class CommandQueue {
     return true;
   }
 
-  async submit(command: BrowserCommand): Promise<BrowserCommandOutcome> {
+  async submit(
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandOutcome> {
     // A STOP DOES NOT WAIT ITS TURN. Everything else here is ordered against
     // the tab's other work; a cancellation is ordered against the very command
     // it cancels, and putting it behind that command in the FIFO means it can
@@ -189,11 +214,11 @@ export class CommandQueue {
     // page: it names an invocation, it is idempotent, and a cancellation for
     // one that already finished (or never existed) is a no-op. The lease gate
     // upstream has already run, so this bypasses ordering only, not permission.
-    if (isOutOfBand(command)) return this.runOutOfBand(command);
+    if (isOutOfBand(command)) return this.runOutOfBand(command, context);
     // Reads run on the FIFO like anything else — ordering still matters, and
     // the depth cap still applies — but they are never tracked by id, so they
     // spend no part of the per-boot budget. See `isReplayable`.
-    if (isReplayable(command)) return this.runUntracked(command);
+    if (isReplayable(command)) return this.runUntracked(command, context);
 
     const existing = this.lookup(command.commandId);
     if (existing) {
@@ -231,7 +256,7 @@ export class CommandQueue {
     const prior = this.tails.get(key) ?? Promise.resolve();
     const raw = prior
       .catch(() => undefined) // a prior command's failure must not stall the tab
-      .then(() => this.executor(command));
+      .then(() => this.executor(command, context));
     this.tails.set(key, raw);
     // The shared promise both the first caller and any duplicate await. It
     // resolves to a normalized result and NEVER rejects, so an executor throw
@@ -261,6 +286,7 @@ export class CommandQueue {
    */
   private async runUntracked(
     command: BrowserCommand,
+    context?: CommandContext,
   ): Promise<BrowserCommandOutcome> {
     const key = queueKeyFor(command);
     if ((this.depth.get(key) ?? 0) >= this.perQueueDepthCap) {
@@ -268,7 +294,9 @@ export class CommandQueue {
     }
     this.depth.set(key, (this.depth.get(key) ?? 0) + 1);
     const prior = this.tails.get(key) ?? Promise.resolve();
-    const raw = prior.catch(() => undefined).then(() => this.executor(command));
+    const raw = prior
+      .catch(() => undefined)
+      .then(() => this.executor(command, context));
     this.tails.set(key, raw);
     try {
       const result = await raw.then((r) => r, normalizeError);
@@ -291,8 +319,9 @@ export class CommandQueue {
    */
   private async runOutOfBand(
     command: BrowserCommand,
+    context?: CommandContext,
   ): Promise<BrowserCommandOutcome> {
-    const result = await this.executor(command).then(
+    const result = await this.executor(command, context).then(
       (value) => value,
       normalizeError,
     );

@@ -182,6 +182,7 @@ import {
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
+import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -4970,6 +4971,26 @@ const runHostedIterationWithBrowser = async (
           })
         : undefined,
     );
+    // WHAT THIS ITERATION'S BROWSER MAY TYPE.
+    //
+    // An eval run delivers NO materialized secrets into its box — see the note
+    // in `resolve-turn-runtime.ts` about why that is still waiting on its own
+    // review — and this does not change that. These values reach one browser
+    // command, are substituted inside the daemon and scrubbed back out; nothing
+    // here becomes an environment variable a harness or a shell can read.
+    //
+    // PER ITERATION, which is affordable precisely because the flag is checked
+    // before the credential is asked for: off, this is not a cheap fetch but no
+    // fetch at all. Asked only when the run actually declared a browser.
+    const browserSecrets = browserApprovalDelivery
+      ? await resolveBrowserSecrets({
+          bearer: convexAuthToken,
+          ...(builtInTarget && "projectId" in builtInTarget
+            ? { projectId: builtInTarget.projectId }
+            : {}),
+          ...(projectEnvironmentId ? { environmentId: projectEnvironmentId } : {}),
+        })
+      : [];
     return resolveHostTools(
       { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInTarget && "projectId" in builtInTarget
@@ -4977,6 +4998,7 @@ const runHostedIterationWithBrowser = async (
             authHeader: convexAuthToken,
             projectId: builtInTarget.projectId,
             ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+            ...(browserSecrets.length > 0 ? { browserSecrets } : {}),
             // Names THIS iteration, so an unattended browser gets a profile no
             // other iteration of this suite can reach. The suite's project is
             // not enough: iterations run concurrently against it.

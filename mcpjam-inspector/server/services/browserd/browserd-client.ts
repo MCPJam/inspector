@@ -338,7 +338,20 @@ export class BrowserdClient {
   async sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
+    options?: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      /**
+       * Values for the `{{secret:NAME}}` placeholders this command carries.
+       *
+       * An OPTION rather than a field on the command, because the command is
+       * what gets echoed onto the ledger row, into `/v1/trace` and into the
+       * durable mirror. A value on the command would be written to all three
+       * before anything could scrub it; here it cannot reach them, because no
+       * writer is ever handed it.
+       */
+      secrets?: ReadonlyArray<{ name: string; value: string }>;
+    },
   ): Promise<BrowserdCommandResponse> {
     const res = await this.request(
       "/v1/commands",
@@ -352,6 +365,7 @@ export class BrowserdClient {
           // forget on the one path that mattered.
           command: { protocolVersion: BROWSERD_PROTOCOL_VERSION, ...command },
           expectedBootId,
+          ...(options?.secrets?.length ? { secrets: options.secrets } : {}),
         }),
       },
       true,

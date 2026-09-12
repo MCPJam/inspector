@@ -23,6 +23,7 @@ import {
   guardLease,
   guardErrorShapes,
   guardStaleness,
+  withSecretScrub,
   type BrowserDriver,
 } from "./browser-driver";
 import { HandoffLease } from "./lease";
@@ -262,15 +263,35 @@ export function buildBrowserdStack(
   // The lease check wraps the staleness guard rather than the other way round:
   // reading a tab's current state token to compare it IS an observation of the
   // page, so it must not happen for a command the lease is about to refuse.
-  // OUTERMOST, so it also covers the refusals the guards themselves produce
-  // and, more importantly, so it runs INSIDE the queue: the result the queue
+  // OUTERMOST, so they also cover the refusals the guards themselves produce
+  // and, more importantly, so they run INSIDE the queue: the result the queue
   // retains for a duplicate command and the row `recordRow` writes are both
   // taken from what comes out of here.
+  //
+  // The SECRET scrub is outermost of the two. It replaces exact known values
+  // and knows what it is looking for; the shape scrub is a guess about strings
+  // nobody registered. Running the exact one last means a value that is both a
+  // registered secret AND credential-shaped comes back as its own
+  // `{{secret:NAME}}` — which the model asked for — rather than as a generic
+  // `[redacted]`.
+  //
+  // ONE registry, and it is the DRIVER'S: the driver writes it (at
+  // substitution time) and this reads it. Reached through the accessor rather
+  // than constructed here so the two cannot drift apart — a driver minting one
+  // and a stack minting another would mean scrubbing for values nobody typed
+  // while typing values nobody scrubs. A driver with no registry (a fake, an
+  // engine that types nothing) yields `null` and the wrapper does nothing.
+  const secrets = {
+    scrubber: () => driver.secretRegistry?.().scrubber() ?? null,
+  };
   const queue = new CommandQueue(
-    guardErrorShapes(
-      config.authority === "shared"
-        ? guardStaleness(driver)
-        : guardLease(lease, guardStaleness(driver, lease)),
+    withSecretScrub(
+      secrets,
+      guardErrorShapes(
+        config.authority === "shared"
+          ? guardStaleness(driver)
+          : guardLease(lease, guardStaleness(driver, lease)),
+      ),
     ),
     bootId,
   );

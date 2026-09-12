@@ -110,7 +110,11 @@ function attributes(node: A11yNode): string {
 }
 
 /** One node's line, without its children. */
-function line(node: A11yNode, indent: number): string {
+function line(
+  node: A11yNode,
+  indent: number,
+  maskedValues?: ReadonlyMap<string, string>,
+): string {
   const role = typeof node.role === "string" ? node.role : "node";
   let text = `${"  ".repeat(indent)}- ${role}`;
   if (typeof node.name === "string" && node.name.length > 0) {
@@ -130,10 +134,23 @@ function line(node: A11yNode, indent: number): string {
     String(value).length > 0 &&
     String(value) !== node.name
   ) {
+    // A SHORT SECRET, which no text scrubber can safely replace.
+    //
+    // The scrubber refuses anything under `MIN_SCRUBBABLE_LENGTH` because
+    // replacing a four-character value throughout a page's text would corrupt
+    // unrelated content — a page that says "test" would come back as a
+    // placeholder. Here that objection does not apply: this is the WHOLE
+    // contents of ONE control, so an exact match is not a coincidence, and a
+    // four-digit code typed into a field is exactly the kind of credential
+    // that falls under that floor.
+    //
+    // Exact equality only. A short value occurring INSIDE a longer field is
+    // the ambiguous case the floor exists for, and is left alone.
+    const masked = maskedValues?.get(String(value));
     // QUOTED, like the name and for the same reason: a textarea holding a
     // newline would otherwise end this line, and everything after it would
     // read as more nodes in the tree.
-    text += `: ${JSON.stringify(String(value))}`;
+    text += `: ${JSON.stringify(masked ?? String(value))}`;
   }
   return text;
 }
@@ -141,6 +158,19 @@ function line(node: A11yNode, indent: number): string {
 export interface RenderOptions {
   /** Shapes the "nothing to show" answer; the filtering itself happened earlier. */
   interactiveOnly?: boolean;
+  /**
+   * Values to show as something else when a control holds one EXACTLY.
+   *
+   * For the short typed secrets the string scrubber will not touch. @see
+   * BrowserSecretRegistry.maskedValues — and note that this is the belt to its
+   * braces, not a replacement: anything long enough is already gone by the
+   * time a rendered tree leaves the daemon.
+   *
+   * Absent (the overwhelmingly common case) renders exactly as before: the
+   * lookup never happens, so a tree from a session that typed no credential is
+   * byte-identical to the one the previous release produced.
+   */
+  maskedValues?: ReadonlyMap<string, string>;
 }
 
 /** Render a (already filtered, already capped, already ref'd) tree as text. */
@@ -171,7 +201,7 @@ export function renderA11yTree(
       return;
     }
     const transparent = isTransparent(node);
-    if (!transparent) lines.push(line(node, indent));
+    if (!transparent) lines.push(line(node, indent, options.maskedValues));
     const ref = typeof node.ref === "string" ? node.ref : parentRef;
     for (const child of node.children ?? []) {
       visit(child, transparent ? indent : indent + 1, ref);

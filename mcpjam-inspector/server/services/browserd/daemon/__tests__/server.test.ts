@@ -4,6 +4,8 @@ import type { Server } from "node:http";
 import { buildBrowserdStack } from "../server";
 import type { BrowserDriver } from "../browser-driver";
 import type { BrowserCommandResult } from "../../protocol";
+import { createBrowserSecretRegistry } from "../secret-registry";
+import { resolveActSecrets } from "../secret-substitution";
 
 const TOKEN = "integration-token";
 
@@ -205,6 +207,135 @@ describe("browserd server adapter — recording is announced, never assumed", ()
       expect(started.status).toBe(503);
       expect(await started.json()).toMatchObject({
         error: "record_unavailable",
+      });
+    });
+  });
+});
+
+/**
+ * R-3. A secret goes in beside the command and does not come back out.
+ *
+ * Over a real socket because the property is about the WHOLE stack: the value
+ * arrives as a sibling of the command (so no ledger writer is ever handed it),
+ * the driver substitutes it at the last moment, and the scrub wrapper — reading
+ * the DRIVER'S OWN registry — replaces it in everything the page hands back.
+ * Two registries would pass every unit test and leak here.
+ */
+describe("browserd server adapter — typed secrets do not come back", () => {
+  /** A driver that types what it is given and then reads the field back. */
+  function echoingDriver(): BrowserDriver {
+    const registry = createBrowserSecretRegistry();
+    return {
+      execute: async (command, context) => {
+        const action = command.action as { kind: string; value?: string };
+        if (action.kind !== "act") return { ok: true };
+        const resolved = resolveActSecrets(
+          action as never,
+          context?.secrets,
+        ) as { value?: string };
+        if (resolved.value !== action.value && context?.secrets)
+          registry.register(context.secrets);
+        // What the page hands back: the field now holds the typed value.
+        return {
+          ok: true,
+          output: { a11y: `textbox "Password" value=${resolved.value}` },
+        };
+      },
+      secretRegistry: () => registry,
+      currentStateToken: async () => undefined,
+      health: async () => ({ ok: true }),
+      close: async () => {},
+    };
+  }
+
+  async function withEchoingStack(
+    run: (base: string) => Promise<void>,
+  ): Promise<void> {
+    const stack = buildBrowserdStack(echoingDriver(), { token: TOKEN });
+    await new Promise<void>((resolve) =>
+      stack.server.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = stack.server.address() as AddressInfo;
+    try {
+      await run(`http://127.0.0.1:${port}`);
+    } finally {
+      stack.closeStreams();
+      await new Promise<void>((resolve) => stack.server.close(() => resolve()));
+    }
+  }
+
+  const typeCommand = (commandId: string, value: string) =>
+    JSON.stringify({
+      command: {
+        commandId,
+        source: "chat",
+        action: { kind: "act", verb: "type", value },
+      },
+      secrets: [{ name: "PW", value: "hunter2-hunter2-hunter2" }],
+    });
+
+  it("substitutes the value and scrubs it back out of the tree", async () => {
+    await withEchoingStack(async (base) => {
+      const res = await fetch(`${base}/v1/commands`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}` },
+        body: typeCommand("c1", "{{secret:PW}}"),
+      });
+      const body = await res.text();
+      expect(body).not.toContain("hunter2");
+      expect(JSON.parse(body).result.output.a11y).toBe(
+        'textbox "Password" value={{secret:PW}}',
+      );
+    });
+  });
+
+  it("keeps scrubbing on LATER commands that carry no secret", async () => {
+    // The point of a per-boot registry: the field still holds the value, and
+    // forgetting after the typing command would leak every observation after
+    // it.
+    await withEchoingStack(async (base) => {
+      await fetch(`${base}/v1/commands`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}` },
+        body: typeCommand("c1", "{{secret:PW}}"),
+      });
+      const res = await fetch(`${base}/v1/commands`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify({
+          command: {
+            commandId: "c2",
+            source: "chat",
+            action: {
+              kind: "act",
+              verb: "type",
+              value: "hunter2-hunter2-hunter2",
+            },
+          },
+        }),
+      });
+      expect(await res.text()).not.toContain("hunter2");
+    });
+  });
+
+  it("refuses rather than typing a literal placeholder", async () => {
+    await withEchoingStack(async (base) => {
+      const res = await fetch(`${base}/v1/commands`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify({
+          command: {
+            commandId: "c3",
+            source: "chat",
+            action: { kind: "act", verb: "type", value: "{{secret:ABSENT}}" },
+          },
+        }),
+      });
+      // The driver here throws rather than refusing, which the queue normalizes
+      // — either way, no page ever sees the placeholder.
+      expect((await res.json()).result).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("secret_unresolved"),
       });
     });
   });

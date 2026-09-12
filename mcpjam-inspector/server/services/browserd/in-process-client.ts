@@ -67,6 +67,17 @@ export interface InProcessBrowserdClient {
   sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
+    options?: {
+      /**
+       * Accepted and IGNORED, so this satisfies every caller typed against the
+       * HTTP client. There is no socket here to time out or abort: the call is
+       * a function call into the stack in this same process.
+       */
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      /** @see BrowserdClient.sendCommand — a sibling, never a command field. */
+      secrets?: ReadonlyArray<{ name: string; value: string }>;
+    },
   ): Promise<BrowserdCommandResponse>;
   /** Read the command ledger forward from a cursor. */
   readTrace(args?: {
@@ -145,9 +156,13 @@ export function createInProcessBrowserdClient(
     async leaseAction(args) {
       return decodeLeaseAction(await call("POST", "/v1/lease", args));
     },
-    async sendCommand(command, expectedBootId) {
+    async sendCommand(command, expectedBootId, options) {
       return decodeCommandResponse(
-        await call("POST", "/v1/commands", { command, expectedBootId }),
+        await call("POST", "/v1/commands", {
+          command,
+          expectedBootId,
+          ...(options?.secrets?.length ? { secrets: options.secrets } : {}),
+        }),
       );
     },
     async paneState(args) {

@@ -140,6 +140,45 @@ interface CommandRequestBody {
    * so a replay against a fresh boot is rejected rather than re-executed.
    */
   expectedBootId?: string;
+  /**
+   * Values for the `{{secret:NAME}}` placeholders the command carries.
+   *
+   * OUTSIDE `command`, deliberately and structurally. The command envelope is
+   * echoed onto the ledger row, into `/v1/trace` and into the durable mirror;
+   * a secret value on it would be written to all three before anything could
+   * scrub it. As a sibling it CANNOT reach them — not because every writer
+   * remembers to strip it, but because no writer is ever handed it.
+   */
+  secrets?: Array<{ name: string; value: string }>;
+}
+
+/** How many secrets one command may carry. */
+const MAX_COMMAND_SECRETS = 32;
+/** The backend's own charset for a secret name. */
+const SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+/**
+ * Read the `secrets` sibling, or `undefined` when there is nothing usable.
+ *
+ * Malformed entries are DROPPED rather than refused, and the difference
+ * matters: a dropped value means the placeholder it was for goes unresolved,
+ * and `resolveActSecrets` then refuses the act with `secret_unresolved` —
+ * naming the problem precisely. A 400 here would report "bad request" for a
+ * command whose actual fault is one unusable secret among several.
+ */
+function readCommandSecrets(
+  raw: unknown,
+): Array<{ name: string; value: string }> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const secrets: Array<{ name: string; value: string }> = [];
+  for (const entry of raw.slice(0, MAX_COMMAND_SECRETS)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { name, value } = entry as { name?: unknown; value?: unknown };
+    if (typeof name !== "string" || !SECRET_NAME.test(name)) continue;
+    if (typeof value !== "string" || value.length === 0) continue;
+    secrets.push({ name, value });
+  }
+  return secrets.length > 0 ? secrets : undefined;
 }
 
 export interface BrowserdHandlerDeps {
@@ -1461,7 +1500,11 @@ export class BrowserdRequestHandler {
       });
     }
 
-    const outcome = await this.queue.submit(parsed.command);
+    const secrets = readCommandSecrets(parsed.secrets);
+    const outcome = await this.queue.submit(
+      parsed.command,
+      secrets ? { secrets } : undefined,
+    );
     const response = this.mapOutcome(outcome);
     this.recordOutcome(parsed.command, outcome, startedAt);
     // AFTER the command ran, so the boost covers the repaint it caused rather

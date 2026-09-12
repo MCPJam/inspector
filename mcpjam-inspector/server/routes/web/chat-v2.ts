@@ -164,6 +164,7 @@ import {
   markRuntimeSecretsDelivered,
   toSecretEnv,
 } from "../../utils/harness/runtime-secrets.js";
+import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { logger } from "../../utils/logger.js";
 import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
 
@@ -1493,6 +1494,14 @@ chatV2.post("/", async (c) => {
           }
         : undefined;
 
+    // WHAT THE BROWSER MAY TYPE, from the list this turn already read. Never a
+    // second fetch: `?? []` folds a FAILED read into "no secrets", which for
+    // this path is the same outcome as none — every placeholder is refused and
+    // nothing is typed — where for the box the two genuinely differ.
+    const browserSecrets = await resolveBrowserSecrets({
+      resolved: runtimeSecrets ?? [],
+    });
+
     const computerSandboxMode =
       isScenarioSession && scenarioId && !resolvedExecution.harness
         ? readComputerSandboxMode(hostRuntimeConfig)
@@ -1756,6 +1765,13 @@ chatV2.post("/", async (c) => {
         // produced this row".
         ...(body.chatSessionId
           ? { browserCorrelation: { chatSessionId: body.chatSessionId } }
+          : {}),
+        // A SEPARATE delivery from `secretEnv` below, with its own gate: this
+        // one never reaches a box's environment, only one browser command, and
+        // only the hosted engine. @see utils/secrets/browser-secrets.ts
+        ...(browserSecrets.length > 0 ? { browserSecrets } : {}),
+        ...(markSecretsDelivered
+          ? { onBrowserSecretDelivered: markSecretsDelivered }
           : {}),
         isGuest: Boolean(c.get("guestId")),
         isScenarioSession,
