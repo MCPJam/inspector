@@ -132,12 +132,17 @@ gates and confirmations are the only ones MCPJam still controls.
 
 ### Transcript safety
 
-Tool inputs, tool outputs, and snapshots all land in the chat transcript (and
-cross to the server) — and, for a published tool, cross to an agent MCPJam
-does not control. No secrets or credentials in input schemas — the
-server-draft tools take no env/headers for exactly this reason (the
-no-env/no-headers precedent). Snapshot providers report STATE, not payloads,
-and redact tokens, keys, and PII.
+Whatever a tool takes and returns leaves your control, by one of two routes.
+An **Ask MCPJam** call lands in that conversation's transcript and crosses to
+the server with it. A **native** call touches neither: it creates no
+conversation, and is executed in the page and answered straight to a browser
+agent MCPJam does not control.
+
+The rule is the same either way, because both ends are outside this app. No
+secrets or credentials in input schemas — the server-draft tools take no
+env/headers for exactly this reason (the no-env/no-headers precedent).
+Snapshot providers report STATE, not payloads, and redact tokens, keys, and
+PII.
 
 ### Prefill over commit
 
