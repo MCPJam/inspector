@@ -9,7 +9,9 @@
  * local draft seeded from the live-subscription prop ONCE per scenario (a
  * reseed mid-edit would discard unsaved checks), explicit Save, and Save
  * gated on `areAllChecksValid` so a half-finished row can't reach the backend
- * validator and lose the whole edit.
+ * validator and lose the whole edit. That check reads the predicates, and a
+ * raw-JSON draft that does not parse is never written into one — the editor
+ * reports it separately, and Save waits on both.
  *
  * Sampling is authored as a percentage but stored as a [0, 1] fraction —
  * convert at the wire, never store the percent.
@@ -76,6 +78,7 @@ export function ScenarioGradingSection({
   const [draft, setDraft] = useState<Draft>(() => draftFromSettings(scenario));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [hasInvalidDraft, setHasInvalidDraft] = useState(false);
 
   // Reseed only when the SCENARIO changes, never on subscription churn of the
   // same row — the draft is the user's unsaved work.
@@ -116,7 +119,12 @@ export function ScenarioGradingSection({
   // backend rejects; gate the button on the same rule so the error is
   // impossible rather than toasted.
   const enabledButEmpty = draft.enabled && draft.rubric.length === 0;
-  const canSave = dirty && samplingValid && rubricValid && !enabledButEmpty;
+  const canSave =
+    dirty &&
+    samplingValid &&
+    rubricValid &&
+    !hasInvalidDraft &&
+    !enabledButEmpty;
 
   const save = async () => {
     // What this save actually persists. Compared by identity after the await
@@ -179,9 +187,7 @@ export function ScenarioGradingSection({
           className="h-7 w-16 text-xs"
           inputMode="numeric"
           value={draft.samplingPercent}
-          onChange={(event) =>
-            update({ samplingPercent: event.target.value })
-          }
+          onChange={(event) => update({ samplingPercent: event.target.value })}
           aria-invalid={!samplingValid}
         />
         <span className="text-xs text-muted-foreground">
@@ -197,6 +203,7 @@ export function ScenarioGradingSection({
       <JourneyRubricEditor
         value={draft.rubric}
         onChange={(next) => update({ rubric: next })}
+        onDraftValidityChange={setHasInvalidDraft}
       />
       {enabledButEmpty ? (
         <p className="text-xs text-destructive">
