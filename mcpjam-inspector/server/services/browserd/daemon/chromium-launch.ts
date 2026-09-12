@@ -452,6 +452,16 @@ export function wrapPage(
       page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
     press: (key) => page.keyboard.press(key),
     scrollBy: ({ dx, dy }) => page.mouse.wheel(dx, dy),
+    // MOVE FIRST, and that is the whole difference from `scrollBy` above.
+    // `mouse.wheel` delivers at the pointer's CURRENT position, which on a
+    // fresh page is (0, 0) and after an act is wherever the last click landed
+    // — so a scroll aimed at a list moved whatever happened to be under the
+    // mouse. Moving there first makes the wheel land on the element the
+    // caller named.
+    async scrollAt(point, { dx, dy }) {
+      await page.mouse.move(point.x, point.y);
+      await page.mouse.wheel(dx, dy);
+    },
     async dragTo(from, to) {
       // Explicit down/move/up rather than `dragAndDrop`: HTML5 drag handlers
       // and canvas apps both need the intermediate move to fire, and a single

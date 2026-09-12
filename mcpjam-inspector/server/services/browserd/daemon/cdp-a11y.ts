@@ -125,6 +125,22 @@ export type AxTreeRead = { ok: true; tree: A11yNode | null } | { ok: false };
 export async function readAxTree(
   cdp: CdpLike,
   rootBackendNodeId?: number,
+  options: {
+    /**
+     * Backend ids of elements that SCROLL, from `DOM.getDocument`.
+     *
+     * A scroll container is almost always a `generic` — a `div` with
+     * `overflow:auto` — and `build` folds every `generic` away, so today the
+     * model cannot see one at all: it reads a list of items with no indication
+     * that the list itself moves, tries `scroll`, and moves the document
+     * behind it instead.
+     *
+     * Passing the set keeps those generics and stamps them `scrollable: true`.
+     * Passing NOTHING is byte-identical to the behaviour before this argument
+     * existed, which is what the eval goldens depend on.
+     */
+    scrollable?: ReadonlySet<number>;
+  } = {},
 ): Promise<AxTreeRead> {
   try {
     await cdp.send("Accessibility.enable");
@@ -148,7 +164,7 @@ export async function readAxTree(
     // `getFullAXTree` answers a flat list joined by ids, and a malformed or
     // cyclic set would otherwise walk forever. Visiting each id once bounds it.
     const seen = new Set<string>();
-    const built = build(root, byId, seen);
+    const built = build(root, byId, seen, options.scrollable);
     // A root that folds away entirely (a bare `generic` wrapper) still has to
     // answer with its children rather than with nothing.
     if (built.length === 0) return { ok: true, tree: null };
@@ -175,6 +191,7 @@ function build(
   node: AxNode,
   byId: Map<string, AxNode>,
   seen: Set<string>,
+  scrollable?: ReadonlySet<number>,
 ): A11yNode[] {
   if (seen.has(node.nodeId)) return [];
   seen.add(node.nodeId);
@@ -182,7 +199,7 @@ function build(
   const children: A11yNode[] = [];
   for (const childId of node.childIds ?? []) {
     const child = byId.get(childId);
-    if (child) children.push(...build(child, byId, seen));
+    if (child) children.push(...build(child, byId, seen, scrollable));
   }
 
   const role = scalar(node.role);
@@ -192,7 +209,21 @@ function build(
   // that matters — an `aria-hidden` wrapper around a live region, say.
   if (node.ignored) return children;
 
-  if (typeof role === "string" && UNINTERESTING_ROLES.has(role)) {
+  /**
+   * Does this node move its own content when you wheel over it?
+   *
+   * Checked BEFORE the folding rule below and not after, because the answer
+   * is the reason to break that rule: a scroll container is almost always a
+   * bare `generic`, which is exactly what `UNINTERESTING_ROLES` exists to
+   * throw away. Without the set, this is always false and the fold is
+   * untouched.
+   */
+  const scrolls =
+    scrollable !== undefined &&
+    typeof node.backendDOMNodeId === "number" &&
+    scrollable.has(node.backendDOMNodeId);
+
+  if (typeof role === "string" && UNINTERESTING_ROLES.has(role) && !scrolls) {
     // Text with content is the exception: a `StaticText` IS the page's words,
     // and folding it away leaves a tree of labels with nothing written in it.
     if (role === "StaticText" && typeof name === "string") {
@@ -232,8 +263,78 @@ function build(
         ? raw === "true"
         : raw;
   }
+  // Stamped last so it cannot be shadowed by a carried CDP property, and only
+  // when true: a `scrollable: false` on every node would be a new key on every
+  // line of every tree, which is the one thing the byte-identity rule forbids.
+  if (scrolls) built.scrollable = true;
   if (children.length > 0) built.children = children;
   return [built];
+}
+
+/**
+ * Which elements on this page scroll their own content.
+ *
+ * ONE CALL, answered by the DOM domain rather than computed: `DOM.getDocument`
+ * with `pierce` reports `isScrollable` per node, which is Chromium's own
+ * layout answer and cannot drift from what a wheel event will actually do. The
+ * alternative — evaluating `getComputedStyle` over every element — is a script
+ * in the page, on a page that may be hostile, to re-derive something the
+ * browser already knows.
+ *
+ * THE DOCUMENT SCROLLER IS EXCLUDED. `html`/`body` scroll on almost every page
+ * and are what a bare `scroll` already moves, so marking them would put
+ * `[scrollable]` on the root of every tree and tell the model nothing.
+ *
+ * Best-effort: a page that cannot answer yields an empty set, and the tree is
+ * read exactly as it is today.
+ */
+export async function readScrollableNodes(
+  cdp: CdpLike,
+): Promise<Set<number>> {
+  const found = new Set<number>();
+  try {
+    const doc = (await cdp.send("DOM.getDocument", {
+      depth: -1,
+      pierce: true,
+    })) as { root?: DomNode };
+    const root = doc?.root;
+    if (!root) return found;
+    // ITERATIVE, like every other walk over page-controlled structure here: a
+    // hostile or merely deep page must not be able to end the daemon with a
+    // stack overflow on a walk it asked for.
+    const stack: DomNode[] = [root];
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      if (
+        node.isScrollable === true &&
+        typeof node.backendNodeId === "number" &&
+        !DOCUMENT_SCROLLER_NAMES.has(node.nodeName ?? "")
+      ) {
+        found.add(node.backendNodeId);
+      }
+      for (const child of node.children ?? []) stack.push(child);
+      for (const child of node.shadowRoots ?? []) stack.push(child);
+      if (node.contentDocument) stack.push(node.contentDocument);
+    }
+  } catch {
+    // No answer is an empty set, not a failed observation: the tree is worth
+    // returning without the markers, and the markers are worth nothing
+    // without the tree.
+  }
+  return found;
+}
+
+/** `html` and `body` scroll on almost every page; a bare `scroll` moves them. */
+const DOCUMENT_SCROLLER_NAMES: ReadonlySet<string> = new Set(["HTML", "BODY"]);
+
+/** The subset of `DOM.getDocument`'s node shape this module reads. */
+interface DomNode {
+  backendNodeId?: number;
+  nodeName?: string;
+  isScrollable?: boolean;
+  children?: DomNode[];
+  shadowRoots?: DomNode[];
+  contentDocument?: DomNode;
 }
 
 /**

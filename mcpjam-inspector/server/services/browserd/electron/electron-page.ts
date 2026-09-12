@@ -1137,6 +1137,19 @@ export function createElectronPage(
         deltaY: dy,
       });
     },
+    // The same event AT A POINT. `scrollBy` above sends it at (0, 0), which is
+    // the top-left corner of the page and therefore almost never the scroll
+    // container a caller meant — a wheel there moves the document.
+    async scrollAt(point, { dx, dy }) {
+      const cdp = await needCdp();
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: point.x,
+        y: point.y,
+        deltaX: dx,
+        deltaY: dy,
+      });
+    },
     async dragTo(from, to) {
       // The intermediate move is not padding: HTML5 drag handlers and canvas
       // apps both need one, and a single jump lands as a click.

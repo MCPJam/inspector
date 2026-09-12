@@ -84,6 +84,11 @@ export const CONTENT_ROLES = new Set([
 export function isRefWorthy(node: A11yNode): boolean {
   const role = node.role;
   if (typeof role !== "string") return false;
+  // A SCROLL CONTAINER IS A TARGET, whatever its role. It is almost always a
+  // bare `generic` — a `div` with `overflow:auto` — which no other rule here
+  // would ever hand a ref, and without one the model can see that the thing
+  // scrolls and has no way to say so.
+  if (node.scrollable === true) return true;
   if (INTERACTIVE_ROLES.has(role)) return true;
   return (
     CONTENT_ROLES.has(role) &&

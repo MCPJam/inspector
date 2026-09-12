@@ -3890,7 +3890,7 @@ function scalar(value) {
   if (typeof raw === "number") return raw;
   return void 0;
 }
-async function readAxTree(cdp, rootBackendNodeId) {
+async function readAxTree(cdp, rootBackendNodeId, options = {}) {
   try {
     await cdp.send("Accessibility.enable");
     const response = await cdp.send("Accessibility.getFullAXTree");
@@ -3901,7 +3901,7 @@ async function readAxTree(cdp, rootBackendNodeId) {
     const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
     if (!root) return { ok: true, tree: null };
     const seen = /* @__PURE__ */ new Set();
-    const built = build(root, byId, seen);
+    const built = build(root, byId, seen, options.scrollable);
     if (built.length === 0) return { ok: true, tree: null };
     return {
       ok: true,
@@ -3911,18 +3911,19 @@ async function readAxTree(cdp, rootBackendNodeId) {
     return { ok: false };
   }
 }
-function build(node, byId, seen) {
+function build(node, byId, seen, scrollable) {
   if (seen.has(node.nodeId)) return [];
   seen.add(node.nodeId);
   const children = [];
   for (const childId of node.childIds ?? []) {
     const child = byId.get(childId);
-    if (child) children.push(...build(child, byId, seen));
+    if (child) children.push(...build(child, byId, seen, scrollable));
   }
   const role = scalar(node.role);
   const name = scalar(node.name);
   if (node.ignored) return children;
-  if (typeof role === "string" && UNINTERESTING_ROLES.has(role)) {
+  const scrolls = scrollable !== void 0 && typeof node.backendDOMNodeId === "number" && scrollable.has(node.backendDOMNodeId);
+  if (typeof role === "string" && UNINTERESTING_ROLES.has(role) && !scrolls) {
     if (role === "StaticText" && typeof name === "string") {
       return [{ role: "text", name }];
     }
@@ -3945,9 +3946,34 @@ function build(node, byId, seen) {
     if (raw === void 0 || raw === null || raw === "") continue;
     built[key] = TRISTATE_PROPERTIES.has(property.name) && (raw === "true" || raw === "false") ? raw === "true" : raw;
   }
+  if (scrolls) built.scrollable = true;
   if (children.length > 0) built.children = children;
   return [built];
 }
+async function readScrollableNodes(cdp) {
+  const found = /* @__PURE__ */ new Set();
+  try {
+    const doc = await cdp.send("DOM.getDocument", {
+      depth: -1,
+      pierce: true
+    });
+    const root = doc?.root;
+    if (!root) return found;
+    const stack = [root];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (node.isScrollable === true && typeof node.backendNodeId === "number" && !DOCUMENT_SCROLLER_NAMES.has(node.nodeName ?? "")) {
+        found.add(node.backendNodeId);
+      }
+      for (const child of node.children ?? []) stack.push(child);
+      for (const child of node.shadowRoots ?? []) stack.push(child);
+      if (node.contentDocument) stack.push(node.contentDocument);
+    }
+  } catch {
+  }
+  return found;
+}
+var DOCUMENT_SCROLLER_NAMES = /* @__PURE__ */ new Set(["HTML", "BODY"]);
 async function resolveBackendNodeId(cdp, selector) {
   try {
     const doc = await cdp.send("DOM.getDocument", { depth: 0 });
@@ -5021,6 +5047,7 @@ var CONTENT_ROLES = /* @__PURE__ */ new Set([
 function isRefWorthy(node) {
   const role = node.role;
   if (typeof role !== "string") return false;
+  if (node.scrollable === true) return true;
   if (INTERACTIVE_ROLES.has(role)) return true;
   return CONTENT_ROLES.has(role) && typeof node.name === "string" && node.name.length > 0;
 }
@@ -5105,7 +5132,16 @@ var FLAG_ATTRS = [
   "disabled",
   "required",
   "focused",
-  "readonly"
+  "readonly",
+  /**
+   * This element moves its own content when you wheel over it.
+   *
+   * Appended rather than inserted, so every existing line is byte-identical:
+   * no node carries this key unless `readScrollableNodes` found it, and the
+   * order of the flags before it is unchanged. It renders as
+   * `- generic [scrollable ref=e4]`.
+   */
+  "scrollable"
 ];
 var TRISTATE_ATTRS = ["checked", "pressed", "expanded"];
 function isTransparent(node) {
@@ -7452,6 +7488,18 @@ var ChromiumDriver = class {
         return page.press(action.value);
       case "scroll": {
         const [dx, dy] = parseScrollDelta(action.value);
+        if (refNode || point) {
+          const at = refNode && page.scrollAt ? (
+            // NO OCCLUSION CHECK. A scroll container is very often under a
+            // sticky header or an overlay, and a wheel event reaches the
+            // scroller regardless — refusing here would refuse the case
+            // this exists for. `"none"` still refuses a target that is
+            // off-viewport, where a wheel would land on nothing.
+            await this.pointForRef(page, refNode, refLabel, "none")
+          ) : point;
+          if (refNode) stillOurs();
+          if (at && page.scrollAt) return page.scrollAt(at, { dx, dy });
+        }
         return page.scrollBy({ dx, dy });
       }
       case "drag": {
@@ -8715,7 +8763,12 @@ var ChromiumDriver = class {
       }
       rootBackendNodeId = resolved;
     }
-    const read = await readAxTree(cdp, rootBackendNodeId);
+    const scrollable = this.features.scrollableMarkers ? await readScrollableNodes(cdp) : void 0;
+    const read = await readAxTree(
+      cdp,
+      rootBackendNodeId,
+      scrollable ? { scrollable } : {}
+    );
     if (!read.ok) {
       return {
         ok: false,
@@ -9705,6 +9758,16 @@ function wrapPage(page, localSecurity = false, localBudget) {
     fillSelector: (selector, text) => page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
     press: (key) => page.keyboard.press(key),
     scrollBy: ({ dx, dy }) => page.mouse.wheel(dx, dy),
+    // MOVE FIRST, and that is the whole difference from `scrollBy` above.
+    // `mouse.wheel` delivers at the pointer's CURRENT position, which on a
+    // fresh page is (0, 0) and after an act is wherever the last click landed
+    // — so a scroll aimed at a list moved whatever happened to be under the
+    // mouse. Moving there first makes the wheel land on the element the
+    // caller named.
+    async scrollAt(point, { dx, dy }) {
+      await page.mouse.move(point.x, point.y);
+      await page.mouse.wheel(dx, dy);
+    },
     async dragTo(from, to) {
       await page.mouse.move(from.x, from.y);
       await page.mouse.down();

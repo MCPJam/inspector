@@ -39,6 +39,15 @@ const FLAG_ATTRS = [
   "required",
   "focused",
   "readonly",
+  /**
+   * This element moves its own content when you wheel over it.
+   *
+   * Appended rather than inserted, so every existing line is byte-identical:
+   * no node carries this key unless `readScrollableNodes` found it, and the
+   * order of the flags before it is unchanged. It renders as
+   * `- generic [scrollable ref=e4]`.
+   */
+  "scrollable",
 ] as const;
 
 /**

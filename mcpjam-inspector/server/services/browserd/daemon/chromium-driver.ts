@@ -81,7 +81,11 @@ import {
   DEFAULT_PAGE_TEXT_MAX_BYTES,
   PAGE_TEXT_RETRIEVAL_HINT,
 } from "./page-text";
-import { readAxTree, resolveBackendNodeId } from "./cdp-a11y";
+import {
+  readAxTree,
+  readScrollableNodes,
+  resolveBackendNodeId,
+} from "./cdp-a11y";
 import {
   assignRefs,
   filterInteractive,
@@ -1470,6 +1474,30 @@ export class ChromiumDriver implements BrowserDriver {
         // Default to one viewport-ish step down, the overwhelmingly common
         // intent, so a bare `scroll` does something useful.
         const [dx, dy] = parseScrollDelta(action.value);
+        // A TARGETED SCROLL, which this verb has always accepted and never
+        // performed. `scroll` with a ref resolved the node, ignored it, and
+        // wheeled at the pointer's current position — reporting success while
+        // the DOCUMENT moved behind the element the model named. A model that
+        // asked a long list to scroll saw the page jump instead and had no way
+        // to tell the two apart from the observation afterwards.
+        //
+        // NOT GATED: this is a bug fix, not a new behaviour. Nothing pins
+        // scroll-with-a-ref today, because there was nothing worth pinning.
+        if (refNode || point) {
+          const at =
+            refNode && page.scrollAt
+              ? // NO OCCLUSION CHECK. A scroll container is very often under a
+                // sticky header or an overlay, and a wheel event reaches the
+                // scroller regardless — refusing here would refuse the case
+                // this exists for. `"none"` still refuses a target that is
+                // off-viewport, where a wheel would land on nothing.
+                await this.pointForRef(page, refNode, refLabel, "none")
+              : point;
+          if (refNode) stillOurs();
+          if (at && page.scrollAt) return page.scrollAt(at, { dx, dy });
+        }
+        // No point, or an engine with no targeted scroll: the document, as
+        // before.
         return page.scrollBy({ dx, dy });
       }
       case "drag": {
@@ -3378,7 +3406,18 @@ export class ChromiumDriver implements BrowserDriver {
       }
       rootBackendNodeId = resolved;
     }
-    const read = await readAxTree(cdp, rootBackendNodeId);
+    // ONE EXTRA CDP CALL, only when the flag is on. `DOM.getDocument` with
+    // `pierce` is the page's whole node tree, which is not free — so a daemon
+    // with the flag off pays nothing and reads exactly the tree it reads
+    // today.
+    const scrollable = this.features.scrollableMarkers
+      ? await readScrollableNodes(cdp)
+      : undefined;
+    const read = await readAxTree(
+      cdp,
+      rootBackendNodeId,
+      scrollable ? { scrollable } : {},
+    );
     if (!read.ok) {
       return {
         ok: false,

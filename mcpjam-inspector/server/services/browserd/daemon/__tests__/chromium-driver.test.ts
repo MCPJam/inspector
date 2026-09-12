@@ -4310,6 +4310,60 @@ describe("ChromiumDriver — acting on a ref", () => {
     expect(typed).toEqual(["a"]);
   });
 
+  it("scrolls AT a ref's point, not the document behind it", async () => {
+    // THE BUG. `scroll` has always accepted a ref, resolved it, and then
+    // ignored it — wheeling at the pointer's current position while reporting
+    // success. A model that asked a long list to scroll saw the whole page
+    // jump instead, and nothing in the observation afterwards told the two
+    // apart.
+    const { res, page } = await observedThenActed({
+      kind: "act",
+      verb: "scroll",
+      target: { a11yRef: "e2" },
+      value: "250",
+    });
+    expect(res.ok).toBe(true);
+    // The fixture logs a targeted wheel differently from a document one, which
+    // is the entire assertion: the two were indistinguishable before.
+    expect(page.calls.acts).toContain("scroll:0,250@100,50");
+    expect(page.calls.acts).not.toContain("scroll:0,250");
+  });
+
+  it("scrolls at coordinates when the model gives them", async () => {
+    const { res, page } = await observedThenActed({
+      kind: "act",
+      verb: "scroll",
+      target: { coordinates: [7, 9] },
+      value: "down",
+    });
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("scroll:0,600@7,9");
+  });
+
+  it("still scrolls the DOCUMENT for a bare scroll", async () => {
+    // Unchanged, and pinned: a bare `scroll` is the overwhelmingly common
+    // call, and the verb matrix above asserts its exact log line.
+    const { res, page } = await observedThenActed({
+      kind: "act",
+      verb: "scroll",
+      value: "250",
+    });
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("scroll:0,250");
+  });
+
+  it("does not refuse a scroll target something is sitting on top of", async () => {
+    // A scroll container is very often under a sticky header or an overlay,
+    // and a wheel event reaches the scroller regardless. The occlusion check
+    // that rightly refuses a CLICK would refuse the case this exists for.
+    const { res, page } = await observedThenActed(
+      { kind: "act", verb: "scroll", target: { a11yRef: "e2" }, value: "250" },
+      { "Runtime.callFunctionOn": { result: { value: "div.sticky-header" } } },
+    );
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("scroll:0,250@100,50");
+  });
+
   it("focuses the ref before pressing a key, so Enter lands where it was aimed", async () => {
     const { res, page, sent } = await observedThenActed({
       kind: "act",
