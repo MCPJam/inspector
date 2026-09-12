@@ -25,7 +25,7 @@
 import { describe, expect, it } from "vitest";
 import golden from "./fixtures/evaluator-vocabulary-golden.json" with { type: "json" };
 import { EvalTest } from "../src/EvalTest.js";
-import { predicateScorer } from "../src/scorers/index.js";
+import { judgeScorer, predicateScorer } from "../src/scorers/index.js";
 import type { EvaluationConfigSnapshot } from "../src/contract/types.js";
 import type { Predicate } from "../src/predicates/types.js";
 import type { Scorer } from "../src/scorers/types.js";
@@ -58,6 +58,28 @@ const customEvaluator: Scorer = {
     return { kind: "scored" as const, value: 1 };
   },
 };
+
+/**
+ * A REAL judge, not a stand-in.
+ *
+ * `customEvaluator` above carries a fixed `implementationHash` on purpose — it
+ * pins the wiring without pinning a prompt digest. But that left the gate with
+ * a hole a reviewer found: no row exercised `judgeScorer`'s actual derivation,
+ * so a later `judge()` constructor could change the prompt template version or
+ * the hash payload and this suite would stay green while every existing judge's
+ * configuration identity moved underneath it.
+ *
+ * The key is deliberately not a real one. `judgeScorer` builds its provider at
+ * construction but does not authenticate, and the definition it produces is a
+ * function of the rubric, the template version and the model string — none of
+ * which needs a live credential.
+ */
+const JUDGE_OPTIONS = {
+  id: "policy-grounding",
+  model: "anthropic/claude-sonnet-4-6",
+  apiKey: "sk-test-not-a-real-key",
+  rubric: ["The answer is supported by the retrieved policy."],
+} as const;
 
 const twoSameType: Predicate[] = [
   { type: "responseContains", needle: "refund" },
@@ -123,6 +145,22 @@ const legacyBuilders: Record<string, () => EvalTest> = {
       predicates: [{ type: "responseContains", needle: "refund" }],
       scorers: [customEvaluator],
     }),
+
+  "anonymous assertion through scorers — the content-derived id": () =>
+    new EvalTest({
+      id: "c_anonymous",
+      name: "anonymous",
+      test: passing,
+      scorers: [predicateScorer({ type: "responseContains", needle: "refund" })],
+    }),
+
+  "a real judge — the rubric-and-template implementation hash": () =>
+    new EvalTest({
+      id: "c_judge",
+      name: "judge",
+      test: passing,
+      scorers: [judgeScorer(JUDGE_OPTIONS)],
+    }),
 };
 
 describe("evaluation config identity is frozen", () => {
@@ -152,6 +190,99 @@ describe("evaluation config identity is frozen", () => {
     });
   }
 
+  it("refuses a reserved id before the builder can collapse anything", () => {
+    // The distinction the contract now spells out. Identical content collapses
+    // — but only OUTSIDE the reserved set, and this is the case a reader would
+    // otherwise get wrong: a built-in row minted against the wrong definition
+    // carries a hash that joins to nothing, and the gate's fail-closed join
+    // reads an unjoinable row as tampering.
+    expect(
+      () =>
+        new EvalTest({
+          id: "c_reserved",
+          name: "reserved",
+          test: passing,
+          scorers: [
+            predicateScorer({ type: "noToolErrors" }, { id: "tool-match" }),
+          ],
+        }).getEvaluationConfigSnapshot(),
+    ).toThrow(/already used by this test's built-in scorers/);
+  });
+
+  it("refuses one id standing for two different evaluations", () => {
+    expect(
+      () =>
+        new EvalTest({
+          id: "c_conflict",
+          name: "conflict",
+          test: passing,
+          scorers: [
+            predicateScorer({ type: "noToolErrors" }, { id: "same" }),
+            predicateScorer(
+              { type: "finalAssistantMessageNonEmpty" },
+              { id: "same" },
+            ),
+          ],
+        }).getEvaluationConfigSnapshot(),
+    ).toThrow();
+  });
+
+  it("collapses one id standing for one evaluation, named twice", () => {
+    const snapshot = new EvalTest({
+      id: "c_collapse",
+      name: "collapse",
+      test: passing,
+      scorers: [
+        predicateScorer({ type: "noToolErrors" }, { id: "same" }),
+        predicateScorer({ type: "noToolErrors" }, { id: "same" }),
+      ],
+    }).getEvaluationConfigSnapshot();
+
+    expect(
+      snapshot.definitions.filter((d) => d.scorerId === "same"),
+    ).toHaveLength(1);
+  });
+
+  it("pins the content-derived id of an anonymous assertion", () => {
+    const row = goldenCases.find((entry) =>
+      entry.label.startsWith("anonymous assertion"),
+    )!;
+    const generated = row.snapshot.definitions.find(
+      (definition) => definition.idSource === "generated",
+    )!;
+
+    // A standalone evaluator has no position, so its id comes from its rule's
+    // content — the whole digest, because two rules sharing a truncated one
+    // would mint a single id for two definitions. Nothing else in this corpus
+    // covers that path: the `predicates` rows are positional and the other
+    // scorer row is explicitly named.
+    expect(generated.scorerId).toMatch(
+      /^predicate:responseContains#[0-9a-f]{64}$/,
+    );
+    expect(generated.implementationHash).toBe(
+      generated.scorerId.split("#")[1],
+    );
+  });
+
+  it("pins a real judge's rubric-and-template hash", () => {
+    const row = goldenCases.find((entry) =>
+      entry.label.startsWith("a real judge"),
+    )!;
+    const judge = row.snapshot.definitions.find(
+      (definition) => definition.deterministic === false,
+    )!;
+
+    // Derived by `judgeScorer` from the rubric, the prompt TEMPLATE VERSION and
+    // the model. Pinning it is what stops a later constructor from moving the
+    // template while every judge's configuration identity moves with it and
+    // this gate stays green.
+    expect(judge.scorerId).toBe("policy-grounding");
+    expect(judge.idSource).toBe("explicit");
+    expect(judge.passThreshold).toBe(0.7);
+    expect(judge.role).toBe("advisory");
+    expect(judge.implementationHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   it("pins the generated ids that a later rule insertion would renumber", () => {
     const renumberable = goldenCases
       .flatMap((entry) => entry.snapshot.definitions)
@@ -159,11 +290,15 @@ describe("evaluation config identity is frozen", () => {
       .map((definition) => definition.scorerId);
     // Not an incidental list: these are the ids that are positional by
     // construction, and the reason a gate refuses to select one.
+    // Positional ones first, then the anonymous content-derived id, which is
+    // `generated` for a different reason: content-stable is not author-stable
+    // either, so a gate must not select it.
     expect(renumberable).toEqual([
       "predicate:responseContains#0",
       "predicate:responseContains#1",
       "predicate:noToolErrors#0",
       "predicate:responseContains#0",
+      "predicate:responseContains#1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1",
     ]);
   });
 });
