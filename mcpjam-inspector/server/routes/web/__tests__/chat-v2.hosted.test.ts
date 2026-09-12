@@ -203,6 +203,16 @@ describe("web routes — chat-v2 hosted mode", () => {
   const originalFetch = global.fetch;
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
 
+  it("rejects local Browser selection before constructing hosted tools", async () => {
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", selectedServerIds: [], messages: [{ role: "user", content: "hi" }],
+      model: { id: "openai/gpt-5-mini", provider: "openai" }, browserEngine: "local",
+    }, token);
+    expect(response.status).toBe(409);
+    expect(prepareChatV2Mock).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
@@ -900,6 +910,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         directVisibility: "project",
         resumeConfig: expect.objectContaining({
           selectedServers: ["Asana"],
+          executionTarget: { kind: "adhoc" },
         }),
         hostConfig: expect.objectContaining({
           // Phase 3: hostStyle defaults to 'claude' when omitted —

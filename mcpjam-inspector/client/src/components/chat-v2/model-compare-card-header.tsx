@@ -57,6 +57,7 @@ export function ModelCompareCardHeader({
   showIdentityHeader = false,
   logoSrc = null,
   result,
+  hideStatus = false,
   showToolsTab = false,
   showStepsTab = false,
   stepsActive = false,
@@ -105,6 +106,8 @@ export function ModelCompareCardHeader({
   logoSrc?: string | null;
   /** When set, shows a Pass/Fail pill instead of the status dot. */
   result?: "passed" | "failed" | null;
+  /** The surrounding run drawer already displays its status. */
+  hideStatus?: boolean;
   /** Include a Results tab alongside Trace/Chat/Raw. Only applies when `tabsInline` is true. */
   showToolsTab?: boolean;
   /** Step-aligned "Steps" tab — rides the out-of-union `stepsActive` /
@@ -228,8 +231,9 @@ export function ModelCompareCardHeader({
       : `${currentInteractionCount} interactions`;
 
   const showResultPill =
-    !compactCompareHeader && (result === "passed" || result === "failed");
-  const showStatusDot = !compactCompareHeader && result == null;
+    !hideStatus && !compactCompareHeader && (result === "passed" || result === "failed");
+  const showStatusDot =
+    !hideStatus && !compactCompareHeader && result == null && !(tabsInline && isRunningSummary);
 
   const resultPill =
     showResultPill && result === "passed" ? (

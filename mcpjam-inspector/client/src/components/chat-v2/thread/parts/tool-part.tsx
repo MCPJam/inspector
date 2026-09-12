@@ -60,6 +60,7 @@ import {
 import { filterSafeExternalLinkUrls } from "@/lib/safe-external-url";
 import { TextPart } from "./text-part";
 import { useHostContextStore } from "@/stores/client-context-store";
+import { useOpenBrowserOnBrowsing } from "@/hooks/useOpenBrowserOnBrowsing";
 import { extractHostDisplayModes } from "@/lib/client-config";
 import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
@@ -166,19 +167,27 @@ export function ToolPart({
   // through the shared app-tool registry/log helper so UI never leaks the
   // model-facing alias when a human-readable tool name is available.
   const appToolAttribution = useAppToolAttribution(label, chatSessionId);
-  // WebMCP page tools: read from the RESULT, never from a live store. A store
-  // answers for the browser as it is now, so a card scrolled back after the
-  // model navigated elsewhere would be attributed to whatever tool happens to
-  // carry that name today — the card would change its own history.
+  // Page-tool names belong to the recorded call/result, not the live page.
+  // Call metadata also labels inspector aliases while approval is pending.
   const pageToolAttribution = resolvePageToolAttribution({
     toolName: label,
     output: (part as any).output,
+    callProviderMetadata: (part as any).callProviderMetadata,
   });
   const displayLabel =
     pageToolAttribution?.rawName ?? appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
+  // The agent started browsing, so the browser gets its panel. Here because
+  // this card is the one place in the client that already knows a browser tool
+  // is running; it fires only while the call is LIVE, so scrolling back
+  // through a transcript full of them does not reopen anything.
+  useOpenBrowserOnBrowsing({
+    toolName: label,
+    state,
+    conversationId: chatSessionId,
+  });
 
   useEffect(() => {
     const isUserInjected = toolCallId?.startsWith("skill-load-");
@@ -428,8 +437,8 @@ export function ToolPart({
                 isDisabled
                   ? "text-muted-foreground/30 cursor-not-allowed"
                   : isActive
-                    ? "bg-background text-foreground shadow-sm cursor-pointer"
-                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+                  ? "bg-background text-foreground shadow-sm cursor-pointer"
+                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -451,18 +460,18 @@ export function ToolPart({
         tab === "data"
           ? "Data"
           : tab === "state"
-            ? "State"
-            : tab === "sandbox"
-              ? "Sandbox"
-              : "Context";
+          ? "State"
+          : tab === "sandbox"
+          ? "Sandbox"
+          : "Context";
       const tooltipLabel =
         tab === "data"
           ? "Data"
           : tab === "state"
-            ? "Widget State"
-            : tab === "sandbox"
-              ? "Sandbox"
-              : "Model Context";
+          ? "Widget State"
+          : tab === "sandbox"
+          ? "Sandbox"
+          : "Model Context";
 
       return (
         <Tooltip key={tab}>
@@ -478,8 +487,8 @@ export function ToolPart({
                 activeDebugTab === tab
                   ? "bg-background text-foreground shadow-sm"
                   : badge && badge > 0
-                    ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                  ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -566,7 +575,7 @@ export function ToolPart({
               <p className="font-medium">
                 {canRun
                   ? "Re-run tool with edited input"
-                  : (runDisabledReason ?? "Re-run tool with edited input")}
+                  : runDisabledReason ?? "Re-run tool with edited input"}
               </p>
             </TooltipContent>
           </Tooltip>
@@ -855,8 +864,8 @@ export function ToolPart({
               approvalVisualState === "approved"
                 ? "border-success/40 bg-success/10"
                 : approvalVisualState === "denied"
-                  ? "border-destructive/40 bg-destructive/10"
-                  : "border-border/60 bg-muted/30",
+                ? "border-destructive/40 bg-destructive/10"
+                : "border-border/60 bg-muted/30",
             )}
           >
             <span className="inline-flex items-center gap-1.5 text-muted-foreground text-[12px] shrink-0">

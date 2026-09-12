@@ -4,7 +4,7 @@ import {
 } from "../evals/eval-list-filter";
 import { useMemo, useState, type MouseEvent } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Play, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { resolveHostLogoByName } from "@/lib/host-logo";
@@ -42,7 +42,7 @@ interface SuitesOverviewProps {
 const ROW_PAD = "flex w-full items-center gap-4 px-3";
 const DATA_COLS =
   "grid min-w-0 flex-1 items-center gap-4 grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_5rem_7rem]";
-const ACTION_COL = "flex w-[7.5rem] shrink-0 items-center justify-end gap-1";
+const ACTION_COL = "flex w-40 shrink-0 items-center justify-end gap-1";
 
 export function SuitesOverview(props: SuitesOverviewProps) {
   return (
@@ -118,10 +118,7 @@ function OverviewBody({
 
   return (
     <div className="min-w-0" data-testid="evals-suites-overview">
-      <div
-        className={cn(ROW_PAD, "border-b border-border/40 pb-3")}
-        role="row"
-      >
+      <div className={cn(ROW_PAD, "border-b border-border/40 pb-3")} role="row">
         <div className={DATA_COLS}>
           <span
             role="columnheader"
@@ -320,9 +317,11 @@ function RowRunControl({
       type="button"
       variant="outline"
       size="sm"
-      className="h-7 px-2.5"
+      className="h-7 gap-1.5 px-2.5"
       data-testid="evals-suites-overview-run"
-      aria-label={hasServers ? `Run ${suiteTitle}` : "No servers configured"}
+      aria-label={
+        hasServers ? `Setup Run ${suiteTitle}` : "No servers configured"
+      }
       title={hasServers ? undefined : "No servers configured"}
       disabled={!hasServers}
       onClick={(event) => {
@@ -330,7 +329,8 @@ function RowRunControl({
         onRerun(suite);
       }}
     >
-      Run
+      <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      Setup Run
     </Button>
   );
 }

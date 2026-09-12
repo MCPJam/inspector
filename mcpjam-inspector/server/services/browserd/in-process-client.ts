@@ -21,6 +21,12 @@
  * screenshot out of a trace while someone types their password.
  */
 import type { BrowserdStack } from "./daemon/server";
+import {
+  decodePaneCommand,
+  decodePaneState,
+  decodeViewport,
+  type BrowserPaneClient,
+} from "./pane-client";
 import type { BrowserLedgerEntry } from "./daemon/command-ledger";
 import type { BrowserCommand } from "./protocol";
 import {
@@ -77,17 +83,21 @@ export interface InProcessBrowserdClient {
     errorCode: string;
     durationMs?: number;
   }): Promise<{ seq: number }>;
+  exportProfile(): Promise<Uint8Array>;
 }
+
+/** The shell's three calls, satisfied in-process. @see BrowserPaneClient */
+export type InProcessPaneClient = InProcessBrowserdClient & BrowserPaneClient;
 
 export function createInProcessBrowserdClient(
   stack: Pick<BrowserdStack, "handler">,
   token: string,
-): InProcessBrowserdClient {
-  const call = async (
+): InProcessPaneClient {
+  const callRaw = async (
     method: string,
     path: string,
     body?: unknown,
-  ): Promise<{ status: number; body: Record<string, unknown> }> => {
+  ): Promise<{ status: number; body: unknown }> => {
     // Split the query the way the http adapter's `new URL(...)` does. The
     // handler matches `req.path` EXACTLY and reads arguments from `req.query`,
     // so passing "/v1/trace?afterSeq=3" whole would 404 a route that exists —
@@ -111,6 +121,14 @@ export function createInProcessBrowserdClient(
       body: body === undefined ? "" : JSON.stringify(body),
       ...(query ? { query } : {}),
     });
+    return { status: response.status, body: response.body };
+  };
+  const call = async (
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: Record<string, unknown> }> => {
+    const response = await callRaw(method, path, body);
     return { status: response.status, body: asRecord(response.body) };
   };
 
@@ -132,9 +150,23 @@ export function createInProcessBrowserdClient(
         await call("POST", "/v1/commands", { command, expectedBootId }),
       );
     },
+    async paneState(args) {
+      const query = args.holder
+        ? `?holder=${encodeURIComponent(args.holder)}`
+        : "";
+      return decodePaneState(await call("GET", `/v1/state${query}`));
+    },
+    async paneCommand(args) {
+      return decodePaneCommand(await call("POST", "/v1/pane-command", args));
+    },
+    async paneViewport(args) {
+      const res = await call("POST", "/v1/viewport", args);
+      return res.status === 200 ? decodeViewport(res.body.viewport) : null;
+    },
     async readTrace(args = {}) {
       const query = new URLSearchParams();
-      if (args.afterSeq !== undefined) query.set("afterSeq", String(args.afterSeq));
+      if (args.afterSeq !== undefined)
+        query.set("afterSeq", String(args.afterSeq));
       if (args.commandId !== undefined) query.set("commandId", args.commandId);
       if (args.limit !== undefined) query.set("limit", String(args.limit));
       const suffix = query.size > 0 ? `?${query.toString()}` : "";
@@ -146,7 +178,9 @@ export function createInProcessBrowserdClient(
       assertOk(response, "/v1/trace");
       const entries = response.body.entries;
       return {
-        entries: Array.isArray(entries) ? (entries as BrowserLedgerEntry[]) : [],
+        entries: Array.isArray(entries)
+          ? (entries as BrowserLedgerEntry[])
+          : [],
         headSeq:
           typeof response.body.headSeq === "number" ? response.body.headSeq : 0,
       };
@@ -159,6 +193,16 @@ export function createInProcessBrowserdClient(
       return {
         seq: typeof response.body.seq === "number" ? response.body.seq : 0,
       };
+    },
+    async exportProfile() {
+      const response = await callRaw("POST", "/v1/profile/export");
+      if (response.status !== 200 || !(response.body instanceof Uint8Array)) {
+        const body = asRecord(response.body);
+        throw new Error(
+          `browser profile export failed with status ${response.status}: ${String(body.error ?? "unknown")}`,
+        );
+      }
+      return response.body;
     },
   };
 }

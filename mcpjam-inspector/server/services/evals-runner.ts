@@ -1,3 +1,4 @@
+import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
 import {
   peekPageToolsForChatTurn,
   pageToolsSnapshotFrom,
@@ -2072,6 +2073,7 @@ async function resolveOrgByokEvalRuntime(args: {
     }
   | undefined
 > {
+  if (isCredentialFreeGithubExecution()) return undefined;
   if (hasExplicitModelApiKeys(args.modelApiKeys)) return undefined;
 
   const providerKeyResult = deriveOrgProviderKey(args.modelDefinition);
@@ -3017,6 +3019,46 @@ export const runEvalSuiteWithAiSdk = async ({
     const renderCheckLimit = createConcurrencyLimiter(
       MAX_CONCURRENT_RENDER_CHECKS,
     );
+    if (recorder?.beginExecutionAttempt) {
+      const modelIdentifiers = Array.from(
+        new Map(
+          tests
+            .filter(
+              (test) =>
+                !isPinnedOnly({
+                  caseType: test.caseType,
+                  promptTurns: resolveEvalTestCase(test).promptTurns,
+                }),
+            )
+            .map((test) => {
+              const modelDefinition = resolveEvalCaseModelDefinition({
+                hostConfig: suiteHostConfig,
+                caseModel: buildModelDefinition(test),
+              });
+              const provider = modelDefinition.provider;
+              const model = getCanonicalModelId(
+                String(modelDefinition.id),
+                provider,
+              );
+              return [
+                `${provider}\u0000${model}`,
+                { provider, model },
+              ] as const;
+            }),
+        ).values(),
+      );
+      await recorder.beginExecutionAttempt({
+        caseCount: tests.length,
+        // Cases may configure different repeat counts. This is the total
+        // number of iteration rows expected for the whole attempt.
+        repetitionCount: tests.reduce(
+          (sum, test) => sum + (test.runs || 1),
+          0,
+        ),
+        renderConcurrencyLimit: MAX_CONCURRENT_RENDER_CHECKS,
+        modelIdentifiers,
+      });
+    }
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
@@ -3600,6 +3642,11 @@ const runLocalIteration = async ({
     testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
+    executionType: !caseNeedsModel
+      ? ("model_free" as const)
+      : resolvedExecution.harness
+        ? ("harness" as const)
+        : ("model" as const),
   };
   const shouldOmitSnapshotForPairing =
     !caseNeedsModel &&
@@ -4785,6 +4832,9 @@ const runHostedIterationWithBrowser = async (
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
+    executionType: resolvedExecution.harness
+      ? ("harness" as const)
+      : ("model" as const),
   };
 
   const iterationId = precreatedIterationId
@@ -4899,6 +4949,17 @@ const runHostedIterationWithBrowser = async (
             // other iteration of this suite can reach. The suite's project is
             // not enough: iterations run concurrently against it.
             ...(iterationId ? { runKey: iterationId } : {}),
+            ...(resolvedExecution.browserProfileId
+              ? { browserProfileId: resolvedExecution.browserProfileId }
+              : {}),
+            ...(iterationId
+              ? {
+                  browserSessionScope: {
+                    kind: "eval_iteration" as const,
+                    sessionId: String(iterationId),
+                  },
+                }
+              : {}),
             // The trusted binding to THIS iteration's box. It reaches the
             // resolver on `ctx`, never on the host config, so nothing in a
             // member-readable snapshot can forge one.

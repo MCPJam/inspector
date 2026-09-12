@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { LocalBrowserOnboarding } from "@/components/browser/LocalBrowserOnboarding";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
 import {
@@ -29,6 +31,24 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { PlaygroundRightRail } from "@/components/playground/PlaygroundRightRail";
+import {
+  browserPanelAvailable,
+  PlaygroundBrowserPanel,
+} from "@/components/playground/PlaygroundBrowserPanel";
+import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
+import { railShouldOpenForBrowse } from "@/hooks/useOpenBrowserOnBrowsing";
+import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
+import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
+import {
+  useBrowserWorkspaceEnabledState,
+  useBrowserEnabledState,
+} from "@/hooks/useComputersEnabled";
+import {
+  MAX_BROWSER_PANEL_SIZE,
+  MIN_BROWSER_PANEL_SIZE,
+  useBrowserWorkspaceStore,
+} from "@/stores/browser-workspace-store";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -140,8 +160,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     hostId: previewedHostId,
   });
   const effectiveHostConfig = previewedHostId
-    ? (previewedHost?.config ?? null)
-    : (props.activeHost ?? null);
+    ? previewedHost?.config ?? null
+    : props.activeHost ?? null;
   const activeMcpProfile = effectiveHostConfig?.mcpProfile;
 
   // Host-derived widget runtime values. The preferences store is the
@@ -228,10 +248,137 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const [isLeftRailVisible, setIsLeftRailVisible] = useState(true);
   const [isRightRailVisible, setIsRightRailVisible] = useState(false);
 
+  // The browser panel's own layout, which is a STORE rather than state here
+  // because three unrelated things move it: the agent starting to browse, the
+  // person dragging the divider, and the panel's own controls.
+  const restorationPending = useActiveChatSessionStore(
+    (state) => state.restorationPending,
+  );
+  const conversationId = useActiveChatSessionStore((state) => state.sessionId);
+  const restoredHasBrowser = useActiveChatSessionStore(
+    (state) => !!state.restoredSession?.browser,
+  );
+  const comparisonHasBrowser = useBrowserComparisonStore((state) =>
+    Object.values(state.clients).some(
+      (client) => client.workspaceId === conversationId && client.started,
+    ),
+  );
+  const sessionHasBrowser = restoredHasBrowser || comparisonHasBrowser;
+  const browserOpen = useBrowserWorkspaceStore((state) =>
+    conversationId ? !!state.conversations[conversationId]?.open : false,
+  );
+  const browserSize = useBrowserWorkspaceStore((state) => state.size);
+  const browserExpanded = useBrowserWorkspaceStore((state) =>
+    conversationId ? !!state.conversations[conversationId]?.expanded : false,
+  );
+  const setBrowserSize = useBrowserWorkspaceStore((state) => state.setSize);
+  const closeConversationBrowser = useBrowserWorkspaceStore(
+    (state) => state.closeBrowser,
+  );
+  const closeBrowser = useCallback(() => {
+    if (conversationId) closeConversationBrowser(conversationId);
+  }, [conversationId, closeConversationBrowser]);
+  const collapsedRailForBrowser = useBrowserWorkspaceStore(
+    (state) => state.collapsedRailForBrowser,
+  );
+  const noteRailCollapsed = useBrowserWorkspaceStore(
+    (state) => state.noteRailCollapsed,
+  );
+  const browseRevealSeq = useBrowserWorkspaceStore((state) => state.revealSeq);
+  const browseRevealId = useBrowserWorkspaceStore(
+    (state) => state.revealConversationId,
+  );
+
+  const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
+  const browsersEnabled = useBrowserEnabledState();
+  const browserEngine = useBrowserEngine(projectScope);
+  const browserToolIds = useBrowserToolIds(
+    effectiveHostConfig,
+    browserEngine.selectedEngine,
+    { projectId: projectScope, hostId: previewedHostId },
+  );
+  // Polled only on the local engine, where the question means something: on
+  // hosted this route describes a machine that is not the one running the
+  // browser.
+  const localBrowserRunning = useLocalBrowserRunning(
+    browserEngine.selectedEngine === "local" && browsersEnabled === true,
+  );
+  // GATED until all three engines meet the release criteria. Off, the browser
+  // is the right rail's Browser tab again — see `BROWSER_WORKSPACE_FLAG`.
+  // TRI-STATE, kept as one: `undefined` is "PostHog has not answered", which
+  // is not the same as "no" and must not close a panel on its own.
+  const workspaceState = useBrowserWorkspaceEnabledState();
+  const canBrowseResolved =
+    workspaceState !== undefined && browsersEnabled !== undefined;
+  const canBrowse =
+    workspaceState === true &&
+    browsersEnabled === true &&
+    browserPanelAvailable({
+      sessionHasBrowser,
+      hostHasBrowser: !!browserToolIds?.includes("browser"),
+      selectedEngine: browserEngine.selectedEngine,
+      isAuthenticated: isConvexAuthenticated,
+      localBrowserRunning,
+    });
+  const showBrowser = browserOpen && canBrowse;
+
+  // The browser takes its room from the Sessions rail, ONCE. Doing it on every
+  // reopen would fight a person who deliberately put the rail back — which is
+  // why the store remembers that it happened rather than this effect keying on
+  // `showBrowser` alone.
+  useEffect(() => {
+    if (!showBrowser || collapsedRailForBrowser) return;
+    noteRailCollapsed();
+    setIsLeftRailVisible(false);
+  }, [showBrowser, collapsedRailForBrowser, noteRailCollapsed]);
+
+  // A host that loses the browser capability while the panel is open leaves it
+  // showing a browser nothing can drive. Closed rather than left inert: the
+  // session behind it is gone either way, and an empty panel holding 60% of
+  // the workspace is worse than the room back.
+  useEffect(() => {
+    // RESOLVED FALSE, not merely falsy. Both flag hooks report `false` while
+    // they are still loading, so a panel opened by `useOpenBrowserOnBrowsing`
+    // during that window was closed again the moment this ran — and the
+    // auto-open effect does not fire a second time when the flags land,
+    // because nothing it watches changed. The browser simply never appeared.
+    if (!restorationPending && browserOpen && canBrowseResolved && !canBrowse)
+      closeBrowser();
+  }, [
+    restorationPending,
+    browserOpen,
+    canBrowse,
+    canBrowseResolved,
+    closeBrowser,
+  ]);
+
   // Panel handles let us programmatically expand a collapsed rail when the
   // user clicks the corresponding `CollapsedPanelStrip` peek button.
   const leftPanelRef = useRef<ImperativePanelHandle | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
+  const pendingRailReveal = useRef(false);
+
+  // The rail starts collapsed. A tab switch inside an unmounted rail is how
+  // "open the browser when they navigate" silently did nothing.
+  useEffect(() => {
+    if (
+      !railShouldOpenForBrowse({
+        conversationId,
+        revealConversationId: browseRevealId,
+        workspacePanelVisible: workspaceState === true,
+      })
+    ) {
+      return;
+    }
+    pendingRailReveal.current = true;
+    setIsRightRailVisible(true);
+  }, [browseRevealSeq, browseRevealId, conversationId, workspaceState]);
+
+  useEffect(() => {
+    if (!isRightRailVisible || !pendingRailReveal.current) return;
+    pendingRailReveal.current = false;
+    rightPanelRef.current?.expand();
+  }, [isRightRailVisible]);
 
   if (playgroundState.loadingState.kind === "skeleton") {
     return (
@@ -273,6 +420,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                     dropdown in the global header) and re-snapshots its
                     persisted config into the chip stores when it changes.
                     Renders nothing. */}
+                    <LocalBrowserOnboarding
+                      projectId={projectScope}
+                      authReady={
+                        !props.isWorkOsAuthLoading &&
+                        (!props.isSignedInWithWorkOs || isConvexAuthenticated)
+                      }
+                    />
                     <PlaygroundPreviewedClientSync
                       projectId={
                         props.sharedProjectId ?? props.activeProjectId ?? null
@@ -328,8 +482,27 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                       <ResizablePanel
                         id="playground-center"
                         order={2}
-                        minSize={40}
-                        className="min-h-0 min-w-0 overflow-hidden"
+                        // The floor drops once a browser is beside it. 40% of
+                        // the workspace for chat and 60% for the browser do not
+                        // both fit, and the panel group answers an impossible
+                        // set of constraints by ignoring the sizes it was
+                        // given — so the browser opened at whatever was left
+                        // rather than at the size it asked for.
+                        // ZERO WHILE EXPANDED, and the reason is arithmetic:
+                        // the browser panel asks for 100 and the group enforces
+                        // every panel's minimum, so a floor of 15 here left the
+                        // browser clamped to 85 — with chat hidden by CSS
+                        // rather than unmounted, that 15% was an unusable gap
+                        // beside a browser that was supposed to fill the space.
+                        minSize={browserExpanded ? 0 : showBrowser ? 15 : 40}
+                        className={cn(
+                          "min-h-0 min-w-0 overflow-hidden",
+                          // An expanded browser hides chat rather than
+                          // unmounting it: the panel group would otherwise
+                          // renumber its children, and a remounted chat pane
+                          // loses its scroll position and its composer draft.
+                          browserExpanded && showBrowser && "hidden",
+                        )}
                       >
                         <PlaygroundCenter
                           activeProjectId={props.activeProjectId}
@@ -346,13 +519,55 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           }
                         />
                       </ResizablePanel>
+                      {showBrowser ? (
+                        <>
+                          {/* No handle while expanded: there is nothing on the
+                              other side of it to resize against, and a divider
+                              that moves a hidden panel is a control that does
+                              nothing visible. */}
+                          {browserExpanded ? null : (
+                            <ResizableHandle withHandle />
+                          )}
+                          <ResizablePanel
+                            id="playground-browser"
+                            order={3}
+                            defaultSize={browserExpanded ? 100 : browserSize}
+                            minSize={
+                              browserExpanded ? 100 : MIN_BROWSER_PANEL_SIZE
+                            }
+                            maxSize={
+                              browserExpanded ? 100 : MAX_BROWSER_PANEL_SIZE
+                            }
+                            // The store, not the panel group, is the record of
+                            // what somebody chose — the group forgets on
+                            // unmount, and the browser panel unmounts every
+                            // time it is closed.
+                            onResize={(size) => {
+                              if (!browserExpanded) setBrowserSize(size);
+                            }}
+                            className="min-h-0 min-w-0 overflow-hidden"
+                          >
+                            <PlaygroundBrowserPanel
+                              projectId={projectScope}
+                              hostId={previewedHostId ?? null}
+                              // MOUNTED but not claiming while the panel is off
+                              // screen. Dropping the socket would stop the
+                              // screencast and lose whatever the agent was
+                              // mid-way through; claiming while hidden keeps a
+                              // metered box awake.
+                              visible={showBrowser}
+                              onClose={closeBrowser}
+                            />
+                          </ResizablePanel>
+                        </>
+                      ) : null}
                       {isRightRailVisible ? (
                         <>
                           <ResizableHandle withHandle />
                           <ResizablePanel
                             ref={rightPanelRef}
                             id="playground-right"
-                            order={3}
+                            order={4}
                             defaultSize={30}
                             minSize={4}
                             maxSize={50}

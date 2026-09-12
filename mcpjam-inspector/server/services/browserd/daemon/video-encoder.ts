@@ -79,12 +79,30 @@ export interface VideoEncoder {
    * A new subscriber is replayed the current GOP, so it sees a picture within
    * a frame rather than waiting out the next keyframe.
    */
-  subscribe(listener: (unit: VideoAccessUnit) => void): () => void;
+  subscribe(
+    listener: (unit: VideoAccessUnit) => void,
+    sharp?: boolean,
+  ): () => void;
   subscriberCount(): number;
   /** Why the encoder is not running, once something has gone wrong. */
   failure(): string | undefined;
   /** Change the bitrate/sharpness trade. Restarts ffmpeg — see the note below. */
   setTier(tier: VideoTier): void;
+  /**
+   * Follow the display to a new size.
+   *
+   * A RESTART, like `setTier`, and for a stronger reason: an H.264 stream's
+   * SPS carries the picture dimensions, so a stream that says 1024 wide cannot
+   * carry a 1400-wide frame at all. A decoder handed one drops it or renders
+   * garbage — and `repeat-headers=1` means the restart puts fresh parameter
+   * sets in front of the first key unit, which is exactly what every watcher
+   * needs to start decoding the new geometry.
+   *
+   * Frames captured before the transition are already gone: `stop()` tears
+   * down the ffmpeg that produced them, so nothing from the previous
+   * generation can reach a subscriber after this returns.
+   */
+  resize(size: { width: number; height: number }): void;
   tier(): VideoTier;
   /**
    * How many access units this encoder has published, ever.
@@ -113,7 +131,17 @@ const NAL_IDR = 5;
 const MAX_RING_BYTES = 3 * 1024 * 1024;
 
 /** Per-tier ffmpeg arguments, after the input and before the output. */
-export function tierArgs(tier: VideoTier): string[] {
+export function tierArgs(tier: VideoTier, sharp = false): string[] {
+  if (sharp)
+    return [
+      "-crf",
+      tier === "sharp" ? "18" : tier === "saver" ? "23" : "20",
+      "-maxrate",
+      tier === "sharp" ? "6M" : "2500k",
+      "-bufsize",
+      tier === "sharp" ? "12M" : "5M",
+    ];
+
   switch (tier) {
     case "sharp":
       // Text stays readable at the cost of bandwidth: the tier somebody picks
@@ -173,8 +201,16 @@ export function ffmpegArgs(options: {
   width: number;
   height: number;
   tier: VideoTier;
+  sharp?: boolean;
 }): string[] {
-  const tier = tierArgs(options.tier);
+  const tier = tierArgs(options.tier, options.sharp);
+  const fps = options.sharp
+    ? options.tier === "sharp"
+      ? 30
+      : options.tier === "saver"
+      ? 10
+      : 20
+    : 30;
   // The saver tier brings its own `-vf` (it scales); everything else gets the
   // plain decimator. Two `-vf` flags would silently keep only the last.
   const filters = tier.includes("-vf") ? [] : ["-vf", "mpdecimate"];
@@ -184,7 +220,7 @@ export function ffmpegArgs(options: {
     "-f",
     "x11grab",
     "-framerate",
-    "30",
+    String(fps),
     "-video_size",
     `${options.width}x${options.height}`,
     "-draw_mouse",
@@ -205,7 +241,7 @@ export function ffmpegArgs(options: {
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "120",
+    String(fps * 4),
     "-sc_threshold",
     "0",
     "-x264-params",
@@ -321,6 +357,16 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const listeners = new Set<(unit: VideoAccessUnit) => void>();
   let tier: VideoTier = options.tier ?? "auto";
+  const sharpSubscribers = new Set<(unit: VideoAccessUnit) => void>();
+  let sharp = false;
+  /**
+   * The display's size, which MOVES on a responsive session.
+   *
+   * `let` rather than `options.width`, because `resize` changes it and every
+   * later ffmpeg start has to grab the screen that is actually there.
+   */
+  let width = Math.max(2, Math.round(options.width));
+  let height = Math.max(2, Math.round(options.height));
   let child: EncoderProcess | undefined;
   let splitter = createAccessUnitSplitter();
   let failure: string | undefined;
@@ -380,9 +426,15 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
         ffmpegPath,
         ffmpegArgs({
           display: options.display,
-          width: options.width,
-          height: options.height,
+          // The CURRENT geometry, not the one this encoder was built with: a
+          // `followPane` session moves the display, and an ffmpeg restarted
+          // after that must grab the screen that is actually there. `x11grab`
+          // with a `-video_size` larger than the screen fails outright; one
+          // smaller silently captures a corner.
+          width,
+          height,
           tier,
+          sharp,
         }),
         { stdio: ["ignore", "pipe", "pipe"] },
       );
@@ -413,8 +465,17 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
   };
 
   return {
-    subscribe(listener) {
+    subscribe(listener, wantsSharp = false) {
       listeners.add(listener);
+      if (wantsSharp) sharpSubscribers.add(listener);
+      const nextSharp = sharpSubscribers.size === listeners.size;
+      if (sharp !== nextSharp) {
+        sharp = nextSharp;
+        if (child) {
+          stop();
+          start();
+        }
+      }
       if (listeners.size === 1) start();
       // The current GOP first, so this subscriber has a picture immediately
       // rather than after up to four seconds of waiting for the next keyframe.
@@ -427,12 +488,34 @@ export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
       }
       return () => {
         listeners.delete(listener);
+        sharpSubscribers.delete(listener);
         if (listeners.size === 0) stop();
+        else {
+          const nextSharp = sharpSubscribers.size === listeners.size;
+          if (sharp !== nextSharp) {
+            sharp = nextSharp;
+            stop();
+            start();
+          }
+        }
       };
     },
     subscriberCount: () => listeners.size,
     failure: () => failure,
     tier: () => tier,
+    resize(size) {
+      const nextWidth = Math.max(2, Math.round(size.width));
+      const nextHeight = Math.max(2, Math.round(size.height));
+      if (nextWidth === width && nextHeight === height) return;
+      width = nextWidth;
+      height = nextHeight;
+      if (!child) return;
+      // See the interface note: the SPS carries the dimensions, so this is a
+      // restart rather than a reconfiguration, and the restart is what mints
+      // the parameter sets and the keyframe the new geometry needs.
+      stop();
+      start();
+    },
     setTier(next) {
       if (next === tier) return;
       tier = next;

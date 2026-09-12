@@ -15,6 +15,7 @@
 import { useState, type ReactNode } from "react";
 import { ChevronRight, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { cn } from "@/lib/utils";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
@@ -84,19 +85,19 @@ export function ActionRow({
       data-ordinal={action.ordinal}
       onMouseEnter={onHover ? () => onHover(step.id) : undefined}
       onMouseLeave={onHover ? () => onHover(null) : undefined}
-      className={cn(
-        "rounded-md border border-border/60 bg-background/40",
-        isActive && "ring-1 ring-ring",
-      )}
+      className={cn("group space-y-2", isActive && "ring-1 ring-ring")}
     >
-      <div className="flex items-center gap-2 px-2.5 py-1.5">
+      <div className="flex items-center gap-2 py-1">
         <span
           aria-hidden
-          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-semibold text-muted-foreground"
+          className={cn(
+            total === 1 && "sr-only",
+            "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-semibold text-muted-foreground",
+          )}
         >
           {action.ordinal}
         </span>
-        <Icon className={cn("h-3.5 w-3.5 shrink-0", meta.tint)} />
+        <Icon className={cn("size-4 shrink-0", step.kind === "prompt" ? "text-info" : meta.tint)} />
         {expandable ? (
           <button
             type="button"
@@ -116,15 +117,16 @@ export function ActionRow({
             </span>
           </button>
         ) : (
-          <span
-            className="min-w-0 flex-1 truncate text-xs font-medium text-foreground"
+          <Label
+            htmlFor={`spine-prompt-${step.id}`}
+            className="min-w-0 flex-1 text-lg font-semibold text-info"
             onClick={onSelect}
           >
-            {meta.label}
-          </span>
+            User Prompt
+          </Label>
         )}
         {status ? <StepStatusBadge status={status} /> : null}
-        {readOnly ? null : (
+        {readOnly || total === 1 ? null : (
           <>
             <Button
               type="button"
@@ -148,34 +150,37 @@ export function ActionRow({
             >
               ↓
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
-              aria-label={`Remove step ${action.ordinal}`}
-              onClick={onRemove}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            {step.kind !== "prompt" ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
+                aria-label={`Remove step ${action.ordinal}`}
+                onClick={onRemove}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            ) : null}
           </>
         )}
       </div>
 
-      <div className="space-y-2 px-2.5 pb-2">
+      <div className="space-y-5">
         {step.kind === "prompt" ? (
           <Textarea
+            id={`spine-prompt-${step.id}`}
             value={step.prompt}
             onChange={(event) =>
               onUpdate({ ...step, prompt: event.target.value })
             }
-            rows={3}
+            rows={4}
             placeholder="Enter the user prompt…"
             autoFocus={autoFocus}
             aria-label={promptAriaLabel}
             readOnly={readOnly}
             className={cn(
-              "resize-none bg-background font-mono text-sm leading-relaxed",
+              "resize-none bg-background font-mono text-sm leading-relaxed focus-visible:border-foreground/50 focus-visible:ring-foreground/15",
               !step.prompt.trim() && evalValidationBorderClass,
             )}
           />

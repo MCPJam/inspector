@@ -150,10 +150,6 @@ COPY --from=deps /usr/src/app/node_modules /usr/src/app/node_modules
 # while @convex-dev/workos transitively pins @workos-inc/node@^7) land under
 # mcpjam-inspector/node_modules and must be carried into the runtime image.
 COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
-COPY --from=build /usr/src/app/mcpjam-inspector/bin ./bin
-COPY --from=build /usr/src/app/mcpjam-inspector/dist ./dist
-COPY --from=build /usr/src/app/mcpjam-inspector/.env.production ./.env.production
-COPY --from=build /usr/src/app/sdk/dist /usr/src/app/sdk/dist
 
 # Bake in Chromium + its system libraries — the same command CI runs
 # (test.yml) — so widget probes render at runtime instead of recording
@@ -169,6 +165,13 @@ USER root
 RUN npx playwright install --with-deps chromium \
     && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
 USER node
+
+# Keep frequently changing application artifacts after the browser layer so
+# source changes can reuse the expensive Chromium and system-library install.
+COPY --from=build /usr/src/app/mcpjam-inspector/bin ./bin
+COPY --from=build /usr/src/app/mcpjam-inspector/dist ./dist
+COPY --from=build /usr/src/app/mcpjam-inspector/.env.production ./.env.production
+COPY --from=build /usr/src/app/sdk/dist /usr/src/app/sdk/dist
 
 EXPOSE 6274
 

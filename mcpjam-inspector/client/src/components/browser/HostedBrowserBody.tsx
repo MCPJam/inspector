@@ -1,3 +1,9 @@
+import type { JpegDeliveryStats } from "@/shared/browser-viewport-policy";
+import {
+  releaseBrowserForChat,
+  useBrowserChatHandoff,
+} from "@/lib/browser-shell/chat-handoff";
+import { useBrowserWorkspaceEnabled } from "@/hooks/useComputersEnabled";
 import {
   browserPageToolsKey,
   noteWebmcpStats,
@@ -11,12 +17,21 @@ import {
   BrowserPaneSurface,
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
+import { BrowserShell } from "@/components/browser/BrowserShell";
+import { useBrowserSession } from "@/lib/browser-shell/use-browser-session";
 import {
+  paneInteractionAnchor,
+  TAKEOVER_RETRY_NOTICE,
+} from "../../../../shared/browser-pane-command";
+import type { BrowserPaneCommand } from "../../../../shared/browser-pane-command";
+import {
+  PaneSettingsMenu,
   PaneControlBar,
-  PaneTabStrip,
   labelFor,
 } from "@/components/browser/PaneControlBar";
 import { BrowserPanel } from "@/components/computer/BrowserPanel";
+import { BrowserSettingsButton } from "@/components/browser/BrowserSettingsButton";
+import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
 import {
   createTierController,
   encoderTierFor,
@@ -37,8 +52,12 @@ import {
 import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
   actOnHostedBrowserLease,
+  fetchHostedBrowserState,
+  reportHostedPaneViewport,
+  sendHostedPaneCommand,
   createBrowserTokenCache,
   fetchHostedBrowserSession,
+  fetchHostedBrowserProfileArchive,
   HostedBrowserError,
   openHostedBrowserFrameStream,
   sendHostedBrowserInput,
@@ -67,6 +86,16 @@ import {
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_NOT_FOUND = 4404;
 const CLOSE_LEASE_HELD = 4409;
+/**
+ * The box is asleep. Wake it, but only if somebody is actually looking.
+ *
+ * Its own code because reconnecting cannot help: the socket does not wake
+ * anything (`ensure=1` on the session route does), so a plain retry would
+ * hammer a paused machine every 3 seconds forever. A hosted browser is
+ * reclaimed within a couple of minutes of nobody watching, so this is the
+ * ordinary way a hidden pane's socket ends — not a fault.
+ */
+const CLOSE_ASLEEP = 4410;
 /**
  * This box cannot encode video. Reconnect WITHOUT asking for it.
  *
@@ -107,15 +136,21 @@ const HOSTED_TIERS = ["auto", "sharp", "saver", "mjpeg", "vnc"] as const;
 
 export function HostedBrowserBody({
   projectId,
+  sessionId,
   mintToken,
+  hostId = null,
   active = true,
 }: {
   projectId: string | null;
+  /** Durable logical browser session, when this pane belongs to a chat. */
+  sessionId?: string;
   /** Mints a fresh ~60s browser token for this project. */
   mintToken: (args: { projectId: string }) => Promise<{
     token: string;
     expiresAt: number;
   }>;
+  /** Client id for the Browser settings button in the nav bar. */
+  hostId?: string | null;
   /**
    * Is this pane the rail's visible tab?
    *
@@ -126,6 +161,7 @@ export function HostedBrowserBody({
    */
   active?: boolean;
 }) {
+  const workspaceEnabled = useBrowserWorkspaceEnabled();
   const [session, setSession] = useState<Session | null>(null);
   const [lease, setLease] = useState<HostedBrowserLease>({ state: "unknown" });
   const [holding, setHolding] = useState(false);
@@ -183,16 +219,16 @@ export function HostedBrowserBody({
   /** The latest round trip, for the tier controller's latency rule. */
   const rttRef = useRef<number | undefined>(undefined);
   /**
-   * Which tab the box is showing.
+   * Which tab the box was last showing, for the "the agent switched" notice.
    *
-   * The video stream grabs the X display, so a model `activate_tab` changes the
-   * picture out from under a watching person — and kiosk hides Chromium's own
-   * tab strip, so nothing in the picture says so.
+   * A REF now, not state. It used to feed a read-only strip beside the picture
+   * — the truncated `{id, url}` list the heartbeat carries, which is all the
+   * pane could get — and the shell's own strip reads the complete list from
+   * `/state` instead. What is still worth having from the heartbeat is its
+   * SPEED: it arrives several times a second, so the notice about a tab the
+   * agent just switched to shows up before the next reconcile. Nothing renders
+   * the value, so nothing needs a re-render when it changes.
    */
-  const [tabs, setTabs] = useState<{
-    active?: string;
-    list?: Array<{ id: string; url: string }>;
-  } | null>(null);
   const activeTabRef = useRef<string | undefined>(undefined);
   const [tabNotice, setTabNotice] = useState<string | null>(null);
   /**
@@ -218,16 +254,6 @@ export function HostedBrowserBody({
   const activeRef = useRef(active);
   activeRef.current = active;
   /**
-   * The hold, readable from a cleanup that must not re-run when it changes.
-   *
-   * The teardown below has to know whether this pane still holds the browser,
-   * but must fire only when the pane GOES AWAY — depending on `holding`
-   * directly would send a second hand-back after every ordinary one.
-   */
-  const holdingRef = useRef(holding);
-  holdingRef.current = holding;
-
-  /**
    * One token cache per project.
    *
    * Per PROJECT because the token names the computer it authorizes; carrying
@@ -237,7 +263,7 @@ export function HostedBrowserBody({
     if (!projectId) return null;
     const mint: MintBrowserToken = () => mintToken({ projectId });
     return createBrowserTokenCache(mint);
-  }, [projectId, mintToken]);
+  }, [projectId, sessionId, mintToken]);
 
   /**
    * Which browser this pane is looking at, as a number that only goes up.
@@ -252,7 +278,6 @@ export function HostedBrowserBody({
     // Captured, not read from a ref: by the time this cleanup runs, a ref
     // assigned during render already holds the NEXT project's cache, and
     // releasing with that would name a different computer.
-    const mine = tokens;
     generation.current += 1;
     setSession(null);
     setLease({ state: "unknown" });
@@ -262,24 +287,11 @@ export function HostedBrowserBody({
     setNotice(null);
     setUnavailable(null);
     tokenRetriesRef.current = 0;
+    // Detaching ends this viewer, never the human's control. Expiry parks.
     return () => {
-      // HAND THE BROWSER BACK ON THE WAY OUT. `pagehide` covers the tab
-      // closing; it does not cover this component being unmounted — which the
-      // rail does on every engine switch — or the project changing under it.
-      // Either left the lease held, and a held lease that stops being
-      // heartbeaten PARKS rather than frees, on purpose. So the agent stayed
-      // blocked on a browser nobody was watching, with no pane left that was
-      // allowed to hand it back: only the holder may, and the holder was gone.
-      if (!holdingRef.current || !mine) return;
-      void actOnHostedBrowserLease(
-        mine,
-        { action: "resume" },
-        { keepalive: true },
-      ).catch(() => {});
+      generation.current += 1;
     };
-    // `tokens` changes only when `projectId` does, so this still runs once per
-    // project — it is in the list because the cleanup closes over it.
-  }, [projectId, tokens]);
+  }, [projectId, sessionId, tokens]);
 
   /**
    * Which read of THIS browser is the latest.
@@ -304,16 +316,23 @@ export function HostedBrowserBody({
    */
   const leaseIsStale = useRef(false);
 
-  /** Read the row without starting anything. */
+  /**
+   * Read the row without starting anything.
+   *
+   * Answers whether the read LANDED — true only when a live session came back
+   * to a caller that is still current. The `ensure` recovery needs to tell a
+   * wake that worked from one that did not: reopening the socket after a
+   * refusal just earns the same refusal, on a loop.
+   */
   const refresh = useCallback(
-    async (options: { ensure?: boolean } = {}) => {
-      if (!tokens) return;
+    async (options: { ensure?: boolean } = {}): Promise<boolean> => {
+      if (!tokens) return false;
       const mine = generation.current;
       const serial = (readSerial.current += 1);
       try {
         const next = await fetchHostedBrowserSession(tokens, options);
         if (generation.current !== mine || readSerial.current !== serial)
-          return;
+          return false;
         // BY IDENTITY, because the socket effect keys off this object.
         //
         // A fresh one for an unchanged row RECONNECTS, and it does so out of
@@ -338,25 +357,44 @@ export function HostedBrowserBody({
         setHolding(next.yours);
         setUnavailable(null);
         setError(null);
+        return true;
       } catch (cause) {
         if (generation.current !== mine || readSerial.current !== serial)
-          return;
+          return false;
         if (cause instanceof HostedBrowserError && cause.status === 409) {
           // No browser on this computer yet — an offer, not a failure.
+          setHolding(false);
+          setLease({ state: "free" });
           setSession(null);
           setUnavailable(null);
           setError(null);
-          return;
+          return false;
         }
         setUnavailable(cause instanceof Error ? cause.message : String(cause));
+        return false;
       }
     },
     [tokens],
   );
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (!active) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let retryMs = 2_000;
+    const poll = async () => {
+      if (document.visibilityState === "visible") await refresh();
+      if (!cancelled && !session) {
+        timer = setTimeout(() => void poll(), retryMs);
+        retryMs = Math.min(retryMs * 2, 30_000);
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [refresh, active, session]);
 
   const open = useCallback(async () => {
     setBusy(true);
@@ -375,8 +413,268 @@ export function HostedBrowserBody({
   // The frame socket. Re-opened when the browser changes or an attempt was
   // refused; closed on unmount, which is what tells the server to hang up the
   // daemon stream and stop encoding JPEGs nobody is watching.
+
+  // THE SIGNAL DIES WITH THE PANE. It describes the browser this pane was
+  // watching; once the pane is gone (or the project changes under it) the
+  // Tools pane must not keep answering for a stream nobody is reading. Its own
+  // effect, keyed on the project alone, so a reconnect does not clear it — a
+  // cleared key comes back on the next beat as a fresh epoch, which would
+  // refetch the page's tools on every reconnect for nothing.
   useEffect(() => {
-    if (!session || !tokens) return;
+    const key = browserPageToolsKey(projectId, "hosted");
+    return () => useBrowserPageToolsStore.getState().clear(key);
+  }, [projectId]);
+
+  /**
+   * Acquire or hand back, and say whether it landed.
+   *
+   * Returns a boolean because the TAKEOVER path needs the answer: a click that
+   * did not get the lease must not then be forwarded as input. One function
+   * rather than two call sites, so the generation guard cannot be skipped by
+   * the newer one — a lease belongs to ONE browser, and an answer arriving
+   * after the pane has moved to another would show control of something nobody
+   * is watching.
+   */
+  const setLeaseAction = useCallback(
+    async (action: "acquire" | "resume"): Promise<boolean> => {
+      if (!tokens || !session) return false;
+      const mine = generation.current;
+      setError(null);
+      try {
+        const outcome = await actOnHostedBrowserLease(tokens, { action });
+        if (generation.current !== mine) return false;
+        setLease(outcome.lease);
+        setHolding(outcome.yours);
+        if (!outcome.took) {
+          setError("Someone else is using this browser right now.");
+          return false;
+        }
+        // Taking control revokes every watcher the daemon had, including this
+        // pane's own stream: it is reopened here rather than waited out.
+        setStreamAttempt((n) => n + 1);
+        return true;
+      } catch (cause) {
+        if (generation.current !== mine) return false;
+        setError(cause instanceof Error ? cause.message : String(cause));
+        return false;
+      }
+    },
+    [tokens, session],
+  );
+
+  useBrowserChatHandoff({
+    projectId,
+    sessionId,
+    holding: holding,
+    release: async (isCurrent) => {
+      if (!tokens || !session) return true;
+      const mine = generation.current;
+      try {
+        const outcome = await actOnHostedBrowserLease(tokens, {
+          action: "resume",
+        });
+        if (isCurrent() && generation.current === mine) {
+          setLease(outcome.lease);
+          setHolding(outcome.yours);
+          setStreamAttempt((n) => n + 1);
+        }
+        return outcome.took;
+      } catch (cause) {
+        if (cause instanceof HostedBrowserError && cause.status === 409)
+          return true;
+        throw cause;
+      }
+    },
+  });
+
+  // Keep a held lease alive. It expires into `parked` on purpose — a timer
+  // running out is not evidence the private moment ended — and a person
+  // mid-login should not have to re-take a browser they never let go of.
+  useEffect(() => {
+    if (!holding || !tokens) return;
+    const timer = setInterval(() => {
+      const mine = generation.current;
+      // THE ANSWER MATTERS. A heartbeat can be refused — the lease expired
+      // into `parked` and somebody else took it, or the browser relaunched —
+      // and throwing that away left the pane offering input and a Hand back
+      // against a lease the server no longer recognises. Every keystroke then
+      // goes nowhere and the person cannot tell why.
+      if (!activeRef.current || document.visibilityState !== "visible") return;
+      void actOnHostedBrowserLease(tokens, { action: "heartbeat" })
+        .then((outcome) => {
+          if (generation.current !== mine) return;
+          setLease(outcome.lease);
+          setHolding(outcome.yours);
+        })
+        .catch(() => {});
+    }, LEASE_HEARTBEAT_MS);
+    return () => clearInterval(timer);
+  }, [holding, tokens]);
+
+  // One POST in flight, the rest queued and consecutive moves collapsed. One
+  // forwarder per HOLD, not per session: whatever it has queued belonged to
+  // the hold that queued it, so a hand-back or an expiry must retire it rather
+  // than let its tail arrive under whoever holds the browser next.
+  // The tab toast is transient: it says something HAPPENED, and a message that
+  // stayed would keep describing a switch that is minutes old.
+  useEffect(() => {
+    if (!tabNotice) return;
+    const timer = setTimeout(() => setTabNotice(null), 4_000);
+    return () => clearTimeout(timer);
+  }, [tabNotice]);
+
+  // One analytics event per pane, on the way out — see `session-summary`.
+  useEffect(() => () => captureBrowserPaneSessionSummary("hosted"), []);
+
+  /**
+   * Will the next batch go on the SOCKET?
+   *
+   * One predicate for two decisions that must agree: which transport the send
+   * callback picks, and whether the forwarder has to serialize. Two spellings
+   * of the same question drifted, and the drift was silent — concurrent POSTs
+   * on a socket that had merely dropped.
+   */
+  const socketSendable = useCallback(
+    () =>
+      socketInputRef.current &&
+      socketRef.current?.readyState === WebSocket.OPEN,
+    [],
+  );
+
+  const exportProfile = useCallback(async () => {
+    if (!tokens) throw new Error("The hosted browser is not ready yet.");
+    await releaseBrowserForChat(projectId, sessionId);
+    return fetchHostedBrowserProfileArchive(tokens);
+  }, [tokens, projectId, sessionId]);
+
+  const placeholder = (() => {
+    if (!projectId) {
+      return (
+        <PaneMessage dashed>
+          <span data-testid="hosted-browser-no-project">
+            Open a project to use its browser.
+          </span>
+        </PaneMessage>
+      );
+    }
+    if (unavailable) {
+      return (
+        <PaneMessage dashed>
+          <span data-testid="hosted-browser-unavailable">
+            This project&apos;s cloud computer isn&apos;t reachable right now.
+          </span>
+          <Button size="sm" variant="outline" onClick={() => void refresh()}>
+            Try again
+          </Button>
+        </PaneMessage>
+      );
+    }
+    if (!session) {
+      return (
+        <PaneMessage dashed>
+          <span data-testid="hosted-browser-idle">
+            No browser is running on this computer yet.
+          </span>
+          <Button size="sm" disabled={busy} onClick={() => void open()}>
+            {busy ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : null}
+            Open the browser
+          </Button>
+        </PaneMessage>
+      );
+    }
+    return undefined;
+  })();
+
+  const control: PaneControl = holding
+    ? "you"
+    : lease.state === "free" || lease.state === "unknown"
+      ? "agent"
+      : lease.holderKind === "script"
+        ? "script"
+        : "other";
+
+  /**
+   * The shell's transport, for this engine.
+   *
+   * Every call carries the token cache rather than a holder: the server reads
+   * the holder off the token's claims, exactly as `/input` and `/lease` do, so
+   * a holder this client could name would let anyone who echoed the right id
+   * drive somebody else's session.
+   */
+  const shellTransport = useMemo(() => {
+    if (!tokens || !session) return null;
+    return {
+      readState: () => fetchHostedBrowserState(tokens),
+      sendCommand: (args: {
+        command: BrowserPaneCommand;
+        commandId?: string;
+      }) => sendHostedPaneCommand(tokens, args),
+      reportViewport: (size: { width: number; height: number }) =>
+        reportHostedPaneViewport(tokens, { ...size, policy: "followPane" }),
+      resume: async () => {
+        await setLeaseAction("resume");
+      },
+    };
+  }, [tokens, session, setLeaseAction]);
+
+  const shell = useBrowserSession({
+    transport: shellTransport,
+    sessionKey: JSON.stringify([projectId, sessionId, session?.bootId]),
+    // The hosted holder is the authenticated user, which this client never
+    // sees. `holding` is passed to the shell explicitly instead, so it never
+    // has to guess from an id it does not have.
+    holderId: null,
+    active,
+  });
+  const forwarder = useMemo(() => {
+    if (!active || !tokens || !holding) return null;
+    const tabId = shell.state.activeTabId ?? undefined;
+    return createInputForwarder(
+      (events, seq) => {
+        if (!activeRef.current || document.visibilityState !== "visible")
+          return;
+        paneFrameStats.noteInputSent(frameSeqRef.current, seq);
+        if (socketSendable()) {
+          // Ordered by the socket, so nothing here waits — see the
+          // forwarder's docstring. A refusal comes back as an `input_ack`,
+          // never a close.
+          socketRef.current!.send(
+            JSON.stringify({ type: "input", seq, events, tabId }),
+          );
+          return;
+        }
+        // One release of fallback: an old relay that did not advertise
+        // `input`, or a socket that is between reconnects.
+        return sendHostedBrowserInput(tokens, { events, tabId });
+      },
+      // Only the POST needs ordering imposed on it; concurrent POSTs arrive in
+      // whatever order the network felt like.
+      // The predicate has to match the TRANSPORT the callback actually
+      // chooses, not merely the capability: the send falls back to POST
+      // whenever the socket is not open, and a `serialize` that only read the
+      // flag let two POSTs travel at once — an unordered drag lands where
+      // nobody aimed, and an unordered press/release leaves a button held.
+      { serialize: () => !socketSendable() },
+    );
+  }, [active, tokens, holding, socketSendable, shell.state.activeTabId]);
+  useEffect(() => () => forwarder?.cancel(), [forwarder]);
+
+  const send = useCallback(
+    (events: BrowserInputEvent[]) => {
+      if (!forwarder || !holding || events.length === 0) return;
+      forwarder.push(events);
+    },
+    [forwarder, holding],
+  );
+
+  const selectionReady =
+    shell.state.connection === "live" ||
+    shell.state.connection === "reconnecting";
+  useEffect(() => {
+    setFrame(null);
+    if (!session || !tokens || !selectionReady) return;
     let closed = false;
     let stream: { close(): void } | null = null;
     /**
@@ -394,6 +692,7 @@ export function HostedBrowserBody({
     let lastBitmap: ImageBitmap | undefined;
     /** Built on the first access unit; null on a stream that stays JPEG. */
     let video: ReturnType<typeof createPaneVideoDecoder> | null = null;
+    let videoAgreed = false;
     /**
      * Record what the box says is on screen, and say so when it moves.
      *
@@ -405,7 +704,6 @@ export function HostedBrowserBody({
       list?: Array<{ id: string; url: string }>;
     }) => {
       if (closed || !next) return;
-      setTabs(next);
       const previous = activeTabRef.current;
       activeTabRef.current = next.active;
       if (!previous || !next.active || previous === next.active) return;
@@ -442,7 +740,9 @@ export function HostedBrowserBody({
         tierRef.current !== "mjpeg";
       const opened = openHostedBrowserFrameStream({
         token,
+        tabId: shell.state.activeTabId ?? undefined,
         wire: "binary",
+        sharp: true,
         ...(wantsVideo ? { codec: "h264" as const } : {}),
       });
       stream = opened;
@@ -654,7 +954,7 @@ export function HostedBrowserBody({
             opened.close();
           },
         },
-        { video: wantsVideo },
+        { video: wantsVideo, sharp: true },
       );
       openedSocket = opened.socket;
       socketRef.current = opened.socket;
@@ -676,6 +976,7 @@ export function HostedBrowserBody({
           const parsed = JSON.parse(raw) as {
             type?: string;
             frame?: PaneFrame;
+            jpegDelivery?: JpegDeliveryStats;
             t?: number;
             framesIn?: number;
             framesOut?: number;
@@ -691,6 +992,8 @@ export function HostedBrowserBody({
               ? ((parsed as { features: unknown[] }).features as unknown[])
               : [];
             socketInputRef.current = features.includes("input");
+            videoAgreed =
+              wantsVideo && (parsed as { codec?: string }).codec === "h264";
             return;
           }
           if (parsed.type === "input_ack") {
@@ -747,22 +1050,26 @@ export function HostedBrowserBody({
             // this pane painted: a pane that dropped a frame because a tab was
             // hidden is not a link that cannot carry the stream.
             const before = tierController.current.current();
-            const next = tierController.current.observe({
-              ...(parsed.framesIn !== undefined
-                ? { framesIn: parsed.framesIn }
-                : {}),
-              ...(parsed.dropped !== undefined
-                ? { dropped: parsed.dropped }
-                : {}),
-              ...(rttRef.current !== undefined ? { rtt: rttRef.current } : {}),
-              ...(typeof (parsed.daemon as { encoderIdle?: boolean })
-                ?.encoderIdle === "boolean"
-                ? {
-                    encoderIdle: (parsed.daemon as { encoderIdle: boolean })
-                      .encoderIdle,
-                  }
-                : {}),
-            });
+            const next = videoAgreed
+              ? tierController.current.observe({
+                  ...(parsed.framesIn !== undefined
+                    ? { framesIn: parsed.framesIn }
+                    : {}),
+                  ...(parsed.dropped !== undefined
+                    ? { dropped: parsed.dropped }
+                    : {}),
+                  ...(rttRef.current !== undefined
+                    ? { rtt: rttRef.current }
+                    : {}),
+                  ...(typeof (parsed.daemon as { encoderIdle?: boolean })
+                    ?.encoderIdle === "boolean"
+                    ? {
+                        encoderIdle: (parsed.daemon as { encoderIdle: boolean })
+                          .encoderIdle,
+                      }
+                    : {}),
+                })
+              : before;
             setTier(next);
             paneFrameStats.noteTier(next);
             // TELL THE DAEMON. Auto used to move only the pane's own state,
@@ -789,6 +1096,7 @@ export function HostedBrowserBody({
                 ?.tabs,
             );
             paneFrameStats.noteRelayStats({
+              jpegDelivery: parsed.jpegDelivery,
               framesIn: parsed.framesIn ?? 0,
               ...(parsed.framesOut !== undefined
                 ? { framesOut: parsed.framesOut }
@@ -870,6 +1178,48 @@ export function HostedBrowserBody({
           );
           return;
         }
+        if (event.code === CLOSE_ASLEEP) {
+          // NO PLAIN SOCKET RETRY. This socket cannot wake anything: reopening
+          // it just refuses again. `ensure` is what asks the control plane to
+          // resume the box, so the recovery is a session read WITH it — a bare
+          // `refresh()` omits the flag and reads a row nobody has woken.
+          //
+          // And only while somebody is looking: a pane behind another tab is
+          // exactly what let the box be reclaimed, so waking it from here
+          // would undo the reclaim on behalf of nobody — and every hidden pane
+          // in every open tab would do it at once. A hidden pane leaves the
+          // box asleep; the visibility-gated poll re-ensures when it is shown
+          // again, which is the moment a person is actually there.
+          if (
+            activeRef.current &&
+            document.visibilityState === "visible" &&
+            !closed
+          ) {
+            void refresh({ ensure: true }).then((woke) => {
+              // A wake that did not land (the box is still coming up, or it
+              // refused) must NOT reopen the socket: it would be refused again
+              // and ask again, forever. The visibility-gated poll retries.
+              if (!woke) return;
+              // THEN REOPEN, explicitly. A resumed box comes back on the SAME
+              // boot, and `refresh` keeps the session object by identity when
+              // the boot is unchanged — deliberately, so a 4409 re-read cannot
+              // hot-loop the socket. That means waking alone would leave the
+              // pane blank until something else changed: the picture has to be
+              // asked for.
+              //
+              // Re-checked after the await, because the wake takes a moment and
+              // the person may have looked away inside it.
+              if (
+                !closed &&
+                activeRef.current &&
+                document.visibilityState === "visible"
+              ) {
+                setStreamAttempt((n) => n + 1);
+              }
+            });
+          }
+          return;
+        }
         if (event.code === CLOSE_VIDEO_UNAVAILABLE) {
           // A box with no ffmpeg, or an encoder that failed to spawn. The same
           // fallback a browser with no `VideoDecoder` takes, and the same one
@@ -927,202 +1277,52 @@ export function HostedBrowserBody({
       }
       stream?.close();
     };
-  }, [session, tokens, refresh, streamAttempt]);
+  }, [
+    session,
+    tokens,
+    refresh,
+    streamAttempt,
+    shell.state.activeTabId,
+    selectionReady,
+  ]);
 
-  // THE SIGNAL DIES WITH THE PANE. It describes the browser this pane was
-  // watching; once the pane is gone (or the project changes under it) the
-  // Tools pane must not keep answering for a stream nobody is reading. Its own
-  // effect, keyed on the project alone, so a reconnect does not clear it — a
-  // cleared key comes back on the next beat as a fresh epoch, which would
-  // refetch the page's tools on every reconnect for nothing.
-  useEffect(() => {
-    const key = browserPageToolsKey(projectId, "hosted");
-    return () => useBrowserPageToolsStore.getState().clear(key);
-  }, [projectId]);
-
-  const setLeaseAction = useCallback(
-    async (action: "acquire" | "resume") => {
-      if (!tokens || !session) return;
-      const mine = generation.current;
-      setError(null);
+  const [takeoverNotice, setTakeoverNotice] = useState<string | null>(null);
+  const takingRef = useRef(false);
+  const tokensRef = useRef(tokens);
+  tokensRef.current = tokens;
+  const takeover = useCallback(
+    async (events: BrowserInputEvent[]) => {
+      if (!tokens || takingRef.current) return;
+      const originalTokens = tokens;
+      const anchor = paneInteractionAnchor(shell.state, session?.bootId);
+      takingRef.current = true;
       try {
-        const outcome = await actOnHostedBrowserLease(tokens, { action });
-        if (generation.current !== mine) return;
-        setLease(outcome.lease);
-        setHolding(outcome.yours);
-        if (!outcome.took) {
-          setError("Someone else is using this browser right now.");
+        if (
+          !(await setLeaseAction("acquire")) ||
+          tokensRef.current !== originalTokens
+        )
+          return;
+        if (!anchor) {
+          setTakeoverNotice(TAKEOVER_RETRY_NOTICE);
           return;
         }
-        // Taking control revokes every watcher the daemon had, including this
-        // pane's own stream: it is reopened here rather than waited out.
-        setStreamAttempt((n) => n + 1);
-      } catch (cause) {
-        if (generation.current !== mine) return;
-        setError(cause instanceof Error ? cause.message : String(cause));
+        await sendHostedBrowserInput(originalTokens, { events, anchor });
+        setTakeoverNotice(null);
+      } catch {
+        setTakeoverNotice(TAKEOVER_RETRY_NOTICE);
+      } finally {
+        takingRef.current = false;
       }
     },
-    [tokens, session],
+    [tokens, session?.bootId, setLeaseAction, shell.state],
   );
 
-  // Keep a held lease alive. It expires into `parked` on purpose — a timer
-  // running out is not evidence the private moment ended — and a person
-  // mid-login should not have to re-take a browser they never let go of.
-  useEffect(() => {
-    if (!holding || !tokens) return;
-    const timer = setInterval(() => {
-      const mine = generation.current;
-      // THE ANSWER MATTERS. A heartbeat can be refused — the lease expired
-      // into `parked` and somebody else took it, or the browser relaunched —
-      // and throwing that away left the pane offering input and a Hand back
-      // against a lease the server no longer recognises. Every keystroke then
-      // goes nowhere and the person cannot tell why.
-      void actOnHostedBrowserLease(tokens, { action: "heartbeat" })
-        .then((outcome) => {
-          if (generation.current !== mine) return;
-          setLease(outcome.lease);
-          setHolding(outcome.yours);
-        })
-        .catch(() => {});
-    }, LEASE_HEARTBEAT_MS);
-    return () => clearInterval(timer);
-  }, [holding, tokens]);
-
-  // Hand the browser back when this tab goes away.
-  //
-  // Best-effort: `keepalive` lets the request outlive the page, but a hard
-  // crash sends nothing — which is why a hold PARKS rather than freeing, and
-  // why the server answers `yours` for a returning pane. Releasing here is the
-  // difference between the agent carrying on at once and it waiting out a hold
-  // nobody is on the other end of.
-  useEffect(() => {
-    if (!holding || !tokens) return;
-    const release = () => {
-      void actOnHostedBrowserLease(
-        tokens,
-        { action: "resume" },
-        { keepalive: true },
-      ).catch(() => {});
-    };
-    window.addEventListener("pagehide", release);
-    return () => window.removeEventListener("pagehide", release);
-  }, [holding, tokens]);
-
-  // One POST in flight, the rest queued and consecutive moves collapsed. One
-  // forwarder per HOLD, not per session: whatever it has queued belonged to
-  // the hold that queued it, so a hand-back or an expiry must retire it rather
-  // than let its tail arrive under whoever holds the browser next.
-  // The tab toast is transient: it says something HAPPENED, and a message that
-  // stayed would keep describing a switch that is minutes old.
-  useEffect(() => {
-    if (!tabNotice) return;
-    const timer = setTimeout(() => setTabNotice(null), 4_000);
-    return () => clearTimeout(timer);
-  }, [tabNotice]);
-
-  // One analytics event per pane, on the way out — see `session-summary`.
-  useEffect(() => () => captureBrowserPaneSessionSummary("hosted"), []);
-
-  /**
-   * Will the next batch go on the SOCKET?
-   *
-   * One predicate for two decisions that must agree: which transport the send
-   * callback picks, and whether the forwarder has to serialize. Two spellings
-   * of the same question drifted, and the drift was silent — concurrent POSTs
-   * on a socket that had merely dropped.
-   */
-  const socketSendable = useCallback(
-    () =>
-      socketInputRef.current &&
-      socketRef.current?.readyState === WebSocket.OPEN,
-    [],
-  );
-
-  const forwarder = useMemo(() => {
-    if (!tokens || !holding) return null;
-    return createInputForwarder(
-      (events, seq) => {
-        paneFrameStats.noteInputSent(frameSeqRef.current, seq);
-        if (socketSendable()) {
-          // Ordered by the socket, so nothing here waits — see the
-          // forwarder's docstring. A refusal comes back as an `input_ack`,
-          // never a close.
-          socketRef.current!.send(
-            JSON.stringify({ type: "input", seq, events }),
-          );
-          return;
-        }
-        // One release of fallback: an old relay that did not advertise
-        // `input`, or a socket that is between reconnects.
-        return sendHostedBrowserInput(tokens, { events });
-      },
-      // Only the POST needs ordering imposed on it; concurrent POSTs arrive in
-      // whatever order the network felt like.
-      // The predicate has to match the TRANSPORT the callback actually
-      // chooses, not merely the capability: the send falls back to POST
-      // whenever the socket is not open, and a `serialize` that only read the
-      // flag let two POSTs travel at once — an unordered drag lands where
-      // nobody aimed, and an unordered press/release leaves a button held.
-      { serialize: () => !socketSendable() },
-    );
-  }, [tokens, holding, socketSendable]);
-  useEffect(() => () => forwarder?.cancel(), [forwarder]);
-
-  const send = useCallback(
-    (events: BrowserInputEvent[]) => {
-      if (!forwarder || !holding || events.length === 0) return;
-      forwarder.push(events);
-    },
-    [forwarder, holding],
-  );
-
-  const placeholder = (() => {
-    if (!projectId) {
-      return (
-        <PaneMessage dashed>
-          <span data-testid="hosted-browser-no-project">
-            Open a project to use its browser.
-          </span>
-        </PaneMessage>
-      );
-    }
-    if (unavailable) {
-      return (
-        <PaneMessage dashed>
-          <span data-testid="hosted-browser-unavailable">
-            This project&apos;s cloud computer isn&apos;t reachable right now.
-          </span>
-          <Button size="sm" variant="outline" onClick={() => void refresh()}>
-            Try again
-          </Button>
-        </PaneMessage>
-      );
-    }
-    if (!session) {
-      return (
-        <PaneMessage dashed>
-          <span data-testid="hosted-browser-idle">
-            No browser is running on this computer yet.
-          </span>
-          <Button size="sm" disabled={busy} onClick={() => void open()}>
-            {busy ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : null}
-            Open the browser
-          </Button>
-        </PaneMessage>
-      );
-    }
-    return undefined;
-  })();
-
-  const control: PaneControl = holding
-    ? "you"
-    : lease.state === "free" || lease.state === "unknown"
-      ? "agent"
-      : lease.holderKind === "script"
-        ? "script"
-        : "other";
+  // The stats overlay's flag, which the take-control bar used to own.
+  const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
+  const onStatsToggle = useCallback((next: boolean) => {
+    paneFrameStats.setEnabled(next);
+    setStatsOpen(next);
+  }, []);
 
   // The DESKTOP view, not the page: `BrowserPanel` proxies RFB and shows the
   // window manager, dialogs and popups. It is the honest answer to "the new
@@ -1145,62 +1345,118 @@ export function HostedBrowserBody({
           }}
         />
         <div className="min-h-0 flex-1 px-3 pb-3">
-          <BrowserPanel projectId={projectId} />
+          <BrowserPanel projectId={projectId} sessionId={sessionId} />
         </div>
       </>
     );
   }
 
+  const onTier = (next: QualityTier) => {
+    setTierPreference(next);
+    const resolved = tierController.current.setPreference(next);
+    const wasVideo = tierRef.current !== "mjpeg" && tierRef.current !== "vnc";
+    const isVideo = resolved !== "mjpeg" && resolved !== "vnc";
+    setTier(resolved);
+    tierRef.current = resolved;
+    paneFrameStats.noteTier(resolved);
+    // Only a change of TRANSPORT needs a new socket. Reconnecting for a
+    // bitrate change would drop the picture to buy nothing.
+    if (wasVideo !== isVideo) setStreamAttempt((n) => n + 1);
+    const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      // The daemon re-encodes at the new tier, which restarts ffmpeg and
+      // produces the fresh keyframe every watcher needs. A relay too old
+      // to understand this ignores it, and the tier stays a client-side
+      // preference — which is still the right picture, just not a cheaper
+      // one.
+      socket.send(
+        JSON.stringify({
+          type: "quality",
+          tier: encoderTierFor(resolved),
+        }),
+      );
+    }
+  };
+
   return (
-    <BrowserPaneSurface
-      frame={frame}
+    <BrowserShell
+      enabled={true}
+      state={shell.state}
+      holderId={null}
+      // THIS engine's lease, not the shell's polled copy: the hosted body
+      // learns about its own acquire the moment it lands, and the shell's
+      // reconcile is a beat behind. @see BrowserShellProps.control
       holding={holding}
-      control={control}
-      // A lease somebody else holds is not one this pane may step over.
-      onTakeControl={
-        session && !holding && lease.state === "free"
-          ? () => void setLeaseAction("acquire")
-          : undefined
-      }
-      onHandBack={
-        session && holding ? () => void setLeaseAction("resume") : undefined
-      }
-      onInput={send}
-      placeholder={placeholder}
-      error={notice ?? error}
-      notice={tabNotice}
-      controls={<PaneTabStrip tabs={tabs} />}
-      tier={tierPreference}
-      tiers={HOSTED_TIERS}
-      onTier={(next) => {
-        setTierPreference(next);
-        const resolved = tierController.current.setPreference(next);
-        const wasVideo =
-          tierRef.current !== "mjpeg" && tierRef.current !== "vnc";
-        const isVideo = resolved !== "mjpeg" && resolved !== "vnc";
-        setTier(resolved);
-        tierRef.current = resolved;
-        paneFrameStats.noteTier(resolved);
-        // Only a change of TRANSPORT needs a new socket. Reconnecting for a
-        // bitrate change would drop the picture to buy nothing.
-        if (wasVideo !== isVideo) setStreamAttempt((n) => n + 1);
-        const socket = socketRef.current;
-        if (socket?.readyState === WebSocket.OPEN) {
-          // The daemon re-encodes at the new tier, which restarts ffmpeg and
-          // produces the fresh keyframe every watcher needs. A relay too old
-          // to understand this ignores it, and the tier stays a client-side
-          // preference — which is still the right picture, just not a cheaper
-          // one.
-          socket.send(
-            JSON.stringify({
-              type: "quality",
-              tier: encoderTierFor(resolved),
-            }),
-          );
-        }
+      control={{
+        kind:
+          control === "you"
+            ? "human"
+            : control === "script"
+              ? "script"
+              : control === "other"
+                ? "human"
+                : "agent",
+        ...(lease.state === "parked" ? { parked: true } : {}),
       }}
-      active={active}
-      engine="hosted"
-    />
+      onCommand={shell.run}
+      onViewportMeasured={shell.reportViewport}
+      // Not just "is there a browser": an engine too old to answer pane
+      // commands has a perfectly real session, and controls that look live
+      // and swallow every click read as broken rather than old.
+      ready={!!session && shell.supported}
+      // `notice` is the socket's lease-handoff message — somebody took the
+      // browser, somebody handed it back. That is a STATUS, and the shell
+      // renders notices as a polite live region while errors are static
+      // destructive text: routed through `error` it was announced to nobody
+      // and drawn as a failure.
+      notice={takeoverNotice ?? notice ?? shell.notice ?? tabNotice}
+      error={error ?? shell.error}
+      {...(placeholder ? { placeholder } : {})}
+      trailing={
+        <>
+          {hostId ? <BrowserSettingsButton hostId={hostId} /> : null}
+          <PaneSettingsMenu
+            statsOpen={statsOpen}
+            onToggleStats={onStatsToggle}
+            tier={tierPreference}
+            tiers={HOSTED_TIERS}
+            onTier={onTier}
+          >
+            {session && sessionId ? (
+              <BrowserProfileSaveButton
+                projectId={projectId ?? ""}
+                exportArchive={exportProfile}
+                disabled={busy}
+              />
+            ) : null}
+          </PaneSettingsMenu>
+        </>
+      }
+    >
+      <BrowserPaneSurface
+        frame={frame}
+        authority={{ kind: "lease", holding }}
+        control={control}
+        // NO take-control button. Using the browser is what takes it now, and
+        // the shell's second row already says who is driving.
+        chrome="none"
+        // The shell's menu owns this now; the surface draws it.
+        statsOpen={statsOpen}
+        onInput={send}
+        onTakeoverInput={takeover}
+        onTakeControl={
+          !workspaceEnabled && session && !holding && lease.state === "free"
+            ? () => void setLeaseAction("acquire")
+            : undefined
+        }
+        onHandBack={
+          !workspaceEnabled && session && holding
+            ? () => void setLeaseAction("resume")
+            : undefined
+        }
+        active={active}
+        engine="hosted"
+      />
+    </BrowserShell>
   );
 }

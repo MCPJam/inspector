@@ -15,6 +15,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
+import { SwarmGenerateError } from "@/lib/swarm-api";
 
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
@@ -874,14 +875,35 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByText(/1 existing · 3 new on next step/i)).toBeVisible();
   });
 
-  it("shows clients and servers after the user description", () => {
+  it("shows one Lapis golem beside the heading, not the four-golem row", () => {
+    openDescribe();
+    // BB-160: the V2 frame gives the graphic a 68px slot — one `lg` avatar is
+    // 44px wide against 188 for the row — and its PNG carries the Lapis
+    // palette, `MINERALS[3]`, which none of the row's four characters use.
+    const golems = screen
+      .getByTestId("swarm-hero-characters")
+      .querySelectorAll("[data-testid='persona-pixel-avatar']");
+    expect(golems).toHaveLength(1);
+    expect(golems[0]).toHaveAttribute("data-palette", "3");
+  });
+
+  it("shows clients and servers before the user description", () => {
     openDescribe();
     expect(
       screen.getByText(
         /choose the clients and servers your users will interact with/i,
       ),
     ).toBeVisible();
-    expect(screen.getByTestId("new-swarm-target-composer")).toBeInTheDocument();
+    // BB-160: the picker grounds the goals the description generates, so it
+    // comes first. jsdom has no layout, so node order is all this can assert.
+    const step = screen.getByTestId("new-swarm-describe-step");
+    expect(
+      Array.from(
+        step.querySelectorAll(
+          "[data-testid='new-swarm-target-composer'],[data-testid='new-swarm-describe-input']",
+        ),
+      ).map((node) => node.getAttribute("data-testid")),
+    ).toEqual(["new-swarm-target-composer", "new-swarm-describe-input"]);
   });
 
   it("shows the grounding hint for the auto-seeded environment", () => {
@@ -1180,6 +1202,39 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.queryByTestId("new-swarm-proposed-personas"),
     ).not.toBeInTheDocument();
+  });
+
+  it("leaves a model limit to its dialog instead of also carding it", async () => {
+    let rejectGenerate: (err: unknown) => void = () => {};
+    generateSwarmPersonaBatchMock.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectGenerate = reject;
+        })
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
+        /generating/i
+      )
+    );
+
+    rejectGenerate(
+      // `limitDialogRaised` is what `postGenerate` sets once the dialog has
+      // taken the error over.
+      new SwarmGenerateError(429, "Daily MCPJam model limit reached.", true)
+    );
+
+    // Back to idle, so the catch has run and had its chance to set a message.
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
+        "Continue"
+      )
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("launches a reused persona's journeys, re-stamped onto the selected environment", async () => {

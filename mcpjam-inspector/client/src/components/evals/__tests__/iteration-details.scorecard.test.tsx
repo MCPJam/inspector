@@ -6,7 +6,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IterationDetails } from "../iteration-details";
 import type { EvalCase, EvalIteration } from "../types";
 
@@ -96,6 +96,7 @@ describe("IterationDetails — the scorecard layout", () => {
     expect(tabs.map((tab) => tab.textContent?.trim())).toEqual([
       "Scorecard",
       "Chat",
+      "Tool Calls",
       "Trace",
       "Steps",
       "Raw",
@@ -125,10 +126,22 @@ describe("IterationDetails — the scorecard layout", () => {
       />,
     );
     expect(screen.getByTestId("mock-scorecard")).toBeInTheDocument();
-    // ...and no tab row, rather than tabs that lead nowhere.
+    // Navigation remains available even when this run has no trace.
     expect(
-      screen.queryByTestId("trace-viewer-scorecard-tab"),
-    ).not.toBeInTheDocument();
+      screen.getByTestId("trace-viewer-scorecard-tab"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps tabs usable for runs with no saved trace", () => {
+    render(<IterationDetails iteration={{ ...iteration, blob: undefined }} testCase={testCase} layoutMode="full" scorecard={scorecard} />);
+    fireEvent.click(screen.getByRole("button", { name: "Chat", exact: true }));
+    expect(screen.getByRole("status")).toHaveTextContent("No trace was recorded for this run.");
+    fireEvent.click(screen.getByRole("button", { name: "Tool Calls", exact: true }));
+    expect(screen.getByTestId("iteration-tools-without-trace")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("trace-viewer-steps-tab"));
+    expect(screen.getByTestId("mock-trace-viewer")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("trace-viewer-scorecard-tab"));
+    expect(screen.getByTestId("mock-scorecard")).toBeInTheDocument();
   });
 
   it("opens on the Scorecard", async () => {
@@ -143,24 +156,20 @@ describe("IterationDetails — the scorecard layout", () => {
     expect(await screen.findByTestId("mock-scorecard")).toBeInTheDocument();
   });
 
-  it("puts the chain above the tabs, not below the transcript", async () => {
-    // A reader asking why a trial did not deliver should not scroll a
-    // transcript to reach the summary of it.
-    const { container } = render(
+  it("omits trial observations above the scorecard", async () => {
+    render(
       <IterationDetails
         iteration={iteration}
         testCase={testCase}
         layoutMode="full"
         scorecard={scorecard}
-        trialChainSlot={<div>chain</div>}
+        trialChainSlot={<div>Across 3 iterations</div>}
       />,
     );
     await screen.findByTestId("mock-scorecard");
-    const chain = screen.getByTestId("iteration-trial-chain");
-    const tabs = container.querySelector('[data-testid="trace-viewer-scorecard-tab"]')!;
-    expect(
-      chain.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(screen.queryByTestId("iteration-trial-chain")).not.toBeInTheDocument();
+    expect(screen.queryByText("Trial observations")).not.toBeInTheDocument();
+    expect(screen.queryByText("Across 3 iterations")).not.toBeInTheDocument();
   });
 
   it("does not repeat the checks below the scorecard", async () => {

@@ -1,3 +1,5 @@
+import type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";
+import type { PlatformSessionBrowserInput, PlatformSessionBrowserOperation, PlatformSessionBrowserOpened, PlatformBrowserToolPolicy } from "./types.js";
 import { PlatformApiError } from "./errors.js";
 import type {
   PlatformScenarioSummary,
@@ -530,6 +532,27 @@ export class PlatformApiClient {
       : undefined;
   }
 
+  /** Coding-agent browser entry point; command outcomes are returned in-band. */
+  browserSession(
+    operation:
+      | "session"
+      | "sessions"
+      | "command"
+      | "trace"
+      | "note"
+      | "artifact"
+      | "close",
+    body: Record<string, unknown>,
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `/browser-sessions/${operation}`,
+      { body },
+      options
+    );
+  }
+
   getMe(options?: RequestOptions): Promise<PlatformMe> {
     return this.request("GET", "/me", {}, options);
   }
@@ -972,10 +995,35 @@ export class PlatformApiClient {
    * session that named only a host is REFUSED without it, rather than run on
    * the other engine. The response's `engine` field always names what ran.
    */
+  chatSessionBrowser<Op extends PlatformSessionBrowserOperation>(
+    sessionId: string,
+    op: Op,
+    body: PlatformSessionBrowserBodies[Op],
+    options?: RequestOptions
+  ): Promise<PlatformSessionBrowserResults[Op]> {
+    return this.request(
+      "POST",
+      `/chat-sessions/${encodeURIComponent(sessionId)}/browser/${op}`,
+      { body },
+      options
+    );
+  }
+  createChatSessionBrowser(
+    body: {
+      projectId: string;
+      policy: PlatformBrowserToolPolicy;
+      profileId?: string;
+      idempotencyKey: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSessionBrowserOpened> {
+    return this.request("POST", "/chat-sessions/browser", { body }, options);
+  }
   sendChatMessage(
     params: {
       idempotencyKey: string;
       message: string;
+      browser?: PlatformSessionBrowserInput;
       projectId?: string;
       sessionId?: string;
       modelId?: string;
@@ -1004,6 +1052,7 @@ export class PlatformApiClient {
         body: {
           idempotencyKey: params.idempotencyKey,
           message: params.message,
+          ...(params.browser !== undefined ? { browser: params.browser } : {}),
           ...(params.projectId !== undefined
             ? { projectId: params.projectId }
             : {}),

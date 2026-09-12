@@ -105,8 +105,24 @@ function build(
     return app.request(`http://local${path}`, { headers });
   };
 
+  const post = (
+    path: string,
+    body: unknown,
+    auth: string | null = "tok",
+  ) => {
+    const headers = new Headers();
+    if (auth !== null) headers.set("authorization", `Bearer ${auth}`);
+    headers.set("content-type", "application/json");
+    return app.request(`http://local${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+  };
+
   return {
     call,
+    post,
     sendCommand,
     lease,
     attachSession,
@@ -262,5 +278,115 @@ describe("GET /page-tools", () => {
     await call("/page-tools?tabId=tab-2");
     const [command] = sendCommand.mock.calls[0] as [{ tabId?: string }];
     expect(command.tabId).toBe("tab-2");
+  });
+});
+
+const INVOKE_OK = {
+  status: "ok" as const,
+  bootId: "boot-1",
+  result: { ok: true, output: { added: "pepperoni" } },
+};
+
+describe("POST /page-tools/invoke", () => {
+  it("401s without a valid browser token", async () => {
+    const { post, sendCommand } = build({
+      verifyToken: (async () => null) as BrowserPanelDeps["verifyToken"],
+    });
+    const res = await post("/page-tools/invoke", { toolKey: "add_topping" });
+    expect(res.status).toBe(401);
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("goes out as inspector while the agent is driving, never with a body-supplied source", async () => {
+    const { post, sendCommand } = build(
+      {},
+      { sendCommand: async () => INVOKE_OK },
+    );
+    const res = await post("/page-tools/invoke", {
+      toolKey: "add_topping",
+      source: "agent",
+      input: { topping: "pepperoni" },
+      frameId: "frame-main",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      output: { added: "pepperoni" },
+    });
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+    const [command] = sendCommand.mock.calls[0] as [
+      {
+        source: string;
+        holder?: string;
+        action: { kind: string; toolKey: string; input: unknown };
+      },
+    ];
+    expect(command.source).toBe("inspector");
+    expect(command.holder).toBeUndefined();
+    expect(command.action).toMatchObject({
+      kind: "webmcp_invoke",
+      toolKey: "add_topping",
+      input: { topping: "pepperoni" },
+    });
+  });
+
+  it("retries as this person's manual command when they hold the lease", async () => {
+    const { post, sendCommand } = build(
+      {},
+      {
+        sendCommand: async (command) => {
+          const source = (command as { source?: string }).source;
+          if (source === "inspector") {
+            return {
+              status: "lease_blocked",
+              lease: "held",
+              bootId: "boot-1",
+            };
+          }
+          return INVOKE_OK;
+        },
+      },
+    );
+    const res = await post("/page-tools/invoke", { toolKey: "add_topping" });
+    expect(res.status).toBe(200);
+    expect(sendCommand).toHaveBeenCalledTimes(2);
+    expect(
+      (sendCommand.mock.calls[1][0] as { source: string; holder?: string }),
+    ).toMatchObject({ source: "manual", holder: CLAIMS.userId });
+  });
+
+  it("counts an invoke as activity, unlike the read", async () => {
+    const { post, touchSession, touchActivity } = build(
+      {},
+      { sendCommand: async () => INVOKE_OK },
+    );
+    expect(
+      (await post("/page-tools/invoke", { toolKey: "add_topping" })).status,
+    ).toBe(200);
+    expect(touchSession).toHaveBeenCalled();
+    expect(touchActivity).toHaveBeenCalled();
+  });
+
+  it("409s when nothing is running", async () => {
+    const { post, sendCommand } = build({
+      lookupSession: (async () => ({
+        reachable: true,
+        session: null,
+      })) as unknown as BrowserPanelDeps["lookupSession"],
+    });
+    const res = await post("/page-tools/invoke", { toolKey: "add_topping" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "no_browser_session",
+    });
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("400s without a toolKey", async () => {
+    const { post, sendCommand } = build();
+    const res = await post("/page-tools/invoke", { input: {} });
+    expect(res.status).toBe(400);
+    expect(sendCommand).not.toHaveBeenCalled();
   });
 });

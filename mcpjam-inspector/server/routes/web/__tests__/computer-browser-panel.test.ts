@@ -56,6 +56,11 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
   );
   const touchSession = vi.fn(async () => ({ counted: true }));
   const touchActivity = vi.fn(async () => {});
+  const wakeComputer = vi.fn(async () => ({
+    ok: true as const,
+    status: 200,
+    value: { ok: "waking", status: "waking" as const },
+  }));
   const lookupSession = vi.fn(async () => ({
     reachable: true,
     session: SESSION,
@@ -70,8 +75,10 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
         ownerUserId: CLAIMS.userId,
         projectId: CLAIMS.projectId,
         providerComputerId: "sbx_1",
+        status: "ready",
       },
     })) as unknown as BrowserPanelDeps["sandboxInfo"],
+    wakeComputer: wakeComputer as unknown as BrowserPanelDeps["wakeComputer"],
     lookupSession:
       lookupSession as unknown as BrowserPanelDeps["lookupSession"],
     touchSession: touchSession as unknown as BrowserPanelDeps["touchSession"],
@@ -79,7 +86,13 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
       touchActivity as unknown as BrowserPanelDeps["touchActivity"],
     bundleHash: () => "hash-1",
     attachSession,
-    createClient: () => ({ lease, leaseAction, sendInput }) as never,
+    createClient: () =>
+      ({
+        lease,
+        leaseAction,
+        sendInput,
+        status: async () => ({ kind: "ok", bootId: SESSION.bootId }),
+      }) as never,
     ...over,
   });
 
@@ -102,6 +115,7 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
     attachSession,
     touchSession,
     touchActivity,
+    wakeComputer,
     lookupSession,
   };
 }
@@ -680,5 +694,343 @@ describe("browser panel — is this lease mine?", () => {
       lease: { state: "unknown" },
       yours: false,
     });
+  });
+});
+
+describe("POST /profile/export", () => {
+  it("calls exportProfile ON its client, not detached from it", async () => {
+    // THE REGRESSION, and the reason it was invisible: the real client is a
+    // CLASS whose `exportProfile` reaches `this.request(...)`, while every
+    // other test here injects an object literal that survives losing its
+    // receiver. The route pulled the method off the instance and called it
+    // bare, so export threw a TypeError and 502'd in production while the
+    // suite stayed green. The fake below is a class for exactly that reason —
+    // do not simplify it to an object literal.
+    class FakeBrowserdClient {
+      readonly marker = "bound";
+      async exportProfile(): Promise<Uint8Array> {
+        // Throws a TypeError when invoked without its receiver, which is
+        // precisely what the bug did.
+        if (this.marker !== "bound") throw new Error("wrong receiver");
+        return new Uint8Array([1, 2, 3]);
+      }
+    }
+    const panel = build({
+      createClient: (() => new FakeBrowserdClient()) as never,
+      lookupSession: (async () => ({
+        reachable: true,
+        session: { ...SESSION, logicalSessionId: "logical_1" },
+      })) as never,
+    });
+
+    const res = await panel.call("/profile/export", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/gzip");
+    // The DURABLE identity, not `SESSION.sessionId`. The boot row's id is
+    // replaced on every relaunch, so provenance recorded against it points at
+    // a row that disappears — and it would disagree with what the local export
+    // path reports for the same browser.
+    expect(res.headers.get("x-browser-session-id")).toBe("logical_1");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+
+  it("sends no session header when the browser has no durable identity", async () => {
+    // Omitted rather than falling back to the boot row: absent means "this
+    // archive is not tied to a conversation", which is true, and which the
+    // boot row's id would misstate.
+    class FakeBrowserdClient {
+      readonly marker = "bound";
+      async exportProfile(): Promise<Uint8Array> {
+        if (this.marker !== "bound") throw new Error("wrong receiver");
+        return new Uint8Array([1]);
+      }
+    }
+    const panel = build({
+      createClient: (() => new FakeBrowserdClient()) as never,
+    });
+
+    const res = await panel.call("/profile/export", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-browser-session-id")).toBeNull();
+  });
+
+  it("answers 409 when the daemon cannot export a profile", async () => {
+    const panel = build({ createClient: (() => ({})) as never });
+    const res = await panel.call("/profile/export", { method: "POST" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "profile_export_unavailable",
+    });
+  });
+});
+
+it.each(["/state", "/pane-command", "/viewport"])(
+  "routes %s to the authenticated conversation sandbox",
+  async (path) => {
+    const lookup = vi.fn(async () => ({
+      reachable: true,
+      session: {
+        ...SESSION,
+        target: "sandbox",
+        computerId: undefined,
+        sandboxRowId: "sandbox_1",
+        logicalSessionId: "logical_1",
+        watched: true,
+      },
+    }));
+    const viewport = { width: 1400, height: 900, revision: 1 };
+    const paneViewport = vi.fn(async () => viewport);
+    const { call } = build({
+      verifyToken: (async () => ({
+        userId: CLAIMS.userId,
+        projectId: CLAIMS.projectId,
+        sandboxRowId: "sandbox_1",
+        sessionId: "logical_1",
+      })) as BrowserPanelDeps["verifyToken"],
+      lookupSession: lookup as unknown as BrowserPanelDeps["lookupSession"],
+      createClient: () =>
+        ({
+          paneState: async () => ({ seq: 1, tabs: [], viewport }),
+          paneCommand: async () => ({ ok: true }),
+          paneViewport,
+        }) as never,
+    });
+    const response = await call(
+      path,
+      path === "/state"
+        ? {}
+        : {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(
+              path === "/viewport"
+                ? { width: 1400, height: 900, policy: "followPane" }
+                : { command: { op: "reload" } },
+            ),
+          },
+    );
+    expect(response.status).toBe(200);
+    expect(lookup).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "sandbox_1", watched: true }),
+    );
+    if (path === "/viewport")
+      expect(paneViewport).toHaveBeenCalledWith({
+        width: 1400,
+        height: 900,
+        policy: "followPane",
+      });
+  },
+);
+
+it("refuses an awake sandbox with an unhealthy or different daemon", async () => {
+  for (const status of [
+    { kind: "ok", bootId: "different" },
+    { kind: "unreachable" },
+  ]) {
+    const { call, attachSession } = build({
+      verifyToken: async () =>
+        ({
+          userId: CLAIMS.userId,
+          projectId: CLAIMS.projectId,
+          sandboxRowId: "box-row",
+        }) as never,
+      sandboxInfo: async () =>
+        ({
+          ok: true,
+          value: {
+            ownerUserId: CLAIMS.userId,
+            projectId: CLAIMS.projectId,
+            providerComputerId: "box",
+          },
+        }) as never,
+      lookupSession: async () =>
+        ({
+          reachable: true,
+          session: {
+            ...SESSION,
+            computerId: undefined,
+            sandboxRowId: "box-row",
+          },
+        }) as never,
+      createClient: () => ({ status: async () => status }) as never,
+    });
+    const response = await call("/session");
+    expect(response.status).toBe(503);
+    expect(attachSession).not.toHaveBeenCalled();
+  }
+});
+
+/**
+ * Waking is a CONTROL-PLANE act, not a side effect of attaching.
+ *
+ * Connecting to a paused E2B box resumes it, so the attach below would wake the
+ * machine on its own — and leave the row `hibernating`, which means running,
+ * unmetered, and skipped by every idle sweep. Since hosted browsers are now
+ * reclaimed within a couple of minutes of nobody watching, that would happen on
+ * every panel re-show.
+ */
+describe("browser panel — ensure wakes a sleeping box", () => {
+  /**
+   * Successive answers from `sandbox-info`, the last one repeating.
+   *
+   * The FIRST is what `authorize` reads (and hands to the ensure path, rather
+   * than paying for a second round trip); the rest are the wake poll.
+   */
+  function withStatuses(
+    statuses: string[],
+    over: Partial<BrowserPanelDeps> = {},
+  ) {
+    let call = 0;
+    return build({
+      sandboxInfo: (async () => ({
+        ok: true,
+        value: {
+          ownerUserId: CLAIMS.userId,
+          projectId: CLAIMS.projectId,
+          providerComputerId: "sbx_1",
+          status: statuses[Math.min(call++, statuses.length - 1)],
+        },
+      })) as unknown as BrowserPanelDeps["sandboxInfo"],
+      ...over,
+    });
+  }
+
+  it("wakes a hibernating computer before attaching to it", async () => {
+    const panel = withStatuses(["hibernating", "ready"]);
+
+    const res = await panel.call("/session?ensure=1");
+
+    expect(res.status).toBe(200);
+    expect(panel.wakeComputer).toHaveBeenCalledWith({
+      computerId: CLAIMS.computerId,
+    });
+  });
+
+  it("does not wake a box that is already awake", async () => {
+    const panel = withStatuses(["ready"]);
+
+    const res = await panel.call("/session?ensure=1");
+
+    expect(res.status).toBe(200);
+    expect(panel.wakeComputer).not.toHaveBeenCalled();
+  });
+
+  it("never wakes without ensure — watching must not resume a parked box", async () => {
+    const panel = withStatuses(["hibernating"]);
+
+    await panel.call("/session");
+
+    expect(panel.wakeComputer).not.toHaveBeenCalled();
+  });
+
+  it("waits for a wake already in flight rather than asking twice", async () => {
+    const panel = withStatuses(["waking", "ready"]);
+
+    const res = await panel.call("/session?ensure=1");
+
+    expect(res.status).toBe(200);
+    // Another replica (or an earlier re-show) already asked.
+    expect(panel.wakeComputer).not.toHaveBeenCalled();
+  });
+
+  it("503s rather than attaching to a box that never comes back", async () => {
+    vi.useFakeTimers();
+    try {
+      const panel = withStatuses(["hibernating", "waking"]);
+      const pending = panel.call("/session?ensure=1");
+      await vi.advanceTimersByTimeAsync(15_000);
+      const res = await pending;
+
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toBe("browser_unavailable");
+      // The pane retries on its own visibility-gated backoff; holding the
+      // request open would just move the wait somewhere less interruptible.
+      expect(panel.attachSession).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falls through when the control plane has no wake route yet", async () => {
+    // This is a cost optimisation, not a correctness gate: an inspector that
+    // failed closed here would take the panel down with it during a rollout
+    // where the backend has not deployed. Attaching still resumes the box the
+    // old way, which is exactly the pre-change behaviour.
+    const panel = withStatuses(["hibernating"], {
+      wakeComputer: (async () => ({
+        ok: false,
+        status: 404,
+        error: "Not Found",
+      })) as unknown as BrowserPanelDeps["wakeComputer"],
+    });
+
+    const res = await panel.call("/session?ensure=1");
+
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("browser panel — holding the browser is being here", () => {
+  it("reports presence when a lease is taken or beaten", async () => {
+    // The VNC tier opens no frame socket, so its pane never pings — this is
+    // the only thing telling the control plane somebody is at the machine.
+    // And a lease holder is the strongest case there is: they may be mid-login
+    // or mid-2FA, and reclaiming the box under them is the failure to avoid.
+    for (const action of ["acquire", "heartbeat", "resume"]) {
+      resetPanelActivityThrottleForTests();
+      const panel = build();
+
+      const res = await panel.call("/lease", {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(panel.touchSession).toHaveBeenCalledWith({
+        sessionId: SESSION.sessionId,
+        kind: "panel",
+      });
+    }
+  });
+
+  it("does not report presence for a lease it failed to take", async () => {
+    resetPanelActivityThrottleForTests();
+    const panel = build({
+      createClient: () =>
+        ({
+          lease: async () => ({ state: "held", bootId: "boot-1" }),
+          leaseAction: async () => ({
+            took: false,
+            lease: { state: "held", holder: "users_other", bootId: "boot-1" },
+          }),
+          status: async () => ({ kind: "ok", bootId: SESSION.bootId }),
+        }) as never,
+    });
+
+    const res = await panel.call("/lease", {
+      method: "POST",
+      body: JSON.stringify({ action: "acquire" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(panel.touchSession).not.toHaveBeenCalled();
+  });
+
+  it("throttles presence rather than writing once per heartbeat", async () => {
+    resetPanelActivityThrottleForTests();
+    const panel = build();
+
+    for (let i = 0; i < 4; i += 1) {
+      await panel.call("/lease", {
+        method: "POST",
+        body: JSON.stringify({ action: "heartbeat" }),
+      });
+    }
+
+    expect(panel.touchSession).toHaveBeenCalledTimes(1);
   });
 });

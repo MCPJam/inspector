@@ -1,3 +1,4 @@
+import type { CaseSource } from "@mcpjam/sdk/contract";
 /**
  * The inspector-side half of the Wave-0 batch authoring contract.
  *
@@ -66,6 +67,7 @@ export type EvalCaseBatchItem = Record<string, unknown> & {
    * authenticated launcher and freezes into the run snapshot; it never travels
    * with a case.
    */
+  source?: CaseSource;
   import?: EvalCaseImportClaim;
 };
 

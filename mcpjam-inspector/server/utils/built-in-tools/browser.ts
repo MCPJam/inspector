@@ -1,3 +1,9 @@
+import { BrowserAdmissionError } from "../computers/browser-admission-error";
+import type { EffectiveBrowserPolicy } from "../../../shared/browser-session-policy";
+import {
+  verifyLocalBrowserConsent,
+  verifyAndFingerprintBrowserConsent,
+} from "../computers/browser-consent.js";
 /**
  * The six `browser_*` built-in tools — a real Chromium on the member's cloud
  * computer, driven through the sandbox-local browserd daemon.
@@ -52,10 +58,12 @@ import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { webmcpPageToolsMode } from "../../config.js";
 import { logger } from "../logger.js";
+import { observedToolBinding } from "../../services/browser-tool-binding";
+import { parkForHandoff } from "./browser-handoff.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
+import { MAX_SESSION_VIEWPORT } from "@/shared/browser-viewport";
 import {
-  BROWSERD_OBSERVATION_VIEWPORT,
   DEFAULT_QUEUE_KEY,
   isPointInViewport,
   type BrowserAction,
@@ -76,8 +84,18 @@ import { buildWebmcpPageTools, type PeekedPageTool } from "./page-tools.js";
 import { pageToolsFromObservation } from "@/shared/browser-page-tools";
 import type { BrowserSessionHandle } from "../../services/browserd/browser-session.js";
 import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
+import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
-import { ensureLocalBrowserSession } from "../../services/browserd/local/local-browser-session.js";
+import {
+  ensureLocalBrowserSession,
+  localBrowserKeyFor,
+  resolveLocalBrowserRuntime,
+} from "../../services/browserd/local/local-browser-session.js";
+import {
+  getComputerSandboxInfo,
+  provisionPlaygroundSandbox,
+  wakePlaygroundSandbox,
+} from "../computers/control-plane-client.js";
 
 // Re-exported so the server's existing importers keep their one import site;
 // the value itself now lives in `shared/client-fulfilled-tools.ts` beside the
@@ -85,13 +103,27 @@ import { ensureLocalBrowserSession } from "../../services/browserd/local/local-b
 export { BROWSER_BUILT_IN_TOOL_ID };
 
 /**
- * The coordinate space the model is told about, stated in the tool schema and
- * re-checked before a command leaves this process. Read from the protocol so
- * the schema, the daemon's bounds check, and the launched viewport cannot
- * disagree about what "x: 900" means.
+ * The coordinate space the model is told about — as a RANGE, not a size.
+ *
+ * It used to be the size: the schema said `max: 1023`, the description said
+ * "1024x768", and the daemon's bounds check agreed with both. That works
+ * exactly as long as no session is ever a different size, and one of them now
+ * is — the interactive Playground's browser follows the panel somebody can
+ * drag. A schema that named 1023 would refuse a perfectly good click at x=1200
+ * before it ever reached the browser.
+ *
+ * So the schema states the WIDEST a session may be, the description tells the
+ * model to read the actual size off its last observation (every one carries
+ * `viewport`), and the daemon refuses anything outside the session's real
+ * bounds — which is the only place that knows them.
+ *
+ * WRITTEN ONCE, deliberately. A description that named the current size would
+ * have to be regenerated on every resize, and regenerating it rotates the
+ * host-configuration hash — so dragging a panel would invalidate every cached
+ * tool manifest, several times a second.
  */
-const VIEWPORT_W = BROWSERD_OBSERVATION_VIEWPORT.width;
-const VIEWPORT_H = BROWSERD_OBSERVATION_VIEWPORT.height;
+const VIEWPORT_MAX_W = MAX_SESSION_VIEWPORT.width;
+const VIEWPORT_MAX_H = MAX_SESSION_VIEWPORT.height;
 
 /**
  * How approval reaches the user for this turn — the thing a surface must
@@ -106,14 +138,56 @@ const VIEWPORT_H = BROWSERD_OBSERVATION_VIEWPORT.height;
  */
 export type BrowserApprovalDelivery =
   | { kind: "attested" }
-  | { kind: "unattended"; policy: BrowserUnattendedPolicy };
+  | { kind: "unattended"; policy: BrowserUnattendedPolicy }
+  | {
+      kind: "session-policy";
+      policy: BrowserUnattendedPolicy;
+      effectivePolicy?: EffectiveBrowserPolicy;
+    };
+
+export type BrowserSessionOwnerKind =
+  "conversation" | "swarm_attempt" | "eval_iteration" | "participant_session";
+
+export interface BrowserSessionScope {
+  kind: BrowserSessionOwnerKind;
+  sessionId: string;
+  hostId?: string;
+}
 
 export interface BrowserToolsOptions {
+  localConsentToken?: string;
+  /**
+   * Told while a turn is parked behind a person holding the browser.
+   *
+   * The "visible waiting state" the handoff needs: without it, a turn that is
+   * politely waiting for somebody to finish signing in is indistinguishable
+   * from a turn that has hung. Optional because an unattended run has nobody
+   * to show it to.
+   */
+  /** Total handoff waiting budget shared by all calls in this tool map. */
+  handoffMaxWaitMs?: number;
+  onHandoffWaiting?: (state: {
+    waiting: boolean;
+    resumed?: boolean;
+    holder?: { kind: "human" | "script" };
+  }) => void;
   /** Bearer authorization forwarded to the control plane. */
   authHeader: string;
+  /** Local guest sessions have no member-owned cloud metadata or profiles. */
+  localGuest?: boolean;
   /** Project whose computer this turn drives. */
   projectId: string;
   executionScope?: ExecutionScope;
+  /**
+   * The host's Tool Approval switch.
+   *
+   * Threaded like `bash` threads it, and read for the same reason: this family
+   * follows the user's setting rather than overruling it. Absent counts as
+   * off, so a caller that never had a switch to thread gets the same answer it
+   * did before this option existed — and an UNATTENDED run ignores it either
+   * way, because its floor is `never` (nobody to ask).
+   */
+  requireToolApproval?: boolean;
   /**
    * Where L3 tokens live BETWEEN requests, so an act that paused for approval
    * is still pinned when it resumes. Defaults to the process-wide one;
@@ -139,6 +213,12 @@ export interface BrowserToolsOptions {
   engine?: BrowserEngine;
   /** ABSENT ⇒ nothing is built. See the fail-closed note above. */
   approvalDelivery?: BrowserApprovalDelivery;
+  /** Durable identity for this browser-owning surface. */
+  sessionScope?: BrowserSessionScope;
+  /** Explicit host/eval profile pin; conversation sessions otherwise use the user default. */
+  browserProfileId?: string;
+  /** Notices emitted while a watched browser is provisioning or waking. */
+  onBrowserNotice?: (notice: string) => void;
   /**
    * Ephemeral for unattended runs, persistent for interactive ones. Threaded
    * from `approvalDelivery` rather than configured, because the two must never
@@ -157,7 +237,7 @@ export interface BrowserToolsOptions {
    * host config, so nothing parsed from a member-readable run snapshot can
    * produce one.
    */
-  sandboxTarget?: { sandboxRowId: string; sandboxId: string };
+  sandboxTarget?: { sandboxRowId: string; sandboxId: string; record?: boolean };
   ensureSession?: (args: {
     bearer: string;
     projectId: string;
@@ -167,7 +247,10 @@ export interface BrowserToolsOptions {
       kind: "sandbox";
       sandboxRowId: string;
       sandboxId: string;
+      watched?: boolean;
+      record?: boolean;
     };
+    logicalSessionId?: string;
     signal?: AbortSignal;
   }) => Promise<BrowserSessionHandle>;
   /** Surfaced to the run when a tool is deliberately not advertised. */
@@ -379,6 +462,11 @@ interface CommandSender {
  * Read BOTH failure layers of a daemon reply. The transport status says
  * whether the command was ADMITTED; `result.ok` says whether the browser
  * actually did it. Only when both are good is this a success.
+ */
+/**
+ * The handoff coordinator, imported rather than inlined: it is the one piece
+ * of this file with no browser in it at all, and it is easier to trust when it
+ * can be tested against a clock the test owns.
  */
 function unwrapCommand(response: {
   status: string;
@@ -634,14 +722,34 @@ class BrowserTurnState {
   }
 
   /** Ensure lazily: a turn that never calls a browser tool boots nothing. */
-  handle(signal?: AbortSignal): Promise<BrowserSessionHandle> {
+  async verifyConsent(): Promise<void> {
+    if (
+      this.opts.engine === "local" &&
+      !(await verifyLocalBrowserConsent(this.opts.localConsentToken))
+    ) {
+      throw new Error(
+        "browser_consent_required: Allow Browser in the Browser panel.",
+      );
+    }
+  }
+
+  async handle(signal?: AbortSignal): Promise<BrowserSessionHandle> {
+    await this.verifyConsent();
     this.session ??= this.ensure({
       bearer: this.opts.authHeader,
       projectId: this.opts.projectId,
       contextMode: this.contextMode,
       ...(this.ownerKey ? { ownerKey: this.ownerKey } : {}),
       ...(this.opts.sandboxTarget
-        ? { target: { kind: "sandbox" as const, ...this.opts.sandboxTarget } }
+        ? {
+            target: {
+              kind: "sandbox" as const,
+              ...this.opts.sandboxTarget,
+            },
+          }
+        : {}),
+      ...(this.opts.sessionScope
+        ? { logicalSessionId: this.opts.sessionScope.sessionId }
         : {}),
       ...(signal ? { signal } : {}),
     });
@@ -818,13 +926,44 @@ export function buildBrowserTools(
     return undefined;
   }
 
-  const unattended = delivery.kind === "unattended" ? delivery.policy : null;
-  const readOnly = unattended?.mode === "read_only";
+  const unattended = delivery.kind === "unattended";
+  const effective =
+    delivery.kind === "session-policy" ? delivery.effectivePolicy : undefined;
+  if (effective?.tools?.length === 0 || effective?.origins?.length === 0) {
+    opts.onToolSuppressed?.({
+      id: BROWSER_BUILT_IN_TOOL_ID,
+      reason: "The effective browser policy permits no tools or origins",
+    });
+    return undefined;
+  }
+  const policy: BrowserUnattendedPolicy | null = effective
+    ? {
+        mode: effective.tools !== null ? "allowlist" : "allow_all",
+        ...(effective.tools !== null ? { toolAllowlist: effective.tools } : {}),
+        ...(effective.origins !== null
+          ? { originAllowlist: effective.origins }
+          : {}),
+      }
+    : delivery.kind === "attested"
+      ? null
+      : delivery.policy;
+  const readOnly = policy?.mode === "read_only";
+  let handoffDeadline: number | undefined;
   const engine: BrowserEngine = opts.engine ?? "hosted";
   // DERIVED, never configured. A surface that can ask a person is interactive
   // and keeps its logins; one that cannot is unattended and must start blank.
   // Letting these be set independently is how an eval ends up running against
   // whatever profile the last playground session left signed in.
+  if (
+    delivery.kind === "session-policy" &&
+    (opts.sessionScope?.kind !== "conversation" || engine !== "hosted")
+  ) {
+    opts.onToolSuppressed?.({
+      id: BROWSER_BUILT_IN_TOOL_ID,
+      reason: "session-policy requires a hosted conversation browser",
+    });
+    return undefined;
+  }
   const contextMode: BrowserContextMode = unattended
     ? "ephemeral"
     : "persistent";
@@ -833,6 +972,18 @@ export function buildBrowserTools(
   // one browser and one cookie jar — so a run that cannot name itself gets no
   // browser at all rather than somebody else's session.
   const ownerKey = unattended ? unattendedOwnerKey(opts) : undefined;
+  if (opts.sessionScope?.kind === "conversation" && unattended) {
+    logger.warn(
+      "[built-in-tools] browser tools not advertised: a conversation browser scope cannot be unattended",
+      { projectId: opts.projectId, sessionId: opts.sessionScope.sessionId },
+    );
+    opts.onToolSuppressed?.({
+      id: BROWSER_BUILT_IN_TOOL_ID,
+      reason:
+        "a conversation browser is interactive and cannot be used by an unattended run",
+    });
+    return undefined;
+  }
   if (unattended && engine === "hosted" && !opts.sandboxTarget) {
     // NOBODY IS WATCHING, AND THE HOSTED BROWSER WOULD BE THE MEMBER'S OWN BOX.
     //
@@ -875,7 +1026,7 @@ export function buildBrowserTools(
   }
   const state = new BrowserTurnState(
     opts,
-    opts.ensureSession ?? defaultEnsureSession(engine),
+    opts.ensureSession ?? defaultEnsureSession(engine, opts),
     contextMode,
     ownerKey,
     opts.tokenMemory ?? browserTokenMemory,
@@ -884,8 +1035,8 @@ export function buildBrowserTools(
   // An unattended `allowlist` policy may name the exact tools this run may
   // use; anything else gets every tool, with approval as the gate.
   const allowedNames = new Set(
-    unattended?.mode === "allowlist" && unattended.toolAllowlist?.length
-      ? unattended.toolAllowlist
+    policy?.mode === "allowlist" && policy.toolAllowlist?.length
+      ? policy.toolAllowlist
       : BROWSER_TOOL_NAMES,
   );
   // READ AT CALL TIME, so staging and tests can flip it per process. The OFF
@@ -941,24 +1092,39 @@ export function buildBrowserTools(
     return undefined;
   }
 
-  // Floors, one per shape of run. Local is forced to ask, exactly as `bash` is
-  // — the browser is driving a real, signed-in Chromium on someone's own
-  // machine, where the blast radius of an unreviewed click is their accounts
-  // rather than a disposable box. An attested (interactive) run has someone to
-  // ask, so it always does. What is left is an unattended run on a disposable
-  // box: nobody to ask, so the declared policy is the answer, and the
-  // interactive tools it might have freed were never built (see `names`).
+  // Floors, one per shape of run.
   //
-  // NOT the switch, on any branch: `requireToolApproval` cannot lower a floor,
-  // and there is no reading of this family where it should.
+  // A run with SOMEBODY TO ASK — an attested interactive turn, or the local
+  // engine driving a real signed-in Chromium on someone's own machine — asks
+  // when the user's switch says to. It used to ask unconditionally, and that
+  // made "Tool Approval: off" untrue for the most common thing anyone does
+  // here: opening a page. The blast radius argument was real, but it is an
+  // argument for what to DEFAULT to, not for overruling a person who has just
+  // told this host what they want.
+  //
+  // An UNATTENDED run keeps `never`, and that is not the switch being ignored
+  // — there is nobody to ask, so a gate would hang the run rather than protect
+  // it. The declared `toolPolicy` is the answer instead, and the interactive
+  // tools it might have freed were never built (see `names`).
+  //
+  // ON DELIVERY ALONE, not on the engine. An unattended run uses the LOCAL
+  // engine (a throwaway Chromium keyed per run), so an `|| engine === "local"`
+  // here would put every unattended local run back on the switch — and a host
+  // config with approval on would then hang each eval iteration against a pill
+  // nobody can click. The engine says whose machine it is; only the delivery
+  // says whether anyone is there to ask.
   const interactiveFloor: ApprovalFloor =
-    delivery.kind === "attested" || engine === "local" ? "always" : "never";
+    delivery.kind === "attested" ? "setting" : "never";
   // Observation is the one thing a read-only policy may free, and only there:
   // a policy cannot make clicking a button on a live logged-in page safe, but
   // it can say this run only looks.
   const observationFloor: ApprovalFloor = readOnly ? "never" : interactiveFloor;
-  const needsApproval = needsApprovalFor(interactiveFloor, false);
-  const observationNeedsApproval = needsApprovalFor(observationFloor, false);
+  const requireToolApproval = opts.requireToolApproval === true;
+  const needsApproval = needsApprovalFor(interactiveFloor, requireToolApproval);
+  const observationNeedsApproval = needsApprovalFor(
+    observationFloor,
+    requireToolApproval,
+  );
 
   /**
    * The tab the model is actually working in.
@@ -1062,6 +1228,39 @@ export function buildBrowserTools(
       throw error;
     }
     try {
+      if (delivery.kind === "session-policy" && policy?.originAllowlist?.length && !recovering && !["observe", "navigate"].includes(action.kind)) {
+        const observed = await send({ kind: "observe", mode: action.kind === "webmcp_invoke" ? "webmcp_tools" : "url" }, { ...(args.tabId ? { tabId: args.tabId } : {}), signal: args.signal, recovering: true, raw: true });
+        if (!observed.ok) {
+          if (/browser_in_use|lease_blocked/.test(observed.error ?? "")) {
+            release?.(); release = undefined;
+            // Handback returns a fresh observation, never replays the old action.
+            return send({ kind: "observe", mode: "a11y" }, { tabId: args.tabId, signal: args.signal });
+          }
+          return observed;
+        }
+        const output = observed.output as { url?: string; page?: { url?: string } } | undefined;
+        const url = output?.url ?? output?.page?.url;
+        if (!url || !isOriginAllowed(url, policy.originAllowlist)) return { ok: false, error: "origin_not_allowed: the current page is outside the session policy", tabId };
+        if (action.kind === "webmcp_invoke") {
+          try {
+            const status = await handle.client.status({ signal: args.signal });
+            if (status.kind !== "ok" || !status.features?.includes("webmcp-binding"))
+              return { ok: false, error: "browser_unavailable: the daemon cannot enforce page-tool bindings", tabId };
+            const binding = observedToolBinding({
+              output: observed.output,
+              stateToken: observed.stateToken,
+              bootId: handle.bootId,
+              toolKey: action.toolKey,
+              frameId: action.expectedBinding?.frameId,
+              origins: policy.originAllowlist,
+            });
+            // First-class tools retain their original approval binding.
+            command.action = { ...action, expectedBinding: action.expectedBinding ?? binding };
+          } catch (error) {
+            return { ok: false, error: error instanceof Error ? error.message : String(error), tabId };
+          }
+        }
+      }
       // A PAGE TOOL KEEPS RUNNING WHEN THE REQUEST IS ABORTED. Dropping the
       // HTTP connection stops us waiting; it does not stop the browser, which
       // has already admitted the command and is inside the page's own handler.
@@ -1091,9 +1290,16 @@ export function buildBrowserTools(
           : undefined;
       let response;
       try {
-        response = await client.sendCommand(command, handle.bootId, {
-          ...(args.signal ? { signal: args.signal } : {}),
-        });
+        // Approval, handoff and queue waits may outlive the grant checked at
+        // handle resolution. Re-check immediately before sending control.
+        await state.verifyConsent();
+        response = await client.sendCommand(
+          { ...command, responsiveViewport: true },
+          handle.bootId,
+          {
+            ...(args.signal ? { signal: args.signal } : {}),
+          },
+        );
       } catch (error) {
         disarm?.();
         if (args.signal?.aborted) {
@@ -1111,6 +1317,53 @@ export function buildBrowserTools(
         throw error;
       }
       disarm?.();
+      // A PERSON HAS THE BROWSER. Park instead of refusing, and come back with
+      // a fresh look rather than with this command's result — which does not
+      // exist, because the command was never run. @see browser-handoff.ts
+      if (response.status === "lease_blocked" && !recovering) {
+        state.forgetTokens(handle.bootId);
+        if (
+          opts.handoffMaxWaitMs !== undefined &&
+          handoffDeadline === undefined
+        )
+          handoffDeadline = Date.now() + Math.max(0, opts.handoffMaxWaitMs);
+        return {
+          ...(await parkForHandoff<ObservationStateToken>({
+            // The SESSION client, not the `CommandSender` cast above: reading
+            // the lease is a different method, and it is the one thing here
+            // that a `sendCommand`-shaped view cannot answer.
+            client: handle.client,
+            ...(handoffDeadline !== undefined
+              ? { maxWaitMs: Math.max(0, handoffDeadline - Date.now()) }
+              : {}),
+            ...(args.signal ? { signal: args.signal } : {}),
+            observe: (signal) =>
+              send(
+                { kind: "observe", mode: "a11y" },
+                {
+                  ...(args.tabId ? { tabId: args.tabId } : {}),
+                  ...(signal ? { signal } : {}),
+                  // `recovering`, for the same reason the origin recovery
+                  // below is: this runs from INSIDE the lock section this
+                  // command already holds, so taking the lock again parks the
+                  // resumption behind the command it exists to resume — and
+                  // neither ever finishes. The turn hangs until the client
+                  // gives up, with the person holding a browser nobody is
+                  // coming back for.
+                  recovering: true,
+                  // The observation belongs to the model — it is what the next
+                  // action is decided from — so its token is remembered like
+                  // any other. `raw` would withhold exactly the thing that
+                  // makes the resumption usable.
+                },
+              ),
+            ...(opts.onHandoffWaiting
+              ? { onWaiting: opts.onHandoffWaiting }
+              : {}),
+          })),
+          tabId,
+        };
+      }
       let outcome = unwrapCommand(response);
       // W4/L6 — a handoff invalidates everything this turn cached. Two signals
       // reach us: a refusal while the person still holds the browser, and the
@@ -1130,9 +1383,9 @@ export function buildBrowserTools(
       // redirect, a meta refresh, a link the model clicked, an OAuth bounce.
       // Until now the observation of that page came back in full, which made the
       // allowlist a suggestion to the model rather than a boundary on the run.
-      if (unattended?.originAllowlist?.length) {
+      if (policy?.originAllowlist?.length) {
         outcome = await enforceResultOrigin(outcome, {
-          allowlist: unattended.originAllowlist,
+          allowlist: policy.originAllowlist,
           tabId: args.tabId,
           recover: recovering
             ? undefined
@@ -1213,16 +1466,18 @@ export function buildBrowserTools(
     "browser_navigate",
     tool({
       description:
-        `Open a URL in ${engineLabel(engine)} (or go back / reload). Returns the page ` +
+        `Open a URL in ${engineLabel(
+          engine,
+        )} (or go back / forward / reload). Returns the page ` +
         "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
         "so you do not need to observe separately before acting.",
       inputSchema: z.object({
         url: z
           .string()
           .optional()
-          .describe("URL to open. Omit when using back or reload."),
+          .describe("URL to open. Omit when using back, forward or reload."),
         action: z
-          .enum(["goto", "back", "reload"])
+          .enum(["goto", "back", "forward", "reload"])
           .optional()
           .describe("Defaults to goto."),
         tabId: z
@@ -1238,17 +1493,15 @@ export function buildBrowserTools(
       execute: async ({ url, action, tabId, newTab }, { abortSignal }) => {
         const verb = action ?? "goto";
         if (verb === "goto" && !url) return { error: "navigate needs a url" };
-        if (
-          url &&
-          unattended &&
-          !isOriginAllowed(url, unattended.originAllowlist)
-        ) {
+        if (url && policy && !isOriginAllowed(url, policy.originAllowlist)) {
           // Enforced BEFORE the command leaves this process: an unattended run
           // must not reach an origin its policy never named.
           return {
             error:
               `origin_not_allowed: this run's toolPolicy does not permit ${url} — ` +
-              `allowed origins: ${(unattended.originAllowlist ?? []).join(", ") || "(none)"}`,
+              `allowed origins: ${
+                (policy.originAllowlist ?? []).join(", ") || "(none)"
+              }`,
           };
         }
         const browserAction: BrowserAction =
@@ -1259,8 +1512,10 @@ export function buildBrowserTools(
                 ...(newTab ? { newTab: true } : {}),
               }
             : verb === "back"
-              ? { kind: "back" }
-              : { kind: "reload" };
+            ? { kind: "back" }
+            : verb === "forward"
+            ? { kind: "forward" }
+            : { kind: "reload" };
         return presented(
           await send(
             // BOTH, matching `browser_act` and matching what the description
@@ -1285,10 +1540,10 @@ export function buildBrowserTools(
         "answer a JavaScript dialog that is blocking the page. " +
         "Target by `ref` from the last a11y observation (best: it is the element you read, and a covered one is refused rather than mis-clicked), or by coordinates from the last screenshot, or by CSS selector. Returns the " +
         "page after the action: URL, what you can act on (a11y with refs), and a " +
-        "screenshot. Coordinates are CSS pixels in a " +
-        `${VIEWPORT_W}x${VIEWPORT_H} viewport with (0, 0) at the TOP-LEFT of the ` +
-        "screenshot — the screenshot is always shown at that size, so read x and y " +
-        "straight off it without scaling.",
+        "screenshot. Coordinates are CSS pixels, (0, 0) at the screenshot's " +
+        "TOP-LEFT, read straight off it without scaling. The page can be " +
+        "resized while you work, so take its size from the `viewport` on your " +
+        "last observation; a coordinate outside it is refused, not clamped.",
       inputSchema: z.object({
         verb: z.enum([
           "click",
@@ -1306,19 +1561,15 @@ export function buildBrowserTools(
         x: z
           .number()
           .min(0)
-          .max(VIEWPORT_W - 1)
+          .max(VIEWPORT_MAX_W - 1)
           .optional()
-          .describe(
-            `X coordinate from the last screenshot, 0 to ${VIEWPORT_W - 1}.`,
-          ),
+          .describe("X from the last screenshot, inside its `viewport`."),
         y: z
           .number()
           .min(0)
-          .max(VIEWPORT_H - 1)
+          .max(VIEWPORT_MAX_H - 1)
           .optional()
-          .describe(
-            `Y coordinate from the last screenshot, 0 to ${VIEWPORT_H - 1}.`,
-          ),
+          .describe("Y from the last screenshot, inside its `viewport`."),
         value: z
           .string()
           .optional()
@@ -1353,7 +1604,17 @@ export function buildBrowserTools(
         { verb, ref, selector, x, y, value, fields, submit, observe, tabId },
         { abortSignal },
       ) => {
-        if (x !== undefined && y !== undefined && !isPointInViewport(x, y)) {
+        if (
+          x !== undefined &&
+          y !== undefined &&
+          // The WIDEST page this browser could be showing, not the default
+          // one. This session's real size lives in the daemon, and the daemon
+          // refuses against it; this check exists only to answer an obviously
+          // impossible coordinate in the model's own terms rather than as a
+          // transport error, so a bound tighter than the schema's would refuse
+          // points that are perfectly valid on a panel somebody widened.
+          !isPointInViewport(x, y, MAX_SESSION_VIEWPORT)
+        ) {
           // The schema states the bounds, but a hosted path reconstructs the
           // schema on the wire and executes with whatever input comes back, so
           // the bound is re-checked here rather than assumed. The daemon
@@ -1361,9 +1622,11 @@ export function buildBrowserTools(
           // instead of as a transport error.
           return {
             error:
-              `out_of_viewport: (${x}, ${y}) is outside the ${VIEWPORT_W}x${VIEWPORT_H} ` +
-              "screenshot; nothing was clicked. Coordinates are CSS pixels with " +
-              "(0, 0) at the top-left — re-read the screenshot and pick a point inside it.",
+              `out_of_viewport: (${x}, ${y}) is outside any page this browser ` +
+              `can show (at most ${VIEWPORT_MAX_W}x${VIEWPORT_MAX_H}); nothing ` +
+              "was clicked. Coordinates are CSS pixels with (0, 0) at the " +
+              "top-left — re-read the screenshot, take the page's size from its " +
+              "`viewport`, and pick a point inside it.",
           };
         }
         // REF FIRST. It is the only target the model did not have to invent:
@@ -1373,10 +1636,10 @@ export function buildBrowserTools(
         const target: BrowserActTarget | undefined = ref
           ? { a11yRef: ref }
           : x !== undefined && y !== undefined
-            ? { coordinates: [x, y] }
-            : selector
-              ? { selector }
-              : undefined;
+          ? { coordinates: [x, y] }
+          : selector
+          ? { selector }
+          : undefined;
         return presented(
           await send(
             {
@@ -1525,18 +1788,19 @@ export function buildBrowserTools(
   add(
     "browser_webmcp_invoke",
     tool({
-      description: firstClassPageTools && canBindPageTools
-        ? // Kept for the engines that cannot grow their tool set inside a turn
-          // (BYOK, the harness): they were handed the page's tools as they were
-          // at turn start, so a page the model navigates to DURING the turn is
-          // reachable only through this. Retiring it there would remove a
-          // capability rather than replace one.
-          "Call a WebMCP tool on the current page BY NAME. Use this only for a page you " +
-          "navigated to during this turn: a page's tools are otherwise available to you " +
-          "directly as `webmcp_*` tools, which are typed and validated — prefer one of " +
-          "those whenever it exists."
-        : "Call one of the WebMCP tools the current page offers. Every observation " +
-          "reports what the page has.",
+      description:
+        firstClassPageTools && canBindPageTools
+          ? // Kept for the engines that cannot grow their tool set inside a turn
+            // (BYOK, the harness): they were handed the page's tools as they were
+            // at turn start, so a page the model navigates to DURING the turn is
+            // reachable only through this. Retiring it there would remove a
+            // capability rather than replace one.
+            "Call a WebMCP tool on the current page BY NAME. Use this only for a page you " +
+            "navigated to during this turn: a page's tools are otherwise available to you " +
+            "directly as `webmcp_*` tools, which are typed and validated — prefer one of " +
+            "those whenever it exists."
+          : "Call one of the WebMCP tools the current page offers. Every observation " +
+            "reports what the page has.",
       inputSchema: z.object({
         toolName: z.string(),
         input: z.unknown().optional(),
@@ -1545,9 +1809,9 @@ export function buildBrowserTools(
       needsApproval,
       execute: async ({ toolName, input, tabId }, { abortSignal }) => {
         if (
-          unattended?.mode === "allowlist" &&
-          unattended.toolAllowlist?.length &&
-          !unattended.toolAllowlist.includes(`webmcp:${toolName}`)
+          policy?.mode === "allowlist" &&
+          policy.toolAllowlist?.length &&
+          !policy.toolAllowlist.includes(`webmcp:${toolName}`)
         ) {
           return {
             error:
@@ -1570,15 +1834,16 @@ export function buildBrowserTools(
   // carry an identity nothing checks, and the call would still be resolved by
   // name at the far end. That is the generic verb wearing a typed schema, so
   // the honest thing is to ship the generic verb.
-  const page = firstClassPageTools && canBindPageTools
-    ? buildPageToolsFor({
-        opts,
-        unattended,
-        needsApproval,
-        send,
-        reservedNames: new Set(built),
-      })
-    : EMPTY_PAGE_TOOLS;
+  const page =
+    firstClassPageTools && canBindPageTools
+      ? buildPageToolsFor({
+          opts,
+          unattended: policy,
+          needsApproval,
+          send,
+          reservedNames: new Set(built),
+        })
+      : EMPTY_PAGE_TOOLS;
   Object.assign(tools, page.tools);
 
   // `canBindPageTools` HERE TOO, matching the initial build. Gating only the
@@ -1600,7 +1865,7 @@ export function buildBrowserTools(
     firstClassPageTools && canBindPageTools && opts.dynamicPageTools
       ? createPageToolRefresher({
           opts,
-          unattended,
+          unattended: policy,
           needsApproval,
           send,
           reservedNames: new Set(built),
@@ -2130,33 +2395,308 @@ function unattendedOwnerKey(opts: BrowserToolsOptions): string | undefined {
 /** The session path for an engine — the ONE seam between the two. */
 function defaultEnsureSession(
   engine: BrowserEngine,
+  opts: BrowserToolsOptions,
 ): NonNullable<BrowserToolsOptions["ensureSession"]> {
   if (engine === "local") {
-    return async ({ projectId, contextMode, ownerKey }) =>
-      ensureLocalBrowserSession({
+    return async ({
+      bearer,
+      projectId,
+      contextMode,
+      ownerKey,
+      logicalSessionId,
+      signal,
+    }) => {
+      const consentFingerprint = await verifyAndFingerprintBrowserConsent(
+        opts.localConsentToken,
+      );
+      if (!consentFingerprint) {
+        throw new Error(
+          "browser_consent_required: Allow Browser in the Browser panel.",
+        );
+      }
+      const service = new BrowserSessionService();
+      const logical =
+        service.enabled &&
+        !opts.localGuest &&
+        opts.sessionScope &&
+        logicalSessionId
+          ? await service.resolveSession({
+              owner: {
+                kind: opts.sessionScope.kind,
+                id: logicalSessionId,
+              },
+              projectId,
+              bearer,
+              engine: "local",
+              profile: "blank",
+              ...(opts.browserProfileId
+                ? { profileId: opts.browserProfileId }
+                : {}),
+              ...(signal ? { signal } : {}),
+            })
+          : null;
+      if (
+        service.enabled &&
+        !opts.localGuest &&
+        opts.sessionScope &&
+        logicalSessionId &&
+        !logical
+      ) {
+        throw new Error("The durable browser session could not be opened");
+      }
+      // `startSession` derives its profile directory from exactly these two
+      // conditions and imports an archive only when it has one: Electron's
+      // profile is a session PARTITION it manages itself, and an ephemeral
+      // context has no profile at all. Downloading an archive that launch will
+      // drop spends up to 256 MB on nothing and leaves the pin looking
+      // honored — refuse it here, and say so.
+      const canImportProfile =
+        contextMode === "persistent" &&
+        resolveLocalBrowserRuntime() === "playwright";
+      if (
+        service.enabled &&
+        logical?.profileId &&
+        !logical.lastBootId &&
+        !canImportProfile
+      ) {
+        logger.warn(
+          "[built-in-tools] saved browser profile not applied: this local browser has no profile directory to import it into",
+          { projectId, contextMode, runtime: resolveLocalBrowserRuntime() },
+        );
+        opts.onBrowserNotice?.(
+          "The saved browser profile was not applied: the browser on this machine has no profile directory to import it into.",
+        );
+      }
+      const profileArchive =
+        canImportProfile &&
+        service.enabled &&
+        logical?.profileId &&
+        !logical.lastBootId
+          ? await service.downloadProfile({
+              projectId,
+              profileId: logical.profileId,
+              bearer,
+              ...(signal ? { signal } : {}),
+            })
+          : null;
+      const handle = await ensureLocalBrowserSession({
+        consentFingerprint,
+        authHeader: bearer,
         projectId,
         contextMode,
         ...(ownerKey ? { ownerKey } : {}),
+        // Start fixed regardless of opening order. An enabled interactive
+        // pane negotiates followPane through the authenticated viewport route.
+        viewportPolicy: "fixed",
+        ...(logicalSessionId ? { sessionId: logicalSessionId } : {}),
+        ...(profileArchive ? { profileArchive } : {}),
       });
+      if (logical) {
+        const serviceArgs = {
+          sessionId: logical.sessionId,
+          projectId,
+          bearer,
+          ...(signal ? { signal } : {}),
+        };
+        const bound = await service.bindBox({
+          ...serviceArgs,
+          box: {
+            localKey: localBrowserKeyFor({
+              projectId,
+              contextMode,
+              ...(ownerKey ? { ownerKey } : {}),
+              sessionId: logicalSessionId,
+            }),
+          },
+        });
+        if (!bound)
+          throw new Error("The durable browser session could not be bound");
+        if (
+          !(await service.recordBoot({ ...serviceArgs, bootId: handle.bootId }))
+        ) {
+          throw new Error(
+            "The durable browser session could not record its boot",
+          );
+        }
+      }
+      return handle;
+    };
   }
   // Hosted. `target` decides WHICH BOX — the run's own disposable desktop when
   // it brought one, the member's project computer otherwise — and everything
   // else about this file stays engine- and box-blind.
-  return async ({ bearer, projectId, contextMode, target, signal }) =>
-    target
+  return async ({
+    bearer,
+    projectId,
+    contextMode,
+    target,
+    logicalSessionId,
+    signal,
+  }) => {
+    // Owner IDs must pass through the durable resolver, including ad-hoc chats.
+    // A missing host is never permission to fall back to the project computer.
+    if (opts.sessionScope && logicalSessionId) {
+      return ensureHostedConversationSession({
+        bearer,
+        projectId,
+        contextMode,
+        logicalSessionId,
+        ownerKind: opts.sessionScope.kind,
+        hostId: opts.sessionScope.hostId,
+        ...(target?.kind === "sandbox" ? { target } : {}),
+        ...(opts.browserProfileId
+          ? { browserProfileId: opts.browserProfileId }
+          : {}),
+        signal,
+        onNotice: opts.onBrowserNotice,
+      });
+    }
+    return target
       ? ensureLiveBrowserSession({
           bearer,
           projectId,
           contextMode,
           target,
+          ...(logicalSessionId ? { logicalSessionId } : {}),
           ...(signal ? { signal } : {}),
         })
       : ensureLiveBrowserSession({
           bearer,
           projectId,
           contextMode,
+          ...(logicalSessionId ? { logicalSessionId } : {}),
           ...(signal ? { signal } : {}),
         });
+  };
+}
+
+/**
+ * Resolve the conversation's durable identity, then lazily obtain its watched
+ * desktop. Opening a chat advertises browser tools but does not spend a
+ * sandbox; the first browser command is the provisioning boundary.
+ */
+export async function ensureHostedConversationSession(args: {
+  bearer: string;
+  projectId: string;
+  contextMode: BrowserContextMode;
+  logicalSessionId: string;
+  ownerKind: BrowserSessionOwnerKind;
+  hostId?: string;
+  browserProfileId?: string;
+  target?: {
+    kind: "sandbox";
+    sandboxRowId: string;
+    sandboxId: string;
+    watched?: boolean;
+    record?: boolean;
+  };
+  signal?: AbortSignal;
+  onNotice?: (notice: string) => void;
+}): Promise<BrowserSessionHandle> {
+  const service = new BrowserSessionService();
+  const logical = await service.resolveSession({
+    owner: { kind: args.ownerKind, id: args.logicalSessionId },
+    projectId: args.projectId,
+    bearer: args.bearer,
+    engine: "hosted",
+    profile: "blank",
+    ...(args.browserProfileId ? { profileId: args.browserProfileId } : {}),
+    ...(args.signal ? { signal: args.signal } : {}),
+  });
+  if (!logical) {
+    throw new Error("The durable browser session could not be opened");
+  }
+  if (logical.engine !== "hosted")
+    throw new Error(
+      "This conversation already uses a browser on another engine.",
+    );
+  const logicalSessionId = logical.sessionId;
+  const profileArchive =
+    logical.profileId && !logical.lastBootId
+      ? await new BrowserSessionService().downloadProfile({
+          projectId: args.projectId,
+          profileId: logical.profileId,
+          bearer: args.bearer,
+          ...(args.signal ? { signal: args.signal } : {}),
+        })
+      : null;
+  let sandboxRowId: string | undefined = args.target?.sandboxRowId;
+  let sandboxId: string | undefined = args.target?.sandboxId;
+  const watched = args.ownerKind === "conversation";
+  if (logical?.box && "sandboxRowId" in logical.box) {
+    sandboxRowId = logical.box.sandboxRowId;
+    const info = await getComputerSandboxInfo({
+      sandboxRowId,
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+    if (!info.ok || !info.value.providerComputerId) {
+      throw new Error(
+        "The existing browser is unavailable. It has not been replaced; retry connecting.",
+      );
+    }
+    if (info.ok && info.value.providerComputerId) {
+      if (watched) {
+        const wake = await wakePlaygroundSandbox({
+          bearer: args.bearer,
+          sandboxRowId,
+          ...(args.signal ? { signal: args.signal } : {}),
+        });
+        if (!wake.ok) {
+          throw new BrowserAdmissionError(wake);
+        }
+      }
+      sandboxId = info.value.providerComputerId;
+    }
+  }
+  if (!sandboxRowId || !sandboxId) {
+    if (!watched) {
+      throw new Error(
+        "The unattended browser session did not receive its sandbox target",
+      );
+    }
+    const provisioned = await provisionPlaygroundSandbox({
+      bearer: args.bearer,
+      projectId: args.projectId,
+      chatSessionId: args.logicalSessionId,
+      ...(args.hostId ? { hostId: args.hostId } : {}),
+      ...(args.signal ? { signal: args.signal } : {}),
+      onWait: ({ delayMs, resource }) => {
+        args.onNotice?.(
+          `The watched browser is waiting for ${
+            resource ?? "desktop"
+          } capacity; retrying in ${Math.ceil(delayMs / 1000)}s.`,
+        );
+      },
+    });
+    if (!provisioned.ok) {
+      throw new BrowserAdmissionError(provisioned);
+    }
+    sandboxRowId = provisioned.value.sandboxRowId;
+    sandboxId = provisioned.value.providerSandboxId;
+    if (!sandboxId) {
+      throw new Error(
+        "The watched browser sandbox did not return a provider id",
+      );
+    }
+  }
+  return ensureLiveBrowserSession({
+    bearer: args.bearer,
+    projectId: args.projectId,
+    contextMode: args.contextMode,
+    logicalSessionId,
+    ...(watched && logical.lastBootId
+      ? { expectedExistingBootId: logical.lastBootId }
+      : {}),
+    target: {
+      kind: "sandbox",
+      sandboxRowId,
+      sandboxId,
+      ...(!watched && args.target?.record === true ? { record: true } : {}),
+      ...(watched ? { watched: true as const } : {}),
+    },
+    ...(profileArchive ? { profileArchive } : {}),
+    ...(args.signal ? { signal: args.signal } : {}),
+  });
 }
 
 /**
@@ -2447,7 +2987,9 @@ function fencePageContent(
 ): string {
   const nonce = pageContentNonce();
   return (
-    `--- MCPJAM_PAGE_CONTENT nonce=${nonce} origin=${safeOrigin(origin)} ---\n` +
+    `--- MCPJAM_PAGE_CONTENT nonce=${nonce} origin=${safeOrigin(
+      origin,
+    )} ---\n` +
     JSON.stringify(page) +
     `\n--- END_MCPJAM_PAGE_CONTENT nonce=${nonce} ---`
   );
@@ -2577,24 +3119,24 @@ function pageToolsNote(
         "call one by name rather than clicking." +
         (options.dynamic ? " They change when you navigate." : "")
       : options.arriving
-        ? "This page's tools will appear as `webmcp_*` tools on your next " +
-          "step." +
-          (options.invokeVerb
-            ? " Until then, call one with `browser_webmcp_invoke`" +
-              (options.listVerb
-                ? " — `browser_webmcp_tools` lists their names."
-                : ".")
-            : "")
-        : options.listVerb
-          ? "This page offers WebMCP tools. List them with `browser_webmcp_tools`, " +
-            "then call one with `browser_webmcp_invoke`."
-          : options.invokeVerb && names.length > 0
-            ? "This page offers WebMCP tools. Call one with " +
-              "`browser_webmcp_invoke`, using a name listed above."
-            : // Nothing this toolset can reach them with. Said plainly rather
-              // than pointing at a verb that is not here.
-              "This page offers WebMCP tools, but none of this browser's tools " +
-              "can reach them; interact with the page itself instead.",
+      ? "This page's tools will appear as `webmcp_*` tools on your next " +
+        "step." +
+        (options.invokeVerb
+          ? " Until then, call one with `browser_webmcp_invoke`" +
+            (options.listVerb
+              ? " — `browser_webmcp_tools` lists their names."
+              : ".")
+          : "")
+      : options.listVerb
+      ? "This page offers WebMCP tools. List them with `browser_webmcp_tools`, " +
+        "then call one with `browser_webmcp_invoke`."
+      : options.invokeVerb && names.length > 0
+      ? "This page offers WebMCP tools. Call one with " +
+        "`browser_webmcp_invoke`, using a name listed above."
+      : // Nothing this toolset can reach them with. Said plainly rather
+        // than pointing at a verb that is not here.
+        "This page offers WebMCP tools, but none of this browser's tools " +
+        "can reach them; interact with the page itself instead.",
   };
 }
 
@@ -2610,21 +3152,23 @@ function pageToolNamesFrom(output: unknown): string[] {
   if (typeof output !== "object" || output === null) return [];
   const tools = (output as { tools?: unknown }).tools;
   if (!Array.isArray(tools)) return [];
-  return tools
-    .map((tool) =>
-      typeof tool === "object" && tool !== null
-        ? (tool as { name?: unknown }).name
-        : undefined,
-    )
-    .filter((name): name is string => typeof name === "string")
-    // BOUNDED PER NAME, not only per list. These are the page's own raw names,
-    // not the sanitized model-facing ones, and 64 of them ride every
-    // observation — so without this a page decides how much of the model's
-    // context its tool list occupies. The fence already stops them posing as
-    // instructions; context is the budget nothing else on this path holds.
-    .map((name) => sanitizeDeclaredText(name, PAGE_TOOL_NAME_MAX_CHARS))
-    .filter((name) => name.length > 0)
-    .slice(0, 64);
+  return (
+    tools
+      .map((tool) =>
+        typeof tool === "object" && tool !== null
+          ? (tool as { name?: unknown }).name
+          : undefined,
+      )
+      .filter((name): name is string => typeof name === "string")
+      // BOUNDED PER NAME, not only per list. These are the page's own raw names,
+      // not the sanitized model-facing ones, and 64 of them ride every
+      // observation — so without this a page decides how much of the model's
+      // context its tool list occupies. The fence already stops them posing as
+      // instructions; context is the budget nothing else on this path holds.
+      .map((name) => sanitizeDeclaredText(name, PAGE_TOOL_NAME_MAX_CHARS))
+      .filter((name) => name.length > 0)
+      .slice(0, 64)
+  );
 }
 
 /** One page-chosen tool name's share of an observation. */

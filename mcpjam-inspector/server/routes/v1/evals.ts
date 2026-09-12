@@ -59,6 +59,7 @@ import {
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
 import {
+  caseSourceSchema,
   caseIntentSchema,
   caseIntentUpdateSchema,
   descriptionExperimentReportSchema,
@@ -2193,6 +2194,7 @@ function toCaseDto(testCase: CaseDoc) {
     ...(testCase.kind === "capability" || testCase.kind === "regression"
       ? { kind: testCase.kind }
       : {}),
+    ...(testCase.source ? { source: testCase.source } : {}),
     ...(importClaim ? { import: importClaim } : {}),
     createdAt: testCase.createdAt ?? null,
     updatedAt: testCase.updatedAt ?? null,
@@ -2781,6 +2783,7 @@ const createCaseSchema = z.strictObject({
   kind: z.enum(["capability", "regression"]).optional(),
   /** The converter's claim for this case. See {@link publicCaseImportSchema}. */
   import: publicCaseImportSchema.optional(),
+  source: caseSourceSchema.optional(),
 });
 const updateCaseSchema = z.strictObject({
   ...publicCaseBodyShape,
@@ -3276,6 +3279,7 @@ function buildCaseMutationArgs(
   // on create, where `createCaseSchema` rejects it before this runs — so
   // `undefined` is the only "leave it alone", exactly as the mutation reads it.
   if (body.import !== undefined) args.import = body.import;
+  if (opts.forCreate && body.source !== undefined) args.source = body.source;
 
   return args;
 }

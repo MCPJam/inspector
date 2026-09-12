@@ -2410,6 +2410,8 @@ describe("operation catalog consistency", () => {
       modelId: "anthropic/claude-sonnet-5",
       serverIds: ["srv"],
     },
+    drive_chat_session_browser: { op: "close", sessionId: "cs_1" },
+    observe_chat_session_browser: { op: "trace", sessionId: "cs_1" },
     get_chat_session: { sessionId: "cs_1" },
     get_chat_session_trace: { sessionId: "cs_1" },
     render_server_widget: { server: "srv", toolName: "show_map" },
@@ -2617,6 +2619,8 @@ describe("operation catalog consistency", () => {
       // transcript, and `risk: "spend"` because it runs a model — the two
       // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
       "send_chat_message",
+      "drive_chat_session_browser",
+      "observe_chat_session_browser",
       // Gate waivers. Both are writes because both persist an audited record
       // and both move a published GitHub Check Run. `get_eval_gate_waiver` is
       // deliberately NOT here — reading whether a gate is waived is available
@@ -2647,6 +2651,7 @@ describe("operation catalog consistency", () => {
       // arguments. Softening the destructive default would claim a safety the
       // host cannot verify, since `readOnlyHint` is server-asserted.
       "send_chat_message",
+      "drive_chat_session_browser",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.mayBeDestructive === true).toBe(

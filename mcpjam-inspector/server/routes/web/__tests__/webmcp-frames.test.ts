@@ -1,3 +1,16 @@
+const scope = {
+  ownerKey: "test-owner",
+  profileKey: "test-profile",
+  consentFingerprint: "test-fingerprint",
+};
+import { issueLocalNonce } from "../../../utils/computers/local-terminal-auth.js";
+import { inspectionNonceScope } from "../../../services/webmcp-inspector/local-authorization.js";
+vi.mock("../../../utils/computers/browser-consent.js", () => ({
+  BROWSER_CONSENT_HEADER: "x-mcpjam-browser-consent",
+  getBrowserConsentFingerprint: async () => "test-fingerprint",
+  watchBrowserConsentChanges: () => () => {},
+  verifyAndFingerprintBrowserConsent: async () => "test-fingerprint",
+}));
 /**
  * Route-level tests for GET /api/web/webmcp/sessions/:id/frames — the binary
  * transport that carries painted frames off the SSE stream.
@@ -113,6 +126,12 @@ function connect(
   token: string | null,
   opts: { origin?: string | null } = {},
 ): Probe {
+  if (token === "valid-nonce")
+    token = issueLocalNonce({
+      kind: "webmcp-frames",
+      projectId: inspectionNonceScope(sessionId, scope),
+      consentFingerprint: scope.consentFingerprint,
+    }).nonce;
   const origin = opts.origin === undefined ? ALLOWED_ORIGIN : opts.origin;
   const url = `ws://127.0.0.1:${port}/api/web/webmcp/sessions/${sessionId}/frames`;
   const options = origin === null ? {} : { origin };
@@ -192,7 +211,8 @@ beforeEach(async () => {
   configState.enabled = true;
   resetWebMcpFramesForTests();
   await webMcpSessions.disposeAll();
-  token = generateSessionToken();
+  generateSessionToken();
+  token = "valid-nonce";
   provider = new FakeProvider();
   server = await startServer();
 });
@@ -219,6 +239,8 @@ async function openSession() {
     url: "https://example.test/",
     provider,
     registry: webMcpSessions,
+    ownerId: scope.ownerKey,
+    localScope: scope,
   });
 }
 
@@ -425,6 +447,36 @@ describe("webmcp frames WS — the stream", () => {
     ws.ws.send(JSON.stringify({ type: "ping" }));
     await ws.settle();
     expect(runtime.expiresAt).toBeGreaterThan(before);
+  });
+
+  it("counts a binary-wire viewer as a subscriber", async () => {
+    // This socket used to subscribe to `runtime.hub` directly, which delivers
+    // frames but is invisible to `hasSubscribers` — so a viewer on this wire
+    // counted as nobody: the idle sweep could reap a session being watched,
+    // and the hosted tool poll stayed silent for a pane someone had open.
+    const session = await openSession();
+    expect(webMcpSessions.hasSubscribers(session.sessionId)).toBe(false);
+
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+    await ws.settle();
+
+    expect(webMcpSessions.hasSubscribers(session.sessionId)).toBe(true);
+  });
+
+  it("marks the session WATCHED on a ping, not merely attached", async () => {
+    // Attachment survives a background tab; the ping does not. For a hosted
+    // session that difference is what holds a metered desktop box awake.
+    const session = await openSession();
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+    await ws.settle();
+    expect(webMcpSessions.isWatched(session.sessionId)).toBe(false);
+
+    ws.ws.send(JSON.stringify({ type: "ping" }));
+    await ws.settle();
+
+    expect(webMcpSessions.isWatched(session.sessionId)).toBe(true);
   });
 
   it("closes 4404 when the session it is watching goes away", async () => {
@@ -720,4 +772,164 @@ describe("frame pacer", () => {
     pacer.push(bytes(3));
     expect(sent.map((b) => b[0])).toEqual([1]);
   });
+});
+
+describe("WebMCP negotiated socket input", () => {
+  async function streamed() {
+    const session = await openSession();
+    const browser = provider.sessions[0];
+    browser.transport = { kind: "frame-stream", width: 1280, height: 800 };
+    const probe = connect(server.port, session.sessionId, token);
+    await probe.opened;
+    await vi.waitFor(() =>
+      expect(
+        probe.text.some((text) => JSON.parse(text).type === "capabilities"),
+      ).toBe(true),
+    );
+    return { browser, probe, runtime: webMcpSessions.get(session.sessionId) };
+  }
+  const wheel = { kind: "wheel", x: 10, y: 20, deltaX: 0, deltaY: 12 };
+  const acks = (probe: Probe) =>
+    probe.text
+      .map((text) => JSON.parse(text))
+      .filter((message) => message.type === "input_ack");
+
+  it("dispatches validated input and acknowledges it without an HTTP request", async () => {
+    const { browser, probe, runtime } = await streamed();
+    runtime.expiresAt = Date.now() + 1000;
+    const expiresBefore = runtime.expiresAt;
+    probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
+    await vi.waitFor(() =>
+      expect(acks(probe)).toEqual([
+        { type: "input_ack", seq: 1, dispatched: 1 },
+      ]),
+    );
+    expect(browser.inputBatches[0][0]).toMatchObject(wheel);
+    expect(runtime.expiresAt).toBeGreaterThan(expiresBefore);
+  });
+
+  it("closes access when the registry session is gone", async () => {
+    const { browser, probe } = await streamed();
+    const get = vi.spyOn(webMcpSessions, "get").mockImplementation(() => {
+      throw new Error("session gone");
+    });
+    try {
+      probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
+      await vi.waitFor(() =>
+        expect(probe.ws.readyState).toBe(WebSocket.CLOSED),
+      );
+      expect(browser.inputBatches).toHaveLength(0);
+    } finally {
+      get.mockRestore();
+    }
+  });
+
+  it("orders batches and coalesces compatible wheels behind a slow dispatch", async () => {
+    const { browser, probe } = await streamed();
+    let finish!: () => void;
+    const dispatch = vi.spyOn(browser, "dispatchInput").mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
+    probe.ws.send(JSON.stringify({ type: "input", seq: 2, events: [wheel] }));
+    probe.ws.send(JSON.stringify({ type: "input", seq: 3, events: [wheel] }));
+    // Ping is ordered behind the messages, so its pong proves they arrived.
+    probe.ws.send(JSON.stringify({ type: "ping" }));
+    await vi.waitFor(() => expect(probe.text).toContain('{"type":"pong"}'));
+    expect(dispatch).toHaveBeenCalledOnce();
+    finish();
+    await vi.waitFor(() => expect(acks(probe)).toHaveLength(3));
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1][0]).toEqual([
+      expect.objectContaining({ kind: "wheel", deltaY: 24 }),
+    ]);
+    expect(acks(probe).map((ack) => ack.seq)).toEqual([1, 2, 3]);
+  });
+
+  it("refuses invalid input and duplicate sequence IDs without replaying", async () => {
+    const { browser, probe } = await streamed();
+    probe.ws.send(
+      JSON.stringify({ type: "input", seq: 1, events: [{ ...wheel, x: -1 }] }),
+    );
+    await vi.waitFor(() =>
+      expect(acks(probe)[0]?.refused).toBe("invalid_input"),
+    );
+    expect(browser.inputBatches).toHaveLength(0);
+    probe.ws.send(JSON.stringify({ type: "input", seq: 2, events: [wheel] }));
+    await vi.waitFor(() => expect(browser.inputBatches).toHaveLength(1));
+    probe.ws.send(JSON.stringify({ type: "input", seq: 2, events: [wheel] }));
+    await vi.waitFor(() => expect(acks(probe)).toHaveLength(3));
+    expect(acks(probe)[2].refused).toBe("invalid_input");
+    expect(browser.inputBatches).toHaveLength(1);
+  });
+
+  it("cancels queued input when its socket disconnects", async () => {
+    const { browser, probe } = await streamed();
+    let finish!: () => void;
+    const dispatch = vi.spyOn(browser, "dispatchInput").mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    probe.ws.send(
+      JSON.stringify({
+        type: "input",
+        seq: 1,
+        events: [{ kind: "mouse_down", x: 1, y: 1, button: "left" }],
+      }),
+    );
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
+    probe.ws.send(JSON.stringify({ type: "input", seq: 2, events: [wheel] }));
+    probe.ws.close();
+    await probe.closed;
+    finish();
+    await probe.settle();
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+
+  it("does not enable input for a native Electron surface", async () => {
+    const session = await openSession();
+    provider.sessions[0].transport = {
+      kind: "electron-native",
+      bootId: "native-boot",
+    };
+    const probe = connect(server.port, session.sessionId, token);
+    await probe.opened;
+    probe.ws.send(JSON.stringify({ type: "input", seq: 1, events: [wheel] }));
+    probe.ws.send(JSON.stringify({ type: "ping" }));
+    await vi.waitFor(() => expect(probe.text).toContain('{"type":"pong"}'));
+    expect(provider.sessions[0].inputBatches).toHaveLength(0);
+    expect(probe.text).toEqual(['{"type":"pong"}']);
+  });
+});
+
+it("consumes a WebMCP nonce once and binds it to the named session", async () => {
+  const session = await openSession();
+  const nonce = issueLocalNonce({
+    kind: "webmcp-frames",
+    projectId: inspectionNonceScope(session.sessionId, scope),
+    consentFingerprint: scope.consentFingerprint,
+  }).nonce;
+  const first = connect(server.port, session.sessionId, nonce);
+  await first.opened;
+  expect(
+    (await connect(server.port, session.sessionId, nonce).closed).code,
+  ).toBe(4401);
+  const other = issueLocalNonce({
+    kind: "webmcp-frames",
+    projectId: inspectionNonceScope("different-session", scope),
+    consentFingerprint: scope.consentFingerprint,
+  }).nonce;
+  expect(
+    (await connect(server.port, session.sessionId, other).closed).code,
+  ).toBe(4404);
+  await webMcpSessions
+    .get(session.sessionId)
+    .localAuthorization!.lifetime.revoke();
+  expect((await first.closed).code).toBe(4401);
 });

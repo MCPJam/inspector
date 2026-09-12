@@ -126,11 +126,18 @@ describe("the ffmpeg arguments", () => {
     expect(args.filter((arg) => arg === "-threads")).toHaveLength(1);
     expect(args[args.indexOf("-threads") + 1]).toBe("1");
     for (const tier of ["auto", "sharp", "saver"] as const) {
-      const forTier = ffmpegArgs({ display: ":0", width: 1024, height: 768, tier });
+      const forTier = ffmpegArgs({
+        display: ":0",
+        width: 1024,
+        height: 768,
+        tier,
+      });
       expect(forTier.filter((arg) => arg === "-threads")).toHaveLength(1);
       // Ahead of the output, or ffmpeg reads it as an output option for a
       // muxer that has no use for it.
-      expect(forTier.indexOf("-threads")).toBeLessThan(forTier.lastIndexOf("-f"));
+      expect(forTier.indexOf("-threads")).toBeLessThan(
+        forTier.lastIndexOf("-f"),
+      );
     }
   });
 
@@ -302,5 +309,39 @@ describe("the encoder's lifecycle", () => {
     encoder.dispose();
     expect(ffmpeg.latest().killed).toBe(true);
     expect(encoder.subscriberCount()).toBe(0);
+  });
+});
+
+describe("negotiated readable video", () => {
+  it.each([
+    ["auto", 20, 20],
+    ["sharp", 30, 18],
+    ["saver", 10, 23],
+  ] as const)(
+    "%s retains resolution and reduces capture rate before spatial detail",
+    (tier, fps, crf) => {
+      const args = ffmpegArgs({
+        display: ":0",
+        width: 1920,
+        height: 1080,
+        tier,
+        sharp: true,
+      });
+      expect(args.join(" ")).not.toContain("scale=");
+      expect(args[args.indexOf("-framerate") + 1]).toBe(String(fps));
+      expect(args[args.indexOf("-g") + 1]).toBe(String(4 * fps));
+      expect(args[args.indexOf("-crf") + 1]).toBe(String(crf));
+    },
+  );
+  it("negotiates against every watcher and recovers after a legacy viewer leaves", () => {
+    const { encoder, ffmpeg } = build({ tier: "saver" });
+    const sharp = encoder.subscribe(() => {}, true);
+    expect(ffmpeg.spawned.at(-1)?.args.join(" ")).not.toContain("scale=");
+    const legacy = encoder.subscribe(() => {});
+    expect(ffmpeg.spawned.at(-1)?.args.join(" ")).toContain("scale=768");
+    legacy();
+    expect(ffmpeg.spawned.at(-1)?.args.join(" ")).not.toContain("scale=");
+    sharp();
+    expect(ffmpeg.latest().killed).toBe(true);
   });
 });

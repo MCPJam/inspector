@@ -50,6 +50,7 @@ import {
   type EnsureBrowserSessionArgs,
   type SessionSandbox,
 } from "./browser-session.js";
+import { BrowserSessionService } from "./session-service.js";
 import { MCPJAM_BROWSERD_BUNDLE_BASE64 } from "./dist/mcpjam-browserd-bundle.generated.js";
 import { startHostedRecording } from "./hosted-recording.js";
 
@@ -110,10 +111,7 @@ export interface ConnectedSandboxLike {
      * recording read as UTF-8 is a corrupt file, and nothing downstream can
      * tell that apart from a corrupt recording.
      */
-    read?(
-      path: string,
-      options: { format: "bytes" },
-    ): Promise<Uint8Array>;
+    read?(path: string, options: { format: "bytes" }): Promise<Uint8Array>;
   };
   getHost(port: number): string;
 }
@@ -372,6 +370,7 @@ async function connectDesktopSandbox(
 /** The production deps for `ensureBrowserSession`. */
 export function liveBrowserSessionDeps(): BrowserSessionDeps {
   return {
+    sessionService: new BrowserSessionService(),
     reserveDesktop: async ({ bearer, projectId, signal }) => {
       const reserved = await ensureComputerReady({
         bearer,
@@ -450,7 +449,12 @@ export function ensureLiveBrowserSession(
 ): Promise<ComputerHostedBrowserSessionHandle>;
 export function ensureLiveBrowserSession(
   args: EnsureBrowserSessionArgs & {
-    target: { kind: "sandbox"; sandboxRowId: string; sandboxId: string };
+    target: {
+      kind: "sandbox";
+      sandboxRowId: string;
+      sandboxId: string;
+      watched?: boolean;
+    };
   },
 ): Promise<SandboxHostedBrowserSessionHandle>;
 export function ensureLiveBrowserSession(
@@ -465,21 +469,13 @@ export function ensureLiveBrowserSession(
       ...rest,
       target,
     }).then(async (handle) => {
-      // RECORDING STARTS HERE, and only here. A per-run box is the unattended
-      // case — nobody is watching it, so the file is the only account of what
-      // the agent saw — and this door is the one every hosted `browser_*` call
-      // comes through, LAZILY: a run that never touches a browser tool never
-      // reaches this line and never records. Put in `browser-session.ts`
-      // instead it would fire for the member's own Playground computer too,
-      // which has a person watching it and no run to be evidence for.
-      //
-      // Awaited but total: `startHostedRecording` swallows everything, so the
-      // handle is returned on exactly the same schedule whether or not the box
-      // could record.
-      await startHostedRecording(handle, {
-        connect: async (sandboxId) =>
-          connectSessionSandbox(await connectDesktopSandbox(sandboxId)),
-      });
+      // Recording is explicit: conversation-owned sandbox browsers are watched
+      // and must not inherit an eval's ffmpeg capture merely by sharing a target type.
+      if (target.record === true)
+        await startHostedRecording(handle, {
+          connect: async (sandboxId) =>
+            connectSessionSandbox(await connectDesktopSandbox(sandboxId)),
+        });
       return handle;
     });
   }

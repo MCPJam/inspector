@@ -15,7 +15,8 @@ export type SharedChatSourceType = "scenario" | "swarm";
 
 export interface SharedChatThread {
   _id: string;
-  sourceType: SharedChatSourceType;
+  sourceType: SharedChatSourceType | "direct" | "eval";
+  projectId?: string;
   surface?: "preview" | "share_link";
   shareId?: string;
   scenarioId?: string;

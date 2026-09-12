@@ -4,7 +4,7 @@
  *
  * The pixels half of a frame-stream session. Everything else about the
  * session — status, tools, activity, and the commands that drive it — stays on
- * the SSE stream and the HTTP command route; this carries ONLY painted frames,
+ * the SSE stream and the HTTP command route; this carries painted frames,
  * as binary, and carries them for exactly the reason SSE could not: a JPEG
  * base64'd into a JSON envelope costs a third more bytes, a `JSON.parse` of a
  * quarter-megabyte string per paint, and a second decode on the way to an
@@ -19,10 +19,11 @@
  * TRUST MODEL. The token here is the ORDINARY inspector session token — the
  * same one `addTokenToUrl` already puts on the SSE stream — rather than a
  * single-use nonce like the local terminal's. That is a deliberate difference
- * in kind: the terminal opens an interactive shell, while this hands back
- * read-only pixels of a session that same token can already start, drive and
- * close through `/api/mcp/webmcp/*`. A nonce would add ceremony without adding
- * a boundary. The gates, in order:
+ * in kind: the terminal opens an interactive shell, while this views and,
+ * after capability negotiation, drives a browser session the same token can
+ * already start, drive and close through `/api/mcp/webmcp/*`. Socket input is
+ * a write path with the same validation and authority as HTTP input.
+ * The gates, in order:
  *   1. Shutdown latch → 4503 (see `shutdownWebMcpFrameSockets`).
  *   2. `WEBMCP_INSPECTOR_ENABLED` → 4503; the route is additionally mounted
  *      only when `!HOSTED_MODE`, so a hosted replica has no path here at all.
@@ -33,21 +34,35 @@
  *   5. A session that exists → else 4404.
  *
  * Wire protocol:
- *   client → server  text JSON {type:"ping"}
+ *   client → server  text JSON {type:"ping"} or {type:"input",seq,events}
+ *   server → client  text JSON {type:"capabilities",features:["input"]}
+ *   server → client  text JSON {type:"input_ack",seq,dispatched,refused?}
  *   server → client  binary frame   24-byte header + JPEG, see
  *                                   `encodeWebMcpBinaryFrame`
  *   server → client  text JSON {type:"pong"}
  *   server → client  close 4401 unauthorized | 4404 gone | 4503 unavailable
  *
- * No client → server binary, and no commands: input still travels the HTTP
- * command route, which already serializes a gesture's events in order.
+ * No client → server binary. Input is capability-gated for local frame-stream
+ * sessions and ordered by the existing relay queue. Other commands remain HTTP.
+ * Older servers omit the capability, so clients continue ordered HTTP input.
  */
+import {
+  createRelayInputForwarder,
+  type RelayInputForwarder,
+} from "./browser-pane-input-forwarder.js";
+import {
+  webMcpSocketInputSchema,
+  WEBMCP_SOCKET_INPUT_MAX_CHARS,
+  toBrowserPaneInput,
+  fromBrowserPaneInput,
+} from "@/shared/webmcp-input";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { MiddlewareHandler } from "hono";
 import type { WSContext } from "hono/ws";
 import { WEBMCP_INSPECTOR_ENABLED } from "../../config.js";
 import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
-import { validateToken } from "../../services/session-token.js";
+import { consumeLocalNonce } from "../../utils/computers/local-terminal-auth.js";
+import { inspectionNonceScope } from "../../services/webmcp-inspector/local-authorization.js";
 import { webMcpSessions } from "../../services/webmcp-inspector/session-registry.js";
 import {
   createFramePacer,
@@ -189,13 +204,14 @@ export function createWebMcpFramesWsHandler(
     { onError: (err: unknown) => void }
   >,
 ): MiddlewareHandler {
-  return upgradeWebSocket((c) => {
+  return upgradeWebSocket(async (c) => {
     // The token rides `Sec-WebSocket-Protocol`: no custom headers on a browser
     // WS handshake, and a query string would land in access logs. No fallback.
     const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
     const token = protocolHeader.split(",")[0]?.trim() ?? "";
     const origin = c.req.header("Origin");
     const sessionId = c.req.param("id") ?? "";
+    const claim = consumeLocalNonce("webmcp-frames", token);
 
     // Everything resolvable before the socket opens is resolved here; a
     // failure becomes an immediate close-with-code in `onOpen`, because
@@ -217,12 +233,20 @@ export function createWebMcpFramesWsHandler(
       // on a bare Hono app.
       rejectCode = CLOSE_UNAUTHORIZED;
       rejectMessage = "Frame requests must come from the inspector UI.";
-    } else if (!validateToken(token)) {
+    } else if (!claim) {
       rejectCode = CLOSE_UNAUTHORIZED;
       rejectMessage = "Invalid session token.";
     } else {
       try {
-        webMcpSessions.get(sessionId);
+        const runtime = webMcpSessions.get(sessionId);
+        const scope = runtime.localAuthorization?.scope;
+        if (
+          !scope ||
+          claim.projectId !== inspectionNonceScope(sessionId, scope) ||
+          claim.consentFingerprint !== scope.consentFingerprint
+        )
+          throw new Error("unauthorized");
+        await runtime.assertAuthorized();
       } catch {
         rejectCode = CLOSE_GONE;
         rejectMessage = "That WebMCP session no longer exists.";
@@ -233,9 +257,20 @@ export function createWebMcpFramesWsHandler(
     let unsubscribe: (() => void) | undefined;
     let pacer: FramePacer | undefined;
     let closed = false;
+    let input: RelayInputForwarder | undefined;
+    const pendingInput = new Set<number>();
+    let lastInputSeq = -1;
 
+    let unregisterInputDrain: (() => void) | undefined;
+    let unregisterConsent: (() => void) | undefined;
     const teardown = () => {
       closed = true;
+      unregisterConsent?.();
+      unregisterInputDrain?.();
+      unregisterInputDrain = undefined;
+      input?.cancel();
+      input = undefined;
+      pendingInput.clear();
       unsubscribe?.();
       unsubscribe = undefined;
       pacer?.close();
@@ -243,7 +278,7 @@ export function createWebMcpFramesWsHandler(
     };
 
     return {
-      onOpen: (_evt, ws) => {
+      onOpen: async (_evt, ws) => {
         if (rejectCode !== null) {
           ws.close(rejectCode, rejectMessage.slice(0, 120));
           return;
@@ -259,6 +294,14 @@ export function createWebMcpFramesWsHandler(
         let runtime;
         try {
           runtime = webMcpSessions.get(sessionId);
+          await runtime.assertAuthorized();
+          unregisterConsent = runtime.localAuthorization?.lifetime.onRevoked(
+            () => {
+              teardown();
+              liveSockets.delete(ws);
+              ws.close(CLOSE_UNAUTHORIZED, "Browser permission changed.");
+            },
+          );
         } catch {
           // Reaped between the handshake and the open.
           ws.close(CLOSE_GONE, "That WebMCP session no longer exists.");
@@ -281,60 +324,173 @@ export function createWebMcpFramesWsHandler(
         });
         pacer = framePacer;
 
-        unsubscribe = runtime.hub.subscribe((event) => {
-          if (closed) return;
-          if (event.type === "frame") {
-            // Base64 → bytes ONCE, here, per send. The in-memory frame stays
-            // base64 so the hub and the SSE route are untouched by this
-            // transport existing.
-            framePacer.push(
-              encodeWebMcpBinaryFrame({
-                deviceWidth: event.frame.deviceWidth,
-                deviceHeight: event.frame.deviceHeight,
-                // Forwarded rather than defaulted here: a frame captured at
-                // two device pixels per CSS pixel and reported as one would
-                // put every click at double its true coordinate.
-                ...(event.frame.scale !== undefined
-                  ? { scale: event.frame.scale }
-                  : {}),
-                ts: event.frame.ts,
-                seq: event.seq,
-                jpeg: Buffer.from(event.frame.data, "base64"),
+        // Only a local streamed page accepts socket input. Electron surfaces
+        // receive native input, and hosted viewers use their own connection.
+        if (runtime.toPublic().viewportTransport.kind === "frame-stream") {
+          input = createRelayInputForwarder({
+            preserveGestureBoundaries: true,
+            dispatch: async ({ events, tabId }) => {
+              try {
+                if (
+                  closed ||
+                  ws.readyState !== 1 ||
+                  webMcpSessions.get(sessionId) !== runtime
+                ) {
+                  return { ok: false, refused: "no_browser_session" };
+                }
+                await runtime.assertAuthorized();
+                webMcpSessions.touch(runtime);
+              } catch {
+                return { ok: false, refused: "no_browser_session" };
+              }
+              await runtime.dispatchInput(
+                events.map(fromBrowserPaneInput),
+                () => closed || ws.readyState !== 1,
+                "socket",
+                tabId,
+              );
+              return { ok: true };
+            },
+            ack: (payload) => {
+              pendingInput.delete(payload.seq);
+              if (!closed)
+                ws.send(JSON.stringify({ type: "input_ack", ...payload }));
+            },
+          });
+          const relay = input;
+          unregisterInputDrain = runtime.registerSocketInputDrain(() =>
+            relay.drain(),
+          );
+          ws.send(
+            JSON.stringify({ type: "capabilities", features: ["input"] }),
+          );
+        }
+
+        // THROUGH THE REGISTRY, not `runtime.hub` directly. Subscribing to the
+        // hub delivers frames perfectly well but is invisible to
+        // `hasSubscribers`, so a viewer on this binary wire counted as nobody:
+        // the idle sweep could reap a session being watched, and the hosted
+        // tool poll — which deliberately spends no daemon command budget on an
+        // unobserved page — stayed silent for a pane someone had open.
+        unsubscribe = webMcpSessions.subscribeTo(
+          runtime,
+          (event) => {
+            // Authorization is re-checked per event, not just at subscribe:
+            // Browser permission can be revoked mid-stream, and frames must
+            // stop at that instant rather than at the next handshake.
+            if (closed || !runtime.isAuthorized()) return;
+            if (event.type === "frame") {
+              // Base64 → bytes ONCE, here, per send. The in-memory frame stays
+              // base64 so the hub and the SSE route are untouched by this
+              // transport existing.
+              framePacer.push(
+                encodeWebMcpBinaryFrame({
+                  deviceWidth: event.frame.deviceWidth,
+                  deviceHeight: event.frame.deviceHeight,
+                  // Forwarded rather than defaulted here: a frame captured at
+                  // two device pixels per CSS pixel and reported as one would
+                  // put every click at double its true coordinate.
+                  ...(event.frame.scale !== undefined
+                    ? { scale: event.frame.scale }
+                    : {}),
+                  ts: event.frame.ts,
+                  seq: event.seq,
+                  jpeg: Buffer.from(event.frame.data, "base64"),
+                }),
+              );
+              return;
+            }
+            if (
+              event.type === "session" &&
+              (event.session.status === "closed" ||
+                event.session.status === "error")
+            ) {
+              // No further paint is ever coming from a closed or crashed
+              // browser. Closing says so, rather than leaving a socket that
+              // looks live feeding a pane that will never update again; the
+              // client's SSE stream carries the reason.
+              teardown();
+              liveSockets.delete(ws);
+              ws.close(CLOSE_GONE, "That WebMCP session is over.");
+            }
+          },
+          FRAME_REPLAY,
+        );
+      },
+
+      onMessage: async (evt, ws) => {
+        try {
+          await webMcpSessions.get(sessionId).assertAuthorized();
+        } catch {
+          teardown();
+          ws.close(CLOSE_UNAUTHORIZED, "Browser permission changed.");
+          return;
+        }
+        const data = evt.data;
+        if (closed || rejectCode !== null || typeof data !== "string") return;
+        if (!isFramePingMessage(data)) {
+          if (!input || data.length > WEBMCP_SOCKET_INPUT_MAX_CHARS) return;
+          let payload: unknown;
+          try {
+            payload = JSON.parse(data);
+          } catch {
+            return;
+          }
+          const parsed = webMcpSocketInputSchema.safeParse(payload);
+          if (!parsed.success) {
+            const seq = (payload as { seq?: unknown } | null)?.seq;
+            if (
+              typeof seq === "number" &&
+              Number.isSafeInteger(seq) &&
+              seq >= 0
+            ) {
+              ws.send(
+                JSON.stringify({
+                  type: "input_ack",
+                  seq,
+                  dispatched: 0,
+                  refused: "invalid_input",
+                }),
+              );
+            }
+            return;
+          }
+          const { seq, events } = parsed.data;
+          // Bound pending acknowledgements and raw events even when a browser
+          // stalls. Replayed sequence IDs must never repeat a click or paste.
+          if (seq <= lastInputSeq || pendingInput.size >= 16) {
+            ws.send(
+              JSON.stringify({
+                type: "input_ack",
+                seq,
+                dispatched: 0,
+                refused: seq <= lastInputSeq ? "invalid_input" : "overloaded",
               }),
             );
             return;
           }
-          if (
-            event.type === "session" &&
-            (event.session.status === "closed" ||
-              event.session.status === "error")
-          ) {
-            // No further paint is ever coming from a closed or crashed
-            // browser. Closing says so, rather than leaving a socket that
-            // looks live feeding a pane that will never update again; the
-            // client's SSE stream carries the reason.
-            teardown();
-            liveSockets.delete(ws);
-            ws.close(CLOSE_GONE, "That WebMCP session is over.");
-          }
-        }, FRAME_REPLAY);
-      },
-
-      onMessage: (evt, ws) => {
-        // Text control messages only. This direction carries no input: a
-        // gesture's events are ordered by the HTTP command chain, and a second
-        // ordering domain would be a second way to get a drag wrong.
-        const data = evt.data;
-        if (typeof data !== "string") return;
-        if (!isFramePingMessage(data)) return;
+          lastInputSeq = seq;
+          pendingInput.add(seq);
+          input.submit({
+            seq,
+            events: events.map(toBrowserPaneInput),
+            tabId: parsed.data.tabId,
+          });
+          return;
+        }
         // A ping is a viewer saying they are still watching, so it refreshes
         // the idle deadline. Without this a session whose only audience is the
         // pane — no navigation, no invocation, nothing else touching the
         // registry — is reaped out from under someone looking straight at it.
         // Bounded by the client's own 30s cadence, so it cannot be used to
         // hold a session open faster than a real viewer would.
+        //
+        // It ALSO marks the session watched, which is a stronger claim than
+        // "a stream is attached": the client sends this only while its pane is
+        // the visible tab and the document is visible. For a hosted session
+        // that is what decides whether a metered desktop box is held awake.
         try {
-          webMcpSessions.touch(webMcpSessions.get(sessionId));
+          webMcpSessions.markWatched(sessionId);
         } catch {
           // Already gone; the session-event branch owns the close.
         }

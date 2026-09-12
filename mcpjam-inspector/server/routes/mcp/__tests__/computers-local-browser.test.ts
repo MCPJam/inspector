@@ -25,6 +25,23 @@ vi.mock("node:os", async () => {
 });
 
 const authState = vi.hoisted(() => ({ verified: true, guest: false }));
+vi.mock(
+  "../../../utils/computers/browser-rollout.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../utils/computers/browser-rollout.js")
+    >()),
+    resolveBrowserRollout: async () => ({
+      enabled: authState.verified,
+      actor: authState.verified
+        ? {
+            id: authState.guest ? "guest-1" : "member-1",
+            guest: authState.guest,
+          }
+        : null,
+    }),
+  }),
+);
 vi.mock("../../../middleware/bearer-auth.js", () => ({
   bearerAuthMiddleware: (c: any, next: any) => {
     if (authState.guest) c.set("guestId", "guest-1");
@@ -36,14 +53,19 @@ vi.mock("../../../middleware/require-verified-auth.js", () => ({
     authState.verified ? next() : c.json({ error: "unauthorized" }, 401),
 }));
 
-const configState = vi.hoisted(() => ({ browserEnabled: true }));
+const enableClients = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/computers/local-browser-settings.js", () => ({ enableLocalBrowserClients: enableClients }));
+
+const configState = vi.hoisted(() => ({ browserEnabled: true, hosted: false }));
 vi.mock("../../../config.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../../config.js")>(
-      "../../../config.js",
-    );
+  const actual = await vi.importActual<typeof import("../../../config.js")>(
+    "../../../config.js",
+  );
   return {
     ...actual,
+    get HOSTED_MODE() {
+      return configState.hosted;
+    },
     get LOCAL_BROWSER_ENABLED() {
       return configState.browserEnabled;
     },
@@ -53,10 +75,11 @@ vi.mock("../../../config.js", async () => {
 const chromiumState = vi.hoisted(() => ({
   installed: false,
   installs: 0,
+  install: { status: "idle" } as Record<string, unknown>,
 }));
 vi.mock("../../../utils/browser-rendering-setup.js", () => ({
   isChromiumInstalled: async () => chromiumState.installed,
-  getChromiumInstallState: () => ({ status: "idle" as const }),
+  getChromiumInstallState: () => chromiumState.install,
   startChromiumInstall: async () => {
     chromiumState.installs += 1;
     return { status: "installing" as const, percent: 0 };
@@ -90,6 +113,7 @@ const browserKeyFor = vi.hoisted(
   () =>
     (args: {
       projectId: string;
+      sessionId?: string;
       contextMode?: string;
       ownerKey?: string;
       captureTypedText?: boolean;
@@ -98,6 +122,8 @@ const browserKeyFor = vi.hoisted(
         ? `${args.projectId}:ephemeral:${
             args.captureTypedText ? "typed" : "redacted"
           }:${args.ownerKey}`
+        : args.sessionId
+        ? `${args.projectId}:session:${args.sessionId}`
         : `${args.projectId}:persistent`,
 );
 
@@ -105,11 +131,10 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   // The session store derives every path from this, and `homedir` is already
   // pointed at the scratch tree — so the real rule, not a stub, keeps the
   // store's own path checks doing their job.
-  getLocalBrowserRoot: () =>
-    join(scratch, ".mcpjam", "computer", "browser"),
+  getLocalBrowserRoot: () => join(scratch, ".mcpjam", "computer", "browser"),
   listLocalBrowserSessions: () =>
     [...browserState.sessions.values()].map((s: any) => ({
-      key: "proj",
+      key: s.key,
       handle: s.handle,
       lastUsedAt: 0,
       leaseHeld: s.lease.isBlocking(),
@@ -147,7 +172,23 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   // a Chromium, and this fake models exactly that.
   findLocalBrowserSessionForProject: (projectId: string) => {
     if (projectId === "bad/project") throw new Error("invalid project key");
-    return [...browserState.sessions.values()][0];
+    const bootId = browserState.byKey.get(`${projectId}:persistent`);
+    return bootId ? browserState.sessions.get(bootId) : undefined;
+  },
+  findLocalBrowserSessionForSession: (projectId: string, sessionId: string) => {
+    if (
+      !/^[A-Za-z0-9_-]{1,64}$/.test(projectId) ||
+      !/^[A-Za-z0-9_-]{1,64}$/.test(sessionId)
+    ) {
+      throw new Error("invalid identity");
+    }
+    const bootId = browserState.byKey.get(
+      browserKeyFor({ projectId, sessionId }),
+    );
+    return bootId ? browserState.sessions.get(bootId) : undefined;
+  },
+  watchLocalBrowserSession: (handle: { bootId: string }) => {
+    browserState.touched.push(handle.bootId);
   },
   touchLocalBrowserSession: (handle: { bootId: string }) => {
     browserState.touched.push(handle.bootId);
@@ -159,22 +200,28 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   ) => (runtime === "electron" ? browserState.surface : "frames"),
   ensureLocalBrowserSession: async (args: {
     projectId: string;
+    sessionId?: string;
     contextMode?: string;
     ownerKey?: string;
     captureTypedText?: boolean;
   }) => {
     browserState.launched.push({ ...args });
     const key = browserKeyFor(args);
-    const { buildBrowserdStack } =
-      await import("../../../services/browserd/daemon/server.js");
-    const { ChromiumDriver } =
-      await import("../../../services/browserd/daemon/chromium-driver.js");
-    const { HandoffLease } =
-      await import("../../../services/browserd/daemon/lease.js");
-    const { createInProcessBrowserdClient } =
-      await import("../../../services/browserd/in-process-client.js");
-    const { fakeContext, fakePage, fakeCdpSession } =
-      await import("../../../services/browserd/daemon/__tests__/fake-page.js");
+    const { buildBrowserdStack } = await import(
+      "../../../services/browserd/daemon/server.js"
+    );
+    const { ChromiumDriver } = await import(
+      "../../../services/browserd/daemon/chromium-driver.js"
+    );
+    const { HandoffLease } = await import(
+      "../../../services/browserd/daemon/lease.js"
+    );
+    const { createInProcessBrowserdClient } = await import(
+      "../../../services/browserd/in-process-client.js"
+    );
+    const { fakeContext, fakePage, fakeCdpSession } = await import(
+      "../../../services/browserd/daemon/__tests__/fake-page.js"
+    );
     if (browserState.onLaunch) {
       const hook = browserState.onLaunch;
       browserState.onLaunch = null;
@@ -217,17 +264,14 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     return handle;
   },
   LocalBrowserUnavailableError: class extends Error {
-    constructor(
-      readonly code: string,
-      message: string,
-    ) {
+    constructor(readonly code: string, message: string) {
       super(message);
     }
   },
 }));
 
 import computers from "../computers.js";
-import { LOCAL_CONSENT_HEADER } from "../../../utils/computers/local-consent.js";
+import { BROWSER_CONSENT_HEADER } from "../../../utils/computers/browser-consent.js";
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -239,7 +283,7 @@ function createApp() {
 
 async function grantConsent(): Promise<string> {
   const response = await createApp().request(
-    "/api/mcp/computers/local-consent/grant",
+    "/api/mcp/computers/local-browser/consent/grant",
     { method: "POST" },
   );
   return ((await response.json()) as { token: string }).token;
@@ -256,11 +300,139 @@ beforeEach(() => {
   authState.verified = true;
   authState.guest = false;
   configState.browserEnabled = true;
+  configState.hosted = false;
+  enableClients.mockReset().mockResolvedValue({ enabledProjects: 2, skippedProjects: 1 });
   chromiumState.installed = false;
   chromiumState.installs = 0;
   browserState.runtime = "playwright";
   browserState.surface = "native";
   browserState.touched = [];
+});
+
+describe("POST /local-browser/enable-clients", () => {
+  const enable = (token?: string) => createApp().request(
+    "/api/mcp/computers/local-browser/enable-clients",
+    { method: "POST", headers: {
+      Authorization: "Bearer signed-in-user",
+      ...(token ? { [BROWSER_CONSENT_HEADER]: token } : {}),
+    } },
+  );
+
+  it("requires a valid device grant before changing any shared clients", async () => {
+    expect((await enable()).status).toBe(403);
+    expect((await enable("forged-token")).status).toBe(403);
+    expect(enableClients).not.toHaveBeenCalled();
+    const token = await grantConsent();
+    const response = await enable(token);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ enabledProjects: 2, skippedProjects: 1 });
+    expect(enableClients).toHaveBeenCalledWith("signed-in-user");
+  });
+
+  it("is unavailable in hosted mode and while local rollout is off", async () => {
+    const token = await grantConsent();
+    configState.hosted = true;
+    expect((await enable(token)).status).toBe(404);
+    configState.hosted = false;
+    configState.browserEnabled = false;
+    expect((await enable(token)).status).toBe(404);
+    expect(enableClients).not.toHaveBeenCalled();
+  });
+
+  it("requires verified credentials", async () => {
+    const token = await grantConsent();
+    authState.verified = false;
+    expect((await enable(token)).status).toBe(401);
+    expect(enableClients).not.toHaveBeenCalled();
+  });
+
+  it("allows guests on this device without changing shared clients", async () => {
+    const token = await grantConsent();
+    authState.guest = true;
+    const response = await enable(token);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ scope: "device", enabledProjects: 0 });
+    expect(enableClients).not.toHaveBeenCalled();
+    expect((await enable()).status).toBe(403);
+  });
+
+  it("allows retry after backend failure with the same consent capability", async () => {
+    const token = await grantConsent();
+    enableClients.mockRejectedValueOnce(new Error("Backend unavailable"));
+    const failure = await enable(token);
+    expect(failure.status).toBe(503);
+    expect(await failure.json()).toMatchObject({ code: "browser_client_setup_failed" });
+    expect((await enable(token)).status).toBe(200);
+    expect(enableClients).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("POST /local-browser/lookup", () => {
+  const request = (path: string, body: unknown, token: string | null) =>
+    createApp().request(`/api/mcp/computers/local-browser/${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { [BROWSER_CONSENT_HEADER]: token } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+  it("finds each conversation's existing boot without starting or navigating", async () => {
+    const token = await grantConsent();
+    const a = { projectId: "proj", sessionId: "chat-a" };
+    const b = { projectId: "proj", sessionId: "chat-b" };
+    const first = await (await request("ensure", a, token)).json();
+    const second = await (await request("ensure", b, token)).json();
+    browserState.launched = [];
+    expect(first.bootId).not.toBe(second.bootId);
+    for (const [body, boot] of [
+      [a, first],
+      [b, second],
+      [a, first],
+    ] as const) {
+      const res = await request("lookup", body, token);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ session: boot });
+    }
+    expect(browserState.launched).toEqual([]);
+    expect(browserState.cdpSent).toEqual([]);
+  });
+
+  it("does not fall back to another conversation or project", async () => {
+    const token = await grantConsent();
+    await request("ensure", { projectId: "proj", sessionId: "chat-a" }, token);
+    browserState.launched = [];
+    for (const body of [
+      { projectId: "proj", sessionId: "chat-b" },
+      { projectId: "other", sessionId: "chat-a" },
+    ]) {
+      expect(await (await request("lookup", body, token)).json()).toEqual({
+        session: null,
+      });
+    }
+    expect(browserState.launched).toEqual([]);
+  });
+
+  it.each([
+    null,
+    {},
+    { projectId: "proj" },
+    { projectId: "proj", sessionId: "../chat" },
+  ])("rejects malformed identity %j", async (body) => {
+    expect((await request("lookup", body, await grantConsent())).status).toBe(
+      400,
+    );
+  });
+
+  it("requires consent and respects the browser kill switch", async () => {
+    const body = { projectId: "proj", sessionId: "chat-a" };
+    expect((await request("lookup", body, null)).status).toBe(403);
+    configState.browserEnabled = false;
+    expect((await request("lookup", body, await grantConsent())).status).toBe(
+      404,
+    );
+  });
 });
 
 describe("POST /local-browser/watch", () => {
@@ -269,7 +441,7 @@ describe("POST /local-browser/watch", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(token ? { [LOCAL_CONSENT_HEADER]: token } : {}),
+        ...(token ? { [BROWSER_CONSENT_HEADER]: token } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -286,7 +458,7 @@ describe("POST /local-browser/watch", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({ projectId: "proj" }),
       },
@@ -318,7 +490,7 @@ describe("POST /local-browser/watch", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({ projectId: "proj" }),
       },
@@ -364,6 +536,27 @@ describe("GET /local-browser/status", () => {
     });
   });
 
+  it("passes a failure through whole: reason, details, and the next retry", async () => {
+    // The pane shows all three; a route that re-derived the state would
+    // have to know the shape, and would drop whatever it did not know.
+    chromiumState.install = {
+      status: "failed",
+      error: "Download failed: server returned code 403",
+      details:
+        "Failed to install browsers\nDownload failed: server returned code 403",
+      retryAt: 1_700_000_000_000,
+      attempts: 1,
+    };
+    try {
+      expect(await (await status()).json()).toMatchObject({
+        installed: false,
+        install: chromiumState.install,
+      });
+    } finally {
+      chromiumState.install = { status: "idle" };
+    }
+  });
+
   it("answers without consent, so the consent screen can describe itself", async () => {
     expect((await status()).status).toBe(200);
   });
@@ -406,16 +599,32 @@ describe("GET /local-browser/status", () => {
     expect((await status()).status).toBe(404);
   });
 
-  it("401s an unverified caller and 403s a guest", async () => {
+  it("401s an unverified caller and admits a verified local guest", async () => {
     authState.verified = false;
     expect((await status()).status).toBe(401);
     authState.verified = true;
     authState.guest = true;
-    expect((await status()).status).toBe(403);
+    expect((await status()).status).toBe(200);
   });
 });
 
 describe("driving the browser from the pane", () => {
+  it("isolates guest browsers and rejects member boot ids, including after consent", async () => {
+    const token = await grantConsent();
+    const member = await ensured(token);
+    authState.guest = true;
+    const guest = await ensured(token);
+    expect(guest.bootId).not.toBe(member.bootId);
+    expect(browserState.launched.at(-1)?.projectId).toMatch(/^guest-browser-/);
+    const denied = await post("state", token, { bootId: member.bootId });
+    expect(denied.status).toBe(404);
+    expect((await post("state", token, { bootId: guest.bootId })).status).toBe(
+      200,
+    );
+    expect(
+      (await post("profile/export", token, { bootId: guest.bootId })).status,
+    ).toBe(403);
+  });
   async function ensured(token: string) {
     const res = await createApp().request(
       "/api/mcp/computers/local-browser/ensure",
@@ -423,7 +632,7 @@ describe("driving the browser from the pane", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({ projectId: "proj-1" }),
       },
@@ -436,7 +645,7 @@ describe("driving the browser from the pane", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [LOCAL_CONSENT_HEADER]: token,
+        [BROWSER_CONSENT_HEADER]: token,
       },
       body: JSON.stringify(body),
     });
@@ -571,8 +780,9 @@ describe("driving the browser from the pane", () => {
   });
 
   it("mints a frames nonce that is single-use and kind-bound", async () => {
-    const { consumeLocalNonce } =
-      await import("../../../utils/computers/local-terminal-auth.js");
+    const { consumeLocalNonce } = await import(
+      "../../../utils/computers/local-terminal-auth.js"
+    );
     const token = await grantConsent();
     const res = await post("token", token, { projectId: "proj-1" });
     const { nonce } = (await res.json()) as { nonce: string };
@@ -600,7 +810,7 @@ describe("POST /local-browser/install", () => {
 
   it("starts the install for a consenting user", async () => {
     const token = await grantConsent();
-    const res = await install({ [LOCAL_CONSENT_HEADER]: token });
+    const res = await install({ [BROWSER_CONSENT_HEADER]: token });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       install: { status: "installing" },
@@ -616,7 +826,7 @@ describe("POST /local-browser/install", () => {
     browserState.runtime = "electron";
     const token = await grantConsent();
 
-    const res = await install({ [LOCAL_CONSENT_HEADER]: token });
+    const res = await install({ [BROWSER_CONSENT_HEADER]: token });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ install: { status: "ready" } });
@@ -625,7 +835,9 @@ describe("POST /local-browser/install", () => {
 
   it("refuses a consent token that is not this machine's", async () => {
     await grantConsent();
-    const res = await install({ [LOCAL_CONSENT_HEADER]: "not-the-capability" });
+    const res = await install({
+      [BROWSER_CONSENT_HEADER]: "not-the-capability",
+    });
     expect(res.status).toBe(403);
     expect(chromiumState.installs).toBe(0);
   });
@@ -645,7 +857,7 @@ describe("POST /local-browser/page-tools", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(token ? { [LOCAL_CONSENT_HEADER]: token } : {}),
+        ...(token ? { [BROWSER_CONSENT_HEADER]: token } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -655,7 +867,7 @@ describe("POST /local-browser/page-tools", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [LOCAL_CONSENT_HEADER]: token,
+        [BROWSER_CONSENT_HEADER]: token,
       },
       body: JSON.stringify({ projectId: "proj" }),
     });
@@ -717,6 +929,83 @@ describe("POST /local-browser/page-tools", () => {
     expect(await res.json()).toEqual({ ok: false, error: "no_page" });
   });
 
+  it("reads the conversation's browser, not the project's leftover one", async () => {
+    // Playground chat and the pane drive `<project>:session:<id>`. A read that
+    // still looked up the persistent Chromium answered `no_browser_session`
+    // while the model was already calling that page's tools.
+    const token = await grantConsent();
+    await createApp().request("/api/mcp/computers/local-browser/ensure", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [BROWSER_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify({ projectId: "proj", sessionId: "chat-1" }),
+    });
+    await openAPage();
+
+    const missed = await pageTools({ projectId: "proj" }, token);
+    expect(missed.status).toBe(409);
+    expect(await missed.json()).toEqual({
+      ok: false,
+      error: "no_browser_session",
+    });
+
+    const res = await pageTools(
+      { projectId: "proj", sessionId: "chat-1" },
+      token,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, webmcpSupported: false });
+  });
+
+  it("lets the pane that holds the lease still read the page", async () => {
+    // The Tools list and the Browser pane share one holder. Without naming it,
+    // a click that took the page (or a leftover parked hold) made the list
+    // say someone else had the browser while the model could still call the
+    // tools after the next hand-back.
+    const token = await grantConsent();
+    const ensured = await createApp().request(
+      "/api/mcp/computers/local-browser/ensure",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [BROWSER_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({ projectId: "proj", sessionId: "chat-1" }),
+      },
+    );
+    const { bootId } = (await ensured.json()) as { bootId: string };
+    await openAPage();
+    await createApp().request("/api/mcp/computers/local-browser/lease", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [BROWSER_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify({
+        bootId,
+        action: "acquire",
+        holder: "rail-tools",
+      }),
+    });
+
+    const blocked = await pageTools(
+      { projectId: "proj", sessionId: "chat-1" },
+      token,
+    );
+    expect(blocked.status).toBe(423);
+    expect(await blocked.json()).toEqual({ ok: false, error: "lease_held" });
+
+    const res = await pageTools(
+      { projectId: "proj", sessionId: "chat-1", holder: "rail-tools" },
+      token,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true });
+  });
+
   it("does not start a browser to answer", async () => {
     const token = await grantConsent();
     // Nothing running for this project.
@@ -738,6 +1027,15 @@ describe("POST /local-browser/page-tools", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400s a malformed conversation id rather than reporting no browser", async () => {
+    const token = await grantConsent();
+    const res = await pageTools(
+      { projectId: "proj", sessionId: "../chat" },
+      token,
+    );
+    expect(res.status).toBe(400);
+  });
+
   it("does not count the read as use of the machine", async () => {
     // A pane polling a tool list is not somebody using the browser; counting it
     // would keep the idle reap from ever closing an abandoned one.
@@ -748,6 +1046,179 @@ describe("POST /local-browser/page-tools", () => {
     await pageTools({ projectId: "proj" }, token);
 
     expect(browserState.touched).toEqual([]);
+  });
+});
+
+describe("POST /local-browser/page-tools/invoke", () => {
+  const invoke = (body: unknown, token: string | null) =>
+    createApp().request("/api/mcp/computers/local-browser/page-tools/invoke", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { [BROWSER_CONSENT_HEADER]: token } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+  async function startBrowser(
+    token: string,
+    extra: Record<string, unknown> = {},
+  ): Promise<void> {
+    await createApp().request("/api/mcp/computers/local-browser/ensure", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [BROWSER_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify({ projectId: "proj", ...extra }),
+    });
+  }
+
+  function wrapSendCommand(): unknown[] {
+    const session = [...browserState.sessions.values()][0];
+    const sent: unknown[] = [];
+    const original = session.client.sendCommand.bind(session.client);
+    session.client.sendCommand = async (command, bootId) => {
+      sent.push(command);
+      return original(command, bootId);
+    };
+    return sent;
+  }
+
+  it("requires consent", async () => {
+    const res = await invoke({ projectId: "proj", toolKey: "add_topping" }, null);
+    expect(res.status).toBe(403);
+  });
+
+  it("does not start a browser to answer", async () => {
+    const token = await grantConsent();
+    const res = await invoke(
+      { projectId: "proj", toolKey: "add_topping" },
+      token,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "no_browser_session",
+    });
+    expect(browserState.sessions.size).toBe(0);
+  });
+
+  it("goes out as inspector while the agent is driving, and ignores a body-supplied source", async () => {
+    const token = await grantConsent();
+    await startBrowser(token, { sessionId: "chat-1" });
+    const sent = wrapSendCommand();
+
+    await invoke(
+      {
+        projectId: "proj",
+        sessionId: "chat-1",
+        toolKey: "add_topping",
+        source: "agent",
+        input: { topping: "pepperoni" },
+        holder: "rail-tools",
+      },
+      token,
+    );
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      source: "inspector",
+      action: {
+        kind: "webmcp_invoke",
+        toolKey: "add_topping",
+        input: { topping: "pepperoni" },
+      },
+    });
+    expect(sent[0]).not.toHaveProperty("holder");
+  });
+
+  it("invokes against the conversation's browser, not the project's leftover one", async () => {
+    const token = await grantConsent();
+    await startBrowser(token, { sessionId: "chat-1" });
+
+    const missed = await invoke(
+      { projectId: "proj", toolKey: "add_topping" },
+      token,
+    );
+    expect(missed.status).toBe(409);
+    expect(await missed.json()).toEqual({
+      ok: false,
+      error: "no_browser_session",
+    });
+
+    const sent = wrapSendCommand();
+    await invoke(
+      { projectId: "proj", sessionId: "chat-1", toolKey: "add_topping" },
+      token,
+    );
+    // The fake page has no WebMCP bridge; what matters is the command reached
+    // THIS conversation's session rather than reporting nothing is running.
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      source: "inspector",
+      action: { kind: "webmcp_invoke", toolKey: "add_topping" },
+    });
+  });
+
+  it("retries as this holder's manual command when they have taken the page", async () => {
+    const token = await grantConsent();
+    const ensured = await createApp().request(
+      "/api/mcp/computers/local-browser/ensure",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [BROWSER_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({ projectId: "proj", sessionId: "chat-1" }),
+      },
+    );
+    const { bootId } = (await ensured.json()) as { bootId: string };
+    await createApp().request("/api/mcp/computers/local-browser/lease", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [BROWSER_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify({
+        bootId,
+        action: "acquire",
+        holder: "rail-tools",
+      }),
+    });
+
+    const sent = wrapSendCommand();
+    const blocked = await invoke(
+      { projectId: "proj", sessionId: "chat-1", toolKey: "add_topping" },
+      token,
+    );
+    expect(blocked.status).toBe(423);
+    expect(await blocked.json()).toEqual({ ok: false, error: "lease_held" });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ source: "inspector" });
+
+    const res = await invoke(
+      {
+        projectId: "proj",
+        sessionId: "chat-1",
+        toolKey: "add_topping",
+        holder: "rail-tools",
+      },
+      token,
+    );
+    expect(res.status).not.toBe(423);
+    expect(sent[1]).toMatchObject({ source: "inspector" });
+    expect(sent[2]).toMatchObject({
+      source: "manual",
+      holder: "rail-tools",
+    });
+  });
+
+  it("400s without a toolKey", async () => {
+    const token = await grantConsent();
+    const res = await invoke({ projectId: "proj" }, token);
+    expect(res.status).toBe(400);
   });
 });
 
@@ -766,7 +1237,7 @@ describe("the agent door's session routes", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [LOCAL_CONSENT_HEADER]: token,
+        [BROWSER_CONSENT_HEADER]: token,
       },
       body: JSON.stringify(body),
     });
@@ -776,7 +1247,7 @@ describe("the agent door's session routes", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [LOCAL_CONSENT_HEADER]: token,
+        [BROWSER_CONSENT_HEADER]: token,
       },
       body: JSON.stringify(body),
     });
@@ -897,7 +1368,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -941,7 +1412,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -973,7 +1444,7 @@ describe("the agent door's session routes", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [LOCAL_CONSENT_HEADER]: token,
+        [BROWSER_CONSENT_HEADER]: token,
       },
       body: JSON.stringify({
         projectId: "proj",
@@ -1007,7 +1478,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -1035,7 +1506,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -1122,7 +1593,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -1217,7 +1688,7 @@ describe("the agent door's session routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [LOCAL_CONSENT_HEADER]: token,
+          [BROWSER_CONSENT_HEADER]: token,
         },
         body: JSON.stringify({
           projectId: "proj",
@@ -1232,4 +1703,22 @@ describe("the agent door's session routes", () => {
     // The run's own browser is untouched by the person's session ending.
     expect(browserState.byKey.has("proj:ephemeral:redacted:run-9")).toBe(true);
   });
+});
+
+it("a real shell grant never authorizes Browser, even under the Browser header", async () => {
+  const { grantLocalComputerConsent } = await import(
+    "../../../utils/computers/local-consent.js"
+  );
+  const shell = await grantLocalComputerConsent();
+  for (const header of ["X-MCPJam-Local-Consent", BROWSER_CONSENT_HEADER]) {
+    const response = await createApp().request(
+      "/api/mcp/computers/local-browser/install",
+      { method: "POST", headers: { [header]: shell.token } },
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "browser_consent_required",
+    });
+  }
+  expect(chromiumState.installs).toBe(0);
 });

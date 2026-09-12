@@ -1,12 +1,4 @@
-/**
- * The spine, and the quiet first-run form in front of it.
- *
- * Two claims are load-bearing here. First, a case that is still just a prompt
- * asks two questions and nothing else — the whole point of the pivot is that a
- * newcomer sees value before they see vocabulary. Second, once the case says
- * more than that, EVERY step is on one list at a position: no leftovers, no
- * hatch to a second editor, and a check nested under the action it grades.
- */
+/** One editor preserves prompt, outcome, and ordered assertions. */
 
 import { useState, type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -128,29 +120,94 @@ const openSpine = async (
 };
 
 describe("the first-run form", () => {
-  it("asks two questions and offers Run — nothing else", () => {
+  it("labels the prompt and outcome and offers Add", () => {
     render(<StatefulSpine runControl={<button>Run test</button>} />);
     expect(screen.getByTestId("case-spine")).toHaveAttribute(
       "data-state",
-      "first-run",
+      "spine",
     );
     expect(screen.getByLabelText("What does the user ask?")).toBeTruthy();
-    expect(
-      screen.getByText("What should a successful answer accomplish?"),
-    ).toBeTruthy();
-    expect(screen.getByText("Run test")).toBeTruthy();
+    expect(screen.getByText("Expected Outcome")).toBeTruthy();
+    expect(screen.queryByText("Run test")).toBeNull();
+    expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
     // The vocabulary a newcomer has not earned yet.
     const text = screen.getByTestId("case-spine").textContent ?? "";
     expect(text).not.toMatch(/Scorers|Gate|Warn|Report|Judge · /);
-    expect(screen.queryByTestId("spine-actions")).toBeNull();
+    expect(screen.getByTestId("spine-actions")).toBeInTheDocument();
     expect(screen.queryByTestId("spine-after-the-run")).toBeNull();
   });
 
-  it("says what the goal sentence is for, in one line", () => {
+  it("retains prompt and outcome fields when adding an assertion", async () => {
+    const user = userEvent.setup();
+    render(
+      <StatefulSpine
+        expectedOutput="Shows my email"
+        defaultChecks={<button>Show default assertions</button>}
+      />,
+    );
+    const prompt = screen.getByLabelText("What does the user ask?");
+    const outcome = screen.getByLabelText("Expected Outcome");
+    await user.type(outcome, " correctly");
+    const add = screen.getByRole("button", { name: "Add" });
+    expect(add).toHaveClass("w-full");
+    expect(
+      screen.getByRole("button", { name: "Show default assertions" })
+        .parentElement,
+    ).toHaveClass("justify-end");
+    await user.click(add);
+    await user.type(
+      screen.getByLabelText("Filter steps and checks"),
+      "element",
+    );
+    await user.click(screen.getByTestId("add-step-item-widget:elementVisible"));
+    await user.keyboard("{Escape}");
+    expect(screen.getByLabelText("What does the user ask?")).toBe(prompt);
+    expect(screen.getByLabelText("Expected Outcome")).toBe(outcome);
+    expect(outcome).toHaveValue("Shows my email correctly");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("lets the assertion drawer close with Escape and restores trigger focus", async () => {
+    const user = userEvent.setup();
+    render(<StatefulSpine />);
+    const trigger = screen.getByRole("button", { name: "Add" });
+    await user.click(trigger);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Filter steps and checks"),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("adds a check to an empty draft while creating its required prompt", async () => {
+    const onStepsChange = vi.fn();
+    const user = userEvent.setup();
+    render(<StatefulSpine steps={[]} onStepsChange={onStepsChange} />);
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.type(
+      screen.getByLabelText("Filter steps and checks"),
+      "element",
+    );
+    await user.click(screen.getByTestId("add-step-item-widget:elementVisible"));
+    const written = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
+    expect(written[0]).toMatchObject({ kind: "prompt", prompt: "" });
+    expect(written[1]).toMatchObject({
+      kind: "assert",
+      assertion: { kind: "elementVisible" },
+    });
+    expect(screen.getByTestId("case-spine")).toHaveAttribute(
+      "data-state",
+      "spine",
+    );
+  });
+
+  it("keeps the first-run form free of redundant helper copy", () => {
     render(<StatefulSpine />);
     expect(
-      screen.getByText("A model grades each run against this."),
-    ).toBeTruthy();
+      screen.queryByText("A model grades each run against this."),
+    ).not.toBeInTheDocument();
   });
 
   it("writes the prompt through the same writer the form used", async () => {
@@ -163,18 +220,15 @@ describe("the first-run form", () => {
     expect(written[0]).toMatchObject({ kind: "prompt" });
   });
 
-  it("reveals the rest behind More options without losing the prompt", async () => {
-    const user = await openSpine();
-    expect(screen.getByTestId("case-spine")).toHaveAttribute(
-      "data-state",
-      "spine",
-    );
-    expect(screen.getByTestId("spine-after-the-run")).toBeTruthy();
+  it("has no More options switch or auxiliary panels", () => {
+    render(<StatefulSpine />);
+    expect(screen.queryByTestId("spine-more-options")).not.toBeInTheDocument();
     expect(
-      (screen.getByLabelText("What does the user ask?") as HTMLTextAreaElement)
-        .value,
-    ).toContain("Which account");
-    expect(user).toBeTruthy();
+      screen.queryByText("Run checks & judge criteria"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Recording & run options"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the spine directly once the case carries a check", () => {
@@ -232,10 +286,9 @@ describe("the spine", () => {
     const onStepsChange = vi.fn();
     const user = await openSpine({ steps: golden, onStepsChange });
     const [prompt] = screen.getAllByTestId("spine-action-row");
-    await user.click(
-      within(prompt!).getByRole("button", { name: "Add a check after this" }),
-    );
-    await user.click(screen.getByTestId("add-scorer-noToolErrors"));
+    await user.click(within(prompt!).getByRole("button", { name: "Add" }));
+    await user.type(screen.getByLabelText("Filter steps and checks"), "errors");
+    await user.click(screen.getByTestId("add-step-item-check:noToolErrors"));
     const written = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
     // After the prompt's whole block — behind a1 and a2, never in front of
     // a gate that already exists.
@@ -250,33 +303,14 @@ describe("the spine", () => {
   it("offers view checks only where a position exists", async () => {
     const user = await openSpine({ steps: withClick });
     const [, click] = screen.getAllByTestId("spine-action-row");
-    await user.click(
-      within(click!).getByRole("button", { name: "Add a check after this" }),
+    await user.click(within(click!).getByRole("button", { name: "Add" }));
+    await user.type(
+      screen.getByLabelText("Filter steps and checks"),
+      "element",
     );
     expect(
-      screen.getByTestId("add-widget-check-widgetToolCalled"),
+      screen.getByTestId("add-step-item-widget:elementVisible"),
     ).toBeTruthy();
-  });
-
-  it("adds a whole-run check to the envelope, not to the steps", async () => {
-    const onStepsChange = vi.fn();
-    const onPredicatesChange = vi.fn();
-    const user = await openSpine({
-      steps: golden,
-      onStepsChange,
-      onPredicatesChange,
-    });
-    const after = screen.getByTestId("spine-after-the-run");
-    await user.click(
-      within(after).getByRole("button", {
-        name: "Add a check on the whole run",
-      }),
-    );
-    await user.click(screen.getByTestId("add-scorer-tokenBudgetUnder"));
-    expect(onPredicatesChange).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: "extend" }),
-    );
-    expect(onStepsChange).not.toHaveBeenCalled();
   });
 
   it("lets a recorded view check be edited, which the form could not", async () => {
@@ -300,7 +334,7 @@ describe("the spine", () => {
 
   it("asks before a delete would re-parent checks to another step", async () => {
     const onStepsChange = vi.fn();
-    const user = await openSpine({ steps: twoTurn, onStepsChange });
+    const user = await openSpine({ steps: withClick, onStepsChange });
     await user.click(screen.getByRole("button", { name: "Remove step 2" }));
     expect(screen.getByTestId("spine-delete-action")).toBeTruthy();
     expect(
@@ -309,16 +343,17 @@ describe("the spine", () => {
     expect(onStepsChange).not.toHaveBeenCalled();
   });
 
-  it("warns that the first step's checks would run before any prompt", async () => {
-    const user = await openSpine({ steps: golden });
-    await user.click(screen.getByRole("button", { name: "Remove step 1" }));
-    expect(screen.getByText(/would run before any prompt/)).toBeTruthy();
+  it("keeps every prompt editable but never removable", async () => {
+    await openSpine({ steps: twoTurn });
+    expect(screen.queryByRole("button", { name: "Remove step 1" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove step 2" })).toBeNull();
+    expect(screen.getByLabelText("What does the user ask?")).toBeEnabled();
   });
 
   it("deletes without asking when the action stands alone", async () => {
     const onStepsChange = vi.fn();
     const user = await openSpine({
-      steps: [...promptOnly, { id: "turn-2", kind: "prompt", prompt: "b" }],
+      steps: [...promptOnly, withClick[1]],
       onStepsChange,
     });
     await user.click(screen.getByRole("button", { name: "Remove step 2" }));
@@ -338,43 +373,21 @@ describe("the spine", () => {
     render(<StatefulSpine steps={golden} readOnly />);
     expect(screen.queryByRole("button", { name: /^Remove step/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Move step/ })).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Add a check after this" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
   });
 
-  it("keeps the recording control, disabled until there is a prompt", async () => {
-    render(<StatefulSpine steps={[{ id: "p", kind: "prompt", prompt: "" }]} />);
-    // A blank prompt is still the quiet state; reveal the spine.
-    await userEvent.setup().click(screen.getByTestId("spine-more-options"));
-    expect(screen.getByTestId("simple-case-start-recording")).toBeDisabled();
-  });
-
-  it("shows the route question under the first action", async () => {
+  it("omits an empty route question under the first action", async () => {
     await openSpine({ steps: golden });
     const [prompt] = screen.getAllByTestId("spine-action-row");
-    expect(within(prompt!).getByTestId("case-route-row")).toBeTruthy();
+    expect(
+      within(prompt!).queryByTestId("case-route-row"),
+    ).not.toBeInTheDocument();
   });
 
   it("locks the route on a model-free case but keeps the call editable", async () => {
     await openSpine({ steps: pinnedFirst });
     expect(screen.getByTestId("simple-case-route-locked")).toBeTruthy();
     expect(screen.getByLabelText("Edit step 1")).toBeTruthy();
-  });
-
-  it("offers a way back out of a replaced suite envelope", async () => {
-    const onPredicatesChange = vi.fn();
-    const user = await openSpine({
-      steps: golden,
-      predicates: { mode: "replace", list: [{ type: "noToolErrors" }] },
-      suiteDefaultPredicates: [{ type: "finalAssistantMessageNonEmpty" }],
-      onPredicatesChange,
-    });
-    await user.click(screen.getByText("Apply suite scorers too"));
-    expect(onPredicatesChange).toHaveBeenCalledWith({
-      mode: "extend",
-      list: [{ type: "noToolErrors" }],
-    });
   });
 
   it("never prints a wire enum for a kind this build knows", async () => {
@@ -581,4 +594,116 @@ it("allows typing an allow-list tool without a connected tool catalog", async ()
   expect(onStepsChange.mock.lastCall?.[0][1].assertion.toolNames).toEqual([
     "search",
   ]);
+});
+
+describe("historical case layout", () => {
+  it("retains prompt and outcome fields, preserves action order, and removes mutation controls", () => {
+    render(
+      <StatefulSpine
+        steps={twoTurn}
+        expectedOutput="Captured outcome"
+        readOnly
+      />,
+    );
+    expect(screen.getAllByText("User Prompt").length).toBeGreaterThan(0);
+    expect(screen.getByText("Expected Outcome")).toBeInTheDocument();
+    expect(screen.getByLabelText("What does the user ask?")).toHaveAttribute(
+      "readonly",
+    );
+    expect(screen.getByDisplayValue("Captured outcome")).toHaveAttribute(
+      "readonly",
+    );
+    expect(screen.queryByRole("button", { name: "Add step" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove/ })).toBeNull();
+  });
+  it("does not fabricate a prompt for an empty historical snapshot", () => {
+    render(<StatefulSpine steps={[]} readOnly />);
+    expect(screen.queryByLabelText("What does the user ask?")).toBeNull();
+  });
+  it("shows unmeasured evidence for checks without recorded results", () => {
+    render(
+      <StatefulSpine
+        steps={golden}
+        readOnly
+        trialIteration={
+          {
+            _id: "run",
+            status: "completed",
+            result: "passed",
+            metadata: {},
+          } as any
+        }
+      />,
+    );
+    expect(screen.getAllByLabelText("Not measured").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Passed")).toBeNull();
+  });
+});
+
+it("adds an action from Add after the selected prompt", async () => {
+  const onStepsChange = vi.fn();
+  const user = userEvent.setup();
+  render(<StatefulSpine steps={[]} onStepsChange={onStepsChange} />);
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  expect(screen.getByText("Actions")).toBeVisible();
+  expect(screen.getByText("Assertions · Tool selection")).toBeVisible();
+  const choice = screen.getByTestId("add-step-item-toolCall");
+  expect(choice.querySelector("svg")).not.toBeNull();
+  await user.click(choice);
+  const written = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
+  expect(written.map((step) => step.kind)).toEqual(["prompt", "toolCall"]);
+});
+
+it("encloses route configuration and keeps one Add entry point per action", async () => {
+  await openSpine({
+    steps: [
+      { id: "prompt", kind: "prompt", prompt: "Get issue" },
+      {
+        id: "check",
+        kind: "assert",
+        assertion: { type: "toolCalledWith", toolName: "get_issue", args: {} },
+      },
+    ],
+  });
+  const route = screen.getByTestId("case-route-row");
+  expect(route).toHaveClass("rounded-lg", "border");
+  expect(within(route).getByText("Matching options")).toBeVisible();
+  expect(within(route).getByTestId("simple-case-tool-row")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Add step", exact: true }),
+  ).toBeNull();
+  expect(
+    screen.getAllByRole("button", { name: "Add", exact: true }),
+  ).toHaveLength(1);
+});
+
+it("routes a whole-run limit to case policy and preserves existing inline steps", async () => {
+  const onPredicatesChange = vi.fn();
+  const onStepsChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <StatefulSpine
+      onPredicatesChange={onPredicatesChange}
+      onStepsChange={onStepsChange}
+      predicates={{ mode: "replace", list: [] }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Add", exact: true }));
+  await user.click(screen.getByTestId("add-step-item-check:tokenBudgetUnder"));
+  expect(onPredicatesChange).toHaveBeenCalledWith(
+    expect.objectContaining({
+      mode: "replace",
+      list: [expect.objectContaining({ type: "tokenBudgetUnder" })],
+    }),
+  );
+  expect(onStepsChange).not.toHaveBeenCalled();
+});
+it("opens the existing expected outcome from the drawer", async () => {
+  const user = userEvent.setup();
+  render(<StatefulSpine />);
+  await user.click(screen.getByRole("button", { name: "Add", exact: true }));
+  await user.click(screen.getByTestId("add-step-item-outcome"));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByLabelText("Expected Outcome")).toHaveFocus();
 });

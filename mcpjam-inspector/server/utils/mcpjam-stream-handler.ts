@@ -5,7 +5,7 @@
  * The LLM lives in Convex (to protect the OpenRouter key),
  * while MCP tools execute locally in this Express server.
  */
-
+import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -2043,7 +2043,18 @@ async function processStream(
           flushText();
           flushReasoning();
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
-          writer.write({ ...chunk, toolCallId });
+          const providerMetadata =
+            "toolName" in chunk && typeof chunk.toolName === "string"
+              ? withPageToolAttributionMetadata(
+                  chunk.providerMetadata,
+                  tools[chunk.toolName],
+                )
+              : undefined;
+          writer.write({
+            ...chunk,
+            toolCallId,
+            ...(providerMetadata ? { providerMetadata } : {}),
+          });
           break;
         }
 
@@ -2058,7 +2069,10 @@ async function processStream(
           // `mergePageToolBindingMetadata`.
           const providerMetadata = mergePageToolBindingMetadata(
             mergeMcpToolOriginMetadata(
-              chunk.providerMetadata,
+              withPageToolAttributionMetadata(
+                chunk.providerMetadata,
+                tools[chunk.toolName],
+              ),
               serverIdForToolCall,
             ),
             pageToolBindingOf(tools[chunk.toolName]),
@@ -2521,10 +2535,10 @@ async function handlePendingApprovals(
   //     so a result for that sibling is written whether or not anyone approved
   //     anything.
   //
-  // The mixed step is now the ordinary case rather than a corner. A page tool
-  // always pauses while the `browser_*` verbs follow their own floor, so one
-  // "add pepperoni" emits a `webmcp_*` call and a `browser_observe` in a
-  // single step, approves one, and resumes into exactly this.
+  // A MIXED STEP IS ORDINARY, and does not need two families on two floors to
+  // happen: the model emits several calls in one assistant message all the
+  // time, an `app_*` or read-only `ui_*` among them never pauses, and one
+  // gated call is enough to park every sibling here.
   //
   // Idempotent by construction: the helper skips any call that already has a
   // result, so a second pass over the same history emits nothing.
