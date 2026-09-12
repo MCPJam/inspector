@@ -228,6 +228,39 @@ describe("invokePageToolForChat", () => {
     ).toHaveBeenCalledTimes(3);
   });
 
+  it("allows a subsequent call after failure and preserves both call labels", async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        state: "failed",
+        errorMessage: "Try another topping",
+      })
+      .mockResolvedValueOnce({ state: "succeeded", output: "pepperoni added" });
+    stubStore("session-1", invoke);
+    const addToolOutput = vi.fn();
+    await fulfillApprovedPageToolCall({
+      toolCallId: "first",
+      alias: ENTRY.alias,
+      input: { topping: "pineapple" },
+      addToolOutput,
+    });
+    await fulfillApprovedPageToolCall({
+      toolCallId: "second",
+      alias: ENTRY.alias,
+      input: { topping: "pepperoni" },
+      addToolOutput,
+    });
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(addToolOutput.mock.calls[0][0].output.isError).toBe(true);
+    expect(addToolOutput.mock.calls[1][0].output.isError).toBeUndefined();
+    for (const [call] of addToolOutput.mock.calls) {
+      expect(call.output.pageTool).toEqual({
+        rawName: ENTRY.rawName,
+        origin: ENTRY.origin,
+      });
+    }
+  });
+
   it("returns the tool's output on success", async () => {
     stubStore("session-1", async () => ({
       state: "succeeded",

@@ -3189,6 +3189,19 @@ export interface PlatformEvalStepResult {
 }
 
 /**
+ * A page of step results, plus whether the evidence read behind them actually
+ * completed.
+ *
+ * The route serves verdicts even when the trace blob cannot be loaded, so an
+ * item with no `evidence` is ambiguous on its own: the step may have produced
+ * none, or the blob loader may be down. `"unavailable"` says the second one
+ * happened. Optional so a caller tolerates a backend that predates the marker.
+ */
+export type PlatformEvalStepsPage = PlatformPage<PlatformEvalStepResult> & {
+  evidence?: "resolved" | "unavailable";
+};
+
+/**
  * Share link for a scenario. The URL embeds the access token; it is visible
  * to any caller who can read the scenario (same audience as the hosted UI).
  */
