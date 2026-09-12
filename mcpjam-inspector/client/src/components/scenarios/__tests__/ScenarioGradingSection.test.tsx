@@ -23,13 +23,52 @@ vi.mock("@/components/swarms/journey-rubric-editor", () => ({
     value,
     onChange,
     onDraftValidityChange,
+    showAllErrors,
   }: {
     value: JourneyCriterion[];
     onChange: (next: JourneyCriterion[]) => void;
     onDraftValidityChange?: (hasInvalidDraft: boolean) => void;
+    showAllErrors?: boolean;
   }) => (
     <div>
       <span data-testid="rubric-count">{value.length}</span>
+      <span data-testid="rubric-show-all">
+        {String(showAllErrors ?? false)}
+      </span>
+      <button
+        type="button"
+        onClick={() =>
+          onChange([
+            ...value,
+            {
+              id: "crit-blank",
+              predicate: { type: "toolCalledAtLeastOnce", toolName: "" },
+            } as JourneyCriterion,
+          ])
+        }
+      >
+        add incomplete check
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onChange(
+            value.map((entry) =>
+              entry.id === "crit-blank"
+                ? ({
+                    ...entry,
+                    predicate: {
+                      type: "toolCalledAtLeastOnce",
+                      toolName: "search",
+                    },
+                  } as JourneyCriterion)
+                : entry,
+            ),
+          )
+        }
+      >
+        complete check
+      </button>
       <button type="button" onClick={() => onDraftValidityChange?.(true)}>
         break json
       </button>
@@ -260,6 +299,45 @@ describe("ScenarioGradingSection", () => {
     await waitFor(() =>
       expect(setProductionScoringMock).toHaveBeenCalledTimes(1),
     );
+  });
+
+  it("a Save attempt with an incomplete check reveals the fields and sends nothing", async () => {
+    const user = userEvent.setup();
+    render(
+      <ScenarioGradingSection
+        scenario={scenarioWith({
+          enabled: true,
+          samplingRate: 1,
+          rubric: RUBRIC,
+        })}
+      />,
+    );
+    const save = screen.getByTestId(
+      "scenario-grading-save",
+    ) as HTMLButtonElement;
+
+    await user.click(screen.getByText("add incomplete check"));
+    // Incomplete, but the button is live: the click is what gives feedback.
+    expect(save.disabled).toBe(false);
+    expect(screen.getByTestId("rubric-show-all")).toHaveTextContent("false");
+    expect(screen.queryByTestId("scenario-grading-incomplete")).toBeNull();
+
+    await user.click(save);
+    expect(setProductionScoringMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("rubric-show-all")).toHaveTextContent("true");
+    expect(screen.getByTestId("scenario-grading-incomplete")).toHaveTextContent(
+      "Fix the highlighted check to save.",
+    );
+
+    await user.click(screen.getByText("complete check"));
+    expect(screen.queryByTestId("scenario-grading-incomplete")).toBeNull();
+
+    await user.click(save);
+    await waitFor(() =>
+      expect(setProductionScoringMock).toHaveBeenCalledTimes(1),
+    );
+    const rubric = setProductionScoringMock.mock.calls[0]![0].config.rubric;
+    expect(rubric).toHaveLength(2);
   });
 
   it("save stays disabled while pristine", () => {
