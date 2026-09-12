@@ -686,6 +686,24 @@ describe("viewport frames", () => {
     expect(seen).toEqual(["settled"]);
   });
 
+  it("tells watchers the retained paint is gone, so they can drop queued work", () => {
+    const { runtime, session } = makeRuntime();
+    const seen: Array<string | null> = [];
+    runtime.frames.subscribe((frame) => seen.push(frame ? frame.data : null));
+    session.emitFrame({ data: "before" });
+
+    runtime.frames.clear();
+    // The hub this replaced said nothing here, on the grounds that a connected
+    // client already knows. It does not: a watcher that paces its sends can be
+    // holding a frame it accepted a moment ago and has not put on the wire, and
+    // nothing else would ever stop that one going out after the clear.
+    expect(seen).toEqual(["before", null]);
+
+    // And not again for a clear with nothing to forget.
+    runtime.frames.clear();
+    expect(seen).toEqual(["before", null]);
+  });
+
   it("drops the retained paint when the browser crashes", () => {
     const { runtime, session } = makeRuntime();
     session.emitFrame({ data: "alive" });

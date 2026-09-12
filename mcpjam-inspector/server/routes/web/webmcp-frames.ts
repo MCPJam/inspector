@@ -336,17 +336,18 @@ export function createWebMcpFramesWsHandler(
         webMcpSessions.touch(runtime);
 
         liveSockets.add(ws);
-        const framePacer = createFramePacer(toCallbackSocket(ws), () => {
-          // Reported to the session so it can encode smaller, and swallowed on
-          // the way: this runs per dropped frame inside a send callback, where
-          // a throw would take the socket down over a diagnostic.
-          try {
-            runtime.noteFramePressure();
-          } catch {
-            /* the session went away between the send and its callback */
-          }
-        });
-        pacer = framePacer;
+        const newPacer = () =>
+          createFramePacer(toCallbackSocket(ws), () => {
+            // Reported to the session so it can encode smaller, and swallowed
+            // on the way: this runs per dropped frame inside a send callback,
+            // where a throw would take the socket down over a diagnostic.
+            try {
+              runtime.noteFramePressure();
+            } catch {
+              /* the session went away between the send and its callback */
+            }
+          });
+        pacer = newPacer();
 
         // Only a local streamed page accepts socket input. Electron surfaces
         // receive native input, and hosted viewers use their own connection.
@@ -400,7 +401,18 @@ export function createWebMcpFramesWsHandler(
         // stop at that instant rather than at the next handshake.
         unsubscribeFrames = runtime.frames.subscribe((frame) => {
           if (closed || !runtime.isAuthorized()) return;
-          framePacer.push(
+          if (frame === null) {
+            // The retained paint is gone, and so must be the one this socket
+            // accepted a moment ago and is still holding behind an outstanding
+            // send. Closing the pacer drops it — its in-flight callback then
+            // ships nothing — and a fresh one carries whatever the page paints
+            // next. Only `close()` can drop a held record, and the pacer is a
+            // daemon bundle input this change does not touch.
+            pacer?.close();
+            pacer = newPacer();
+            return;
+          }
+          pacer?.push(
             encodeFrameStreamRecord({
               kind: FRAME_STREAM_KIND.frame,
               deviceWidth: frame.deviceWidth,

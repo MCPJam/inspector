@@ -402,6 +402,28 @@ describe("webmcp frames WS — the stream", () => {
     expect([...decoded.jpeg]).toEqual([0xff, 0xd8, 0x42, 0x42, 0x42]);
   });
 
+  it("keeps streaming after a navigation clears the retained paint", async () => {
+    const session = await openSession();
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+    provider.sessions[0].emitFrame({ data: jpegBase64(0x41) });
+    expect([...readFrame(await ws.waitForBinary()).jpeg]).toEqual([
+      0xff, 0xd8, 0x41, 0x41, 0x41,
+    ]);
+
+    // The clear replaces this socket's pacer, to drop any frame it accepted
+    // for the OLD page and had not yet put on the wire. The replacement has to
+    // carry the new page's paint, or a navigation would end the stream.
+    provider.sessions[0].callbacks.onNavigated(
+      "https://example.test/two",
+      "https://example.test",
+    );
+    provider.sessions[0].emitFrame({ data: jpegBase64(0x42) });
+    expect([...readFrame(await ws.waitForBinary(2)).jpeg]).toEqual([
+      0xff, 0xd8, 0x42, 0x42, 0x42,
+    ]);
+  });
+
   it("carries frames only — no activity, tools or session chatter", async () => {
     const session = await openSession();
     const ws = connect(server.port, session.sessionId, token);

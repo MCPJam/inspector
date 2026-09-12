@@ -30,7 +30,13 @@ import type { WebMcpFrame } from "@/shared/webmcp-inspector-protocol";
  */
 export type RuntimeFrame = WebMcpFrame & { seq: number };
 
-export type RuntimeFrameListener = (frame: RuntimeFrame) => void;
+/**
+ * `null` means the retained paint is GONE, not that a blank one arrived.
+ *
+ * Sent so a watcher can drop work it has already queued for a picture that is
+ * no longer current — see `clear()`.
+ */
+export type RuntimeFrameListener = (frame: RuntimeFrame | null) => void;
 
 export class WebMcpFrameChannel {
   /** The current paint. Replaced, never queued — see the module comment. */
@@ -88,11 +94,23 @@ export class WebMcpFrameChannel {
    * Called when the stream stops and when the page navigates away: a frame of
    * a page that has been left — or of a stream nobody is running any more — is
    * not "the current one", and handing it to the next watcher would show them
-   * a page that is gone. Nothing is published; a connected client already knows,
-   * and this only governs what a LATE ARRIVAL is handed.
+   * a page that is gone.
+   *
+   * Watchers ARE told, which the hub this replaced did not do. A connected
+   * client does not already know: a watcher that paces its sends can be
+   * holding a frame it accepted a moment ago and has not put on the wire yet,
+   * and nothing else would ever stop that one going out after the clear.
    */
   clear(): void {
+    if (this.current === undefined) return;
     this.current = undefined;
+    for (const listener of this.listeners) {
+      try {
+        listener(null);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   close(): void {
