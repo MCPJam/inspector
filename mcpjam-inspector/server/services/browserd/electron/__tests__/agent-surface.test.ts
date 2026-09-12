@@ -106,7 +106,7 @@ describe("which view is on screen", () => {
     expect(surface.isShown()).toBe(false);
   });
 
-  it("re-bounds without reparenting on a resize", () => {
+  it("re-positions without reparenting when the pane moves", () => {
     // The pane sends geometry whenever its rail moves; a surface that
     // reparented on each would tear the page down and rebuild it several times
     // a drag.
@@ -115,10 +115,63 @@ describe("which view is on screen", () => {
     const view = fakeView("a");
     surface.registerTab(view);
     surface.show({ holder, bounds: BOUNDS });
-    const next = { ...BOUNDS, width: 600 };
-    surface.show({ holder, bounds: next });
+    const moved = { ...BOUNDS, x: BOUNDS.x + 120, y: BOUNDS.y + 30 };
+    surface.show({ holder, bounds: moved });
     expect(holder.children).toEqual([view]);
-    expect(view.bounds).toEqual(next);
+    expect(view.bounds).toMatchObject({ x: moved.x, y: moved.y });
+  });
+
+  it("does NOT resize the page when the pane's measurement changes", () => {
+    // On Electron a view's bounds ARE its CSS viewport, so the old version of
+    // this — bounds straight from the pane — meant dragging the window changed
+    // the coordinate space the agent was reasoning in, with no revision bump
+    // and no stale-observation refusal to catch it.
+    const requested: Array<{ width: number; height: number }> = [];
+    const surface = createContextSurface({
+      onViewportRequest: (size) => {
+        requested.push(size);
+      },
+    });
+    const holder = fakeWindow();
+    const view = fakeView("a");
+    surface.registerTab(view);
+    surface.show({ holder, bounds: BOUNDS });
+    surface.show({ holder, bounds: { ...BOUNDS, width: 600 } });
+
+    expect(view.bounds).toMatchObject({ width: BOUNDS.width });
+    // Reported, so the session can decide — which is a different thing from
+    // applied.
+    expect(requested).toContainEqual({ width: 600, height: BOUNDS.height });
+  });
+
+  it("takes the page to a new size only when the session says so", () => {
+    const surface = createContextSurface();
+    const holder = fakeWindow();
+    const view = fakeView("a");
+    surface.registerTab(view);
+    surface.show({ holder, bounds: BOUNDS });
+    surface.setViewport({ width: 1400, height: 900 });
+    expect(view.bounds).toEqual({
+      x: BOUNDS.x,
+      y: BOUNDS.y,
+      width: 1400,
+      height: 900,
+    });
+  });
+
+  it("gives a newly activated tab the session's size, not the pane's", () => {
+    const surface = createContextSurface();
+    const holder = fakeWindow();
+    const first = fakeView("a");
+    surface.registerTab(first);
+    surface.show({ holder, bounds: { ...BOUNDS, width: 600 } });
+    surface.setViewport({ width: 1400, height: 900 });
+
+    const second = fakeView("b");
+    surface.registerTab(second);
+    // Two tabs in one session rendering at two sizes has no honest number to
+    // publish for either.
+    expect(second.bounds).toMatchObject({ width: 1400, height: 900 });
   });
 
   it("takes the view back out when the pane hides", () => {
@@ -253,4 +306,23 @@ describe("teardown", () => {
     holder.destroy();
     expect(() => surface.hide()).not.toThrow();
   });
+});
+
+it("shows shared inspection without acquiring a lease or installing an input shield", () => {
+  let shields = 0;
+  const surface = createContextSurface({
+    authority: "shared",
+    createShield: () => {
+      shields++;
+      return null;
+    },
+  });
+  const holder = fakeWindow();
+  const view = fakeView("inspection");
+  surface.registerTab(view);
+  surface.show({ holder, bounds: BOUNDS });
+  expect(holder.children).toEqual([view]);
+  expect(surface.inputAllowed()).toBe(true);
+  expect(shields).toBe(0);
+  surface.dispose();
 });

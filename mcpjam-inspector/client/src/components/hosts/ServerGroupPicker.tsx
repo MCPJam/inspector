@@ -12,6 +12,7 @@ import { useMutation, useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
 import {
   deriveServerGroupName,
+  isObservedStatus,
   newGroupDraft,
 } from "@/components/hosts/server-group-name";
 import { Button } from "@mcpjam/design-system/button";
@@ -28,8 +29,11 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
+import { getConnectionStatusMeta } from "@/components/connection/server-card-utils";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useProjectServers } from "@/hooks/useViews";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
+import { findProjectByAnyId } from "@/state/app-types";
 import { ServerSelectionList } from "@/components/hosts/server-selection-list";
 import type { EvalServerAttachment } from "@/components/evals/types";
 
@@ -122,6 +126,32 @@ export function ServerGroupPicker({
     isAuthenticated,
     projectId,
   });
+  /**
+   * Convex stores a server's config, not whether it answers — the live status
+   * is in app state, keyed by name. Joining them is what stops this form
+   * offering a failed server as readily as a working one (BB-49). Optional
+   * read: the picker also renders with no provider above it.
+   */
+  const appState = useOptionalSharedAppState();
+  // ...but only the ACTIVE project's: `SWITCH_PROJECT` and hydration both
+  // replace `servers` wholesale. This picker is handed a record's own
+  // `projectId` (a suite's, a scenario's), which a bookmarked URL can point at
+  // a project that is not active — and a name like `github` exists in more than
+  // one of them. Join only when the two resolve to the same project: an
+  // unmarked row is a supported state, another project's status is not.
+  const activeProjectId = appState?.activeProjectId;
+  const joinable =
+    activeProjectId !== undefined &&
+    findProjectByAnyId(appState?.projects, projectId)?.id === activeProjectId;
+  const runtimeServers = joinable ? appState?.servers : undefined;
+  const serverPool = useMemo(
+    () =>
+      projectServers.map((server) => ({
+        ...server,
+        status: runtimeServers?.[server.name]?.connectionStatus,
+      })),
+    [projectServers, runtimeServers],
+  );
 
   const [open, setOpen] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -541,15 +571,39 @@ export function ServerGroupPicker({
                       </p>
                     ) : (
                       <ul className="space-y-0.5">
-                        {serverNames.map((name, i) => (
-                          <li
-                            key={`${attachment._id}-${i}`}
-                            className="flex items-center gap-1.5 py-0.5 text-[11px] text-muted-foreground"
-                          >
-                            <Server className="size-3 shrink-0" />
-                            <span className="truncate">{name}</span>
-                          </li>
-                        ))}
+                        {serverNames.map((name, i) => {
+                          // Expanding a group is how you check what is inside
+                          // it before picking it (BB-49). Nothing in the row
+                          // is focusable, so the label rides a hidden node
+                          // rather than an accessible name.
+                          const status =
+                            runtimeServers?.[name]?.connectionStatus;
+                          const meta = isObservedStatus(status)
+                            ? getConnectionStatusMeta(status)
+                            : null;
+                          return (
+                            <li
+                              key={`${attachment._id}-${i}`}
+                              className="flex items-center gap-1.5 py-0.5 text-[11px] text-muted-foreground"
+                            >
+                              <Server className="size-3 shrink-0" />
+                              {meta ? (
+                                <>
+                                  <span
+                                    className={cn(
+                                      "size-1.5 shrink-0 rounded-full",
+                                      meta.indicatorClassName,
+                                    )}
+                                    title={meta.label}
+                                    aria-hidden
+                                  />
+                                  <span className="sr-only">{meta.label}</span>
+                                </>
+                              ) : null}
+                              <span className="truncate">{name}</span>
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
@@ -561,10 +615,7 @@ export function ServerGroupPicker({
               <button
                 type="button"
                 onClick={() => {
-                  const draft = newGroupDraft(
-                    projectServers,
-                    existingGroupNames
-                  );
+                  const draft = newGroupDraft(serverPool, existingGroupNames);
                   setShowCreate(true);
                   setNameEdited(false);
                   setCreateTouched(false);
@@ -614,9 +665,10 @@ export function ServerGroupPicker({
                   pushes the Create button below the fold. */}
               <div className="max-h-48 overflow-y-auto pr-1">
                 <ServerSelectionList
-                  servers={projectServers.map((s) => ({
+                  servers={serverPool.map((s) => ({
                     id: s._id,
                     name: s.name,
+                    status: s.status,
                   }))}
                   selectedIds={createServerIds}
                   onToggle={handleToggleServer}

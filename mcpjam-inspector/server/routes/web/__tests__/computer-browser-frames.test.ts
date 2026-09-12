@@ -98,6 +98,7 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
         ownerUserId: CLAIMS.userId,
         projectId: CLAIMS.projectId,
         providerComputerId: "sbx_1",
+        status: "ready",
       },
     })) as unknown as BrowserFramesDeps["sandboxInfo"],
     lookupSession: (async () => ({
@@ -219,6 +220,30 @@ describe("browser frames socket — who may watch", () => {
     const { ws } = await f.connect();
     expect(ws.closed?.code).toBe(4401);
     expect(f.upstreamCalls).toHaveLength(0);
+  });
+
+  it("closes 4410 — not 4503 — when the box has been reclaimed", async () => {
+    // A hosted browser is hibernated within a couple of minutes of nobody
+    // watching, so a paused box is ORDINARY. This socket cannot wake it (that
+    // is `ensure=1` on the panel route), and a generic 4503 would put a hidden
+    // pane into a 3s reconnect loop against a machine we deliberately parked.
+    for (const status of ["hibernating", "waking", "provisioning"]) {
+      const f = build({
+        sandboxInfo: (async () => ({
+          ok: true,
+          value: {
+            ownerUserId: CLAIMS.userId,
+            projectId: CLAIMS.projectId,
+            providerComputerId: "sbx_1",
+            status,
+          },
+        })) as unknown as BrowserFramesDeps["sandboxInfo"],
+      });
+      const { ws } = await f.connect();
+      expect(ws.closed).toMatchObject({ code: 4410 });
+      // Nothing was asked of a box that has no daemon answering.
+      expect(f.upstreamCalls).toHaveLength(0);
+    }
   });
 
   it("closes 4404 when no browser is running on that computer", async () => {
@@ -944,5 +969,39 @@ describe("browser frames socket — quality", () => {
     const { ws, events } = await f.connect();
     say(events, ws, { type: "quality", tier: "sharp" });
     await vi.waitFor(() => expect(f.qualityCalls).toEqual(["sharp"]));
+  });
+});
+
+describe("sharp stream negotiation", () => {
+  it.each([false, true])(
+    "requires both viewer and daemon capability (daemon=%s)",
+    async (capable) => {
+      const h = build();
+      if (capable) h.setDaemonFeatures(["sharp-stream-v1"]);
+      const { ws, events } = await h.connect("tok", "wire=binary&sharp=1");
+      expect(h.upstreamCalls[0]?.sharp === true).toBe(capable);
+      const hello = ws.sent
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => JSON.parse(x))
+        .find((x) => x.type === "hello");
+      expect(hello.features.includes("sharp-stream-v1")).toBe(capable);
+      h.upstreamCalls[0]!.onFrame({
+        jpeg: new Uint8Array(300_000),
+        deviceWidth: 620,
+        deviceHeight: 1160,
+        scale: 1,
+        ts: 1,
+        seq: 1,
+      });
+      expect(ws.sent.some((x) => x instanceof Uint8Array)).toBe(capable);
+      events.onClose!({} as never, ws as never);
+    },
+  );
+  it("keeps old clients within their limit even against a capable daemon", async () => {
+    const h = build();
+    h.setDaemonFeatures(["sharp-stream-v1"]);
+    const { ws, events } = await h.connect("tok", "wire=binary");
+    expect(h.upstreamCalls[0]?.sharp).toBeUndefined();
+    events.onClose!({} as never, ws as never);
   });
 });

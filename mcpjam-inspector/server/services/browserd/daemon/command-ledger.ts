@@ -316,6 +316,7 @@ export function redactAction(
           : {}),
       };
     case "back":
+    case "forward":
     case "reload":
       return { kind: action.kind };
     case "act": {

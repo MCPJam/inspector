@@ -547,6 +547,67 @@ describe("mcpjam-stream-handler", () => {
     ]);
   });
 
+  it("streams and persists inspector tool names for the free-model path", async () => {
+    const onConversationComplete = vi.fn();
+    const pageTool = {
+      alias: "page_1a2b3c4d",
+      sessionId: "s",
+      toolKey: "add_topping",
+      rawName: "add_topping",
+      origin: "https://pizza.test",
+    };
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        {
+          type: "tool-input-start",
+          toolCallId: "call-page",
+          toolName: pageTool.alias,
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "call-page",
+          toolName: pageTool.alias,
+          input: {},
+        },
+        {
+          type: "finish",
+          finishReason: "tool-calls",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]),
+    );
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Add a topping" }] as any,
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "Use the page tools",
+      tools: buildPageTools([pageTool]),
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      requireToolApproval: false,
+      onConversationComplete,
+    });
+    await lastExecution;
+    for (const type of ["tool-input-start", "tool-input-available"]) {
+      expect(
+        writtenChunks.find((chunk) => chunk.type === type)?.providerMetadata
+          ?.mcpjam?.pageTool,
+      ).toEqual({ rawName: pageTool.rawName, origin: pageTool.origin });
+    }
+    expect(
+      onConversationComplete.mock.calls[0]?.[0]?.[1]?.content,
+    ).toContainEqual(
+      expect.objectContaining({
+        type: "tool-call",
+        providerOptions: {
+          mcpjam: {
+            pageTool: { rawName: pageTool.rawName, origin: pageTool.origin },
+          },
+        },
+      }),
+    );
+  });
+
   it("persists reasoning parts in order with surrounding assistant content", async () => {
     const onConversationComplete = vi.fn();
     global.fetch = vi.fn().mockResolvedValue(
@@ -1973,6 +2034,11 @@ describe("mcpjam-stream-handler", () => {
       // that waits forever. There is nothing to thread now: the tool
       // `buildPageTools` produces carries the answer, and this drives the
       // engine with exactly that tool and nothing else.
+      //
+      // The switch is ON here so the built tool's answer is `true` and the
+      // pill below is a real assertion. What it pins is that the ENGINE reads
+      // the tool's own declaration — the OFF direction is pinned in the
+      // approval matrix, which drives every family through both settings.
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -1998,11 +2064,11 @@ describe("mcpjam-stream-handler", () => {
             origin: "https://shop.test",
             description: "Check out",
           },
-        ] as never) as any,
+        ] as never, true) as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
-        requireToolApproval: false,
+        requireToolApproval: true,
       });
 
       await lastExecution;

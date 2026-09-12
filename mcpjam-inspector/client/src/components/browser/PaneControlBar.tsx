@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Hand, MousePointer2, Settings2 } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
 import { Button } from "@mcpjam/design-system/button";
@@ -45,6 +46,82 @@ export function controlLabel(control: PaneControl): string {
 }
 
 /**
+ * The view settings: quality, and the stats overlay.
+ *
+ * EXTRACTED from the bar because the browser shell has its own two rows now
+ * and does not want a third — but it does want this menu, sitting at the end
+ * of the navigation row beside "Resume agent". The bar below still composes it
+ * for the surfaces that predate the shell, so there is one menu with one set
+ * of labels rather than two that drift.
+ */
+export function PaneSettingsMenu({
+  statsOpen,
+  onToggleStats,
+  tier,
+  onTier,
+  tiers,
+  children,
+}: {
+  children?: ReactNode;
+  statsOpen: boolean;
+  onToggleStats: (next: boolean) => void;
+  tier?: QualityTier;
+  onTier?: (next: QualityTier) => void;
+  tiers?: readonly QualityTier[];
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-label="Browser view settings"
+          data-testid="pane-settings"
+        >
+          <Settings2 className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {onTier && (tiers?.length ?? 0) > 0 ? (
+          <>
+            <DropdownMenuLabel>Quality</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={tier ?? "auto"}
+              onValueChange={(next) => onTier(next as QualityTier)}
+            >
+              {(tiers ?? []).map((entry) => (
+                <DropdownMenuRadioItem
+                  key={entry}
+                  value={entry}
+                  data-testid={`pane-tier-${entry}`}
+                >
+                  {TIER_LABELS[entry]}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
+        {children ? (
+          <>
+            <DropdownMenuLabel>Profiles</DropdownMenuLabel>
+            {children}
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
+        <DropdownMenuCheckboxItem
+          checked={statsOpen}
+          onCheckedChange={(next) => onToggleStats(Boolean(next))}
+          data-testid="pane-stats-toggle"
+        >
+          Stats
+        </DropdownMenuCheckboxItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
  * The strip above the picture: who is driving, how to take over, and the menu.
  *
  * Extracted from `BrowserPaneSurface` because the NATIVE Electron surface has
@@ -53,6 +130,11 @@ export function controlLabel(control: PaneControl): string {
  * needs exactly this bar, unchanged, above it. Two copies of a take-control
  * button is two chances to disagree about when it is offered, which is the one
  * thing the lease exists to be unambiguous about.
+ *
+ * SUPERSEDED BY THE BROWSER SHELL for the panes that have one: the shell's two
+ * rows carry the ownership status and the resume control, so a bar above them
+ * would be a third row saying the same thing. Still used where there is no
+ * shell — and `PaneSettingsMenu` above is the piece both want.
  */
 export function PaneControlBar({
   control,
@@ -93,47 +175,13 @@ export function PaneControlBar({
       </span>
       <div className="flex items-center gap-2">
         {extra}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-label="Browser view settings"
-              data-testid="pane-settings"
-            >
-              <Settings2 className="h-3.5 w-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {onTier && (tiers?.length ?? 0) > 0 ? (
-              <>
-                <DropdownMenuLabel>Quality</DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={tier ?? "auto"}
-                  onValueChange={(next) => onTier(next as QualityTier)}
-                >
-                  {(tiers ?? []).map((entry) => (
-                    <DropdownMenuRadioItem
-                      key={entry}
-                      value={entry}
-                      data-testid={`pane-tier-${entry}`}
-                    >
-                      {TIER_LABELS[entry]}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-                <DropdownMenuSeparator />
-              </>
-            ) : null}
-            <DropdownMenuCheckboxItem
-              checked={statsOpen}
-              onCheckedChange={(next) => onToggleStats(Boolean(next))}
-              data-testid="pane-stats-toggle"
-            >
-              Stats for nerds
-            </DropdownMenuCheckboxItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <PaneSettingsMenu
+          statsOpen={statsOpen}
+          onToggleStats={onToggleStats}
+          {...(tier ? { tier } : {})}
+          {...(onTier ? { onTier } : {})}
+          {...(tiers ? { tiers } : {})}
+        />
         {onHandBack ? (
           <Button size="sm" variant="outline" onClick={onHandBack}>
             <Hand className="mr-1.5 h-3.5 w-3.5" />

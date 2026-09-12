@@ -47,7 +47,8 @@ import { useIsMemberActor } from "@/hooks/use-is-member-actor";
  * would bounce a legitimately-flagged user who cold-loads the URL directly.
  */
 export type GithubChecksAvailability =
-  { state: "enabled" | "disabled" } | undefined;
+  | { state: "enabled" | "disabled"; canManage?: boolean }
+  | undefined;
 
 /**
  * What the check concludes when MCPJam cannot run the suite — an outage, or a
@@ -104,7 +105,10 @@ export type GithubCheckConnectionStatus =
 
 export type GithubInstallationAccountType = "Organization" | "User";
 export type GithubInstallationBindingStatus =
-  "active" | "suspended" | "removed" | "unbound";
+  | "active"
+  | "suspended"
+  | "removed"
+  | "unbound";
 
 /**
  * One GitHub App installation this organization holds.
@@ -188,6 +192,24 @@ export type GithubCheckRepoConfigRow = {
    * not silently add a required MCPJam Conformance check.
    */
   conformanceEnabled?: boolean;
+  allowSuiteCredentialsInForks?: boolean;
+  prServerOAuthSourceServerId?: string;
+  prServerOAuthPolicyRevision?: number;
+  prServerOAuth: {
+    status:
+      | "not_configured"
+      | "ready"
+      | "authorization_required"
+      | "reauthorization_required"
+      | "selection_required";
+    sourceServerId?: string;
+    sourceName?: string;
+    sources: Array<{
+      serverId: string;
+      name: string;
+      authorized: boolean;
+    }>;
+  };
   conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
   /**
    * ABSENT IS `on`, NOT `off`. See {@link GithubCheckFeedbackComments}: an
@@ -322,6 +344,26 @@ export function useGithubChecksSettings(
   );
   const setRepoOutagePolicyMutation = useMutation(
     "github/checkRepoConfigs:setRepoOutagePolicy" as any,
+  );
+  const setRepoForkCredentialsMutation = useMutation(
+    "github/checkRepoConfigs:setRepoForkCredentials" as any,
+  );
+  const setRepoPrServerOAuthMutation = useMutation(
+    "github/checkRepoConfigs:setRepoPrServerOAuth" as any,
+  );
+  const setRepoPrServerOAuth = useCallback(
+    (args: { configId: string; sourceServerId: string | null }) =>
+      setRepoPrServerOAuthMutation({ organizationId, ...args }) as Promise<{
+        changed: boolean;
+      }>,
+    [organizationId, setRepoPrServerOAuthMutation],
+  );
+  const setRepoForkCredentials = useCallback(
+    (args: { configId: string; enabled: boolean }) =>
+      setRepoForkCredentialsMutation({ organizationId, ...args }) as Promise<{
+        changed: boolean;
+      }>,
+    [organizationId, setRepoForkCredentialsMutation],
   );
   const setRepoConformanceMutation = useMutation(
     "github/checkRepoConfigs:setRepoConformance" as any,
@@ -503,6 +545,8 @@ export function useGithubChecksSettings(
     setRepoSuite,
     setRepoOutagePolicy,
     setRepoConformance,
+    setRepoForkCredentials,
+    setRepoPrServerOAuth,
     setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,

@@ -63,8 +63,8 @@ test("a corrupt file reads as empty, because the recovery is to grant again", as
 test("the consent capability round-trips, and the file is private", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-browser-store-"));
   const file = path.join(dir, "nested", "browser.json");
-  await writeBrowserState(file, { version: 1, consent: "cap-abc" });
-  assert.equal(readBrowserState(file).consent, "cap-abc");
+  await writeBrowserState(file, { version: 1, browserConsent: "cap-abc" });
+  assert.equal(readBrowserState(file).browserConsent, "cap-abc");
   // The consent capability is a credential; the session ids name somebody's
   // browsing history.
   assert.equal((await stat(file)).mode & 0o077, 0);
@@ -80,7 +80,7 @@ test("re-writing an existing loose file tightens its mode", async () => {
   // The atomic write creates a fresh 0600 temp file and renames it over the
   // loose one, so the destination is never briefly world-readable and there is
   // no follow-up chmod whose failure could be swallowed.
-  await writeBrowserState(file, { version: 1, consent: "cap" });
+  await writeBrowserState(file, { version: 1, browserConsent: "cap" });
   assert.equal((await stat(file)).mode & 0o077, 0);
 });
 
@@ -89,29 +89,29 @@ test("a write is atomic — an interrupted one cannot leave invalid JSON", async
   // session, so a half-written destination is not an acceptable failure mode.
   const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-browser-store-"));
   const file = path.join(dir, "browser.json");
-  await writeBrowserState(file, { version: 1, consent: "first" });
-  await writeBrowserState(file, { version: 1, consent: "second" });
+  await writeBrowserState(file, { version: 1, browserConsent: "first" });
+  await writeBrowserState(file, { version: 1, browserConsent: "second" });
   const { readdir } = await import("node:fs/promises");
   // No temp files left behind, and the destination still parses.
   assert.deepEqual(await readdir(dir), ["browser.json"]);
-  assert.equal(readBrowserState(file).consent, "second");
+  assert.equal(readBrowserState(file).browserConsent, "second");
 });
 
 test("remembering a session does not disturb the consent or other projects", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-browser-store-"));
   const file = path.join(dir, "browser.json");
-  await writeBrowserState(file, { version: 1, consent: "cap-abc" });
+  await writeBrowserState(file, { version: 1, browserConsent: "cap-abc" });
   await rememberSession(file, "proj-a", "bs_1");
   await rememberSession(file, "proj-b", "bs_2");
   const state = readBrowserState(file);
-  assert.equal(state.consent, "cap-abc");
+  assert.equal(state.browserConsent, "cap-abc");
   assert.deepEqual(state.sessions, { "proj-a": "bs_1", "proj-b": "bs_2" });
 
   await forgetSession(file, "proj-a");
   const after = readBrowserState(file);
   assert.deepEqual(after.sessions, { "proj-b": "bs_2" });
   // Closing one session must not sign the machine out of the browser.
-  assert.equal(after.consent, "cap-abc");
+  assert.equal(after.browserConsent, "cap-abc");
 });
 
 test("forgetting only applies to the session actually named", async () => {
@@ -132,9 +132,9 @@ test("forgetting only applies to the session actually named", async () => {
 test("forgetting a session that was never remembered is a no-op", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-browser-store-"));
   const file = path.join(dir, "browser.json");
-  await writeBrowserState(file, { version: 1, consent: "cap" });
+  await writeBrowserState(file, { version: 1, browserConsent: "cap" });
   await forgetSession(file, "nope");
-  assert.equal(readBrowserState(file).consent, "cap");
+  assert.equal(readBrowserState(file).browserConsent, "cap");
 });
 
 test("a sessions map with non-string values is dropped rather than trusted", async () => {
@@ -143,9 +143,9 @@ test("a sessions map with non-string values is dropped rather than trusted", asy
   const { writeFile } = await import("node:fs/promises");
   await writeFile(
     file,
-    JSON.stringify({ version: 1, consent: "cap", sessions: { a: 7 } }),
+    JSON.stringify({ version: 1, browserConsent: "cap", sessions: { a: 7 } })
   );
   const state = readBrowserState(file);
-  assert.equal(state.consent, "cap");
+  assert.equal(state.browserConsent, "cap");
   assert.equal(state.sessions, undefined);
 });

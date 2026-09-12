@@ -13,6 +13,7 @@ import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { ScenarioShareEmptyPanel } from "@/components/scenarios/ScenarioShareEmptyPanel";
 import { ScenarioShareDialog } from "@/components/scenarios/ScenarioShareDialog";
 import { ScenarioShareSection } from "@/components/scenarios/ScenarioShareSection";
+import { ScenarioFindingsTab } from "@/components/scenarios/findings/scenario-findings-tab";
 import { ScenarioPerTurnFeedbackToggle } from "@/components/scenarios/ScenarioPerTurnFeedbackToggle";
 import { ScenarioTasksSection } from "@/components/scenarios/ScenarioTasksSection";
 import { ScenarioUsagePanel } from "@/components/scenarios/ScenarioUsagePanel";
@@ -66,7 +67,6 @@ import {
   withScenarioPreviewSurface,
 } from "@/lib/scenario-session";
 import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
 import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 
 /**
@@ -99,6 +99,7 @@ const TAB_OPTIONS: ReadonlyArray<{
   value: UserTestingDetailTab;
   label: string;
 }> = [
+  { value: "findings", label: "Findings" },
   { value: "insights", label: "Insights" },
   { value: "sessions", label: "Sessions" },
 ];
@@ -301,8 +302,23 @@ export function UserTestingScenarioDetail({
     scenario.description ?? "",
   );
   const descriptionFocusedRef = useRef(false);
+  // What the draft was last seeded with. Holding focus is not evidence the
+  // user changed anything, so this is what "dirty" is measured against —
+  // otherwise a focused field with no edits saves its stale draft over a
+  // value that arrived while the reseed below was suppressed.
+  const descriptionSeedRef = useRef(scenario.description ?? "");
+  // Which save owns the field. The seed is marked before a write lands, so a
+  // later completion that is no longer the newest must not reconcile against
+  // it — its value has already been superseded.
+  const descriptionSaveRef = useRef(0);
+  // Read by `adoptRemoteDescription`, which can run after an await: the render
+  // it was defined in may already be stale, and rolling back to that render's
+  // value would drop a collaborator's edit that landed mid-flight.
+  const remoteDescriptionRef = useRef(scenario.description ?? "");
+  remoteDescriptionRef.current = scenario.description ?? "";
   useEffect(() => {
     if (descriptionFocusedRef.current) return;
+    descriptionSeedRef.current = scenario.description ?? "";
     setDescriptionDraft(scenario.description ?? "");
   }, [scenario.description]);
 
@@ -316,25 +332,62 @@ export function UserTestingScenarioDetail({
     }
   };
 
+  const adoptRemoteDescription = () => {
+    descriptionSeedRef.current = remoteDescriptionRef.current;
+    setDescriptionDraft(remoteDescriptionRef.current);
+  };
+
   const persistDescription = async () => {
     descriptionFocusedRef.current = false;
     const next = descriptionDraft.trim();
-    if (next === (scenario.description ?? "").trim()) {
-      // No-op blur: resync the draft with the envelope, which also adopts any
-      // remote value the focused-guard above deliberately skipped.
-      setDescriptionDraft(scenario.description ?? "");
+    // Nothing of the user's to save: the draft still holds what it was seeded
+    // with, or it already matches what is stored. Resync either way, which
+    // adopts a remote value the focused-guard above deliberately skipped.
+    if (
+      next === descriptionSeedRef.current.trim() ||
+      next === (scenario.description ?? "").trim()
+    ) {
+      adoptRemoteDescription();
       return;
     }
+    // Marked BEFORE the write, not after it: the seed is what "dirty" is
+    // measured against, and leaving Edit re-measures while this is still in
+    // flight. Advancing it late sent `next` a second time from that flush.
+    const generation = ++descriptionSaveRef.current;
+    descriptionSeedRef.current = next;
     try {
       await updateScenario({
         scenarioId: scenario.scenarioId,
         description: next,
       } as any);
     } catch (err) {
+      // A newer save has taken over: its value is the one to keep, and
+      // resyncing from here would drop it.
+      if (generation !== descriptionSaveRef.current) return;
       toast.error(convexErrMessage(err, "Failed to save the description"));
-      setDescriptionDraft(scenario.description ?? "");
+      // Also rolls the marked seed back to what is actually stored.
+      adoptRemoteDescription();
     }
   };
+
+  // The field lives on Edit, and leaving Edit unmounts it without firing blur.
+  // React drops the typed text, and `descriptionFocusedRef` stays true for the
+  // life of this instance — which survives the flip — freezing the reseed
+  // above. Clear the guard on the way out, and save only what the user really
+  // changed: flushing a merely-focused draft would overwrite a value that
+  // landed while the reseed was suppressed.
+  useEffect(() => {
+    if (editMode) return;
+    descriptionFocusedRef.current = false;
+    if (descriptionDraft === descriptionSeedRef.current) {
+      adoptRemoteDescription();
+      return;
+    }
+    void persistDescription();
+    // Deliberately keyed on the Edit→detail flip alone: the draft and
+    // `persistDescription` both change every render and would retrigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMode]);
 
   // The URL is the stash for both the tab and the opened session: the gates
   // above remount this route during a cold boot, so state captured on first
@@ -422,27 +475,10 @@ export function UserTestingScenarioDetail({
         onSave={handleRename}
         variant="h1"
         placeholder="Scenario name"
-        className="-ml-2 shrink-0 px-2 text-xl font-semibold tracking-tight"
+        // `shrink` overrides the design-system button's own shrink-0, which
+        // otherwise keeps the name at full width and pushes the tabs off.
+        className="-ml-2 min-w-0 shrink px-2 text-xl font-semibold tracking-tight"
         inputClassName="min-w-[8rem] max-w-full text-xl font-semibold tracking-tight"
-      />
-      <TextareaAutosize
-        aria-label="Scenario description"
-        data-testid="user-testing-description"
-        value={descriptionDraft}
-        onChange={(e) => setDescriptionDraft(e.target.value)}
-        onFocus={() => {
-          descriptionFocusedRef.current = true;
-        }}
-        onBlur={() => void persistDescription()}
-        minRows={1}
-        maxRows={4}
-        maxLength={2000}
-        placeholder="Add a description…"
-        className={cn(
-          "min-h-0 min-w-[12rem] flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm",
-          "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
-          "focus-visible:border-0 focus-visible:ring-0",
-        )}
       />
       {/* Host-backed scenarios get no Environment section — nothing else on
           Edit names the client they run against, so the header does. */}
@@ -551,6 +587,32 @@ export function UserTestingScenarioDetail({
               <h1 className="text-xl font-semibold tracking-tight text-foreground">
                 Settings
               </h1>
+
+              {/* Off the header row as of BB-202: a field that grows next to
+                  the title crowds the tabs. Still the only editor for it. */}
+              <section
+                className="space-y-4"
+                data-testid="user-testing-description-section"
+              >
+                <h2 className="text-lg font-medium tracking-tight text-foreground">
+                  Description
+                </h2>
+                <TextareaAutosize
+                  aria-label="Scenario description"
+                  data-testid="user-testing-description"
+                  value={descriptionDraft}
+                  onChange={(e) => setDescriptionDraft(e.target.value)}
+                  onFocus={() => {
+                    descriptionFocusedRef.current = true;
+                  }}
+                  onBlur={() => void persistDescription()}
+                  minRows={2}
+                  maxRows={8}
+                  maxLength={2000}
+                  placeholder="Add a description…"
+                  className="resize-none text-sm"
+                />
+              </section>
 
               {environmentError ? (
                 <div
@@ -710,6 +772,38 @@ export function UserTestingScenarioDetail({
       />
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
+        {tab === "findings" ? (
+          <div className="absolute inset-0 overflow-y-auto px-8 py-4">
+            {/* Same guard, same reason, as Insights below — and it matters
+                MORE here. That boundary was added when Insights was a tab a
+                reader opted into; Findings is the landing tab, so a throw
+                from its drill-down query blanks the default view of
+                `/user-testing/:scenarioId` for everyone arriving without a
+                `?tab=`. `ScenarioGoalChain` already guards the secondary
+                query on this surface, which left the primary one as the only
+                unguarded `useQuery` on the page. */}
+            <ErrorBoundary
+              key={scenario.scenarioId}
+              name="user-testing-findings"
+              fallback={<ScenarioShareEmptyPanel scenario={scenario} />}
+            >
+              <ScenarioFindingsTab
+                scenarioId={scenario.scenarioId}
+                onOpenSession={(threadId) =>
+                  navigate(
+                    buildUserTestingScenarioPath(scenario.scenarioId, {
+                      tab: "sessions",
+                      session: threadId,
+                      sel: selParam ?? undefined,
+                      view,
+                    }),
+                    { replace: true },
+                  )
+                }
+              />
+            </ErrorBoundary>
+          </div>
+        ) : null}
         {tab === "sessions" ? (
           <div className="absolute inset-0">
             <ScenarioUsagePanel

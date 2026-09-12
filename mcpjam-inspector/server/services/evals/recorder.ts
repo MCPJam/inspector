@@ -24,6 +24,7 @@ import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/con
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
+import { randomUUID } from "node:crypto";
 import {
   environmentLaunchConflictError,
   environmentLaunchRejectionError,
@@ -40,6 +41,8 @@ type IterationStatus = ContractIterationStatus;
 // Run-level (not per-iteration) terminal stop reason, threaded into the
 // suite-run finalize so the dashboard can show why a run stopped.
 type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
+type ExecutionType = "model" | "model_free" | "harness";
+const RUNTIME_TELEMETRY_TIMEOUT_MS = 2_000;
 
 /**
  * When a Convex mutation rejects because a billing/entitlement cap was hit
@@ -88,6 +91,12 @@ type SuiteRunEnvironmentSnapshot = {
 export type SuiteRunRecorder = {
   runId: string;
   suiteId: string;
+  beginExecutionAttempt?(args: {
+    caseCount: number;
+    repetitionCount: number;
+    renderConcurrencyLimit: number;
+    modelIdentifiers: Array<{ provider: string; model: string }>;
+  }): Promise<void>;
   startIteration(args: {
     testCaseId?: string;
     testCaseSnapshot?: {
@@ -108,6 +117,7 @@ export type SuiteRunRecorder = {
     };
     iterationNumber: number;
     startedAt: number;
+    executionType?: ExecutionType;
   }): Promise<string | undefined>;
   finishIteration(args: {
     iterationId?: string;
@@ -192,11 +202,104 @@ export const createSuiteRunRecorder = ({
   runId: string;
 }): SuiteRunRecorder => {
   let runDeleted = false; // Track if run was deleted
+  let runtimeAttempt:
+    | { attemptId: string; monotonicStartedAt: number }
+    | undefined;
+  const iterationRuntime = new Map<
+    string,
+    {
+      executionType: ExecutionType;
+      startOffsetMs: number;
+    }
+  >();
+  const pendingRuntimeWrites = new Set<Promise<void>>();
+
+  const warnRuntimeFailure = (message: string, error: unknown) => {
+    logger.warn(message, {
+      runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  };
+
+  const runRuntimeTelemetry = async <T>(
+    operation: () => Promise<T>,
+    failureMessage: string
+  ): Promise<{ ok: true; value: T } | { ok: false }> => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const settled = Promise.resolve().then(operation).then(
+      (value) => ({ kind: "success" as const, value }),
+      (error) => ({ kind: "failure" as const, error })
+    );
+    const deadline = new Promise<{ kind: "timeout" }>((resolve) => {
+      timeout = setTimeout(
+        () => resolve({ kind: "timeout" }),
+        RUNTIME_TELEMETRY_TIMEOUT_MS
+      );
+    });
+    const result = await Promise.race([settled, deadline]);
+    if (timeout) clearTimeout(timeout);
+    if (result.kind === "success") {
+      return { ok: true, value: result.value };
+    }
+    warnRuntimeFailure(
+      failureMessage,
+      result.kind === "timeout"
+        ? new Error(
+            `runtime telemetry timed out after ${RUNTIME_TELEMETRY_TIMEOUT_MS}ms`
+          )
+        : result.error
+    );
+    return { ok: false };
+  };
+
+  const trackRuntimeWrite = (write: Promise<unknown>) => {
+    const tracked = write.then(() => undefined);
+    pendingRuntimeWrites.add(tracked);
+    void tracked.finally(() => pendingRuntimeWrites.delete(tracked));
+  };
 
   return {
     runId,
     suiteId,
-    async startIteration({ testCaseId, testCaseSnapshot, iterationNumber }) {
+    async beginExecutionAttempt(metadata) {
+      runtimeAttempt = undefined;
+      iterationRuntime.clear();
+      const attemptId = randomUUID();
+      try {
+        const currentRunResult = await runRuntimeTelemetry(
+          () =>
+            convexClient.query("testSuites:getTestSuiteRun" as any, { runId }),
+          "[evals] Failed to read current runtime attempt"
+        );
+        if (!currentRunResult.ok) return;
+        const currentRun = currentRunResult.value;
+        const beginResult = await runRuntimeTelemetry(
+          () =>
+            convexClient.mutation(
+              "testSuites:beginEvalRuntimeAttempt" as any,
+              {
+                runId,
+                attemptId,
+                ...(currentRun?.runtimeSummary?.attemptId
+                  ? { previousAttemptId: currentRun.runtimeSummary.attemptId }
+                  : {}),
+                ...metadata,
+              }
+            ),
+          "[evals] Failed to begin runtime telemetry"
+        );
+        if (!beginResult.ok) return;
+        runtimeAttempt = { attemptId, monotonicStartedAt: performance.now() };
+      } catch (error) {
+        warnRuntimeFailure("[evals] Failed to begin runtime telemetry", error);
+      }
+    },
+    async startIteration({
+      testCaseId,
+      testCaseSnapshot,
+      iterationNumber,
+      executionType = "model",
+    }) {
       if (runDeleted) {
         // Silently skip if run was deleted
         return undefined;
@@ -252,6 +355,34 @@ export const createSuiteRunRecorder = ({
           iterationId: matchingIteration._id,
         });
 
+        if (runtimeAttempt) {
+          const attempt = runtimeAttempt;
+          const iterationId = matchingIteration._id as string;
+          const startOffsetMs = Math.max(
+            0,
+            performance.now() - attempt.monotonicStartedAt
+          );
+          trackRuntimeWrite(
+            runRuntimeTelemetry(
+              () =>
+                convexClient.mutation(
+                  "testSuites:recordEvalIterationRuntimeStart" as any,
+                  {
+                    iterationId,
+                    attemptId: attempt.attemptId,
+                    executionType,
+                    startOffsetMs,
+                  }
+                ),
+              "[evals] Failed to record iteration runtime start"
+            )
+          );
+          iterationRuntime.set(iterationId, {
+            executionType,
+            startOffsetMs,
+          });
+        }
+
         return matchingIteration._id as string;
       } catch (error) {
         const errorMessage =
@@ -277,6 +408,33 @@ export const createSuiteRunRecorder = ({
     async finishIteration(params) {
       if (runDeleted) {
         return;
+      }
+      if (params.iterationId && runtimeAttempt) {
+        const timing = iterationRuntime.get(params.iterationId);
+        if (timing) {
+          const endOffsetMs = Math.max(
+            timing.startOffsetMs,
+            performance.now() - runtimeAttempt.monotonicStartedAt
+          );
+          trackRuntimeWrite(
+            runRuntimeTelemetry(
+              () =>
+                convexClient.mutation(
+                  "testSuites:recordEvalIterationRuntimeEnd" as any,
+                  {
+                    iterationId: params.iterationId,
+                    attemptId: runtimeAttempt.attemptId,
+                    executionType: timing.executionType,
+                    executionOutcome: params.status,
+                    startOffsetMs: timing.startOffsetMs,
+                    endOffsetMs,
+                  }
+                ),
+              "[evals] Failed to record iteration runtime end"
+            )
+          );
+          iterationRuntime.delete(params.iterationId);
+        }
       }
       await finalizeEvalIteration({
         convexClient,
@@ -309,6 +467,34 @@ export const createSuiteRunRecorder = ({
         if (runDeleted) {
           // Silently skip if run was deleted
           return;
+        }
+
+        if (runtimeAttempt) {
+          await Promise.allSettled([...pendingRuntimeWrites]);
+          try {
+            await runRuntimeTelemetry(
+              () =>
+                convexClient.mutation(
+                  "testSuites:finalizeEvalRuntimeAttempt" as any,
+                  {
+                    runId,
+                    attemptId: runtimeAttempt.attemptId,
+                    totalElapsedMs: Math.max(
+                      0,
+                      performance.now() - runtimeAttempt.monotonicStartedAt
+                    ),
+                    interrupted:
+                      status === "cancelled" || status === "timed_out",
+                  }
+                ),
+              "[evals] Failed to finalize runtime telemetry"
+            );
+          } catch (error) {
+            warnRuntimeFailure(
+              "[evals] Failed to finalize runtime telemetry",
+              error
+            );
+          }
         }
 
         try {
@@ -863,6 +1049,10 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     config,
     recorder,
+    githubCredentialPolicy: response?.githubCredentialPolicy as
+      | "no_customer_credentials"
+      | "suite_credentials"
+      | undefined,
     /**
      * This start was a REPLAY of an existing run (idempotency key hit, or the
      * keyless fingerprint window), not a launch.

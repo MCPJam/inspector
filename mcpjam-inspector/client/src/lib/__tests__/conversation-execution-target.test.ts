@@ -32,8 +32,8 @@ describe("readConversationExecutionTarget", () => {
     ).toEqual({ kind: "environment", environmentId: "env_1" });
   });
 
-  it("reports UNRECORDED for a browser Playground session, which pins neither", () => {
-    // This is the shape of every `origin: "playground"` row: `resumeConfig`
+  it("reports UNRECORDED for a legacy session without a target", () => {
+    // Older `origin: "playground"` rows have this shape: `resumeConfig`
     // carries prompt/temperature/servers and no target field at all.
     expect(
       readConversationExecutionTarget({
@@ -156,5 +156,35 @@ describe("describeConversationTargetDisclosure", () => {
       kind: "mismatch",
       recorded: { kind: "host", hostId: "cursor-host" },
     });
+  });
+});
+
+describe("recorded resume destination", () => {
+  it("prefers the last saved target over a legacy first-turn environment pin", () => {
+    expect(
+      readConversationExecutionTarget({
+        resumeConfig: {
+          environmentId: "original",
+          executionTarget: { kind: "host", hostId: "continued" },
+        },
+      }),
+    ).toEqual({ kind: "host", hostId: "continued" });
+  });
+  it("distinguishes an explicit ad-hoc run from missing metadata", () => {
+    const recorded = readConversationExecutionTarget({
+      resumeConfig: { executionTarget: { kind: "adhoc" } },
+    });
+    expect(
+      describeConversationTargetDisclosure({
+        recorded,
+        composer: { kind: "host", hostId: null },
+      }),
+    ).toEqual({ kind: "none" });
+    expect(
+      describeConversationTargetDisclosure({
+        recorded,
+        composer: { kind: "host", hostId: "other" },
+      }).kind,
+    ).toBe("mismatch");
   });
 });

@@ -42,7 +42,7 @@ const {
     ipcHandleMock: vi.fn(
       (channel: string, handler: (...args: any[]) => any) => {
         ipcHandlers.set(channel, handler);
-      }
+      },
     ),
     ipcOnMock: vi.fn((channel: string, handler: (...args: any[]) => void) => {
       ipcListeners.set(channel, handler);
@@ -115,7 +115,8 @@ function emitAppEvent(event: string, ...args: any[]) {
   }
 }
 
-type UpdateListenersModule = typeof import("../../src/ipc/update/update-listeners.js");
+type UpdateListenersModule =
+  typeof import("../../src/ipc/update/update-listeners.js");
 let lastLoadedModule: UpdateListenersModule | null = null;
 
 async function loadUpdateListeners() {
@@ -163,7 +164,7 @@ describe("update-listeners", () => {
       installRequested: false,
     });
     expect(
-      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } })
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
     ).toEqual({ kind: "pending", installRequested: false });
   });
 
@@ -416,6 +417,46 @@ describe("update-listeners", () => {
     emitAutoUpdaterEvent("error", new Error("network died"));
 
     expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+  });
+
+  it("ignores a second Update click while the install is already underway", async () => {
+    // INSPECTOR-ELECTRON-GT. `quitAndInstall` is not idempotent: with a window
+    // still open Electron registers the AutoUpdater on the window list and
+    // waits for the windows to close, so a second call re-registers the same
+    // observer and Chromium reports "Observers can only be added once!".
+    // Nothing clears `downloaded`, so the button stays live for the whole
+    // teardown — which is the window a double-click lands in.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a repeat click after the install started from a queued download", async () => {
+    // The other way in: the user clicks while still downloading, so
+    // `update-downloaded` starts the install itself. A click after that lands
+    // on a `downloaded` status with the quit already in flight.
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
   });
 
   it("catches quitAndInstall throws and surfaces an error broadcast", async () => {

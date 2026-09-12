@@ -1,3 +1,4 @@
+import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
@@ -99,6 +100,8 @@ export function pickEnrichmentHeaders(
 }
 
 export interface ResumeConfig {
+  /** Destination of the last saved turn; re-authorized when resumed. */
+  executionTarget?: ResumeExecutionTarget;
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
@@ -236,6 +239,11 @@ export function buildDirectHostConfig(input: {
  */
 export interface PersistedTurnTrace {
   turnId: string;
+  browserAtTurn?: {
+    browserSessionId: string;
+    bootId?: string;
+    box?: { sandboxRowId: string } | { computerId: string };
+  };
   promptIndex: number;
   startedAt: number;
   endedAt: number;
@@ -349,6 +357,7 @@ interface PersistChatSessionOptions {
   expectedVersion?: number;
   rewind?: ChatRewind;
   turnTrace?: PersistedTurnTrace;
+  turnLeaseOwnerToken?: string;
   /**
    * Materialized project secrets this turn delivered into the sandbox, so their
    * values are replaced with `[secret:NAME]` before anything is persisted.
@@ -595,6 +604,9 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
     ...(options.turnTrace?.turnId ? { turnId: options.turnTrace.turnId } : {}),
     ...(options.rewind ? { rewind: options.rewind } : {}),
     ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
+    ...(options.turnLeaseOwnerToken
+      ? { turnLeaseOwnerToken: options.turnLeaseOwnerToken }
+      : {}),
     ...(options.harnessSessionCommit
       ? { harnessSessionCommit: options.harnessSessionCommit }
       : {}),
@@ -944,10 +956,10 @@ export async function persistChatSessionToConvex(
     lastFailure = {
       failureKind: result.failureKind,
       ...(result.status !== undefined ? { status: result.status } : {}),
-      ...(result.preview ?? lastFailure.preview
+      ...((result.preview ?? lastFailure.preview)
         ? { preview: result.preview ?? lastFailure.preview }
         : {}),
-      ...(result.error ?? lastFailure.error
+      ...((result.error ?? lastFailure.error)
         ? { error: result.error ?? lastFailure.error }
         : {}),
     };

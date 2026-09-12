@@ -160,6 +160,15 @@ export type BrowserAgentCommand =
       observeAfter?: BrowserAgentObserveAfter;
     }
   | { op: "back"; observeAfter?: BrowserAgentObserveAfter }
+  /**
+   * Forward through this tab's history.
+   *
+   * Published alongside `back` rather than kept pane-only, because the two are
+   * one capability and an agent that can go back and not forward has to
+   * remember and re-navigate a URL it already had. A no-op when there is
+   * nothing ahead, exactly as `back` is at the start of history.
+   */
+  | { op: "forward"; observeAfter?: BrowserAgentObserveAfter }
   | { op: "reload"; observeAfter?: BrowserAgentObserveAfter }
   | {
       op: "act";
@@ -327,7 +336,9 @@ export type BrowserAgentRefusalCode =
   | "session_revoked"
   | "session_closed"
   | "busy"
-  | "daemon_at_capacity";
+  | "daemon_at_capacity"
+  /** Provisioning or wake failed before a command could be sent. */
+  | "browser_unavailable";
 
 /** Why an outcome is unknowable. @see BrowserAgentResult */
 export type BrowserAgentUnknownReason =

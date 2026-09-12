@@ -703,15 +703,12 @@ export function IterationDetails({
   // disappear when it fails to load: the scorecard reads persisted metadata,
   // so a traceless or blob-errored trial still has scorers to show — and
   // hiding the tabs would hide the only view of them, which is the failure
-  // this pane exists to fix. The trace-backed tabs hide individually instead.
+  // this pane exists to fix. Missing trace views explain their unavailable data.
   /** The tabs that read the trace blob, and therefore wait for it. */
   const traceTabsReady = hasTrace && !loading && !error;
   const previewTraceToolbar =
     layoutMode === "full" &&
-    // A trial with NO trace has only its scorecard, so it gets no tab row
-    // rather than a row of tabs that lead nowhere. With a trace the row
-    // appears immediately; the trace-backed tabs join it once the blob lands.
-    (scorecard ? hasTrace : hasTrace && !loading && !error) ? (
+    (scorecard || (hasTrace && !loading && !error)) ? (
       <PreviewHeaderSlot>
         <TraceViewModeTabs
           mode={
@@ -722,11 +719,11 @@ export function IterationDetails({
               : previewTraceMode
           }
           onModeChange={setPreviewTraceMode}
-          showToolsTab={hasEvalToolCalls && traceTabsReady}
+          showToolsTab={Boolean(scorecard) || (hasEvalToolCalls && traceTabsReady)}
           showBrowserTab={hasBrowserArtifacts && traceTabsReady}
           browserActive={previewTraceMode === "browser"}
           onSelectBrowser={() => setPreviewTraceMode("browser")}
-          showStepsTab={hasSteps && traceTabsReady}
+          showStepsTab={hasSteps && (Boolean(scorecard) || traceTabsReady)}
           stepsActive={previewTraceMode === "steps"}
           onSelectSteps={() => setPreviewTraceMode("steps")}
           showScorecardTab={Boolean(scorecard)}
@@ -1078,7 +1075,7 @@ export function IterationDetails({
     </div>
   ) : null;
 
-  const traceSection = hasTrace ? (
+  const traceSection = hasTrace || (scorecard && previewTraceMode === "steps") ? (
     <div
       className={cn(
         "flex flex-col",
@@ -1117,7 +1114,7 @@ export function IterationDetails({
           />
         ) : (
           <TraceViewer
-              trace={blob}
+              trace={blob ?? {}}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
               model={traceModel}
               toolsMetadata={toolsMetadata}
@@ -1172,7 +1169,7 @@ export function IterationDetails({
           the answer is six cards wide — putting it under the trace would make
           them scroll a transcript to reach the summary of it. Absent for the
           hosts that pass no slot, which is most of them. */}
-      {trialChainSlot ? (
+      {trialChainSlot && !scorecard ? (
         <div className="shrink-0 px-3" data-testid="iteration-trial-chain">
           {trialChainSlot}
         </div>
@@ -1261,10 +1258,15 @@ export function IterationDetails({
             scoresSection,
           })
         ) : (
-          <>
-            {traceSection}
-            {toolCallsSection}
-          </>
+          !hasTrace && previewTraceMode === "tools" ? (
+            <div className="space-y-3" data-testid="iteration-tools-without-trace">{toolCallsGrids}</div>
+          ) : !hasTrace && previewTraceMode !== "steps" ? (
+            <p className="p-4 text-sm text-muted-foreground" role="status">
+              {iteration.status === "running" || iteration.status === "pending"
+                ? "This run has not recorded a trace yet."
+                : "No trace was recorded for this run."}
+            </p>
+          ) : traceSection
         )
       ) : traceFirst ? (
         <>

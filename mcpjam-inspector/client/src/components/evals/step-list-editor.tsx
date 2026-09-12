@@ -76,6 +76,7 @@ type StepListEditorProps = {
    * replay pane to show a run's `testCaseSnapshot` with the same card visuals as
    * the live editor.
    */
+  protectPrompts?: boolean;
   readOnly?: boolean;
   /**
    * Live per-turn execution status (keyed by implicit turn index) from a quick
@@ -166,6 +167,7 @@ function StepRow({
   onHover,
   onUpdate,
   onRemove,
+  removable = true,
   onMove,
 }: {
   step: TestStep;
@@ -185,6 +187,7 @@ function StepRow({
   onHover?: (stepId: string | null) => void;
   onUpdate: (next: TestStep) => void;
   onRemove: () => void;
+  removable?: boolean;
   onMove: (dir: -1 | 1) => void;
 }) {
   const meta = STEP_META[step.kind];
@@ -251,6 +254,7 @@ function StepRow({
             >
               <ArrowDown className="h-3.5 w-3.5" />
             </Button>
+            {removable ? (
             <Button
               type="button"
               variant="ghost"
@@ -261,6 +265,7 @@ function StepRow({
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
+            ) : null}
           </div>
         )}
       </div>
@@ -439,6 +444,7 @@ export function StepListEditor({
   projectServers,
   evalValidationBorderClass,
   readOnly = false,
+  protectPrompts = false,
   stepStatusByTurn,
   stepStatusById,
   syncedStepId,
@@ -449,8 +455,10 @@ export function StepListEditor({
   const turnIndices = stepStatusByTurn ? stepTurnIndices(steps) : null;
   const updateAt = (index: number, next: TestStep) =>
     onStepsChange(steps.map((s, i) => (i === index ? next : s)));
-  const removeAt = (index: number) =>
+  const removeAt = (index: number) => {
+    if (protectPrompts && steps[index]?.kind === "prompt") return;
     onStepsChange(steps.filter((_, i) => i !== index));
+  };
   const moveAt = (index: number, dir: -1 | 1) => {
     const target = index + dir;
     if (target < 0 || target >= steps.length) return;
@@ -531,6 +539,7 @@ export function StepListEditor({
                 }
                 statusIsPerStep={stepStatusById?.get(step.id) !== undefined}
                 onUpdate={(next) => updateAt(index, next)}
+                removable={!protectPrompts || step.kind !== "prompt"}
                 onRemove={() => removeAt(index)}
                 onMove={(dir) => moveAt(index, dir)}
               />

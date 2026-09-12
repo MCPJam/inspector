@@ -494,9 +494,7 @@ describe("project run history metrics", () => {
       .getAllByRole("columnheader")
       .map((header) => header.textContent);
     expect(headers.slice(0, 2)).toEqual(["Date", "Run"]);
-    expect(
-      inTable().getByRole("columnheader", { name: "Date" }),
-    ).toBeVisible();
+    expect(inTable().getByRole("columnheader", { name: "Date" })).toBeVisible();
     expect(inTable().getByRole("columnheader", { name: "Run" })).toBeVisible();
     expect(
       inTable().getByRole("columnheader", { name: "Status" }),
@@ -537,9 +535,7 @@ describe("project run history metrics", () => {
     expect(suite.closest("td")).toBe(
       suite.closest("tr")!.querySelectorAll("td")[0],
     );
-    expect(suite).toHaveTextContent(
-      formatRunHistoryDateRange(1_700_000_000_000, 1_700_000_000_000),
-    );
+    expect(suite).not.toHaveTextContent(/Nov/);
     await waitFor(() =>
       expect(mocks.query).toHaveBeenCalledWith(
         "testSuites:listTestSuiteRunIterations",
@@ -550,10 +546,10 @@ describe("project run history metrics", () => {
     expect(inTable().queryByText("Verdict")).toBeNull();
     await act(async () => release({ ...rows[1], runGroupId: "together" }));
     expect(
-      await inTable().findByRole("button", { name: "Run #1", exact: true }),
+      await inTable().findByRole("button", { name: "#1", exact: true }),
     ).toBeVisible();
     expect(
-      inTable().queryByRole("button", { name: "Run #2", exact: true }),
+      inTable().queryByRole("button", { name: "#2", exact: true }),
     ).toBeNull();
     expect(
       mocks.query.mock.calls.every(([name]) =>
@@ -616,13 +612,28 @@ describe("project run history metrics", () => {
       screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
     );
     await user.keyboard("{Escape}");
-    await screen.findByText(/1 of 1 loaded runs/);
+    await screen.findByText(/1 of 2 loaded runs/);
+    expect(latestQueryArgs().origins).toBeUndefined();
+    const platform = screen.getByRole("button", { name: "Filter by platform" });
+    expect(platform).toHaveClass("border-primary/40");
+    const clear = screen.getByRole("button", { name: "Clear filters" });
+    expect(clear.parentElement).not.toContainElement(
+      screen.getByRole("heading", { name: "All Runs" }),
+    );
+    expect(clear.parentElement).toContainElement(platform);
+    expect(
+      clear.compareDocumentPosition(platform) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     const metrics = screen.getByTestId("project-run-history-metrics");
     expect(within(metrics).getByText("2/2 passed")).toBeVisible();
     expect(within(metrics).queryByText(/failed iteration/)).toBeNull();
     expect(within(metrics).queryByText(/ pp$/)).toBeNull();
     expect(inTable().queryByText("UI suite")).toBeNull();
-    expect(screen.getByText(/1 of 1 loaded runs/)).toBeVisible();
+    expect(screen.getByText(/1 of 2 loaded runs/)).toBeVisible();
+    await user.click(clear);
+    expect(platform).not.toHaveClass("border-primary/40");
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
 
   it("keeps unavailable metrics absent and lets the user retry", async () => {
@@ -751,9 +762,7 @@ describe("project run history metrics", () => {
     });
     const suiteCells = suite.closest("tr")!.querySelectorAll("td");
     expect(suite.closest("td")).toBe(suiteCells[0]);
-    expect(suiteCells[0]).toHaveTextContent(
-      formatRunHistoryDateRange(1000, 2000),
-    );
+    expect(suiteCells[0]).not.toHaveTextContent(/Dec/);
     expect(suiteCells[0].querySelector("svg")).not.toBeNull();
     expect(suiteCells[1]).toHaveTextContent("Checkout suite");
     expect(suiteCells[1].querySelector("svg")).toBeNull();
@@ -762,11 +771,11 @@ describe("project run history metrics", () => {
     );
     expect(within(suite.closest("tr")!).getByText("75%")).toBeVisible();
     expect(within(suite.closest("tr")!).getByText("3/4 passed")).toBeVisible();
-    const run = screen.getByRole("button", { name: "Run #1", exact: true });
+    const run = screen.getByRole("button", { name: "#1", exact: true });
     const runCells = run.querySelectorAll("td");
     expect(runCells[0]).toHaveTextContent(formatRunHistoryDate(1000));
-    expect(runCells[0]).not.toHaveTextContent("Run #");
-    expect(runCells[1]).toHaveTextContent("Run #1");
+    expect(runCells[0]).not.toHaveTextContent("#");
+    expect(runCells[1]).toHaveTextContent("#1");
     expect(runCells[1]).not.toHaveTextContent(formatRunHistoryDate(1000));
     expect(screen.queryByText(/Run group/)).toBeNull();
     expect(
@@ -789,27 +798,29 @@ describe("project run history metrics", () => {
       screen.getByRole("option", { name: "Cursor", exact: true }),
     );
     expect(
-      within(
-        screen.getByRole("button", { name: "Run #1", exact: true }),
-      ).getByText(/Cursor/),
+      within(screen.getByRole("button", { name: "#1", exact: true })).getByText(
+        /Cursor/,
+      ),
     ).toBeVisible();
     expect(
-      within(
-        screen.getByRole("button", { name: "Run #1", exact: true }),
-      ).getByText(/ChatGPT/),
+      within(screen.getByRole("button", { name: "#1", exact: true })).getByText(
+        /ChatGPT/,
+      ),
     ).toBeVisible();
     expect(screen.getByText("1 of 1 loaded runs")).toBeVisible();
-    expect(screen.queryByText(/roll-ups across matching loaded runs/)).toBeNull();
+    expect(
+      screen.queryByText(/roll-ups across matching loaded runs/),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: "Collapse all" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Expand all" })).toBeNull();
     await user.click(suite);
     expect(
-      screen.queryByRole("button", { name: "Run #1", exact: true }),
+      screen.queryByRole("button", { name: "#1", exact: true }),
     ).toBeNull();
     await user.click(
       screen.getByRole("button", { name: "Expand suite Checkout suite" }),
     );
-    screen.getByRole("button", { name: "Run #1", exact: true }).focus();
+    screen.getByRole("button", { name: "#1", exact: true }).focus();
     await user.keyboard("{Enter}");
     expect(onSelectRun).toHaveBeenCalledWith({
       suiteId: "suite_1",
@@ -823,7 +834,7 @@ describe("project run history metrics", () => {
     ).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("shows a date range on the suite group when runs span days", async () => {
+  it("omits dates on suite groups even when runs span days", async () => {
     arrangeHistory();
     const earliest = new Date(2026, 8, 8, 15, 25).getTime();
     const latest = new Date(2026, 8, 10, 12, 0).getTime();
@@ -834,7 +845,10 @@ describe("project run history metrics", () => {
     setRows(rows);
     mocks.query.mockImplementation(async (name, args: any) =>
       name === "testSuites:getTestSuiteRun"
-        ? { ...rows.find((row) => row._id === args.runId), effectiveModelId: "gpt-5.1" }
+        ? {
+            ...rows.find((row) => row._id === args.runId),
+            effectiveModelId: "gpt-5.1",
+          }
         : { page: [], isDone: true, continueCursor: "" },
     );
     render(
@@ -847,7 +861,9 @@ describe("project run history metrics", () => {
     const suite = await screen.findByRole("button", {
       name: "Collapse suite Checkout suite",
     });
-    expect(suite).toHaveTextContent(formatRunHistoryDateRange(earliest, latest));
+    expect(suite).not.toHaveTextContent(
+      formatRunHistoryDateRange(earliest, latest),
+    );
     expect(suite).not.toHaveTextContent("Checkout suite");
   });
 

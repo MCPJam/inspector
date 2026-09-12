@@ -1,6 +1,13 @@
 import { useState, type ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { TestTemplateEditor } from "../test-template-editor";
@@ -32,7 +39,9 @@ function createDeferred() {
 
 const useMutationMock = vi.hoisted(() => vi.fn(() => vi.fn()));
 const useQueryMock = vi.hoisted(() => vi.fn());
-const reviewBlobAction = vi.hoisted(() => vi.fn().mockResolvedValue({ messages: [] }));
+const reviewBlobAction = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ messages: [] }),
+);
 const updateTestCaseMutationMock = vi.hoisted(() => vi.fn());
 const streamEvalTestCaseMock = vi.hoisted(() => vi.fn());
 const runEvalTestCaseMock = vi.hoisted(() => vi.fn());
@@ -874,6 +883,7 @@ describe("TestTemplateEditor run view from route", () => {
       screen.getByLabelText("What does the user ask?"),
     ).toBeInTheDocument();
     expect(screen.queryByText("User prompt")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Setup SDK" })).toBeNull();
   });
 
   it("keeps a multi-turn case in the workspace and lists what the form cannot author", async () => {
@@ -962,6 +972,35 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
+  it("keeps unsaved case edits while iteration evidence opens in the drawer", async () => {
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    const trial = {
+      ...baseIteration,
+      testCaseSnapshot: {
+        ...baseIteration.testCaseSnapshot,
+        steps: [
+          { id: "captured", kind: "prompt", prompt: "Historical prompt" },
+        ],
+        expectedOutput: "Historical outcome",
+      },
+    } as EvalIteration;
+    const query = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: unknown) =>
+      name === "testSuites:getTestIteration" ? trial : query(name, args),
+    );
+    renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
+    const prompt = await screen.findByLabelText("What does the user ask?");
+    fireEvent.change(prompt, { target: { value: "Unsaved current prompt" } });
+    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByTestId("case-workspace-inspect-strip")).toBeNull();
+    expect(screen.queryByDisplayValue("Historical prompt")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    expect(
+      await screen.findByDisplayValue("Unsaved current prompt"),
+    ).not.toHaveAttribute("readonly");
+  });
+
   it("offers failure evidence after the first trial and opens Steps", async () => {
     activeCaseDoc = goldenCaseDoc;
     activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
@@ -977,6 +1016,7 @@ describe("TestTemplateEditor run view from route", () => {
       },
     };
     renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
+    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
     const button = await screen.findByRole("button", {
       name: "Open the failed step",
     });
@@ -990,46 +1030,102 @@ describe("TestTemplateEditor run view from route", () => {
     );
   });
 
-  it("Run test saves the latest keystrokes", async () => {
+  it("saves judge overrides from the dedicated UVC page", async () => {
     activeCaseDoc = goldenCaseDoc;
-    const onRunCase = vi.fn();
-    renderGoldenCase({ observeFirst: true, onRunCase });
-    const prompt = await screen.findByLabelText("What does the user ask?");
-    fireEvent.change(prompt, { target: { value: "Intermediate prompt" } });
-    fireEvent.change(prompt, { target: { value: "Final prompt to actually run" } });
-    fireEvent.click(screen.getByTestId("case-run-test"));
-    await waitFor(() => expect(onRunCase).toHaveBeenCalled());
-    expect(updateTestCaseMutationMock.mock.calls.at(-1)?.[0].steps[0].prompt)
-      .toBe("Final prompt to actually run");
+    renderGoldenCase({ observeFirst: true, checksPage: true });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Outcome achieved" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save overrides" }));
+    await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());
+    expect(updateTestCaseMutationMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      judgeConfigOverride: { goalCompletion: { enabled: false } },
+    });
+    expect(screen.queryByTestId("case-workspace")).not.toBeInTheDocument();
   });
 
-  it("Run test stops when save validation fails", async () => {
+  it("Run test case saves the latest keystrokes", async () => {
+    const user = userEvent.setup();
     activeCaseDoc = goldenCaseDoc;
-    const onRunCase = vi.fn();
-    renderGoldenCase({ observeFirst: true, onRunCase });
+    renderGoldenCase({ observeFirst: true });
+    const prompt = await screen.findByLabelText("What does the user ask?");
+    fireEvent.change(prompt, { target: { value: "Intermediate prompt" } });
+    fireEvent.change(prompt, {
+      target: { value: "Final prompt to actually run" },
+    });
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    await waitFor(() => expect(streamEvalTestCaseMock).toHaveBeenCalled());
+    expect(
+      updateTestCaseMutationMock.mock.calls.at(-1)?.[0].steps[0].prompt,
+    ).toBe("Final prompt to actually run");
+  });
+
+  it("Run test case stays disabled when the case would not save", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase({ observeFirst: true });
     const prompt = await screen.findByLabelText("What does the user ask?");
     fireEvent.change(prompt, { target: { value: "" } });
-    fireEvent.click(screen.getByTestId("case-run-test"));
-    await waitFor(() => expect(screen.getByTestId("case-run-test")).not.toBeDisabled());
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    expect(
+      screen.getByRole("button", { name: "Run test case" }),
+    ).toBeDisabled();
     expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
-    expect(onRunCase).not.toHaveBeenCalled();
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
   });
 
   it("accepting a no-tool suggestion persists a restriction", async () => {
-    const noToolSteps = [
-      { id: "s1", kind: "prompt", prompt: "Say hello" },
-    ];
-    activeCaseDoc = { ...goldenCaseDoc, steps: noToolSteps, predicates: { mode: "extend", list: [{ type: "noToolErrors" }] }, expectedOutput: "A greeting", lastMessageRun: undefined } as any;
-    const trial = { ...baseIteration, blob: "blob-1", testCaseSnapshot: { ...baseIteration.testCaseSnapshot, steps: noToolSteps, predicates: [{ type: "noToolErrors" }], expectedOutput: "A greeting" } };
+    const noToolSteps = [{ id: "s1", kind: "prompt", prompt: "Say hello" }];
+    activeCaseDoc = {
+      ...goldenCaseDoc,
+      steps: noToolSteps,
+      predicates: { mode: "extend", list: [{ type: "noToolErrors" }] },
+      expectedOutput: "A greeting",
+      lastMessageRun: undefined,
+    } as any;
+    const trial = {
+      ...baseIteration,
+      blob: "blob-1",
+      testCaseSnapshot: {
+        ...baseIteration.testCaseSnapshot,
+        steps: noToolSteps,
+        predicates: [{ type: "noToolErrors" }],
+        expectedOutput: "A greeting",
+      },
+    };
     renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
-    const text = await screen.findByText("Require that no tool is called").catch(() => { throw new Error(document.body.textContent ?? "no text"); });
+    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
+    fireEvent.click(await screen.findByText("Suggested checks"));
+    const text = await screen
+      .findByText("Require that no tool is called")
+      .catch(() => {
+        throw new Error(document.body.textContent ?? "no text");
+      });
     const row = text.closest("li")!;
-    fireEvent.click(within(row).getByRole("button", { name: "Add", exact: true }));
-    await waitFor(() => expect(screen.queryByText("Require that no tool is called")).not.toBeInTheDocument());
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Add", exact: true }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Require that no tool is called"),
+      ).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
     fireEvent.click(screen.getAllByRole("button", { name: /save/i })[0]!);
     await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());
     const payload = updateTestCaseMutationMock.mock.calls.at(-1)?.[0];
-    expect(payload.isNegativeTest === true || payload.predicates?.list?.some((p: any) => p.type === "onlyToolsCalled" && p.toolNames.length === 0) || payload.steps.some((s: any) => s.assertion?.type === "onlyToolsCalled" && s.assertion.toolNames.length === 0)).toBe(true);
+    expect(
+      payload.isNegativeTest === true ||
+        payload.predicates?.list?.some(
+          (p: any) => p.type === "onlyToolsCalled" && p.toolNames.length === 0,
+        ) ||
+        payload.steps.some(
+          (s: any) =>
+            s.assertion?.type === "onlyToolsCalled" &&
+            s.assertion.toolNames.length === 0,
+        ),
+    ).toBe(true);
   });
 
   it("mounts the FORM by default — observe-first is opt-in", async () => {
@@ -1172,7 +1268,10 @@ describe("TestTemplateEditor run view from route", () => {
     await waitFor(() => {
       expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
     });
-    await user.click(screen.getAllByRole("button", { name: /run$/i })[0]!);
+    expect(screen.queryByRole("button", { name: "Iterations" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
 
     await waitFor(() => {
       expect(streamEvalTestCaseMock).toHaveBeenCalled();
@@ -1310,8 +1409,11 @@ describe("TestTemplateEditor run view from route", () => {
     expect(
       screen.queryByTestId("simple-case-tools-unset"),
     ).not.toBeInTheDocument();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Setup Run" }));
     expect(
-      screen.getAllByRole("button", { name: /run$/i })[0],
+      screen.getByRole("button", { name: "Run test case" }),
     ).toBeDisabled();
   });
 
@@ -1365,8 +1467,16 @@ describe("TestTemplateEditor run view from route", () => {
           { stage: "discovery", state: "passed" },
           { stage: "selection", state: "passed" },
           { stage: "call", state: "failed", reason: "argumentMismatch" },
-          { stage: "response", state: "notReached", reason: "earlierStageFailed" },
-          { stage: "userValue", state: "notReached", reason: "earlierStageFailed" },
+          {
+            stage: "response",
+            state: "notReached",
+            reason: "earlierStageFailed",
+          },
+          {
+            stage: "userValue",
+            state: "notReached",
+            reason: "earlierStageFailed",
+          },
         ],
         firstFailedStage: "call",
         failureCategory: "arguments",
@@ -1392,10 +1502,13 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
+    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
     await waitFor(() => {
       expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
     });
-    expect(screen.getByTestId("iteration-trial-chain")).toBeInTheDocument();
+    // The chain is a strip inside the Scorecard now, not a slot above it.
+    expect(screen.queryByTestId("iteration-trial-chain")).toBeNull();
+    expect(screen.getByTestId("trial-scorecard")).toBeInTheDocument();
   });
 
   it("shows the quick-run chain in RunColumn after a just-finished run", async () => {
@@ -1466,7 +1579,13 @@ describe("TestTemplateEditor run view from route", () => {
         screen.getAllByRole("button", { name: /run$/i })[0],
       ).toBeInTheDocument();
     });
-    await user.click(screen.getAllByRole("button", { name: /run$/i })[0]!);
+    expect(screen.queryByRole("button", { name: "Iterations" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    await waitFor(() => expect(streamEvalTestCaseMock).toHaveBeenCalled());
+    // The finished run lands in the timeline; its evidence opens in the drawer.
+    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
     await waitFor(() => {
       expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
     });
@@ -1537,82 +1656,17 @@ describe("TestTemplateEditor run view from route", () => {
         screen.getAllByRole("button", { name: /run$/i })[0],
       ).toBeInTheDocument();
     });
-    await user.click(screen.getAllByRole("button", { name: /run$/i })[0]!);
+    expect(screen.queryByRole("button", { name: "Iterations" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    await waitFor(() => expect(streamEvalTestCaseMock).toHaveBeenCalled());
+    fireEvent.click((await screen.findAllByTestId("case-run-row"))[0]);
 
     const card = await screen.findByTestId("trial-scorecard");
     expect(card).toBeInTheDocument();
-    // The chain describes the trial, so it sits above the tabs, not inside one.
-    const chain = screen.getByTestId("trial-chain-panel");
-    expect(
-      chain.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it("shows the observational route rollup for a multi-trial quick run", async () => {
-    const metadata = { compareRunId: "cmp_rollup" };
-    const trials: EvalIteration[] = [
-      {
-        ...baseIteration,
-        _id: "t1",
-        suiteRunId: undefined,
-        blob: "trace",
-        createdAt: 10,
-        actualToolCalls: [
-          { toolName: "search", arguments: {} },
-          { toolName: "get", arguments: {} },
-        ],
-        metadata,
-      },
-      {
-        ...baseIteration,
-        _id: "t2",
-        suiteRunId: undefined,
-        blob: "trace",
-        createdAt: 11,
-        actualToolCalls: [
-          { toolName: "search", arguments: {} },
-          { toolName: "get", arguments: {} },
-        ],
-        metadata,
-      },
-      {
-        ...baseIteration,
-        _id: "t3",
-        suiteRunId: undefined,
-        blob: "trace",
-        createdAt: 12,
-        actualToolCalls: [{ toolName: "list", arguments: {} }],
-        metadata,
-      },
-    ];
-    activeCaseDoc = { ...caseDoc, lastMessageRun: "t3" };
-    renderWithProviders(
-      <TestTemplateEditor
-        simpleCaseEditor
-        suiteIterations={trials}
-        suiteId="suite-1"
-        selectedTestCaseId="case-1"
-        connectedServerNames={new Set(["srv"])}
-        projectId={null}
-        trialChainEnabled
-        availableModels={[
-          {
-            provider: "openai",
-            model: "gpt-4",
-            label: "GPT-4",
-          } as any,
-        ]}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("route-rollup-card")).toBeInTheDocument();
-    });
-    const card = screen.getByTestId("route-rollup-card");
-    expect(card).toHaveTextContent("Across 3 iterations");
-    expect(card).toHaveTextContent("same route in 2 of 3");
-    expect(card).toHaveTextContent("Observational");
-    expect(card).not.toHaveTextContent(/pass|fail|verdict/i);
+    // The chain describes the trial, so it opens with the Scorecard.
+    expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
   });
 
   it("runs compare across case-configured models and reuses the compare session id for per-model retry", async () => {
@@ -2354,7 +2408,9 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     const runningCard = getCompareCard("Gemini 2.5 Pro");
-    expect(within(runningCard).getByLabelText("Running")).toBeInTheDocument();
+    expect(
+      within(runningCard).queryByLabelText("Running"),
+    ).not.toBeInTheDocument();
     expect(getMetricRunningSpinnerCount(runningCard)).toBe(0);
 
     finalModelDeferred.resolve();
@@ -2481,7 +2537,9 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     const compareCard = getCompareCard("Gemini 2.5 Pro");
-    expect(within(compareCard).getByLabelText("Running")).toBeInTheDocument();
+    expect(
+      within(compareCard).queryByLabelText("Running"),
+    ).not.toBeInTheDocument();
     expect(getMetricRunningSpinnerCount(compareCard)).toBe(0);
 
     finalModelDeferred.resolve();

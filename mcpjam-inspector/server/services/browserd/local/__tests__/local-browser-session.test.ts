@@ -9,7 +9,9 @@ import {
 } from "vitest";
 import {
   ensureLocalBrowserSession,
+  closeLocalBrowserSession,
   findLocalBrowserSession,
+  findLocalBrowserSessionForSession,
   getLocalBrowserProfileDir,
   killLocalBrowserSessions,
   listLocalBrowserSessions,
@@ -21,9 +23,10 @@ import {
   shutdownLocalBrowserSessions,
   sweepLocalBrowserSessions,
   touchLocalBrowserSession,
+  watchLocalBrowserSession,
   type LocalBrowserDeps,
 } from "../local-browser-session";
-import { fakeContext } from "../../daemon/__tests__/fake-page";
+import { fakeContext, fakePage } from "../../daemon/__tests__/fake-page";
 import {
   contextSurfaceCount,
   contextSurfaceFor,
@@ -94,6 +97,51 @@ afterEach(async () => {
 });
 
 describe("local browser session", () => {
+  it("keeps each conversation's live page across a switch and ignores a crashed browser", async () => {
+    const pageA = fakePage({ url: "https://example.test/a" });
+    const pageB = fakePage({ url: "https://example.test/b" });
+    const a = fakeContext({ pages: [pageA] });
+    const b = fakeContext({ pages: [pageB] });
+    const launch = vi
+      .fn()
+      .mockResolvedValueOnce(a.context)
+      .mockResolvedValueOnce(b.context);
+    const { deps } = makeDeps({ launch });
+    const first = await ensureLocalBrowserSession(
+      { projectId: "proj", sessionId: "chat-a" },
+      deps,
+    );
+    const second = await ensureLocalBrowserSession(
+      { projectId: "proj", sessionId: "chat-b" },
+      deps,
+    );
+    const liveA = findLocalBrowserSessionForSession("proj", "chat-a")!;
+    await liveA.client.paneCommand({
+      holder: "pane",
+      command: { op: "create_tab" },
+    });
+    expect(a.created[0]).toBe(pageA);
+    const navigationsBeforeSwitch = [...pageA.calls.goto];
+    pageA.setUrl("https://example.test/a/changed");
+
+    expect(
+      findLocalBrowserSessionForSession("proj", "chat-b")?.handle.bootId,
+    ).toBe(second.bootId);
+    expect(
+      findLocalBrowserSessionForSession("proj", "chat-a")?.handle.bootId,
+    ).toBe(first.bootId);
+    expect(pageA.url()).toBe("https://example.test/a/changed");
+    expect(pageA.calls.goto).toEqual(navigationsBeforeSwitch);
+    expect(pageA.calls.reload).toBe(0);
+    expect(a.wasClosed()).toBe(false);
+    expect(
+      findLocalBrowserSessionForSession("other", "chat-a"),
+    ).toBeUndefined();
+    a.setConnected(false);
+    expect(findLocalBrowserSessionForSession("proj", "chat-a")).toBeUndefined();
+    expect(launch).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps ONE browser per project across turns", async () => {
     const { deps, launched } = makeDeps();
     const first = await ensureLocalBrowserSession(
@@ -334,6 +382,21 @@ describe("local browser session", () => {
     await handle.client.leaseAction!({ action: "resume", holder: "rail-1" });
 
     advance(LOCAL_BROWSER_IDLE_MS + 1);
+    await sweepLocalBrowserSessions(at());
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
+  it("foreground presence protects a browser past absolute age, then expires", async () => {
+    const { deps, advance, at } = makeDeps();
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
+    advance(LOCAL_BROWSER_MAX_LIFETIME_MS + 1);
+    watchLocalBrowserSession(handle, at());
+    await sweepLocalBrowserSessions(at());
+    expect(listLocalBrowserSessions()).toHaveLength(1);
+    advance(45_001);
     await sweepLocalBrowserSessions(at());
     expect(listLocalBrowserSessions()).toHaveLength(0);
   });
@@ -714,4 +777,51 @@ describe("local browser session — the pane's own view of it", () => {
     expect(calls[0]!.surface).toBeUndefined();
     expect(contextSurfaceFor(handle.bootId)).toBeUndefined();
   });
+});
+
+it("keeps the profile closed until export completes even if ensure races", async () => {
+  const { deps, launched } = makeDeps();
+  const first = await ensureLocalBrowserSession(
+    { projectId: "export-race" },
+    deps,
+  );
+  let finish!: () => void;
+  let started!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const exporting = closeLocalBrowserSession(first.bootId, async () => {
+    started();
+    await gate;
+  });
+  await entered;
+  const opening = ensureLocalBrowserSession({ projectId: "export-race" }, deps);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(launched).toHaveLength(1);
+  finish();
+  expect(await exporting).toEqual({ closed: true });
+  expect((await opening).bootId).not.toBe(first.bootId);
+  expect(launched).toHaveLength(2);
+});
+
+it("releases the teardown lease when Chromium cannot flush a profile", async () => {
+  const { deps, contexts } = makeDeps();
+  const session = await ensureLocalBrowserSession(
+    { projectId: "export-flush-failure" },
+    deps,
+  );
+  const close = contexts[0].ctx.close.bind(contexts[0].ctx);
+  contexts[0].ctx.close = async () => {
+    throw new Error("flush failed");
+  };
+  const archive = vi.fn(async () => {});
+  await expect(
+    closeLocalBrowserSession(session.bootId, archive),
+  ).rejects.toThrow("flush failed");
+  expect(archive).not.toHaveBeenCalled();
+  expect((await session.client.lease!()).state).toBe("free");
+  contexts[0].ctx.close = close;
 });

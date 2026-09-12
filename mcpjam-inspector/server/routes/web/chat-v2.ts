@@ -1,3 +1,6 @@
+import { apiSessionWriteAllowed } from "./api-session-write-guard";
+import { BrowserSessionService } from "../../services/browserd/session-service";
+import { toResumeExecutionTarget } from "@/shared/execution-target";
 import type { BrowserPageToolsSnapshot } from "../../utils/built-in-tools/browser.js";
 import {
   peekPageToolsForChatTurn,
@@ -214,10 +217,31 @@ chatV2.post("/", async (c) => {
   try {
     const bearerToken = assertBearerToken(c);
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
+    if (
+      rawBody.browserEngine === "local" ||
+      c.req.header("x-mcpjam-browser-consent")
+    ) {
+      return c.json(
+        {
+          error: "Local Browser must use the local Inspector chat route",
+          code: "browser_location_mismatch",
+        },
+        409,
+      );
+    }
     rpcCollector = createHostedRpcLogCollector(rawBody);
 
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
+    if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
+      const allowed = await apiSessionWriteAllowed(rawBody.origin, async (signal) => {
+        const service = new BrowserSessionService();
+        if (!service.enabled) return { writable: true };
+        return service.agentRequest<{ writable: boolean }>("assert_web_writable", { bearer: bearerToken, projectId: hostedBody.projectId!, body: { conversationId: hostedBody.chatSessionId }, signal: AbortSignal.any([signal, c.req.raw.signal]) });
+      });
+      if (!allowed) return c.json({ code: "API_SESSION_READ_ONLY", error: "This API session is view-only in Playground. Continue it through the session API." }, 409);
+    }
+
     const { initializePins, mcpProtocolVersionsByServerId } =
       extractMcpInitializeOptions(rawBody);
     const body = rawBody as unknown as ChatV2Request & {
@@ -624,8 +648,8 @@ chatV2.post("/", async (c) => {
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
       : scenarioEnvironment
-      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
-      : undefined;
+        ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
+        : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (scenario / host-bound turns above — the
@@ -681,7 +705,10 @@ chatV2.post("/", async (c) => {
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
         hostStyle:
           body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
-        builtInToolIds: body.builtInToolIds,
+        builtInToolIds:
+          isScenarioSession || environmentSpec
+            ? undefined
+            : body.builtInToolIds,
       },
       // Scenario: the published host wins (a share-link client can't override).
       // Host preview (Playground): the owner's in-session tweaks win, while
@@ -709,19 +736,19 @@ chatV2.post("/", async (c) => {
       !resolvedExecution.harness
         ? "emulated"
         : harnessSupportsSkills(resolvedExecution.harness)
-        ? "harness"
-        : "unsupported";
+          ? "harness"
+          : "unsupported";
     const turnProvenance = environmentSpec
       ? turnSkillProvenance(environmentSpec, { delivery: skillDeliveryMode })
       : scenarioEnvironment
-      ? turnSkillProvenance(
-          {
-            environmentRef: scenarioEnvironment.environmentRef,
-            skills: scenarioEnvironment.skills ?? [],
-          },
-          { delivery: skillDeliveryMode },
-        )
-      : undefined;
+        ? turnSkillProvenance(
+            {
+              environmentRef: scenarioEnvironment.environmentRef,
+              skills: scenarioEnvironment.skills ?? [],
+            },
+            { delivery: skillDeliveryMode },
+          )
+        : undefined;
 
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
@@ -797,7 +824,7 @@ chatV2.post("/", async (c) => {
     // standing if the refusal were ever moved.
     const externalAccountHarnessTurn = Boolean(
       resolvedExecution.harness &&
-        harnessUsesExternalAccount(resolvedExecution.harness),
+      harnessUsesExternalAccount(resolvedExecution.harness),
     );
     // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
     // below resolves anything. `resolveHostModelDefinition` asks the org's
@@ -1656,7 +1683,21 @@ chatV2.post("/", async (c) => {
     // `peekPageTools`). A turn that was not going to drive one pays nothing,
     // and a failure of any kind means "no page tools this turn" rather than a
     // failed conversation.
+    // One owner for discovery AND execution; never infer it from the visible pane.
+    const browserSessionScope =
+      body.browserScope === "conversation" &&
+      body.chatSessionId &&
+      !isScenarioSession
+        ? {
+            kind: "conversation" as const,
+            sessionId: body.chatSessionId,
+            ...(hostId ? { hostId } : {}),
+          }
+        : undefined;
     const pageToolsPeek = await peekPageToolsForChatTurn({
+      ...(browserSessionScope
+        ? { conversationId: browserSessionScope.sessionId }
+        : {}),
       builtInToolIds: resolvedExecution.builtInToolIds,
       browserToolId: BROWSER_BUILT_IN_TOOL_ID,
       firstClass: webmcpPageToolsMode() === "first_class",
@@ -1688,9 +1729,7 @@ chatV2.post("/", async (c) => {
     // callback, exactly as it does the approval classification.
     let pageToolRefresh:
       | {
-          refreshPageTools: (ctx: {
-            signal?: AbortSignal;
-          }) => Promise<unknown>;
+          refreshPageTools: (ctx: { signal?: AbortSignal }) => Promise<unknown>;
           currentPageTools: () => MintedDeclaredTool[];
           currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
         }
@@ -1735,9 +1774,14 @@ chatV2.post("/", async (c) => {
         // A person is watching this surface, so it may advertise interactive
         // browser tools and keep a signed-in profile.
         browserApprovalDelivery: { kind: "attested" },
-        ...(pageToolsSnapshot
-          ? { browserPageTools: pageToolsSnapshot }
+        ...(resolvedExecution.browserProfileId
+          ? { browserProfileId: resolvedExecution.browserProfileId }
           : {}),
+        // A Playground conversation owns one durable browser identity. It is
+        // resolved lazily by the browser tool on first use, so merely opening
+        // the chat does not provision a paid desktop.
+        ...(browserSessionScope ? { browserSessionScope } : {}),
+        ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
         // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset as
         // a constructor argument and never re-reads it, so claiming it here
         // would build a refresher nothing consumes. NOT gated on the snapshot:
@@ -1904,7 +1948,7 @@ chatV2.post("/", async (c) => {
             ? {
                 toolCallCancellation:
                   toolCallCancellationFromMcpProfile(
-                    (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+                    (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
                   ) ?? {},
               }
             : {}),
@@ -1975,6 +2019,7 @@ chatV2.post("/", async (c) => {
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
         },
         persist: {
+          executionTarget: toResumeExecutionTarget(executionTarget),
           chatSessionId: body.chatSessionId,
           projectId: hostedBody.projectId,
           sourceType,

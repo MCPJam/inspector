@@ -5,18 +5,26 @@
  * Two things it must keep straight, because getting either wrong is a lie the
  * user acts on:
  *
- *   1. OURS vs THE PAGE'S, and — for a page tool — BOTH ITS NAMES. The model
- *      calls `webmcp_bookSlot`; the page calls it `bookSlot`. A pane showing
- *      only one of them makes the transcript unreadable in one direction, and
- *      the names must be the ones the SERVER minted, not a second guess.
- *   2. WHOSE BROWSER. "this machine" and "your computer" are different
- *      promises about what a click can reach.
+ *   1. OURS vs THE PAGE'S, as sibling groups. A page tool leads with the
+ *      page's name (`bookSlot`); the model name and host sit beneath it. The
+ *      names must be the ones the SERVER minted, not a second guess.
+ *   2. The browser verbs stay listed even when the page has no tools.
  */
 import { describe, expect, it, vi } from "vitest";
 import { WEBMCP_MAX_PAGE_TOOLS } from "@/shared/declared-tools";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { BrowserToolsSection } from "../BrowserToolsSection";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
+
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigate,
+}));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { id: "member" } }),
+}));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 const TOOLS: SerializedModelRequestTool[] = [
   {
@@ -68,36 +76,66 @@ const PAGE_OK = {
 function renderSection(
   over: Partial<Parameters<typeof BrowserToolsSection>[0]> = {},
 ) {
-  const onRefreshPage = vi.fn();
+  const onSelect = vi.fn();
   render(
     <BrowserToolsSection
       tools={TOOLS}
       page={PAGE_OK}
-      engine="hosted"
       searchQuery=""
-      onRefreshPage={onRefreshPage}
+      onSelect={onSelect}
       {...over}
     />,
   );
-  return { onRefreshPage };
+  return { onSelect };
 }
 
 describe("BrowserToolsSection", () => {
+  function openBrowser() {
+    fireEvent.click(screen.getByRole("button", { name: /^browser$/i }));
+  }
+
+  it("starts Browser collapsed — WebMCP is the one that changes", () => {
+    renderSection();
+    expect(screen.getByText("WebMCP")).toBeInTheDocument();
+    expect(screen.getByText("bookSlot")).toBeInTheDocument();
+    expect(screen.getByText("Browser")).toBeInTheDocument();
+    expect(screen.queryByText("browser_navigate")).toBeNull();
+  });
+
   it("lists the browser tools the model is given", () => {
     renderSection();
+    openBrowser();
     expect(screen.getByText("browser_navigate")).toBeInTheDocument();
     expect(screen.getByText("browser_webmcp_tools")).toBeInTheDocument();
     expect(screen.getByText("Open a URL in the browser.")).toBeInTheDocument();
   });
 
-  it("shows a page tool under the name the MODEL calls, with the page's own beneath", () => {
+  it("shows a page tool under the page's name, with the model name and host beneath", () => {
     renderSection();
-    expect(screen.getByText("Declared by the page")).toBeInTheDocument();
-    // The name in the transcript.
-    expect(screen.getByText("webmcp_bookSlot")).toBeInTheDocument();
-    expect(screen.getByText("webmcp_getAvailability")).toBeInTheDocument();
-    // And the name on the page, with where it came from.
-    expect(screen.getByText(/bookSlot · webmcp\.dev/)).toBeInTheDocument();
+    expect(screen.getByText("WebMCP")).toBeInTheDocument();
+    expect(screen.getByText("bookSlot")).toBeInTheDocument();
+    expect(screen.getByText("getAvailability")).toBeInTheDocument();
+    expect(
+      screen.getByText(/webmcp_bookSlot · webmcp\.dev/),
+    ).toBeInTheDocument();
+  });
+
+  it("collapses WebMCP when the header is clicked", () => {
+    renderSection();
+    expect(screen.getByText("bookSlot")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^webmcp$/i }));
+    expect(screen.queryByText("bookSlot")).toBeNull();
+    expect(screen.getByText("Browser")).toBeInTheDocument();
+  });
+
+  it("puts WebMCP above Browser", () => {
+    renderSection();
+    const page = screen.getByText("WebMCP");
+    const browser = screen.getByText("Browser");
+    expect(
+      page.compareDocumentPosition(browser) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByText("webmcp.dev")).toBeNull();
   });
 
   it("marks the page tools past the cap as NOT offered to the model", async () => {
@@ -123,7 +161,9 @@ describe("BrowserToolsSection", () => {
   it("says the model calls them by name, not through a generic verb", () => {
     renderSection();
     expect(
-      screen.getByText(/Available to the model on its next step, by these names/),
+      screen.getByText(
+        /Available to the model on its next step, by these names/,
+      ),
     ).toBeInTheDocument();
     // THE INSTRUCTION ITSELF, not the whole pane. `browser_webmcp_invoke` is a
     // browser verb and belongs in the verb list above; the claim here is that
@@ -136,18 +176,6 @@ describe("BrowserToolsSection", () => {
         /Available to the model on its next step, by these names/,
       ).textContent,
     ).not.toContain("browser_webmcp_invoke");
-  });
-
-  it("marks the list live only when the browser is reporting changes", () => {
-    renderSection({ live: { revision: 4, hash: "abc", count: 2 } });
-    expect(screen.getByText("live")).toBeInTheDocument();
-  });
-
-  it("does not claim to be live with no stream open", () => {
-    // Absent means "no news" — a daemon too old to send it, or no pane open —
-    // never "no tools", and never a promise the list is following the page.
-    renderSection();
-    expect(screen.queryByText("live")).toBeNull();
   });
 
   it("shows the page's read-only claim AS a claim", () => {
@@ -177,22 +205,27 @@ describe("BrowserToolsSection", () => {
     expect(screen.getByText(/Not offered to the model/)).toBeInTheDocument();
   });
 
-  it("says whose browser this is", () => {
-    renderSection({ engine: "local" });
-    expect(screen.getByText("this machine")).toBeInTheDocument();
-  });
-
-  it("names the hosted browser as the user's computer", () => {
-    renderSection({ engine: "hosted" });
-    expect(screen.getByText("your computer")).toBeInTheDocument();
-  });
-
   it("offers no Run — driving a browser goes through approval", () => {
-    // Every other section here has one. This must not: a form that fired
-    // `browser_act` would drive a signed-in browser outside the approval path
-    // that exists to put a person in front of exactly that.
+    // The section itself still has no Run. Selecting a row opens the panel
+    // detail, and Run there asks the agent — it must not fire `browser_act`
+    // from this list.
     renderSection();
     expect(screen.queryByRole("button", { name: /run/i })).toBeNull();
+  });
+
+  it("selects a page tool the way an MCP tool row does", () => {
+    const { onSelect } = renderSection();
+    fireEvent.click(screen.getByRole("button", { name: /bookSlot/i }));
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.stringContaining("webmcp_bookSlot"),
+    );
+  });
+
+  it("selects a browser verb the way an MCP tool row does", () => {
+    const { onSelect } = renderSection();
+    openBrowser();
+    fireEvent.click(screen.getByRole("button", { name: /browser_navigate/i }));
+    expect(onSelect).toHaveBeenCalledWith("browser:browser_navigate");
   });
 
   it("says a page offers nothing, rather than showing an error", () => {
@@ -223,17 +256,46 @@ describe("BrowserToolsSection", () => {
         <BrowserToolsSection
           tools={TOOLS}
           page={{ ok: false, error }}
-          engine="hosted"
           searchQuery=""
-          onRefreshPage={vi.fn()}
         />,
       );
       expect(screen.getByText(copy), error).toBeInTheDocument();
-      // The browser tools stay listed whatever the page is doing: they are a
-      // property of the HOST, not of what happens to be loaded.
-      expect(screen.getByText("browser_navigate")).toBeInTheDocument();
+      // The browser group stays listed whatever the page is doing: the verbs
+      // are a property of the HOST, not of what happens to be loaded.
+      expect(screen.getByText("Browser")).toBeInTheDocument();
       unmount();
     }
+  });
+
+  it("asks for local Browser permission in WebMCP instead of saying none is running", async () => {
+    const onAllow = vi.fn(async () => true);
+    renderSection({
+      tools: [],
+      page: { ok: false, error: "no_browser_session" },
+      localConsent: { onAllow, settingsHostId: "host_1" },
+    });
+    expect(screen.queryByText(/No browser running yet/)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /^browser$/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(
+      screen.getByText(
+        /Enable browser access from the Browser tab on the right pane/,
+      ),
+    ).toBeInTheDocument();
+    expect(onAllow).not.toHaveBeenCalled();
+  });
+
+  it("links to Browser settings from the enable-access notice", () => {
+    navigate.mockClear();
+    renderSection({
+      tools: [],
+      page: { ok: false, error: "no_browser_session" },
+      localConsent: { onAllow: async () => true, settingsHostId: "host_1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Browser settings" }));
+    expect(navigate).toHaveBeenCalledWith("/hosts/host_1?hostTab=browser");
   });
 
   it("stays quiet while the first read is in flight", () => {
@@ -251,31 +313,58 @@ describe("BrowserToolsSection", () => {
 
   it("filters both groups with the panel's search box", () => {
     renderSection({ searchQuery: "bookslot" });
-    expect(screen.getByText("webmcp_bookSlot")).toBeInTheDocument();
+    expect(screen.getByText("bookSlot")).toBeInTheDocument();
+    expect(screen.getByText(/webmcp_bookSlot/)).toBeInTheDocument();
     expect(screen.queryByText("browser_navigate")).toBeNull();
-    expect(screen.queryByText("webmcp_getAvailability")).toBeNull();
+    expect(screen.queryByText("Browser")).toBeNull();
+    expect(screen.queryByText("getAvailability")).toBeNull();
   });
 
   it("searches descriptions too, not just names", () => {
     // A person looking for what a page can DO types the verb, not the
     // camelCase identifier the page happened to register.
     renderSection({ searchQuery: "consultation" });
-    expect(screen.getByText("webmcp_bookSlot")).toBeInTheDocument();
-    expect(screen.queryByText("webmcp_getAvailability")).toBeNull();
+    expect(screen.getByText("bookSlot")).toBeInTheDocument();
+    expect(screen.getByText(/webmcp_bookSlot/)).toBeInTheDocument();
+    expect(screen.queryByText("getAvailability")).toBeNull();
   });
 
   it("hides the whole section when a search matches nothing in it", () => {
     renderSection({ searchQuery: "zzz-nothing" });
     expect(screen.queryByTestId("browser-tools-section")).toBeNull();
   });
+});
 
-  it("re-reads the page on request", () => {
-    // The page changes under the list every time the agent navigates, and
-    // nothing pushes that to the client.
-    const { onRefreshPage } = renderSection();
-    fireEvent.click(
-      screen.getByRole("button", { name: /refresh page tools/i }),
-    );
-    expect(onRefreshPage).toHaveBeenCalledTimes(1);
+it("explains an explicit client opt-out without another permission prompt", () => {
+  renderSection({
+    tools: [],
+    page: null,
+    localConsent: {
+      onAllow: async () => true,
+      settingsHostId: "host_1",
+      disabledForClient: true,
+    },
   });
+  expect(
+    screen.getByText("Browser tools are disabled for this client."),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+});
+
+it("shows a retry action instead of hiding a failed Browser catalog", () => {
+  const retry = vi.fn();
+  render(
+    <BrowserToolsSection
+      tools={[]}
+      page={null}
+      searchQuery=""
+      catalogError
+      onRetryCatalog={retry}
+    />,
+  );
+  expect(screen.getByRole("status").textContent).toContain(
+    "Couldn't load Browser tools.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(retry).toHaveBeenCalledOnce();
 });

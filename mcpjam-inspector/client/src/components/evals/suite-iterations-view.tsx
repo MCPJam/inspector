@@ -1,3 +1,4 @@
+import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
 import { SuiteClientsSettings } from "./suite-clients-settings";
 import {
   useMemo,
@@ -73,6 +74,7 @@ import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
 import { launchRuns } from "../evaluate/run-results-matrix-model";
+import { RunComparisonPage } from "../evaluate/run-comparison-page";
 import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
 import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
@@ -167,6 +169,7 @@ export interface SuiteNavigation {
       insightsFocus?: boolean;
       replace?: boolean;
       compareToRunId?: string;
+      comparison?: boolean;
       testCaseId?: string;
     },
   ) => void;
@@ -176,6 +179,7 @@ export interface SuiteNavigation {
     testId: string,
     options?: {
       openCompare?: boolean;
+      checks?: boolean;
       replace?: boolean;
       iteration?: string;
       fromEvalServer?: string;
@@ -650,6 +654,7 @@ export function SuiteIterationsView({
   // Every EDITING gate reads this, not `readOnlyConfig`: a CI-owned suite is
   // read-only in exactly the same way, but keeps its Run controls.
   const editingDisabled = readOnlyConfig || configLocked;
+  const [importOpen, setImportOpen] = useState(false);
 
   // ── CASE AUTHORING, WITHHELD RATHER THAN GATED ────────────────────────────
   //
@@ -1842,6 +1847,7 @@ export function SuiteIterationsView({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {projectId && !editingDisabled && <ImportDatasetDialog key={suite._id} open={importOpen} onOpenChange={setImportOpen} projectId={projectId} suiteId={suite._id} />}
       {/* Header */}
       {showSuiteHeader ? (
         <div className="shrink-0">
@@ -1951,9 +1957,10 @@ export function SuiteIterationsView({
                       replace: true,
                     })
                   }
-                  onOpenSuiteSettings={() =>
-                    navigation.toSuiteOverview(suite._id)
-                  }
+                  checksPage={route.type === "test-edit" && Boolean(route.checks)}
+                  onOpenCaseChecks={() => navigation.toTestEdit(suite._id, selectedTestId, { checks: true })}
+                  onCloseCaseChecks={() => navigation.toTestEdit(suite._id, selectedTestId)}
+                  onOpenSuiteSettings={() => navigation.toSuiteEdit(suite._id)}
                 />
               </motion.div>
             ) : viewMode === "test-detail" && selectedTestId ? (
@@ -2002,6 +2009,17 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : showEvaluateRunPage && selectedRunDetails && route.type === "run-detail" && route.comparison ? (
+              <RunComparisonPage
+                key={selectedRunDetails._id}
+                currentRun={selectedRunDetails}
+                runs={runs}
+                iterations={allIterations}
+                suiteName={suite.name}
+                hostNamesById={hostNamesById}
+                onBack={() => navigation.toRunDetail(suite._id, selectedRunDetails._id)}
+                onOpenRun={(runId) => navigation.toRunDetail(suite._id, runId)}
+              />
             ) : showEvaluateRunPage && selectedRunDetails ? (
               <motion.div
                 key={contentKey}
@@ -2014,6 +2032,7 @@ export function SuiteIterationsView({
                 className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
               >
                 <EvaluateRunPage
+                  onOpenComparison={() => navigation.toRunDetail(suite._id, selectedRunDetails._id, undefined, { comparison: true })}
                   relatedRuns={runs}
                   launchReview={{
                     projectId,
@@ -2093,6 +2112,7 @@ export function SuiteIterationsView({
                 className="flex min-h-0 flex-1 flex-col overflow-y-auto"
               >
                 <SuiteDetailOverview
+                  onSetupSdk={handleOpenSuiteExport}
                   runReviewRequested={runReviewRequested}
                   onRunReviewClose={onRunReviewClose}
                   environments={projectEnvironments ?? undefined}
@@ -2106,6 +2126,7 @@ export function SuiteIterationsView({
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onDescribeCases={onDescribeTestCase}
+                  onImportCases={projectId && !editingDisabled ? () => setImportOpen(true) : undefined}
                   onGenerateTestCases={onGenerateTestCases}
                   canGenerateTestCases={canGenerateTestCases}
                   generateTestCasesDisabledReason={

@@ -74,8 +74,10 @@ export interface BrowserdIdentity {
    * looking at.
    */
   lease?: "free" | "held" | "parked";
+  leaseHeld?: boolean;
   watchers?: number;
   msSinceActivity?: number;
+  tabs?: Array<{ id: string; url: string }>;
 }
 
 export type BrowserdStatus =
@@ -342,8 +344,10 @@ function decodeIdentity(body: Record<string, unknown>): BrowserdIdentity {
   const contextMode = body.contextMode;
   const startedBy = body.startedBy;
   const lease = body.lease;
+  const leaseHeld = body.leaseHeld;
   const watchers = body.watchers;
   const msSinceActivity = body.msSinceActivity;
+  const tabs = body.tabs;
   return {
     ...(typeof protocolVersion === "number" &&
     Number.isInteger(protocolVersion) &&
@@ -369,6 +373,7 @@ function decodeIdentity(body: Record<string, unknown>): BrowserdIdentity {
     ...(lease === "free" || lease === "held" || lease === "parked"
       ? { lease }
       : {}),
+    ...(typeof leaseHeld === "boolean" ? { leaseHeld } : {}),
     ...(typeof watchers === "number" && Number.isFinite(watchers) && watchers >= 0
       ? { watchers }
       : {}),
@@ -377,5 +382,30 @@ function decodeIdentity(body: Record<string, unknown>): BrowserdIdentity {
     msSinceActivity >= 0
       ? { msSinceActivity }
       : {}),
+    ...decodeTabs(tabs),
   };
+}
+
+/**
+ * A tab list, or nothing.
+ *
+ * `[]` decoded from an array THAT HAD ENTRIES is not "no tabs" — it is a
+ * payload this build cannot read (an entry without a string `url`, a shape
+ * change across a version skew), and this module's convention is that what
+ * cannot be read is UNKNOWN, never zero. Only an array the daemon actually
+ * sent empty means the browser has no tabs; `withActivityTouches` writes what
+ * it gets straight to the logical session's stored strip, and `[]` replaces it.
+ */
+function decodeTabs(tabs: unknown): {
+  tabs?: Array<{ id: string; url: string }>;
+} {
+  if (!Array.isArray(tabs)) return {};
+  const list = tabs.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const value = entry as { id?: unknown; url?: unknown };
+    return typeof value.id === "string" && typeof value.url === "string"
+      ? [{ id: value.id, url: value.url }]
+      : [];
+  });
+  return list.length === 0 && tabs.length > 0 ? {} : { tabs: list };
 }

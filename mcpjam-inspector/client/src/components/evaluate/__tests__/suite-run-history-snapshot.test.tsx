@@ -26,6 +26,22 @@ function iteration(partial: Partial<EvalIteration>): EvalIteration {
 }
 
 describe("SuiteRunHistorySnapshot", () => {
+  it.each([undefined, 0, 1.5])("shows Cost only when measured: %s", (cost) => {
+    render(
+      <SuiteRunHistorySnapshot
+        runs={[run({})]}
+        allIterations={[
+          iteration({
+            usage: cost === undefined ? undefined : { estimatedCostUsd: cost },
+          }),
+        ]}
+      />,
+    );
+    if (cost === undefined)
+      expect(screen.queryByText("Cost")).not.toBeInTheDocument();
+    else expect(screen.getByText("Cost")).toBeInTheDocument();
+  });
+
   it("renders nothing when there is no measured run", () => {
     const { container } = render(
       <SuiteRunHistorySnapshot runs={[]} allIterations={[]} />,
@@ -176,16 +192,16 @@ describe("SuiteRunHistorySnapshot", () => {
         ).toBeInTheDocument();
       }
       expect(screen.queryByTestId("metric-sparkline-cost")).toBeNull();
-      expect(screen.getByText("not priced")).toBeVisible();
+      expect(screen.queryByText("not priced")).not.toBeInTheDocument();
       expect(screen.queryByText(/ pp$/)).toBeNull();
       const latency = screen.getByTestId("metric-sparkline-latency");
       fireEvent.mouseMove(latency, { clientX: 0 });
-      expect(within(latency).getByText(/Run #7/)).toBeVisible();
+      expect(within(latency).getByText(/#7/)).toBeVisible();
       expect(
         within(latency).getByTestId("metric-sparkline-tooltip-value"),
       ).toHaveTextContent("P50 2.00s · P95 2.00s");
       fireEvent.mouseMove(latency, { clientX: 60 });
-      expect(within(latency).getByText(/Run #9/)).toBeVisible();
+      expect(within(latency).getByText(/#9/)).toBeVisible();
       expect(
         within(latency).getByTestId("metric-sparkline-tooltip-value"),
       ).toHaveTextContent("P50 4.00s · P95 4.00s");
