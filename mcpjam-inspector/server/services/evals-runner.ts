@@ -4960,6 +4960,13 @@ const runHostedIterationWithBrowser = async (
                   },
                 }
               : {}),
+            // WHICH RUN AND WHICH ITERATION, on every browser ledger row. An
+            // eval's browser trace is read after the fact, by somebody asking
+            // why one iteration of a hundred behaved differently — and until
+            // now the rows named neither.
+            ...(iterationId
+              ? { browserCorrelation: { iterationId: String(iterationId) } }
+              : {}),
             // The trusted binding to THIS iteration's box. It reaches the
             // resolver on `ctx`, never on the host config, so nothing in a
             // member-readable snapshot can forge one.

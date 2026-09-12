@@ -1466,6 +1466,13 @@ async function handleTurn(c: Context): Promise<Response> {
         onToolSuppressed: (item) => {
           browserReason = item.reason;
         },
+        // This surface knows BOTH: the durable session and the turn its lease
+        // is scoped to. A browser ledger row from a v1 turn was previously
+        // traceable to neither.
+        browserCorrelation: {
+          chatSessionId: runtimeChatSessionId,
+          turnId: leaseTurnId,
+        },
       };
       const eligible = resolveHostTools(
         { builtInToolIds: ["browser"] },

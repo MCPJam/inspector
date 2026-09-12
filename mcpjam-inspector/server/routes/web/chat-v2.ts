@@ -1749,6 +1749,14 @@ chatV2.post("/", async (c) => {
         projectId: hostedBody.projectId,
         ...(executionScope ? { executionScope } : {}),
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+        // WHAT ELSE this turn's browser commands belong to, echoed onto every
+        // ledger row. The chat session is what this surface knows; the AI SDK
+        // fills in `toolCallId` per call, which is the join a person reading a
+        // browser trace actually wants — "which tool call in the transcript
+        // produced this row".
+        ...(body.chatSessionId
+          ? { browserCorrelation: { chatSessionId: body.chatSessionId } }
+          : {}),
         isGuest: Boolean(c.get("guestId")),
         isScenarioSession,
         // Lets a spend inside a shared scenario bill the scenario OWNER instead

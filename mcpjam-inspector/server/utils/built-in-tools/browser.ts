@@ -70,10 +70,12 @@ import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
 import { MAX_SESSION_VIEWPORT } from "@/shared/browser-viewport";
 import {
   DEFAULT_QUEUE_KEY,
+  isBrowserCommandCorrelation,
   isPointInViewport,
   type BrowserAction,
   type BrowserActTarget,
   type BrowserCommand,
+  type BrowserCommandCorrelation,
   type ObservationStateToken,
   type WebMcpToolsRevision,
 } from "../../services/browserd/protocol.js";
@@ -242,6 +244,20 @@ export interface BrowserToolsOptions {
   /** Project whose computer this turn drives. */
   projectId: string;
   executionScope?: ExecutionScope;
+  /**
+   * WHAT ELSE this turn's browser commands belong to.
+   *
+   * Echoed onto the ledger row, never interpreted. The daemon has carried it
+   * since the ledger existed and only `routes/mcp/computers.ts` — the CODING
+   * AGENT door — ever produced one: every command the MODEL sent arrived with
+   * a bare `commandId` and nothing joining it to the chat turn, eval iteration
+   * or swarm that caused it. So a ledger row could be read, and could not be
+   * traced back to why it happened.
+   *
+   * `toolCallId` is filled per call from the AI SDK's execute options rather
+   * than here; this carries what the SURFACE knows.
+   */
+  correlation?: BrowserCommandCorrelation;
   /**
    * The host's Tool Approval switch.
    *
@@ -1241,6 +1257,17 @@ export function buildBrowserTools(
        * the observation the act was decided from.
        */
       raw?: boolean;
+      /**
+       * The AI SDK's id for the tool call that produced this command.
+       *
+       * Threaded through `send` rather than read at the top, because one model
+       * step can emit several browser calls and each gets its own id — the
+       * whole point of recording it is telling them apart on the ledger.
+       *
+       * Optional: the server's OWN reads (the page-tool revision check, the
+       * origin recovery) are not tool calls and correctly carry nothing.
+       */
+      toolCallId?: string;
     },
   ): Promise<CommandOutcome & { tabId: string }> => {
     let handle: BrowserSessionHandle;
@@ -1273,9 +1300,27 @@ export function buildBrowserTools(
       ? state.tokenFor(args.tabId, handle.bootId)
       : undefined;
     const commandId = randomUUID();
+    // MERGED PER CALL, surface first: the surface knows the chat session, the
+    // eval iteration or the swarm, and only the AI SDK knows which tool call
+    // this is. `toolCallId` is what joins a ledger row to the exact call in
+    // the transcript, which is the join a person reading a trace actually
+    // wants — and the one nothing produced for a model command.
+    const correlation: BrowserCommandCorrelation | undefined = (() => {
+      const merged = {
+        ...(opts.correlation ?? {}),
+        ...(args.toolCallId ? { toolCallId: args.toolCallId } : {}),
+      };
+      if (Object.keys(merged).length === 0) return undefined;
+      // VALIDATED with the same rule the coding-agent door uses, because this
+      // reaches the same durable rows. An oversized or nested map is dropped
+      // whole rather than half-written: a correlation is a convenience, and
+      // failing a browser command over one would be absurd.
+      return isBrowserCommandCorrelation(merged) ? merged : undefined;
+    })();
     const command: BrowserCommand = {
       commandId,
       source: unattended ? "eval" : "chat",
+      ...(correlation ? { correlation } : {}),
       ...(args.tabId ? { tabId: args.tabId } : {}),
       action:
         pinned && action.kind === "act"
@@ -1584,7 +1629,10 @@ export function buildBrowserTools(
           .describe("Open in a NEW tab; requires an unused tabId."),
       }),
       needsApproval,
-      execute: async ({ url, action, tabId, newTab }, { abortSignal }) => {
+      execute: async (
+        { url, action, tabId, newTab },
+        { abortSignal, toolCallId },
+      ) => {
         const verb = action ?? "goto";
         if (verb === "goto" && !url) return { error: "navigate needs a url" };
         if (url && policy && !isOriginAllowed(url, policy.originAllowlist)) {
@@ -1618,7 +1666,7 @@ export function buildBrowserTools(
             // a whole extra call getting the refs — the round trip refs exist
             // to remove.
             { ...browserAction, observe: "both" },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         );
       },
@@ -1685,7 +1733,7 @@ export function buildBrowserTools(
       needsApproval,
       execute: async (
         { verb, ref, selector, x, y, value, fields, submit, observe, tabId },
-        { abortSignal },
+        { abortSignal, toolCallId },
       ) => {
         if (
           x !== undefined &&
@@ -1743,7 +1791,7 @@ export function buildBrowserTools(
               observe: observe ?? "both",
             },
             // Pin to the observation the model actually saw (L3).
-            { tabId, signal: abortSignal, expectedState: true },
+            { tabId, signal: abortSignal, toolCallId, expectedState: true },
           ),
         );
       },
@@ -1761,14 +1809,14 @@ export function buildBrowserTools(
         tabId: z.string().describe("The tab to act on."),
       }),
       needsApproval,
-      execute: async ({ action, tabId }, { abortSignal }) =>
+      execute: async ({ action, tabId }, { abortSignal, toolCallId }) =>
         presented(
           await send(
             {
               kind: "act",
               verb: action === "activate" ? "activate_tab" : "close_tab",
             },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         ),
     }),
@@ -1832,7 +1880,7 @@ export function buildBrowserTools(
       needsApproval: observationNeedsApproval,
       execute: async (
         { mode, filter, rootRef, rootSelector, requestId, tabId },
-        { abortSignal },
+        { abortSignal, toolCallId },
       ) =>
         presented(
           await send(
@@ -1844,7 +1892,7 @@ export function buildBrowserTools(
               ...(rootSelector ? { rootSelector } : {}),
               ...(requestId ? { requestId } : {}),
             },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         ),
     }),
@@ -1858,11 +1906,11 @@ export function buildBrowserTools(
         "let you act through their own API instead of clicking; most pages offer none.",
       inputSchema: z.object({ tabId: z.string().optional() }),
       needsApproval: observationNeedsApproval,
-      execute: async ({ tabId }, { abortSignal }) =>
+      execute: async ({ tabId }, { abortSignal, toolCallId }) =>
         presented(
           await send(
             { kind: "observe", mode: "webmcp_tools" },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         ),
     }),
@@ -1890,7 +1938,10 @@ export function buildBrowserTools(
         tabId: z.string().optional(),
       }),
       needsApproval,
-      execute: async ({ toolName, input, tabId }, { abortSignal }) => {
+      execute: async (
+        { toolName, input, tabId },
+        { abortSignal, toolCallId },
+      ) => {
         if (
           policy?.mode === "allowlist" &&
           policy.toolAllowlist?.length &&
@@ -1905,7 +1956,7 @@ export function buildBrowserTools(
         return presented(
           await send(
             { kind: "webmcp_invoke", toolKey: toolName, input },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         );
       },

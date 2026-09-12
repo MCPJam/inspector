@@ -149,8 +149,14 @@ function build(
   return { result, ...fake };
 }
 
-async function run(tools: any, name: string, args: Record<string, unknown>) {
-  return tools[name].execute(args, { toolCallId: "call-1" });
+async function run(
+  tools: any,
+  name: string,
+  args: Record<string, unknown>,
+  /** One model step can emit several browser calls, each with its own id. */
+  toolCallId = "call-1",
+) {
+  return tools[name].execute(args, { toolCallId });
 }
 
 describe("buildBrowserTools — fail-closed advertisement", () => {
@@ -3959,5 +3965,84 @@ describe("buildBrowserTools — credential shapes on the way to the model", () =
     const text = JSON.stringify(toBrowserModelOutput({ output: out }).value);
     expect(text).toContain("keep-me-visible");
     expect(text).not.toContain("scrub-me-please");
+  });
+});
+
+describe("buildBrowserTools — what a ledger row can be traced back to", () => {
+  /** The `correlation` the tool put on the command it sent. */
+  const correlationOf = (sendCommand: { mock: { calls: unknown[][] } }) =>
+    (sendCommand.mock.calls[0]![0] as { correlation?: Record<string, string> })
+      .correlation;
+
+  it("stamps the surface's correlation and the AI SDK's tool call id", async () => {
+    // Both halves: the SURFACE knows the chat session, only the AI SDK knows
+    // which of a step's several tool calls this one is — and that is the join
+    // a person reading a browser trace actually wants.
+    const { result, sendCommand } = build({
+      correlation: { chatSessionId: "chat-7" },
+    });
+    await run(result!.tools, "browser_observe", {});
+    expect(correlationOf(sendCommand)).toEqual({
+      chatSessionId: "chat-7",
+      toolCallId: "call-1",
+    });
+  });
+
+  it("stamps the tool call id even with no surface correlation", async () => {
+    const { result, sendCommand } = build();
+    await run(result!.tools, "browser_observe", {});
+    expect(correlationOf(sendCommand)).toEqual({ toolCallId: "call-1" });
+  });
+
+  it("sends NO correlation key when there is nothing to say", async () => {
+    // An empty object on every command would be a new field in every ledger
+    // row and in every trace, saying nothing. Reached by an engine that
+    // supplies no tool call id, which is what the server's own internal reads
+    // look like.
+    const { result, sendCommand } = build();
+    await (
+      result!.tools.browser_observe as {
+        execute: (args: unknown, options: unknown) => Promise<unknown>;
+      }
+    ).execute({}, {});
+    expect(correlationOf(sendCommand)).toBeUndefined();
+  });
+
+  it("drops an oversized map rather than half-writing it", async () => {
+    // Validated with the same rule the coding-agent door uses, because it
+    // reaches the same durable rows. A correlation is a convenience, so a bad
+    // one costs the correlation and never the browser command.
+    const oversized = Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [`k${i}`, "v"]),
+    );
+    const { result, sendCommand } = build({ correlation: oversized as never });
+    const out = await run(result!.tools, "browser_observe", {});
+    expect(out.error).toBeUndefined();
+    expect(correlationOf(sendCommand)).toBeUndefined();
+  });
+
+  it("drops a map with an over-long value the same way", async () => {
+    const { result, sendCommand } = build({
+      correlation: { chatSessionId: "x".repeat(201) } as never,
+    });
+    await run(result!.tools, "browser_observe", {});
+    expect(correlationOf(sendCommand)).toBeUndefined();
+  });
+
+  it("gives each call in one step its own id", async () => {
+    // The reason `toolCallId` is threaded through `send` rather than read once
+    // at the top: a model step routinely emits several browser calls.
+    const { result, sendCommand } = build({
+      correlation: { chatSessionId: "chat-7" },
+    });
+    await run(result!.tools, "browser_observe", {}, "call-a");
+    await run(result!.tools, "browser_observe", {}, "call-b");
+    expect(
+      sendCommand.mock.calls.map(
+        (call) =>
+          (call[0] as { correlation?: { toolCallId?: string } }).correlation
+            ?.toolCallId,
+      ),
+    ).toEqual(["call-a", "call-b"]);
   });
 });

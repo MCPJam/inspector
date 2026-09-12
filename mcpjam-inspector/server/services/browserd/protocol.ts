@@ -634,6 +634,33 @@ export interface BrowserCommandCorrelation {
   swarmId?: string;
 }
 
+/**
+ * Is this a correlation map we are willing to echo onto a ledger row?
+ *
+ * Echoed and NEVER INTERPRETED, so the only question is whether it is a flat,
+ * bounded string map: a nested object here would be an unbounded blob riding
+ * into every row of a ring that has to stay cheap to keep and cheap to mirror.
+ *
+ * Lives here rather than in the one route that had it, because the model tool
+ * now produces correlations too and two copies of a validator that decides
+ * what reaches durable storage is one copy too many.
+ *
+ * Shape only, not KEYS: an unknown key from a newer caller is echoed rather
+ * than dropped, which is what makes adding one an additive change.
+ */
+export function isBrowserCommandCorrelation(
+  value: unknown,
+): value is BrowserCommandCorrelation {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  return (
+    entries.length <= 10 &&
+    entries.every(([, v]) => typeof v === "string" && v.length <= 200)
+  );
+}
+
 /** The daemon's result for one executed command. Opaque to the queue. */
 export interface BrowserCommandResult {
   ok: boolean;

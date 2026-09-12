@@ -36,7 +36,11 @@ import {
   unknownResult,
   type ContractRefusal,
 } from "../agent-contract-mapper.js";
-import type { BrowserCommand, BrowserCommandSource } from "../protocol.js";
+import type {
+  BrowserCommand,
+  BrowserCommandCorrelation,
+  BrowserCommandSource,
+} from "../protocol.js";
 import type { InProcessBrowserdClient } from "../in-process-client.js";
 import type { BrowserdCommandResponse } from "../browserd-codec.js";
 import type { BrowserLedgerActor } from "../daemon/command-ledger.js";
@@ -209,7 +213,12 @@ export interface RunAgentCommandArgs {
   command: BrowserAgentCommand;
   commandId?: string;
   tabId?: string;
-  correlation?: Record<string, string>;
+  /**
+   * Typed now that `isBrowserCommandCorrelation` is shared: this used to be a
+   * bare string map because the route's private validator answered one, and a
+   * caller could put any key it liked into a ledger row.
+   */
+  correlation?: BrowserCommandCorrelation;
 }
 
 export interface RunAgentCommandOutput {

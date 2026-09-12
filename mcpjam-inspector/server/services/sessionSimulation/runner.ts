@@ -683,6 +683,13 @@ export async function runSyntheticHostSession(
             persist.sourceType === "swarm" ? "swarm_attempt" : "eval_iteration",
           sessionId: chatSessionId,
         },
+        // A swarm fans out many sessions against one run. Both ids, because
+        // "which run" and "which of its sessions" are different questions and
+        // a browser trace read afterwards asks the second one first.
+        browserCorrelation: {
+          chatSessionId,
+          ...(persist.journeyRunId ? { swarmId: persist.journeyRunId } : {}),
+        },
         // …and WITH one, bash binds to this session's own disposable box. The
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.

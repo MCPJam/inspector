@@ -264,6 +264,17 @@ export interface BuiltInToolContext {
   browserSessionScope?: BrowserSessionScope;
   /** Explicit profile pin from a host/eval config. */
   browserProfileId?: string;
+  /**
+   * WHAT ELSE this turn's browser commands belong to. Echoed onto every
+   * ledger row, never interpreted.
+   *
+   * Threaded per surface because only the surface knows: a Playground turn has
+   * a chat session and a turn id, an eval iteration has a run and an iteration
+   * id, a swarm has a swarm id. The daemon has carried this field since the
+   * ledger existed and only the coding-agent door ever filled it, so a row
+   * from a MODEL command could be read and not traced back to why it happened.
+   */
+  browserCorrelation?: Parameters<typeof buildBrowserTools>[0]["correlation"];
   browserHandoffMaxWaitMs?: number;
   onBrowserHandoffWaiting?: Parameters<
     typeof buildBrowserTools
@@ -788,6 +799,9 @@ export function resolveHostTools(
         ...(conversationBrowser ? { sessionScope: conversationBrowser } : {}),
         ...(ctx.browserProfileId
           ? { browserProfileId: ctx.browserProfileId }
+          : {}),
+        ...(ctx.browserCorrelation
+          ? { correlation: ctx.browserCorrelation }
           : {}),
         ...(ctx.onBrowserNotice
           ? { onBrowserNotice: ctx.onBrowserNotice }
