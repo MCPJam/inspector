@@ -30,6 +30,7 @@ import {
   labelFor,
 } from "@/components/browser/PaneControlBar";
 import { BrowserPanel } from "@/components/computer/BrowserPanel";
+import { BrowserSettingsButton } from "@/components/browser/BrowserSettingsButton";
 import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
 import {
   createTierController,
@@ -127,6 +128,7 @@ export function HostedBrowserBody({
   projectId,
   sessionId,
   mintToken,
+  hostId = null,
   active = true,
 }: {
   projectId: string | null;
@@ -137,6 +139,8 @@ export function HostedBrowserBody({
     token: string;
     expiresAt: number;
   }>;
+  /** Client id for the Browser settings button in the nav bar. */
+  hostId?: string | null;
   /**
    * Is this pane the rail's visible tab?
    *
@@ -1348,21 +1352,24 @@ export function HostedBrowserBody({
       error={error ?? shell.error}
       {...(placeholder ? { placeholder } : {})}
       trailing={
-        <PaneSettingsMenu
-          statsOpen={statsOpen}
-          onToggleStats={onStatsToggle}
-          tier={tierPreference}
-          tiers={HOSTED_TIERS}
-          onTier={onTier}
-        >
-          {session && sessionId ? (
-            <BrowserProfileSaveButton
-              projectId={projectId ?? ""}
-              exportArchive={exportProfile}
-              disabled={busy}
-            />
-          ) : null}
-        </PaneSettingsMenu>
+        <>
+          {hostId ? <BrowserSettingsButton hostId={hostId} /> : null}
+          <PaneSettingsMenu
+            statsOpen={statsOpen}
+            onToggleStats={onStatsToggle}
+            tier={tierPreference}
+            tiers={HOSTED_TIERS}
+            onTier={onTier}
+          >
+            {session && sessionId ? (
+              <BrowserProfileSaveButton
+                projectId={projectId ?? ""}
+                exportArchive={exportProfile}
+                disabled={busy}
+              />
+            ) : null}
+          </PaneSettingsMenu>
+        </>
       }
     >
       <BrowserPaneSurface

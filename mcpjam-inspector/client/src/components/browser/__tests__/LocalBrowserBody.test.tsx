@@ -78,6 +78,10 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
   useBrowserWorkspaceEnabled: () => api.workspaceEnabled,
 }));
 
+vi.mock("@/components/browser/BrowserSettingsButton", () => ({
+  BrowserSettingsButton: () => null,
+}));
+
 vi.mock("@/lib/local-browser/client", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/local-browser/client")

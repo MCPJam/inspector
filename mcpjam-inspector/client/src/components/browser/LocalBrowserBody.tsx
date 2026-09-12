@@ -29,6 +29,7 @@ import {
 import { ElectronNativeBody } from "@/components/browser/ElectronNativeBody";
 import { BrowserShell } from "@/components/browser/BrowserShell";
 import { PaneSettingsMenu } from "@/components/browser/PaneControlBar";
+import { BrowserSettingsButton } from "@/components/browser/BrowserSettingsButton";
 import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
 import { useBrowserSession } from "@/lib/browser-shell/use-browser-session";
 import {
@@ -105,6 +106,7 @@ export function LocalBrowserBody({
   sessionId,
   consentGranted,
   consentToken,
+  hostId = null,
   active = true,
   onSessionReady,
 }: {
@@ -113,6 +115,8 @@ export function LocalBrowserBody({
   sessionId?: string;
   consentGranted: boolean;
   consentToken: string | null;
+  /** Client id for the Browser settings button in the nav bar. */
+  hostId?: string | null;
   /**
    * Is this pane the rail's visible tab?
    *
@@ -1317,18 +1321,21 @@ export function LocalBrowserBody({
           // that has gone — replace the page area entirely. @see the prop.
           {...(placeholder ? { placeholder } : {})}
           trailing={
-            <PaneSettingsMenu
-              statsOpen={statsOpen}
-              onToggleStats={onStatsToggle}
-            >
-              {session && sessionId ? (
-                <BrowserProfileSaveButton
-                  projectId={projectId ?? ""}
-                  exportArchive={exportProfile}
-                  disabled={busy}
-                />
-              ) : null}
-            </PaneSettingsMenu>
+            <>
+              {hostId ? <BrowserSettingsButton hostId={hostId} /> : null}
+              <PaneSettingsMenu
+                statsOpen={statsOpen}
+                onToggleStats={onStatsToggle}
+              >
+                {session && sessionId ? (
+                  <BrowserProfileSaveButton
+                    projectId={projectId ?? ""}
+                    exportArchive={exportProfile}
+                    disabled={busy}
+                  />
+                ) : null}
+              </PaneSettingsMenu>
+            </>
           }
         >
           {native ? (
