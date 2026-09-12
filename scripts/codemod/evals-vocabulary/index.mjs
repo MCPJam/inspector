@@ -46,11 +46,20 @@
  * rather than the guarantee. The whole tree parses clean today, so this gate
  * fires on a file that is actually broken.
  *
+ * WHAT IT READS is what git sees: tracked files plus untracked files that are
+ * not ignored, through `git ls-files`. A filesystem walk with a hand-kept skip
+ * list read ignored `worktrees/` checkouts on a real laptop, took minutes, and
+ * reported other branches' code. A root that is not a git work tree falls back
+ * to the walk. Symlinks are skipped and listed, never followed: the target is
+ * either scanned under its own path or is not this repository's to rename, and
+ * a dangling one names nothing at all.
+ *
  * Exit codes: 0 clean report · 1 scan error (fails closed, like the runtime
  * guards) · 2 a protected term or path was proposed for mutation.
  */
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -113,12 +122,18 @@ const CODE_EXT = new Set([
 ]);
 const TEXT_EXT = new Set([".md", ".mdx", ".json", ".yml", ".yaml"]);
 
-function walk(dir, out, failures) {
+/**
+ * The fallback enumeration, for a root that is not a git work tree.
+ *
+ * `lstat`, not `stat`: a symlink is recorded as skipped rather than followed,
+ * for the same reasons as in the git path below.
+ */
+function walk(dir, out, failures, skipped) {
   let entries;
   try {
     entries = readdirSync(dir);
   } catch (error) {
-    failures.push({ file: dir, reason: String(error) });
+    failures.push({ file: relative(ROOT, dir), reason: String(error) });
     return out;
   }
   for (const entry of entries) {
@@ -126,15 +141,77 @@ function walk(dir, out, failures) {
     const full = join(dir, entry);
     let stat;
     try {
-      stat = statSync(full);
+      stat = lstatSync(full);
     } catch (error) {
-      failures.push({ file: full, reason: String(error) });
+      failures.push({ file: relative(ROOT, full), reason: String(error) });
       continue;
     }
-    if (stat.isDirectory()) walk(full, out, failures);
-    else out.push(full);
+    if (stat.isSymbolicLink()) {
+      skipped.push({ file: relative(ROOT, full), reason: symlinkReason(full) });
+    } else if (stat.isDirectory()) walk(full, out, failures, skipped);
+    else out.push(relative(ROOT, full).split(sep).join("/"));
   }
   return out;
+}
+
+function symlinkReason(full) {
+  try {
+    statSync(full);
+    return "symlink (not followed)";
+  } catch {
+    return "dangling symlink";
+  }
+}
+
+/**
+ * Every candidate path, relative to ROOT with forward slashes.
+ *
+ * Inside a git work tree this is `git ls-files --cached --others
+ * --exclude-standard`: what is tracked, plus what is new and not ignored. The
+ * repository's own `.gitignore` is the only skip list that stays true — the
+ * hand-kept one it replaces knew nothing about `worktrees/`, and against the
+ * backend root it read 51,320 files. If git is absent or the root is not a
+ * work tree, the filesystem walk runs instead; if git IS the enumerator and
+ * fails, that is fatal, because an empty listing reads as a clean tree.
+ */
+function listCandidates(failures, skipped) {
+  const probe = spawnSync(
+    "git",
+    ["-C", ROOT, "rev-parse", "--is-inside-work-tree"],
+    {
+      encoding: "utf8",
+    }
+  );
+  if (probe.error || probe.status !== 0 || probe.stdout.trim() !== "true") {
+    return {
+      enumeration: "filesystem walk",
+      paths: walk(ROOT, [], failures, skipped),
+    };
+  }
+  const listed = spawnSync(
+    "git",
+    [
+      "-C",
+      ROOT,
+      "ls-files",
+      "-z",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+    ],
+    { encoding: "utf8", maxBuffer: 512 * 1024 * 1024 }
+  );
+  if (listed.error || listed.status !== 0) {
+    failures.push({
+      file: ".",
+      reason: `git ls-files failed: ${listed.error ?? listed.stderr.trim()}`,
+    });
+    return { enumeration: "git ls-files", paths: [] };
+  }
+  const paths = [...new Set(listed.stdout.split("\0").filter(Boolean))].filter(
+    (rel) => !rel.split("/").some((segment) => SKIP_DIRS.has(segment))
+  );
+  return { enumeration: "git ls-files", paths };
 }
 
 /**
@@ -146,12 +223,45 @@ function walk(dir, out, failures) {
  */
 const TOOL_DIR = "scripts/codemod/evals-vocabulary/";
 
-const isProtectedPath = (rel) =>
-  protectedSpec.paths.some((p) => rel === p || rel.startsWith(p)) ||
-  protectedSpec.pathSuffixes.some((s) => rel.endsWith(s));
+const underPaths = (rel, paths = [], suffixes = []) =>
+  paths.some((p) => rel === p || rel.startsWith(p)) ||
+  suffixes.some((s) => rel.endsWith(s));
 
-const protectedTermsOnLine = (line) =>
-  protectedSpec.terms.filter((term) => line.includes(term));
+const isProtectedPath = (rel) =>
+  underPaths(rel, protectedSpec.paths, protectedSpec.pathSuffixes);
+
+/**
+ * Families, not just spellings.
+ *
+ * An exact-string denylist protected `githubCheck` and nothing spelled after
+ * it, so a mapping proposing `githubCheckRunId` — or `GithubCheckRepoConfigRow`,
+ * capital G — was reported as ordinary work. Each family's pattern spells its
+ * case variants on purpose; matching case-insensitively would make `trial`
+ * billing everywhere, and half of it is eval.
+ */
+const termFamilies = (protectedSpec.termFamilies ?? []).map((family) => ({
+  ...family,
+  regex: new RegExp(family.pattern),
+}));
+const protectedFields = protectedSpec.fields ?? [];
+
+const isProtectedTerm = (token) =>
+  protectedSpec.terms.includes(token) ||
+  termFamilies.some((family) => family.regex.test(token));
+
+const protectedTermsOnLine = (line) => [
+  ...protectedSpec.terms.filter((term) => line.includes(term)),
+  ...termFamilies
+    .filter((family) => family.regex.test(line))
+    .map((family) => family.family),
+];
+
+/** A field that is only foreign in the files that own it, like mcpjam.yml's `checks:`. */
+const protectedFieldAt = (rel, token) =>
+  protectedFields.find(
+    (field) =>
+      field.name === token && underPaths(rel, field.paths, field.pathSuffixes)
+  );
 
 const inAllowedPaths = (rel, paths) =>
   !paths || paths.some((p) => rel === p || rel.startsWith(p));
@@ -395,8 +505,12 @@ function record(rel, line, lineText, rename, matched, shape) {
     violations.push({ ...entry, reason: `protected path` });
     return;
   }
-  if (protectedSpec.terms.includes(matched)) {
+  if (isProtectedTerm(matched) || isProtectedTerm(rename.from)) {
     violations.push({ ...entry, reason: `protected term` });
+    return;
+  }
+  if (protectedFieldAt(rel, matched)) {
+    violations.push({ ...entry, reason: `protected field` });
     return;
   }
   const nearby = protectedTermsOnLine(lineText).filter((t) => t !== matched);
@@ -404,15 +518,75 @@ function record(rel, line, lineText, rename, matched, shape) {
   findings.push(entry);
 }
 
-const files = walk(ROOT, [], unreadable);
+/**
+ * The mapping is a proposal whether or not today's tree contains the word.
+ *
+ * Checked before any file is read, so a protected `from` fails on a checkout
+ * that happens not to use it instead of waiting for the first one that does.
+ * A protected FIELD fails here when the rename could reach the field's owners:
+ * repository-wide, or through a `paths` entry that overlaps theirs.
+ */
+for (const rename of mapping.renames) {
+  const base = {
+    file: null,
+    line: null,
+    matched: rename.from,
+    shape: "mapping",
+    from: rename.from,
+    to: rename.to,
+    scope: rename.scope,
+    text: `${rename.from} → ${rename.to}`,
+  };
+  if (isProtectedTerm(rename.from)) {
+    violations.push({ ...base, reason: "protected term" });
+    continue;
+  }
+  const overlaps = (a, b) => a.startsWith(b) || b.startsWith(a);
+  for (const field of protectedFields) {
+    if (field.name !== rename.from) continue;
+    const reaches =
+      !rename.paths ||
+      rename.paths.some(
+        (p) =>
+          (field.paths ?? []).some((fp) => overlaps(p, fp)) ||
+          (field.pathSuffixes ?? []).some((s) => p.endsWith(s))
+      );
+    if (reaches) violations.push({ ...base, reason: "protected field" });
+  }
+}
+
+const skipped = [];
+const { enumeration, paths: candidates } = listCandidates(unreadable, skipped);
 
 let scanned = 0;
-for (const file of files) {
-  const rel = relative(ROOT, file).split(sep).join("/");
-  const ext = file.slice(file.lastIndexOf("."));
+for (const rel of candidates) {
+  const file = join(ROOT, rel);
+  const ext = rel.slice(rel.lastIndexOf("."));
   const isCode = CODE_EXT.has(ext);
   const isText = TEXT_EXT.has(ext);
   if (!isCode && !isText) continue;
+
+  // The walk already lstat'ed; git's listing did not. A path git tracks may be
+  // a symlink, or deleted from the working tree — neither holds source to
+  // rename. Anything else lstat cannot answer is a hole, and fatal.
+  let entryStat;
+  try {
+    entryStat = lstatSync(file);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      skipped.push({
+        file: rel,
+        reason: "listed by git, absent from the working tree",
+      });
+    } else {
+      unreadable.push({ file: rel, reason: String(error) });
+    }
+    continue;
+  }
+  if (entryStat.isSymbolicLink()) {
+    skipped.push({ file: rel, reason: symlinkReason(file) });
+    continue;
+  }
 
   let text;
   try {
@@ -567,7 +741,9 @@ if (AS_JSON) {
       {
         status: violations.length > 0 ? "protected" : "ok",
         root: ROOT,
+        enumeration,
         scanned,
+        skipped,
         findings,
         reviewByHand,
         violations,
@@ -585,9 +761,8 @@ if (violations.length > 0) {
       `No report was written.\n`
   );
   for (const v of violations) {
-    console.error(
-      `  ✗ ${v.file}:${v.line}  ${v.from} → ${v.to}  (${v.reason})`
-    );
+    const where = v.file === null ? "mapping.json" : `${v.file}:${v.line}`;
+    console.error(`  ✗ ${where}  ${v.from} → ${v.to}  (${v.reason})`);
     console.error(`      ${v.text}`);
   }
   console.error(
@@ -666,6 +841,21 @@ for (const [key, entries] of [...grouped].sort(
   );
 }
 out.push("");
+
+if (skipped.length > 0) {
+  out.push("## Skipped");
+  out.push("");
+  out.push(
+    `${skipped.length} listed path(s) were not read because they hold no source of their own.`
+  );
+  out.push("");
+  out.push("| path | why |");
+  out.push("|---|---|");
+  for (const entry of skipped) {
+    out.push(`| \`${entry.file}\` | ${entry.reason} |`);
+  }
+  out.push("");
+}
 
 if (reviewByHand.length > 0) {
   out.push("## Review by hand");

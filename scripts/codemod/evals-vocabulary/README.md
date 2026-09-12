@@ -35,7 +35,7 @@ for a different thing.
 So the value here is the inventory, not the edit. A reviewer reads the report to
 size the surface and to find the places where the same token means two things;
 the renames themselves land in PRs a human reviews against the pinned contract.
-A script that rewrote 422 occurrences across 93 files and asked for a rubber
+A script that rewrote 690 occurrences across 102 files and asked for a rubber
 stamp would be asking for the one thing nobody can give it.
 
 ## The two severities
@@ -76,12 +76,23 @@ TypeScript is already installed for the build, so this costs no new dependency
 and no lockfile entry — which matters when the report has to run identically in
 CI and on a laptop mid-stack.
 
+## What it reads
+
+What git sees: tracked files plus untracked files that are not ignored, through
+`git ls-files`. A filesystem walk with a hand-kept skip list read ignored
+`worktrees/` checkouts on a real laptop and took minutes; the repository's own
+`.gitignore` is the only skip list that stays true. A root that is not a git
+work tree falls back to the walk.
+
 ## Why it fails closed
 
 Three ways it refuses to produce a report rather than produce a misleading one:
 
-- A path it cannot walk, stat or read is fatal. An inventory with a hole in it
-  reads as complete, and the next person renames from it.
+- A path it cannot stat or read is fatal. An inventory with a hole in it reads
+  as complete, and the next person renames from it. A symlink is the exception:
+  it is listed as skipped and never followed, because a dangling one names
+  nothing and a live one is either scanned under its own path or is not this
+  repository's to rename.
 - Reading zero SOURCE files is fatal, even from a root full of other things. A
   clean empty report is otherwise indistinguishable from a clean real one.
 - Generation writes to a temporary file and moves it into place only on success,
@@ -96,7 +107,16 @@ Three ways it refuses to produce a report rather than produce a misleading one:
   `subpath` renames are repository-wide unless a `paths` allowlist narrows them;
   `wire-field` renames are always path-restricted, because those four words are
   English.
-- `protected.json` — the terms and paths that mean something else.
+- `protected.json` — what means something else. `terms` are exact tokens;
+  `termFamilies` are patterns that protect every member of a family
+  (`githubCheck*` covers `githubCheckRunId` and `GithubCheckRepoConfigRow`),
+  each spelling its case variants explicitly; `fields` protect one field name
+  only in the files that own it, like the customer-authored `checks:` key of
+  `mcpjam.yml`; `paths` are path prefixes. Billing trials are protected by
+  path (the client billing files and, under `--root ../mcpjam-backend`, the
+  Convex billing modules) and by pattern (`trialPlan`, `isTrial`,
+  `starterTrial*`), never by the eval counters `configuredTrials` and friends,
+  so an eval-trial rename can proceed without touching billing.
 - `REPORT.md` — the generated inventory, committed so a reviewer can read it
   without running anything.
 

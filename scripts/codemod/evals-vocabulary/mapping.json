@@ -1,5 +1,5 @@
 {
-  "__readme": "Planned renames for the evaluator-vocabulary program, read by index.mjs. `scope` decides what a match may be: `identifier` matches a bare identifier outside comments and strings; `subpath` matches an import specifier; `flag` matches a CLI flag token; `wire-field` matches an object KEY only, and only inside the files its `paths` names. Wire fields are path-restricted on purpose: `checks` and `repetitions` are ordinary English elsewhere in this repo, and a rename proposed against prose is a rename nobody can review.",
+  "__readme": "Planned renames for the evaluator-vocabulary program, read by index.mjs. `scope` decides what a match may be: `identifier` matches a bare identifier outside comments and strings; `subpath` matches an import specifier; `flag` matches a CLI flag token; `wire-field` matches an object KEY only, and only inside the files its `paths` names. Wire fields are path-restricted on purpose: `checks` and `repetitions` are ordinary English elsewhere in this repo, and a rename proposed against prose is a rename nobody can review. The configured count is deliberately absent: `repetitions` stays the canonical per-case count and `--repetitions` the canonical flag, with `--iterations` its deprecated alias (settled 2026-09-08, #4774). `iteration` names one execution instance only, so no rename may map the count onto `iterations`, and `--max-trials` is out of scope.",
   "renames": [
     { "from": "Scorer", "to": "Evaluator", "scope": "identifier" },
     { "from": "ScoreDefinition", "to": "EvaluatorDefinition", "scope": "identifier" },
@@ -34,11 +34,8 @@
 
     { "from": "@mcpjam/sdk/predicates", "to": "@mcpjam/sdk/assertions", "scope": "subpath" },
 
-    { "from": "--repetitions", "to": "--iterations", "scope": "flag", "paths": ["cli/", "docs/"] },
-
     { "from": "checks", "to": "assertions", "scope": "wire-field", "paths": ["sdk/src/platform/", "mcpjam-inspector/server/routes/v1/evals.ts", "cli/src/lib/eval-run-file.ts", "cli/src/lib/eval-suite-export.ts"] },
     { "from": "predicates", "to": "assertions", "scope": "wire-field", "paths": ["sdk/src/platform/", "mcpjam-inspector/server/routes/v1/evals.ts"] },
-    { "from": "defaultPredicates", "to": "defaultAssertions", "scope": "wire-field", "paths": ["sdk/src/platform/", "mcpjam-inspector/server/routes/v1/evals.ts", "mcpjam-inspector/client/src/components/evals/"] },
-    { "from": "repetitions", "to": "iterations", "scope": "wire-field", "paths": ["sdk/src/platform/", "mcpjam-inspector/server/routes/v1/evals.ts", "cli/src/lib/eval-run-file.ts"] }
+    { "from": "defaultPredicates", "to": "defaultAssertions", "scope": "wire-field", "paths": ["sdk/src/platform/", "mcpjam-inspector/server/routes/v1/evals.ts", "mcpjam-inspector/client/src/components/evals/"] }
   ]
 }

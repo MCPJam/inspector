@@ -1,5 +1,5 @@
 {
-  "__readme": "Words and paths that mean something OTHER than an eval evaluator. A proposed mutation that touches one of these fails the run \u2014 not a skip, a failure. The scanner cannot tell a GitHub check run from a grading check by looking at the token, so the only safe rule is that it refuses to guess.",
+  "__readme": "Words and paths that mean something OTHER than an eval evaluator. A proposed mutation that touches one of these fails the run — not a skip, a failure. The scanner cannot tell a GitHub check run from a grading check by looking at the token, so the only safe rule is that it refuses to guess. `terms` match one exact token. `termFamilies` protect every member of a family: each `pattern` is a regular expression tested against the token (and, for the proximity note, against the line), and each family spells its case variants out explicitly rather than matching case-insensitively, because `trial` case-insensitively is half the eval vocabulary. `fields` protect one field name inside the paths that own it, for words like `checks` that are only foreign in one place. `paths` are prefixes of repository-relative paths, so `.../xaa-` covers every `xaa-*.ts` beside it. Paths here are relative to whichever `--root` is scanned; the `convex/` and backend `scripts/` entries apply when the root is mcpjam-backend.",
   "terms": [
     "checkRunId",
     "checksEnabled",
@@ -24,6 +24,8 @@
     "trialing",
     "trialEndSeconds",
     "trial_period_days",
+    "trialPlan",
+    "isTrial",
     "maxEvaluatorErrorRate",
     "evaluatorError",
     "evaluatorErrorRate",
@@ -38,17 +40,136 @@
     "HostCompatEvaluation",
     "stepAssertionPayloadValidator"
   ],
+  "termFamilies": [
+    {
+      "family": "githubCheck*",
+      "pattern": "[gG]ithub_?[cC]heck|GITHUB_CHECK",
+      "why": "GitHub check runs and their settings, worker and rows: githubCheckRunId, githubCheckTriggerId, GithubCheckRepoConfigRow, useGithubChecksSettings, github_check, GITHUB_CHECKS_ENABLED."
+    },
+    {
+      "family": "EvalCheckRepo*",
+      "pattern": "[eE]val_?[cC]heck_?[rR]epo|EVAL_CHECK_REPO",
+      "why": "The repositories connected to GitHub Checks: connectEvalCheckRepoOperation, list_eval_check_repos, PlatformEvalCheckRepos."
+    },
+    {
+      "family": "checkRun*",
+      "pattern": "(?<![A-Za-z0-9])[cC]heck_?[rR]un|CHECK_RUN",
+      "why": "GitHub check-run ids and payloads: checkRunId, check_run_id."
+    },
+    {
+      "family": "*DoctorCheck*",
+      "pattern": "[dD]octor_?[cC]heck",
+      "why": "Server doctor checks, not grading checks."
+    },
+    {
+      "family": "conformanceCheck*",
+      "pattern": "[cC]onformance_?[cC]heck|CONFORMANCE_CHECK|conformance-check",
+      "why": "Protocol conformance checks."
+    },
+    {
+      "family": "*IdentityAssertion*",
+      "pattern": "[iI]dentity_?[aA]ssertion|IDENTITY_ASSERTION|identity-assertion",
+      "why": "XAA identity assertions (draft-ietf-oauth-identity-assertion-authz-grant)."
+    },
+    {
+      "family": "*AssertionFormat*",
+      "pattern": "[aA]ssertion_?[fF]ormat|ASSERTION_FORMAT|assertion-format",
+      "why": "The XAA assertion-format preset (oidc or saml)."
+    },
+    {
+      "family": "*ClientAssertion*",
+      "pattern": "[cC]lient_?[aA]ssertion|CLIENT_ASSERTION",
+      "why": "RFC 7523 client assertions: client_assertion, signClientAssertion."
+    },
+    {
+      "family": "*IdJag*",
+      "pattern": "[iI]d_?[jJ]ag|ID_JAG|id-jag",
+      "why": "Identity Assertion JWT Authorization Grants: idJag, issueIdJag, ID_JAG_TOKEN_TYPE, inspect_id_jag."
+    },
+    {
+      "family": "*Saml*",
+      "pattern": "[sS]aml|SAML",
+      "why": "SAML assertions: SAML_ASSERTION_NS, issueMockSamlAssertion, isSaml."
+    },
+    {
+      "family": "billing trial state",
+      "pattern": "(?<![A-Za-z0-9])(?:[tT]rial_?(?:[pP]lan|[eE]nds?|[sS]tart|[dD]ays|[dD]ecision|[oO]verlay|[pP]eriod|[sS]tatus|[mM]eta|[bB]illing|[cC]ountdown)|trialing|isTrial|TRIAL_(?:PLAN|ENDS?|START|DAYS|PERIOD|STATUS))",
+      "why": "Who is on a paid-plan trial and when it ends: trialPlan, trialEndsAt, trialStartedAt, trialDaysRemaining, trialDecision, trialOverlayPlan, trialStatus, trial_end, trial_period_days, trialing, isTrial. Eval counters (configuredTrials, attemptedTrials, minGradeableTrials, trialKey, trialVerdict) deliberately do NOT match; they are eval terms, and billing is protected by path so an eval-trial rename can proceed."
+    },
+    {
+      "family": "billing trial grants",
+      "pattern": "[sS]tarter_?[tT]rial|STARTER_TRIAL|[oO]rg_?(?:[tT]eam_?)?[tT]rials|org-team-trials|[tT]eam_?[tT]rial|[gG]rant[A-Za-z]*Trial|[fF]ree_?[aA]fter_?[tT]rial|[dD]eferred_?[tT]rial|TrialCountdown|trial-countdown|resetTrialsForBillingLaunch|TrialBackfill",
+      "why": "Granting, resetting and counting down billing trials: starterTrialsEnabled, orgTrialsGranted, grantExistingOrgTeamTrials, selectFreeAfterTrial, deferredTrialBillingStartsAt, SidebarTrialCountdown, the billing:org-team-trials:* scripts."
+    }
+  ],
+  "fields": [
+    {
+      "name": "checks",
+      "paths": ["mcpjam-inspector/server/services/github-checks/"],
+      "pathSuffixes": ["mcpjam.yml", "mcpjam.yaml"],
+      "why": "The customer-authored `checks:` section of mcpjam.yml, read in github-checks/resolver/mcpjamYaml.ts and documented in resolve-and-start.ts. Customers wrote this key into their own repositories; renaming the reader breaks all of them."
+    }
+  ],
   "paths": [
     "mcpjam-inspector/server/routes/v1/eval-checks.ts",
     "mcpjam-inspector/server/routes/web/checks.ts",
-    "mcpjam-inspector/server/services/github-checks/",
-    "mcpjam-inspector/server/services/github-checks-worker.ts",
     "mcpjam-inspector/client/src/components/settings/GithubChecksRoute.tsx",
     "mcpjam-inspector/client/src/components/xaa/",
     "mcpjam-inspector/client/src/components/swarms/",
+    "mcpjam-inspector/client/src/lib/xaa/",
+    "mcpjam-inspector/client/src/hooks/useXaa",
+    "mcpjam-inspector/client/src/components/connection/shared/Xaa",
+    "mcpjam-inspector/client/src/components/learn-more/XAAHowItWorksContent.tsx",
+    "mcpjam-inspector/server/routes/mcp/xaa.ts",
+    "mcpjam-inspector/server/routes/mcp/__tests__/xaa",
+    "mcpjam-inspector/server/routes/web/xaa.ts",
+    "mcpjam-inspector/server/routes/web/__tests__/xaa",
+    "mcpjam-inspector/server/routes/web/__tests__/fixtures/xaa-",
+    "mcpjam-inspector/server/routes/xaa-",
+    "mcpjam-inspector/server/routes/__tests__/xaa-",
+    "mcpjam-inspector/server/services/xaa-",
+    "mcpjam-inspector/server/services/__tests__/xaa-",
+    "mcpjam-inspector/shared/xaa.ts",
+    "mcpjam-inspector/shared/xaa-",
+    "mcpjam-inspector/docs/xaa-",
     "cli/src/commands/xaa.ts",
+    "cli/tests/xaa.test.ts",
     "cli/src/commands/oauth.ts",
     "sdk/src/xaa/",
+    "sdk/tests/xaa/",
+    "sdk/src/oauth/client-identity.ts",
+    "sdk/src/oauth/state-machines/shared/jwt.ts",
+    "docs/cli/xaa.mdx",
+    "docs/inspector/xaa-debugger.mdx",
+    "docs/hosted/sso.mdx",
+    "mcpjam-inspector/client/src/components/sidebar/sidebar-trial-countdown.tsx",
+    "mcpjam-inspector/client/src/components/sidebar/__tests__/sidebar-trial-countdown.test.tsx",
+    "mcpjam-inspector/client/src/hooks/useOrganizationBilling.ts",
+    "mcpjam-inspector/client/src/hooks/__tests__/useOrganizationBilling",
+    "mcpjam-inspector/client/src/components/organization/OrganizationCurrentPlanPanel.tsx",
+    "mcpjam-inspector/client/src/components/organization/OrganizationBillingSection.tsx",
+    "mcpjam-inspector/client/src/components/__tests__/OrganizationsTab.billing.test.tsx",
+    "mcpjam-inspector/client/src/lib/billing-gates.ts",
+    "mcpjam-inspector/client/src/lib/__tests__/billing-gates.test.ts",
+    "convex/billing.ts",
+    "convex/billingNode.ts",
+    "convex/billing/",
+    "convex/lib/entitlements.ts",
+    "convex/lib/__tests__/entitlements",
+    "convex/lib/billing",
+    "convex/lib/pricing/",
+    "convex/migrations/resetTrialsForBillingLaunch.ts",
+    "convex/migrations/grantExistingOrgTeamTrials.ts",
+    "convex/migrations/migrateStarterToSolo.ts",
+    "convex/userOps/plan.ts",
+    "convex/userOps/pricing.ts",
+    "scripts/runOrgTeamTrialBackfill.ts",
+    "tests/convex/resetTrialsForBillingLaunch.test.ts",
+    "tests/convex/organizationBilling.test.ts",
+    "tests/convex/entitlements.test.ts",
+    "tests/convex/billingMigrations.test.ts",
+    "tests/convex/stripeWebhook.test.ts",
+    "docs/billing-trial-",
     "sdk/src/host-compat/",
     "sdk/src/server-doctor-core.ts",
     "sdk/src/server-doctor.ts",
