@@ -20,12 +20,15 @@ import sharp from "sharp";
 import os from "node:os";
 import { writeFile } from "node:fs/promises";
 import {
-  decodeWebMcpBinaryFrame,
   WEBMCP_FRAME_BOOST_INTERVAL_MS,
   WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_FRAME_MIN_INTERVAL_MS,
-  type WebMcpBinaryFrame,
 } from "../shared/webmcp-inspector-protocol";
+import {
+  createFrameStreamDecoder,
+  FRAME_STREAM_KIND,
+  type FrameStreamFrame,
+} from "../shared/browserd-frame-stream";
 import { readJpegDimensions } from "../shared/jpeg-dimensions";
 import { startWebMcpFixturePage } from "./fixtures/webmcp-frame-page";
 
@@ -93,26 +96,31 @@ function openFrameSocket(token: string, sessionId: string) {
     "ws",
   )}/api/web/webmcp/sessions/${sessionId}/frames`;
   const ws = new WebSocket(url, [token], { origin: ORIGIN });
-  const frames: Array<WebMcpBinaryFrame & { receivedAt: number }> = [];
+  const frames: Array<FrameStreamFrame & { receivedAt: number }> = [];
   const undecodable: number[] = [];
   const controls: Array<Record<string, unknown>> = [];
+  // The same decoder the browser runs. The socket speaks the daemon's record
+  // format directly, so this reads it exactly as `createFrameWireReader` does
+  // — including across message boundaries, which is the property a per-message
+  // adapter could never have checked.
+  const decoder = createFrameStreamDecoder();
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
       controls.push(JSON.parse(data.toString()));
       return;
     }
     const bytes = data as Buffer;
-    const frame = decodeWebMcpBinaryFrame(
-      bytes.buffer.slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.byteLength,
-      ) as ArrayBuffer,
+    const result = decoder.push(
+      new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
     );
-    if (!frame) {
+    if (!result.ok) {
       undecodable.push(bytes.byteLength);
       return;
     }
-    frames.push({ ...frame, receivedAt: Date.now() });
+    for (const record of result.records) {
+      if (record.kind !== FRAME_STREAM_KIND.frame) continue;
+      frames.push({ ...record, receivedAt: Date.now() });
+    }
   });
   return {
     ws,
@@ -203,7 +211,7 @@ async function invokePageTool(
   name: string,
 ): Promise<unknown> {
   const tools = parseSseEvents(
-    await readSse(token, sessionId, "replay=200&frames=off", 1_500),
+    await readSse(token, sessionId, "replay=200", 1_500),
   ).filter((event) => event.type === "tools");
   const descriptors = (tools.at(-1)?.tools ?? []) as Array<{
     toolKey: string;
@@ -231,7 +239,7 @@ async function invokePageTool(
     .poll(
       async () => {
         const settled = parseSseEvents(
-          await readSse(token, sessionId, "replay=200&frames=off", 1_000),
+          await readSse(token, sessionId, "replay=200", 1_000),
         )
           .filter((event) => event.type === "activity")
           .map((event) => event.entry as { kind?: string; output?: unknown })
@@ -373,20 +381,13 @@ test.describe("WebMCP viewport frame stream", () => {
       expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
       expect(new Set(seqs).size).toBe(seqs.length);
 
-      // ---- SSE carries everything BUT the frames --------------------------
-      const suppressed = await readSse(
-        token,
-        sessionId,
-        "replay=200&frames=off",
-        1_500,
-      );
-      expect(suppressed).toContain("session_started");
-      expect(suppressed).not.toContain('"type":"frame"');
-
-      // …and still does carry them for a client that never asked to opt out,
-      // which is every client older than this socket.
-      const withFrames = await readSse(token, sessionId, "replay=200", 1_500);
-      expect(withFrames).toContain('"type":"frame"');
+      // ---- the event stream carries NO pixels, ever ------------------------
+      // Not a preference a query string sets any more: frames have their own
+      // channel on the server and their own socket on the wire, and the event
+      // stream is the timeline.
+      const events = await readSse(token, sessionId, "replay=200", 1_500);
+      expect(events).toContain("session_started");
+      expect(events).not.toContain('"type":"frame"');
 
       // ---- capture → arrival ----------------------------------------------
       const latencies = socket.frames.map(

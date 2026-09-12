@@ -36,22 +36,12 @@ import type {
   WebMcpSessionStatus,
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
-import type { WebMcpLiveFrame } from "@/stores/webmcp-inspector-store";
+import { webmcpFrameChannel } from "@/stores/webmcp-inspector-store";
+import { useFrameChannel } from "@/lib/browser-pane/frame-channel";
 import { notePainted } from "@/lib/webmcp-inspector/frame-stats";
 import { BrowserPanel } from "@/components/computer/BrowserPanel";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyWebMcpDiagnostics } from "@/lib/webmcp-inspector/diagnostics";
-
-/**
- * Cadence of the FALLBACK screenshot poll.
- *
- * Only reached when the viewport stream is unavailable: a server too old to
- * know `set_screencast`, or a hosted session whose picture comes from somewhere
- * else entirely. A second is deliberately slow — this path costs a full
- * round-trip screenshot per tick, and it exists to keep the pane honest rather
- * than to look live.
- */
-const SCREENSHOT_POLL_MS = 1_000;
 
 /**
  * How long to wait for React to commit the embedded pane.
@@ -77,7 +67,6 @@ export function WebmcpInspectorTab() {
     starting,
     error,
     frameTransport,
-    noteScreenshotPolling,
     startSession,
     closeSession,
     sendCommand,
@@ -98,7 +87,6 @@ export function WebmcpInspectorTab() {
       starting: state.starting,
       error: state.error,
       frameTransport: state.frameTransport,
-      noteScreenshotPolling: state.noteScreenshotPolling,
       startSession: state.startSession,
       closeSession: state.closeSession,
       sendCommand: state.sendCommand,
@@ -225,65 +213,29 @@ export function WebmcpInspectorTab() {
     documentVisible;
 
   /**
-   * Keep the pane fed while it is being looked at, and stop the moment it is
-   * not.
+   * Ask for frames while the pane is being looked at, and stop the moment it
+   * is not.
    *
-   * Two sources, one pane. The viewport STREAM is the primary path — frames
-   * arrive as the page paints. The screenshot POLL is the fallback, for a
-   * server too old to know `set_screencast` and for a hosted session whose
-   * picture comes from the Browser panel instead. The fallback engages on its
-   * own, silently: someone running an older server should see their page, not
-   * an error explaining why they cannot.
+   * ONE source now. There used to be a second — a once-a-second screenshot
+   * poll that engaged when `set_screencast` came back refused — for a server
+   * too old to know the command. That server cannot exist (the client and the
+   * server ship in one package), and what `false` actually means today is
+   * transient: the daemon has no tab selected yet, and its own health tick
+   * re-subscribes a moment later into the socket that is already open. So a
+   * refusal is waited out rather than worked around.
    *
-   * A client-owned surface has NEITHER. `streaming` is already false for it,
-   * so this effect never runs — no `set_screencast` command, no poll timer, and
-   * nothing to withdraw on unmount.
+   * A client-owned surface asks for nothing: `streaming` is already false for
+   * it, so this effect never runs.
+   *
+   * KEYED ON THE SESSION, not just the pane: `streaming` does not change when
+   * one `frame-stream` session replaces another, and without this the new
+   * session is never asked to start painting.
    */
-  const pollsScreenshots = behaviour.pollsScreenshots;
-  /**
-   * The poll belongs to the SESSION, not just to the pane.
-   *
-   * A dependency rather than a detail: `streaming` and `pollsScreenshots` are
-   * both unchanged when one `frame-stream` session replaces another, so
-   * without this the effect never re-runs — and a poll started because the
-   * OLD session's browser refused `set_screencast` would keep firing
-   * screenshots at a new session whose socket works perfectly, with the badge
-   * stuck on "Frames: polling". Re-running asks the new session the question
-   * fresh, and the cleanup below stops the interval that answered it for the
-   * old one.
-   */
-  const pollSessionId = session?.sessionId;
+  const streamSessionId = session?.sessionId;
   useEffect(() => {
     if (!streaming) return;
-    let cancelled = false;
-    let poll: ReturnType<typeof setInterval> | undefined;
-    const startPolling = () => {
-      if (cancelled || poll !== undefined) return;
-      // `silent`, so a once-a-second capture cannot clear the error banner from
-      // a navigation or invocation failure before anyone has read it.
-      const shoot = () => void captureScreenshot({ silent: true });
-      shoot();
-      poll = setInterval(shoot, SCREENSHOT_POLL_MS);
-      // The poll is this surface's own fallback, so this surface is the only
-      // thing that can report it. Without it the store would describe a pane
-      // painting from screenshots as one that has no transport at all.
-      noteScreenshotPolling(true);
-    };
-
-    if (pollsScreenshots) {
-      startPolling();
-    } else {
-      void setScreencast(true).then((accepted) => {
-        if (!accepted) startPolling();
-      });
-    }
-
+    void setScreencast(true);
     return () => {
-      cancelled = true;
-      if (poll !== undefined) {
-        clearInterval(poll);
-        noteScreenshotPolling(false);
-      }
       // Asked for whenever this session is still the current one, including
       // when the stream was never running: it is idempotent on the server, and
       // a session left encoding frames for a pane nobody is looking at is
@@ -292,23 +244,12 @@ export function WebmcpInspectorTab() {
       // But ONLY while it is still the current one. `setScreencast` aims at
       // whatever session the store holds now, so a stop sent from a cleanup
       // that a session CHANGE triggered would stop the replacement's stream
-      // rather than this one's — undone a moment later by the re-run below,
-      // and only because the command queue happens to preserve that order.
-      // The session this stream belonged to is gone, and its browser with it;
-      // there is nothing left here to stop.
+      // rather than this one's. The session this stream belonged to is gone,
+      // and its browser with it; there is nothing left here to stop.
       const current = useWebmcpInspectorStore.getState().session?.sessionId;
-      if (!pollsScreenshots && current === pollSessionId) {
-        void setScreencast(false);
-      }
+      if (current === streamSessionId) void setScreencast(false);
     };
-  }, [
-    streaming,
-    pollsScreenshots,
-    pollSessionId,
-    setScreencast,
-    captureScreenshot,
-    noteScreenshotPolling,
-  ]);
+  }, [streaming, streamSessionId, setScreencast]);
 
   /**
    * Where this session's browser should run and appear.
@@ -419,15 +360,15 @@ export function WebmcpInspectorTab() {
           {
             label: "Copy diagnostics",
             onSelect: () => {
-              const { liveFrame } = useWebmcpInspectorStore.getState();
+              const frame = webmcpFrameChannel.latest();
               void copyWebMcpDiagnostics({
                 session,
                 frameTransport,
-                frame: liveFrame
+                frame: frame
                   ? {
-                      deviceWidth: liveFrame.deviceWidth,
-                      deviceHeight: liveFrame.deviceHeight,
-                      seq: liveFrame.seq,
+                      deviceWidth: frame.deviceWidth,
+                      deviceHeight: frame.deviceHeight,
+                      seq: frame.seq,
                     }
                   : undefined,
               });
@@ -437,10 +378,20 @@ export function WebmcpInspectorTab() {
       : []),
   ];
 
-  const framesDegraded =
+  /**
+   * The socket gave up, and there is nothing underneath it.
+   *
+   * Said once, plainly, rather than left as a pane that quietly stops
+   * updating: the Screenshot button still works, and that is the remedy worth
+   * pointing at. Not shown while retries are still running — the pane is still
+   * holding the last picture it was given, and a notice that flickered on and
+   * off across a reconnect would be worse than the gap it describes.
+   */
+  const framesUnavailable =
     transportKind === "frame-stream" &&
-    ((frameTransport.rung === "sse-frames" && frameTransport.latched) ||
-      frameTransport.rung === "poll");
+    streaming &&
+    frameTransport.latched &&
+    frameTransport.rung === "none";
 
   const showViewport = live;
   const hostedBlocked = HOSTED_MODE && !hostedReady;
@@ -459,23 +410,10 @@ export function WebmcpInspectorTab() {
             <span className="ml-1">Close browser</span>
           </Button>
           {session ? <StatusBadge status={session.status} /> : null}
-          {framesDegraded ? (
-            <Badge
-              variant="outline"
-              className="text-[10px]"
-              title={
-                frameTransport.rung === "poll"
-                  ? "This server cannot stream the viewport, so the pane is polling screenshots."
-                  : `The frame socket could not be used, so frames are riding the event stream. Attempts: ${frameTransport.attempts}`
-              }
-            >
-              {frameTransport.rung === "poll"
-                ? "Frames: polling"
-                : "Frames: SSE"}
-            </Badge>
-          ) : null}
           <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-            {behaviour.notice}
+            {framesUnavailable
+              ? "Live view is unavailable for this session. Use Screenshot to see the page."
+              : behaviour.notice}
           </p>
         </div>
       ) : null}
@@ -685,7 +623,10 @@ function SubscribedViewportPane(
     "frame" | "fallbackScreenshot" | "fallbackScreenshotAt"
   >,
 ) {
-  const frame = useWebmcpInspectorStore((state) => state.liveFrame);
+  // The picture comes off its own channel, not the store: a frame arriving
+  // thirty times a second must not be a store update every panel has to be
+  // memoised against. @see lib/browser-pane/frame-channel
+  const frame = useFrameChannel(webmcpFrameChannel);
   const fallbackScreenshot = useWebmcpInspectorStore(
     (state) => state.lastScreenshot,
   );
@@ -711,7 +652,8 @@ function ViewportPane({
   behaviour,
   onInput,
 }: {
-  frame: WebMcpLiveFrame | undefined;
+  /** Decoded by the socket, which owns the bitmap; this only draws it. */
+  frame: PaneFrame | null;
   fallbackScreenshot: string | undefined;
   /** When the server had `fallbackScreenshot`; see the store's field. */
   fallbackScreenshotAt: number | undefined;
@@ -721,8 +663,14 @@ function ViewportPane({
   /** The promise bounds outstanding batches; the ordered socket pipelines them. */
   onInput: (events: WebMcpInputEvent[]) => void | Promise<void>;
 }) {
+  // CSS pixels, which is the page's own coordinate space and therefore what
+  // every forwarded click is expressed in. A frame captured at two device
+  // pixels per CSS pixel reported in device pixels would double every click.
   const surface = frame
-    ? { width: frame.cssWidth, height: frame.cssHeight }
+    ? {
+        width: Math.round(frame.deviceWidth / (frame.scale || 1)),
+        height: Math.round(frame.deviceHeight / (frame.scale || 1)),
+      }
     : transportSurface(transport);
   // ViewportPane is keyed by sessionId; a retired pane cancels its report.
   const resize = useViewportReporter((size) => {
@@ -759,15 +707,9 @@ function ViewportPane({
     [behaviour.drivesPage, forwarder],
   );
   const picture = useMemo<PaneFrame | null>(() => {
-    if (frame)
-      return {
-        src: frame.src,
-        deviceWidth: frame.deviceWidth,
-        deviceHeight: frame.deviceHeight,
-        scale: frame.deviceWidth / frame.cssWidth,
-        ts: frame.ts,
-        seq: frame.seq,
-      };
+    // The live frame is ALREADY a `PaneFrame` — the socket decodes into the
+    // shape the surface draws — so there is nothing to convert.
+    if (frame) return frame;
     if (streaming && fallbackScreenshot)
       return {
         data: fallbackScreenshot,
@@ -787,9 +729,12 @@ function ViewportPane({
     surface.height,
   ]);
   const painted = useCallback(() => {
-    if (frame) notePainted(frame);
+    // A manual screenshot carries no `seq`: it is not a frame of the stream,
+    // and filing it as one would put a number in the percentiles that no
+    // gesture is waiting on.
+    if (frame) notePainted({ ts: frame.ts, seq: frame.seq, rung: "ws" });
     else if (fallbackScreenshotAt !== undefined)
-      notePainted({ ts: fallbackScreenshotAt, rung: "poll" });
+      notePainted({ ts: fallbackScreenshotAt });
   }, [frame, fallbackScreenshotAt]);
   return (
     <figure className="m-0 flex h-full min-h-0 flex-col bg-muted/20 p-3">
@@ -962,7 +907,6 @@ interface ViewportBehaviour {
    */
   serverPaints: boolean;
   /** Poll screenshots instead of asking for a stream; nothing streams here. */
-  pollsScreenshots: boolean;
   /** The stream is the ONLY view, so "Live view: off" must not be offered. */
   streamRequired: boolean;
   /** Whether the pane forwards the viewer's input to the page. */
@@ -985,7 +929,6 @@ interface ViewportBehaviour {
 
 const NATIVE_WINDOW_BEHAVIOUR: ViewportBehaviour = {
   serverPaints: true,
-  pollsScreenshots: false,
   streamRequired: false,
   // View-only on purpose: the person already has the real page in front of
   // them, and forwarding pane input would drive it a SECOND time — every click
@@ -1023,8 +966,7 @@ function viewportBehaviour(
         // once-a-second screenshot it used to fall back to was proof of life
         // rather than a picture anyone could work with.
         serverPaints: false,
-        pollsScreenshots: false,
-        embedsBrowserPanel: true,
+              embedsBrowserPanel: true,
         notice:
           "This browser is running on your MCPJam computer, not on this machine. It cannot reach anything on your own network, including localhost.",
         viewOnlyCaption:
@@ -1049,8 +991,7 @@ function viewportBehaviour(
         // poll, and no input to forward — the surface takes the viewer's mouse
         // and keyboard natively, which is the entire point of it.
         serverPaints: false,
-        pollsScreenshots: false,
-        streamRequired: false,
+              streamRequired: false,
         drivesPage: false,
         notice:
           "This page is running right here, in the app — click and type into it directly. Tools it registers appear as they register.",

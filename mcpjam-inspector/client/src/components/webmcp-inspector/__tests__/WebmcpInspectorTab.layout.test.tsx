@@ -83,7 +83,6 @@ describe("WebmcpInspectorTab — three-panel workspace", () => {
       starting: false,
       error: undefined,
       lastScreenshot: undefined,
-      liveFrame: undefined,
       chatEnabled: false,
     });
   });

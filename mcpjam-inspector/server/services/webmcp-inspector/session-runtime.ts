@@ -42,6 +42,7 @@ import {
   type WebMcpSessionCallbacks,
 } from "./provider";
 import { WebMcpStreamHub } from "./stream-hub";
+import { WebMcpFrameChannel } from "./frame-channel";
 
 /**
  * An activity entry before the runtime stamps its id and timestamp.
@@ -210,6 +211,14 @@ function boundProviderTools(
 export class WebMcpSessionRuntime {
   readonly sessionId: string;
   readonly hub = new WebMcpStreamHub();
+  /**
+   * The picture, on its own channel.
+   *
+   * Apart from the hub because pixels and the timeline have nothing in common
+   * but a session: only the frame socket wants these, and putting them on the
+   * event channel made every other consumer filter them out. @see WebMcpFrameChannel
+   */
+  readonly frames = new WebMcpFrameChannel();
   readonly createdAt: number;
 
   private session: WebMcpBrowserSession | undefined;
@@ -332,10 +341,10 @@ export class WebMcpSessionRuntime {
       onNavigated: (url, origin) => {
         this.url = url;
         // The retained frame depicts a page that is gone. Held, it would be
-        // replayed to a reconnecting client as the current one — the same class
+        // handed to a late-arriving watcher as the current one — the same class
         // of lie as serving the previous page's tools, which is why the
         // provider drops those here too.
-        this.hub.clearFrame();
+        this.frames.clear();
         this.setStatus("ready");
         this.pushActivity({ kind: "navigated", url, origin });
       },
@@ -561,10 +570,10 @@ export class WebMcpSessionRuntime {
   async setScreencast(enabled: boolean): Promise<boolean> {
     const streaming = await this.requireSession().setScreencast(enabled);
     if (enabled) this.onActivity();
-    // Nothing is going to replace that retained frame now, and replay promises
-    // a reconnecting client the CURRENT paint rather than the last one before
+    // Nothing is going to replace that retained frame now, and the channel
+    // promises a late watcher the CURRENT paint rather than the last one before
     // the stream stopped.
-    if (!streaming) this.hub.clearFrame();
+    if (!streaming) this.frames.clear();
     return streaming;
   }
 
@@ -1039,17 +1048,22 @@ export class WebMcpSessionRuntime {
   /**
    * Publish one painted frame.
    *
-   * Its own path rather than an activity entry, for two independent reasons.
+   * Its own CHANNEL rather than an activity entry, for two independent reasons.
    * A frame is not a protocol happening, so it does not belong on the timeline
    * or in an export — and `pushActivity` writes to the replay ring, which a
    * 10fps stream would empty of everything else within seconds.
+   *
+   * The sequence still comes from the session's own counter, shared with the
+   * hub's events: the client compares it against what it last painted, and a
+   * private counter would make that comparison meaningless the moment a frame
+   * and an event disagreed about which came first.
    *
    * It also does NOT call `onActivity()`. A page with a CSS spinner paints
    * forever; ticking the idle clock from a paint would make every abandoned
    * animated page unreapable.
    */
   private publishFrame(frame: WebMcpFrame): void {
-    this.publish({ type: "frame", seq: this.nextSeq(), frame });
+    this.frames.publish({ ...frame, seq: this.nextSeq() });
   }
 
   private pushActivity(entry: WebMcpActivityDraft): void {
@@ -1089,6 +1103,7 @@ export class WebMcpSessionRuntime {
     // a closed hub would drop it on the floor.
     await this.draining_.catch(() => {});
     this.hub.close();
+    this.frames.close();
   }
 }
 

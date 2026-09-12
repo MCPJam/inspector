@@ -60,8 +60,6 @@ const RATE_WINDOW_MS = 3_000;
  */
 export type FrameTransportRung =
   | "ws"
-  | "sse-frames"
-  | "poll"
   | "none"
   | "jpeg-json"
   | "jpeg-binary"

@@ -362,9 +362,9 @@ export function BrowserPaneSurface({
       }
       return;
     }
-    if (!frame.data && !frame.src) return;
+    if (!frame.data) return;
     images.push({
-      src: frame.src ?? `data:image/jpeg;base64,${frame.data}`,
+      src: `data:image/jpeg;base64,${frame.data}`,
       frame,
       record,
     });

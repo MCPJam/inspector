@@ -81,7 +81,6 @@ function seed(session?: typeof HOSTED_SESSION) {
     pending: [],
     starting: false,
     error: undefined,
-    liveFrame: undefined,
     lastScreenshot: undefined,
     chatEnabled: false,
     captureScreenshot,
