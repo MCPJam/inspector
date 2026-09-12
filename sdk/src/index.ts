@@ -1399,6 +1399,30 @@ export type {
   ScorerRunOptions,
 } from "./scorers/index.js";
 
+// The evaluator runtime (main entry only — `judge()` reaches the model factory,
+// which is not browser-safe). `assertion()` and `judge()` build their
+// definitions through the same functions `predicateScorer` and `judgeScorer`
+// use, so a case migrated one rule at a time keeps every evaluator identity it
+// had. See `docs/evals-vocabulary-consolidation.md`.
+export {
+  DEFAULT_EVALUATOR_CONCURRENCY,
+  DEFAULT_EVALUATOR_TIMEOUT_MS,
+  assertion,
+  evaluatorsPassed,
+  judge,
+  runEvaluators,
+  runEvaluatorsProjected,
+  toEvaluatorRawOutcome,
+} from "./evaluators/index.js";
+export type {
+  AnyEvaluator,
+  AssertionEvaluator,
+  Evaluator,
+  EvaluatorRunOptions,
+  JudgeEvaluator,
+  JudgeOptions,
+} from "./evaluators/index.js";
+
 // The gate engine. ONE evaluator behind `assertGate` (code-first) and
 // `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
 // red on the other.

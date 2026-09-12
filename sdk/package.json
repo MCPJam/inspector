@@ -42,6 +42,11 @@
       "import": "./dist/matchers.js",
       "default": "./dist/matchers.js"
     },
+    "./assertions": {
+      "types": "./dist/assertions/index.d.ts",
+      "import": "./dist/assertions/index.js",
+      "default": "./dist/assertions/index.js"
+    },
     "./predicates": {
       "types": "./dist/predicates/index.d.ts",
       "import": "./dist/predicates/index.js",
