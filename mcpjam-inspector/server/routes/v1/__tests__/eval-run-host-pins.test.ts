@@ -62,8 +62,8 @@ vi.mock("convex/browser", () => ({
 
 import v1Routes from "../index.js";
 
-const PROJECT_ID = "p_1";
-const SUITE_ID = "s_1";
+const PROJECT_ID = "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const SUITE_ID = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 /** A host that pins one of everything the connection can carry. */
 const PINNED_HOST = {
@@ -125,7 +125,7 @@ beforeEach(() => {
   });
   prepareEvalRunMock.mockResolvedValue({
     suiteId: SUITE_ID,
-    runId: "run_1",
+    runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     caseUpsert: { committed: [], failed: [] },
     recorder: { finalize: vi.fn() },
     execute: vi.fn().mockResolvedValue(undefined),
