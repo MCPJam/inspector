@@ -18,27 +18,42 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "./useBrowserToolIds";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useHost } from "@/hooks/useClients";
 import { resolveEffectiveHost } from "@/lib/effective-client";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
-import { useMintBrowserToken } from "@/hooks/useProjectComputer";
+import {
+  useMintBrowserToken,
+  useMintConversationBrowserToken,
+} from "@/hooks/useProjectComputer";
 import {
   createBrowserTokenCache,
   type MintBrowserToken,
 } from "@/lib/hosted-browser/client";
 import {
   fetchBrowserToolDefinitions,
+  fetchHostedPageToolInvoke,
   fetchHostedPageTools,
+  fetchLocalPageToolInvoke,
   fetchLocalPageTools,
 } from "@/lib/browser-page-tools/client";
-import type { BrowserPageToolsResponse } from "@/shared/browser-page-tools";
+import type {
+  BrowserPageToolInvokeResponse,
+  BrowserPageToolsResponse,
+} from "@/shared/browser-page-tools";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import { usePaneHolderId } from "@/lib/local-browser/pane-holder";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import {
   browserPageToolsKey,
   useLiveWebmcpSignal,
   useWebmcpEpoch,
 } from "@/stores/browser-page-tools-store";
+
+/** How many times to re-read after a lease blocks the catalog. */
+const LEASE_HELD_RETRIES = 3;
 
 /**
  * Definitions are static per engine, so one fetch serves every mount for the
@@ -48,9 +63,21 @@ import {
  */
 const DEFINITIONS_CACHE = new Map<string, SerializedModelRequestTool[]>();
 
+/**
+ * Explains missing local access in the tool list and links to client settings.
+ * Initial permission discovery belongs to the Playground onboarding dialog.
+ */
+export interface BrowserLocalConsentPrompt {
+  onAllow: () => Promise<boolean>;
+  disabledForClient?: boolean;
+  /** The saved client whose Browser tab turns it back off; null → clients list. */
+  settingsHostId: string | null;
+}
+
 export interface BrowserToolsState {
   /** True when the previewed host actually attaches the browser capability. */
   attached: boolean;
+  catalogError?: boolean;
   /** Which browser a call would drive. */
   engine: "hosted" | "local";
   /** The `browser_*` tools, as the model is shown them. */
@@ -68,6 +95,17 @@ export interface BrowserToolsState {
   live?: { revision: number; hash: string; count: number; url?: string };
   /** Re-read the page. The definitions never change; only this does. */
   refreshPage: () => void;
+  /**
+   * Run a page tool the pane is showing, the way the WebMCP Inspector does.
+   * `browser_*` verbs are not on this path.
+   */
+  invokePage: (args: {
+    rawName: string;
+    frameId?: string;
+    input: Record<string, unknown>;
+  }) => Promise<BrowserPageToolInvokeResponse>;
+  /** Local permission or client enablement is missing; show a settings link. */
+  localConsent?: BrowserLocalConsentPrompt | null;
 }
 
 export function useBrowserTools(args: {
@@ -92,9 +130,16 @@ export function useBrowserTools(args: {
   // that stopped at the explicit pick reported "no browser" for a project
   // whose DEFAULT host has one, which is the common case: the pane offered a
   // live browser while the Tools panel beside it said no server was connected.
+  // `shouldQueryProjectId`, not a bare truthiness check. This hook's
+  // `projectId` is the PLAYGROUND'S project scope, which falls back to the
+  // local `activeProjectId` when there is no cloud project (PlaygroundTab
+  // passes `sharedProjectId ?? activeProjectId`). That fallback is the string
+  // sentinel `"none"` for a guest, which is truthy and reached
+  // `v.id("projects")` — a validator that throws BEFORE the handler runs, so
+  // nothing downstream could catch it. Sentry CONVEX-HQ: 636 users.
   const projectDefaultHostConfig = useQuery(
     "hostConfigsV2:getProjectDefault" as never,
-    isAuthenticated && args.projectId
+    isAuthenticated && shouldQueryProjectId(args.projectId)
       ? ({ projectId: args.projectId } as never)
       : "skip",
   ) as HostConfigDtoV2 | null | undefined;
@@ -104,9 +149,23 @@ export function useBrowserTools(args: {
   });
   const engineState = useBrowserEngine(args.projectId);
   const mintToken = useMintBrowserToken();
-  const attached = (hostConfig?.builtInToolIds ?? []).includes(
-    BROWSER_BUILT_IN_TOOL_ID,
+  const mintConversationToken = useMintConversationBrowserToken();
+  // THE CONVERSATION the Browser pane is driving. Chat ensures
+  // `<project>:session:<id>`; a read that omits it still looks at the legacy
+  // project-wide Chromium, which is why this list stayed empty while the
+  // model was already calling the page's tools.
+  const conversationId = useActiveChatSessionStore((state) => state.sessionId);
+  // THE SAME HOLDER the Browser pane acquires under. Without it a hold that
+  // is ours — a click that took the page, a leftover parked lease — makes
+  // this list say someone else has the browser, while the model can still
+  // call the tools after the next hand-back.
+  const paneHolder = usePaneHolderId();
+  const toolIds = useBrowserToolIds(
+    hostConfig,
+    engineState.selectedEngine,
+    args,
   );
+  const attached = (toolIds ?? []).includes(BROWSER_BUILT_IN_TOOL_ID);
   // The BODY-side engine choice, exactly as the Browser pane resolves it, so
   // the pane and the tool list cannot describe two different browsers.
   const engine: "hosted" | "local" =
@@ -131,9 +190,22 @@ export function useBrowserTools(args: {
   const tokens = useMemo(() => {
     if (engine !== "hosted" || !args.projectId || !isAuthenticated) return null;
     const projectId = args.projectId;
-    const mint: MintBrowserToken = () => mintToken({ projectId });
+    const mint: MintBrowserToken = conversationId
+      ? () =>
+          mintConversationToken({
+            projectId,
+            conversationId,
+          })
+      : () => mintToken({ projectId });
     return createBrowserTokenCache(mint);
-  }, [engine, args.projectId, isAuthenticated, mintToken]);
+  }, [
+    engine,
+    args.projectId,
+    isAuthenticated,
+    mintToken,
+    mintConversationToken,
+    conversationId,
+  ]);
   /**
    * The cache, readable from the page effect WITHOUT being one of its
    * dependencies.
@@ -150,10 +222,10 @@ export function useBrowserTools(args: {
   /** Whether a hosted read is possible at all — a boolean, so it can be a dep. */
   const hostedReadable = tokens !== null;
 
-  // Definitions. Cached per engine for the session; a failure leaves the list
-  // empty rather than surfacing an error, because a pane that cannot describe
-  // the browser is still a working pane.
+  const [catalogError, setCatalogError] = useState(false);
+  // Successful definitions stay cached; Refresh retries failed catalog reads.
   useEffect(() => {
+    setCatalogError(false);
     if (!attached) {
       setTools([]);
       return;
@@ -167,17 +239,22 @@ export function useBrowserTools(args: {
     let cancelled = false;
     fetchBrowserToolDefinitions(engine, controller.signal)
       .then((items) => {
+        if (cancelled) return;
+        if (items.length === 0) throw new Error("Empty Browser catalog");
         DEFINITIONS_CACHE.set(engine, items);
-        if (!cancelled) setTools(items);
+        setTools(items);
       })
       .catch(() => {
-        if (!cancelled) setTools([]);
+        if (!cancelled) {
+          setTools([]);
+          setCatalogError(true);
+        }
       });
     return () => {
       cancelled = true;
       controller.abort();
     };
-  }, [attached, engine]);
+  }, [attached, engine, pageNonce]);
 
   /**
    * The page read, which is a live look at a running browser.
@@ -217,7 +294,12 @@ export function useBrowserTools(args: {
       engine === "hosted" && cache
         ? fetchHostedPageTools(cache, controller.signal, signalTabId)
         : fetchLocalPageTools(
-            { projectId, ...(signalTabId ? { tabId: signalTabId } : {}) },
+            {
+              projectId,
+              ...(conversationId ? { sessionId: conversationId } : {}),
+              ...(paneHolder ? { holder: paneHolder } : {}),
+              ...(signalTabId ? { tabId: signalTabId } : {}),
+            },
             consentToken,
             controller.signal,
           );
@@ -239,6 +321,8 @@ export function useBrowserTools(args: {
   }, [
     attached,
     args.projectId,
+    conversationId,
+    paneHolder,
     engine,
     consentToken,
     hostedReadable,
@@ -259,17 +343,100 @@ export function useBrowserTools(args: {
     webmcpEpoch,
   ]);
 
+  /**
+   * A hold is often a blink — takeover, chat handoff, a command in flight.
+   * The catalog used to keep the refusal forever because the tool set itself
+   * did not change, so the live signal never bumped the epoch. A few retries
+   * cover the blink; a hold that lasts is still named after the last one.
+   */
+  const leaseHeldTries = useRef(0);
+  useEffect(() => {
+    leaseHeldTries.current = 0;
+  }, [webmcpEpoch, conversationId]);
+  useEffect(() => {
+    if (!page || page.ok || page.error !== "lease_held") {
+      leaseHeldTries.current = 0;
+      return;
+    }
+    if (leaseHeldTries.current >= LEASE_HELD_RETRIES) return;
+    const attempt = (leaseHeldTries.current += 1);
+    const timer = window.setTimeout(
+      () => setPageNonce((n) => n + 1),
+      400 * attempt,
+    );
+    return () => window.clearTimeout(timer);
+  }, [page]);
+
+  const invokePage = useCallback(
+    async (call: {
+      rawName: string;
+      frameId?: string;
+      input: Record<string, unknown>;
+    }): Promise<BrowserPageToolInvokeResponse> => {
+      if (!attached || !call.rawName) {
+        return { ok: false, error: "no_browser_session" };
+      }
+      const signalTabId = live?.tabId;
+      if (engine === "hosted") {
+        const cache = tokensRef.current;
+        if (!cache) return { ok: false, error: "no_browser_session" };
+        return fetchHostedPageToolInvoke(cache, {
+          toolKey: call.rawName,
+          input: call.input,
+          ...(call.frameId ? { frameId: call.frameId } : {}),
+          ...(signalTabId ? { tabId: signalTabId } : {}),
+        });
+      }
+      const projectId = args.projectId;
+      if (!projectId) return { ok: false, error: "no_browser_session" };
+      return fetchLocalPageToolInvoke(
+        {
+          projectId,
+          toolKey: call.rawName,
+          input: call.input,
+          ...(conversationId ? { sessionId: conversationId } : {}),
+          ...(paneHolder ? { holder: paneHolder } : {}),
+          ...(call.frameId ? { frameId: call.frameId } : {}),
+          ...(signalTabId ? { tabId: signalTabId } : {}),
+        },
+        consentToken,
+      );
+    },
+    [
+      attached,
+      engine,
+      args.projectId,
+      conversationId,
+      paneHolder,
+      consentToken,
+      live?.tabId,
+    ],
+  );
+
   const available =
     engine !== "local" ||
     (engineState.localAvailable && engineState.consent.granted);
+  const localConsent: BrowserLocalConsentPrompt | null =
+    engine === "local" &&
+    engineState.localAvailable &&
+    (!engineState.consent.granted || !attached)
+      ? {
+          disabledForClient: engineState.consent.granted && !attached,
+          onAllow: engineState.consent.grant,
+          settingsHostId: host?.hostId ?? null,
+        }
+      : null;
   return {
     attached,
     engine,
+    localConsent,
+    catalogError: attached && available && catalogError,
     tools: available ? tools : [],
     page: available
       ? page
       : { ok: false as const, error: "no_browser_session" as const },
     live: available ? live : undefined,
     refreshPage,
+    invokePage,
   };
 }

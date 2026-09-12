@@ -232,6 +232,27 @@ writes there is deliberately bounded.
 If a case title or a tool name is itself sensitive, treat it as published: those
 are the two fields that carry your own words into a public comment.
 
+## Server authentication
+
+Some MCP servers require OAuth login before they will answer the MCP initialize
+request. When MCPJam detects a Bearer challenge during the health probe, it
+marks the server as requiring authorization and looks for a project-shared OAuth
+connection to use.
+
+MCPJam derives the OAuth connection from the repository's selected suite. When
+that suite has one authorized project-shared OAuth connection, there is nothing
+else connected-repository settings need you to choose.
+
+Settings shows a small action only when attention is needed: **Authorize** for
+a suite connection with no saved project authorization, **Reconnect** after a
+check reports that authorization no longer works, or a picker when the suite
+contains more than one eligible OAuth connection. These actions open the
+project's existing Servers page and OAuth flow.
+
+When the required authorization is missing or rejected, the GitHub check
+reports **Action required** and skips execution. Personal and unrelated project
+connections are never selected automatically.
+
 ## Per-repository switches
 
 Each connected repository has three labeled switches:

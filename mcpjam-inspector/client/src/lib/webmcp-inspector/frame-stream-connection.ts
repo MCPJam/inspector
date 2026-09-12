@@ -29,7 +29,6 @@ import {
   createFrameWireReader,
   type DecodedFrame,
 } from "@/lib/browser-pane/frame-wire";
-import { getSessionToken } from "@/lib/session-token";
 
 /**
  * Close codes the server sends, and what each one MEANS to the ladder.
@@ -132,7 +131,7 @@ export function openWebMcpFrameStream(
       clearInterval(handle as ReturnType<typeof setInterval>));
 
   const url = buildWebMcpFramesWsUrl(opts);
-  const token = opts.token ?? getSessionToken();
+  const token = opts.token;
   const factory =
     opts.wsFactory ??
     ((u: string, p: string[]) =>
@@ -211,6 +210,10 @@ export function openWebMcpFrameStream(
     awaitingInput.clear();
   };
   const clearFrame = () => {
+    // The reader first: a decode started before this call would otherwise land
+    // afterwards and republish a picture the caller has just discarded, on a
+    // socket that is still open because live view can come back.
+    frames.drop();
     lastBitmap?.close();
     lastBitmap = undefined;
   };

@@ -8,7 +8,7 @@ import {
 const REFRESH_MS = 500;
 
 /**
- * "Stats for nerds" — what this stream is actually doing, right now.
+ * Stats — what this stream is actually doing, right now.
  *
  * The pane degrades silently by design: a link that cannot carry video falls
  * back to JPEG, a client without `VideoDecoder` never asks for video at all,
@@ -65,6 +65,23 @@ export function StatsOverlay({
         {live.width || "–"}×{live.height || "–"} @ {live.fps} fps · {live.kbps}{" "}
         kbps
       </div>
+      {relay?.jpegDelivery && (
+        <div>
+          delivery ≤{relay.jpegDelivery.maxFps} fps ·{" "}
+          {relay.jpegDelivery.reason}
+        </div>
+      )}
+      {live.displayed && (
+        <div>
+          display {live.displayed.width}×{live.displayed.height}
+        </div>
+      )}
+      {relay?.daemon?.jpeg && (
+        <div>
+          JPEG {relay.daemon.jpeg.quality}/{relay.daemon.jpeg.requestedQuality}{" "}
+          · {relay.daemon.jpeg.reason}
+        </div>
+      )}
       <div>
         rtt {live.rtt ?? "–"} ms · frame→paint {live.captureToPaintP50 ?? "–"}{" "}
         ms

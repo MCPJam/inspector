@@ -1,3 +1,9 @@
+import { logger } from "../../utils/logger.js";
+import { localBrowserAdmission } from "../browserd/local/browser-admission.js";
+import { withKeyedLock } from "../browserd/probe-lock.js";
+import type { LocalInspectionScope } from "./local-authorization.js";
+import { createBrowserConsentLifetime } from "../browserd/local/consent-lifetime.js";
+import { createLocalBrowserSecurityPolicy } from "../browserd/local/security-policy.js";
 import { localBrowserdWebMcpProvider } from "./local-browserd-provider";
 /**
  * Lifecycle for WebMCP Inspector sessions: capacity, expiry, teardown.
@@ -121,6 +127,17 @@ const DEFAULT_MAX_LIFETIME_MS = 60 * 60_000;
 const DEFAULT_SWEEP_INTERVAL_MS = 30_000;
 
 /**
+ * How long one "I am looking at this" ping counts for.
+ *
+ * The pane pings every 30s (`FRAME_WS_PING_MS`), so this is two intervals plus
+ * slack: one dropped ping must not read as somebody leaving, and a pane that
+ * really has gone must stop counting within about a minute — comfortably
+ * inside the 90s grace the control plane gives a browser box before reclaiming
+ * it.
+ */
+const WATCHED_TTL_MS = 75_000;
+
+/**
  * A held capacity slot. The id is registry-issued and checked against a live
  * set, so a forged `{ active: true }` cannot drive the counter negative.
  */
@@ -160,6 +177,12 @@ export class WebMcpSessionRegistry {
     this.maxLifetimeMs = options.maxLifetimeMs ?? DEFAULT_MAX_LIFETIME_MS;
     this.sweepIntervalMs = options.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
     this.now = options.now ?? Date.now;
+  }
+
+  localRuntimes(): WebMcpSessionRuntime[] {
+    return [...this.sessions.values()].filter(
+      (runtime) => !!runtime.localAuthorization,
+    );
   }
 
   size(): number {
@@ -204,7 +227,9 @@ export class WebMcpSessionRegistry {
     const kind = kindOf(sessionId);
     if (this.activeCount(kind) >= this.ceilingFor(kind)) {
       throw new WebMcpSessionCapacityError(
-        `Only ${this.ceilingFor(kind)} WebMCP browser sessions can run at once. Close one and try again.`,
+        `Only ${this.ceilingFor(
+          kind,
+        )} WebMCP browser sessions can run at once. Close one and try again.`,
       );
     }
     const reservation: WebMcpSessionReservation = {
@@ -243,7 +268,9 @@ export class WebMcpSessionRegistry {
       this.ceilingFor(kindOf(runtime.sessionId))
     ) {
       throw new WebMcpSessionCapacityError(
-        `Only ${this.ceilingFor(kindOf(runtime.sessionId))} WebMCP browser sessions can run at once.`,
+        `Only ${this.ceilingFor(
+          kindOf(runtime.sessionId),
+        )} WebMCP browser sessions can run at once.`,
       );
     }
     // Close whatever held this id first. Ids used to be random per runtime, so
@@ -388,6 +415,35 @@ export class WebMcpSessionRegistry {
     runtime.expiresAt = this.now() + this.idleTimeoutMs;
   }
 
+  /**
+   * "Somebody has their eyes on this session right now."
+   *
+   * Distinct from `hasSubscribers`, which only says a stream is ATTACHED — and
+   * a stream stays attached from a background tab, a minimised window, and a
+   * pane behind another tab. That distinction is free locally (the session
+   * lives in this process either way) but not for a HOSTED session, where the
+   * same signal is what keeps a metered desktop box awake: reporting presence
+   * for an attached-but-unwatched stream held a box awake for the full 2-hour
+   * ceiling for a picture nobody had on screen.
+   *
+   * Set by the frame socket's ping, which the client sends only while its pane
+   * is the visible tab AND the document is visible. It EXPIRES rather than
+   * being cleared on close, so losing a socket without a clean close stops the
+   * evidence within one interval rather than never.
+   */
+  markWatched(sessionId: string): void {
+    const runtime = this.sessions.get(sessionId);
+    if (!runtime) return;
+    runtime.watchedUntil = this.now() + WATCHED_TTL_MS;
+    this.touch(runtime);
+  }
+
+  /** Has a viewer said they are looking at this session recently? */
+  isWatched(sessionId: string): boolean {
+    const runtime = this.sessions.get(sessionId);
+    return !!runtime && runtime.watchedUntil > this.now();
+  }
+
   async close(
     sessionId: string,
     options: { reason?: "closed" | "detached" } = {},
@@ -473,6 +529,7 @@ export class WebMcpSessionRegistry {
 export const webMcpSessions = new WebMcpSessionRegistry();
 
 export interface StartWebMcpSessionOptions {
+  localScope?: LocalInspectionScope;
   url: string;
   provider?: WebMcpBrowserProvider;
   registry?: WebMcpSessionRegistry;
@@ -497,18 +554,70 @@ export interface StartWebMcpSessionOptions {
 export async function startWebMcpSession(
   options: StartWebMcpSessionOptions,
 ): Promise<WebMcpSessionPublic> {
+  return options.localScope
+    ? withKeyedLock(`webmcp-profile:${options.localScope.profileKey}`, () =>
+        startAuthorizedSession(options),
+      )
+    : startAuthorizedSession(options);
+}
+async function startAuthorizedSession(
+  options: StartWebMcpSessionOptions,
+): Promise<WebMcpSessionPublic> {
   const registry = options.registry ?? webMcpSessions;
   const provider = options.provider ?? localBrowserdWebMcpProvider;
-  const reservation = registry.reserve(options.sessionId);
+  const lifetime = options.localScope
+    ? await createBrowserConsentLifetime(
+        options.localScope.consentFingerprint,
+        undefined,
+        options.localScope.actorId
+          ? localBrowserAdmission(options.localScope.actorId)
+          : undefined,
+      )
+    : undefined;
+  let reservation: WebMcpSessionReservation;
+  try {
+    reservation = registry.reserve(options.sessionId);
+  } catch (error) {
+    lifetime?.dispose();
+    throw error;
+  }
+  const securityPolicy = lifetime
+    ? createLocalBrowserSecurityPolicy({
+        ...lifetime,
+        onAudit: (counts) => logger.info("Local WebMCP policy summary", counts),
+      })
+    : undefined;
   const runtime = new WebMcpSessionRuntime(options.url, {
+    ...(options.localScope && lifetime
+      ? {
+          localAuthorization: {
+            scope: options.localScope,
+            lifetime,
+            disposePolicy: () => securityPolicy?.dispose?.(),
+          },
+        }
+      : {}),
     now: () => registry.clock(),
     onActivity: () => registry.touch(runtime),
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     ...(options.ownerId ? { ownerId: options.ownerId } : {}),
   });
 
+  lifetime?.onRevoked(async () => {
+    try {
+      await registry.close(runtime.sessionId);
+    } catch {
+      await runtime.close();
+    }
+  });
   try {
     const session = await provider.createSession({
+      ...(options.localScope && lifetime
+        ? {
+            localScope: options.localScope,
+            securityPolicy,
+          }
+        : {}),
       url: options.url,
       headless: options.headless,
       ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
@@ -519,6 +628,14 @@ export async function startWebMcpSession(
         : {}),
       callbacks: runtime.callbacks(),
     });
+    if (lifetime) {
+      try {
+        await lifetime.assertActive();
+      } catch (error) {
+        await session.dispose();
+        throw error;
+      }
+    }
     runtime.attach(session);
     return registry.register(runtime, reservation);
   } catch (error) {

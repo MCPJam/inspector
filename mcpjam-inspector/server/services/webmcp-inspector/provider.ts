@@ -1,3 +1,5 @@
+import type { LocalInspectionScope } from "./local-authorization.js";
+import type { LocalBrowserSecurityPolicy } from "../browserd/local/security-policy.js";
 /**
  * The browser boundary for the WebMCP Inspector.
  *
@@ -197,6 +199,8 @@ export interface WebMcpBrowserSession {
 export type WebMcpViewportMode = "window" | "embedded";
 
 export interface CreateWebMcpSessionOptions {
+  localScope?: LocalInspectionScope;
+  securityPolicy?: LocalBrowserSecurityPolicy;
   url: string;
   /**
    * `false` ⇒ adopt the page the browser is ALREADY on instead of driving it
@@ -322,10 +326,7 @@ export class WebMcpOutcomeUnknownError extends Error {
 
 /** The invocation was cancelled — by the user, or by the timeout. */
 export class WebMcpInvocationCancelledError extends Error {
-  constructor(
-    message: string,
-    readonly reason: "cancelled" | "timeout",
-  ) {
+  constructor(message: string, readonly reason: "cancelled" | "timeout") {
     super(message);
     this.name = "WebMcpInvocationCancelledError";
   }

@@ -11,6 +11,7 @@
  *   GET  /page-tools         → the WebMCP tools the current page declares, read
  *                              with the same observation the model's
  *                              the chat turn's page-tool peek sends (Tools pane)
+ *   POST /page-tools/invoke  → run one of those tools as this person (manual)
  *
  * Auth mirrors `computer-upload.ts`: the browser mints a ~60s Convex browser
  * token (`projectComputers.mintBrowserToken`) and sends it as
@@ -40,7 +41,9 @@ import {
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
   touchComputerActivity,
+  wakeComputer as wakeComputerViaControlPlane,
   wakePlaygroundSandbox,
+  type ComputerStatus,
 } from "../../utils/computers/control-plane-client.js";
 import {
   lookupBrowserSession,
@@ -62,7 +65,10 @@ import {
   parsePaneCommand,
 } from "../../services/browserd/daemon/pane-command.js";
 import {
+  pageToolInvokeFromBody,
+  pageToolInvokeFromCommandResponse,
   pageToolsFromCommandResponse,
+  sendPageToolInvoke,
   webmcpToolsObserveCommand,
 } from "../../services/browserd/page-tools.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
@@ -73,6 +79,7 @@ import {
 import {
   shouldTouchActivity,
   shouldTouchSessionCommand,
+  shouldTouchSessionPanel,
 } from "../../utils/computers/activity-touch.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
@@ -83,6 +90,17 @@ import { browserProfileArchiveResponse } from "../../../shared/browser-session-h
  *  short enough that a closed laptop parks the lease rather than holding the
  *  browser hostage. */
 const LEASE_TTL_MS = 2 * 60_000;
+
+/**
+ * How long `ensure=1` waits for a hibernating computer to come back.
+ *
+ * E2B pause→resume keeps the whole desktop process tree, so a resume is about
+ * a second; this is sized for a slow one rather than for a wedged one. Past
+ * the ceiling the pane is told to retry, which it already does on its own
+ * visibility-gated backoff — much better than holding the request open.
+ */
+const WAKE_POLL_TIMEOUT_MS = 10_000;
+const WAKE_POLL_INTERVAL_MS = 500;
 
 /**
  * The most events one input request may carry, and what counts as one.
@@ -100,7 +118,9 @@ const isInputEvent = isBrowserPaneInputEvent as (
 type Claims = ComputerBrowserClaims;
 
 type AuthFailure = { status: 401 | 503; error: string };
-type AuthResult = { ok: true; claims: Claims } | ({ ok: false } & AuthFailure);
+type AuthResult =
+  | { ok: true; claims: Claims; status: ComputerStatus }
+  | ({ ok: false } & AuthFailure);
 
 /** Deps seam so the route is testable without E2B or a live Convex. */
 export interface BrowserPanelDeps {
@@ -110,6 +130,8 @@ export interface BrowserPanelDeps {
   touchSession?: typeof touchBrowserSession;
   touchActivity?: typeof touchComputerActivity;
   wakeSandbox?: typeof wakePlaygroundSandbox;
+  /** Resume a hibernating COMPUTER through the control plane (`ensure=1`). */
+  wakeComputer?: typeof wakeComputerViaControlPlane;
   bundleHash?: () => string;
   /**
    * Establish a session on an already-owned computer (`ensure=1`).
@@ -171,6 +193,7 @@ export function createComputerBrowserPanelRoutes(
   const touchSession = deps.touchSession ?? touchBrowserSession;
   const touchActivity = deps.touchActivity ?? touchComputerActivity;
   const wakeSandbox = deps.wakeSandbox ?? wakePlaygroundSandbox;
+  const wakeComputer = deps.wakeComputer ?? wakeComputerViaControlPlane;
   const bundleHash = deps.bundleHash ?? browserdBundleHash;
   const configured = deps.configured ?? isComputersDataPlaneConfigured;
   const attachSession =
@@ -221,7 +244,10 @@ export function createComputerBrowserPanelRoutes(
     ) {
       return unauthorized;
     }
-    return { ok: true, claims };
+    // The status rides along: `ensure=1` needs it to decide whether the box has
+    // to be woken, and re-reading it would be a second control-plane round trip
+    // on every panel open for an answer we already have.
+    return { ok: true, claims, status: info.value.status };
   }
 
   /** The live session row for this computer, or null. */
@@ -291,6 +317,47 @@ export function createComputerBrowserPanelRoutes(
     );
   }
 
+  /**
+   * Make sure a computer is awake before we attach to it.
+   *
+   * Returns false ONLY when the box is genuinely still on its way up — the
+   * caller then tells the pane to retry, which it already knows how to do.
+   * Everything else answers true and lets the attach proceed unchanged:
+   *   - already `ready` (the common case) — one status read, no wake;
+   *   - a control plane without the wake route yet, or any transport failure —
+   *     this is a cost optimisation, not a correctness gate, and an inspector
+   *     that fails closed here would take the panel down with it;
+   *   - `not_wakeable` (mid-provision, errored, or no vendor box) — reserving
+   *     is not a panel's decision to make, and the attach reports what it finds.
+   */
+  async function ensureComputerAwake(
+    computerId: string,
+    current: ComputerStatus,
+  ): Promise<boolean> {
+    if (current === "ready") return true;
+    if (current === "hibernating") {
+      const woke = await wakeComputer({ computerId });
+      // 409 `not_wakeable` and a missing route alike: nothing to wait for.
+      if (!woke.ok) return true;
+    } else if (current !== "waking") {
+      return true;
+    }
+    // Resume is ~1s (the process tree survives the pause), so this normally
+    // costs one or two polls. The ceiling is what stops a wedged wake from
+    // holding the request open until the pane's own timeout.
+    const deadline = Date.now() + WAKE_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, WAKE_POLL_INTERVAL_MS),
+      );
+      const next = await sandboxInfo({ computerId });
+      if (!next.ok) return true;
+      if (next.value.status === "ready") return true;
+      if (next.value.status !== "waking") return true;
+    }
+    return false;
+  }
+
   const app = new Hono();
 
   app.get("/session", async (c) => {
@@ -313,6 +380,33 @@ export function createComputerBrowserPanelRoutes(
             { ok: false, error: woke.error },
             woke.status === 503 ? 503 : 409,
           );
+      }
+      if (ensure && "computerId" in target) {
+        // WAKE BEFORE ATTACHING, and say so out loud.
+        //
+        // Attaching connects to the sandbox, and connecting RESUMES a paused
+        // E2B box — so this used to happen by accident, with the control plane
+        // none the wiser: the row stayed `hibernating` while the box ran, which
+        // means unmetered and skipped by every idle sweep. That was survivable
+        // while boxes only slept after 30 idle minutes; hosted browsers are now
+        // reclaimed within a couple of minutes of nobody watching, so a panel
+        // re-show would hit it constantly and cost MORE than doing nothing.
+        //
+        // Failure here is never fatal to the panel: a control plane that has
+        // not deployed the route yet, or a row that is awake already, both fall
+        // through to the attach below, which behaves exactly as it did before.
+        const ready = await ensureComputerAwake(target.computerId, auth.status);
+        if (!ready) {
+          return c.json(
+            {
+              ok: false,
+              error: "browser_unavailable",
+              detail:
+                "This computer is still waking up. Retry connecting in a moment.",
+            },
+            503,
+          );
+        }
       }
       let session = await currentSession(target, auth.claims.sessionId);
       if (!session && ensure && "computerId" in target) {
@@ -423,6 +517,22 @@ export function createComputerBrowserPanelRoutes(
         action,
         took: outcome.took,
       });
+      // HOLDING THE BROWSER IS BEING HERE. The pane beats this every ~30s
+      // while visible, which is the only presence signal on the VNC tier (no
+      // frame socket, so no pings) and the strongest one anywhere: somebody
+      // mid-login or mid-2FA is typing into this machine. Reclaiming it under
+      // them is the failure this guards.
+      if (outcome.took && shouldTouchSessionPanel(session.sessionId)) {
+        void touchSession({ sessionId: session.sessionId, kind: "panel" })
+          .then(({ counted }) => {
+            const computerId = auth.claims.computerId;
+            if (!counted || !computerId || !shouldTouchActivity(computerId)) {
+              return;
+            }
+            void touchActivity({ computerId }).catch(() => {});
+          })
+          .catch(() => {});
+      }
       return c.json(
         {
           ok: outcome.took,
@@ -698,10 +808,10 @@ export function createComputerBrowserPanelRoutes(
           outcome.reason === "lease_held"
             ? 423
             : outcome.reason === "page_changed"
-            ? 409
-            : outcome.reason === "unsupported"
-            ? 501
-            : 502;
+              ? 409
+              : outcome.reason === "unsupported"
+                ? 501
+                : 502;
         return c.json(
           {
             ok: false,
@@ -929,6 +1039,73 @@ export function createComputerBrowserPanelRoutes(
       }
       reportRouteFailure("browser panel page-tools read failed", error, {
         source: "computer-browser-panel.page-tools",
+        hop: "mcpjam_internal",
+        context: { browserTarget: id },
+      });
+      return c.json({ ok: false, error: "unreachable" }, 502);
+    }
+  });
+
+  /**
+   * Invoke a page tool the Tools pane is showing.
+   *
+   * A person clicked Run on a tool they can see. Same hop as the read:
+   * `inspector` first so it runs while the agent is driving, then this
+   * caller's `manual` if they hold the lease. Never a body-supplied source.
+   * Counts as real use (unlike the read): the command touches the page.
+   */
+  app.post("/page-tools/invoke", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const { userId } = auth.claims;
+    const target = browserTarget(auth.claims);
+    const id = targetId(auth.claims);
+    const parsed = pageToolInvokeFromBody(await c.req.json().catch(() => null));
+    if (!parsed.ok) {
+      return c.json({ ok: false, error: parsed.error }, 400);
+    }
+
+    try {
+      const session = await currentSession(target, auth.claims.sessionId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      const client = createClient(session);
+      const response = await sendPageToolInvoke(
+        (command, bootId) => client.sendCommand(command, bootId),
+        {
+          toolKey: parsed.toolKey,
+          input: parsed.input,
+          holder: userId,
+          bootId: session.bootId,
+          ...(parsed.frameId ? { frameId: parsed.frameId } : {}),
+          ...(parsed.tabId ? { tabId: parsed.tabId } : {}),
+        },
+      );
+      const mapped = pageToolInvokeFromCommandResponse(response);
+      if (mapped.status === 200) {
+        if (shouldTouchSessionCommand(session.sessionId)) {
+          void touchSession({
+            sessionId: session.sessionId,
+            kind: "command",
+          }).catch(() => {});
+        }
+        if (
+          auth.claims.computerId &&
+          shouldTouchActivity(auth.claims.computerId)
+        ) {
+          void touchActivity({ computerId: auth.claims.computerId }).catch(
+            () => {},
+          );
+        }
+      }
+      return c.json(mapped.body, mapped.status);
+    } catch (error) {
+      if (error instanceof BrowserdClientError) {
+        return c.json({ ok: false, error: "unreachable" }, 502);
+      }
+      reportRouteFailure("browser panel page-tools invoke failed", error, {
+        source: "computer-browser-panel.page-tools-invoke",
         hop: "mcpjam_internal",
         context: { browserTarget: id },
       });

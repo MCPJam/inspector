@@ -5,6 +5,7 @@ import { shortHash } from "../state-token";
 import { parsePaneCommand, paneCommandToAction } from "../pane-command";
 import type { BrowserCommand, BrowserCommandOutcome } from "../../protocol";
 import { INITIAL_SESSION_VIEWPORT } from "../../../../../shared/browser-viewport";
+import { decodeStateSnapshot } from "../../../../../shared/browser-pane-wire";
 
 /**
  * The three endpoints a person's browser needs, and the rule that a person's
@@ -20,6 +21,12 @@ function makeHandler(
     authority?: "shared" | "lease";
     submit?: (c: BrowserCommand) => Promise<BrowserCommandOutcome>;
     stateSnapshot?: () => Promise<unknown>;
+    webmcpToolsSnapshot?: (tabId?: string) => {
+      revision: number;
+      hash: string;
+      count: number;
+      supported: boolean;
+    };
     requestViewport?: (size: {
       width: number;
       height: number;
@@ -46,6 +53,7 @@ function makeHandler(
     driver: {
       health: async () => ({ ok: true as const }),
       sessionViewportState: () => INITIAL_SESSION_VIEWPORT,
+      webmcpToolsSnapshot: over.webmcpToolsSnapshot,
       ...(over.stateSnapshot
         ? { stateSnapshot: over.stateSnapshot as never }
         : {}),
@@ -89,6 +97,21 @@ const snapshot = () => ({
 });
 
 describe("GET /v1/state", () => {
+  it("carries the active tab's cached tool signal through state decoding", async () => {
+    const webmcp = { revision: 4, hash: "pizza", count: 7 };
+    const read = vi.fn(() => ({ ...webmcp, supported: true }));
+    const { handler } = makeHandler({
+      stateSnapshot: async () => snapshot(),
+      webmcpToolsSnapshot: read,
+    });
+    const res = await handler.handle(
+      req({ method: "GET", path: "/v1/state", body: "" }),
+    );
+    expect(read).toHaveBeenCalledWith("t1");
+    expect(decodeStateSnapshot(decodeStateSnapshot(res.body))?.webmcp).toEqual(
+      webmcp,
+    );
+  });
   it("answers with the whole browser, and who is driving", async () => {
     const { handler } = makeHandler({ stateSnapshot: async () => snapshot() });
     const res = await handler.handle(

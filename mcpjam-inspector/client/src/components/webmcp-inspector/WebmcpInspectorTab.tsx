@@ -1,3 +1,7 @@
+import { LocalBrowserConsentGate } from "@/components/browser/LocalBrowserConsentGate";
+import { useLocalBrowserConsent } from "@/hooks/useLocalBrowserConsent";
+import { authFetch } from "@/lib/session-token";
+import { BROWSER_CONSENT_HEADER } from "@/lib/local-browser-consent";
 import { BrowserShell } from "@/components/browser/BrowserShell";
 import {
   useBrowserSession,
@@ -5,11 +9,14 @@ import {
 } from "@/lib/browser-shell/use-browser-session";
 import { decodeStateSnapshot } from "@/shared/browser-pane-wire";
 import { useViewportReporter } from "@/lib/browser-pane/use-viewport-reporter";
+import {
+  readLastWebMcpUrl,
+  writeLastWebMcpUrl,
+} from "@/lib/webmcp-inspector/last-url";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { Globe, X } from "lucide-react";
+import { Globe } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Badge } from "@mcpjam/design-system/badge";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { ThreePanelLayout } from "@/components/ui/three-panel-layout";
@@ -33,7 +40,6 @@ import { BrowserPaneSurface } from "@/components/browser/BrowserPaneSurface";
 import type {
   WebMcpActivityEntry,
   WebMcpInputEvent,
-  WebMcpSessionStatus,
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
 import { webmcpFrameChannel } from "@/stores/webmcp-inspector-store";
@@ -59,6 +65,8 @@ import { copyWebMcpDiagnostics } from "@/lib/webmcp-inspector/diagnostics";
  * instead of a silent fall-through to window behaviour.
  */
 export function WebmcpInspectorTab() {
+  const consent = useLocalBrowserConsent();
+  const [showBrowserSetup, setShowBrowserSetup] = useState(false);
   const {
     session,
     tools,
@@ -76,6 +84,7 @@ export function WebmcpInspectorTab() {
     setScreencast,
     sendInput,
     clearError,
+    clearActivity,
     reconnect,
     disconnect,
   } = useWebmcpInspectorStore(
@@ -96,12 +105,23 @@ export function WebmcpInspectorTab() {
       setScreencast: state.setScreencast,
       sendInput: state.sendInput,
       clearError: state.clearError,
+      clearActivity: state.clearActivity,
       reconnect: state.reconnect,
       disconnect: state.disconnect,
     })),
   );
 
-  const [url, setUrl] = useState("http://localhost:3000");
+  const [url, setUrlState] = useState(readLastWebMcpUrl);
+  const setUrl = useCallback((next: string) => {
+    setUrlState(next);
+    writeLastWebMcpUrl(next);
+  }, []);
+  // The field remounts when you leave this route. The session does not — so
+  // the live page URL is the source of truth, and we write it so the next
+  // visit still has it after the session is gone.
+  useEffect(() => {
+    if (session?.url) setUrl(session.url);
+  }, [session?.url, setUrl]);
   const [selectedToolKey, setSelectedToolKey] = useState<string | undefined>();
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [activityOpen, setActivityOpen] = useState(true);
@@ -270,12 +290,27 @@ export function WebmcpInspectorTab() {
     if (hosted && activeProjectId) {
       return { transport: "hosted" as const, projectId: activeProjectId };
     }
-    return inApp ? { display: "in-app" as const } : undefined;
+    return {
+      projectId: activeProjectId ?? undefined,
+      ...(inApp ? { display: "in-app" as const } : {}),
+    };
   };
 
   const openBrowser = async () => {
     if (HOSTED_MODE && !hostedReady) return;
+    if (!HOSTED_MODE && !hosted && !consent.granted) return;
     await startSession(url, startOptions());
+  };
+
+  const allowAndOpenBrowser = async () => {
+    if (!(await consent.grant())) return false;
+    setShowBrowserSetup(false);
+    // The grant is already in shared storage, but this render still has
+    // consent.granted=false. Start directly so Allow needs no second click.
+    // Startup errors belong to the workspace's error banner, not the grant.
+    if (useWebmcpInspectorStore.getState().pageToolsLive()) reconnect();
+    else await startSession(url, startOptions());
+    return true;
   };
 
   const pendingForSelected = pending.find(
@@ -319,9 +354,55 @@ export function WebmcpInspectorTab() {
     else toast.error("Could not copy activity to your clipboard");
   };
 
+  const clearProfile = async (legacy = false) => {
+    if (
+      !window.confirm(
+        legacy
+          ? "Delete sign-ins and site data from the old shared WebMCP profile? New profiles are unaffected."
+          : "Close inspection sessions and delete sign-ins and site data for this account and project? Saved transcripts and exports remain.",
+      )
+    )
+      return;
+    const response = await authFetch("/api/mcp/webmcp/profile", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        [BROWSER_CONSENT_HEADER]: consent.token ?? "",
+      },
+      body: JSON.stringify({ projectId: activeProjectId ?? undefined, legacy }),
+    });
+    if (response.ok) {
+      if (!legacy) await closeSession();
+      toast.success("Inspection site data cleared");
+    } else toast.error("Could not clear inspection site data");
+  };
   const overflowActions = [
+    ...(!HOSTED_MODE && !hosted && consent.granted
+      ? [
+          {
+            label: "Enable for all clients",
+            onSelect: () => setShowBrowserSetup(true),
+          },
+        ]
+      : []),
+    ...(!HOSTED_MODE && !hosted && isPackaged && consent.granted
+      ? [
+          {
+            label: "Clear inspection site data",
+            onSelect: () => void clearProfile(),
+          },
+          {
+            label: "Delete old shared profile",
+            onSelect: () => void clearProfile(true),
+          },
+        ]
+      : []),
     ...(live
       ? [
+          {
+            label: "Close browser",
+            onSelect: () => void closeSession(),
+          },
           {
             label: "Screenshot",
             onSelect: () => void captureScreenshot(),
@@ -396,51 +477,44 @@ export function WebmcpInspectorTab() {
   const showViewport = live;
   const hostedBlocked = HOSTED_MODE && !hostedReady;
 
+  /**
+   * Said in the shell's own notice strip rather than as a toolbar badge.
+   *
+   * The strip is `role="status"` over the page area, so it is announced and it
+   * reads whether the pane is showing a stale screenshot or nothing at all —
+   * where a badge beside the address field states a transport and leaves the
+   * reader to work out what to do about it.
+   */
+  const framesNotice = framesUnavailable
+    ? "Live view is unavailable for this session. Use Screenshot to see the page."
+    : null;
+
   const centerContent = showViewport ? (
     <div className="flex h-full min-h-0 flex-col">
-      {live ? (
-        <div className="flex min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            onClick={() => void closeSession()}
-          >
-            <X className="h-3 w-3" />
-            <span className="ml-1">Close browser</span>
-          </Button>
-          {session ? <StatusBadge status={session.status} /> : null}
-          <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-            {framesUnavailable
-              ? "Live view is unavailable for this session. Use Screenshot to see the page."
-              : behaviour.notice}
-          </p>
-        </div>
-      ) : null}
-      <div className="flex min-h-0 flex-1 flex-col">
-        {live && behaviour.embedsBrowserPanel && sessionProjectId ? (
-          /* The remote browser's own live view, in the pane rather than
-             somewhere else to go and find.
+      {live && behaviour.embedsBrowserPanel && sessionProjectId ? (
+        /* The remote browser's own live view, in the pane rather than
+           somewhere else to go and find.
 
-             Mounted only once the session REPORTS this transport, never
-             before: the panel mints a token for a desktop computer, and
-             asking for one before the session has reserved that computer
-             throws. `ensure={false}` for the same reason the panel refuses
-             to reserve anywhere — a viewport must not be able to provision a
-             machine; the session it is watching already did. */
-          <div className="min-h-0 flex-1">
-            <BrowserPanel projectId={sessionProjectId} ensure={false} />
-          </div>
-        ) : live ? (
-          <WebMcpBrowserShell
-            key={session?.sessionId}
-            streaming={streaming}
-            transport={session?.viewportTransport}
-            behaviour={behaviour}
-            onInput={sendInput}
-          />
-        ) : null}
-      </div>
+           Mounted only once the session REPORTS this transport, never
+           before: the panel mints a token for a desktop computer, and
+           asking for one before the session has reserved that computer
+           throws. `ensure={false}` for the same reason the panel refuses
+           to reserve anywhere — a viewport must not be able to provision a
+           machine; the session it is watching already did. */
+        <div className="min-h-0 flex-1">
+          <BrowserPanel projectId={sessionProjectId} ensure={false} />
+        </div>
+      ) : live ? (
+        <WebMcpBrowserShell
+          key={session?.sessionId}
+          consentToken={consent.token}
+          streaming={streaming}
+          transport={session?.viewportTransport}
+          behaviour={behaviour}
+          onInput={sendInput}
+          {...(framesNotice ? { framesNotice } : {})}
+        />
+      ) : null}
     </div>
   ) : (
     <div className="flex h-full items-center justify-center">
@@ -460,6 +534,13 @@ export function WebmcpInspectorTab() {
     </div>
   );
 
+  if (!HOSTED_MODE && !hosted && (!consent.granted || showBrowserSetup)) {
+    return (
+      <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center overflow-auto p-6">
+        <LocalBrowserConsentGate onAllow={allowAndOpenBrowser} />
+      </div>
+    );
+  }
   return (
     <div className="flex h-full flex-col">
       {error ? (
@@ -521,6 +602,7 @@ export function WebmcpInspectorTab() {
             onCopy={(entries) => void copyActivity(entries)}
             onExportJson={() => exportAs("json")}
             onExportOtlp={() => exportAs("otlp")}
+            onClear={clearActivity}
             onClose={() => setActivityOpen(false)}
           />
         }
@@ -547,7 +629,17 @@ export function WebmcpInspectorTab() {
  * the picture wrongly.
  */
 function WebMcpBrowserShell(
-  props: Parameters<typeof SubscribedViewportPane>[0],
+  props: Parameters<typeof SubscribedViewportPane>[0] & {
+    consentToken: string | null;
+    /**
+     * Shown in place of the session's own notice while it holds.
+     *
+     * It outranks `shell.notice` deliberately: that one reports a navigation
+     * that did not go through, and this one reports that nothing the page does
+     * next will be visible at all.
+     */
+    framesNotice?: string;
+  },
 ) {
   const transport = useMemo<BrowserSessionTransport>(
     () => ({
@@ -593,7 +685,7 @@ function WebMcpBrowserShell(
       holderId={null}
       onCommand={shell.run}
       ready={shell.supported}
-      notice={shell.notice}
+      notice={props.framesNotice ?? shell.notice}
       error={shell.error}
     >
       {native ? (
@@ -603,6 +695,7 @@ function WebMcpBrowserShell(
           control="agent"
           holding={false}
           consentGranted
+          consentToken={props.consentToken}
           chrome="none"
         />
       ) : (
@@ -783,23 +876,6 @@ function ViewportPane({
  * that could go stale between renders.
  */
 
-function StatusBadge({ status }: { status: WebMcpSessionStatus }) {
-  // Typed against the protocol union rather than `string`: if a status is
-  // renamed there, this mapping should fail to compile instead of silently
-  // falling through to "secondary".
-  const tone: "default" | "destructive" | "secondary" =
-    status === "ready"
-      ? "default"
-      : status === "error" || status === "unsupported"
-        ? "destructive"
-        : "secondary";
-  return (
-    <Badge variant={tone} className="text-[10px] capitalize">
-      {status}
-    </Badge>
-  );
-}
-
 /**
  * The failure modes worth spelling out. Each one is a different thing for the
  * reader to do, so each gets its own sentence rather than a generic "error".
@@ -891,8 +967,7 @@ function ErrorBanner({
  * That default is a trap: adding a transport meant the new kind silently
  * inherited window behaviour — the screencast asked for on a surface that
  * cannot stream, the input forwarder armed on a page that already receives
- * real input, and a notice telling the viewer to go look at a window that does
- * not exist — with nothing failing to compile and nothing failing at runtime
+ * real input — with nothing failing to compile and nothing failing at runtime
  * either. So the branch is a switch, and its default arm asserts `never`:
  * the NEXT kind added to the protocol is a typecheck failure here, and whoever
  * adds it decides these answers deliberately.
@@ -911,8 +986,6 @@ interface ViewportBehaviour {
   streamRequired: boolean;
   /** Whether the pane forwards the viewer's input to the page. */
   drivesPage: boolean;
-  /** Where the page actually is, for the notice above the pane. */
-  notice: string;
   /** The pane's caption when it is a view rather than a surface. */
   viewOnlyCaption: string;
   /**
@@ -934,8 +1007,6 @@ const NATIVE_WINDOW_BEHAVIOUR: ViewportBehaviour = {
   // them, and forwarding pane input would drive it a SECOND time — every click
   // landing twice, from two directions, with nothing reconciling them.
   drivesPage: false,
-  notice:
-    "A browser window is open on this machine — interact with the page there. Tools it registers appear here as they register.",
   viewOnlyCaption:
     "A live view of the page. Interact with it in the browser window.",
 };
@@ -953,8 +1024,6 @@ function viewportBehaviour(
     case "headless":
       return {
         ...NATIVE_WINDOW_BEHAVIOUR,
-        notice:
-          "Running headless — no window to interact with. Tools, invocation and screenshots all work; use the Screenshot button to see the page.",
         viewOnlyCaption: "A live view of the headless page.",
       };
     case "remote-interactive-url":
@@ -966,9 +1035,7 @@ function viewportBehaviour(
         // once-a-second screenshot it used to fall back to was proof of life
         // rather than a picture anyone could work with.
         serverPaints: false,
-              embedsBrowserPanel: true,
-        notice:
-          "This browser is running on your MCPJam computer, not on this machine. It cannot reach anything on your own network, including localhost.",
+        embedsBrowserPanel: true,
         viewOnlyCaption:
           "A live view of your MCPJam computer's browser. Take control to sign in or answer a challenge.",
       };
@@ -980,8 +1047,6 @@ function viewportBehaviour(
         // touch, with no way back except closing the session.
         streamRequired: true,
         drivesPage: true,
-        notice:
-          "This page is running in the pane below — click and type into it there. Tools it registers appear as they register.",
         viewOnlyCaption: "A live view of the page.",
       };
     case "electron-native":
@@ -991,10 +1056,8 @@ function viewportBehaviour(
         // poll, and no input to forward — the surface takes the viewer's mouse
         // and keyboard natively, which is the entire point of it.
         serverPaints: false,
-              streamRequired: false,
+        streamRequired: false,
         drivesPage: false,
-        notice:
-          "This page is running right here, in the app — click and type into it directly. Tools it registers appear as they register.",
         viewOnlyCaption: "The page is running natively in this pane.",
       };
     default:

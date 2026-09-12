@@ -469,21 +469,13 @@ export function ensureLiveBrowserSession(
       ...rest,
       target,
     }).then(async (handle) => {
-      // RECORDING STARTS HERE, and only here. A per-run box is the unattended
-      // case — nobody is watching it, so the file is the only account of what
-      // the agent saw — and this door is the one every hosted `browser_*` call
-      // comes through, LAZILY: a run that never touches a browser tool never
-      // reaches this line and never records. Put in `browser-session.ts`
-      // instead it would fire for the member's own Playground computer too,
-      // which has a person watching it and no run to be evidence for.
-      //
-      // Awaited but total: `startHostedRecording` swallows everything, so the
-      // handle is returned on exactly the same schedule whether or not the box
-      // could record.
-      await startHostedRecording(handle, {
-        connect: async (sandboxId) =>
-          connectSessionSandbox(await connectDesktopSandbox(sandboxId)),
-      });
+      // Recording is explicit: conversation-owned sandbox browsers are watched
+      // and must not inherit an eval's ffmpeg capture merely by sharing a target type.
+      if (target.record === true)
+        await startHostedRecording(handle, {
+          connect: async (sandboxId) =>
+            connectSessionSandbox(await connectDesktopSandbox(sandboxId)),
+        });
       return handle;
     });
   }

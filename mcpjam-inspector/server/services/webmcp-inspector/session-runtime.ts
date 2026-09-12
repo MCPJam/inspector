@@ -1,3 +1,5 @@
+import type { LocalInspectionScope } from "./local-authorization.js";
+import type { createBrowserConsentLifetime } from "../browserd/local/consent-lifetime.js";
 /**
  * One inspected page: tool identity, the invocation queue, and the activity
  * timeline. Knows nothing about HTTP, and nothing about Playwright — it talks
@@ -65,6 +67,11 @@ export class WebMcpQueueFullError extends Error {
 }
 
 export interface WebMcpSessionRuntimeOptions {
+  localAuthorization?: {
+    scope: LocalInspectionScope;
+    disposePolicy?: () => void;
+    lifetime: Awaited<ReturnType<typeof createBrowserConsentLifetime>>;
+  };
   sessionId?: string;
   now?: () => number;
   invokeTimeoutMs?: number;
@@ -116,7 +123,9 @@ function invocationIdentity(
   binding?: WebMcpRegistrationBinding,
 ): string {
   try {
-    return `${toolKey}\u0000${JSON.stringify(input ?? {})}\u0000${JSON.stringify(binding ?? null)}`;
+    return `${toolKey}\u0000${JSON.stringify(
+      input ?? {},
+    )}\u0000${JSON.stringify(binding ?? null)}`;
   } catch {
     return `${toolKey}\u0000<unserializable:${Math.random()}>`;
   }
@@ -247,6 +256,7 @@ export class WebMcpSessionRuntime {
   private readonly queueLimit: number;
   private readonly onActivity: () => void;
   private readonly ownerId: string | undefined;
+  readonly localAuthorization: WebMcpSessionRuntimeOptions["localAuthorization"];
   private readonly rehydrated: boolean;
   /**
    * Outcomes of invocations that have already settled, by their caller-supplied
@@ -291,6 +301,12 @@ export class WebMcpSessionRuntime {
   /** Set by the registry; the runtime reports it but does not own it. */
   expiresAt = 0;
   hardExpiresAt = 0;
+  /**
+   * When the last "somebody is looking" ping stops counting. Also the
+   * registry's, for the same reason — the runtime carries it, the registry
+   * decides it.
+   */
+  watchedUntil = 0;
 
   constructor(startUrl: string, options: WebMcpSessionRuntimeOptions = {}) {
     this.sessionId = options.sessionId ?? randomUUID();
@@ -300,6 +316,7 @@ export class WebMcpSessionRuntime {
     this.onActivity = options.onActivity ?? (() => {});
     this.url = startUrl;
     this.ownerId = options.ownerId;
+    this.localAuthorization = options.localAuthorization;
     this.rehydrated = options.rehydrated === true;
     this.createdAt = this.now();
     // Recorded at construction, not at `attach`: the browser navigates and
@@ -332,6 +349,13 @@ export class WebMcpSessionRuntime {
   belongsTo(userId: string | undefined): boolean {
     if (this.ownerId === undefined) return true;
     return userId !== undefined && userId === this.ownerId;
+  }
+
+  async assertAuthorized(): Promise<void> {
+    await this.localAuthorization?.lifetime.assertActive();
+  }
+  isAuthorized(): boolean {
+    return this.localAuthorization?.lifetime.isActive() ?? true;
   }
 
   /** Callbacks handed to the provider at construction. */
@@ -491,6 +515,7 @@ export class WebMcpSessionRuntime {
       throw new Error("This browser does not support pane navigation.");
     await Promise.all([...this.socketInputDrains].map((drain) => drain()));
     const pending = this.inputTail.then(async () => {
+      if (this.localAuthorization) await this.assertAuthorized();
       if (this.inputClosed || this.session !== session)
         throw new Error("The browser session is no longer available.");
       await session.browserCommand!(command);
@@ -540,6 +565,7 @@ export class WebMcpSessionRuntime {
     // geometry their coordinates were captured against.
     await Promise.all([...this.socketInputDrains].map((drain) => drain()));
     const pending = this.inputTail.then(async () => {
+      if (this.localAuthorization) await this.assertAuthorized();
       if (this.inputClosed || this.session !== session) return;
       try {
         await session.resizeViewport?.(width, height);
@@ -611,6 +637,7 @@ export class WebMcpSessionRuntime {
       await Promise.all([...this.socketInputDrains].map((drain) => drain()));
     }
     const pending = this.inputTail.then(async () => {
+      if (this.localAuthorization) await this.assertAuthorized();
       if (this.inputClosed || this.session !== session || isCancelled()) {
         throw new Error("The browser session is no longer available.");
       }
@@ -935,10 +962,10 @@ export class WebMcpSessionRuntime {
             // someone their payment did not go through when it may well have.
             "unknown"
           : error instanceof WebMcpInvocationCancelledError
-            ? error.reason === "timeout"
-              ? "timeout"
-              : "cancelled"
-            : "failed";
+          ? error.reason === "timeout"
+            ? "timeout"
+            : "cancelled"
+          : "failed";
       const message =
         error instanceof Error ? error.message : "The tool failed.";
       await this.settle(item, state, startedAt, {
@@ -1063,6 +1090,10 @@ export class WebMcpSessionRuntime {
    * animated page unreapable.
    */
   private publishFrame(frame: WebMcpFrame): void {
+    // The authorization gate stays ahead of the publish: a revoked local
+    // grant must stop the pixels, and moving them to their own channel does
+    // not move them outside that rule.
+    if (!this.isAuthorized()) return;
     this.frames.publish({ ...frame, seq: this.nextSeq() });
   }
 
@@ -1104,6 +1135,8 @@ export class WebMcpSessionRuntime {
     await this.draining_.catch(() => {});
     this.hub.close();
     this.frames.close();
+    this.localAuthorization?.disposePolicy?.();
+    this.localAuthorization?.lifetime.dispose();
   }
 }
 

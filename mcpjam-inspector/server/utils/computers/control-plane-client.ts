@@ -73,6 +73,7 @@ export type ControlPlaneResult<T> =
       resource?: string;
       /** Server-provided retry hint, normalized to milliseconds. */
       retryAfterMs?: number;
+      limit?: number;
     };
 
 export function getConvexHttpUrl(): string | null {
@@ -122,9 +123,9 @@ function getServiceToken(): string | null {
 export function isComputersDataPlaneConfigured(): boolean {
   return Boolean(
     getConvexHttpUrl() &&
-      getServiceToken() &&
-      process.env.E2B_API_KEY &&
-      process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim(),
+    getServiceToken() &&
+    process.env.E2B_API_KEY &&
+    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim(),
   );
 }
 
@@ -173,6 +174,7 @@ async function postJson<T>(
       status: response.status,
       error,
       ...(code ? { code } : {}),
+      ...(typeof body?.limit === "number" ? { limit: body.limit } : {}),
       // WHICH budget a 503 hit (`run` | `desktop` | `org` | `global`), when
       // the control plane said. Lets a caller word its wait notice — "waiting
       // on desktop capacity" is a different sentence, and a different wait,
@@ -730,6 +732,42 @@ export async function getComputerSandboxInfo(args: {
     args.computerId
       ? { computerId: args.computerId }
       : { sandboxRowId: args.sandboxRowId },
+    args.signal,
+  );
+}
+
+/**
+ * Resume a computer that is merely ASLEEP, without reserving one.
+ *
+ * Connecting to a paused E2B box resumes it, so attaching already woke
+ * machines as a side effect — and did it behind the control plane's back: the
+ * row stays `hibernating` while the box runs, which means unmetered and
+ * invisible to every idle sweep. Saying so explicitly is what keeps the
+ * machine's state something the control plane knows.
+ *
+ * Never provisions: the backend refuses (409 `not_wakeable`) anything that is
+ * not a hibernating row with a vendor box, because a panel is a place to LOOK
+ * at a machine and must not be able to conjure one.
+ *
+ * Service-token auth, like `getComputerSandboxInfo` — the panel's own bearer
+ * proves who is asking, and the route is server-to-server.
+ */
+export async function wakeComputer(args: {
+  computerId: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<{ ok: string; status?: ComputerStatus }>> {
+  const headers = authHeaders();
+  if (!headers) {
+    return {
+      ok: false,
+      status: 0,
+      error: "INSPECTOR_SERVICE_TOKEN is not set or was rejected",
+    };
+  }
+  return postJson<{ ok: string; status?: ComputerStatus }>(
+    "/computers/wake",
+    headers,
+    { computerId: args.computerId },
     args.signal,
   );
 }

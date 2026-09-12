@@ -1,11 +1,23 @@
+vi.mock("@/components/browser/LocalBrowserOnboarding", () => ({
+  LocalBrowserOnboarding: () => null,
+}));
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { id: "member" } }),
+}));
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ComponentProps, ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 
 // PlaygroundTab pulls in a large hook + provider graph. We only care about the
 // `loadingState` branch that decides whether the branded first-run loading
 // screen shows, so neutralize everything else and drive `loadingState`.
 
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useBrowserWorkspaceEnabledState: () => true,
+  useBrowserEnabledState: () => true,
+}));
 const mockLoadingScreen = vi.hoisted(() => vi.fn());
 const mockLoadingState = vi.hoisted(() => ({
   current: { kind: "skeleton" } as { kind: string },
@@ -26,6 +38,7 @@ vi.mock("@/components/ui-playground/hooks/use-playground-state", () => ({
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: false }),
+  useQuery: () => undefined,
 }));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (s: Record<string, unknown>) => unknown) =>
@@ -121,10 +134,33 @@ const baseProps: ComponentProps<typeof PlaygroundTab> = {
 
 describe("PlaygroundTab loading branch", () => {
   beforeEach(() => {
+    useActiveChatSessionStore.setState({
+      sessionId: null,
+      restoredSession: null,
+      restorationPending: false,
+    });
+    useBrowserWorkspaceStore.setState({ conversations: {} });
     mockLoadingScreen.mockClear();
     mockLoadingState.current = { kind: "skeleton" };
   });
 
+  it("does not close a persisted panel while conversation metadata is restoring", () => {
+    useActiveChatSessionStore.setState({
+      sessionId: "wire",
+      restorationPending: true,
+    });
+    useBrowserWorkspaceStore.getState().openBrowser("wire");
+    render(<PlaygroundTab {...baseProps} />);
+    expect(useBrowserWorkspaceStore.getState().conversations.wire.open).toBe(
+      true,
+    );
+    act(() =>
+      useActiveChatSessionStore.getState().setRestorationPending(false),
+    );
+    expect(useBrowserWorkspaceStore.getState().conversations.wire.open).toBe(
+      false,
+    );
+  });
   it("shows the branded 'Setting things up...' screen during the first-run skeleton", () => {
     mockLoadingState.current = { kind: "skeleton" };
 

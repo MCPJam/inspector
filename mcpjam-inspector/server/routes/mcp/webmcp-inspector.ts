@@ -1,3 +1,12 @@
+import { withKeyedLock } from "../../services/browserd/probe-lock.js";
+import { HTTPException } from "hono/http-exception";
+import {
+  authorizeLocalInspection,
+  inspectionNonceScope,
+  inspectionPartition,
+  type LocalInspectionScope,
+} from "../../services/webmcp-inspector/local-authorization.js";
+import { issueLocalNonce } from "../../utils/computers/local-terminal-auth.js";
 import { parsePaneCommand } from "../../services/browserd/daemon/pane-command";
 import {
   MIN_SESSION_VIEWPORT,
@@ -56,7 +65,10 @@ import type {
 } from "../../services/webmcp-inspector/session-runtime";
 import { touchBrowserSession } from "../../services/browserd/browser-sessions-client.js";
 import { touchComputerActivity } from "../../utils/computers/control-plane-client.js";
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionPanel,
+} from "../../utils/computers/activity-touch.js";
 import { isHostedDesktopUnavailable } from "../../utils/computers/runtime-config.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
@@ -255,6 +267,7 @@ const commandSchema = z.discriminatedUnion("type", [
  * that drift apart invisibly, because each one's own tests keep passing.
  */
 function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
+  if (error instanceof HTTPException) return error.getResponse();
   if (error instanceof HostedIdentityError) {
     return error.response;
   }
@@ -409,6 +422,10 @@ function hostedIdentity(
 function hostedPresence(runtime: WebMcpSessionRuntime): void {
   const target = runtime.hostedTarget();
   if (!target) return;
+  // The stream ticks every 15s; the control plane needs to hear once a minute.
+  // Without this, one open pane is four control-plane writes a minute, and the
+  // extra three change nothing.
+  if (!shouldTouchSessionPanel(target.sessionId)) return;
   void touchBrowserSession({ sessionId: target.sessionId, kind: "panel" })
     .then(({ counted }) => {
       if (counted && shouldTouchActivity(target.computerId)) {
@@ -548,6 +565,19 @@ webmcpInspector.post("/sessions", async (c) => {
     );
   }
 
+  let localScope: LocalInspectionScope | undefined;
+  // NOT `transport === "local"`: the field is optional, and an omitted one
+  // means local (a real window on this machine). Keying consent off the
+  // explicit value let the wire default launch Chromium unauthorized, and
+  // `resolveRuntime` — which checks EVERY non-hosted session — then refused
+  // every command on the session that start had just handed back.
+  if (transport !== "hosted") {
+    try {
+      localScope = await authorizeLocalInspection(c, projectId);
+    } catch (error) {
+      return webMcpErrorResponse(c, error, "Browser permission required.");
+    }
+  }
   let provider;
   /** Set on the hosted path: the reserved daemon, and who it belongs to. */
   // COMPUTER-typed: this route opens the member's own browser for a person
@@ -664,6 +694,7 @@ webmcpInspector.post("/sessions", async (c) => {
 
   try {
     const session = await startWebMcpSession({
+      ...(localScope ? { localScope, ownerId: localScope.ownerKey } : {}),
       url,
       ...(provider ? { provider } : {}),
       // Omitted means `window`, so a caller that never heard of this field gets
@@ -699,7 +730,21 @@ async function resolveRuntime(
   sessionId: string,
 ): Promise<WebMcpSessionRuntime> {
   if (!HOSTED_MODE || !sessionId.startsWith("hosted:")) {
-    return webMcpSessions.get(sessionId);
+    const runtime = webMcpSessions.get(sessionId);
+    if (!sessionId.startsWith("hosted:")) {
+      const scope = await authorizeLocalInspection(c);
+      if (
+        !runtime.localAuthorization ||
+        !runtime.belongsTo(scope.ownerKey) ||
+        runtime.localAuthorization.scope.consentFingerprint !==
+          scope.consentFingerprint
+      )
+        throw new WebMcpSessionNotFoundError(
+          "That inspection session is not available.",
+        );
+      await runtime.assertAuthorized();
+    }
+    return runtime;
   }
   const identity = hostedIdentity(c);
   if (!identity.ok) throw new HostedIdentityError(identity.response);
@@ -783,6 +828,23 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
   const replay = Number.isFinite(replayParam)
     ? Math.max(0, Math.min(500, replayParam))
     : 200;
+  /**
+   * The session this stream belongs to, resolved once.
+   *
+   * Held for the authorization gate below: a local Browser grant can be
+   * revoked mid-stream, and this stream has to stop the moment it is. Looked
+   * up here rather than per event — `get` throws for a reaped session, and
+   * doing that inside a send would turn a dead session into an exception in
+   * the middle of the stream.
+   */
+  let runtime: ReturnType<typeof webMcpSessions.get> | undefined;
+  try {
+    runtime = webMcpSessions.get(sessionId);
+  } catch {
+    // Already gone; `subscribe` below reports it to the client properly.
+  }
+
+  let unsubscribeConsent: (() => void) | undefined;
   let unsubscribe: (() => void) | undefined;
   let keepalive: ReturnType<typeof setInterval> | undefined;
   const encoder = new TextEncoder();
@@ -792,6 +854,8 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
   // for the life of the process, enqueueing into a closed controller every 15
   // seconds with the throw swallowed.
   const teardown = () => {
+    unsubscribeConsent?.();
+    unsubscribeConsent = undefined;
     if (keepalive) clearInterval(keepalive);
     keepalive = undefined;
     unsubscribe?.();
@@ -800,6 +864,14 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
 
   const stream = new ReadableStream({
     start(controller) {
+      unsubscribeConsent = runtime?.localAuthorization?.lifetime.onRevoked(
+        () => {
+          teardown();
+          try {
+            controller.close();
+          } catch {}
+        },
+      );
       const write = (chunk: Uint8Array) => {
         try {
           controller.enqueue(chunk);
@@ -816,6 +888,9 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
       // properly, and what is left here is the timeline: small, bounded by its
       // own ring, and never worth dropping.
       const send = (payload: unknown) => {
+        // A revoked local grant stops this stream at that instant, not at the
+        // next handshake.
+        if (runtime && !runtime.isAuthorized()) return;
         write(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
 
@@ -841,7 +916,16 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
         // commands, so a session someone has open and is reading — the normal
         // way to watch an agent drive a page — is reaped mid-view.
         webMcpSessions.touchWatchedSessions();
-        if (resolved) hostedPresence(resolved);
+        // A HOSTED session's presence costs money, so it needs the stronger
+        // claim: not "a stream is attached" — which stays true from a
+        // background tab, a minimised window, and a pane behind another tab —
+        // but "somebody has this on screen", which only the pane's own ping
+        // establishes. Reporting on attachment alone held a metered desktop
+        // box awake for the full 2-hour ceiling for a picture nobody was
+        // looking at.
+        if (resolved && webMcpSessions.isWatched(resolved.sessionId)) {
+          hostedPresence(resolved);
+        }
       }, 15_000);
 
       c.req.raw.signal.addEventListener("abort", () => {
@@ -1060,10 +1144,69 @@ webmcpInspector.delete("/sessions/:id", async (c) => {
         return c.json({ closed: false });
       }
     }
+    if (!sessionId.startsWith("hosted:") && webMcpSessions.peek(sessionId))
+      await resolveRuntime(c, sessionId);
     const closed = await webMcpSessions.close(sessionId);
     return c.json({ closed });
   } catch (error) {
     return webMcpErrorResponse(c, error, "Could not close that session.");
+  }
+});
+
+webmcpInspector.post("/sessions/:id/stream-nonce", async (c) => {
+  try {
+    const runtime = await resolveRuntime(c, c.req.param("id"));
+    const scope = runtime.localAuthorization?.scope;
+    if (!scope) return c.json({ error: "Not found" }, 404);
+    return c.json(
+      issueLocalNonce({
+        kind: "webmcp-frames",
+        projectId: inspectionNonceScope(c.req.param("id"), scope),
+        consentFingerprint: scope.consentFingerprint,
+      }),
+    );
+  } catch (error) {
+    return webMcpErrorResponse(
+      c,
+      error,
+      "Could not open the inspection stream.",
+    );
+  }
+});
+
+webmcpInspector.delete("/profile", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const scope = await authorizeLocalInspection(
+      c,
+      typeof body.projectId === "string" ? body.projectId : undefined,
+    );
+    if (!process.versions.electron) return c.json({ cleared: true });
+    return await withKeyedLock(
+      `webmcp-profile:${scope.profileKey}`,
+      async () => {
+        const { session } = await import("electron");
+        for (const runtime of webMcpSessions.localRuntimes()) {
+          if (runtime.localAuthorization?.scope.profileKey === scope.profileKey)
+            await webMcpSessions.close(runtime.sessionId);
+        }
+        const partition =
+          body.legacy === true
+            ? "persist:webmcp-inspector"
+            : inspectionPartition(scope);
+        const profile = session.fromPartition(partition);
+        await profile.closeAllConnections();
+        await profile.clearStorageData();
+        await profile.clearCache();
+        return c.json({ cleared: true });
+      },
+    );
+  } catch (error) {
+    return webMcpErrorResponse(
+      c,
+      error,
+      "Could not clear inspection site data.",
+    );
   }
 });
 

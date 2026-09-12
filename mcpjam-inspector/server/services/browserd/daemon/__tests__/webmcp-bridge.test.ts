@@ -1514,3 +1514,89 @@ describe("WebMcpBridge — a second response for a settled invocation", () => {
     await expect(again).resolves.toMatchObject({ output: { content: [] } });
   });
 });
+
+describe("local discovery security budgets", () => {
+  it("retains 1024 registrations, then invalidates the document and recovers on navigation", async () => {
+    const fake = fakeCdp(),
+      notice = vi.fn();
+    const bridge = await started(fake, {
+      localSecurity: true,
+      onDiscoveryLimit: notice,
+    });
+    fake.emit("WebMCP.toolsAdded", {
+      tools: Array.from({ length: 1024 }, (_, i) => ({
+        ...TOOL,
+        name: `tool_${i}`,
+      })),
+    });
+    expect(bridge.list()).toHaveLength(1024);
+    fake.emit("WebMCP.toolsAdded", { tools: [{ ...TOOL, name: "overflow" }] });
+    expect(bridge.list()).toEqual([]);
+    expect(bridge.discoveryLimitReached()).toBe(true);
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+    expect(notice).toHaveBeenCalledTimes(1);
+    fake.emit("Page.frameNavigated", {
+      frame: { id: "frame-main", url: "https://example.test/new" },
+    });
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+    expect(bridge.list()).toHaveLength(1);
+  });
+  it.each(["large", "deep", "churn", "frames"])(
+    "refuses hostile %s metadata",
+    async (kind) => {
+      const fake = fakeCdp();
+      const bridge = await started(fake, { localSecurity: true });
+      if (kind === "large")
+        fake.emit("WebMCP.toolsAdded", {
+          tools: [{ ...TOOL, inputSchema: { description: "a".repeat(65537) } }],
+        });
+      if (kind === "deep") {
+        let schema: object = {};
+        for (let i = 0; i < 34; i++) schema = { child: schema };
+        fake.emit("WebMCP.toolsAdded", {
+          tools: [{ ...TOOL, inputSchema: schema }],
+        });
+      }
+      if (kind === "churn")
+        fake.emit("WebMCP.toolsRemoved", {
+          tools: Array.from({ length: 2049 }, () => TOOL),
+        });
+      if (kind === "frames")
+        for (let i = 0; i < 65; i++)
+          await bridge.addSession(`frame-${i}`, fakeCdp().cdp);
+      expect(bridge.discoveryLimitReached()).toBe(true);
+      expect(bridge.list()).toEqual([]);
+    },
+  );
+  it("keeps the hosted discovery policy unchanged", async () => {
+    const fake = fakeCdp(),
+      bridge = await started(fake);
+    fake.emit("WebMCP.toolsAdded", {
+      tools: Array.from({ length: 1025 }, (_, i) => ({
+        ...TOOL,
+        name: `tool_${i}`,
+      })),
+    });
+    expect(bridge.list()).toHaveLength(1025);
+  });
+});
+
+it("shares discovery budgets across tabs in the local session", async () => {
+  const localBudget = { entries: new Map() };
+  const first = fakeCdp(),
+    second = fakeCdp();
+  const a = await started(first, { localSecurity: true, localBudget });
+  const b = await started(second, { localSecurity: true, localBudget });
+  const tools = Array.from({ length: 600 }, (_, i) => ({
+    ...TOOL,
+    name: `tool_${i}`,
+  }));
+  first.emit("WebMCP.toolsAdded", { tools });
+  second.emit("WebMCP.toolsAdded", { tools });
+  expect(a.list()).toHaveLength(600);
+  expect(b.discoveryLimitReached()).toBe(true);
+  expect(b.list()).toEqual([]);
+  a.dispose();
+  b.dispose();
+  expect(localBudget.entries.size).toBe(0);
+});

@@ -67,7 +67,11 @@ export interface HandoffWaitDeps {
    * only difference between "the agent is parked behind a person" and "the
    * agent has hung" is that one of them eventually finishes.
    */
-  onWaiting?: (state: { waiting: boolean; holder?: HandoffHolder }) => void;
+  onWaiting?: (state: {
+    waiting: boolean;
+    resumed?: boolean;
+    holder?: HandoffHolder;
+  }) => void;
   pollMs?: number;
   /**
    * How long to park before giving up and telling the model to come back.
@@ -103,6 +107,7 @@ export async function waitForHandoff(
   const maxWaitMs = deps.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
   const startedAt = now();
   let announced = false;
+  let resumed = false;
   let lastHolder: HandoffHolder = { kind: "human" };
 
   try {
@@ -119,6 +124,7 @@ export async function waitForHandoff(
         return { status: "unknown" };
       }
       if (read.held === false) {
+        resumed = true;
         return { status: "released", waitedMs: now() - startedAt };
       }
       if (read.held === "unknown") return { status: "unknown" };
@@ -145,7 +151,12 @@ export async function waitForHandoff(
     // ALWAYS, including on the cancelled and unknown paths. A surface left
     // showing "waiting for you to hand the browser back" after the turn was
     // stopped is a spinner nothing will ever clear.
-    if (announced) deps.onWaiting?.({ waiting: false, holder: lastHolder });
+    if (announced || resumed)
+      deps.onWaiting?.({
+        waiting: false,
+        ...(resumed ? { resumed: true } : {}),
+        holder: lastHolder,
+      });
   }
 }
 
@@ -182,7 +193,6 @@ export function stillHeldMessage(holder: HandoffHolder): string {
         "else, or tell the user you are blocked on the browser — retrying " +
         "will not free it.";
 }
-
 
 /**
  * The whole handoff, from the refusal to the answer the model reads.

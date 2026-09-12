@@ -1,8 +1,13 @@
-/// <reference types="@electron-forge/plugin-vite/forge-vite-env" />
+/// <reference path="./forge.env.d.ts" />
 // MUST stay the first import: it sets WS_NO_BUFFER_UTIL, which `ws` reads at
 // module-eval time, and the bundled `ws` is otherwise handed an empty stub for
 // its optional `bufferutil` dep. See the file for the full story (#4208).
 import "./ws-native-fallback.js";
+// Must stay below that guard: `security-policy.js` reaches into `server/`,
+// which pulls in `ws`. Hoisted above it, `ws` evaluates before
+// WS_NO_BUFFER_UTIL is set -- the #4208 path `ws-native-fallback.test.ts` pins.
+import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
+import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import * as Sentry from "@sentry/electron/main";
 import { app, BrowserWindow, shell, Menu, dialog, session } from "electron";
 import {
@@ -116,6 +121,8 @@ if (process.platform === "win32") {
  * WebMCP on the floor. A future feature must comma-join it into this one call.
  */
 app.commandLine.appendSwitch("enable-features", "WebMCP");
+// Chromium 150 (Electron 43) also needs the explicit Blink feature override.
+app.commandLine.appendSwitch("enable-blink-features", "WebMCP");
 
 // Register custom protocol for OAuth callbacks
 if (!app.isDefaultProtocolClient("mcpjam")) {
@@ -163,7 +170,45 @@ let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
 let appBootstrapped = false;
 
-const isDev = process.env.NODE_ENV === "development";
+/**
+ * The renderer dev server forge is serving this run, or `null` when there
+ * isn't one.
+ *
+ * Dev mode is derived from this rather than from `NODE_ENV`, which made the
+ * blank-window failure depend on the environment instead of on whether a
+ * renderer actually exists to load. `MAIN_WINDOW_VITE_DEV_SERVER_URL` is a
+ * compile-time define that forge's vite plugin fills in only for
+ * `command === 'serve'`, so a non-empty value means "this bundle was built by
+ * `electron-forge start` and a renderer dev server is listening" — exactly
+ * and only the condition under which loading it can succeed.
+ *
+ * The `NODE_ENV === "development"` read this replaces was a trap. Vite's
+ * `resolveConfig` sets `NODE_ENV=production` in the forge process whenever it
+ * isn't already set; the spawned Electron inherits that, so `isDev` came out
+ * false during `electron:dev`. `createMainWindow` then loaded the embedded
+ * server instead of the renderer, and that server — unpackaged — 307s every
+ * UI route to the hardcoded `http://localhost:8080` of
+ * `getInspectorFrontendUrl`, where nothing listens. A blank white window, no
+ * error in any log. `startHonoServer` does set `NODE_ENV=development` for
+ * unpackaged runs, but that assignment runs long after this module-load-time
+ * read, so it could never have helped.
+ *
+ * `typeof` is mandatory, not defensive styling: for a packaging build the
+ * define's value is `undefined`, which can leave the identifier free, and a
+ * bare reference would throw ReferenceError at module load. See
+ * `src/forge.env.d.ts`.
+ *
+ * Folding `!app.isPackaged` in here keeps the two halves from disagreeing and
+ * lets the type carry the invariant, so every use site is a plain
+ * `rendererDevServerUrl ?? <production url>`.
+ */
+const rendererDevServerUrl =
+  !app.isPackaged &&
+  typeof MAIN_WINDOW_VITE_DEV_SERVER_URL === "string" &&
+  MAIN_WINDOW_VITE_DEV_SERVER_URL.length > 0
+    ? MAIN_WINDOW_VITE_DEV_SERVER_URL
+    : null;
+const isDev = rendererDevServerUrl !== null;
 
 function shouldForceElectronOAuthFallback(): boolean {
   return (
@@ -177,7 +222,7 @@ function getServerUrl(): string {
 }
 
 function getRendererBaseUrl(): string {
-  return isDev ? MAIN_WINDOW_VITE_DEV_SERVER_URL : getServerUrl();
+  return rendererDevServerUrl ?? getServerUrl();
 }
 
 function findOAuthCallbackUrl(args: string[]): string | undefined {
@@ -239,13 +284,13 @@ function createElectronHostedAuthNavigationUrl(url: string): string {
             [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
           }
         : parsedState === undefined
-          ? {
-              [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
-            }
-          : {
-              [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
-              originalState: parsedState,
-            };
+        ? {
+            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+          }
+        : {
+            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+            originalState: parsedState,
+          };
 
     urlObj.searchParams.set("state", JSON.stringify(nextState));
     return urlObj.toString();
@@ -451,8 +496,9 @@ async function startHonoServer(): Promise<number> {
     // workspace grant through the server's own route. Read here, after the
     // server module has generated it, and re-read on every restart.
     try {
-      const { getSessionToken } =
-        await import("../server/services/session-token.js");
+      const { getSessionToken } = await import(
+        "../server/services/session-token.js"
+      );
       localHarnessSessionToken = getSessionToken();
     } catch {
       localHarnessSessionToken = null;
@@ -462,8 +508,9 @@ async function startHonoServer(): Promise<number> {
     // rather than imported by the server, which has to stay loadable under
     // `npx` where there is no Electron and no keychain at all.
     try {
-      const { setInstanceKeyStore } =
-        await import("../server/utils/harness/local/instance-key.js");
+      const { setInstanceKeyStore } = await import(
+        "../server/utils/harness/local/instance-key.js"
+      );
       setInstanceKeyStore(createSafeStorageKeyStore());
     } catch (err) {
       log.warn(
@@ -509,6 +556,7 @@ async function startHonoServer(): Promise<number> {
       port,
       hostname,
     });
+    registerBrowserController(`http://127.0.0.1:${port}`);
     // Attach the computer terminal WebSocket upgrade handler (mirror of
     // server/index.ts). Without this the Computer tab's Shell can't upgrade.
     injectWebSocket(server);
@@ -557,7 +605,8 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   });
 
   // Load the app
-  window.loadURL(isDev ? MAIN_WINDOW_VITE_DEV_SERVER_URL : serverUrl);
+  setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);
+  window.loadURL(rendererDevServerUrl ?? serverUrl);
 
   if (isDev) {
     window.webContents.openDevTools();

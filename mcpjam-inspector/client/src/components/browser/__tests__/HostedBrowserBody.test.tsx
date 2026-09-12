@@ -1,3 +1,4 @@
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 /**
  * The hosted pane.
  *
@@ -20,6 +21,10 @@ import userEvent from "@testing-library/user-event";
 
 const api = vi.hoisted(() => ({
   workspaceEnabled: true,
+  exportProfile: vi.fn(async () => ({
+    archive: new Blob(),
+    savedFrom: "profile-chat",
+  })),
   /** What `/session` answers, or an error to throw. */
   session: null as unknown,
   sessionError: null as { status: number } | null,
@@ -28,6 +33,10 @@ const api = vi.hoisted(() => ({
   leaseCalls: [] as string[],
   mints: 0,
   invalidations: 0,
+  /** How many times the pane re-read `/session` (i.e. asked to ensure one). */
+  sessionReads: 0,
+  /** The options each of those reads carried — `{ensure:true}` wakes the box. */
+  sessionReadOptions: [] as unknown[],
   streamArgs: [] as unknown[],
   /** What the shell's state poll answers. Null is "cannot say". */
   state: null as unknown,
@@ -48,12 +57,17 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
   useBrowserWorkspaceEnabled: () => api.workspaceEnabled,
 }));
 
+vi.mock("@/components/browser/BrowserSettingsButton", () => ({
+  BrowserSettingsButton: () => null,
+}));
+
 vi.mock("@/lib/hosted-browser/client", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/hosted-browser/client")
   >("@/lib/hosted-browser/client");
   return {
     ...actual,
+    fetchHostedBrowserProfileArchive: api.exportProfile,
     createBrowserTokenCache: () => ({
       get: async () => {
         api.mints += 1;
@@ -93,7 +107,9 @@ vi.mock("@/lib/hosted-browser/client", async () => {
       ...size,
       revision: 1,
     }),
-    fetchHostedBrowserSession: async () => {
+    fetchHostedBrowserSession: async (_tokens: unknown, options?: unknown) => {
+      api.sessionReads += 1;
+      api.sessionReadOptions.push(options);
       if (api.sessionError) {
         throw new actual.HostedBrowserError("nope", api.sessionError.status);
       }
@@ -148,6 +164,8 @@ const RUNNING = {
 beforeEach(() => {
   api.workspaceEnabled = true;
   api.session = RUNNING;
+  api.sessionReads = 0;
+  api.sessionReadOptions = [];
   api.sessionError = null;
   api.lease = { took: true, lease: { state: "held" }, yours: true };
   api.inputs = [];
@@ -167,6 +185,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 const mintToken = async () => ({ token: "t", expiresAt: Date.now() + 60_000 });
@@ -254,8 +273,8 @@ describe("the hosted pane — who has control", () => {
       yours: true,
     };
     renderBody();
-    expect(await screen.findByText("You have it (paused)")).toBeTruthy();
-    expect(screen.getByText(/resume agent/i)).toBeTruthy();
+    expect(await screen.findByText("You’re in control (paused)")).toBeTruthy();
+    expect(screen.queryByText(/let agent browse/i)).toBeNull();
   });
 
   it("does not offer to take a browser somebody else holds", async () => {
@@ -268,7 +287,7 @@ describe("the hosted pane — who has control", () => {
     expect(await screen.findByText("Someone else is driving")).toBeTruthy();
     // There is no button to withhold any more: using the browser is what
     // takes it, and the server refuses a click into somebody else's hold.
-    expect(screen.queryByText(/resume agent/i)).toBeNull();
+    expect(screen.queryByText(/let agent browse/i)).toBeNull();
   });
 
   it("takes control and reopens the stream the take just revoked", async () => {
@@ -290,7 +309,8 @@ describe("the hosted pane — who has control", () => {
     api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
     api.lease = { took: true, lease: { state: "free" }, yours: false };
     renderBody();
-    await userEvent.click(await screen.findByText(/resume agent/i));
+    await screen.findByText("You’re in control");
+    await act(async () => releaseBrowserForChat("proj-1"));
     await waitFor(() => expect(api.leaseCalls).toEqual(["resume"]));
     await screen.findByText("The agent is driving");
   });
@@ -335,6 +355,75 @@ describe("the hosted pane — the socket", () => {
       await vi.advanceTimersByTimeAsync(3_000);
     });
     expect(api.sockets.length).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it("wakes the box and brings the picture back when it has been reclaimed", async () => {
+    // 4410 says the machine is asleep. This socket cannot wake it — only
+    // `ensure=1` on the session route does — and a bare re-read would not
+    // either: it reads a row nobody has resumed. Then the stream has to be
+    // asked for again, because a resumed box comes back on the SAME boot and
+    // the session object is deliberately kept by identity, so nothing else
+    // would reopen the socket and the pane would sit blank.
+    vi.useFakeTimers();
+    renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+
+    act(() => socket().onclose?.({ code: 4410 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    // Asked the control plane to resume it, not merely re-read the row.
+    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
+    // And got the picture back.
+    expect(api.sockets.length).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it("does not reopen the socket when the wake did not land", async () => {
+    // A box that refuses to come back would otherwise be refused, re-asked,
+    // and refused again forever. The visibility-gated poll owns the retry.
+    vi.useFakeTimers();
+    renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    api.sessionError = { status: 503 };
+
+    act(() => socket().onclose?.({ code: 4410 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
+    expect(api.sockets.length).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it("leaves a reclaimed box asleep when nobody is looking at the pane", async () => {
+    // A hidden pane is WHY the box was reclaimed. Waking it from here would
+    // undo that on behalf of nobody — and every hidden pane in every open tab
+    // would do it at once. The visibility-gated poll re-ensures when the pane
+    // is shown again, which is when somebody is actually there.
+    vi.useFakeTimers();
+    const view = renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    view.rerender(
+      <HostedBrowserBody
+        projectId="proj-1"
+        mintToken={mintToken}
+        active={false}
+      />,
+    );
+    const before = api.sessionReads;
+
+    act(() => socket().onclose?.({ code: 4410 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(api.sessionReads).toBe(before);
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+    expect(api.sockets.length).toBe(1);
     vi.useRealTimers();
   });
 
@@ -502,7 +591,7 @@ describe("the hosted pane — a lease that changes underneath it", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10);
       });
-      expect(screen.getByText("You have it")).toBeTruthy();
+      expect(screen.getByText("You’re in control")).toBeTruthy();
 
       api.lease = {
         took: false,
@@ -553,7 +642,7 @@ describe("the hosted pane — a lease that changes underneath it", () => {
     // one back.
     api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
     const view = renderBody();
-    expect(await screen.findByText("You have it")).toBeTruthy();
+    expect(await screen.findByText("You’re in control")).toBeTruthy();
     api.leaseCalls = [];
     view.unmount();
     expect(api.leaseCalls).toEqual([]);
@@ -910,35 +999,44 @@ describe("the hosted pane — quality tiers", () => {
     await waitFor(() => expect(api.sockets.length).toBeGreaterThan(before));
   });
 
-  it("tells the DAEMON when auto steps the quality down", async () => {
-    // Auto used to move only the pane's own state, so a viewer on a link that
-    // could not carry the stream was labelled "Data saver" while the encoder
-    // went on producing exactly the bitrate that was being dropped.
-    renderBody();
-    await deliverFrame();
-    // Three consecutive readings, because the controller refuses to act on
-    // one: half the frames offered are dropped each second.
-    for (let n = 1; n <= 4; n += 1) {
+  it.each(["h264", "jpeg"])(
+    "auto changes the encoder only for negotiated video (%s)",
+    async (codec) => {
+      // Auto used to move only the pane's own state, so a viewer on a link that
+      // could not carry the stream was labelled "Data saver" while the encoder
+      // went on producing exactly the bitrate that was being dropped.
+      vi.stubGlobal("VideoDecoder", class {});
+      renderBody();
+      await deliverFrame();
       act(() => {
         socket().onmessage?.({
-          data: JSON.stringify({
-            type: "stats",
-            framesIn: n * 20,
-            dropped: n * 10,
-            bytes: 0,
-            subscribers: 1,
-          }),
+          data: JSON.stringify({ type: "hello", features: ["input"], codec }),
         });
       });
-    }
-    await waitFor(() =>
-      expect(
-        socket()
-          .sent.map((raw) => JSON.parse(raw))
-          .some((m) => m.type === "quality" && m.tier === "saver"),
-      ).toBe(true),
-    );
-  });
+      // Three consecutive readings, because the controller refuses to act on
+      // one: half the frames offered are dropped each second.
+      for (let n = 1; n <= 4; n += 1) {
+        act(() => {
+          socket().onmessage?.({
+            data: JSON.stringify({
+              type: "stats",
+              framesIn: n * 20,
+              dropped: n * 10,
+              bytes: 0,
+              subscribers: 1,
+            }),
+          });
+        });
+      }
+      await waitFor(() =>
+        expect(
+          socket()
+            .sent.map((raw) => JSON.parse(raw))
+            .some((m) => m.type === "quality" && m.tier === "saver"),
+        ).toBe(codec === "h264"),
+      );
+    },
+  );
 
   it("falls back to JPEG when the box says it cannot encode video", async () => {
     // A generic drop is worth retrying as-is; this one is not — retrying asks
@@ -977,4 +1075,68 @@ it("keeps hosted navigation when the workspace flag is off", async () => {
   await deliverFrame();
   expect(await screen.findByTestId("browser-new-tab")).toBeInTheDocument();
   expect(screen.getByTestId("browser-address")).toBeInTheDocument();
+});
+
+it("keeps profile saving in settings rather than the browser toolbar", async () => {
+  renderBody({ sessionId: "profile-chat" });
+  await waitFor(() =>
+    expect(screen.getByTestId("browser-new-tab")).not.toBeDisabled(),
+  );
+  expect(screen.queryByRole("button", { name: "Save profile" })).toBeNull();
+  expect(screen.queryByText("Save profile for other chats…")).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Browser view settings" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Save profile for other chats…",
+    }),
+  ).toBeVisible();
+});
+
+vi.mock("@/lib/browser-profiles/client", () => ({
+  saveBrowserProfile: vi.fn(),
+}));
+
+it("returns control before exporting a profile after the user signs in", async () => {
+  api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+  api.lease = { took: true, lease: { state: "free" }, yours: false };
+  api.exportProfile.mockClear();
+  const prompt = vi.spyOn(window, "prompt").mockReturnValue("Signed in");
+  try {
+    renderBody({ sessionId: "profile-chat" });
+    await screen.findByText("You’re in control");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Browser view settings" }),
+    );
+    const item = await screen.findByRole("menuitem", {
+      name: "Save profile for other chats…",
+    });
+    expect(item).not.toHaveAttribute("data-disabled");
+    await userEvent.click(item);
+    await waitFor(() => expect(api.exportProfile).toHaveBeenCalledOnce());
+    expect(api.leaseCalls).toEqual(["resume"]);
+  } finally {
+    prompt.mockRestore();
+  }
+});
+
+it("clears automatic handoff when a previously held browser disappears", async () => {
+  api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+  const view = renderBody();
+  await screen.findByText("You’re in control");
+  api.sessionError = { status: 409 };
+  view.rerender(
+    <HostedBrowserBody
+      projectId="proj-1"
+      mintToken={mintToken}
+      active={false}
+    />,
+  );
+  view.rerender(
+    <HostedBrowserBody projectId="proj-1" mintToken={mintToken} active />,
+  );
+  await screen.findByTestId("hosted-browser-idle");
+  await act(async () => releaseBrowserForChat("proj-1"));
+  expect(api.leaseCalls).toEqual([]);
 });

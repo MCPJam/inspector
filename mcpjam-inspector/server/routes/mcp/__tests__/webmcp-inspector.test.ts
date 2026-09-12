@@ -1,3 +1,26 @@
+vi.mock("../../../utils/computers/browser-rollout.js", () => ({
+  rolloutEnabled: async () => true,
+  resolveBrowserRollout: async () => ({
+    enabled: true,
+    actor: { id: "test-actor", guest: true },
+  }),
+}));
+import { inspectionProfileKey } from "../../../services/webmcp-inspector/local-authorization.js";
+import { createHash } from "node:crypto";
+const ownerKey = createHash("sha256")
+  .update(JSON.stringify(["guest", "test-actor"]))
+  .digest("hex");
+const scope = {
+  ownerKey,
+  profileKey: inspectionProfileKey(ownerKey),
+  consentFingerprint: "test-fingerprint",
+};
+vi.mock("../../../utils/computers/browser-consent.js", () => ({
+  BROWSER_CONSENT_HEADER: "x-mcpjam-browser-consent",
+  getBrowserConsentFingerprint: async () => "test-fingerprint",
+  watchBrowserConsentChanges: () => () => {},
+  verifyAndFingerprintBrowserConsent: async () => "test-fingerprint",
+}));
 /**
  * Route-level behaviour: status codes, the kill switch, and the SSE stream.
  * The browser is a fake — protocol fidelity is covered against a real Chromium
@@ -20,6 +43,7 @@ vi.mock("../../../config", () => ({
   // hosted gate does not apply locally, so the kill switch is the whole answer.
   webmcpInspectorReachable: () => configState.enabled,
   HOSTED_MODE: false,
+  LOCAL_BROWSER_ENABLED: true,
 }));
 
 // The hosted transport's two live seams. Mocked so the switch can be tested
@@ -81,6 +105,8 @@ async function openSession(provider: FakeProvider) {
     url: "https://example.test/",
     provider,
     registry: webMcpSessions,
+    ownerId: scope.ownerKey,
+    localScope: scope,
   });
 }
 

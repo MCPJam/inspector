@@ -1,3 +1,10 @@
+vi.mock("@/hooks/useLocalBrowserConsent", () => ({
+  useLocalBrowserConsent: () => ({
+    granted: true,
+    token: "test-consent",
+    grant: vi.fn(async () => true),
+  }),
+}));
 import { StrictMode } from "react";
 import { waitFor } from "@testing-library/react";
 /**
@@ -354,7 +361,7 @@ describe("WebmcpInspectorTab — viewport", () => {
       name: "Live view of the inspected page",
     });
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
 
     await act(async () => {
       mouseDown(image, { clientX: 640, clientY: 400, button: 0 });
@@ -536,7 +543,7 @@ describe("WebmcpInspectorTab — viewport", () => {
       name: "Live view of the inspected page",
     });
     canvas.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
     const wheel = new WheelEvent("wheel", {
       bubbles: true,
       cancelable: true,
@@ -759,10 +766,9 @@ describe("WebmcpInspectorTab — viewport", () => {
     });
     // A Chrome window is one click away, and is what someone wants when they
     // need their own devtools open on the page.
-    expect(startSession).toHaveBeenLastCalledWith(
-      expect.any(String),
-      undefined,
-    );
+    expect(startSession).toHaveBeenLastCalledWith(expect.any(String), {
+      projectId: undefined,
+    });
   });
 });
 

@@ -96,15 +96,16 @@ export function createFrameWireReader(
      * kind it does not know.
      */
     video?: boolean;
+    sharp?: boolean;
   } = {},
 ): {
   push(chunk: ArrayBuffer | Uint8Array): void;
+  /** Refuse whatever is decoding, without ending the reader. */
+  drop(): void;
   /** Stop decoding and release the pending bitmap, if any. */
   close(): void;
 } {
-  const decoder = createFrameStreamDecoder(
-    options.video ? { video: true } : {},
-  );
+  const decoder = createFrameStreamDecoder(options);
   let closed = false;
   /**
    * The newest sequence already handed to the caller.
@@ -120,8 +121,18 @@ export function createFrameWireReader(
   >;
   let decoding = false;
   let pendingRecord: JpegRecord | undefined;
+  /**
+   * Which run of the stream the decode in flight belongs to.
+   *
+   * A decode cannot be cancelled, so `drop()` cannot stop one — it can only
+   * refuse the result. Without that refusal a caller who stops the stream
+   * mid-decode gets one more picture AFTER it asked for none, which is a pane
+   * that repaints a page the viewer has already been told it is not watching.
+   */
+  let deliveryGeneration = 0;
   const decodeRecord = (record: JpegRecord) => {
     decoding = true;
+    const generation = deliveryGeneration;
     const jpeg = record.jpeg;
     const startedAt = performance.now();
     // OFF THE MAIN THREAD, which is the whole point of the byte wire:
@@ -137,10 +148,14 @@ export function createFrameWireReader(
       }),
     )
       .then((bitmap) => {
-        if (closed || record.seq <= deliveredSeq) {
-          // The socket went while we were decoding, or a newer picture
-          // already landed. Nobody will draw this, and nobody else will
-          // free it.
+        if (
+          closed ||
+          generation !== deliveryGeneration ||
+          record.seq <= deliveredSeq
+        ) {
+          // The socket went while we were decoding, the caller dropped the
+          // picture under us, or a newer one already landed. Nobody will draw
+          // this, and nobody else will free it.
           bitmap.close();
           return;
         }
@@ -219,6 +234,17 @@ export function createFrameWireReader(
           decodeRecord(record);
         }
       }
+    },
+    /**
+     * Abandon what is in flight, and stay open for what comes next.
+     *
+     * For a caller that stops showing the picture without closing the socket —
+     * live view turned off, a navigation that blanks the pane — where `close()`
+     * would end the reader for a stream that is about to carry frames again.
+     */
+    drop() {
+      deliveryGeneration += 1;
+      pendingRecord = undefined;
     },
     close() {
       closed = true;

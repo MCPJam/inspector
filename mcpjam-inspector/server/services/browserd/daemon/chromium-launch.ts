@@ -1,3 +1,9 @@
+import type { LocalDiscoveryBudget } from "./webmcp-bridge.js";
+import { startLocalBrowserProxy } from "../local/egress-proxy.js";
+import {
+  secureDriverContext,
+  type LocalBrowserSecurityPolicy,
+} from "../local/security-policy.js";
 /**
  * The live Playwright implementation of the driver's browser boundary.
  *
@@ -14,7 +20,10 @@
 import type { DriverContext, DriverPage } from "./browser-page";
 import {
   BROWSERD_CONTEXT_OPTIONS,
+  BROWSERD_LOCAL_CONTEXT_OPTIONS,
   buildBrowserdLaunchArgs,
+  localChromeUserAgent,
+  type BrowserdSurface,
 } from "./launch-args";
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
@@ -179,7 +188,11 @@ const ACT_TIMEOUT_MS = 15_000;
  */
 const SCREENSHOT_JPEG_QUALITY = 70;
 
-export function wrapPage(page: AnyPage): DriverPage {
+export function wrapPage(
+  page: AnyPage,
+  localSecurity = false,
+  localBudget?: LocalDiscoveryBudget,
+): DriverPage {
   // The console ring. Attached once per wrapped page; entries are captured
   // eagerly because a console message is gone the moment it is emitted.
   const consoleRing: ConsoleEntry[] = [];
@@ -502,7 +515,9 @@ export function wrapPage(page: AnyPage): DriverPage {
         // ONE attach. Two sessions on a page is two of everything the CDP
         // domains keep per session, for one page's worth of truth.
         const session = await adapted.cdp();
-        return session ? attachWebMcp(page, session) : null;
+        return session
+          ? attachWebMcp(page, session, localSecurity, localBudget)
+          : null;
       })();
       return webmcpPromise;
     },
@@ -530,6 +545,8 @@ export function wrapPage(page: AnyPage): DriverPage {
 async function attachWebMcp(
   page: AnyPage,
   session: CdpLike,
+  localSecurity = false,
+  localBudget?: LocalDiscoveryBudget,
 ): Promise<WebMcpBridge | null> {
   try {
     // ONE probe closure, used for the initial `start()` AND re-run on every
@@ -545,7 +562,7 @@ async function attachWebMcp(
         .catch(() => false);
       return supported === true;
     };
-    const bridge = new WebMcpBridge(session);
+    const bridge = new WebMcpBridge(session, { localSecurity, localBudget });
     bridge.resupport(probe);
     await bridge.start(probe);
     attachFrameSessions(page, bridge);
@@ -673,6 +690,8 @@ export function registerCdpAttacher(
 }
 
 export interface LaunchBrowserdContextOptions {
+  /** Present only on local managed browsers; hosted policy is unchanged. */
+  securityPolicy?: LocalBrowserSecurityPolicy;
   /** Persistent profile directory — the singleton whose lock L8 clears. */
   userDataDir: string;
   /** Headed under Xfce in the sandbox; tests may force headless. */
@@ -716,6 +735,15 @@ export interface LaunchBrowserdContextOptions {
    * the engine depend on a filesystem layout we do not control.
    */
   executablePath?: string;
+  /**
+   * Which machine this browser is running on.
+   *
+   * Defaults to `sandbox`, so the hosted desktop's launch is byte-identical to
+   * what it was before this option existed. The local engine passes `local`,
+   * which drops the pins that would be lies on a user's own machine — see
+   * `BROWSERD_LOCAL_CONTEXT_OPTIONS` and `hardeningArgsFor`.
+   */
+  surface?: BrowserdSurface;
 }
 
 /**
@@ -725,95 +753,199 @@ export interface LaunchBrowserdContextOptions {
  * builds as root), so the sandbox is disabled only in that case.
  */
 /**
- * The context options, with the display's scale factor folded in.
+ * The context options for a surface, with the display's scale factor folded in.
  *
- * PERSISTENT ONLY. An ephemeral context is an eval or a swarm iteration, where
- * the whole point of the pinned options is that a screenshot on one host
- * matches a screenshot on another (L5) — so its scale factor stays 1 whatever
- * the box is configured for, and hosted and local eval captures stay identical.
+ * SCALE FACTOR IS PERSISTENT-ONLY. An ephemeral context is an eval or a swarm
+ * iteration, where the whole point of the pinned options is that a screenshot
+ * on one host matches a screenshot on another (L5) — so its scale factor stays
+ * 1 whatever the box is configured for, and hosted and local eval captures stay
+ * identical.
+ *
+ * THE SURFACE DECIDES THE REST. A `local` context keeps the viewport (the
+ * model's coordinate space) and drops every pin that would describe a machine
+ * the user is not running — the difference between an eval's determinism and a
+ * browser that claims to be a GPU-less Linux box sitting in UTC while it runs
+ * on someone's laptop. Ephemeral local runs drop them too: a local eval's
+ * captures were never comparable to a hosted one's (different OS, different
+ * fonts), so the pins bought nothing there and cost the same captchas.
  */
 export function contextOptionsFor(options: {
   contextMode: "persistent" | "ephemeral";
   deviceScaleFactor?: number;
-}): Omit<typeof BROWSERD_CONTEXT_OPTIONS, "deviceScaleFactor"> & {
+  surface?: BrowserdSurface;
+}): (
+  | Omit<typeof BROWSERD_CONTEXT_OPTIONS, "deviceScaleFactor">
+  | Omit<typeof BROWSERD_LOCAL_CONTEXT_OPTIONS, "deviceScaleFactor">
+) & {
   deviceScaleFactor: number;
 } {
+  const base =
+    options.surface === "local"
+      ? BROWSERD_LOCAL_CONTEXT_OPTIONS
+      : BROWSERD_CONTEXT_OPTIONS;
   const dpr = options.deviceScaleFactor ?? 1;
   if (options.contextMode !== "persistent" || dpr === 1) {
-    return BROWSERD_CONTEXT_OPTIONS;
+    return base;
   }
-  return { ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: dpr };
+  return { ...base, deviceScaleFactor: dpr };
 }
 
 export async function launchBrowserdContext(
   options: LaunchBrowserdContextOptions,
 ): Promise<DriverContext> {
-  const { chromium } = await import("playwright");
-  const launchArgs = {
-    headless: options.headless ?? false,
-    ...(options.channel ? { channel: options.channel } : {}),
-    ...(options.executablePath
-      ? { executablePath: options.executablePath }
-      : {}),
-    // Chromium cannot start its renderer sandbox as uid 0 (the image builds
-    // as root), so it is disabled only in that case.
-    chromiumSandbox: process.getuid?.() !== 0,
-    args: buildBrowserdLaunchArgs(options.extraArgs),
-  };
-
-  if (options.contextMode === "ephemeral") {
-    // No user-data-dir at all: an eval's isolation must be a property of the
-    // BROWSER, not of remembering to clear cookies. Nothing persists, so
-    // there is no singleton lock to clear either (L8 is about the shared
-    // profile directory, which does not exist here).
-    const browser = await chromium.launch(launchArgs);
-    let context;
-    try {
-      context = await browser.newContext({
-        acceptDownloads: false,
-        permissions: [],
-        // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
-        // whatever the box says, so eval captures match across hosts.
-        ...contextOptionsFor({ contextMode: "ephemeral" }),
-        deviceScaleFactor: options.deviceScaleFactor ?? 1,
+  const policy = options.securityPolicy;
+  if (policy) {
+    if (process.getuid?.() === 0)
+      throw new Error(
+        "Local Browser requires a non-root user so Chromium can remain sandboxed.",
+      );
+    if (
+      options.extraArgs?.some((arg) =>
+        /--(?:no-sandbox|disable-setuid-sandbox|disable-web-security|proxy|host-resolver|ignore-certificate-errors)/.test(
+          arg,
+        ),
+      )
+    )
+      throw new Error("Unsafe local Browser launch override.");
+    await policy.assertActive();
+  }
+  if (policy && options.contextMode !== "ephemeral" && options.userDataDir) {
+    // Remove offline network responses before Chromium can restore a worker.
+    // Cookies and website sign-ins remain in the profile.
+    const { rm } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    for (const cache of ["Service Worker", "Cache", "Code Cache"]) {
+      await rm(join(options.userDataDir, "Default", cache), {
+        recursive: true,
+        force: true,
       });
+    }
+  }
+  const { chromium } = await import("playwright");
+  const proxy = policy ? await startLocalBrowserProxy(policy) : undefined;
+  const finish = async (
+    context: import("playwright").BrowserContext,
+    onClose?: () => Promise<unknown>,
+  ) => {
+    try {
+      if (policy) {
+        // Request routing also blocks non-network file resources. The proxy
+        // is the network boundary, including workers and WebSockets.
+        await context.route("**/*", async (route) => {
+          if (!policy.allowsRequest(route.request().url()))
+            await route.abort("blockedbyclient");
+          else await route.continue();
+        });
+        for (const page of context.pages()) {
+          // Never adopt restored local-file/controller documents into the driver.
+          if (!policy.allowsRequest(page.url())) await page.close();
+        }
+      }
+      const adapted = adaptContext(context as unknown as AnyContext, {
+        localSecurity: Boolean(policy),
+        localBudget: policy?.discoveryBudget,
+        onClose: async () => {
+          try {
+            await onClose?.();
+          } finally {
+            await proxy?.close();
+          }
+        },
+      });
+      return policy ? secureDriverContext(adapted, policy) : adapted;
     } catch (error) {
-      // Ownership of the browser transfers to `adaptContext` below. If we
-      // never get there, nothing else will ever close it, and a stranded
-      // Chromium keeps running inside the box until the sandbox dies.
-      await browser.close().catch(() => {});
+      await context.close().catch(() => {});
+      await onClose?.();
       throw error;
     }
-    return adaptContext(context as unknown as AnyContext, {
-      // The browser outlives the context, so closing the context alone would
-      // leave a Chromium process behind in the box.
-      onClose: () => browser.close(),
-    });
-  }
-
-  const cleared = await clearStaleSingletonLock(options.userDataDir);
-  if (cleared.heldBy) {
-    // Somebody took the profile between the session layer's check and this
-    // launch. Refusing here beats Chromium's own message, and beats removing a
-    // live owner's lock to make room for ourselves.
-    throw new Error(
-      `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}` +
-        `${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds ` +
-        "this profile; close it and try again",
-    );
-  }
-  const context = await chromium.launchPersistentContext(options.userDataDir, {
-    ...launchArgs,
-    acceptDownloads: false,
-    permissions: [],
-    ...contextOptionsFor({
-      contextMode: "persistent",
-      ...(options.deviceScaleFactor !== undefined
-        ? { deviceScaleFactor: options.deviceScaleFactor }
+  };
+  const surface = options.surface ?? "sandbox";
+  try {
+    // Local only, and a switch rather than a context option on purpose: it
+    // corrects the UA string Chromium sends (headless would otherwise announce
+    // `HeadlessChrome`) while leaving the REAL client hints in place, so header
+    // and `navigator.userAgentData` agree. See `localChromeUserAgent`.
+    const userAgent =
+      surface === "local"
+        ? await localChromeUserAgent({
+            customExecutable: Boolean(options.executablePath),
+          })
+        : undefined;
+    const launchArgs = {
+      ...(proxy ? { proxy: proxy.proxy } : {}),
+      headless: options.headless ?? false,
+      ...(options.channel ? { channel: options.channel } : {}),
+      ...(options.executablePath
+        ? { executablePath: options.executablePath }
         : {}),
-    }),
-  });
-  return adaptContext(context as unknown as AnyContext);
+      // Chromium cannot start its renderer sandbox as uid 0 (the image builds
+      // as root), so it is disabled only in that case.
+      chromiumSandbox: process.getuid?.() !== 0,
+      args: buildBrowserdLaunchArgs(options.extraArgs, {
+        surface,
+        ...(userAgent ? { userAgent } : {}),
+      }),
+    };
+
+    if (options.contextMode === "ephemeral") {
+      // No user-data-dir at all: an eval's isolation must be a property of the
+      // BROWSER, not of remembering to clear cookies. Nothing persists, so
+      // there is no singleton lock to clear either (L8 is about the shared
+      // profile directory, which does not exist here).
+      const browser = await chromium.launch(launchArgs);
+      let context;
+      try {
+        context = await browser.newContext({
+          acceptDownloads: false,
+          permissions: [],
+          // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
+          // whatever the box says, so eval captures match across hosts.
+          ...contextOptionsFor({ contextMode: "ephemeral", surface }),
+          deviceScaleFactor: options.deviceScaleFactor ?? 1,
+        });
+      } catch (error) {
+        // Ownership of the browser transfers to `adaptContext` below. If we
+        // never get there, nothing else will ever close it, and a stranded
+        // Chromium keeps running inside the box until the sandbox dies.
+        await browser.close().catch(() => {});
+        throw error;
+      }
+      return await finish(context, () => browser.close());
+    }
+
+    const cleared = await clearStaleSingletonLock(options.userDataDir);
+    if (cleared.heldBy) {
+      // Somebody took the profile between the session layer's check and this
+      // launch. Refusing here beats Chromium's own message, and beats removing a
+      // live owner's lock to make room for ourselves.
+      throw new Error(
+        `profile_in_use: another browser (pid ${
+          cleared.heldBy.pid ?? "unknown"
+        }` +
+          `${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds ` +
+          "this profile; close it and try again",
+      );
+    }
+    const context = await chromium.launchPersistentContext(
+      options.userDataDir,
+      {
+        ...launchArgs,
+        acceptDownloads: false,
+        permissions: [],
+        ...contextOptionsFor({
+          contextMode: "persistent",
+          surface,
+          ...(options.deviceScaleFactor !== undefined
+            ? { deviceScaleFactor: options.deviceScaleFactor }
+            : {}),
+        }),
+      },
+    );
+    return await finish(context);
+  } catch (error) {
+    await proxy?.close();
+    throw error;
+  }
 }
 
 /** The subset of a Playwright BrowserContext the adapter uses. */
@@ -836,7 +968,11 @@ export type AnyContext = {
  */
 export function adaptContext(
   context: AnyContext,
-  options: { onClose?: () => Promise<unknown> } = {},
+  options: {
+    onClose?: () => Promise<unknown>;
+    localSecurity?: boolean;
+    localBudget?: LocalDiscoveryBudget;
+  } = {},
 ): DriverContext {
   const startup = [...context.pages()];
   let adopted = 0;
@@ -854,7 +990,11 @@ export function adaptContext(
         (frame) => context.newCDPSession!(frame as unknown as AnyPage),
       );
     }
-    const driverPage = wrapPage(page);
+    const driverPage = wrapPage(
+      page,
+      options.localSecurity,
+      options.localBudget,
+    );
     wrapped.set(page, driverPage);
     page.on("popup", (popup: AnyPage) => {
       const child = adopt(popup);

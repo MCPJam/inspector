@@ -62,7 +62,8 @@ import type { MiddlewareHandler } from "hono";
 import type { WSContext } from "hono/ws";
 import { WEBMCP_INSPECTOR_ENABLED } from "../../config.js";
 import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
-import { validateToken } from "../../services/session-token.js";
+import { consumeLocalNonce } from "../../utils/computers/local-terminal-auth.js";
+import { inspectionNonceScope } from "../../services/webmcp-inspector/local-authorization.js";
 import { webMcpSessions } from "../../services/webmcp-inspector/session-registry.js";
 import {
   createFramePacer,
@@ -212,13 +213,14 @@ export function createWebMcpFramesWsHandler(
     { onError: (err: unknown) => void }
   >,
 ): MiddlewareHandler {
-  return upgradeWebSocket((c) => {
+  return upgradeWebSocket(async (c) => {
     // The token rides `Sec-WebSocket-Protocol`: no custom headers on a browser
     // WS handshake, and a query string would land in access logs. No fallback.
     const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
     const token = protocolHeader.split(",")[0]?.trim() ?? "";
     const origin = c.req.header("Origin");
     const sessionId = c.req.param("id") ?? "";
+    const claim = consumeLocalNonce("webmcp-frames", token);
 
     // Everything resolvable before the socket opens is resolved here; a
     // failure becomes an immediate close-with-code in `onOpen`, because
@@ -240,12 +242,20 @@ export function createWebMcpFramesWsHandler(
       // on a bare Hono app.
       rejectCode = CLOSE_UNAUTHORIZED;
       rejectMessage = "Frame requests must come from the inspector UI.";
-    } else if (!validateToken(token)) {
+    } else if (!claim) {
       rejectCode = CLOSE_UNAUTHORIZED;
       rejectMessage = "Invalid session token.";
     } else {
       try {
-        webMcpSessions.get(sessionId);
+        const runtime = webMcpSessions.get(sessionId);
+        const scope = runtime.localAuthorization?.scope;
+        if (
+          !scope ||
+          claim.projectId !== inspectionNonceScope(sessionId, scope) ||
+          claim.consentFingerprint !== scope.consentFingerprint
+        )
+          throw new Error("unauthorized");
+        await runtime.assertAuthorized();
       } catch {
         rejectCode = CLOSE_GONE;
         rejectMessage = "That WebMCP session no longer exists.";
@@ -262,8 +272,10 @@ export function createWebMcpFramesWsHandler(
     let lastInputSeq = -1;
 
     let unregisterInputDrain: (() => void) | undefined;
+    let unregisterConsent: (() => void) | undefined;
     const teardown = () => {
       closed = true;
+      unregisterConsent?.();
       unregisterInputDrain?.();
       unregisterInputDrain = undefined;
       input?.cancel();
@@ -278,7 +290,7 @@ export function createWebMcpFramesWsHandler(
     };
 
     return {
-      onOpen: (_evt, ws) => {
+      onOpen: async (_evt, ws) => {
         if (rejectCode !== null) {
           ws.close(rejectCode, rejectMessage.slice(0, 120));
           return;
@@ -294,6 +306,14 @@ export function createWebMcpFramesWsHandler(
         let runtime;
         try {
           runtime = webMcpSessions.get(sessionId);
+          await runtime.assertAuthorized();
+          unregisterConsent = runtime.localAuthorization?.lifetime.onRevoked(
+            () => {
+              teardown();
+              liveSockets.delete(ws);
+              ws.close(CLOSE_UNAUTHORIZED, "Browser permission changed.");
+            },
+          );
         } catch {
           // Reaped between the handshake and the open.
           ws.close(CLOSE_GONE, "That WebMCP session no longer exists.");
@@ -330,6 +350,7 @@ export function createWebMcpFramesWsHandler(
                 ) {
                   return { ok: false, refused: "no_browser_session" };
                 }
+                await runtime.assertAuthorized();
                 webMcpSessions.touch(runtime);
               } catch {
                 return { ok: false, refused: "no_browser_session" };
@@ -361,8 +382,12 @@ export function createWebMcpFramesWsHandler(
         // bytes ONCE, here, per send: the provider hands the runtime base64
         // because that is what a CDP screencast produces, and this is the only
         // place it becomes the bytes that go on the wire.
+        //
+        // Authorization is re-checked PER FRAME, not just at subscribe:
+        // Browser permission can be revoked mid-stream, and the pixels must
+        // stop at that instant rather than at the next handshake.
         unsubscribeFrames = runtime.frames.subscribe((frame) => {
-          if (closed) return;
+          if (closed || !runtime.isAuthorized()) return;
           framePacer.push(
             encodeFrameStreamRecord({
               kind: FRAME_STREAM_KIND.frame,
@@ -379,25 +404,64 @@ export function createWebMcpFramesWsHandler(
           );
         });
 
-        unsubscribe = runtime.hub.subscribe((event) => {
-          if (closed) return;
-          if (
-            event.type === "session" &&
-            (event.session.status === "closed" ||
-              event.session.status === "error")
-          ) {
-            // No further paint is ever coming from a closed or crashed
-            // browser. Closing says so, rather than leaving a socket that
-            // looks live feeding a pane that will never update again; the
-            // client's SSE stream carries the reason.
-            teardown();
-            liveSockets.delete(ws);
-            ws.close(CLOSE_GONE, "That WebMCP session is over.");
-          }
-        }, SESSION_STATUS_REPLAY);
+        // THROUGH THE REGISTRY, not `runtime.hub` directly. Subscribing to the
+        // hub delivers events perfectly well but is invisible to
+        // `hasSubscribers`, so a viewer on this binary wire counted as nobody:
+        // the idle sweep could reap a session being watched, and the hosted
+        // tool poll — which deliberately spends no daemon command budget on an
+        // unobserved page — stayed silent for a pane someone had open. That
+        // still holds now the pixels arrive on their own channel: this
+        // subscription is what makes this socket a watcher.
+        unsubscribe = webMcpSessions.subscribeTo(
+          runtime,
+          (event) => {
+            // The authorization check belongs here as much as on the frame
+            // channel, and not only to stop reading a revoked session's
+            // events. A revoked grant closes this socket through the
+            // `onRevoked` handler above, which says 4401 — "stop trying".
+            // Without this guard the `session: closed` that revoking also
+            // produces gets here first and says 4404 — "that session is over"
+            // — and the client latches on the wrong reason.
+            if (closed || !runtime.isAuthorized()) return;
+            if (
+              event.type === "session" &&
+              (event.session.status === "closed" ||
+                event.session.status === "error")
+            ) {
+              // No further paint is ever coming from a closed or crashed
+              // browser. Closing says so, rather than leaving a socket that
+              // looks live feeding a pane that will never update again; the
+              // client's SSE stream carries the reason.
+              teardown();
+              liveSockets.delete(ws);
+              ws.close(CLOSE_GONE, "That WebMCP session is over.");
+            }
+          },
+          SESSION_STATUS_REPLAY,
+        );
+
+        // The status the socket just MISSED. Replay is one event deep, and a
+        // crash publishes the terminal session event and then a timeline entry
+        // — so a socket that connects between the two replays the entry and
+        // never learns the browser is gone. Read the status directly rather
+        // than deepening the replay, which would hand every socket timeline
+        // events it has no use for.
+        const current = runtime.toPublic().status;
+        if (current === "closed" || current === "error") {
+          teardown();
+          liveSockets.delete(ws);
+          ws.close(CLOSE_GONE, "That WebMCP session is over.");
+        }
       },
 
-      onMessage: (evt, ws) => {
+      onMessage: async (evt, ws) => {
+        try {
+          await webMcpSessions.get(sessionId).assertAuthorized();
+        } catch {
+          teardown();
+          ws.close(CLOSE_UNAUTHORIZED, "Browser permission changed.");
+          return;
+        }
         const data = evt.data;
         if (closed || rejectCode !== null || typeof data !== "string") return;
         if (!isFramePingMessage(data)) {
@@ -456,8 +520,13 @@ export function createWebMcpFramesWsHandler(
         // registry — is reaped out from under someone looking straight at it.
         // Bounded by the client's own 30s cadence, so it cannot be used to
         // hold a session open faster than a real viewer would.
+        //
+        // It ALSO marks the session watched, which is a stronger claim than
+        // "a stream is attached": the client sends this only while its pane is
+        // the visible tab and the document is visible. For a hosted session
+        // that is what decides whether a metered desktop box is held awake.
         try {
-          webMcpSessions.touch(webMcpSessions.get(sessionId));
+          webMcpSessions.markWatched(sessionId);
         } catch {
           // Already gone; the session-event branch owns the close.
         }

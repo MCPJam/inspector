@@ -95,7 +95,14 @@ export interface LocalBrowserStatus {
   install: {
     status: "idle" | "installing" | "ready" | "failed";
     percent?: number;
+    /** One line, human-readable, when `failed`. */
     error?: string;
+    /** The installer's last output, when `failed`, for a details block. */
+    details?: string;
+    /** Epoch ms of the next automatic attempt, when one is booked. */
+    retryAt?: number;
+    /** Failed attempts so far in this server process. */
+    attempts?: number;
   };
   running: boolean;
   leaseHeld: boolean;
@@ -131,7 +138,8 @@ async function post<T>(
     ...(options?.keepalive ? { keepalive: true } : {}),
   });
   const json = (await response.json().catch(() => null)) as
-    (T & { error?: string; code?: string }) | null;
+    | (T & { error?: string; code?: string })
+    | null;
   if (!response.ok) {
     // A stored grant is only a UI projection; the server can reject it after
     // revocation or a runtime change. Reopen the consent gate, but never let
@@ -361,7 +369,8 @@ export interface LocalBrowserTraceGap {
 }
 
 export type LocalBrowserTraceEntry =
-  LocalBrowserTraceRow | LocalBrowserTraceGap;
+  | LocalBrowserTraceRow
+  | LocalBrowserTraceGap;
 
 export interface LocalBrowserTracePage {
   entries: LocalBrowserTraceEntry[];
@@ -465,6 +474,7 @@ export function openLocalBrowserFrameStream(args: {
   nonce: string;
   /** `"binary"` asks for the daemon's frame records; omitted keeps JSON. */
   wire?: "binary" | "json";
+  sharp?: boolean;
 }): { socket: WebSocket; close(): void } {
   // The nonce is a bearer capability and the frames are pictures of a
   // signed-in browser; neither goes over an unencrypted non-loopback hop.
@@ -474,7 +484,9 @@ export function openLocalBrowserFrameStream(args: {
     args.bootId,
   )}&holder=${encodeURIComponent(args.holder)}${
     args.wire === "binary" ? "&wire=binary" : ""
-  }${args.tabId ? `&tabId=${encodeURIComponent(args.tabId)}` : ""}`;
+  }${args.sharp ? "&sharp=1" : ""}${
+    args.tabId ? `&tabId=${encodeURIComponent(args.tabId)}` : ""
+  }`;
   const socket = new WebSocket(url, [args.nonce]);
   // See the hosted opener: `blob` would make binary messages arrive
   // asynchronously and out of order against the control messages beside them.

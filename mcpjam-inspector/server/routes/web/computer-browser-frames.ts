@@ -1,3 +1,7 @@
+import {
+  jpegFrameLimit,
+  SHARP_STREAM_FEATURE,
+} from "@/shared/browser-viewport-policy";
 /**
  * The hosted browser's frame socket (`/api/web/computers/browser/frames`).
  *
@@ -85,6 +89,18 @@ const CLOSE_NOT_FOUND = 4404; // no browser there
  * a pane should hold its place and reconnect, not surface an error.
  */
 const CLOSE_LEASE_HELD = 4409;
+/**
+ * The box is asleep. TEMPORARY, and its own code because the pane's answer is
+ * neither "retry this socket" nor "give up".
+ *
+ * A hosted browser is now reclaimed within a couple of minutes of nobody
+ * watching, so finding one paused is ORDINARY rather than exceptional. The
+ * socket cannot fix it — waking is `ensure=1` on the panel route — and a plain
+ * 4503 would put a hidden pane into a 3-second reconnect loop against a box
+ * that will stay paused until somebody looks at it again, which is both
+ * pointless traffic and a probe against a machine we deliberately parked.
+ */
+const CLOSE_ASLEEP = 4410;
 const CLOSE_UNAVAILABLE = 4503; // shutting down, or an unexplained drop
 /**
  * This box cannot encode video; ask again without it.
@@ -121,6 +137,7 @@ export interface BrowserFramesDeps {
     holder: string;
     tabId?: string;
     codec?: "jpeg" | "h264";
+    sharp?: boolean;
     signal: AbortSignal;
     /**
      * One frame, as the DAEMON produced it — raw JPEG bytes, not base64.
@@ -225,6 +242,7 @@ export function createComputerBrowserFramesWsHandler(
         holder: args.holder,
         ...(args.tabId ? { tabId: args.tabId } : {}),
         ...(args.codec ? { codec: args.codec } : {}),
+        ...(args.sharp ? { sharp: true } : {}),
         ...(args.onVideo
           ? {
               onVideo: (record) =>
@@ -290,6 +308,8 @@ export function createComputerBrowserFramesWsHandler(
      * this safe while an old bundle is still cached in somebody's tab.
      */
     const binaryWire = c.req.query("wire") === "binary";
+    const wantsSharp = c.req.query("sharp") === "1";
+    let sharpAgreed = false;
     /**
      * Did this pane ask for video, and can it take it?
      *
@@ -333,6 +353,12 @@ export function createComputerBrowserFramesWsHandler(
           info.value.projectId !== claims.projectId
         ) {
           refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
+        } else if (info.value.status !== "ready") {
+          // Free: the status came back in the read we already made for the
+          // ownership check. A paused box has no daemon answering, so opening
+          // the upstream would fail anyway — this just says WHY, so the pane
+          // can re-ensure instead of reconnecting into nothing.
+          refusal = { code: CLOSE_ASLEEP, reason: "computer asleep" };
         } else {
           viewerId = claims.userId;
           const lookup = await lookupSession({
@@ -351,14 +377,20 @@ export function createComputerBrowserFramesWsHandler(
             session.logicalSessionId !== claims.sessionId
           ) {
             refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
-          } else if (wantsVideo) {
+          } else if (wantsVideo || wantsSharp) {
             // ANNOUNCED, never assumed. A daemon too old to encode would answer
             // an error stream, and a reader cannot tell that apart from a dead
             // browser — so the relay asks first and simply serves JPEG when the
             // answer is no.
             const status = await daemonStatus(session).catch(() => null);
             videoAgreed =
-              status?.kind === "ok" && (status.features ?? []).includes("h264");
+              wantsVideo &&
+              status?.kind === "ok" &&
+              (status.features ?? []).includes("h264");
+            sharpAgreed =
+              wantsSharp &&
+              status?.kind === "ok" &&
+              (status.features ?? []).includes(SHARP_STREAM_FEATURE);
           }
         }
       }
@@ -500,7 +532,10 @@ export function createComputerBrowserFramesWsHandler(
           ws.send(
             JSON.stringify({
               type: "hello",
-              features: ["input"],
+              features: [
+                "input",
+                ...(sharpAgreed ? [SHARP_STREAM_FEATURE] : []),
+              ],
               // What this stream will actually carry. `"h264"` appears only
               // when the pane asked AND the daemon said it could — a pane that
               // asked and does not see it keeps its JPEG path, which is the
@@ -571,6 +606,7 @@ export function createComputerBrowserFramesWsHandler(
           holder: viewerId,
           ...(tabId ? { tabId } : {}),
           ...(videoAgreed ? { codec: "h264" as const } : {}),
+          ...(sharpAgreed ? { sharp: true } : {}),
           ...(videoAgreed
             ? {
                 onVideo: (record) => {
@@ -599,6 +635,10 @@ export function createComputerBrowserFramesWsHandler(
             : {}),
           signal: abort.signal,
           onFrame: (frame) => {
+            if (frame.jpeg.byteLength > jpegFrameLimit(sharpAgreed)) {
+              stats?.countDrop();
+              return;
+            }
             if (closed) {
               stats?.countDrop();
               return;
@@ -625,7 +665,7 @@ export function createComputerBrowserFramesWsHandler(
               // output already is one, but its type is widened by the shared
               // module's `Uint8Array<ArrayBufferLike>`.
               const view = new Uint8Array(bytes);
-              stats?.offer(view.byteLength, () => ws.send(view));
+              stats?.offerJpeg(view.byteLength, () => ws.send(view));
               return;
             }
             const payload = JSON.stringify({
@@ -642,7 +682,7 @@ export function createComputerBrowserFramesWsHandler(
                 relayTs: Date.now(),
               },
             });
-            stats?.offer(payload.length, () => ws.send(payload));
+            stats?.offerJpeg(payload.length, () => ws.send(payload));
           },
           // The daemon's side of the accounting, merged into the same `stats`
           // message the relay's own counters go out on. One shape for the pane,

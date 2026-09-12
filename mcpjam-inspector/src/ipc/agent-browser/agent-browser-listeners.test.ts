@@ -39,6 +39,7 @@ function fakeWindow(
     webContents: {
       id: options.id ?? 7,
       getZoomFactor: () => window_.zoom,
+      mainFrame: { url: "http://localhost:6274" },
     },
     contentView: {
       addChildView: (view: SurfaceView) => {
@@ -84,6 +85,7 @@ function install(
   registerAgentBrowserListeners(
     () => (options.mainWindow ?? window_) as never,
     {
+      rendererOrigin: "http://localhost:6274",
       verifyConsent:
         options.verifyConsent ?? (async (token) => token === "browser-token"),
       surfaceFor: (bootId) => surfaces.get(bootId),
@@ -101,14 +103,25 @@ function install(
   const senderId = (options.mainWindow ?? window_)?.webContents.id ?? 7;
   return {
     surfaces,
+    capabilityFromFrame: (senderFrame: unknown) =>
+      handlers.get("agent-browser:capability")!(
+        { sender: { id: senderId }, senderFrame },
+        "browser-token",
+      ) as Promise<{ available: boolean }>,
     capability: (id = senderId, token: string | undefined = "browser-token") =>
       handlers.get("agent-browser:capability")!(
-        { sender: { id } },
+        {
+          sender: { id },
+          senderFrame: (options.mainWindow ?? window_)?.webContents.mainFrame,
+        },
         token,
       ) as Promise<{ available: boolean }>,
     setViewport: (request: unknown, id = senderId) =>
       handlers.get("agent-browser:set-viewport")!(
-        { sender: { id } },
+        {
+          sender: { id },
+          senderFrame: (options.mainWindow ?? window_)?.webContents.mainFrame,
+        },
         { consentToken: "browser-token", ...(request as object) },
       ) as Promise<AgentBrowserViewportResult>,
   };
@@ -202,6 +215,36 @@ describe("agent-browser:capability", () => {
 });
 
 describe("agent-browser:set-viewport", () => {
+  it("does not reattach a view when an older show finishes after hide", async () => {
+    const surface = createContextSurface({ authority: "shared" });
+    const view = fakeView();
+    surface.registerTab(view);
+    let finishShow!: (valid: boolean) => void;
+    const verifyConsent = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishShow = resolve;
+          }),
+      )
+      .mockResolvedValue(true);
+    const api = install({
+      surfaces: new Map([["boot-1", surface]]),
+      verifyConsent,
+    });
+    const show = api.setViewport({
+      bootId: "boot-1",
+      visible: true,
+      bounds: BOUNDS,
+    });
+    await api.setViewport({ bootId: "boot-1", visible: false });
+    finishShow(true);
+    await show;
+    expect(surface.isShown()).toBe(false);
+    expect(window_.children).not.toContain(view);
+  });
+
   const withSurface = (holder = "rail-1") => {
     const surface = createContextSurface();
     const view = fakeView();
@@ -429,4 +472,14 @@ it("Browser IPC rejects wrong or revoked consent without changing shell state", 
     timeout: 2000,
   });
   expect(await api.capability()).toEqual({ available: false });
+});
+
+it("rejects a same-window subframe and a main frame navigated away from the app", async () => {
+  const handlers = install();
+  await expect(handlers.capability()).resolves.toEqual({ available: true });
+  await expect(
+    handlers.capabilityFromFrame({ url: "http://localhost:6274" }),
+  ).resolves.toEqual({ available: false });
+  window_.webContents.mainFrame.url = "https://untrusted.test/";
+  await expect(handlers.capability()).resolves.toEqual({ available: false });
 });
