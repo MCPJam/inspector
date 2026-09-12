@@ -17,7 +17,15 @@
  * inline error and disable save up the tree.
  */
 
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -105,6 +113,35 @@ export interface ChecksSectionProps {
    * Legacy scenario predicates on existing rows render read-only.
    */
   globalGatesMenu?: boolean;
+  /**
+   * Fires when the section starts or stops holding a raw-JSON draft that does
+   * not parse. Such a draft is deliberately never written into a predicate (a
+   * half-typed schema is not an assertion), so `areAllChecksValid` cannot see
+   * it: the row still holds the last args that parsed, and Zod accepts those.
+   * Callers that gate Save on validity combine this with that check.
+   *
+   * Optional and inert when absent — the registry still runs, but nothing
+   * downstream reads it.
+   */
+  onDraftValidityChange?: (hasInvalidDraft: boolean) => void;
+}
+
+/**
+ * Where the raw-JSON editors report an unparsable draft, keyed by editor
+ * instance rather than row index: a row deleted or reordered above unmounts
+ * or re-keys the editor, and the registration follows the instance.
+ */
+const InvalidDraftRegistry = createContext<
+  ((editorId: string, invalid: boolean) => void) | null
+>(null);
+
+function useInvalidDraftRegistration(invalid: boolean): void {
+  const report = useContext(InvalidDraftRegistry);
+  const editorId = useId();
+  useEffect(() => {
+    report?.(editorId, invalid);
+    return () => report?.(editorId, false);
+  }, [report, editorId, invalid]);
 }
 
 export function ChecksSection({
@@ -120,7 +157,31 @@ export function ChecksSection({
   hideEmptyState = false,
   allowedKinds,
   globalGatesMenu = false,
+  onDraftValidityChange,
 }: ChecksSectionProps & { hideAddButton?: boolean; hideEmptyState?: boolean }) {
+  const [invalidDraftIds, setInvalidDraftIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const reportDraft = useMemo(
+    () => (editorId: string, invalid: boolean) => {
+      setInvalidDraftIds((prev) => {
+        if (prev.has(editorId) === invalid) return prev;
+        const next = new Set(prev);
+        if (invalid) next.add(editorId);
+        else next.delete(editorId);
+        return next;
+      });
+    },
+    [],
+  );
+  const hasInvalidDraft = invalidDraftIds.size > 0;
+  useEffect(() => {
+    onDraftValidityChange?.(hasInvalidDraft);
+    // Only the boolean: an inline callback would otherwise re-fire on every
+    // render with the same answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasInvalidDraft]);
+
   const updateAt = (index: number, next: Predicate) => {
     const copy = value.slice();
     copy[index] = next;
@@ -137,73 +198,77 @@ export function ChecksSection({
 
   const showHeader = Boolean(title) || Boolean(description);
   return (
-    <div className="space-y-3">
-      {showHeader ? (
-        <div>
-          {title ? (
-            <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-          ) : null}
-          {description ? (
-            <p className="text-xs text-muted-foreground mt-1">{description}</p>
-          ) : null}
-        </div>
-      ) : null}
+    <InvalidDraftRegistry.Provider value={reportDraft}>
+      <div className="space-y-3">
+        {showHeader ? (
+          <div>
+            {title ? (
+              <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+            ) : null}
+            {description ? (
+              <p className="text-xs text-muted-foreground mt-1">
+                {description}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
-      {value.length === 0 ? (
-        hideEmptyState ? null : (
-          <p className="text-xs italic text-muted-foreground/70">
-            {emptyStateText ??
-              `No checks set${
-                !readOnly ? " — every case passes by default." : "."
-              }`}
-          </p>
-        )
-      ) : (
-        <ul className="space-y-2">
-          {value.map((predicate, i) => (
-            <li key={i}>
-              <CheckRow
-                predicate={predicate}
-                onChange={
-                  readOnly || (globalGatesMenu && isScenarioPredicateKind(predicate.type))
-                    ? () => {}
-                    : (next) => updateAt(i, next)
-                }
-                onRemove={
-                  readOnly || (globalGatesMenu && isScenarioPredicateKind(predicate.type))
-                    ? undefined
-                    : () => removeAt(i)
-                }
-                availableTools={availableTools}
-                toolArgSchemas={toolArgSchemas}
-                readOnly={
-                  readOnly ||
-                  (globalGatesMenu && isScenarioPredicateKind(predicate.type))
-                }
-                legacyScenarioGate={
-                  globalGatesMenu && isScenarioPredicateKind(predicate.type)
-                }
-                globalGate={
-                  globalGatesMenu && isGlobalPolicyKind(predicate.type)
-                }
-              />
-            </li>
-          ))}
-        </ul>
-      )}
+        {value.length === 0 ? (
+          hideEmptyState ? null : (
+            <p className="text-xs italic text-muted-foreground/70">
+              {emptyStateText ??
+                `No checks set${
+                  !readOnly ? " — every case passes by default." : "."
+                }`}
+            </p>
+          )
+        ) : (
+          <ul className="space-y-2">
+            {value.map((predicate, i) => (
+              <li key={i}>
+                <CheckRow
+                  predicate={predicate}
+                  onChange={
+                    readOnly ||
+                    (globalGatesMenu && isScenarioPredicateKind(predicate.type))
+                      ? () => {}
+                      : (next) => updateAt(i, next)
+                  }
+                  onRemove={
+                    readOnly ||
+                    (globalGatesMenu && isScenarioPredicateKind(predicate.type))
+                      ? undefined
+                      : () => removeAt(i)
+                  }
+                  availableTools={availableTools}
+                  toolArgSchemas={toolArgSchemas}
+                  readOnly={
+                    readOnly ||
+                    (globalGatesMenu && isScenarioPredicateKind(predicate.type))
+                  }
+                  legacyScenarioGate={
+                    globalGatesMenu && isScenarioPredicateKind(predicate.type)
+                  }
+                  globalGate={
+                    globalGatesMenu && isGlobalPolicyKind(predicate.type)
+                  }
+                />
+              </li>
+            ))}
+          </ul>
+        )}
 
-      {!readOnly && !hideAddButton ? (
-        <AddCheckMenu
-          onAdd={addOfKind}
-          allowedKinds={
-            globalGatesMenu
-              ? GLOBAL_POLICY_MENU_KINDS
-              : allowedKinds
-          }
-          globalGatesMenu={globalGatesMenu}
-        />
-      ) : null}
-    </div>
+        {!readOnly && !hideAddButton ? (
+          <AddCheckMenu
+            onAdd={addOfKind}
+            allowedKinds={
+              globalGatesMenu ? GLOBAL_POLICY_MENU_KINDS : allowedKinds
+            }
+            globalGatesMenu={globalGatesMenu}
+          />
+        ) : null}
+      </div>
+    </InvalidDraftRegistry.Provider>
   );
 }
 
@@ -345,9 +410,7 @@ export function CheckRow({
           />
 
           {error ? (
-            <div className="text-[11px] text-destructive">
-              {error}
-            </div>
+            <div className="text-[11px] text-destructive">{error}</div>
           ) : null}
           {legacyScenarioGate ? (
             <p className="text-[11px] text-muted-foreground">
@@ -630,8 +693,8 @@ function CheckFields({
       return (
         <div className="space-y-2">
           <div className="text-xs text-muted-foreground">
-            Passes when at least one MCP App view rendered during the
-            iteration. Fails when the run recorded no view renders.
+            Passes when at least one MCP App view rendered during the iteration.
+            Fails when the run recorded no view renders.
           </div>
           <WidgetToolFilterField
             value={predicate.toolName}
@@ -676,8 +739,8 @@ function CheckFields({
       return (
         <div className="space-y-2">
           <div className="text-xs text-muted-foreground">
-            Passes when no rendered widget logged console errors. Fails when
-            the run recorded no widget renders.
+            Passes when no rendered widget logged console errors. Fails when the
+            run recorded no widget renders.
           </div>
           <WidgetToolFilterField
             value={predicate.toolName}
@@ -852,9 +915,24 @@ function ToolNameField({
   );
 }
 
-function CompactFieldDetails({ compact, open, label, children }: { compact: boolean; open: boolean; label: string; children: ReactNode }) {
+function CompactFieldDetails({
+  compact,
+  open,
+  label,
+  children,
+}: {
+  compact: boolean;
+  open: boolean;
+  label: string;
+  children: ReactNode;
+}) {
   if (!compact) return <>{children}</>;
-  return <details open={open} className="text-[11px] text-muted-foreground"><summary className="cursor-pointer py-1">{label}</summary>{children}</details>;
+  return (
+    <details open={open} className="text-[11px] text-muted-foreground">
+      <summary className="cursor-pointer py-1">{label}</summary>
+      {children}
+    </details>
+  );
 }
 
 export function ToolCalledWithFields({
@@ -886,7 +964,11 @@ export function ToolCalledWithFields({
         availableTools={availableTools}
         readOnly={readOnly}
       />
-      <CompactFieldDetails compact={compact} open={Object.keys(predicate.args.args ?? {}).length > 0} label={`Arguments · ${predicate.args.argumentMatching ?? "partial"} matching`}>
+      <CompactFieldDetails
+        compact={compact}
+        open={Object.keys(predicate.args.args ?? {}).length > 0}
+        label={`Arguments · ${predicate.args.argumentMatching ?? "partial"} matching`}
+      >
         <ArgMatcherSubform
           value={predicate.args}
           onChange={(args) => onChange({ ...predicate, args })}
@@ -894,7 +976,11 @@ export function ToolCalledWithFields({
           readOnly={readOnly}
         />
       </CompactFieldDetails>
-      <CompactFieldDetails compact={compact} open={predicate.minCount != null} label={`Call count${predicate.minCount != null ? ` · ${predicate.minCount}` : ""}`}>
+      <CompactFieldDetails
+        compact={compact}
+        open={predicate.minCount != null}
+        label={`Call count${predicate.minCount != null ? ` · ${predicate.minCount}` : ""}`}
+      >
         <div className="space-y-1">
           <Label htmlFor={minCountId} className="text-[11px]">
             Minimum matching calls (optional)
@@ -933,7 +1019,9 @@ export function ToolCalledWithFields({
  *  without a tree-builder. */
 function isNestedContainer(v: unknown): boolean {
   if (v === null || typeof v !== "object") return false;
-  return Array.isArray(v) || Object.keys(v as Record<string, unknown>).length > 0;
+  return (
+    Array.isArray(v) || Object.keys(v as Record<string, unknown>).length > 0
+  );
 }
 
 /** True iff every top-level value in `args` is a flat leaf (not a nested
@@ -1200,8 +1288,7 @@ function StructuredArgsRow({
   const argKeys = argProperties ? Object.keys(argProperties) : [];
   const useKeyDropdown = argKeys.length > 0;
   const argSchema = argProperties?.[persistedKey] as
-    | { type?: string; description?: string }
-    | undefined;
+    { type?: string; description?: string } | undefined;
   // A freshly-added row uses a synthetic `arg`/`argN` key that isn't a real
   // schema property — show the placeholder so the user is prompted to pick.
   const isPlaceholderKey =
@@ -1212,8 +1299,7 @@ function StructuredArgsRow({
     .filter((k) => k === persistedKey || !isKeyTaken(k))
     .map((k) => {
       const schema = argProperties![k] as
-        | { type?: string; description?: string }
-        | undefined;
+        { type?: string; description?: string } | undefined;
       let description = schema?.description || "";
       if (schema?.type) {
         description += description
@@ -1311,6 +1397,28 @@ function StructuredArgsRow({
  * args can still edit them as text. Maintained as a separate component
  * so the structured editor doesn't have to inherit its draft-text state.
  */
+function parseArgsDraft(text: string): {
+  parsed: Record<string, unknown> | null;
+  error: string | null;
+} {
+  try {
+    const parsed = JSON.parse(text);
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      return { parsed: null, error: "Expected a JSON object" };
+    }
+    return { parsed: parsed as Record<string, unknown>, error: null };
+  } catch (err) {
+    return {
+      parsed: null,
+      error: err instanceof Error ? err.message : "Invalid JSON",
+    };
+  }
+}
+
 function RawArgsJsonEditor({
   value,
   onChange,
@@ -1331,7 +1439,10 @@ function RawArgsJsonEditor({
     }
   };
   const [draftJson, setDraftJson] = useState(() => formatValue(value));
-  const [jsonError, setJsonError] = useState<string | null>(null);
+  // Derived from the text, never stored beside it: a stored flag is one more
+  // thing an unrelated edit can leave stale, and this one gates Save.
+  const jsonError = useMemo(() => parseArgsDraft(draftJson).error, [draftJson]);
+  useInvalidDraftRegistration(jsonError !== null);
 
   // Resync the draft text when `value` changes from outside this instance
   // (e.g. switching cases, deleting/reordering checks). Predicate rows are
@@ -1351,7 +1462,6 @@ function RawArgsJsonEditor({
     }
     if (drift) {
       setDraftJson(formatValue(value));
-      setJsonError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
@@ -1376,29 +1486,14 @@ function RawArgsJsonEditor({
         onChange={(e) => {
           const next = e.target.value;
           setDraftJson(next);
-          try {
-            const parsed = JSON.parse(next);
-            if (
-              parsed === null ||
-              typeof parsed !== "object" ||
-              Array.isArray(parsed)
-            ) {
-              setJsonError("Expected a JSON object");
-              return;
-            }
-            setJsonError(null);
-            onChange(parsed as Record<string, unknown>);
-          } catch (err) {
-            setJsonError(err instanceof Error ? err.message : "Invalid JSON");
-          }
+          const { parsed } = parseArgsDraft(next);
+          if (parsed) onChange(parsed);
         }}
         spellCheck={false}
         disabled={readOnly}
       />
       {jsonError ? (
-        <div className="text-[11px] text-destructive">
-          {jsonError}
-        </div>
+        <div className="text-[11px] text-destructive">{jsonError}</div>
       ) : null}
     </div>
   );
@@ -1482,9 +1577,7 @@ function ResponseMatchesFields({
         disabled={readOnly}
       />
       {regexError ? (
-        <div className="text-[11px] text-destructive">
-          {regexError}
-        </div>
+        <div className="text-[11px] text-destructive">{regexError}</div>
       ) : null}
     </div>
   );
@@ -1743,8 +1836,8 @@ function ToolOrderFields({
         readOnly={readOnly}
       />
       <p className="text-[11px] text-muted-foreground">
-        Vacuously true when the second tool is never called &mdash; the rule
-        has nothing to violate.
+        Vacuously true when the second tool is never called &mdash; the rule has
+        nothing to violate.
       </p>
     </div>
   );
@@ -1857,6 +1950,23 @@ function ToolResultContainsFields({
   );
 }
 
+function parseSchemaDraft(
+  text: string,
+):
+  | { ok: true; parsed: unknown; error: null }
+  | { ok: false; parsed: null; error: string } {
+  try {
+    return { ok: true, parsed: JSON.parse(text), error: null };
+  } catch (parseError) {
+    return {
+      ok: false,
+      parsed: null,
+      error:
+        parseError instanceof Error ? parseError.message : String(parseError),
+    };
+  }
+}
+
 function ToolResultSchemaFields({
   predicate,
   onChange,
@@ -1872,7 +1982,9 @@ function ToolResultSchemaFields({
   const [draft, setDraft] = useState(() =>
     JSON.stringify(predicate.schema ?? {}, null, 2),
   );
-  const [error, setError] = useState<string | null>(null);
+  // Derived from the text — see `RawArgsJsonEditor`.
+  const error = useMemo(() => parseSchemaDraft(draft).error, [draft]);
+  useInvalidDraftRegistration(error !== null);
   // Resync when `predicate` changes from OUTSIDE this instance. Rows are keyed
   // by array index, so removing or reordering a row above reuses this same
   // component with a different predicate — and without this the textarea keeps
@@ -1890,7 +2002,6 @@ function ToolResultSchemaFields({
     }
     if (drift) {
       setDraft(JSON.stringify(predicate.schema ?? {}, null, 2));
-      setError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [predicate.schema]);
@@ -1908,25 +2019,14 @@ function ToolResultSchemaFields({
           onChange={(e) => {
             const next = e.target.value;
             setDraft(next);
-            try {
-              const parsed = JSON.parse(next);
-              setError(null);
-              onChange({ ...predicate, schema: parsed });
-            } catch (parseError) {
-              // Kept LOCAL rather than written through: a half-typed schema is
-              // not an assertion, and persisting one would make the check
-              // unusable-schema on the next run.
-              //
-              // But the row still HOLDS the last schema that parsed, and a
-              // save writes that one — so the message below says so. A form
-              // that shows one thing, saves another, and mentions neither is
-              // the worse half of this trade.
-              setError(
-                parseError instanceof Error
-                  ? parseError.message
-                  : String(parseError),
-              );
-            }
+            // Written through only when it parses: a half-typed schema is not
+            // an assertion, and persisting one would make the check
+            // unusable-schema on the next run. The row meanwhile HOLDS the
+            // last schema that parsed, so the message below says so, and the
+            // section reports the unparsable draft upward so a caller can
+            // keep Save closed until it parses again.
+            const { parsed, ok } = parseSchemaDraft(next);
+            if (ok) onChange({ ...predicate, schema: parsed });
           }}
           className="font-mono text-xs"
           disabled={readOnly}
@@ -2059,9 +2159,7 @@ export interface CaseChecksSectionProps {
  * Resolve a CasePredicates view-model with a default (`inherit`) when
  * undefined, so the 3-state radio always has a checked value to bind to.
  */
-function resolveCaseChecks(
-  value: CasePredicates | undefined,
-): CasePredicates {
+function resolveCaseChecks(value: CasePredicates | undefined): CasePredicates {
   return value ?? { mode: "inherit", list: [] };
 }
 
@@ -2125,8 +2223,8 @@ export function CaseChecksSection({
           <div className="rounded-md border border-border/50 bg-muted/20 p-2.5 space-y-2">
             <p className="text-[11px] text-muted-foreground">
               {caseScenarioAsserts.length} scenario check
-              {caseScenarioAsserts.length === 1 ? "" : "s"} here — move to
-              Steps for inline checks.
+              {caseScenarioAsserts.length === 1 ? "" : "s"} here — move to Steps
+              for inline checks.
             </p>
             {onAppendScenarioToSteps ? (
               <Button
@@ -2194,11 +2292,7 @@ export function CaseChecksSection({
       ? "no default checks"
       : `${suiteDefaults.length} default check${suiteDefaults.length === 1 ? "" : "s"}`;
   const overrideKindLabel =
-    mode === "replace"
-      ? "replace"
-      : mode === "extend"
-        ? "extend"
-        : undefined;
+    mode === "replace" ? "replace" : mode === "extend" ? "extend" : undefined;
   const handleResetMode = () => onChange(undefined);
 
   return (
@@ -2246,15 +2340,23 @@ export function CaseChecksSection({
 
       {mode === "inherit" ? (
         suiteDefaults.length === 0 ? (
-          emptyInheritanceMessage ? <p className="text-xs text-muted-foreground">{emptyInheritanceMessage}</p> : <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-xs text-foreground">
-            <span aria-hidden className="mt-0.5 text-warning">⚠</span>
-            <span>
-              Suite has no default checks. This case has{" "}
-              <strong className="font-semibold">no checks</strong> — it will
-              always pass on the checks axis. Switch to Replace or Extend to
-              author case-specific checks.
-            </span>
-          </div>
+          emptyInheritanceMessage ? (
+            <p className="text-xs text-muted-foreground">
+              {emptyInheritanceMessage}
+            </p>
+          ) : (
+            <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-xs text-foreground">
+              <span aria-hidden className="mt-0.5 text-warning">
+                ⚠
+              </span>
+              <span>
+                Suite has no default checks. This case has{" "}
+                <strong className="font-semibold">no checks</strong> — it will
+                always pass on the checks axis. Switch to Replace or Extend to
+                author case-specific checks.
+              </span>
+            </div>
+          )
         ) : (
           <div className="rounded-md border border-border/40 bg-background p-3 text-xs text-muted-foreground">
             {`${suiteDefaults.length} check${suiteDefaults.length === 1 ? "" : "s"} inherited from suite — view defaults on the suite settings page.`}
@@ -2282,7 +2384,11 @@ export function CaseChecksSection({
           value={resolved.list}
           onChange={setList}
           availableTools={availableTools}
-          title={mode === "extend" ? "Additional checks for this case" : "Checks for this case"}
+          title={
+            mode === "extend"
+              ? "Additional checks for this case"
+              : "Checks for this case"
+          }
           // In extend mode the inherited suite checks still run, so the
           // default "every case passes by default" would be false — an empty
           // list here means no EXTRA checks, not no checks.

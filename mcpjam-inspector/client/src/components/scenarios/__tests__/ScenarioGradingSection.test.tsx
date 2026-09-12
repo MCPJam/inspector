@@ -22,12 +22,20 @@ vi.mock("@/components/swarms/journey-rubric-editor", () => ({
   JourneyRubricEditor: ({
     value,
     onChange,
+    onDraftValidityChange,
   }: {
     value: JourneyCriterion[];
     onChange: (next: JourneyCriterion[]) => void;
+    onDraftValidityChange?: (hasInvalidDraft: boolean) => void;
   }) => (
     <div>
       <span data-testid="rubric-count">{value.length}</span>
+      <button type="button" onClick={() => onDraftValidityChange?.(true)}>
+        break json
+      </button>
+      <button type="button" onClick={() => onDraftValidityChange?.(false)}>
+        fix json
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -159,7 +167,11 @@ describe("ScenarioGradingSection", () => {
     const user = userEvent.setup();
     render(
       <ScenarioGradingSection
-        scenario={scenarioWith({ enabled: true, samplingRate: 1, rubric: RUBRIC })}
+        scenario={scenarioWith({
+          enabled: true,
+          samplingRate: 1,
+          rubric: RUBRIC,
+        })}
       />,
     );
 
@@ -187,7 +199,11 @@ describe("ScenarioGradingSection", () => {
 
     render(
       <ScenarioGradingSection
-        scenario={scenarioWith({ enabled: true, samplingRate: 1, rubric: RUBRIC })}
+        scenario={scenarioWith({
+          enabled: true,
+          samplingRate: 1,
+          rubric: RUBRIC,
+        })}
       />,
     );
 
@@ -208,6 +224,42 @@ describe("ScenarioGradingSection", () => {
           .disabled,
       ).toBe(false);
     });
+  });
+
+  it("keeps Save closed while a raw-JSON draft does not parse, even after other edits", async () => {
+    const user = userEvent.setup();
+    render(
+      <ScenarioGradingSection
+        scenario={scenarioWith({
+          enabled: true,
+          samplingRate: 1,
+          rubric: RUBRIC,
+        })}
+      />,
+    );
+    const save = screen.getByTestId(
+      "scenario-grading-save",
+    ) as HTMLButtonElement;
+
+    // Dirty and Zod-valid: the predicate list never receives the bad text.
+    await user.click(screen.getByText("add check"));
+    expect(save.disabled).toBe(false);
+
+    await user.click(screen.getByText("break json"));
+    expect(save.disabled).toBe(true);
+
+    // An unrelated edit must not reopen it — this is the reported bug.
+    await user.clear(screen.getByLabelText("Sample"));
+    await user.type(screen.getByLabelText("Sample"), "50");
+    expect(save.disabled).toBe(true);
+
+    await user.click(screen.getByText("fix json"));
+    expect(save.disabled).toBe(false);
+
+    await user.click(save);
+    await waitFor(() =>
+      expect(setProductionScoringMock).toHaveBeenCalledTimes(1),
+    );
   });
 
   it("save stays disabled while pristine", () => {
@@ -234,9 +286,7 @@ describe("ScenarioGradingSection", () => {
     const user = userEvent.setup();
     render(<ScenarioGradingSection scenario={scenarioWith(null)} />);
 
-    await user.click(
-      screen.getByTestId("scenario-grading-enabled"),
-    );
+    await user.click(screen.getByTestId("scenario-grading-enabled"));
 
     expect(
       screen.getByText("Add at least one check to enable grading."),
@@ -258,7 +308,11 @@ describe("ScenarioGradingSection", () => {
     const user = userEvent.setup();
     render(
       <ScenarioGradingSection
-        scenario={scenarioWith({ enabled: true, samplingRate: 1, rubric: RUBRIC })}
+        scenario={scenarioWith({
+          enabled: true,
+          samplingRate: 1,
+          rubric: RUBRIC,
+        })}
       />,
     );
 
