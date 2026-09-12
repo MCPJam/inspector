@@ -16,8 +16,8 @@
  * would make the pin pass forever, from the moment it stopped watching
  * anything, which is strictly worse than a loud failure.
  *
- * So the declaration stays here, byte for byte, and `evaluator-stage.ts`
- * re-exports it under the canonical name instead.
+ * So the declaration stays here, byte for byte, and `./index.ts` re-exports it
+ * under the canonical name instead.
  */
 
 import {
