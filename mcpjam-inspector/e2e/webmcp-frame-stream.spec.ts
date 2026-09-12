@@ -60,12 +60,66 @@ async function sessionToken(): Promise<string> {
   return body.token!;
 }
 
+/**
+ * The two credentials `authorizeLocalInspection` wants on top of the session
+ * token, taken once per run by `authorizeLocalBrowser` below.
+ *
+ * The session token says "this page is the inspector"; these say WHO is asking
+ * and that this DEVICE has agreed to be inspected, which is a different
+ * question and the reason the header is separate.
+ */
+let guestBearer: string | undefined;
+let browserConsent: string | undefined;
+
 function authed(token: string, extra: Record<string, string> = {}) {
   return {
     "X-MCP-Session-Auth": `Bearer ${token}`,
     Origin: ORIGIN,
+    ...(guestBearer ? { Authorization: `Bearer ${guestBearer}` } : {}),
+    ...(browserConsent ? { "x-mcpjam-browser-consent": browserConsent } : {}),
     ...extra,
   };
+}
+
+/**
+ * Become a caller `/api/mcp/webmcp/*` will actually serve: a guest identity,
+ * and the device consent that route has required since #4921.
+ *
+ * Both are taken through the product's own routes, in the order the product
+ * takes them — the consent grant is itself behind the bearer. Without them a
+ * session start answers 401, then 403 `browser_consent_required`, and the
+ * rollout skip below hides both: the flag refuses first, so this file never
+ * reaches the gates it would also fail. Taking them here is what makes these
+ * runnable at all wherever the flag does admit a localhost caller.
+ *
+ * BEST EFFORT, and deliberately so: the consent route sits behind the SAME
+ * rollout flag, so where the flag is off — CI, every headless run — it answers
+ * 404 too. Asserting here would turn the skip below into seven failures for
+ * the one condition it exists to tolerate. Leaving the credentials unset
+ * instead puts each test back on the server's own answer to a session start,
+ * which either skips on the flag or fails loudly quoting the gate it hit.
+ *
+ * The consent grant ROTATES an existing one — the capability is one per
+ * machine and only `grant` yields the plaintext, since the file keeps a hash —
+ * so a developer with the inspector open re-authorizes it after a local run.
+ */
+async function authorizeLocalBrowser(token: string): Promise<void> {
+  const guest = await fetch(`${BASE}/api/web/guest-session`, {
+    method: "POST",
+    headers: { Origin: ORIGIN, "content-type": "application/json" },
+    body: "{}",
+  });
+  guestBearer = guest.ok
+    ? ((await guest.json()) as { token?: string }).token
+    : undefined;
+
+  const granted = await fetch(
+    `${BASE}/api/mcp/computers/local-browser/consent/grant`,
+    { method: "POST", headers: authed(token) },
+  );
+  browserConsent = granted.ok
+    ? ((await granted.json()) as { token?: string }).token
+    : undefined;
 }
 
 async function command(
@@ -346,6 +400,12 @@ test.describe("WebMCP viewport frame stream", () => {
     !LOCAL_TARGET,
     "The WebMCP Inspector is not mounted on a hosted deployment.",
   );
+  // Consent is per machine and the guest lasts a day, so one pass covers the
+  // file. It has to land before the first session start, not inside each test.
+  test.beforeAll(async () => {
+    await authorizeLocalBrowser(await sessionToken());
+  });
+
   // Serial, because each test opens a real browser and the registry caps
   // concurrent sessions at two — parallel workers would race each other into a
   // capacity refusal that has nothing to do with what is under test.
