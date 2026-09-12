@@ -4,8 +4,17 @@ import {
   writeOnboardingState,
   clearOnboardingState,
   isFirstRunEligible,
+  markOnboardingDismissed,
   markOnboardingStarted,
   markOnboardingShown,
+  isFirstRunServerChoiceEligible,
+  markFirstRunPlaygroundPromptConsumed,
+  markFirstRunPlaygroundPromptPending,
+  markFirstRunServerChoiceDismissed,
+  markFirstRunServerChoiceStarted,
+  markFirstRunServerChoiceWelcomeShown,
+  markFirstRunServerChoiceCompleted,
+  readFirstRunServerChoiceState,
 } from "../onboarding-state";
 
 describe("onboarding-state", () => {
@@ -26,7 +35,7 @@ describe("onboarding-state", () => {
     it("marks onboarding as started before the NUX is shown", () => {
       markOnboardingStarted();
       expect(readOnboardingState()).toEqual(
-        expect.objectContaining({ status: "started" })
+        expect.objectContaining({ status: "started" }),
       );
     });
 
@@ -34,7 +43,10 @@ describe("onboarding-state", () => {
       markOnboardingStarted();
       markOnboardingShown();
       expect(readOnboardingState()).toEqual(
-        expect.objectContaining({ status: "seen", shownAt: expect.any(Number) })
+        expect.objectContaining({
+          status: "seen",
+          shownAt: expect.any(Number),
+        }),
       );
     });
 
@@ -42,6 +54,11 @@ describe("onboarding-state", () => {
       const state = { status: "completed" as const, completedAt: 1234567890 };
       writeOnboardingState(state);
       expect(readOnboardingState()).toEqual(state);
+    });
+
+    it("records an explicit dismissal", () => {
+      markOnboardingDismissed();
+      expect(readOnboardingState()).toEqual({ status: "dismissed" });
     });
 
     it("returns null for invalid JSON", () => {
@@ -52,7 +69,7 @@ describe("onboarding-state", () => {
     it("returns null for invalid status", () => {
       localStorage.setItem(
         "mcp-onboarding-state",
-        JSON.stringify({ status: "invalid" })
+        JSON.stringify({ status: "invalid" }),
       );
       expect(readOnboardingState()).toBeNull();
     });
@@ -93,6 +110,10 @@ describe("onboarding-state", () => {
 
     it("returns true when hash is #home (the default landing route)", () => {
       expect(isFirstRunEligible(false, "#home")).toBe(true);
+    });
+
+    it("returns true from the Playground entry route", () => {
+      expect(isFirstRunEligible(false, "playground")).toBe(true);
     });
 
     it("returns false when hash points to a specific tab", () => {
@@ -173,6 +194,138 @@ describe("onboarding-state", () => {
     it("returns false when onboarding was visibly shown", () => {
       writeOnboardingState({ status: "seen", shownAt: Date.now() });
       expect(isFirstRunEligible(false, "")).toBe(false);
+    });
+  });
+
+  describe("isFirstRunServerChoiceEligible", () => {
+    it("records the welcome as shown before the user interacts", () => {
+      markFirstRunServerChoiceWelcomeShown();
+
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "started",
+          shownAt: expect.any(Number),
+        }),
+      );
+    });
+
+    it("keeps a visibly started flow eligible when a server row hydrates", () => {
+      markFirstRunServerChoiceWelcomeShown();
+
+      expect(
+        isFirstRunServerChoiceEligible(
+          true,
+          "playground",
+          readFirstRunServerChoiceState(),
+        ),
+      ).toBe(true);
+    });
+
+    it("records the server associated with a connection attempt", () => {
+      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceStarted("Personal server");
+
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "started",
+          attemptedServerName: "Personal server",
+        }),
+      );
+    });
+
+    it("keeps the attempted server and starter prompt across completion", () => {
+      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceStarted("Excalidraw (App)");
+      markFirstRunServerChoiceCompleted();
+      markFirstRunPlaygroundPromptPending();
+
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "completed",
+          attemptedServerName: "Excalidraw (App)",
+          playgroundPromptPending: true,
+        }),
+      );
+
+      markFirstRunPlaygroundPromptConsumed();
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "completed",
+          attemptedServerName: "Excalidraw (App)",
+          playgroundPromptPending: false,
+        }),
+      );
+    });
+
+    it("does not inherit completion from the legacy automatic flow", () => {
+      writeOnboardingState({ status: "seen", shownAt: Date.now() });
+
+      expect(
+        isFirstRunServerChoiceEligible(
+          false,
+          "home",
+          readFirstRunServerChoiceState(),
+        ),
+      ).toBe(true);
+    });
+
+    it("stays hidden after the user explicitly chooses setup later", () => {
+      markFirstRunServerChoiceDismissed();
+
+      expect(
+        isFirstRunServerChoiceEligible(
+          false,
+          "home",
+          readFirstRunServerChoiceState(),
+        ),
+      ).toBe(false);
+    });
+
+    it("does not hide the welcome after an automatic legacy completion", () => {
+      localStorage.setItem(
+        "mcp-first-run-server-choice-state",
+        JSON.stringify({ status: "completed", completedAt: Date.now() }),
+      );
+
+      expect(
+        isFirstRunServerChoiceEligible(
+          false,
+          "home",
+          readFirstRunServerChoiceState(),
+        ),
+      ).toBe(true);
+    });
+
+    it("lets a legacy completion without shownAt enter and exit the explicit flow", () => {
+      localStorage.setItem(
+        "mcp-first-run-server-choice-state",
+        JSON.stringify({ status: "completed", completedAt: Date.now() }),
+      );
+
+      markFirstRunServerChoiceWelcomeShown();
+      expect(readFirstRunServerChoiceState()).toEqual(
+        expect.objectContaining({
+          status: "started",
+          shownAt: expect.any(Number),
+        }),
+      );
+
+      markFirstRunServerChoiceDismissed();
+      expect(readFirstRunServerChoiceState()).toEqual({ status: "dismissed" });
+    });
+
+    it("stays hidden after an explicit welcome and successful connection", () => {
+      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceStarted();
+      markFirstRunServerChoiceCompleted();
+
+      expect(
+        isFirstRunServerChoiceEligible(
+          false,
+          "home",
+          readFirstRunServerChoiceState(),
+        ),
+      ).toBe(false);
     });
   });
 });

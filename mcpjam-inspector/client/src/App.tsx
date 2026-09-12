@@ -63,8 +63,29 @@ import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
-import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
-import { isFirstRunEligible } from "./lib/onboarding-state";
+import { PLAYGROUND_FIRST_RUN_PROMPT } from "./components/ui-playground/hooks/use-playground-state";
+import {
+  EXCALIDRAW_SERVER_CONFIG,
+  EXCALIDRAW_SERVER_NAME,
+} from "./lib/excalidraw-quick-connect";
+import {
+  isFirstRunServerChoiceEligible,
+  markFirstRunPlaygroundPromptConsumed,
+  markFirstRunPlaygroundPromptPending,
+  markFirstRunServerChoiceCompleted,
+  markFirstRunServerChoiceDismissed,
+  markFirstRunServerChoiceStarted,
+  markFirstRunServerChoiceWelcomeShown,
+  readFirstRunServerChoiceState,
+} from "./lib/onboarding-state";
+import {
+  FirstRunOnboardingOverlay,
+  type FirstRunConnectionState,
+  type FirstRunServerDraft,
+} from "./components/onboarding/FirstRunOnboardingOverlay";
+import type { ServerFormData } from "@/shared/types.js";
+import { validateServerFormData } from "@/lib/server-form-validation";
+import { listTools } from "@/lib/apis/mcp-tools-api";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -200,6 +221,7 @@ import {
   stripProjectFromPath,
 } from "./lib/project-route";
 import { useProjectRouteCoordinator } from "./hooks/use-project-route-coordinator";
+import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import {
   createProjectSignInReturnRecoveryIntent,
   resolveProjectSignInReturnRecovery,
@@ -330,7 +352,6 @@ import {
   UNSAFE_LocationContext,
   useParams,
 } from "react-router";
-import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
 import { resetTokenCache } from "./lib/apis/web/context";
@@ -2281,10 +2302,12 @@ export function PlaygroundRoute() {
     isSelectedServerSyncing,
     isWorkOsLoading,
     playgroundServerSelectorProps,
+    firstRunPlaygroundPrompt,
     projectServers,
     remoteFirstRunOnboardingShown,
     selectedMCPConfig,
     setPlaygroundOnboarding,
+    setFirstRunPlaygroundPrompt,
     setEvalChatHandoff,
     workOsUser,
   } = useAppRouteContext();
@@ -2303,12 +2326,18 @@ export function PlaygroundRoute() {
       isClientConfigSyncPending={isClientConfigSyncPending}
       areServersHydrated={areServersHydrated}
       hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
+      autoConnectFirstRun={false}
       isServerSyncing={isSelectedServerSyncing}
       onConnect={handleConnect}
       onSaveHostContext={handleUpdateHostContext}
       ensureServersReady={ensureServersReady}
       onOnboardingChange={setPlaygroundOnboarding}
       playgroundServerSelectorProps={playgroundServerSelectorProps}
+      firstRunPrompt={firstRunPlaygroundPrompt}
+      onFirstRunPromptConsumed={() => {
+        setFirstRunPlaygroundPrompt(null);
+        markFirstRunPlaygroundPromptConsumed();
+      }}
       activeHost={activeHost}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
@@ -2513,6 +2542,32 @@ export default function App() {
     setOptimisticallyDeletedOrganizationIds,
   ] = useState<string[]>([]);
   const [playgroundOnboarding, setPlaygroundOnboarding] = useState(false);
+  const [firstRunOverlayDismissed, setFirstRunOverlayDismissed] =
+    useState(false);
+  const [firstRunOverlaySessionStarted, setFirstRunOverlaySessionStarted] =
+    useState(false);
+  const [initialFirstRunServerChoiceState] = useState(() =>
+    readFirstRunServerChoiceState(),
+  );
+  const skipFirstRunWelcome = Boolean(
+    initialFirstRunServerChoiceState?.shownAt,
+  );
+  const shouldRepairFirstRunStartedState =
+    initialFirstRunServerChoiceState?.status === "started";
+  const [firstRunConnectionState, setFirstRunConnectionState] =
+    useState<FirstRunConnectionState>({ status: "idle" });
+  const [firstRunPlaygroundPrompt, setFirstRunPlaygroundPrompt] = useState<
+    string | null
+  >(() =>
+    initialFirstRunServerChoiceState?.playgroundPromptPending
+      ? PLAYGROUND_FIRST_RUN_PROMPT
+      : null,
+  );
+  const [pendingFirstRunConnection, setPendingFirstRunConnection] =
+    useState<ServerFormData | null>(null);
+  const firstRunConnectionAttemptRef = useRef(0);
+  const restoredFirstRunSelectionRef = useRef<string | null>(null);
+  const restoredFirstRunServerRef = useRef<string | null>(null);
   // Bumped to ask the active debugger route to open its own "configure server"
   // modal (XAA / OAuth) instead of the generic Add Server modal — see the
   // onAddServerRequested wiring on the header server picker below.
@@ -3054,6 +3109,7 @@ export default function App() {
     reconnectServerForClientSwitch,
     ensureServersReady,
     ensureHostedServerIdsForNames,
+    isConnectionPreflightPending,
     syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
@@ -3108,7 +3164,10 @@ export default function App() {
   // gets a chance to run.
   const disconnectRuntimeServersForAuthExit = useCallback(async () => {
     const inspection = useWebmcpInspectorStore.getState();
-    if (inspection.session && !inspection.session.sessionId.startsWith("hosted:")) {
+    if (
+      inspection.session &&
+      !inspection.session.sessionId.startsWith("hosted:")
+    ) {
       await inspection.closeSession();
     }
     const serverNames = Object.keys(appState.servers);
@@ -3252,12 +3311,15 @@ export default function App() {
   const hasAnyFirstRunBlockingProjectServers = Object.keys(projectServers).some(
     (serverName) => serverName !== EXCALIDRAW_SERVER_NAME,
   );
+  // A first attempt creates its project server record before the real MCP
+  // handshake begins. Keep the overlay mounted while that attempt is active so
+  // a failed handshake can return the user to its editable recovery form.
+  const isFirstRunConnectionActive = firstRunConnectionState.status !== "idle";
   const remoteFirstRunOnboardingShown =
     currentUser == null
       ? undefined
       : currentUser.hasSeenOnboarding === true ||
         currentUser.hasCompletedOnboarding === true;
-  const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
   // A signed-in user counts as "new" (and thus gets the first-run Playground
   // redirect) only when their account was created on/after the rollout cutoff.
   // This keeps every pre-existing account on Home even if its onboarding flag
@@ -3299,22 +3361,7 @@ export default function App() {
       const raw = new URLSearchParams(window.location.search).get("template");
       return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
     })();
-  // Same clobber hazard for a project-bearing entry — either shape. The
-  // onboarding redirect would drop the path before it is normalized onto
-  // `/p/<projectId>/...`, taking the destination the link named with it.
-  //
-  // The path test asks whether the URL CLAIMS a project, not whether that
-  // claim is usable: `/p/<malformed>/servers` matches the `p/:projectId`
-  // route, and the boundary answers it with the generic inaccessible state.
-  // Testing for a well-formed id instead would let the onboarding redirect
-  // fire on exactly those URLs and replace the error with Playground — the
-  // requested URL gone, and no way to tell the user what was wrong with it.
-  //
-  // A legacy `?project=` still counts only when it is USABLE: that one is
-  // stripped rather than reported, so a malformed value must not suppress
-  // onboarding. Either way the suppression is transient — the normalizer
-  // resolves or gives up on the first render after project data settles.
-  const hasProjectSwitchDeepLinkParam =
+  const hasProjectScopedFirstRunDestination =
     typeof window !== "undefined" &&
     (hasProjectDeepLinkParam(window.location.search) ||
       readProjectPathSegment(window.location.pathname) !== null);
@@ -3324,26 +3371,260 @@ export default function App() {
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
-    !hasProjectSwitchDeepLinkParam &&
     !isWorkOsLoading &&
     effectiveHostedShellGateState === "ready" &&
     !(isAuthenticated && currentUser === undefined) &&
-    !hasSeenFirstRunOnboarding &&
     (!HOSTED_MODE ||
       (isAuthenticated &&
         !isLoadingRemoteProjects &&
         areServersHydrated &&
         !!activeProjectId &&
         activeProjectId !== "none")) &&
-    isFirstRunEligible(
-      hasAnyFirstRunBlockingProjectServers,
-      activeTab,
-      !!workOsUser,
-      remoteFirstRunOnboardingShown,
-      isNewSignedInAccount,
+    (firstRunOverlaySessionStarted ||
+      isFirstRunConnectionActive ||
+      isFirstRunServerChoiceEligible(
+        hasAnyFirstRunBlockingProjectServers && !isFirstRunConnectionActive,
+        activeTab,
+        initialFirstRunServerChoiceState,
+        !!workOsUser,
+        isNewSignedInAccount,
+      ));
+  const shouldRouteToFirstRunHome =
+    shouldRouteToFirstRunOnboarding &&
+    !firstRunOverlayDismissed &&
+    activeTab !== "home" &&
+    !hasProjectScopedFirstRunDestination;
+  const shouldShowFirstRunOverlay =
+    shouldRouteToFirstRunOnboarding &&
+    (activeTab === "home" || hasProjectScopedFirstRunDestination) &&
+    !firstRunOverlayDismissed;
+
+  useLayoutEffect(() => {
+    if (shouldRouteToFirstRunOnboarding) {
+      setFirstRunOverlaySessionStarted(true);
+    }
+  }, [shouldRouteToFirstRunOnboarding]);
+
+  const openFirstRunServerConnection = useCallback(
+    (draft: FirstRunServerDraft) => {
+      const stdioCommandParts = draft.urlOrCommand
+        .trim()
+        .split(/\s+/)
+        .filter((part) => part.length > 0);
+      const formData: ServerFormData = {
+        name: draft.name,
+        type: draft.transport,
+        ...(draft.transport === "http"
+          ? { url: draft.urlOrCommand }
+          : {
+              command: stdioCommandParts[0] ?? "",
+              args: stdioCommandParts.slice(1),
+            }),
+        useOAuth: draft.authentication === "oauth",
+        authMethod: draft.authentication,
+      };
+      const validationError = validateServerFormData(formData);
+      if (validationError) {
+        setFirstRunConnectionState({
+          status: "failed",
+          serverName: formData.name,
+          serverKind: "personal",
+          error: validationError,
+        });
+        return;
+      }
+
+      firstRunConnectionAttemptRef.current += 1;
+      markFirstRunServerChoiceStarted(formData.name);
+      setPendingFirstRunConnection(formData);
+      setFirstRunConnectionState({
+        status: "preparing",
+        serverName: formData.name,
+        serverKind: "personal",
+      });
+    },
+    [],
+  );
+
+  const connectFirstRunDemo = useCallback(() => {
+    firstRunConnectionAttemptRef.current += 1;
+    markFirstRunServerChoiceStarted(EXCALIDRAW_SERVER_CONFIG.name);
+    setPendingFirstRunConnection(EXCALIDRAW_SERVER_CONFIG);
+    setFirstRunConnectionState({
+      status: "preparing",
+      serverName: EXCALIDRAW_SERVER_NAME,
+      serverKind: "demo",
+    });
+  }, []);
+
+  // Hosted project creation is asynchronous. `handleConnect` deliberately
+  // rejects earlier attempts with "Finishing setup." because it needs the
+  // shared Convex project id. Keep the selected server here and launch the
+  // normal save, handshake, compatibility, and tool-discovery path as soon as
+  // that project is available instead of surfacing an unusable connection UI.
+  const isFirstRunProjectReady =
+    !isConnectionPreflightPending &&
+    (!HOSTED_MODE ||
+      !isAuthenticated ||
+      Boolean(projects[activeProjectId]?.sharedProjectId));
+  useEffect(() => {
+    if (
+      !pendingFirstRunConnection ||
+      firstRunConnectionState.status !== "preparing" ||
+      !isFirstRunProjectReady
+    ) {
+      return;
+    }
+
+    setPendingFirstRunConnection(null);
+    setFirstRunConnectionState({
+      status: "connecting",
+      serverName: pendingFirstRunConnection.name,
+      serverKind: firstRunConnectionState.serverKind,
+    });
+    void handleConnect(pendingFirstRunConnection, {
+      suppressErrorToast: true,
+    });
+  }, [
+    firstRunConnectionState.status,
+    handleConnect,
+    isFirstRunProjectReady,
+    pendingFirstRunConnection,
+  ]);
+
+  useEffect(() => {
+    if (firstRunConnectionState.status !== "connecting") return;
+
+    const server = appState.servers[firstRunConnectionState.serverName];
+    if (!server) return;
+
+    if (server.connectionStatus === "connected") {
+      const attemptId = firstRunConnectionAttemptRef.current;
+      const { serverKind, serverName } = firstRunConnectionState;
+      setPendingFirstRunConnection(null);
+      setFirstRunConnectionState({
+        status: "loading-tools",
+        serverName,
+        serverKind,
+      });
+      void listTools({ serverId: serverName, refresh: true })
+        .then(({ tools }) => {
+          if (firstRunConnectionAttemptRef.current !== attemptId) return;
+          // Persist the real outcome before the user presses the final CTA so
+          // a refresh cannot replay onboarding after a successful handshake.
+          markFirstRunServerChoiceCompleted();
+          setFirstRunConnectionState({
+            status: "connected",
+            serverName,
+            serverKind,
+            toolCount: tools.length,
+          });
+        })
+        .catch((error: unknown) => {
+          if (firstRunConnectionAttemptRef.current !== attemptId) return;
+          setFirstRunConnectionState({
+            status: "failed",
+            serverName,
+            serverKind,
+            error:
+              error instanceof Error
+                ? error.message
+                : "MCPJam connected, but could not load this server's tools.",
+          });
+        });
+      return;
+    }
+
+    if (server.connectionStatus === "failed") {
+      setPendingFirstRunConnection(null);
+      setFirstRunConnectionState({
+        status: "failed",
+        serverName: firstRunConnectionState.serverName,
+        serverKind: firstRunConnectionState.serverKind,
+        error: server.lastError || "MCPJam could not connect to this server.",
+      });
+    }
+  }, [appState.servers, firstRunConnectionState]);
+
+  // Repair stale `started` records left by the earlier flow, which created the
+  // server successfully but never wrote its onboarding completion marker.
+  useEffect(() => {
+    if (
+      !shouldRepairFirstRunStartedState ||
+      !areServersHydrated ||
+      isFirstRunConnectionActive
+    ) {
+      return;
+    }
+    if (readFirstRunServerChoiceState()?.status !== "started") return;
+
+    const connectedServerNames = new Set(
+      [
+        ...Object.values(projectServers),
+        ...Object.values<ServerWithName>(appState.servers),
+      ]
+        .filter((server) => server.connectionStatus === "connected")
+        .map((server) => server.name),
     );
-  const shouldHoldHostedHomeRouteForFirstRunRedirect =
-    HOSTED_MODE && activeTab === "home" && shouldRouteToFirstRunOnboarding;
+    const attemptedServerName =
+      initialFirstRunServerChoiceState?.attemptedServerName;
+    const isNamedAttemptConnected =
+      attemptedServerName !== undefined &&
+      connectedServerNames.has(attemptedServerName);
+    // Records from builds before attemptedServerName existed can be repaired
+    // only after they are clearly stale and exactly one server is connected.
+    // This avoids mistaking a fresh refresh at the choice screen for success.
+    const isLegacyStaleConnection =
+      attemptedServerName === undefined &&
+      connectedServerNames.size === 1 &&
+      Date.now() -
+        (initialFirstRunServerChoiceState?.startedAt ?? Date.now()) >=
+        5 * 60_000;
+    if (!isNamedAttemptConnected && !isLegacyStaleConnection) return;
+
+    markFirstRunServerChoiceCompleted();
+    setFirstRunOverlayDismissed(true);
+  }, [
+    appState.servers,
+    areServersHydrated,
+    initialFirstRunServerChoiceState,
+    isFirstRunConnectionActive,
+    projectServers,
+    shouldRepairFirstRunStartedState,
+  ]);
+
+  const cancelFirstRunConnection = useCallback(() => {
+    firstRunConnectionAttemptRef.current += 1;
+    setPendingFirstRunConnection(null);
+    if (firstRunConnectionState.status !== "idle") {
+      handleRuntimeDisconnect(firstRunConnectionState.serverName);
+    }
+    setFirstRunConnectionState({ status: "idle" });
+  }, [firstRunConnectionState, handleRuntimeDisconnect]);
+
+  const returnToFirstRunChoice = useCallback(() => {
+    firstRunConnectionAttemptRef.current += 1;
+    setPendingFirstRunConnection(null);
+    setFirstRunConnectionState({ status: "idle" });
+  }, []);
+
+  const openFirstRunPlayground = useCallback(() => {
+    firstRunConnectionAttemptRef.current += 1;
+    setPendingFirstRunConnection(null);
+    setFirstRunConnectionState({ status: "idle" });
+    setFirstRunOverlayDismissed(true);
+    setFirstRunPlaygroundPrompt(PLAYGROUND_FIRST_RUN_PROMPT);
+    markFirstRunPlaygroundPromptPending();
+    navigateApp(routePaths.playground);
+  }, [navigateApp]);
+
+  const dismissFirstRunOverlay = useCallback(() => {
+    firstRunConnectionAttemptRef.current += 1;
+    markFirstRunServerChoiceDismissed();
+    setPendingFirstRunConnection(null);
+    setFirstRunConnectionState({ status: "idle" });
+    setFirstRunOverlayDismissed(true);
+  }, []);
 
   const previousConnectedServersRef = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -3422,6 +3703,50 @@ export default function App() {
     setSelectedServer,
     setSelectedMCPConfigs,
     appState.selectedMultipleServers,
+  ]);
+
+  // The first successful onboarding server is also the first Playground
+  // context. Restore both its selection and live connection after a reload so
+  // the tools pane and the durable starter prompt do not come back empty.
+  useEffect(() => {
+    if (activeTab !== "playground" || !areServersHydrated) return;
+    if (initialFirstRunServerChoiceState?.status !== "completed") return;
+
+    const serverName = initialFirstRunServerChoiceState.attemptedServerName;
+    if (!serverName || !projectServers[serverName]) return;
+
+    if (restoredFirstRunSelectionRef.current !== serverName) {
+      restoredFirstRunSelectionRef.current = serverName;
+      if (appState.selectedServer !== serverName) {
+        setSelectedServer(serverName);
+      }
+      if (!appState.selectedMultipleServers.includes(serverName)) {
+        setSelectedMCPConfigs([
+          ...appState.selectedMultipleServers,
+          serverName,
+        ]);
+      }
+    }
+
+    if (
+      projectServers[serverName].connectionStatus === "connected" ||
+      restoredFirstRunServerRef.current === serverName
+    ) {
+      return;
+    }
+
+    restoredFirstRunServerRef.current = serverName;
+    void ensureServersReady([serverName]);
+  }, [
+    activeTab,
+    appState.selectedMultipleServers,
+    appState.selectedServer,
+    areServersHydrated,
+    ensureServersReady,
+    initialFirstRunServerChoiceState,
+    projectServers,
+    setSelectedMCPConfigs,
+    setSelectedServer,
   ]);
 
   // Create effective app state that uses the correct projects (Convex when authenticated)
@@ -4203,10 +4528,10 @@ export default function App() {
   ]);
 
   useLayoutEffect(() => {
-    if (shouldRouteToFirstRunOnboarding) {
-      navigateApp(routePaths.playground);
+    if (shouldRouteToFirstRunHome) {
+      navigateApp(routePaths.home);
     }
-  }, [shouldRouteToFirstRunOnboarding]);
+  }, [shouldRouteToFirstRunHome]);
 
   // The snap-to-Servers effect that used to live here is gone with the URL
   // migration. It existed because a project switch changed hidden state and
@@ -4850,8 +5175,7 @@ export default function App() {
 
   if (
     shouldHoldHostedDefaultRouteForAuth ||
-    shouldHoldHostedHomeRouteForAppReady ||
-    shouldHoldHostedHomeRouteForFirstRunRedirect
+    shouldHoldHostedHomeRouteForAppReady
   ) {
     return <LoadingScreen />;
   }
@@ -5066,6 +5390,7 @@ export default function App() {
     defaultHubRoute,
     ensureServersReady,
     evalChatHandoff,
+    firstRunPlaygroundPrompt,
     handleCheckoutIntentNavigationStarted,
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
@@ -5107,6 +5432,7 @@ export default function App() {
     selectedMCPConfig,
     selectedServerEntry,
     setPlaygroundOnboarding,
+    setFirstRunPlaygroundPrompt,
     setActiveHostId,
     setEvalChatHandoff,
     setHostsTabSelectedHostId,
@@ -5160,43 +5486,43 @@ export default function App() {
           continuous outer chrome and the off-white panel below is the working
           surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-row has-[[data-agent-dock=bottom]]:flex-col">
-      <SidebarInset className="bg-sidebar flex flex-col min-h-0">
-        <AppChromeHeader
-          // "make nux clean" (#2868) hid this on Home for everyone, but that
-          // also hid guests' only Sign in / Create account affordance there
-          // (PUR-35). Keep Home clean for signed-in users; show the header
-          // for guests so they still get sign-in/sign-up.
-          hidden={appChromeHeaderHidden}
-          activeServerSelectorProps={activeServerSelectorProps}
-          globalHostBarProps={globalHostBarProps}
+        <SidebarInset className="bg-sidebar flex flex-col min-h-0">
+          <AppChromeHeader
+            // "make nux clean" (#2868) hid this on Home for everyone, but that
+            // also hid guests' only Sign in / Create account affordance there
+            // (PUR-35). Keep Home clean for signed-in users; show the header
+            // for guests so they still get sign-in/sign-up.
+            hidden={appChromeHeaderHidden}
+            activeServerSelectorProps={activeServerSelectorProps}
+            globalHostBarProps={globalHostBarProps}
+          />
+          <AppChromePanel headerHidden={appChromeHeaderHidden}>
+            {showTrialDecisionNotice ? (
+              <div className="border-b border-border/60 px-4 py-3">
+                <Alert>
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>Billing decision required</AlertTitle>
+                  <AlertDescription>
+                    This organization&apos;s trial has ended. An owner must
+                    upgrade or choose the free plan to restore full access.
+                  </AlertDescription>
+                </Alert>
+              </div>
+            ) : null}
+            <AppRouteReactContext.Provider value={routeContext}>
+              {locationContext ? (
+                <Outlet context={routeContext} />
+              ) : (
+                <NoRouterRouteBody activeTab={activeTab} />
+              )}
+            </AppRouteReactContext.Provider>
+          </AppChromePanel>
+        </SidebarInset>
+        <AgentSidePanelMount
+          projectId={activeProjectId ?? null}
+          organizationId={activeOrganizationId ?? null}
+          activeTab={activeTab}
         />
-        <AppChromePanel headerHidden={appChromeHeaderHidden}>
-          {showTrialDecisionNotice ? (
-            <div className="border-b border-border/60 px-4 py-3">
-              <Alert>
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Billing decision required</AlertTitle>
-                <AlertDescription>
-                  This organization&apos;s trial has ended. An owner must
-                  upgrade or choose the free plan to restore full access.
-                </AlertDescription>
-              </Alert>
-            </div>
-          ) : null}
-          <AppRouteReactContext.Provider value={routeContext}>
-            {locationContext ? (
-              <Outlet context={routeContext} />
-            ) : (
-              <NoRouterRouteBody activeTab={activeTab} />
-            )}
-          </AppRouteReactContext.Provider>
-        </AppChromePanel>
-      </SidebarInset>
-      <AgentSidePanelMount
-        projectId={activeProjectId ?? null}
-        organizationId={activeOrganizationId ?? null}
-        activeTab={activeTab}
-      />
       </div>
       <Dialog
         open={showTrialDecisionModal}
@@ -5337,6 +5663,18 @@ export default function App() {
                   appContent
                 )}
               </HostedShellGate>
+              <FirstRunOnboardingOverlay
+                open={shouldShowFirstRunOverlay}
+                skipWelcome={skipFirstRunWelcome}
+                connectionState={firstRunConnectionState}
+                onConnectOwnServer={openFirstRunServerConnection}
+                onConnectDemo={connectFirstRunDemo}
+                onCancelConnection={cancelFirstRunConnection}
+                onReturnToChoice={returnToFirstRunChoice}
+                onOpenPlayground={openFirstRunPlayground}
+                onWelcomeShown={markFirstRunServerChoiceWelcomeShown}
+                onSkip={dismissFirstRunOverlay}
+              />
             </div>
             {shouldShowBillingHandoffOverlay ? (
               <BillingHandoffLoading overlay />

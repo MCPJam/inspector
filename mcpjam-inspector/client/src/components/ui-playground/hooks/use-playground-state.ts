@@ -81,7 +81,7 @@ const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
 const FIRST_RUN_SKELETON_TIMEOUT_MS = 12000;
 
 export const PLAYGROUND_FIRST_RUN_PROMPT =
-  "Draw me an MCP architecture diagram";
+  "What can this server do?";
 
 type ExecutionInjectionWaiter = {
   expectedToolCallId?: string;
@@ -113,6 +113,8 @@ export interface UsePlaygroundStateOptions {
   /** False while the Convex servers query is still in flight. */
   areServersHydrated?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
+  /** Whether this caller retains the legacy auto-connect onboarding path. */
+  autoConnectFirstRun?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
@@ -186,6 +188,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     isClientConfigSyncPending = false,
     areServersHydrated = true,
     hasSeenFirstRunOnboarding,
+    autoConnectFirstRun,
     isServerSyncing = false,
     onConnect,
     onOnboardingChange,
@@ -216,6 +219,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     isProjectProvisioned,
     isClientConfigSyncPending,
     areServersHydrated,
+    autoConnectFirstRun,
   });
 
   const firstRunComposerSeed =
