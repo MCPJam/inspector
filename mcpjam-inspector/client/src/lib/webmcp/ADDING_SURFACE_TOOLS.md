@@ -102,9 +102,24 @@ metadata, a snapshot of a screen showing any of those. It becomes WebMCP's
 than instructions. Over-claiming costs nothing; under-claiming is the mistake
 that matters.
 
-You do not set `consequentialHint` — it is derived from the annotations above
-(destructive, or mutating-and-open-world), so the two can never disagree. Get
-the annotations right and the native hints follow.
+`consequentialHint` is normally derived from the annotations above
+(destructive, or mutating-and-open-world), so the two cannot drift: get the
+annotations right and the native hint follows. The exception is real, though,
+because the two hints ask different questions — MCP's `destructiveHint` is
+about irreversibility, Chrome's `consequentialHint` is about whether a browser
+agent should confirm first. A tool that only CREATES can still commit the
+organization to something. Say so outright there, with the reason at the call
+site:
+
+```ts
+// `access: "link_guests"` opens this to signed-out visitors, funded by the org.
+nativePublication: publishNativeConsequential({ untrustedContent: false }),
+```
+
+That widens only what the browser is told; the MCP annotations and Ask
+MCPJam's approval behaviour stay as they are. It is not a way around getting
+`destructiveHint` right — if an action really is irreversible, annotate it
+destructive.
 
 ### Billing gates
 

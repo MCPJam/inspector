@@ -314,6 +314,64 @@ describe("executeUiToolCall", () => {
       expect(text.endsWith("[truncated]")).toBe(true);
     });
 
+    it("bounds the WHOLE result, not each part on its own", async () => {
+      // `content` can hold any number of parts. A per-part cap bounds nothing:
+      // 50 parts at the cap is 50x the cap, and the total is the number both
+      // transports actually have to carry.
+      useUiToolsRegistry.getState().registerUiTool(
+        makeTool({
+          execute: async () => ({
+            content: Array.from({ length: 50 }, () => ({
+              type: "text" as const,
+              text: "x".repeat(MAX_RESULT_CHARS),
+            })),
+          }),
+        }),
+      );
+
+      const outcome = await executeUiToolCall({
+        toolName: "ui_navigate",
+        input: {},
+        caller: "native_webmcp",
+        invocationId: "native-1",
+      });
+
+      const total = outcome.result.content.reduce(
+        (sum, part) => sum + part.text.length,
+        0,
+      );
+      // The budget, plus the one short line saying what did not fit.
+      expect(total).toBeLessThanOrEqual(MAX_RESULT_CHARS + 200);
+      const last = outcome.result.content.at(-1)?.text ?? "";
+      expect(last).toContain("more result part(s) omitted");
+    });
+
+    it("reports an oversized foreign part instead of rendering it", async () => {
+      // The danger is not only the output: stringify-then-truncate would
+      // materialize the whole value first.
+      useUiToolsRegistry.getState().registerUiTool(
+        makeTool({
+          execute: async () =>
+            ({
+              content: [
+                { type: "image", data: "d".repeat(MAX_RESULT_CHARS * 4) },
+              ],
+            }) as never,
+        }),
+      );
+
+      const outcome = await executeUiToolCall({
+        toolName: "ui_navigate",
+        input: {},
+        caller: "native_webmcp",
+        invocationId: "native-1",
+      });
+
+      const text = outcome.result.content[0]?.text ?? "";
+      expect(text.length).toBeLessThanOrEqual(MAX_RESULT_CHARS + 32);
+      expect(outcome.status).toBe("ok");
+    });
+
     it("serializes a foreign result shape rather than shipping it raw", async () => {
       useUiToolsRegistry.getState().registerUiTool(
         makeTool({

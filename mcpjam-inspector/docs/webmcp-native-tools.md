@@ -44,6 +44,9 @@ Per definition, explicitly:
 nativePublication: PUBLISH_NATIVE,            // ordinary inspector action
 nativePublication: PUBLISH_NATIVE_UNTRUSTED,  // …whose result quotes a third party
 nativePublication: nativeInternal("why not"), // Ask MCPJam only
+// …and, for an action the browser should confirm even though MCP does not
+// call it destructive:
+nativePublication: publishNativeConsequential({ untrustedContent: false }),
 ```
 
 Absent metadata reads as **internal**, so a new tool is never published by
@@ -77,7 +80,11 @@ claim from "no":
   spend quota, consume billed infrastructure) plus mutating actions that reach
   an external system. Read-only tools are never consequential, even when they
   read across the network — gating reads teaches people to click through the
-  prompts that matter.
+  prompts that matter. A definition can also declare it outright, and that
+  wins: the two hints ask different questions, and a tool that only creates
+  can still commit the organization to something. `ui_publish_scenario` is the
+  live case — nothing is destroyed, but `access: "link_guests"` opens the
+  scenario to signed-out visitors funded by the organization.
 
 `exposedTo` is never set: these tools drive the user's own inspector session
 and have no business being callable from another origin's page.

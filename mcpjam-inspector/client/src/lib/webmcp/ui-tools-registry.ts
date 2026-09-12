@@ -112,6 +112,20 @@ export type UiToolNativePublication =
        * knows to treat the payload as data rather than instructions.
        */
       readonly untrustedContent: boolean;
+      /**
+       * Force `consequentialHint: true` for the browser, when WebMCP's
+       * question and MCP's are not the same question.
+       *
+       * `consequentialHint` normally follows the MCP annotations (see
+       * `nativeAnnotationsFor`), and for nearly every tool that is right.
+       * They do diverge: MCP's `destructiveHint` asks "is this irreversible,
+       * does it destroy something?", while Chrome's `consequentialHint` asks
+       * "should a browser agent confirm this with its user first?" — a tool
+       * that only CREATES can still answer yes, if what it creates commits
+       * the organization to something. Set this there, with the reason at the
+       * call site; never as a way to avoid getting the MCP annotations right.
+       */
+      readonly consequential?: true;
     }
   | { readonly kind: "internal"; readonly reason: string };
 

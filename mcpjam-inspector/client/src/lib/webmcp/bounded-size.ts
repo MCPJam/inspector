@@ -61,3 +61,51 @@ export function clampText(text: string): string {
   if (text.length <= MAX_RESULT_CHARS) return text;
   return `${text.slice(0, MAX_RESULT_CHARS)}… [truncated]`;
 }
+
+/**
+ * `JSON.stringify` that CANNOT build a string bigger than `cap`, and cannot
+ * walk more than `nodeBudget` values getting there.
+ *
+ * The difference from stringify-then-truncate: that materializes the whole
+ * thing first, so a handler returning a 100 MB object costs 100 MB before a
+ * single character is thrown away. Here long strings are cut down inside the
+ * replacer, and a value that blows either budget aborts the walk and returns
+ * `null` — the caller substitutes a marker rather than a head of JSON no
+ * reader could parse anyway.
+ */
+export function boundedJsonString(
+  value: unknown,
+  cap = MAX_RESULT_CHARS,
+  nodeBudget = DEFAULT_NODE_BUDGET,
+): string | null {
+  let emitted = 0;
+  let nodes = 0;
+  const OVER = Symbol("over-budget");
+  try {
+    const text = JSON.stringify(value, (_key, v) => {
+      nodes += 1;
+      if (nodes > nodeBudget) throw OVER;
+      // Everything below counts what this node will COST in the output, and
+      // gives up the moment the total would exceed the cap.
+      if (typeof v === "string") {
+        const room = cap - emitted;
+        if (room <= 0) throw OVER;
+        emitted += Math.min(v.length, room);
+        // Truncate IN the replacer: one multi-megabyte scalar is a single
+        // node, so no node budget would catch it.
+        return v.length > room ? `${v.slice(0, room)}…` : v;
+      }
+      if (typeof v === "number" || typeof v === "boolean") {
+        emitted += 8;
+        if (emitted > cap) throw OVER;
+      }
+      return v;
+    });
+    return text ?? null;
+  } catch {
+    // Over budget, or a value that cannot be serialized at all (a cycle, a
+    // throwing `toJSON`). Both mean the same thing to the caller: there is
+    // nothing safe to render here.
+    return null;
+  }
+}

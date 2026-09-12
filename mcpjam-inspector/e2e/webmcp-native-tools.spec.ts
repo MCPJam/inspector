@@ -52,10 +52,17 @@ interface RespondedPayload {
 
 /** The agent's view of the page: what it can see, and how it calls it. */
 class BrowserAgent {
-  private readonly added: ToolPayload[] = [];
-  private readonly removed: Array<{ name: string }> = [];
+  /**
+   * The tools the page currently offers, by name — a live map rather than an
+   * add-log, because the publisher legitimately removes and re-adds a name
+   * (a replaced registration, a remount). Reading an append-only array there
+   * hides the restored tool and hands back its dead descriptor.
+   */
+  private readonly tools = new Map<string, ToolPayload>();
   private readonly responded: RespondedPayload[] = [];
   private frameId = "";
+  /** False when this browser has no WebMCP domain at all. */
+  domainAvailable = false;
 
   private constructor(
     private readonly page: Page,
@@ -65,18 +72,30 @@ class BrowserAgent {
   static async attach(page: Page): Promise<BrowserAgent> {
     const cdp = await page.context().newCDPSession(page);
     const agent = new BrowserAgent(page, cdp);
-    cdp.on("WebMCP.toolsAdded", (event) =>
-      agent.added.push(...((event as { tools: ToolPayload[] }).tools ?? [])),
-    );
-    cdp.on("WebMCP.toolsRemoved", (event) =>
-      agent.removed.push(
-        ...((event as { tools: Array<{ name: string }> }).tools ?? []),
-      ),
-    );
+    cdp.on("WebMCP.toolsAdded", (event) => {
+      for (const tool of (event as { tools: ToolPayload[] }).tools ?? []) {
+        agent.tools.set(tool.name, tool);
+      }
+    });
+    cdp.on("WebMCP.toolsRemoved", (event) => {
+      for (const tool of (event as { tools: Array<{ name: string }> }).tools ??
+        []) {
+        agent.tools.delete(tool.name);
+      }
+    });
     cdp.on("WebMCP.toolResponded", (event) =>
       agent.responded.push(event as RespondedPayload),
     );
-    await cdp.send("WebMCP.enable" as never);
+    try {
+      await cdp.send("WebMCP.enable" as never);
+      agent.domainAvailable = true;
+    } catch {
+      // A Chromium without the experimental domain rejects the command
+      // outright. Caught here so the availability check below can SKIP rather
+      // than this line erroring the run — the check is still needed either
+      // way, because `WebMCP.enable` also resolves on a browser where the
+      // feature is merely switched off (see webmcp-cdp.spike.test.ts).
+    }
     return agent;
   }
 
@@ -91,15 +110,12 @@ class BrowserAgent {
 
   /** Tools currently advertised to this agent. */
   discover(): string[] {
-    const gone = new Set(this.removed.map((tool) => tool.name));
-    return [...new Set(this.added.map((tool) => tool.name))]
-      .filter((name) => !gone.has(name))
-      .sort();
+    return [...this.tools.keys()].sort();
   }
 
   tool(name: string): ToolPayload {
-    const found = this.added.find((entry) => entry.name === name);
-    if (!found) throw new Error(`the page never published "${name}"`);
+    const found = this.tools.get(name);
+    if (!found) throw new Error(`the page is not publishing "${name}"`);
     return found;
   }
 
@@ -171,9 +187,11 @@ test("a browser agent discovers MCPJam's tools, navigates, and reads the screen 
   await expect(page.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
   await agent.resolveFrame();
 
-  const webMcpAvailable = await page.evaluate(
-    "!!(document.modelContext ?? navigator.modelContext)",
-  );
+  const webMcpAvailable =
+    agent.domainAvailable &&
+    (await page.evaluate(
+      "!!(document.modelContext ?? navigator.modelContext)",
+    ));
   test.skip(
     !webMcpAvailable && !process.env.CI,
     "WebMCP needs Chromium 151+ with --enable-features=WebMCP; install the pinned Playwright browser",

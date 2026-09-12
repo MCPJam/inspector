@@ -84,7 +84,16 @@ interface NativeRegistration {
   name: string;
   /** The exact definition object this registration was built from. */
   def: UiToolDefinition;
-  /** Aborting this unregisters the tool. Never aborted while a call runs. */
+  /**
+   * The REGISTRATION's lifetime, not any call's. Aborting it unregisters the
+   * tool, which is why it is never aborted while a call this registration
+   * accepted is still running, and why it is deliberately NOT forwarded to a
+   * running handler: "your registration went away" is not "stop what you are
+   * doing", and cancelling the call we chose to let finish would undo the one
+   * accommodation the pinned browser needs. Per-invocation cancellation is the
+   * agent's own signal, which arrives through `ctx.signal` (see
+   * `buildExecute`) on a Chromium that supplies one.
+   */
   controller: AbortController;
   /** Resolves when the platform has accepted or refused. Never rejects. */
   settled: Promise<void>;

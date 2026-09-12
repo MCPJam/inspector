@@ -158,6 +158,35 @@ describe("nativeAnnotationsFor", () => {
     });
   });
 
+  it("honors an explicit consequence declaration over the derivation", () => {
+    // MCP's destructiveHint asks whether something is irreversible; Chrome's
+    // consequentialHint asks whether a browser agent should confirm. A tool
+    // that only creates can still answer yes to the second
+    // (`ui_publish_scenario` opening an org-funded link to signed-out
+    // visitors), and deriving alone would under-claim exactly there.
+    expect(
+      nativeAnnotationsFor(
+        makeDef({
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+          },
+          nativePublication: {
+            kind: "publish",
+            untrustedContent: false,
+            consequential: true,
+          },
+        }),
+      ),
+    ).toEqual({
+      readOnlyHint: false,
+      untrustedContentHint: false,
+      consequentialHint: true,
+    });
+  });
+
   it("reads an unannotated tool pessimistically", () => {
     // The protocol's default: an absent destructiveHint means destructive,
     // and a definition that never declared its publication is treated as

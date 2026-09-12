@@ -42,6 +42,23 @@ export const PUBLISH_NATIVE_UNTRUSTED: UiToolNativePublication = {
 };
 
 /**
+ * Publish, and tell the browser to confirm this one even though MCP's
+ * `destructiveHint` is false — for an action that creates rather than
+ * destroys, yet commits the organization to something a person should see
+ * first. The MCP annotations stay as they are; this only widens what the
+ * BROWSER is told. State the reason at the call site.
+ */
+export function publishNativeConsequential(options: {
+  untrustedContent: boolean;
+}): UiToolNativePublication {
+  return {
+    kind: "publish",
+    untrustedContent: options.untrustedContent,
+    consequential: true,
+  };
+}
+
+/**
  * Keep this tool off the native surface, with the reason stated. Reserved for
  * tools whose meaning depends on an MCPJam conversation — there is no
  * conversation behind a native call, so publishing one would advertise a

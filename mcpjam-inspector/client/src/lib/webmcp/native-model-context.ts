@@ -118,7 +118,7 @@ export function resolveNativeModelContext(): ResolvedNativeModelContext | null {
  * server's tool output. A definition that somehow reaches here without saying
  * gets `true`, the cautious reading.
  *
- * `consequentialHint` IS derived, from the annotations the catalog already
+ * `consequentialHint` is derived, from the annotations the catalog already
  * curates: destructive actions (delete something, spend quota, consume billed
  * infrastructure), plus mutating actions that reach an external system
  * (`openWorldHint`) — connecting a server, running one of its tools. A
@@ -127,6 +127,13 @@ export function resolveNativeModelContext(): ResolvedNativeModelContext | null {
  * teach the user to click through the prompts that matter. An absent
  * `destructiveHint` counts as destructive, matching the protocol's pessimistic
  * default and the approval floor MCPJam already applies.
+ *
+ * A definition can also declare `consequential` outright, and that wins. The
+ * two hints ask different questions — MCP's `destructiveHint` is about
+ * irreversibility, Chrome's `consequentialHint` is about whether a browser
+ * agent should confirm — and a tool that only creates can still commit the
+ * organization to something (`ui_publish_scenario` opening an org-funded link
+ * to signed-out visitors). Deriving alone would under-claim exactly there.
  */
 export function nativeAnnotationsFor(
   def: UiToolDefinition,
@@ -134,13 +141,15 @@ export function nativeAnnotationsFor(
   const readOnly = def.annotations?.readOnlyHint ?? def.readOnly;
   const destructive = def.annotations?.destructiveHint !== false;
   const openWorld = def.annotations?.openWorldHint === true;
+  const publication =
+    def.nativePublication?.kind === "publish" ? def.nativePublication : null;
   return {
     readOnlyHint: readOnly,
-    untrustedContentHint:
-      def.nativePublication?.kind === "publish"
-        ? def.nativePublication.untrustedContent
-        : true,
-    consequentialHint: destructive || (openWorld && !readOnly),
+    untrustedContentHint: publication ? publication.untrustedContent : true,
+    consequentialHint:
+      publication?.consequential === true ||
+      destructive ||
+      (openWorld && !readOnly),
   };
 }
 

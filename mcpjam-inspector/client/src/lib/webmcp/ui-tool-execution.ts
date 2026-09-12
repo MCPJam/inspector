@@ -24,7 +24,7 @@
 
 import { assertEvalToolAllowed } from "@/lib/mcpjam-agent/eval-scope";
 import type { InspectorCommandErrorCode } from "@/shared/inspector-command.js";
-import { clampText } from "./bounded-size";
+import { boundedJsonString, clampText, MAX_RESULT_CHARS } from "./bounded-size";
 import {
   useUiToolsRegistry,
   type UiToolCaller,
@@ -150,43 +150,66 @@ function readArguments(
 }
 
 /**
- * Force a handler's return value into the wire shape, bounded.
+ * Force a handler's return value into the wire shape, under ONE budget.
  *
  * The first-party handlers already return bounded text (`okResult` /
  * `errorResult` in `groups/shared.ts`), so for every tool in the catalog this
  * is a pass-through that rebuilds an equal object. It exists for the value
  * that ISN'T one of those: a future handler returning a foreign shape, a
- * `content` array holding non-text parts, or a string long enough to bloat an
- * agent's context. Both transports serialize what comes back — Ask MCPJam
- * into a transcript, WebMCP across the browser boundary — so neither can
- * accept "whatever the handler felt like returning".
+ * `content` array holding non-text parts, or text long enough to bloat an
+ * agent's context.
+ *
+ * The budget is AGGREGATE, across the whole result. A per-part cap bounds
+ * nothing — `content` can hold any number of parts, so N parts at the cap is
+ * N times the cap — and the number the two transports actually have to carry
+ * is the total. Parts are filled from the remaining budget until it runs out,
+ * and what did not fit is reported rather than dropped in silence.
  */
 function boundedResult(value: unknown): UiToolResult {
   const source = value as Partial<UiToolResult> | undefined;
   const parts = Array.isArray(source?.content) ? source.content : [];
   const content: UiToolResult["content"] = [];
-  for (const part of parts) {
-    if (part && typeof part === "object" && part.type === "text") {
-      content.push({ type: "text", text: clampText(String(part.text ?? "")) });
-      continue;
+  let remaining = MAX_RESULT_CHARS;
+
+  for (const [index, part] of parts.entries()) {
+    if (remaining <= 0) {
+      content.push({
+        type: "text",
+        text: `… [${parts.length - index} more result part(s) omitted: the result is over ${MAX_RESULT_CHARS} characters]`,
+      });
+      break;
     }
-    // A non-text part still has to cross a JSON boundary; carry what can be
-    // serialized and never throw on what can't.
-    let text: string;
-    try {
-      text = JSON.stringify(part) ?? String(part);
-    } catch {
-      text = "[unserializable tool result part]";
-    }
-    content.push({ type: "text", text: clampText(text) });
+    const text = boundedPartText(part, remaining);
+    remaining -= text.length;
+    content.push({ type: "text", text });
   }
+
   if (content.length === 0) {
-    content.push({
-      type: "text",
-      text: "The tool returned no content.",
-    });
+    content.push({ type: "text", text: "The tool returned no content." });
   }
   return source?.isError ? { content, isError: true } : { content };
+}
+
+/** One part's text, never longer than `budget`. */
+function boundedPartText(part: unknown, budget: number): string {
+  if (
+    part &&
+    typeof part === "object" &&
+    (part as { type?: unknown }).type === "text"
+  ) {
+    const text = String((part as { text?: unknown }).text ?? "");
+    return text.length > budget
+      ? `${text.slice(0, budget)}… [truncated]`
+      : text;
+  }
+  // A non-text part still has to cross a JSON boundary. `boundedJsonString`
+  // never materializes the whole value — a part too big for the remaining
+  // budget is reported, not rendered — and never throws on what cannot be
+  // serialized at all.
+  return (
+    boundedJsonString(part, budget) ??
+    "[result part omitted: not serializable, or over the size budget]"
+  );
 }
 
 /**
