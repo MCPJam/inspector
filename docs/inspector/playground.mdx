@@ -259,7 +259,7 @@ Widgets can request mode changes from their own code; users can exit PiP or Full
 
 All widgets — whether they declare `openai/outputTemplate` (ChatGPT Apps), `_meta.ui.resourceUri` (MCP Apps), or both — render through a single unified renderer. The `window.openai` compatibility shim is always injected, so both `window.openai.*` calls and `ui/*` JSON-RPC messages work regardless of which metadata the tool declares.
 
-Widget rendering is gated on the active Client's `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor) render widgets as normal. Hosts that strip the extension — such as Codex, an elicitation-only CLI — show the plain tool result row instead. Per-server capability overrides are honored.
+Widget rendering is gated on the active Client's `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor, Codex) render widgets as normal. Hosts that strip the extension show the plain tool result row instead. Per-server capability overrides are honored.
 
 ## Per-Widget Debugging
 
@@ -444,7 +444,20 @@ When a server requires multiple interactions before a tool can run, the notice w
 
 ## Browser
 
+When you open Playground on a local installation where the browser is available but not yet set up, a dialog appears asking **"Let agents use your browser?"** — even over a restored conversation and without requiring a saved client or connected MCP server.
+
+- **Allow browser access** — grants device permission and enables browser tools for eligible clients. The dialog stays open until setup finishes; closing or pressing Escape while setup is in progress is blocked.
+- **Not now** / **Close** / **Escape** — dismisses the dialog and remembers that choice across tabs and remounts. The dialog does not reappear for that installation.
+
+If device permission was already granted on a previous visit but client setup was never completed, the dialog reappears once with the title **"Finish enabling browser tools"** and a **Finish setup** button instead of Allow.
+
+If setup fails partway through, the error stays visible and a **Retry setup** button appears so you can try again without re-granting device permission.
+
+After dismissing the dialog, you can still enable browser tools from the **Browser tab** in the right rail or from a client's **Browser settings**.
+
 Playground follows the selected client's saved Browser enablement. Turn Browser on or off in the client's [Browser tab](/inspector/clients#browser-settings). A **Browser settings** link in the browser panel header opens that tab when a client is selected.
+
+Browser tools are visible in the Tools rail as soon as the project's browser setting is on — a saved default client configuration is not required. If a specific client has browser tools explicitly disabled, the Tools rail shows a note explaining that and links to that client's Browser settings rather than showing another Allow prompt.
 
 ## Related Features
 
