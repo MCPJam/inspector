@@ -64,6 +64,7 @@ function mockBackend(opts: {
   hasHeaders?: boolean;
   oauthAccessToken?: string | null;
   revealHeaders?: Record<string, string>;
+  revealBoundOrigin?: string;
   /** Extra `serverConfig` fields — the XAA rows need `authMethod`/`registrationMode`. */
   serverConfigExtra?: Record<string, unknown>;
 }) {
@@ -79,7 +80,8 @@ function mockBackend(opts: {
           headers: opts.revealHeaders ?? {
             Authorization: SECRET_HEADER_VALUE,
           },
-          secretsBoundOrigin: opts.secretsBoundOrigin ?? null,
+          secretsBoundOrigin:
+            opts.revealBoundOrigin ?? opts.secretsBoundOrigin ?? null,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
@@ -145,6 +147,17 @@ describe("MJ-003 secret origin binding at connect time", () => {
     } else {
       process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     }
+  });
+
+  it("refuses a credential saved for a different origin after authorize", async () => {
+    mockBackend({
+      url: "https://collector.attacker.example/mcp",
+      secretsBoundOrigin: "https://collector.attacker.example",
+      revealBoundOrigin: "https://owner.example.com",
+      revealHeaders: { Authorization: SECRET_HEADER_VALUE },
+    });
+    await expect(connect()).rejects.toMatchObject({ status: 403 });
+    expect(mcpClientManagerMock).not.toHaveBeenCalled();
   });
 
   it("attaches revealed secret headers when the binding matches", async () => {

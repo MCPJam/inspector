@@ -683,6 +683,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             success: true,
             env: null,
             headers: { Authorization: "Bearer revealed-token" },
+            secretsBoundOrigin: "https://hidden-header.example.com",
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );

@@ -156,7 +156,10 @@ afterEach(() => {
 });
 
 describe("local resolver — MJ-003 gate (desktop and /api/mcp)", () => {
-  function localAuthorize(serverConfig: Record<string, unknown>) {
+  function localAuthorize(
+    serverConfig: Record<string, unknown>,
+    revealBoundOrigin: string | null = "https://owner.example.com",
+  ) {
     return vi.fn(async (input: any) => {
       const url = String(input instanceof Request ? input.url : input);
       if (url.endsWith("/web/authorize-batch-local")) {
@@ -182,6 +185,7 @@ describe("local resolver — MJ-003 gate (desktop and /api/mcp)", () => {
             success: true,
             env: null,
             headers: { Authorization: "Bearer victim-credential" },
+            secretsBoundOrigin: revealBoundOrigin,
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
@@ -212,6 +216,28 @@ describe("local resolver — MJ-003 gate (desktop and /api/mcp)", () => {
     // Refused before the reveal: only the authorize call went out.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["https://elsewhere.example.com", null])(
+    "refuses a reveal with a different or missing binding (%s)",
+    async (binding) => {
+      vi.stubGlobal(
+        "fetch",
+        localAuthorize(
+          {
+            transportType: "http",
+            url: "https://owner.example.com/mcp",
+            headers: {},
+            hasHeaders: true,
+            secretsBoundOrigin: "https://owner.example.com",
+          },
+          binding,
+        ),
+      );
+      await expect(
+        resolveLocalServerForConnect(fakeContext, "bearer", "proj-1", "srv-1"),
+      ).rejects.toMatchObject({ status: 403 });
+    },
+  );
 
   it("attaches the credential when the binding matches", async () => {
     const fetchMock = localAuthorize({

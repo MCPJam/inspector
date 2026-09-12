@@ -946,6 +946,10 @@ async function applyLocalRuntimeResolution<
 
   if (needsRuntimeSecrets) {
     const secrets = await fetchRuntimeServerSecrets({
+      expectedTargetUrl:
+        result.serverConfig.transportType === "http"
+          ? result.serverConfig.url
+          : null,
       bearerToken,
       projectId,
       serverId,
@@ -1090,6 +1094,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
     config.hasEnv === true && !hasNonEmptyStringRecord(config.env)
       ? (
           await fetchRuntimeServerSecrets({
+            expectedTargetUrl: null,
             bearerToken: args.bearerToken,
             projectId: args.projectId,
             serverId: args.serverId,

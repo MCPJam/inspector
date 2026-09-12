@@ -1892,10 +1892,9 @@ export async function createAuthorizedManager(
         };
       }
 
-      // MJ-003. Checked before the reveal, not after: a mismatch means these
-      // credentials are not going on this connection either way, and asking
-      // Convex to decrypt them first would put the plaintext in this process
-      // for no reason and log a reveal that never needed to happen.
+      // Reject an already-stale authorize snapshot before decrypting. The reveal
+      // helper also checks the binding returned with the values: the row may
+      // change between authorize and reveal.
       if (auth.serverConfig.hasHeaders === true) {
         assertSecretsOriginMatches({
           boundOrigin: auth.serverConfig.secretsBoundOrigin,
@@ -1915,6 +1914,7 @@ export async function createAuthorizedManager(
                   ...(auth.serverConfig.headers ?? {}),
                   ...((
                     await fetchRuntimeServerSecrets({
+                      expectedTargetUrl: auth.serverConfig.url,
                       bearerToken,
                       projectId,
                       serverId,
