@@ -1,7 +1,6 @@
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
-import { resolveLocalBrowserTools } from "@/shared/local-browser-settings";
 /**
  * PlaygroundMain
  *
@@ -172,6 +171,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
+import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-tool-slots";
 import { clientDisplayName } from "@/lib/client-display-name";
 import {
   loadSelectedHostIds,
@@ -940,6 +940,7 @@ export function PlaygroundMain({
   const effectiveBuiltInToolIds = useBrowserToolIds(
     previewedHostId ? previewedHost?.config : projectDefaultHostConfig,
     playgroundBrowserEngine.engine,
+    { projectId: convexProjectId, hostId: previewedHostId },
   );
   // A newly selected host is unknown for one render while its config loads.
   // Fail closed in that gap: it may resolve to Codex or Claude Code, whose
@@ -2061,6 +2062,20 @@ export function PlaygroundMain({
     temperature,
     requireToolApproval,
   ]);
+
+  // What each column's host actually attaches, resolved by the SAME hook the
+  // single pane uses (`effectiveBuiltInToolIds` above). The grid used to
+  // inline its own copy of that logic, which read neither the member's saved
+  // Browser setting nor its loading state — see
+  // `usePlaygroundBrowserToolSlots`.
+  const columnBuiltInToolIds = usePlaygroundBrowserToolSlots(
+    multiHostColumns.map((column) => ({
+      hostId: column.compareId,
+      config: column.hostConfig,
+    })),
+    playgroundBrowserEngine.engine,
+    convexProjectId,
+  );
 
   // ── The same question, asked once per COLUMN ─────────────────────────────
   //
@@ -5663,11 +5678,12 @@ export function PlaygroundMain({
                           stopRequestId={stopBroadcastRequestId}
                           executionConfig={{
                             ...column.executionConfig,
-                            builtInToolIds: resolveLocalBrowserTools(
-                              column.hostConfig.builtInToolIds,
-                              column.hostConfig.localBrowserEnabled,
-                              !HOSTED_MODE && playgroundBrowserEngine.engine === "local",
-                            ),
+                            // Undefined is a real answer — "this turn states
+                            // nothing", which lets the server fall back to the
+                            // host's own config. Exactly what the single pane
+                            // sends, rather than substituting the raw host
+                            // list and pre-empting the loading guard.
+                            builtInToolIds: columnBuiltInToolIds[columnIndex],
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
