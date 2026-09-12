@@ -591,7 +591,7 @@ export function PlaygroundMain({
   recorder,
   syncConversationToUrl = false,
 }: PlaygroundMainProps) {
-  const { signUp } = useAuth();
+  const { signUp, user } = useAuth();
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
@@ -5666,7 +5666,10 @@ export function PlaygroundMain({
                             ...column.executionConfig,
                             builtInToolIds: resolveLocalBrowserTools(
                               column.hostConfig.builtInToolIds,
-                              column.hostConfig.localBrowserEnabled,
+                              column.hostConfig.localBrowserEnabled ??
+                                (!user && playgroundBrowserEngine.consent.granted
+                                  ? true
+                                  : undefined),
                               !HOSTED_MODE && playgroundBrowserEngine.engine === "local",
                             ),
                           }}
