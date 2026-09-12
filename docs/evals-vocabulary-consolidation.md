@@ -13,9 +13,10 @@ file since #4774), `predicates` (Convex storage and the SDK's evaluator library)
 (the backend's suite-file contract, `convex/lib/evalSuiteFile.ts`). The two halves of the suite-file
 contract already disagree with each other.
 
-One execution count is spelled four ways: `repetitions` (suite file, CLI flag, Convex verdict-policy
-v2), `runs` (Convex legacy, still required storage), `iterations` (SDK run options, public API case
-field), and `iterationOverride` (run launch).
+One configured execution count is spelled three ways: `repetitions` (suite file, CLI flag, Convex
+verdict-policy v2), `runs` (Convex legacy, still required storage), and `iterations` (SDK run options,
+public API case field). And the word for ONE execution is itself split: eval code says `trial` where
+the product already says "iteration".
 
 Four authoring entry points — `test`, `expectedToolCalls`, `predicates`, `scorers` — converge on one
 `ScoreResult`, but an author has to learn all four to know that.
@@ -26,7 +27,8 @@ Four authoring entry points — `test`, `expectedToolCalls`, `predicates`, `scor
 |---|---|---|
 | suite | cases with shared defaults and an acceptance policy | unchanged |
 | case | an authored scenario with stable identity | unchanged |
-| iteration | one execution of a case under one execution variant | `repetitions`, `runs`, `iterationOverride` |
+| iteration | one execution instance of a case under one execution variant | the eval sense of `trial` |
+| repetitions | the configured number of iterations of a case | `runs`, and `iterations` wherever it names the configured count (SDK run options, public API case field) |
 | trace | captured evidence of that execution | unchanged |
 | evaluator | an assertion or a judge | `Scorer`, `grader`, umbrella uses of `check` |
 | assertion | a deterministic rule | `Predicate`, `check`, matcher-backed rules |
@@ -96,6 +98,9 @@ These words mean something else. A codemod that proposes to mutate one fails the
   only the transcript half can be re-derived from a persisted trace.
 - **Benchmark and description-experiment `repetitions`** (`convex/schema.ts` benchmark tables,
   `evalDescriptionExperiments.plan.repetitions`).
+- **Description-experiment `iterationOverride`** (`convex/descriptionExperiments.ts`), the experiment's
+  own override beside `maxTrials`. It is not folded into `iteration`. `--max-trials`, `maxTrials` and
+  `plannedTrials` cap the product of cases and repetitions and are out of scope for this program.
 - Generic verbs and helpers: `assertValid*`, vitest `expect`, prose "check that", mathematical
   predicates.
 
@@ -122,6 +127,7 @@ SDK. Protect the unrelated identifiers, and review eval imports there by hand.
 | `Predicate`, `PredicateResult`, `PredicateScope` | `Assertion`, `AssertionResult`, `AssertionScope` | type aliases from a new subpath |
 | `@mcpjam/sdk/predicates` | `@mcpjam/sdk/assertions` | new subpath; the old one keeps working |
 | `EvalTestConfig.predicates` / `.scorers` / `.test` | `.evaluators` / `.execute` | additive |
+| `EvalSuite.run({ iterations })` | `EvalSuite.run({ repetitions })` | additive; `iterations` stays as a deprecated alias |
 
 `RECOMMENDED_DEFAULT_PREDICATES` stays declared in `sdk/src/contract/grader-stage.ts`, byte for byte.
 The backend pins it through a whole-file capture of the three `{type, role, severity}` triples
@@ -192,7 +198,7 @@ payload, which invariant 2 forbids.
 const suite = new EvalSuite({
   name: "Support workflows",
   defaults: {
-    iterations: 5,
+    repetitions: 5,
     evaluators: [assertion({ type: "noToolErrors", role: "advisory" })],
   },
 });
@@ -203,16 +209,19 @@ suite.add(new EvalTest({
   execute: async (executor) => {
     await executor.run("Explain the refund policy.");
   },
-  evaluators: [
-    assertion({ id: "nonempty-answer", type: "finalAssistantMessageNonEmpty" }),
-    judge({
-      id: "policy-grounding",
-      model: configuredJudgeModel,
-      apiKey,
-      rubric: ["The answer is supported by the retrieved policy."],
-      role: "advisory",
-    }),
-  ],
+  evaluators: {
+    mode: "extend",
+    list: [
+      assertion({ id: "nonempty-answer", type: "finalAssistantMessageNonEmpty" }),
+      judge({
+        id: "policy-grounding",
+        model: configuredJudgeModel,
+        apiKey,
+        rubric: ["The answer is supported by the retrieved policy."],
+        role: "advisory",
+      }),
+    ],
+  },
 }));
 
 const result = await suite.run(executor);
@@ -222,23 +231,27 @@ const result = await suite.run(executor);
 
 ```ts
 export type EvaluatorOverride = { mode: "inherit" | "extend" | "replace"; list: Evaluator[] };
-export interface EvalSuiteDefaults { iterations?: number; evaluators?: Evaluator[] }
-// EvalTestConfig gains: execute?, evaluators?: Evaluator[] | EvaluatorOverride; `test` becomes optional.
+export interface EvalSuiteDefaults { repetitions?: number; evaluators?: Evaluator[] }
+// EvalTestConfig gains: execute?, evaluators?: EvaluatorOverride; `test` becomes optional.
+// EvalSuite.run options gain: repetitions?; the existing `iterations` stays as its deprecated alias.
 ```
 
 ### Resolution
 
-Suite defaults and case evaluators resolve through the same three rules the backend's
-`resolvePredicates` already implements, so a code-first case and a hosted case with the same
-configuration grade the same way:
+Suite defaults and case evaluators resolve through exactly the three rules the backend's
+`resolvePredicates` (`convex/lib/predicates.ts`) implements, and no others, so a code-first case and a
+hosted case with the same configuration grade the same way:
 
-- an absent case list, or `mode: "inherit"`, takes the suite defaults;
-- `mode: "replace"` takes the case list alone, and `{ mode: "replace", list: [] }` is how an author
-  explicitly disables an inherited default;
-- `mode: "extend"` is suite defaults followed by the case list;
-- a bare array is `extend`.
+- an absent case override, or `mode: "inherit"`, takes the suite defaults, or an empty list when the
+  suite has none. Under `inherit` the case's `list` is ignored, not refused, exactly as the backend
+  ignores it;
+- `mode: "replace"` takes the case list verbatim, ignoring the suite defaults entirely, and
+  `{ mode: "replace", list: [] }` is how an author explicitly disables an inherited default;
+- `mode: "extend"` is suite defaults followed by the case list, suite first.
 
-`{ mode: "inherit" }` with a non-empty list is refused rather than silently ignored.
+A case override is always the `{ mode, list }` object. There is no bare-array shorthand: the backend's
+stored override has no such form, so a shorthand would be a code-first-only rule with no hosted
+equivalent.
 
 ### Equivalence
 
@@ -250,11 +263,11 @@ definition. Therefore:
 
 ```
 { predicates: [a, b] }
-  ≡ { evaluators: [assertion(a), assertion(b)] }
-  ≡ { predicates: [a], evaluators: [assertion(b)] }
+  ≡ { evaluators: { mode: "extend", list: [assertion(a), assertion(b)] } }
+  ≡ { predicates: [a], evaluators: { mode: "extend", list: [assertion(b)] } }
 ```
 
-all produce the same `EvaluationConfigSnapshot` — the same definitions in the same order, the same
+with no suite defaults, all produce the same `EvaluationConfigSnapshot` — the same definitions in the same order, the same
 `scorerId` and `idSource` on each, the same `definitionHash`, the same aggregate hash. A golden
 fixture captured from unchanged code pins this, and asserts each id literally so an ordinal shift
 fails even if the hash coincidentally matched.
@@ -285,9 +298,9 @@ fails the iteration closed, exactly as a throwing `test` does today.
 | both `test` and `execute` | ``EvalTest "<name>" sets both `execute` and its legacy `test` alias — set one. They are two spellings of the case's driver; `execute` may return nothing and lets the evaluators decide.`` |
 | neither | ``Invalid config: must provide 'execute' (or the legacy 'test') function`` |
 | duplicate evaluator id, including against a suite default | ``EvalTest "<name>": duplicate evaluator id "<id>". Evaluator ids must be unique within a case, and suite defaults.evaluators count too — rename one, or use mode "replace" to drop the suite's.`` |
-| `inherit` with a non-empty list | ``EvalTest "<name>" sets evaluators.mode "inherit" with a non-empty list — "inherit" takes the suite's defaults.evaluators only; use "extend" to append or "replace" to override.`` |
 | a widget assertion in a code-first case | ``Assertion <type> needs widget render observations, which only a hosted run captures. Remove it from this code-first evaluator, or move the case to a hosted eval suite.`` |
-| `EvalSuite.run` with no count | ``EvalSuite "<name>" has no iteration count: pass { iterations } to run(), or set defaults.iterations on the suite.`` |
+| `EvalSuite.run` with no count | ``EvalSuite "<name>" has no repetitions count: pass { repetitions } to run(), or set defaults.repetitions on the suite.`` |
+| both spellings of the count | ``Set repetitions or its deprecated alias iterations, not both.`` |
 | both spellings of a bound | ``Set evaluatorConcurrency or its legacy alias scorerConcurrency, not both.`` |
 
 `predicates` alongside `evaluators`, and `scorers` alongside `evaluators`, are **additive** rather
@@ -331,15 +344,18 @@ explicit `null` clear still reaches storage:
 Send <canonical> or <legacy>, not both — they are two spellings of one field.
 ```
 
-Under vocabulary 2 the canonical spellings are `assertions` and `iterations`; the read projection
-renames `checks` to `assertions` and reports the configured count as `iterations`. Under vocabulary 1
+Under vocabulary 2 the canonical spellings are `assertions` and `repetitions`; the read projection
+renames `checks` to `assertions` and reports the configured count as `repetitions`. Under vocabulary 1
 nothing moves. A canonical client must project a GET result into a valid write request rather than
 echoing both spellings back into a PATCH.
 
 The count family is the one place where meaning, not just spelling, differs, because the legacy API
-carries two counts with different semantics on the same object. Under vocabulary 2 `iterations` is
-the configured count; the adapter writes the legacy `runs` and, on a verdict-policy-v2 suite, the v2
-`repetitions` as well, keeping both stored spellings equal.
+carries two counts with different semantics on the same object: `iterations` (a spelling of `runs`)
+and the verdict-policy-v2 `repetitions`. Under vocabulary 1 that object is unchanged, both counts
+included. Under vocabulary 2 `repetitions` is the one configured count and `iterations` and `runs` are
+its legacy spellings; the adapter writes the legacy `runs` and, on a verdict-policy-v2 suite, the v2
+`repetitions` as well, keeping both stored spellings equal. `iterations` never names the configured
+count in vocabulary 2: an iteration is one execution.
 
 ### Capability
 
@@ -350,7 +366,7 @@ vocabulary: {
   version: 2,
   evaluatorKinds: ["assertion", "judge"],
   assertionKinds: PREDICATE_KINDS,
-  fields: { assertions: ["checks", "predicates"], defaultAssertions: ["defaultPredicates"], iterations: ["repetitions", "runs", "iterationOverride"] },
+  fields: { assertions: ["checks", "predicates"], defaultAssertions: ["defaultPredicates"], repetitions: ["iterations", "runs"] },
 }
 ```
 
@@ -360,8 +376,8 @@ a field on an unrelated object.
 
 ## The suite file
 
-Dialect `"2"` uses `assertions` and `iterations`. Dialect `"1"` is untouched — its `repetitions` stays
-required and its published JSON Schema keeps its contract, so an older strict reader can never
+Dialect `"2"` uses `assertions`; the count is `repetitions` in both dialects. Dialect `"1"` is
+untouched — its `repetitions` stays required and its published JSON Schema keeps its contract, so an older strict reader can never
 misread a new file under its existing version.
 
 The loader accepts both. The writer emits the file's own dialect, and a new dialect is written only
