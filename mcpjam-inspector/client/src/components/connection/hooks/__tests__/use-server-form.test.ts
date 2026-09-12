@@ -1495,4 +1495,42 @@ describe("useServerForm credential-clear warning", () => {
     });
     expect(result.current.credentialClearBlocksSubmit).toBe(true);
   });
+
+  const spacedStdioServer = {
+    name: "Local server",
+    config: {
+      command: "node",
+      args: ["--inspect", "C:\\Program Files\\mcp\\file name.js", 'say "hi"'],
+      env: { API_KEY: "secret" },
+    },
+    lastConnectionTime: new Date(),
+    connectionStatus: "disconnected",
+    retryCount: 0,
+    enabled: true,
+  } as any;
+
+  it("round-trips stdio arguments that contain whitespace and quotes", async () => {
+    const { result } = renderHook(() => useServerForm(spacedStdioServer));
+    await waitFor(() => {
+      expect(result.current.commandInput).not.toBe("");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      command: "node",
+      args: ["--inspect", "C:\\Program Files\\mcp\\file name.js", 'say "hi"'],
+    });
+  });
+
+  it("stays silent when a space-bearing stdio target is opened and saved unchanged", async () => {
+    // The user-visible bug: a whitespace split re-reads the stored arguments
+    // as different ones, so the form announces that an untouched row is about
+    // to lose its credentials.
+    const { result } = renderHook(() => useServerForm(spacedStdioServer));
+    await waitFor(() => {
+      expect(result.current.commandInput).not.toBe("");
+    });
+
+    expect(result.current.pendingCredentialClear).toBeNull();
+    expect(result.current.credentialClearBlocksSubmit).toBe(false);
+  });
 });

@@ -33,16 +33,87 @@ import {
  * Shared with the credential-clear warning so the two cannot disagree about
  * what this form is about to send: a warning derived from a different parse
  * would fire on edits the backend keeps and stay silent on ones it clears.
+ *
+ * Quoting is the exact inverse of `formatCommandInput`. A plain whitespace
+ * split loses the boundaries of a saved argument that contains a space — it
+ * reads `["file name.js"]` back as two arguments — which warns that an
+ * untouched row is about to lose its credentials and then saves arguments the
+ * user never typed.
  */
 function parseCommandInput(input: string): {
   command: string;
   args: string[];
 } {
-  const parts = input
-    .trim()
-    .split(/\s+/)
-    .filter((part) => part.length > 0);
+  const parts: string[] = [];
+  let current = "";
+  let inPart = false;
+  let quote: '"' | "'" | null = null;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      else current += char;
+      continue;
+    }
+
+    if (quote === '"') {
+      if (char === "\\" && (input[i + 1] === '"' || input[i + 1] === "\\")) {
+        current += input[i + 1];
+        i += 1;
+      } else if (char === '"') {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      inPart = true;
+      continue;
+    }
+
+    if (char === "\\" && i + 1 < input.length) {
+      current += input[i + 1];
+      i += 1;
+      inPart = true;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      if (inPart) {
+        parts.push(current);
+        current = "";
+        inPart = false;
+      }
+      continue;
+    }
+
+    current += char;
+    inPart = true;
+  }
+
+  if (inPart) parts.push(current);
+
   return { command: parts[0] || "", args: parts.slice(1) };
+}
+
+/**
+ * The single command line the edit form shows for a stored stdio target, and
+ * the inverse of `parseCommandInput` — the form holds one text input, so the
+ * round trip through it is what keeps the warning honest.
+ */
+function formatCommandInput(command: string, args: readonly string[]): string {
+  if (!command) return "";
+  return [command, ...args].map(quoteCommandToken).join(" ");
+}
+
+function quoteCommandToken(token: string): string {
+  if (token !== "" && !/[\s"'\\]/.test(token)) return token;
+  return `"${token.replace(/(["\\])/g, "\\$1")}"`;
 }
 
 interface InitialFormValues {
@@ -379,11 +450,10 @@ export function useServerForm(
         ? "stdio"
         : "http";
       const serverUrl = isHttpServer && config.url ? config.url.toString() : "";
-      const fullCommand = server.config.command
-        ? [server.config.command, ...(server.config.args || [])]
-            .filter(Boolean)
-            .join(" ")
-        : "";
+      const fullCommand = formatCommandInput(
+        server.config.command ?? "",
+        server.config.args ?? []
+      );
       const authorizationHeader = isHttpServer
         ? getAuthorizationHeaderValue(
             config.requestInit?.headers as Record<string, unknown> | undefined
