@@ -283,6 +283,26 @@ describe('announcementFor', () => {
     assert.ok(!/follow it here/.test(text), 'cancellation must not show the run URL');
   });
 
+  it('includes the resource URL in legacy generate/run announcements when the server returns one', () => {
+    const genText = announcementFor(
+      { operation: 'generate_eval_cases', resource: { url: 'https://app/cases/1' } },
+      'U1',
+    );
+    assert.match(genText, /<https:\/\/app\/cases\/1\|follow it here>/);
+
+    const suiteText = announcementFor(
+      { operation: 'run_eval_suite', resource: { url: 'https://app/runs/2' } },
+      'U1',
+    );
+    assert.match(suiteText, /<https:\/\/app\/runs\/2\|follow it here>/);
+
+    const caseText = announcementFor(
+      { operation: 'run_eval_case', resource: { url: 'https://app/runs/3' } },
+      'U1',
+    );
+    assert.match(caseText, /<https:\/\/app\/runs\/3\|follow it here>/);
+  });
+
   it('claims nothing for an operation and kind it has never seen', () => {
     const text = announcementFor({ operation: 'some_new_op', kind: 'teleport' }, 'U1');
     assert.strictEqual(text, ':white_check_mark: Approved by <@U1>.');

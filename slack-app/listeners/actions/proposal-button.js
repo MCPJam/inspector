@@ -89,9 +89,11 @@ export function announcementFor(outcome, userId) {
     return `:white_check_mark: Cancelled by <@${userId}>.`;
   }
   if (outcome.operation === 'generate_eval_cases') {
+    if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
     return `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`;
   }
   if (outcome.operation === 'run_eval_suite' || outcome.operation === 'run_eval_case') {
+    if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
     return `:white_check_mark: Approved by <@${userId}>, and it's away.`;
   }
   if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
