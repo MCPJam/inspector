@@ -396,6 +396,30 @@ describe("the evaluator-vocabulary scanner", () => {
     ]);
   });
 
+  it("reads a destructured field as the property, not the local it binds", () => {
+    const root = tree({
+      "sdk/src/platform/types.ts":
+        // The field is `checks`; `localChecks` is a local that happens to
+        // hold it. Blaming the local both misses the rename and proposes one
+        // nobody asked for.
+        `const { checks: localChecks } = row;\n` +
+        // Shorthand: one identifier, both the field and the local.
+        `const { predicates } = row;\n` +
+        // An ARRAY binding reads a position. Its local is spelled like the
+        // field and names no field at all.
+        `const [repetitions] = values;\n`,
+    });
+    const { status, json } = scan(root);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .filter((f: { scope: string }) => f.scope === "wire-field")
+        .map((f: { line: number; matched: string }) => `${f.line} ${f.matched}`)
+        .sort()
+    ).toEqual(["1 checks", "2 predicates"]);
+  });
+
   it("lists every occurrence rather than the first sixty", () => {
     // The defect this pins is specific: the committed report stated 74
     // occurrences of one rename and listed 60, so the 14 a reader most needed

@@ -155,7 +155,53 @@ const subpathRenames = new Map(byScope("subpath").map((r) => [r.from, r]));
 const wireFieldRenames = byScope("wire-field");
 const flagRenames = byScope("flag");
 
-/** The script kind a parse needs, so JSX is parsed as JSX rather than as `<`. */
+/**
+ * Compiler options for a one-file program that resolves nothing.
+ *
+ * `noResolve` and `noLib` are what make this affordable: no module resolution,
+ * no `lib.d.ts` load, no walk into `node_modules`. Syntactic diagnostics do not
+ * need any of it — they are the parser's own findings — so the program exists
+ * purely to reach the supported accessor for them.
+ */
+const DIAGNOSTIC_OPTIONS = {
+  noResolve: true,
+  noLib: true,
+  allowJs: true,
+  jsx: ts.JsxEmit.Preserve,
+  target: ts.ScriptTarget.Latest,
+};
+
+/**
+ * The parser's complaints about one file, through public API.
+ *
+ * `SourceFile.parseDiagnostics` holds the same information and is a third
+ * faster, but it is internal: a TypeScript release may rename it, stop
+ * populating it, or keep it and change what it means, and the failure mode of
+ * the last one is a gate that silently stops gating. `getSyntacticDiagnostics`
+ * is the supported way to ask, so the cost buys a guarantee that survives an
+ * upgrade. The already-parsed tree is handed straight to the host, so the file
+ * is parsed once, not twice.
+ */
+function syntacticDiagnostics(source, file, text) {
+  const host = {
+    getSourceFile: (name) => (name === file ? source : undefined),
+    getDefaultLibFileName: () => "lib.d.ts",
+    writeFile: () => {},
+    getCurrentDirectory: () => ROOT,
+    getCanonicalFileName: (name) => name,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+    fileExists: (name) => name === file,
+    readFile: (name) => (name === file ? text : undefined),
+  };
+  return ts
+    .createProgram([file], DIAGNOSTIC_OPTIONS, host)
+    .getSyntacticDiagnostics(source);
+}
+
+/**
+ * The script kind a parse needs, so JSX is parsed as JSX rather than as `<`.
+ */
 function scriptKindOf(file) {
   if (file.endsWith(".tsx")) return ts.ScriptKind.TSX;
   if (file.endsWith(".jsx")) return ts.ScriptKind.JSX;
@@ -171,8 +217,9 @@ function scriptKindOf(file) {
  *
  * "Field" covers all five shapes a wire field takes: the declaration
  * (`checks:`), the OPTIONAL declaration (`checks?:`), the shorthand
- * (`{ checks }`), the destructured binding, and the read — including the
- * optional read, because `row?.checks` and `row.checks` are one node shape. The
+ * (`{ checks }`), the destructured PROPERTY (`{ checks: local }` reads
+ * `checks`, not `local`), and the read — including the optional read, because
+ * `row?.checks` and `row.checks` are one node shape. The
  * token lookahead this replaced saw only the first of the five, which is why
  * `repetitions?: number` in the platform types was missing from the inventory
  * the renames are meant to enumerate.
@@ -192,16 +239,7 @@ function interestingNodes(text, file) {
   // reports nothing — the identifier is inside the run-on template as far as
   // the parser is concerned. That is a hole in the inventory that reads as a
   // clean file, so the diagnostics are the gate, not the absence of a throw.
-  const diagnostics = source.parseDiagnostics;
-  if (!Array.isArray(diagnostics)) {
-    // `parseDiagnostics` is internal. If a TypeScript upgrade stops exposing
-    // it, the fail-closed guarantee above is gone and every report after that
-    // is silently weaker — so lose the run, loudly, rather than the guarantee.
-    throw new Error(
-      `typescript ${ts.version} exposes no parseDiagnostics array; ` +
-        `the parse-error gate cannot run`
-    );
-  }
+  const diagnostics = syntacticDiagnostics(source, file, text);
   if (diagnostics.length > 0) {
     const first = diagnostics[0];
     throw new Error(
@@ -218,14 +256,25 @@ function interestingNodes(text, file) {
   const visit = (node) => {
     if (ts.isIdentifier(node)) {
       const parent = node.parent;
+      // A destructured field is the PROPERTY read, never the local bound to
+      // it. `const { checks: local } = row` reads `checks` and declares
+      // `local`, so taking `name` blamed the local and lost the field; and
+      // `const [checks] = values` reads a POSITION, so it names no field at
+      // all however its local is spelled.
+      const isBindingField =
+        ts.isBindingElement(parent) &&
+        ts.isObjectBindingPattern(parent.parent) &&
+        (parent.propertyName
+          ? parent.propertyName === node
+          : parent.name === node);
       const isPropertyName =
-        (ts.isPropertySignature(parent) ||
+        ((ts.isPropertySignature(parent) ||
           ts.isPropertyAssignment(parent) ||
           ts.isPropertyDeclaration(parent) ||
           ts.isMethodSignature(parent) ||
-          ts.isEnumMember(parent) ||
-          ts.isBindingElement(parent)) &&
-        parent.name === node;
+          ts.isEnumMember(parent)) &&
+          parent.name === node) ||
+        isBindingField;
       const isMember =
         (ts.isPropertyAccessExpression(parent) || ts.isQualifiedName(parent)) &&
         (parent.name === node || parent.right === node);
