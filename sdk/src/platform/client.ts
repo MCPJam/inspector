@@ -1,6 +1,7 @@
 import type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";
 import type { PlatformSessionBrowserInput, PlatformSessionBrowserOperation, PlatformSessionBrowserOpened, PlatformBrowserToolPolicy } from "./types.js";
 import { PlatformApiError } from "./errors.js";
+import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -168,7 +169,12 @@ export interface PlatformApiClientOptions {
   fetch?: typeof fetch;
   /** Per-request timeout. */
   timeoutMs?: number;
-  /** Optional User-Agent; ignored by browsers (forbidden header). */
+  /**
+   * A token naming the calling PROGRAM, prefixed onto this client's own
+   * `mcpjam-sdk/<version>` rather than replacing it — see
+   * {@link DEFAULT_PLATFORM_USER_AGENT}. Omit it and the SDK still identifies
+   * itself. Ignored by browsers, where the header is forbidden.
+   */
   userAgent?: string;
   /**
    * Extra headers sent on every request — for a deployment that sits behind an
@@ -490,6 +496,28 @@ function stripTrailingSlashes(url: string): string {
   return url.slice(0, end);
 }
 
+/**
+ * What this client calls itself when the caller says nothing.
+ *
+ * It used to say nothing at all, which is why the question "who is on the SDK,
+ * and on which version?" has no answer in the request logs: the header was set
+ * only when a caller supplied one, and most callers do not. That absence is not
+ * a gap in the telemetry — Axiom carries every request — it is a field nobody
+ * populated, and the cost of it is that decisions about this surface get argued
+ * from reasoning rather than settled from data.
+ *
+ * A caller's own token is PREFIXED rather than replaced, so `mcpjam-cli/5.7.1
+ * mcpjam-sdk/8.7.1` says both which program is calling and which SDK it links.
+ * Losing the second was the whole problem; losing the first would trade one
+ * blind spot for another.
+ *
+ * NOT an identity claim, and nothing may treat it as one. A user-agent is
+ * caller-supplied text, this repository already removed UA-derived attribution
+ * once for exactly that reason, and re-introducing it as a log field is only
+ * safe while it stays a log field.
+ */
+export const DEFAULT_PLATFORM_USER_AGENT = `mcpjam-sdk/${readSdkVersion()}`;
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
@@ -517,7 +545,9 @@ export class PlatformApiClient {
     // client instance, which throws "Illegal invocation" in Workers/browsers.
     this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.userAgent = options.userAgent;
+    this.userAgent = options.userAgent
+      ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
+      : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's

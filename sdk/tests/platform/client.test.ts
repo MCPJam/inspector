@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_PLATFORM_API_BASE_URL,
+  DEFAULT_PLATFORM_USER_AGENT,
   PlatformApiClient,
   PlatformApiError,
 } from "../../src/platform/index.js";
@@ -382,21 +383,30 @@ describe("PlatformApiClient", () => {
     expect(suiteRuns.searchParams.get("limit")).toBe("10");
   });
 
-  it("sets a user-agent header only when configured", async () => {
+  it("identifies the SDK by default, and keeps the caller's own token", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({}));
     await makeClient(fetchMock).getMe();
     await makeClient(fetchMock, { userAgent: "mcpjam-cli/1.0" }).getMe();
 
-    expect(
-      new Headers(requestOf(fetchMock, 0).init.headers as HeadersInit).get(
+    const header = (index: number) =>
+      new Headers(requestOf(fetchMock, index).init.headers as HeadersInit).get(
         "user-agent"
-      )
-    ).toBeNull();
-    expect(
-      new Headers(requestOf(fetchMock, 1).init.headers as HeadersInit).get(
-        "user-agent"
-      )
-    ).toBe("mcpjam-cli/1.0");
+      );
+
+    // It used to send nothing here, which is why "who is on the SDK, and on
+    // which version?" had no answer in the request logs.
+    expect(header(0)).toBe(DEFAULT_PLATFORM_USER_AGENT);
+    // Prefixed, not replaced: which program is calling AND which SDK it links.
+    expect(header(1)).toBe(`mcpjam-cli/1.0 ${DEFAULT_PLATFORM_USER_AGENT}`);
+  });
+
+  it("names a version rather than claiming one it was not given", () => {
+    // `unknown` is the honest answer when a consumer bundles the SDK from
+    // source with no `define` — a stamp asserting a version nobody injected
+    // would be worse than one admitting it does not know.
+    expect(DEFAULT_PLATFORM_USER_AGENT).toMatch(
+      /^mcpjam-sdk\/(unknown|\d+\.\d+\.\d+.*)$/
+    );
   });
 
   it("maps wire error envelopes onto PlatformApiError", async () => {
