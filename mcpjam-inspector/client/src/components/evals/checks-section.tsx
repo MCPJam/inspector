@@ -20,6 +20,7 @@
 import {
   createContext,
   useContext,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -125,6 +126,11 @@ export interface ChecksSectionProps {
    * downstream reads it.
    */
   onDraftValidityChange?: (hasInvalidDraft: boolean) => void;
+  /**
+   * Show every row's validation issues, touched or not. Callers turn this on
+   * when the user tries to save with an incomplete check — see `CheckRow`.
+   */
+  showAllErrors?: boolean;
 }
 
 /**
@@ -145,6 +151,50 @@ function useInvalidDraftRegistration(invalid: boolean): void {
   }, [report, editorId, invalid]);
 }
 
+/**
+ * How a `CheckRow` hands its Zod verdict to the fields inside it.
+ *
+ * A blank check fails the schema before anyone has typed — eight kinds start
+ * with a required string empty — and painting that on first render made a
+ * fresh row look broken. So an issue is SHOWN only once its field has been
+ * touched, or when the caller asks for everything (a Save attempt). The field
+ * owns the copy: "Pick a tool" says what to do, where Zod's message says what
+ * went wrong with a string.
+ */
+interface FieldValidation {
+  /** Whether the current predicate has a Zod issue at this top-level path. */
+  isInvalid: (path: string) => boolean;
+  /** Whether an issue at this path should be visible right now. */
+  isShown: (path: string) => boolean;
+  markTouched: (path: string) => void;
+}
+
+const FieldValidationContext = createContext<FieldValidation | null>(null);
+
+/**
+ * Paths whose issue a field renders itself, with its own copy. Any other
+ * issue falls back to the row-level line. Static rather than registered:
+ * the row renders before its fields, so it could not learn the claims of
+ * the same pass any other way.
+ */
+const FIELD_OWNED_PATHS: ReadonlySet<string> = new Set([
+  "toolName",
+  "beforeToolName",
+  "needle",
+  "pattern",
+]);
+
+function useFieldValidation(
+  path: string,
+  message: string,
+): { error: string | null; markTouched: () => void } {
+  const ctx = useContext(FieldValidationContext);
+  const error =
+    ctx && ctx.isInvalid(path) && ctx.isShown(path) ? message : null;
+  const markTouched = useCallback(() => ctx?.markTouched(path), [ctx, path]);
+  return { error, markTouched };
+}
+
 export function ChecksSection({
   value,
   onChange,
@@ -159,6 +209,7 @@ export function ChecksSection({
   allowedKinds,
   globalGatesMenu = false,
   onDraftValidityChange,
+  showAllErrors = false,
 }: ChecksSectionProps & { hideAddButton?: boolean; hideEmptyState?: boolean }) {
   const [invalidDraftIds, setInvalidDraftIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -271,6 +322,7 @@ export function ChecksSection({
                   globalGate={
                     globalGatesMenu && isGlobalPolicyKind(predicate.type)
                   }
+                  showAllErrors={showAllErrors}
                 />
               </li>
             ))}
@@ -363,6 +415,8 @@ export interface CheckRowProps {
   legacyScenarioGate?: boolean;
   /** Compact whole-run gate row (label + hint in header, minimal fields). */
   globalGate?: boolean;
+  /** Reveal issues on untouched fields too — the Save-attempt case. */
+  showAllErrors?: boolean;
 }
 
 export function CheckRow({
@@ -376,17 +430,60 @@ export function CheckRow({
   embedded = false,
   legacyScenarioGate = false,
   globalGate = false,
+  showAllErrors = false,
 }: CheckRowProps) {
-  // Zod-validate the current row so an in-progress edit (e.g. empty toolName,
-  // malformed args JSON) surfaces an inline error and disables Save up the
-  // tree (callers wire `isAnyCheckInvalid` into their disable state).
-  const validation = useMemo(
-    () => predicateSchema.safeParse(predicate),
-    [predicate],
+  // Zod-validate the current row. Callers gate Save on the same schema via
+  // `areAllChecksValid`; this copy of the verdict is what the fields show,
+  // and only once touched — see `FieldValidation`.
+  const issues = useMemo(() => {
+    const result = predicateSchema.safeParse(predicate);
+    const byPath = new Map<string, string>();
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        const path = String(issue.path[0] ?? "");
+        if (!byPath.has(path)) byPath.set(path, issue.message);
+      }
+    }
+    return byPath;
+  }, [predicate]);
+
+  const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set());
+  const markTouched = useCallback((path: string) => {
+    setTouched((prev) => {
+      if (prev.has(path)) return prev;
+      const next = new Set(prev);
+      next.add(path);
+      return next;
+    });
+  }, []);
+  const isShown = useCallback(
+    (path: string) => showAllErrors || touched.has(path),
+    [showAllErrors, touched],
   );
-  const error = validation.success
-    ? null
-    : validation.error.issues.map((i) => i.message).join("; ");
+  const fieldValidation = useMemo<FieldValidation>(
+    () => ({
+      isInvalid: (path) => issues.has(path),
+      isShown,
+      markTouched,
+    }),
+    [issues, isShown, markTouched],
+  );
+
+  // Issues no field renders itself. Zod's own wording, since we know nothing
+  // more specific about them; shown once the row has been touched anywhere.
+  const rowLevelError = useMemo(() => {
+    const rest = [...issues.entries()]
+      .filter(([path]) => !FIELD_OWNED_PATHS.has(path))
+      .map(([, message]) => message);
+    return rest.length > 0 ? rest.join("; ") : null;
+  }, [issues]);
+  const showRowLevelError =
+    rowLevelError !== null && (showAllErrors || touched.size > 0);
+  const anyErrorShown =
+    showRowLevelError ||
+    [...issues.keys()].some(
+      (path) => FIELD_OWNED_PATHS.has(path) && isShown(path),
+    );
 
   return (
     <div
@@ -395,7 +492,7 @@ export function CheckRow({
           ? "min-w-0 space-y-3"
           : cn(
               "rounded-md border p-3",
-              error
+              anyErrorShown
                 ? "border-destructive/40 bg-destructive/5"
                 : "border-border/60 bg-muted/10",
             ),
@@ -418,18 +515,20 @@ export function CheckRow({
             )
           ) : null}
 
-          <CheckFields
-            predicate={predicate}
-            onChange={onChange}
-            availableTools={availableTools}
-            widgetToolNames={widgetToolNames}
-            toolArgSchemas={toolArgSchemas}
-            readOnly={readOnly}
-            compactGlobalGate={globalGate}
-          />
+          <FieldValidationContext.Provider value={fieldValidation}>
+            <CheckFields
+              predicate={predicate}
+              onChange={onChange}
+              availableTools={availableTools}
+              widgetToolNames={widgetToolNames}
+              toolArgSchemas={toolArgSchemas}
+              readOnly={readOnly}
+              compactGlobalGate={globalGate}
+            />
+          </FieldValidationContext.Provider>
 
-          {error ? (
-            <div className="text-[11px] text-destructive">{error}</div>
+          {showRowLevelError ? (
+            <div className="text-[11px] text-destructive">{rowLevelError}</div>
           ) : null}
           {legacyScenarioGate ? (
             <p className="text-[11px] text-muted-foreground">
@@ -867,6 +966,7 @@ function ToolNameField({
   readOnly,
   label = "Tool",
   compact = false,
+  path = "toolName",
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -880,13 +980,23 @@ function ToolNameField({
    */
   label?: string;
   compact?: boolean;
+  /**
+   * Which predicate field this control edits, for validation. Defaults to
+   * `toolName`; the ordering rule's second field is `beforeToolName`.
+   */
+  path?: "toolName" | "beforeToolName";
 }) {
   const id = useId();
+  const errorId = `${id}-error`;
   // When a suite has attached servers and we know the tool list, prefer a
   // dropdown to prevent typos. Fall back to free text otherwise (legacy
   // suites without an attached server, or for tools the editor doesn't
   // know about yet).
   const useDropdown = availableTools && availableTools.length > 0;
+  const { error, markTouched } = useFieldValidation(
+    path,
+    useDropdown ? "Pick a tool" : "Enter a tool name",
+  );
   return (
     <div
       className={
@@ -899,7 +1009,17 @@ function ToolNameField({
         {label}
       </Label>
       {useDropdown && !readOnly ? (
-        <Select value={value || undefined} onValueChange={onChange}>
+        <Select
+          value={value || undefined}
+          onValueChange={(next) => {
+            markTouched();
+            onChange(next);
+          }}
+          // Closing the menu without choosing is the dropdown's blur.
+          onOpenChange={(open) => {
+            if (!open) markTouched();
+          }}
+        >
           <SelectTrigger
             id={id}
             className={
@@ -908,6 +1028,8 @@ function ToolNameField({
                 : "h-8 text-xs"
             }
             aria-label={label}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
           >
             <SelectValue placeholder="Pick a tool…" />
           </SelectTrigger>
@@ -924,12 +1046,29 @@ function ToolNameField({
           id={id}
           value={value}
           aria-label={label}
-          onChange={(e) => onChange(e.target.value)}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+          onChange={(e) => {
+            markTouched();
+            onChange(e.target.value);
+          }}
+          onBlur={markTouched}
           placeholder="e.g. search"
           className="h-8 text-xs"
           disabled={readOnly}
         />
       )}
+      {error ? (
+        <p
+          id={errorId}
+          className={cn(
+            "text-[11px] text-destructive",
+            compact && "col-start-2",
+          )}
+        >
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1528,6 +1667,10 @@ function ResponseContainsFields({
 }) {
   const needleId = useId();
   const csId = useId();
+  const { error, markTouched } = useFieldValidation(
+    "needle",
+    "Enter the text to look for",
+  );
   return (
     <div className="space-y-2">
       <div className="space-y-1">
@@ -1537,11 +1680,22 @@ function ResponseContainsFields({
         <Input
           id={needleId}
           value={predicate.needle}
-          onChange={(e) => onChange({ ...predicate, needle: e.target.value })}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${needleId}-error` : undefined}
+          onChange={(e) => {
+            markTouched();
+            onChange({ ...predicate, needle: e.target.value });
+          }}
+          onBlur={markTouched}
           placeholder="e.g. refund issued"
           className="h-8 text-xs"
           disabled={readOnly}
         />
+        {error ? (
+          <p id={`${needleId}-error`} className="text-[11px] text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
       <div className="flex items-center gap-2">
         <Switch
@@ -1570,9 +1724,11 @@ function ResponseMatchesFields({
   readOnly: boolean;
 }) {
   const id = useId();
-  // Live-validate the regex on input. An invalid pattern shows inline and the
-  // row-level Zod validation will also flag it (empty pattern). We don't
-  // attempt to detect ReDoS here — the evaluator has its own heuristic guard.
+  // Live-validate the regex on input. An invalid pattern shows inline as soon
+  // as it is typed — the user wrote it, so it is not an untouched-field
+  // message. The empty case goes through the touched rule like every other
+  // required field. We don't attempt to detect ReDoS here — the evaluator has
+  // its own heuristic guard.
   let regexError: string | null = null;
   if (predicate.pattern) {
     try {
@@ -1581,6 +1737,11 @@ function ResponseMatchesFields({
       regexError = e instanceof Error ? e.message : "Invalid regex";
     }
   }
+  const { error: emptyError, markTouched } = useFieldValidation(
+    "pattern",
+    "Enter a pattern",
+  );
+  const error = regexError ?? emptyError;
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
@@ -1589,13 +1750,21 @@ function ResponseMatchesFields({
       <Input
         id={id}
         value={predicate.pattern}
-        onChange={(e) => onChange({ ...predicate, pattern: e.target.value })}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
+        onChange={(e) => {
+          markTouched();
+          onChange({ ...predicate, pattern: e.target.value });
+        }}
+        onBlur={markTouched}
         placeholder="e.g. ^Order #\\d{4} confirmed$"
         className="h-8 font-mono text-xs"
         disabled={readOnly}
       />
-      {regexError ? (
-        <div className="text-[11px] text-destructive">{regexError}</div>
+      {error ? (
+        <div id={`${id}-error`} className="text-[11px] text-destructive">
+          {error}
+        </div>
       ) : null}
     </div>
   );
@@ -1846,6 +2015,7 @@ function ToolOrderFields({
       />
       <ToolNameField
         label="Before this tool"
+        path="beforeToolName"
         value={predicate.beforeToolName}
         onChange={(beforeToolName) =>
           onChange({ ...predicate, beforeToolName })
@@ -1943,6 +2113,10 @@ function ToolResultContainsFields({
   readOnly: boolean;
 }) {
   const id = useId();
+  const { error, markTouched } = useFieldValidation(
+    "needle",
+    "Enter the text the result must contain",
+  );
   return (
     <div className="space-y-2">
       <div className="space-y-1">
@@ -1952,11 +2126,22 @@ function ToolResultContainsFields({
         <Input
           id={id}
           value={predicate.needle}
-          onChange={(e) => onChange({ ...predicate, needle: e.target.value })}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : undefined}
+          onChange={(e) => {
+            markTouched();
+            onChange({ ...predicate, needle: e.target.value });
+          }}
+          onBlur={markTouched}
           placeholder="ISS-4412"
           className="h-8 text-xs"
           disabled={readOnly}
         />
+        {error ? (
+          <p id={`${id}-error`} className="text-[11px] text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
       <ResultToolFilterField
         value={predicate.toolName}
