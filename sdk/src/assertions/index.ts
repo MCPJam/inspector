@@ -3,10 +3,18 @@
  * name.
  *
  * A barrel, not a move. The implementation stays in `../predicates/`, and
- * `@mcpjam/sdk/predicates` keeps resolving to the same objects: the two
- * subpaths are one library with two spellings for the length of the rollout,
- * and a consumer importing either gets identical values — `toBe`-identical,
- * not merely equal.
+ * `@mcpjam/sdk/predicates` keeps working: the two subpaths are one library with
+ * two spellings for the length of the rollout.
+ *
+ * IDENTICAL IN SOURCE, NOT IN THE PUBLISHED BUNDLE. Imported from source (the
+ * inspector's aliases, this package's tests) both subpaths are the same module
+ * objects. The built package is different: `tsup.config.ts` sets
+ * `splitting: false`, so `dist/assertions/index.js` and
+ * `dist/predicates/index.js` each inline their own copy. A consumer of the
+ * published package gets equal behaviour but separate function and schema
+ * instances, so `evaluateAssertions === evaluatePredicates` is false there, and
+ * so is any identity or `instanceof` check across the two subpaths. Import one
+ * subpath per consumer.
  *
  * Moving the files instead would have been a larger diff for no benefit and one
  * real cost: `mcpjam-inspector`'s vitest configs and its Vite build alias each

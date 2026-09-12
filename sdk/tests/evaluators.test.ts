@@ -114,6 +114,98 @@ describe("assertion() is predicateScorer() under its canonical name", () => {
   });
 });
 
+/**
+ * The migration claim, stated as the author would write it.
+ *
+ * An author moving a rule from `predicateScorer(rule, { role, id })` to the
+ * canonical constructor writes `assertion({ ...rule, role, id })`: policy and
+ * name ride on the rule object instead of in options. If the two mint a
+ * different `scorerId` or `definitionHash`, `eval gate --baseline` reads every
+ * migrated evaluator as one removed and one added. So this compares the two
+ * spellings across the policy fields rules legitimately carry, not only the
+ * bare rule.
+ */
+describe("assertion({ ...rule, role, id }) mints predicateScorer(rule, { role, id })'s identity", () => {
+  const RULES: Assertion[] = [
+    { type: "responseContains", needle: "refund" },
+    { type: "noToolErrors" },
+    { type: "finalAssistantMessageNonEmpty" },
+    { type: "toolCalledAtLeastOnce", toolName: "search_policies" } as Assertion,
+    { type: "responseMatches", pattern: "refund\\s+issued" } as Assertion,
+  ];
+  // Rules that already carry `severity`, which the schema pairs with an
+  // advisory role. `predicateScorer` has no severity option, so the rule object
+  // is the only place severity can travel.
+  const WARN_RULES: Assertion[] = RULES.map(
+    (rule) => ({ ...rule, severity: "warn" }) as Assertion
+  );
+
+  type Variant = {
+    label: string;
+    role?: "advisory" | "gating";
+    id?: string;
+  };
+  const VARIANTS: Variant[] = [
+    { label: "unnamed, role absent" },
+    { label: "unnamed, role advisory", role: "advisory" },
+    { label: "unnamed, role gating", role: "gating" },
+    { label: "explicitly named, role absent", id: "named-rule" },
+    {
+      label: "explicitly named, role advisory",
+      id: "named-rule",
+      role: "advisory",
+    },
+    { label: "whitespace-only id", id: "   " },
+    { label: "whitespace-only id, role advisory", id: "   ", role: "advisory" },
+  ];
+
+  const cases = [
+    ...RULES.flatMap((rule) => VARIANTS.map((variant) => ({ rule, variant }))),
+    ...WARN_RULES.flatMap((rule) =>
+      VARIANTS.filter((variant) => variant.role === "advisory").map(
+        (variant) => ({ rule, variant })
+      )
+    ),
+  ].map(({ rule, variant }) => ({
+    name: `${rule.type}${"severity" in rule ? " (severity warn)" : ""} — ${variant.label}`,
+    rule,
+    variant,
+  }));
+
+  it.each(cases)("$name", ({ rule, variant }) => {
+    const canonical = assertion({
+      ...rule,
+      ...(variant.role !== undefined ? { role: variant.role } : {}),
+      ...(variant.id !== undefined ? { id: variant.id } : {}),
+    });
+    const legacy = predicateScorer(rule, {
+      ...(variant.role !== undefined ? { role: variant.role } : {}),
+      ...(variant.id !== undefined ? { id: variant.id } : {}),
+    });
+
+    const canonicalResolved = resolveScoreDefinition(canonical.definition);
+    const legacyResolved = resolveScoreDefinition(legacy.definition);
+
+    expect(canonical.definition.scorerId).toBe(legacy.definition.scorerId);
+    expect(definitionHash(canonicalResolved)).toBe(
+      definitionHash(legacyResolved)
+    );
+    expect(canonicalResolved).toEqual(legacyResolved);
+  });
+
+  it("scores the same rows for a role carried on the rule", async () => {
+    const canonical = await runEvaluators(
+      [assertion({ ...RULE, role: "advisory" })],
+      context("nothing here")
+    );
+    const legacy = await runEvaluators(
+      [predicateScorer(RULE, { role: "advisory" })],
+      context("nothing here")
+    );
+    expect(canonical).toEqual(legacy);
+  });
+});
+
 describe("judge() is judgeScorer() under its canonical name", () => {
   it("builds a byte-identical definition", () => {
     expect(judge(JUDGE_OPTIONS).definition).toEqual(
