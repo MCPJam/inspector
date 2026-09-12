@@ -63,7 +63,7 @@ export function clampText(text: string): string {
 }
 
 /**
- * `JSON.stringify` that CANNOT build a string bigger than `cap`, and cannot
+ * `JSON.stringify` that CANNOT return a string bigger than `cap`, and cannot
  * walk more than `nodeBudget` values getting there.
  *
  * The difference from stringify-then-truncate: that materializes the whole
@@ -72,6 +72,14 @@ export function clampText(text: string): string {
  * replacer, and a value that blows either budget aborts the walk and returns
  * `null` — the caller substitutes a marker rather than a head of JSON no
  * reader could parse anyway.
+ *
+ * The running total counts what each node costs in the OUTPUT — its
+ * separator, and inside an object its quoted key — not just its scalar
+ * payload. Under a payload-only total, `null`s, `{}`s and long property names
+ * are free: an array of 100,000 `null`s stays inside every budget and still
+ * serializes to half a megabyte. The `text.length` check at the end is the
+ * guarantee, because escaping can widen a string past the length it was
+ * measured at; the accounting only decides how early the walk gives up.
  */
 export function boundedJsonString(
   value: unknown,
@@ -82,26 +90,30 @@ export function boundedJsonString(
   let nodes = 0;
   const OVER = Symbol("over-budget");
   try {
-    const text = JSON.stringify(value, (_key, v) => {
+    // A `function`, not an arrow: `this` is the holder, which is how an array
+    // element (a bare comma) is told apart from an object member (a key).
+    const text = JSON.stringify(value, function (this: unknown, key, v) {
       nodes += 1;
       if (nodes > nodeBudget) throw OVER;
-      // Everything below counts what this node will COST in the output, and
-      // gives up the moment the total would exceed the cap.
+      emitted += Array.isArray(this) ? 1 : key.length + 4;
       if (typeof v === "string") {
-        const room = cap - emitted;
+        const room = cap - emitted - 2;
         if (room <= 0) throw OVER;
-        emitted += Math.min(v.length, room);
+        emitted += Math.min(v.length, room) + 2;
         // Truncate IN the replacer: one multi-megabyte scalar is a single
         // node, so no node budget would catch it.
         return v.length > room ? `${v.slice(0, room)}…` : v;
       }
-      if (typeof v === "number" || typeof v === "boolean") {
-        emitted += 8;
-        if (emitted > cap) throw OVER;
+      if (v === null) emitted += 4;
+      else if (typeof v === "object") emitted += 2;
+      else if (typeof v === "number" || typeof v === "boolean") {
+        emitted += String(v).length;
       }
+      if (emitted > cap) throw OVER;
       return v;
     });
-    return text ?? null;
+    if (text === undefined) return null;
+    return text.length > cap ? null : text;
   } catch {
     // Over budget, or a value that cannot be serialized at all (a cycle, a
     // throwing `toJSON`). Both mean the same thing to the caller: there is

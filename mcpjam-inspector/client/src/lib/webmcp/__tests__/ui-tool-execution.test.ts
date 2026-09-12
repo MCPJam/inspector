@@ -372,6 +372,36 @@ describe("executeUiToolCall", () => {
       expect(outcome.status).toBe("ok");
     });
 
+    it("bounds a foreign part that is huge in SHAPE rather than in payload", async () => {
+      // 100,000 `null`s: no scalar bytes to count, well inside any traversal
+      // budget, and half a megabyte once serialized. A budget that only adds
+      // up strings and numbers waves this straight through into the agent's
+      // context.
+      useUiToolsRegistry.getState().registerUiTool(
+        makeTool({
+          execute: async () =>
+            ({
+              content: [
+                { type: "sparse", rows: new Array(100_000).fill(null) },
+              ],
+            }) as never,
+        }),
+      );
+
+      const outcome = await executeUiToolCall({
+        toolName: "ui_navigate",
+        input: {},
+        caller: "native_webmcp",
+        invocationId: "native-1",
+      });
+
+      const total = outcome.result.content.reduce(
+        (sum, part) => sum + part.text.length,
+        0,
+      );
+      expect(total).toBeLessThanOrEqual(MAX_RESULT_CHARS + 200);
+    });
+
     it("serializes a foreign result shape rather than shipping it raw", async () => {
       useUiToolsRegistry.getState().registerUiTool(
         makeTool({
