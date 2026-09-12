@@ -5296,9 +5296,14 @@ describe("ChromiumDriver — acting inside a frame", () => {
       const pending = driver.execute(cmd({ kind: "observe", mode: "a11y" }));
       await vi.advanceTimersByTimeAsync(2_000);
       const res = await pending;
-      // Degraded, not failed: the MAIN document still reads, which is exactly
-      // what the release before the frame forest produced.
+      // Degraded, NOT failed — and the difference is the tree, not the status.
+      // `ok` alone passes on an empty or missing one, which would be the same
+      // outage wearing a success: the point of the bound is that the main
+      // document still reads, exactly as it did before the frame forest.
       expect(res.ok).toBe(true);
+      const a11y = (res.output as { a11y?: string } | undefined)?.a11y;
+      expect(a11y).toEqual(expect.any(String));
+      expect(a11y).toContain("Outside");
     } finally {
       vi.useRealTimers();
     }
