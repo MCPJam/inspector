@@ -489,6 +489,56 @@ describe("chromium install — automatic retries", () => {
     expect(runInstall).toHaveBeenCalledTimes(4);
   });
 
+  it("keeps refusing after the ladder is spent, until someone asks", async () => {
+    const runInstall = failingInstall();
+    const isInstalled = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValue(false);
+    const attempt = () =>
+      ensureLocalChromiumInstalled({
+        env: localEnv,
+        isInstalled,
+        runInstall,
+        logger: silentLogger,
+      });
+
+    await attempt();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(runInstall).toHaveBeenCalledTimes(4);
+
+    // The cap is spent and nothing is booked, so there is no timer left to
+    // suppress anything. A widget render and a WebMCP session both ask now.
+    await attempt();
+    await ensureLocalChromiumInstalled({
+      env: localEnv,
+      isInstalled,
+      runInstall,
+      logger: silentLogger,
+      reason: "webmcp",
+    });
+    expect(runInstall).toHaveBeenCalledTimes(4);
+    // They are told why, rather than silently getting nothing.
+    expect(getChromiumInstallState()).toMatchObject({
+      status: "failed",
+      error: "network down",
+      attempts: 4,
+    });
+
+    // "Retry now" is the one thing that lifts it: the installer runs a fifth
+    // time. `isInstalled` stays false for the probe inside the reservation —
+    // answering true there would report `ready` without installing anything,
+    // which is a different path than the one under test.
+    runInstall.mockResolvedValueOnce(undefined);
+    isInstalled.mockResolvedValueOnce(false).mockResolvedValue(true);
+    await startChromiumInstall({ isInstalled, runInstall });
+    await vi.waitFor(() =>
+      expect(getChromiumInstallState()).toEqual({ status: "ready" }),
+    );
+    expect(runInstall).toHaveBeenCalledTimes(5);
+  });
+
   it("a retry that succeeds clears the ladder", async () => {
     const runInstall = vi
       .fn<() => Promise<void>>()

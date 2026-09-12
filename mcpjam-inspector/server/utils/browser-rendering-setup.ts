@@ -342,7 +342,7 @@ function publishReady(): void {
 function publishFailure(
   error: unknown,
   retryWith: BrowserRenderingSetupOptions,
-): void {
+): Extract<ChromiumInstallState, { status: "failed" }> {
   cancelScheduledRetry();
   failedAttempts += 1;
   const message = error instanceof Error ? error.message : String(error);
@@ -365,6 +365,7 @@ function publishFailure(
     }, delay);
     retryTimer.unref?.();
   }
+  return failed;
 }
 
 /**
@@ -394,8 +395,12 @@ export async function startChromiumInstall(
   const isInstalled = options.isInstalled ?? isChromiumInstalled;
   const runInstall = options.runInstall ?? runPlaywrightChromiumInstall;
 
+  // Clears the STANDING FAILURE too, not just the ladder: it is what gates
+  // every automatic caller above, and this click is the one thing that is
+  // allowed to lift it.
   cancelScheduledRetry();
   failedAttempts = 0;
+  lastFailure = null;
 
   // The reservation is made SYNCHRONOUSLY and the "is it already there?" probe
   // happens inside it. Probing first meant two clicks, or a click and the
@@ -496,9 +501,18 @@ export async function ensureLocalChromiumInstalled(
       return true;
     }
 
-    if (retryTimer && reason !== "retry" && lastFailure) {
-      // An automatic retry is already booked. Report THAT failure, with its
-      // countdown, rather than starting a fresh attempt nobody asked for.
+    if (lastFailure && reason !== "retry") {
+      // A failure stands. Report THAT rather than starting a fresh attempt
+      // nobody asked for — whether an automatic retry is still booked (the
+      // state carries its countdown) or the ladder is spent.
+      //
+      // Gated on the FAILURE, not on the pending timer. Gating on the timer
+      // meant the cap evaporated the moment it was reached: with nothing
+      // booked, every later render or WebMCP request walked straight past
+      // this and spawned its own installer, so a machine that could never
+      // download Chromium ran one per request forever. Once the ladder is
+      // spent only an explicit "Retry now" clears this, which is the whole
+      // point of a cap.
       explicitInstallState = lastFailure;
       return false;
     }
@@ -534,11 +548,10 @@ export async function ensureLocalChromiumInstalled(
       log.info("[browser-rendering] Playwright Chromium is ready");
       return true;
     } catch (error) {
-      publishFailure(error, retryWith);
-      const failed = explicitInstallState as Extract<
-        ChromiumInstallState,
-        { status: "failed" }
-      >;
+      // Taken from the publisher's return rather than re-read from the
+      // module state and cast back: the cast was a lie the compiler could not
+      // check, and it narrowed to `installing` here anyway.
+      const failed = publishFailure(error, retryWith);
       const when = failed.retryAt
         ? `; retrying in ${Math.round((failed.retryAt - Date.now()) / 1000)}s`
         : "; no more automatic retries";
