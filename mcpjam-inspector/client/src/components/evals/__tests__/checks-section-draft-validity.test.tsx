@@ -18,21 +18,31 @@ function Harness({
   initial,
   onDraftValidityChange,
   onValue,
+  replacement,
 }: {
   initial: Predicate[];
   onDraftValidityChange: (hasInvalidDraft: boolean) => void;
   onValue?: (next: Predicate[]) => void;
+  /** A whole new list the test can swap in from outside the section. */
+  replacement?: Predicate[];
 }) {
   const [value, setValue] = useState(initial);
   return (
-    <ChecksSection
-      value={value}
-      onChange={(next) => {
-        setValue(next);
-        onValue?.(next);
-      }}
-      onDraftValidityChange={onDraftValidityChange}
-    />
+    <>
+      <ChecksSection
+        value={value}
+        onChange={(next) => {
+          setValue(next);
+          onValue?.(next);
+        }}
+        onDraftValidityChange={onDraftValidityChange}
+      />
+      {replacement ? (
+        <button type="button" onClick={() => setValue(replacement)}>
+          replace list
+        </button>
+      ) : null}
+    </>
   );
 }
 
@@ -197,6 +207,63 @@ describe("ChecksSection raw-JSON draft validity", () => {
         screen.getByRole("button", { name: "Remove check" }),
       );
     });
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("removing the row above keeps the row below's draft with its own predicate", async () => {
+    const onDraftValidityChange = vi.fn();
+    render(
+      <Harness
+        initial={[toolCalledWith("search"), toolCalledWith("fetch")]}
+        onDraftValidityChange={onDraftValidityChange}
+      />,
+    );
+    await switchToRawJson(0);
+    const second = await switchToRawJson(1);
+    // A half-typed draft on the SECOND row only.
+    fireEvent.change(second, { target: { value: '{"q": ' } });
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(true);
+
+    await act(async () => {
+      await userEvent.click(
+        screen.getAllByRole("button", { name: "Remove check" })[0]!,
+      );
+    });
+
+    // One row left, and it is still the fetch row mid-edit — not the search
+    // row's editor now pointed at fetch's args.
+    expect(screen.getAllByLabelText("Tool")).toHaveLength(1);
+    expect(screen.getByLabelText("Tool")).toHaveValue("fetch");
+    expect(screen.getByLabelText(/Expected args \(JSON\)/)).toHaveValue(
+      '{"q": ',
+    );
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("re-derives the draft when the whole list is replaced from outside", async () => {
+    const onDraftValidityChange = vi.fn();
+    render(
+      <Harness
+        initial={[toolCalledWith("search")]}
+        replacement={[
+          {
+            type: "toolCalledWith",
+            toolName: "other",
+            args: { args: { city: "Lima" } },
+          } as Predicate,
+        ]}
+        onDraftValidityChange={onDraftValidityChange}
+      />,
+    );
+    const textarea = await switchToRawJson();
+    fireEvent.change(textarea, { target: { value: "{" } });
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(true);
+
+    await userEvent.click(screen.getByText("replace list"));
+
+    expect(screen.getByLabelText(/Expected args \(JSON\)/)).toHaveValue(
+      JSON.stringify({ city: "Lima" }, null, 2),
+    );
     expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
   });
 
