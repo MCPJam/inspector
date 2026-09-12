@@ -1,10 +1,8 @@
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
+import { chainPresentation } from "@/components/shared/user-value-chain/user-value-chain-types";
 
 export type UsageFilterPreset =
-  | "all"
-  | "needs_review"
-  | "low_ratings"
-  | "no_feedback";
+  "all" | "needs_review" | "low_ratings" | "no_feedback";
 
 /**
  * Hand-mirrored from `convex/lib/usageInsights/filters.ts`
@@ -33,7 +31,11 @@ export type UsageDimensionKey =
   // (`<criterionId>:pass|fail|ungraded`), because the key is a closed union
   // and criterion ids are minted at authoring time. `chipGroupKey` re-splits
   // them so each criterion behaves as its own boolean dimension.
-  | "criterion";
+  | "criterion"
+  // One stage of the measured user value chain. Same shape as `criterion` and
+  // for the same reason: the key is a closed union, so the stage's identity
+  // travels in the chip VALUE (`<stage>:passed` | `:failed`).
+  | "stage";
 
 /** Chip-value verdicts for the `criterion` dimension. */
 export const CRITERION_PASS = "pass";
@@ -45,9 +47,45 @@ export type CriterionVerdict = "pass" | "fail" | "ungraded";
 /** Build a criterion chip value. Mirrors `criterionChipValue` on the server. */
 export function criterionChipValue(
   criterionId: string,
-  verdict: CriterionVerdict
+  verdict: CriterionVerdict,
 ): string {
   return `${criterionId}:${verdict}`;
+}
+
+/**
+ * Chip-value suffixes for the `stage` dimension.
+ *
+ * Only the two ELIGIBLE states. `notMeasured`, `notApplicable` and `notReached`
+ * are three different reasons a stage has no verdict, and the funnel excludes
+ * all three from `eligible` — offering them would open a list longer than the
+ * count that offered it.
+ */
+export const STAGE_PASSED = "passed";
+export const STAGE_FAILED = "failed";
+
+export type StageChipState = "passed" | "failed";
+
+/** Build a stage chip value. Mirrors `stageChipValue` on the server. */
+export function stageChipValue(stage: string, state: StageChipState): string {
+  return `${stage}:${state}`;
+}
+
+/**
+ * Split a stage chip value into `(stage, state)`.
+ *
+ * Mirrors `parseStageChipValue` in `convex/lib/usageInsights/filters.ts`. The
+ * two must agree exactly, or a server-filtered page and a client-filtered list
+ * would disagree about what the reader selected.
+ */
+export function parseStageChipValue(
+  value: string,
+): { stage: string; state: StageChipState } | null {
+  const idx = value.lastIndexOf(":");
+  if (idx <= 0) return null;
+  const stage = value.slice(0, idx);
+  const state = value.slice(idx + 1);
+  if (state !== STAGE_PASSED && state !== STAGE_FAILED) return null;
+  return { stage, state };
 }
 
 /**
@@ -64,7 +102,7 @@ export function criterionChipValue(
  * the user selected.
  */
 export function parseCriterionChipValue(
-  value: string
+  value: string,
 ): { criterionId: string; verdict: CriterionVerdict } | null {
   const idx = value.lastIndexOf(":");
   if (idx <= 0) return null;
@@ -115,7 +153,7 @@ const PRIMARY_BEHAVIOR_PRIORITY = [
 
 /** The single behavior value for a thread, or null when it has no tags. */
 export function primaryBehaviorTag(
-  tags: readonly string[] | undefined | null
+  tags: readonly string[] | undefined | null,
 ): string | null {
   if (!tags || tags.length === 0) return null;
   for (const candidate of PRIMARY_BEHAVIOR_PRIORITY) {
@@ -225,7 +263,7 @@ function threadFeedbackBucket(thread: SharedChatThread): string {
 
 export function threadMatchesUsageFilter(
   thread: SharedChatThread,
-  filter: UsageFilterPreset
+  filter: UsageFilterPreset,
 ): boolean {
   if (filter === "all") return true;
 
@@ -249,7 +287,7 @@ export function threadMatchesUsageFilter(
 
 export function threadMatchesChip(
   thread: SharedChatThread,
-  chip: UsageFilterChip
+  chip: UsageFilterChip,
 ): boolean {
   if (chip.kind === "cluster") {
     return threadThemeId(thread, chip.dimension ?? "goal") === chip.clusterId;
@@ -314,6 +352,23 @@ export function threadMatchesChip(
       if (result === undefined) return false;
       return result.passed === (parsed.verdict === CRITERION_PASS);
     }
+    case "stage": {
+      const parsed = parseStageChipValue(chip.value);
+      if (!parsed) return false;
+      // Only a CURRENT chain carries verdicts. `chainPresentation` is already
+      // the client's reading of that lifecycle and its "current" is exactly the
+      // server's `counted` bucket, so this reuses it rather than growing a
+      // second copy of the gate. The trap it closes is the stale chain:
+      // `markStagePending` preserves the previous generation's rows, so a
+      // stale one looks fully populated and would match on a naive lookup
+      // while the funnel counts none of it.
+      if (chainPresentation(thread.stageDerivation) !== "current") return false;
+      const row = thread.stageDerivation?.stageResults?.find(
+        (r) => r.stage === parsed.stage,
+      );
+      // `notMeasured` / `notApplicable` / `notReached` are not "not failed".
+      return row?.state === parsed.state;
+    }
     default:
       return false;
   }
@@ -335,12 +390,19 @@ function chipGroupKey(chip: UsageFilterChip): string {
     const parsed = parseCriterionChipValue(chip.value);
     return parsed ? `criterion:${parsed.criterionId}` : "criterion:__invalid__";
   }
+  // Stage chips group PER STAGE, for the criterion reasoning above. Under one
+  // shared `stage` key they would all OR, turning "failed at discovery AND at
+  // response" into "either" — a wider cohort than the reader selected.
+  if (chip.key === "stage") {
+    const parsed = parseStageChipValue(chip.value);
+    return parsed ? `stage:${parsed.stage}` : "stage:__invalid__";
+  }
   return chip.key;
 }
 
 export function threadMatchesFilterState(
   thread: SharedChatThread,
-  filter: UsageFilterState
+  filter: UsageFilterState,
 ): boolean {
   if (!threadMatchesUsageFilter(thread, filter.preset)) return false;
   // Chips are AND'd across dimensions but OR'd within the same dimension.
@@ -363,7 +425,7 @@ export function threadMatchesFilterState(
 
 export function toggleChip(
   filter: UsageFilterState,
-  chip: UsageFilterChip
+  chip: UsageFilterChip,
 ): UsageFilterState {
   const matches = filter.chips.findIndex((c) => chipKey(c) === chipKey(chip));
   if (matches >= 0) {
@@ -387,7 +449,7 @@ export function chipKey(chip: UsageFilterChip): string {
 /** The theme a session carries on one axis; `themeClusterId` is the goal one. */
 export function threadThemeId(
   thread: SharedChatThread,
-  dimension: SignalDimension
+  dimension: SignalDimension,
 ): string | undefined {
   switch (dimension) {
     case "goal":
@@ -431,12 +493,12 @@ export type ThemeRef = {
  * independently before the whole value is handed to URLSearchParams.
  */
 export function serializeSelectionParam(
-  themes: readonly Pick<ThemeRef, "dimension" | "clusterId">[]
+  themes: readonly Pick<ThemeRef, "dimension" | "clusterId">[],
 ): string {
   return themes
     .map(
       ({ dimension, clusterId }) =>
-        `${dimension}:${encodeURIComponent(clusterId)}`
+        `${dimension}:${encodeURIComponent(clusterId)}`,
     )
     .join(",");
 }
@@ -481,7 +543,7 @@ export function isEmptySelection(selection: InsightsSelection): boolean {
 
 /** The chips that express a selection. */
 export function selectionChips(
-  selection: InsightsSelection
+  selection: InsightsSelection,
 ): UsageFilterChip[] {
   return selection.themes.map((theme) => ({
     kind: "cluster" as const,
@@ -504,7 +566,7 @@ export function selectionChips(
  */
 export function removeChipsByKeys(
   filter: UsageFilterState,
-  keys: readonly string[]
+  keys: readonly string[],
 ): UsageFilterState {
   if (keys.length === 0) return filter;
   const drop = new Set(keys);
@@ -520,11 +582,11 @@ export function removeChipsByKeys(
  */
 export function selectionChipsToAdd(
   filter: UsageFilterState,
-  selection: InsightsSelection
+  selection: InsightsSelection,
 ): UsageFilterChip[] {
   const existing = new Set(filter.chips.map(chipKey));
   return selectionChips(selection).filter(
-    (chip) => !existing.has(chipKey(chip))
+    (chip) => !existing.has(chipKey(chip)),
   );
 }
 
@@ -541,7 +603,7 @@ export function selectionChipsToAdd(
 export function applySelection(
   filter: UsageFilterState,
   next: InsightsSelection,
-  previousOwnedKeys: readonly string[] = []
+  previousOwnedKeys: readonly string[] = [],
 ): UsageFilterState {
   const base = removeChipsByKeys(filter, previousOwnedKeys);
   return {
@@ -553,7 +615,7 @@ export function applySelection(
 /** Whether every chip this selection implies is currently active. */
 export function isSelectionSelected(
   filter: UsageFilterState,
-  selection: InsightsSelection
+  selection: InsightsSelection,
 ): boolean {
   if (isEmptySelection(selection)) return false;
   const active = new Set(filter.chips.map(chipKey));
@@ -563,7 +625,7 @@ export function isSelectionSelected(
 /** Structural equality, used to decide whether a click re-opens or closes. */
 export function isSameSelection(
   a: InsightsSelection | null,
-  b: InsightsSelection | null
+  b: InsightsSelection | null,
 ): boolean {
   if (a === null || b === null) return a === b;
   const left = selectionChips(a).map(chipKey).sort();
@@ -575,7 +637,7 @@ export function isSameSelection(
 
 export function removeChipByKey(
   filter: UsageFilterState,
-  key: string
+  key: string,
 ): UsageFilterState {
   return {
     ...filter,
@@ -585,7 +647,7 @@ export function removeChipByKey(
 
 export function compareThreadsForUsageList(
   a: SharedChatThread,
-  b: SharedChatThread
+  b: SharedChatThread,
 ): number {
   const score = (t: SharedChatThread) => {
     let s = 0;

@@ -7,13 +7,10 @@
  * index order here.
  */
 
+import type { UserValueStage } from "@mcpjam/sdk/contract";
+
 export type JourneyStageId =
-  | "connection"
-  | "discovery"
-  | "selection"
-  | "call"
-  | "response"
-  | "value";
+  "connection" | "discovery" | "selection" | "call" | "response" | "value";
 
 export interface JourneyStage {
   id: JourneyStageId;
@@ -62,6 +59,31 @@ export const JOURNEY_STAGES: readonly JourneyStage[] = [
     question: "Did the configured system complete the original task?",
   },
 ] as const;
+
+/**
+ * The panel's stage ids to the measured chain's, and back.
+ *
+ * Five are identical; the sixth is not — the chain calls the last stage
+ * `userValue` and this panel has always called it `value`. Both directions are
+ * needed (mapping a funnel IN, building a session filter OUT), and the reverse
+ * is INVERTED from the forward map rather than written twice, so a seventh
+ * stage cannot be added to one direction only.
+ */
+export const CHAIN_STAGE_BY_JOURNEY: Record<JourneyStageId, UserValueStage> = {
+  connection: "connection",
+  discovery: "discovery",
+  selection: "selection",
+  call: "call",
+  response: "response",
+  value: "userValue",
+};
+
+export const JOURNEY_STAGE_BY_CHAIN = Object.fromEntries(
+  Object.entries(CHAIN_STAGE_BY_JOURNEY).map(([journey, chain]) => [
+    chain,
+    journey,
+  ]),
+) as Record<UserValueStage, JourneyStageId>;
 
 /** Index of a stage in chain order — the "earliest failing stage" ordering. */
 export function journeyStageIndex(id: JourneyStageId): number {

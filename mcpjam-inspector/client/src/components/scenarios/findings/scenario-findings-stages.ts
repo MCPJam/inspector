@@ -21,7 +21,7 @@
  *  - `ok` is EARNED: every eligible session passed. One failure is `warn`.
  */
 
-import { USER_VALUE_STAGES, type UserValueStage } from "@mcpjam/sdk/contract";
+import { USER_VALUE_STAGES } from "@mcpjam/sdk/contract";
 // Type-only: erased at compile time, so the swarm runtime stays out of here.
 import type {
   GoalStageModel,
@@ -30,6 +30,7 @@ import type {
 } from "@/components/swarms/findings/findings-derivation";
 import {
   JOURNEY_STAGES,
+  JOURNEY_STAGE_BY_CHAIN,
   journeyStageTitle,
   type JourneyStageId,
 } from "@/components/swarms/findings/journey-stages";
@@ -39,19 +40,11 @@ import type {
 } from "@/components/shared/user-value-chain/user-value-chain-types";
 
 /**
- * The chain's stage ids to the panel's. Five are identical; the sixth is not.
- * The chain calls the last stage `userValue`, the Findings panel has always
- * called it `value`. A `Record` rather than a cast, so a seventh stage on
- * either side fails the build instead of silently dropping a column.
+ * The chain's stage ids to the panel's, from the one place that owns both
+ * vocabularies. It used to be restated here, which is one more copy than the
+ * two directions need.
  */
-const STAGE_ID: Record<UserValueStage, JourneyStageId> = {
-  connection: "connection",
-  discovery: "discovery",
-  selection: "selection",
-  call: "call",
-  response: "response",
-  userValue: "value",
-};
+const STAGE_ID = JOURNEY_STAGE_BY_CHAIN;
 
 /**
  * A stage's state, from its tally alone.
