@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   adaptContext,
+  contextOptionsFor,
   wrapPage,
   type AnyContext,
   type AnyPage,
 } from "../chromium-launch";
+import {
+  BROWSERD_CONTEXT_OPTIONS,
+  BROWSERD_LOCAL_CONTEXT_OPTIONS,
+  BROWSERD_OBSERVATION_VIEWPORT,
+} from "../launch-args";
 
 /**
  * Unit coverage for the ONE piece of the Playwright adapter that had a P1: the
@@ -182,5 +188,52 @@ describe("wrapPage.screenshotBase64", () => {
       expect.objectContaining({ type: "jpeg" }),
     );
     expect(base64).toBe(Buffer.from("jpeg-bytes").toString("base64"));
+  });
+});
+
+describe("contextOptionsFor — the surface decides what is a determinism pin", () => {
+  it("gives the sandbox its full pin set, scale factor folded in when persistent", () => {
+    expect(contextOptionsFor({ contextMode: "persistent" })).toEqual(
+      BROWSERD_CONTEXT_OPTIONS,
+    );
+    expect(
+      contextOptionsFor({ contextMode: "persistent", deviceScaleFactor: 2 }),
+    ).toEqual({ ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: 2 });
+  });
+
+  it("still pins an EPHEMERAL sandbox context at scale 1, so eval captures match across hosts", () => {
+    expect(
+      contextOptionsFor({ contextMode: "ephemeral", deviceScaleFactor: 2 }),
+    ).toEqual(BROWSERD_CONTEXT_OPTIONS);
+  });
+
+  it("gives a LOCAL context the viewport and nothing that describes a machine", () => {
+    const local = contextOptionsFor({
+      contextMode: "persistent",
+      surface: "local",
+    });
+    expect(local).toEqual(BROWSERD_LOCAL_CONTEXT_OPTIONS);
+    expect(local).not.toHaveProperty("userAgent");
+    expect(local).not.toHaveProperty("timezoneId");
+    expect(local).toHaveProperty("viewport", BROWSERD_OBSERVATION_VIEWPORT);
+  });
+
+  it("drops the pins for a local EPHEMERAL run too", () => {
+    // A local eval's captures were never comparable to a hosted one's — same
+    // pins, different OS and fonts — so the pins bought nothing there and cost
+    // the same captchas.
+    expect(
+      contextOptionsFor({ contextMode: "ephemeral", surface: "local" }),
+    ).toEqual(BROWSERD_LOCAL_CONTEXT_OPTIONS);
+  });
+
+  it("honours the display's scale factor on a local persistent context", () => {
+    expect(
+      contextOptionsFor({
+        contextMode: "persistent",
+        surface: "local",
+        deviceScaleFactor: 2,
+      }),
+    ).toEqual({ ...BROWSERD_LOCAL_CONTEXT_OPTIONS, deviceScaleFactor: 2 });
   });
 });
