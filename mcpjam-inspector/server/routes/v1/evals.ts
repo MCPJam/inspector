@@ -1077,9 +1077,9 @@ function requireProjectIdShape(projectId: string): string {
 /**
  * A deployment that predates the named Convex function.
  *
- * Checked BEFORE {@link isConvexNotVisibleError}: Convex's missing-function
- * prose contains "not found", and treating that as a hidden run would turn
- * an undeployed evaluator into "this run has no policy".
+ * Checked FIRST wherever a route also classifies visibility: Convex's
+ * missing-function prose contains "not found", and treating that as a hidden
+ * run would turn an undeployed evaluator into "this run has no policy".
  */
 function isConvexFunctionMissing(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -1443,7 +1443,7 @@ export async function fetchSuiteRunServerSelection(
   if (namedHostId !== undefined) {
     requireConvexIdShape(namedHostId, "namedHostId", {
       scope: "v1.evals",
-      notFoundMessage: "Eval suite not found",
+      notFoundMessage: "Host not found",
     });
   }
   const convex = createConvexReadClient(convexAuthToken);
@@ -5264,11 +5264,20 @@ const GATE_WAIVER_TRANSLATE_OPTIONS = {
   fallbackMessage: "Gate waiver rejected by the platform",
 } as const;
 
+/**
+ * What the DELETE route answers when the `:waiverId` segment cannot name this
+ * run's waiver — either because the run's active waiver is a different one, or
+ * because the segment is not a Convex id at all. One string for both, so the
+ * shape gate does not become the existence oracle the rest of this surface
+ * avoids.
+ */
+const GATE_WAIVER_NOT_FOUND_FOR_RUN = "Gate waiver not found for this run";
+
 // POST /v1/projects/:projectId/eval-runs/:runId/gate-waivers
 // Grant a waiver. 201 on a new one; 409 when one is already in force.
 evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
   const projectId = c.req.param("projectId");
-  const runId = c.req.param("runId");
+  const runId = evalIdParam(c, "runId", "Eval run");
   const body = parseWithSchema(
     gateWaiverCreateSchema,
     await readJsonObjectBody(c),
@@ -5282,10 +5291,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
       runId,
     });
   } catch (error) {
-    if (isConvexNotVisibleError(error)) {
-      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
-    }
-    throw error;
+    throw translateConvexReadError(error, {
+      scope: "v1.evals",
+      notFoundMessage: "Eval run not found",
+    });
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5322,17 +5331,17 @@ evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
 // trip; this is the explicit read, for asking the question on its own.
 evals.get("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
   const projectId = c.req.param("projectId");
-  const runId = c.req.param("runId");
+  const runId = evalIdParam(c, "runId", "Eval run");
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
   let run: RunDoc | null;
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
   } catch (error) {
-    if (isConvexNotVisibleError(error)) {
-      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
-    }
-    throw error;
+    throw translateConvexReadError(error, {
+      scope: "v1.evals",
+      notFoundMessage: "Eval run not found",
+    });
   }
   requireProjectMatch(run, projectId, "Eval run");
 
@@ -5366,8 +5375,11 @@ evals.delete(
   "/projects/:projectId/eval-runs/:runId/gate-waivers/:waiverId",
   async (c) => {
     const projectId = c.req.param("projectId");
-    const runId = c.req.param("runId");
-    const waiverId = c.req.param("waiverId");
+    const runId = evalIdParam(c, "runId", "Eval run");
+    const waiverId = requireConvexIdParam(c, "waiverId", {
+      scope: "v1.evals",
+      notFoundMessage: GATE_WAIVER_NOT_FOUND_FOR_RUN,
+    });
     const token = await getConvexBearerForRequest(c);
     const readClient = createConvexReadClient(token);
 
@@ -5377,10 +5389,10 @@ evals.delete(
         runId,
       });
     } catch (error) {
-      if (isConvexNotVisibleError(error)) {
-        throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
-      }
-      throw error;
+      throw translateConvexReadError(error, {
+        scope: "v1.evals",
+        notFoundMessage: "Eval run not found",
+      });
     }
     requireProjectMatch(run, projectId, "Eval run");
 
@@ -5409,7 +5421,7 @@ evals.delete(
       throw new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        "Gate waiver not found for this run",
+        GATE_WAIVER_NOT_FOUND_FOR_RUN,
       );
     }
 
@@ -5447,7 +5459,7 @@ evals.get(
   "/projects/:projectId/eval-runs/:runId/decision-summary",
   async (c) => {
     const projectId = c.req.param("projectId");
-    const runId = c.req.param("runId");
+    const runId = evalIdParam(c, "runId", "Eval run");
     const limit = parseDecisionSummaryLimit(c.req.query("limit"));
     // `null`, not `undefined`, and the difference is the completeness claim: a
     // request that carried a cursor has already skipped rows, so whatever it gets
@@ -5468,10 +5480,10 @@ evals.get(
         },
       );
     } catch (error) {
-      if (isConvexNotVisibleError(error)) {
-        throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
-      }
-      throw error;
+      throw translateConvexReadError(error, {
+        scope: "v1.evals",
+        notFoundMessage: "Eval run not found",
+      });
     }
 
     const complete = decisionSummaryPageIsComplete({
@@ -5641,7 +5653,15 @@ evals.get(
 
     // Evidence is best-effort: the trace blob may be absent (still-running or
     // never-persisted iteration). Verdicts from metadata still return.
+    //
+    // WHICH of those two happened is reported, because the swallow below cannot
+    // tell a refusal from a broken blob loader — production redacts both to
+    // "Server Error" — and an unreported swallow makes a blob-store outage look
+    // exactly like an iteration that recorded no evidence. `"resolved"` means
+    // the evidence read completed (it may still have found nothing);
+    // `"unavailable"` means it failed and the verdicts below are all there is.
     let envelope: Record<string, unknown> | undefined;
+    let evidence: "resolved" | "unavailable" = "resolved";
     try {
       const trace = await convex.action(
         "testSuites:getTestIterationBlob" as any,
@@ -5693,6 +5713,7 @@ evals.get(
         kind: failure.kind,
         detail: redactForLog(error),
       });
+      evidence = "unavailable";
     }
 
     const assembled = assembleStepResults(
@@ -5712,7 +5733,13 @@ evals.get(
       stepCount: assembled.length,
       traceBytes: measureTraceBytes(envelope),
     });
-    return v1PageJson(c, assembled.map(toStepResultDto));
+    // Not `v1PageJson`: the page carries the `evidence` discriminator alongside
+    // `items`, which is the only thing distinguishing "the blob loader is down"
+    // from "this iteration recorded nothing".
+    return c.json({
+      items: assembled.map(toStepResultDto),
+      evidence,
+    });
   },
 );
 
@@ -5796,7 +5823,7 @@ function toSuiteRevisionDto(row: Record<string, any>) {
 // before/after of one revision is a different question with a different cost.
 evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
   const projectId = c.req.param("projectId");
-  const suiteId = c.req.param("suiteId");
+  const suiteId = evalIdParam(c, "suiteId", "Eval suite");
   const rawLimit = c.req.query("limit");
   const rawCursor = c.req.query("cursor");
   const query = parseWithSchema(suiteRevisionsQuerySchema, {
@@ -5833,10 +5860,10 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
       paginationOpts: { numItems: limit, cursor },
     });
   } catch (error) {
-    if (isConvexNotVisibleError(error)) {
-      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval suite not found");
-    }
-    throw error;
+    throw translateConvexReadError(error, {
+      scope: "v1.evals",
+      notFoundMessage: "Eval suite not found",
+    });
   }
 
   return v1PageJson(
@@ -5901,7 +5928,7 @@ evals.get(
   "/projects/:projectId/eval-suites/:suiteId/stage-analytics",
   async (c) => {
     const projectId = c.req.param("projectId");
-    const suiteId = c.req.param("suiteId");
+    const suiteId = evalIdParam(c, "suiteId", "Eval suite");
     // An EMPTY query value means "not supplied", not "supplied as empty".
     // Without this, `?from=` coerces to `0` — a real lower bound, which
     // excludes every run that never recorded a completion stamp — so a request
@@ -6056,7 +6083,10 @@ evals.get(
   "/projects/:projectId/eval-runs/:runId/stage-analytics",
   async (c) => {
     const projectId = c.req.param("projectId");
-    const runId = c.req.param("runId");
+    const runId = requireConvexIdParam(c, "runId", {
+      scope: "v1.evals",
+      notFoundMessage: RUN_ANALYTICS_NOT_FOUND,
+    });
     const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
     let document: unknown;
@@ -6171,7 +6201,10 @@ const RUN_GATE_NOT_FOUND = "Eval run not found";
 
 evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
   const projectId = c.req.param("projectId");
-  const runId = c.req.param("runId");
+  const runId = requireConvexIdParam(c, "runId", {
+    scope: "v1.evals",
+    notFoundMessage: RUN_GATE_NOT_FOUND,
+  });
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
@@ -6255,7 +6288,10 @@ const RUN_ROUTE_FACTS_NOT_FOUND = "Eval run route facts not found";
 
 evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
   const projectId = c.req.param("projectId");
-  const runId = c.req.param("runId");
+  const runId = requireConvexIdParam(c, "runId", {
+    scope: "v1.evals",
+    notFoundMessage: RUN_ROUTE_FACTS_NOT_FOUND,
+  });
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
@@ -6348,7 +6384,10 @@ const RUN_SERVER_FACTS_NOT_FOUND = "Eval run server facts not found";
 
 evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
   const projectId = c.req.param("projectId");
-  const runId = c.req.param("runId");
+  const runId = requireConvexIdParam(c, "runId", {
+    scope: "v1.evals",
+    notFoundMessage: RUN_SERVER_FACTS_NOT_FOUND,
+  });
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
@@ -6720,7 +6759,7 @@ evals.get(
   "/projects/:projectId/eval-runs/:runId/description-experiments",
   async (c) => {
     const projectId = c.req.param("projectId");
-    const runId = c.req.param("runId");
+    const runId = evalIdParam(c, "runId", "Eval run");
     const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
     let run: RunDoc | null;
@@ -6784,7 +6823,7 @@ evals.post(
   "/projects/:projectId/eval-runs/:runId/description-experiments",
   async (c) => {
     const projectId = c.req.param("projectId");
-    const runId = c.req.param("runId");
+    const runId = evalIdParam(c, "runId", "Eval run");
     const body = parseWithSchema(
       proposeDescriptionRewriteSchema,
       await readJsonObjectBody(c),
@@ -6838,7 +6877,11 @@ evals.post(
   "/projects/:projectId/eval-description-experiments/:experimentId/start",
   async (c) => {
     const projectId = c.req.param("projectId");
-    const experimentId = c.req.param("experimentId");
+    const experimentId = evalIdParam(
+      c,
+      "experimentId",
+      "Eval description experiment",
+    );
     const body = parseWithSchema(
       startDescriptionExperimentSchema,
       await readJsonObjectBody(c),
@@ -7201,7 +7244,11 @@ evals.get(
   "/projects/:projectId/eval-description-experiments/:experimentId",
   async (c) => {
     const projectId = c.req.param("projectId");
-    const experimentId = c.req.param("experimentId");
+    const experimentId = evalIdParam(
+      c,
+      "experimentId",
+      "Eval description experiment",
+    );
     const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
     let document: unknown;

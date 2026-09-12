@@ -767,6 +767,126 @@ describe("a malformed run id is not an incident", () => {
 });
 
 /**
+ * The REST of the eval surface's id parameters, one case per route class.
+ *
+ * The first gate landed on thirteen routes; fourteen siblings kept reading
+ * `runId` / `suiteId` / `waiverId` / `experimentId` out of the path and handing
+ * them to the same `testSuites:getTestSuiteRun` the incident came through —
+ * three of them reachable by a share-link guest. A gate that covers most of a
+ * surface is a gate somebody routes around, so each class is pinned here by the
+ * assertion that matters: no outbound call.
+ */
+describe("the id gate covers the whole eval surface", () => {
+  const BAD = encodeURIComponent(`${RUN} ${RUN}`);
+  const SUITE = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+  it.each([
+    ["run gate-waivers", `/projects/${PROJECT}/eval-runs/${BAD}/gate-waivers`],
+    [
+      "run decision-summary",
+      `/projects/${PROJECT}/eval-runs/${BAD}/decision-summary`,
+    ],
+    [
+      "run stage-analytics",
+      `/projects/${PROJECT}/eval-runs/${BAD}/stage-analytics`,
+    ],
+    ["run gate", `/projects/${PROJECT}/eval-runs/${BAD}/gate`],
+    ["run route-facts", `/projects/${PROJECT}/eval-runs/${BAD}/route-facts`],
+    ["run server-facts", `/projects/${PROJECT}/eval-runs/${BAD}/server-facts`],
+    [
+      "run description-experiments",
+      `/projects/${PROJECT}/eval-runs/${BAD}/description-experiments`,
+    ],
+    ["suite revisions", `/projects/${PROJECT}/eval-suites/${BAD}/revisions`],
+    [
+      "suite stage-analytics",
+      `/projects/${PROJECT}/eval-suites/${BAD}/stage-analytics`,
+    ],
+    [
+      "description experiment detail",
+      `/projects/${PROJECT}/eval-description-experiments/${BAD}`,
+    ],
+  ])("404s %s without calling Convex", async (_name, path) => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+
+    const res = await makeApp(evals).request(`/api/v1${path}`);
+
+    expect(res.status).toBe(404);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("404s a malformed waiverId before the revoke can run", async () => {
+    // The run segment is WELL formed here, so this can only pass if the gate
+    // reads the waiver segment too — and it has to answer before the mutation,
+    // because a revoke that happens and then reports "not found" has already
+    // done the thing it is refusing.
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/gate-waivers/${BAD}`,
+      { method: "DELETE" },
+    );
+
+    expect(res.status).toBe(404);
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("404s a malformed runId before a waiver can be granted", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${BAD}/gate-waivers`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "shipping the hotfix" }),
+      },
+    );
+
+    expect(res.status).toBe(404);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("404s a malformed experimentId before the start mutation", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-description-experiments/${BAD}/start`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      },
+    );
+
+    expect(res.status).toBe(404);
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("still reaches Convex for a well-formed suite id", async () => {
+    // The over-tight-gate guard, on the suite half of the surface.
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuite: { _id: SUITE, projectId: PROJECT },
+      listSuiteRevisions: { page: [], isDone: true, continueCursor: "" },
+    });
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-suites/${SUITE}/revisions`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(queryMock).toHaveBeenCalled();
+  });
+});
+
+/**
  * The gate's boundary conditions, which the shape check alone gets wrong.
  *
  * A shape gate has two failure directions, and the incident only motivated
@@ -853,6 +973,34 @@ describe("iteration steps degrade to verdicts-only on a REDACTED refusal", () =>
     // see this iteration, so there is nothing left to refuse and nothing to
     // leak — and the response is otherwise complete.
     expect(res.status).toBe(200);
+    // And the 200 SAYS SO. `classifyConvexReadError` reads any "server error"
+    // as `redacted`, a genuine blob-loader crash included, so without this
+    // field a blob-store outage is indistinguishable from an iteration that
+    // recorded no evidence — every call 200, verdicts only, nothing wrong.
+    expect(((await res.json()) as Record<string, unknown>).evidence).toBe(
+      "unavailable",
+    );
+  });
+
+  it("reports resolved evidence when the blob read succeeds", async () => {
+    // The other half of the discriminator: an iteration whose evidence read
+    // completed says so even when the trace carried nothing, which is the
+    // difference the outage case above is measured against.
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: RUN_ROW,
+      getTestIteration: ITERATION_ROW,
+    });
+    actionMock.mockResolvedValue(null);
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/iterations/${ITERATION}/steps`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Record<string, unknown>).evidence).toBe(
+      "resolved",
+    );
   });
 
   it("still fails on a TRANSPORT failure, which is a real outage", async () => {

@@ -51,12 +51,31 @@ failure is now read as a refusal at this one call site, where the two preceding
 reads have already established the caller may see the iteration; a transport
 failure still classifies `upstream` and still surfaces.
 
-`docs/reference/openapi.json` gains the `502` the shared read translator can now
-return on nine eval operations that documented only `500`.
+The remaining fourteen eval routes are gated too, so the surface is closed
+rather than sampled. `gate-waivers` (grant, read, revoke), `decision-summary`,
+the suite and run `stage-analytics`, `gate`, `route-facts`, `server-facts`, the
+`description-experiments` pair and both `eval-description-experiments/:id`
+routes read `runId` / `suiteId` / `waiverId` / `experimentId` straight out of
+the path and forwarded them to the same `testSuites:getTestSuiteRun` the
+incident came through — three of them reachable by a share-link guest. Each one
+now answers the same 404 its route already answers for a resource that is not
+visible, before any outbound call.
 
-Finally, the repo's forbidden-symbol guards become a program instead of a shell
-negation. `! rg …` fails OPEN: a missing ripgrep exits 127 and `!` inverts that
-to success, as does a renamed scan root, so three of the five steps in
-`test:checks` could report green having inspected nothing.
-`scripts/check-runtime-guards.mjs` treats a missing root or a zero-file scan as
-a failure and names the file and line of each violation.
+Five of those routes translated their Convex read failures by hand
+(`isConvexNotVisibleError` plus a bare rethrow, which lands on the terminal
+500). They now use the shared read translator like the rest of the surface, so
+an upstream failure answers 502 instead of 500 and a bad credential answers 401
+instead of either. `docs/reference/openapi.json` gains the `502` on those five
+operations, alongside the nine it already gained.
+
+The iteration-steps page now says whether its evidence read actually completed.
+`classifyConvexReadError` maps any message containing "server error" to
+`redacted`, which includes a genuine blob-loader crash — so during a blob-store
+outage every call answered 200 with verdicts and no evidence, indistinguishable
+from an iteration that recorded none. The page carries
+`evidence: "resolved" | "unavailable"` beside `items`; the swallow itself is
+unchanged, because no message match can separate the redacted refusal from the
+redacted crash.
+
+A malformed `namedHostId` on a suite launch answered "Eval suite not found". It
+answers "Host not found", matching the sibling gate on the run-group targets.
