@@ -1,14 +1,20 @@
 name: Build and Test
 
 on:
+  # Run on every PR regardless of its base branch. See the note in test.yml:
+  # `branches` filters on the PR's BASE, so a stacked PR — based on the branch
+  # below it until that one merges — never matched `main` and was never built
+  # or linted.
   pull_request:
-    # See the note in test.yml: `branches` filters on the PR's BASE, so a
-    # stacked PR never matched `main` and was never built or linted.
-    branches:
-      - main
-      - "claude/mcp-benchmarks-v2-b0tw4b-**"
   push:
     branches: [main]
+
+# A newer push to the same branch makes in-flight runs obsolete — cancel them
+# so superseded runs don't keep burning a runner. Matters more now that this
+# workflow runs on every PR rather than only main-based ones.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 env:
   NODE_VERSION: "24.14.0"
