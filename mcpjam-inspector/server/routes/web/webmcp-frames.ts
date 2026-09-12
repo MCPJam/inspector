@@ -319,6 +319,18 @@ export function createWebMcpFramesWsHandler(
           ws.close(CLOSE_GONE, "That WebMCP session no longer exists.");
           return;
         }
+        // Already over, before a single thing is set up. `get` only throws for
+        // a session absent from the map, so a crashed runtime reaches here —
+        // and the frame channel hands a retained picture to a new subscriber
+        // SYNCHRONOUSLY, so checking after the subscribe would send the dead
+        // browser's last paint down a socket on its way to being closed.
+        const status = runtime.toPublic().status;
+        if (status === "closed" || status === "error") {
+          teardown();
+          ws.close(CLOSE_GONE, "That WebMCP session is over.");
+          return;
+        }
+
         // Somebody is watching this page, which is activity: without this a
         // session driven only through the pane would be reaped mid-view.
         webMcpSessions.touch(runtime);
@@ -439,19 +451,6 @@ export function createWebMcpFramesWsHandler(
           },
           SESSION_STATUS_REPLAY,
         );
-
-        // The status the socket just MISSED. Replay is one event deep, and a
-        // crash publishes the terminal session event and then a timeline entry
-        // — so a socket that connects between the two replays the entry and
-        // never learns the browser is gone. Read the status directly rather
-        // than deepening the replay, which would hand every socket timeline
-        // events it has no use for.
-        const current = runtime.toPublic().status;
-        if (current === "closed" || current === "error") {
-          teardown();
-          liveSockets.delete(ws);
-          ws.close(CLOSE_GONE, "That WebMCP session is over.");
-        }
       },
 
       onMessage: async (evt, ws) => {

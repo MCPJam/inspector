@@ -413,6 +413,10 @@ export class WebMcpSessionRuntime {
       },
       onCrashed: (message) => {
         this.setStatus("error", message);
+        // The retained paint is not the CURRENT paint any more — there is no
+        // current paint, because there is no browser. Kept, it would be handed
+        // to the next socket to subscribe as though the page were still there.
+        this.frames.clear();
         this.pushActivity({ kind: "session_error", message });
         // A dead browser can never settle what is in flight.
         this.failAllPending(new Error(message));
@@ -962,10 +966,10 @@ export class WebMcpSessionRuntime {
             // someone their payment did not go through when it may well have.
             "unknown"
           : error instanceof WebMcpInvocationCancelledError
-          ? error.reason === "timeout"
-            ? "timeout"
-            : "cancelled"
-          : "failed";
+            ? error.reason === "timeout"
+              ? "timeout"
+              : "cancelled"
+            : "failed";
       const message =
         error instanceof Error ? error.message : "The tool failed.";
       await this.settle(item, state, startedAt, {

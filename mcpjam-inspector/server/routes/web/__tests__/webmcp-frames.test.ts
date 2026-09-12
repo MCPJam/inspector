@@ -513,6 +513,9 @@ describe("webmcp frames WS — the stream", () => {
 
   it("closes a socket that connects AFTER the browser has already crashed", async () => {
     const session = await openSession();
+    // A paint from before the crash, which the channel would otherwise retain
+    // and hand to the next subscriber as though the page were still there.
+    provider.sessions[0].emitFrame({ data: jpegBase64(0x42) });
     // A crash publishes the terminal session event and THEN a timeline entry,
     // and replay is one event deep — so a socket arriving now replays the
     // entry and would never hear that the browser is gone.
@@ -520,6 +523,11 @@ describe("webmcp frames WS — the stream", () => {
 
     const ws = connect(server.port, session.sessionId, token);
     expect((await ws.closed).code).toBe(4404);
+    // And NOT one dead frame on the way out. The channel delivers a retained
+    // paint synchronously on subscribe, so a socket that subscribed first and
+    // checked the status afterwards would send it before closing.
+    await ws.settle();
+    expect(ws.binary).toHaveLength(0);
   });
 });
 

@@ -686,6 +686,17 @@ describe("viewport frames", () => {
     expect(seen).toEqual(["settled"]);
   });
 
+  it("drops the retained paint when the browser crashes", () => {
+    const { runtime, session } = makeRuntime();
+    session.emitFrame({ data: "alive" });
+    expect(runtime.frames.latest()).toBeDefined();
+
+    session.callbacks.onCrashed("The browser crashed.");
+    // There is no CURRENT paint for a browser that is gone. Retained, it would
+    // be handed to the next socket to subscribe as though the page were there.
+    expect(runtime.frames.latest()).toBeUndefined();
+  });
+
   it("writes no timeline entry for a frame", () => {
     const { session, activity } = makeRuntime();
     const before = activity().length;
