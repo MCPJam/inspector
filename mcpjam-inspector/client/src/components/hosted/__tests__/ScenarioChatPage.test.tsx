@@ -2239,4 +2239,173 @@ describe("ScenarioChatPage", () => {
       );
     });
   });
+
+  describe("preview surface", () => {
+    it("keeps surface=preview on the session after the URL collapses to /#slug", async () => {
+      window.history.replaceState(
+        {},
+        "",
+        "/user-testing/demo/scenario-token?surface=preview",
+      );
+
+      render(<ScenarioChatPage pathToken="scenario-token" />);
+
+      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(window.location.hash).toBe("#resolved-scenario");
+      });
+      expect(window.location.search).toBe("");
+      expect(readScenarioSession()?.surface).toBe("preview");
+      expect(mockChatTabV2).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          hostedContext: expect.objectContaining({ scenarioSurface: "preview" }),
+        }),
+      );
+    });
+
+    function writeSurfaceSession(surface: "preview" | "share_link") {
+      writeScenarioSession({
+        scenarioId: "sbx_1",
+        accessVersion: 1,
+        surface,
+        payload: {
+          projectId: "ws_1",
+          scenarioId: "sbx_1",
+          name: "Surface Scenario",
+          description: "",
+          hostStyle: "claude",
+          mode: "anyone_with_link",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.7,
+          requireToolApproval: false,
+          servers: [],
+        },
+      });
+    }
+
+    it("shows a labelled Back to study control after consent on the preview surface", async () => {
+      writeSurfaceSession("preview");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Continue" }),
+      );
+      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Back to study" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toBeNull();
+      expect(window.location.pathname).toBe("/user-testing/sbx_1");
+      expect(window.location.hash).toBe("");
+    });
+
+    it("keeps the header free of Back to study for a share-link tester", async () => {
+      writeSurfaceSession("share_link");
+      consentAlreadyGiven();
+      window.history.replaceState({}, "", "/#surface-scenario");
+
+      render(<ScenarioChatPage />);
+
+      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Back to study" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "MCPJam" })).toBeInTheDocument();
+    });
+
+    it("routes consent Leave back to the study on the preview surface", async () => {
+      writeSurfaceSession("preview");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Leave" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toBeNull();
+      expect(window.location.pathname).toBe("/user-testing/sbx_1");
+      expect(
+        screen.queryByTestId("scenario-recording-declined"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps the terminal declined panel for a share-link tester who Leaves", async () => {
+      writeSurfaceSession("share_link");
+      window.history.replaceState({}, "", "/#surface-scenario");
+      const onExit = vi.fn();
+
+      render(<ScenarioChatPage onExitScenarioChat={onExit} />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Leave" }),
+      );
+
+      expect(
+        await screen.findByTestId("scenario-recording-declined"),
+      ).toBeInTheDocument();
+      expect(onExit).not.toHaveBeenCalled();
+      expect(readScenarioSession()?.scenarioId).toBe("sbx_1");
+      expect(window.location.pathname).toBe("/");
+    });
+
+    it("never clears the host tab's stored session when exiting from inside the embed", async () => {
+      mockIsEmbeddedPreview.mockReturnValue(true);
+      const outerSession = {
+        scenarioId: "sbx_outer",
+        accessVersion: 7,
+        payload: {
+          projectId: "ws_outer",
+          scenarioId: "sbx_outer",
+          name: "Outer Dashboard Scenario",
+          description: "Hosted scenario",
+          hostStyle: "chatgpt" as const,
+          mode: "invited_only" as const,
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
+      };
+      writeScenarioSession(outerSession);
+      consentAlreadyGiven();
+      window.history.replaceState(
+        {},
+        "",
+        "/user-testing/demo/scenario-token?surface=preview",
+      );
+      const onExit = vi.fn();
+
+      render(
+        <ScenarioChatPage
+          pathToken="scenario-token"
+          onExitScenarioChat={onExit}
+        />,
+      );
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Back to study" }),
+      );
+
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(readScenarioSession()).toMatchObject({
+        scenarioId: "sbx_outer",
+        accessVersion: 7,
+      });
+    });
+  });
 });

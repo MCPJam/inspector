@@ -67,12 +67,16 @@ function request(
 }
 
 const NOW = 1_700_000_000_000;
-const BASE = "/api/v1/projects/p1/eval-runs/run_1/gate-waivers";
+const BASE = "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/gate-waivers";
+// Id-SHAPED, like the run and suite fixtures beside it: `:waiverId` is now
+// checked for the Convex id shape before it is forwarded, so a `wv_1` label
+// would exercise the gate instead of the route behind it.
+const WAIVER = "wvr1xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 const WAIVER_ROW = {
-  id: "wv_1",
-  suiteId: "suite_1",
-  runId: "run_1",
+  id: WAIVER,
+  suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+  runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   reason: "hotfix ships today; tracked in ENG-1",
   expiresAt: NOW + 86_400_000,
   createdAt: NOW - 3_600_000,
@@ -85,8 +89,8 @@ const WAIVER_ROW = {
 };
 
 const RUN_DOC = {
-  _id: "run_1",
-  suiteId: "suite_1",
+  _id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
   projectId: "p1",
   status: "completed",
   result: "failed",
@@ -146,7 +150,7 @@ describe("v1 gate waivers", () => {
     expect(body.status).toBe("created");
     expect(body.republishedChecks).toBe(2);
     expect(body.waiver).toMatchObject({
-      id: "wv_1",
+      id: WAIVER,
       createdByEmail: "alice@example.com",
       reason: "hotfix ships today; tracked in ENG-1",
       expiresAt: NOW + 86_400_000,
@@ -283,7 +287,7 @@ describe("v1 gate waivers", () => {
     const response = await request("GET", BASE);
     expect(response.status).toBe(200);
     const body = (await response.json()) as any;
-    expect(body.waiver.id).toBe("wv_1");
+    expect(body.waiver.id).toBe(WAIVER);
   });
 
   it("answers null — not 404 — when no waiver is in force", async () => {
@@ -309,7 +313,7 @@ describe("v1 gate waivers", () => {
         revokedBy: "usr_2",
       },
     });
-    const response = await request("DELETE", `${BASE}/wv_1`);
+    const response = await request("DELETE", `${BASE}/${WAIVER}`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as any;
     expect(body.status).toBe("revoked");
@@ -330,7 +334,7 @@ describe("v1 gate waivers", () => {
         revokedBy: "usr_2",
       },
     });
-    const response = await request("DELETE", `${BASE}/wv_1`);
+    const response = await request("DELETE", `${BASE}/${WAIVER}`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as any;
     expect(body.status).toBe("already_revoked");
@@ -342,10 +346,10 @@ describe("v1 gate waivers", () => {
     // reported as not-found — performing the destructive act it refuses.
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuiteRun"
-        ? { ...RUN_DOC, gateWaiver: { ...WAIVER_ROW, id: "wv_other" } }
+        ? { ...RUN_DOC, gateWaiver: { ...WAIVER_ROW, id: "wvr2xxxxxxxxxxxxxxxxxxxxxxxxxxxx" } }
         : null
     );
-    const response = await request("DELETE", `${BASE}/wv_1`);
+    const response = await request("DELETE", `${BASE}/${WAIVER}`);
     expect(response.status).toBe(404);
     expect(convexMutationMock).not.toHaveBeenCalled();
   });
@@ -369,12 +373,12 @@ describe("the run projection carries the waiver", () => {
     );
     const response = await request(
       "GET",
-      "/api/v1/projects/p1/eval-runs/run_1"
+      "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     );
     expect(response.status).toBe(200);
     const body = (await response.json()) as any;
     expect(body.gateWaiver).toMatchObject({
-      id: "wv_1",
+      id: WAIVER,
       createdByEmail: "alice@example.com",
       active: true,
     });
@@ -390,7 +394,7 @@ describe("the run projection carries the waiver", () => {
     );
     const response = await request(
       "GET",
-      "/api/v1/projects/p1/eval-runs/run_1"
+      "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     );
     const body = (await response.json()) as any;
     expect(body).toHaveProperty("gateWaiver");

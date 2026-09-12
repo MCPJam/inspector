@@ -1,3 +1,4 @@
+import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
   streamText,
   stepCountIs,
@@ -431,7 +432,10 @@ export function stampMcpToolOriginProviderOptions(
         // an earlier request's approval was granted against, and the very
         // thing the tool's `execute` compares itself to on resume.
         const providerOptions = mergePageToolBindingMetadata(
-          mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+          withPageToolAttributionMetadata(
+            mergeMcpToolOriginMetadata(record.providerOptions, serverId),
+            tools[toolName],
+          ),
           record.type === "tool-call"
             ? pageToolBindingOf(tools[toolName])
             : undefined
@@ -463,7 +467,10 @@ export function withMcpToolOriginChunkMetadata<
   if (typeof chunk.toolName !== "string") return chunk;
   const serverId = readToolServerId(tools, chunk.toolName);
   const providerMetadata = mergePageToolBindingMetadata(
-    mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+    withPageToolAttributionMetadata(
+      mergeMcpToolOriginMetadata(chunk.providerMetadata, serverId),
+      tools[chunk.toolName],
+    ),
     pageToolBindingOf(tools[chunk.toolName])
   );
   return providerMetadata ? { ...chunk, providerMetadata } : chunk;
