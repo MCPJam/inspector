@@ -371,3 +371,72 @@ describe("WebMcpSessionRegistry — viewport mode", () => {
     await registry.disposeAll();
   });
 });
+
+/**
+ * "Somebody has this on screen" is a stronger claim than "a stream is
+ * attached", and only the second one costs money: for a HOSTED session the
+ * watched flag is what holds a metered desktop box awake.
+ */
+describe("WebMcpSessionRegistry — who is actually looking", () => {
+  it("is not watched merely because a stream is attached", async () => {
+    const { registry } = makeRegistry();
+    const provider = new FakeProvider();
+    const started = await startWebMcpSession({
+      url: "https://a.test/",
+      provider,
+      registry,
+    });
+    const runtime = registry.get(started.sessionId);
+
+    registry.subscribeTo(runtime, () => {});
+
+    // Attached — a background tab keeps its stream open — but nobody has said
+    // they are looking.
+    expect(registry.hasSubscribers(started.sessionId)).toBe(true);
+    expect(registry.isWatched(started.sessionId)).toBe(false);
+  });
+
+  it("counts a ping, and stops counting it when they go quiet", async () => {
+    const { registry, advance } = makeRegistry();
+    const provider = new FakeProvider();
+    const started = await startWebMcpSession({
+      url: "https://a.test/",
+      provider,
+      registry,
+    });
+
+    registry.markWatched(started.sessionId);
+    expect(registry.isWatched(started.sessionId)).toBe(true);
+
+    // A dropped ping (the pane sends one every 30s) must not read as leaving.
+    advance(40_000);
+    expect(registry.isWatched(started.sessionId)).toBe(true);
+
+    // Two missed intervals is somebody who has gone.
+    advance(40_000);
+    expect(registry.isWatched(started.sessionId)).toBe(false);
+  });
+
+  it("keeps a watched session out of the idle sweep", async () => {
+    const { registry, advance } = makeRegistry();
+    const provider = new FakeProvider();
+    const started = await startWebMcpSession({
+      url: "https://a.test/",
+      provider,
+      registry,
+    });
+
+    advance(9_000);
+    registry.markWatched(started.sessionId);
+    advance(9_000);
+    registry.sweepExpired();
+
+    expect(registry.size()).toBe(1);
+  });
+
+  it("says nothing about a session that is gone", () => {
+    const { registry } = makeRegistry();
+    expect(registry.isWatched("webmcp_missing")).toBe(false);
+    expect(() => registry.markWatched("webmcp_missing")).not.toThrow();
+  });
+});
