@@ -27,6 +27,7 @@ export function JourneyRubricEditor({
   onChange,
   allowedKinds,
   maxCriteria = MAX_RUBRIC_CRITERIA,
+  onDraftValidityChange,
 }: {
   value: JourneyCriterion[];
   onChange: (next: JourneyCriterion[]) => void;
@@ -43,6 +44,8 @@ export function JourneyRubricEditor({
    * backend enforces regardless.
    */
   maxCriteria?: number;
+  /** Passed through to `ChecksSection` — see its prop of the same name. */
+  onDraftValidityChange?: (hasInvalidDraft: boolean) => void;
 }) {
   // Stable across renders as long as the entries are: `ChecksSection` compares
   // by identity when the user edits a row, and a fresh array every render
@@ -63,6 +66,7 @@ export function JourneyRubricEditor({
           onChange(reconcileRubricEntries(value, next))
         }
         title="Checks"
+        onDraftValidityChange={onDraftValidityChange}
         // "Measure", never "gate": a failing check is a finding in Insights,
         // and nothing downstream blocks or fails because of it.
         // One line on purpose — this doubles as card-header copy on the
