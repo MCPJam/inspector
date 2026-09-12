@@ -35,6 +35,8 @@ const api = vi.hoisted(() => ({
   invalidations: 0,
   /** How many times the pane re-read `/session` (i.e. asked to ensure one). */
   sessionReads: 0,
+  /** The options each of those reads carried — `{ensure:true}` wakes the box. */
+  sessionReadOptions: [] as unknown[],
   streamArgs: [] as unknown[],
   /** What the shell's state poll answers. Null is "cannot say". */
   state: null as unknown,
@@ -105,8 +107,9 @@ vi.mock("@/lib/hosted-browser/client", async () => {
       ...size,
       revision: 1,
     }),
-    fetchHostedBrowserSession: async () => {
+    fetchHostedBrowserSession: async (_tokens: unknown, options?: unknown) => {
       api.sessionReads += 1;
+      api.sessionReadOptions.push(options);
       if (api.sessionError) {
         throw new actual.HostedBrowserError("nope", api.sessionError.status);
       }
@@ -162,6 +165,7 @@ beforeEach(() => {
   api.workspaceEnabled = true;
   api.session = RUNNING;
   api.sessionReads = 0;
+  api.sessionReadOptions = [];
   api.sessionError = null;
   api.lease = { took: true, lease: { state: "held" }, yours: true };
   api.inputs = [];
@@ -354,23 +358,43 @@ describe("the hosted pane — the socket", () => {
     vi.useRealTimers();
   });
 
-  it("re-ensures rather than reconnecting when the box has been reclaimed", async () => {
-    // 4410 says the machine is asleep. This socket cannot wake it — that is
-    // `ensure=1` on the session route — so retrying it would just hammer a
-    // paused box every 3 seconds forever.
+  it("wakes the box and brings the picture back when it has been reclaimed", async () => {
+    // 4410 says the machine is asleep. This socket cannot wake it — only
+    // `ensure=1` on the session route does — and a bare re-read would not
+    // either: it reads a row nobody has resumed. Then the stream has to be
+    // asked for again, because a resumed box comes back on the SAME boot and
+    // the session object is deliberately kept by identity, so nothing else
+    // would reopen the socket and the pane would sit blank.
     vi.useFakeTimers();
     renderBody({ active: true });
     await vi.waitFor(() => expect(api.sockets.length).toBe(1));
-    const before = api.sessionReads;
 
     act(() => socket().onclose?.({ code: 4410 }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_000);
     });
 
-    // Asked for the box back...
-    expect(api.sessionReads).toBeGreaterThan(before);
-    // ...rather than reopening a socket at a machine with nothing behind it.
+    // Asked the control plane to resume it, not merely re-read the row.
+    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
+    // And got the picture back.
+    expect(api.sockets.length).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it("does not reopen the socket when the wake did not land", async () => {
+    // A box that refuses to come back would otherwise be refused, re-asked,
+    // and refused again forever. The visibility-gated poll owns the retry.
+    vi.useFakeTimers();
+    renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    api.sessionError = { status: 503 };
+
+    act(() => socket().onclose?.({ code: 4410 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
     expect(api.sockets.length).toBe(1);
     vi.useRealTimers();
   });
@@ -398,6 +422,7 @@ describe("the hosted pane — the socket", () => {
     });
 
     expect(api.sessionReads).toBe(before);
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
     expect(api.sockets.length).toBe(1);
     vi.useRealTimers();
   });

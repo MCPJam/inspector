@@ -316,16 +316,23 @@ export function HostedBrowserBody({
    */
   const leaseIsStale = useRef(false);
 
-  /** Read the row without starting anything. */
+  /**
+   * Read the row without starting anything.
+   *
+   * Answers whether the read LANDED — true only when a live session came back
+   * to a caller that is still current. The `ensure` recovery needs to tell a
+   * wake that worked from one that did not: reopening the socket after a
+   * refusal just earns the same refusal, on a loop.
+   */
   const refresh = useCallback(
-    async (options: { ensure?: boolean } = {}) => {
-      if (!tokens) return;
+    async (options: { ensure?: boolean } = {}): Promise<boolean> => {
+      if (!tokens) return false;
       const mine = generation.current;
       const serial = (readSerial.current += 1);
       try {
         const next = await fetchHostedBrowserSession(tokens, options);
         if (generation.current !== mine || readSerial.current !== serial)
-          return;
+          return false;
         // BY IDENTITY, because the socket effect keys off this object.
         //
         // A fresh one for an unchanged row RECONNECTS, and it does so out of
@@ -350,9 +357,10 @@ export function HostedBrowserBody({
         setHolding(next.yours);
         setUnavailable(null);
         setError(null);
+        return true;
       } catch (cause) {
         if (generation.current !== mine || readSerial.current !== serial)
-          return;
+          return false;
         if (cause instanceof HostedBrowserError && cause.status === 409) {
           // No browser on this computer yet — an offer, not a failure.
           setHolding(false);
@@ -360,9 +368,10 @@ export function HostedBrowserBody({
           setSession(null);
           setUnavailable(null);
           setError(null);
-          return;
+          return false;
         }
         setUnavailable(cause instanceof Error ? cause.message : String(cause));
+        return false;
       }
     },
     [tokens],
@@ -1170,9 +1179,10 @@ export function HostedBrowserBody({
           return;
         }
         if (event.code === CLOSE_ASLEEP) {
-          // NO SOCKET RETRY. This socket cannot wake anything; `refresh()`
-          // re-runs the session read with `ensure=1`, which is what asks the
-          // control plane to resume the box.
+          // NO PLAIN SOCKET RETRY. This socket cannot wake anything: reopening
+          // it just refuses again. `ensure` is what asks the control plane to
+          // resume the box, so the recovery is a session read WITH it — a bare
+          // `refresh()` omits the flag and reads a row nobody has woken.
           //
           // And only while somebody is looking: a pane behind another tab is
           // exactly what let the box be reclaimed, so waking it from here
@@ -1185,7 +1195,28 @@ export function HostedBrowserBody({
             document.visibilityState === "visible" &&
             !closed
           ) {
-            void refresh();
+            void refresh({ ensure: true }).then((woke) => {
+              // A wake that did not land (the box is still coming up, or it
+              // refused) must NOT reopen the socket: it would be refused again
+              // and ask again, forever. The visibility-gated poll retries.
+              if (!woke) return;
+              // THEN REOPEN, explicitly. A resumed box comes back on the SAME
+              // boot, and `refresh` keeps the session object by identity when
+              // the boot is unchanged — deliberately, so a 4409 re-read cannot
+              // hot-loop the socket. That means waking alone would leave the
+              // pane blank until something else changed: the picture has to be
+              // asked for.
+              //
+              // Re-checked after the await, because the wake takes a moment and
+              // the person may have looked away inside it.
+              if (
+                !closed &&
+                activeRef.current &&
+                document.visibilityState === "visible"
+              ) {
+                setStreamAttempt((n) => n + 1);
+              }
+            });
           }
           return;
         }
