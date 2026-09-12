@@ -18,6 +18,11 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import {
+  assessAgentActivity,
+  countModelInvocations,
+} from "./evals/agent-activity.js";
+import { parseBrowserToolPolicy } from "./evals/browser-tool-policy.js";
 import { collectToolAnnotations } from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
@@ -40,7 +45,10 @@ import {
   type ModelVisibleMcpToolResults,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
-import { harnessOfHostConfig } from "./evals/harness-admission.js";
+import {
+  harnessOfHostConfig,
+  isModelFreeCase,
+} from "./evals/harness-admission.js";
 import {
   readTasksPolicy,
   type MCPClientManager,
@@ -4227,6 +4235,30 @@ const runLocalIteration = async ({
         ...browser.scriptedCheckFailures,
         ...stepScriptedFailures,
       ],
+      // NOTHING RAN? A trial can report a pass having run nothing at all: the
+      // matcher is satisfied when every expected call was made and none was
+      // forbidden, and a model that never ran made no forbidden call either.
+      // @see assessAgentActivity for why each exemption is there.
+      agentActivity: assessAgentActivity({
+        modelFree: isModelFreeCase(test),
+        isNegativeTest: test.isNegativeTest === true,
+        expectedToolCalls: (test.expectedToolCalls ?? []).length,
+        toolSurface: {
+          mcpTools: Object.keys(prepared?.allTools ?? {}).length,
+          browserTools:
+            parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
+              source: "agent-activity",
+              // Only deciding whether the case EXPECTED browser work; the
+              // delivery parse above already reported a malformed policy.
+              quiet: true,
+            }) !== undefined,
+        },
+        toolCalls: toolsCalledByPromptWithWidgets.flat().length,
+        modelInvocations: countModelInvocations({
+          spans: traceForGate?.spans,
+          messages: traceForGate?.messages,
+        }),
+      }),
     });
     const promptTraceSummaries = buildPromptTraceSummaries(
       evaluation,
@@ -5701,6 +5733,28 @@ const runHostedIterationWithBrowser = async (
       ...browser.scriptedCheckFailures,
       ...hostedStepScriptedFailures,
     ],
+    // NOTHING RAN? A trial can report a pass having run nothing at all: the
+    // matcher is satisfied when every expected call was made and none was
+    // forbidden, and a model that never ran made no forbidden call either.
+    // @see assessAgentActivity for why each exemption is there.
+    agentActivity: assessAgentActivity({
+      modelFree: isModelFreeCase(test),
+      isNegativeTest: test.isNegativeTest === true,
+      expectedToolCalls: (test.expectedToolCalls ?? []).length,
+      toolSurface: {
+        mcpTools: Object.keys(prepared?.allTools ?? {}).length,
+        browserTools:
+        parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
+          source: "agent-activity",
+          quiet: true,
+        }) !== undefined,
+      },
+      toolCalls: toolsCalledByPromptWithWidgets.flat().length,
+      modelInvocations: countModelInvocations({
+        spans: traceForGate?.spans,
+        messages: traceForGate?.messages,
+      }),
+    }),
   });
   const promptTraceSummaries = buildPromptTraceSummaries(
     evaluation,

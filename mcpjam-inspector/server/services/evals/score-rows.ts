@@ -25,7 +25,9 @@ import {
   type ScoreResult,
 } from "@mcpjam/sdk/contract";
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
+import type { AgentActivityAssessment } from "./agent-activity.js";
 import {
+  HOSTED_AGENT_ACTIVITY_SCORER_ID,
   HOSTED_JUDGE_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
   buildHostedEvaluationConfig,
@@ -102,6 +104,14 @@ export type HostedScoreRowInputs = {
    * not run it.
    */
   toolMatchAuthored?: boolean;
+  /**
+   * Whether this iteration showed any agent activity. @see assessAgentActivity
+   *
+   * Both the DEFINITION and the ROW key off the same `no_agent_activity`
+   * status, unlike the tool-match pair above — there is no second pass here
+   * and no case where the guard has fired but its evidence is unavailable.
+   */
+  agentActivity?: AgentActivityAssessment;
 };
 
 function isFiniteNumber(value: unknown): value is number {
@@ -200,6 +210,11 @@ export function hostedScoreDefinitionInputs(
           },
         }
       : {}),
+    // The DEFINITION exists only when the guard fired, so a normal run's
+    // `evaluationConfigHash` is byte-identical to every one ever recorded.
+    ...(inputs.agentActivity?.status === "no_agent_activity"
+      ? { agentActivityFired: true }
+      : {}),
   };
 }
 
@@ -258,6 +273,25 @@ export function buildHostedScoreRows(
         passed: inputs.evaluation.passed === true,
         reason: describeToolMatch(inputs.evaluation),
       })
+    );
+  }
+
+  const activityDefinition = byId.get(HOSTED_AGENT_ACTIVITY_SCORER_ID);
+  if (activityDefinition && inputs.agentActivity?.status === "no_agent_activity") {
+    // AN ERROR ROW, not a failed one — the same distinction the judge-absence
+    // branch below makes, for the same reason. "Nothing ran" is a statement
+    // about MEASUREMENT, so the row carries no value, keeps the scorer in
+    // `unresolvedScorerIds`, and leaves its stage `notMeasured`. A 0 would
+    // attribute a defect to the server on a run that never took place.
+    //
+    // The `passed = false` this pairs with lives at the verdict boundary
+    // (`buildEvalIterationVerdict`), because under `shadow` and `off` grading
+    // modes these rows decide nothing and the boolean still does.
+    rows.push(
+      errorScoreResult(
+        activityDefinition,
+        `no_agent_activity: ${inputs.agentActivity.detail}`,
+      ),
     );
   }
 

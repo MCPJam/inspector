@@ -71,6 +71,11 @@ import {
   buildSelectionToolCatalog,
   type SelectionCatalogToolLike,
 } from "./selection-tool-catalog.js";
+import type { AgentActivityAssessment } from "./agent-activity.js";
+import {
+  deriveEvidenceInsufficiency,
+  type EvidenceInsufficiency,
+} from "./evidence-insufficiency.js";
 
 /**
  * The canonical lifecycle vocabulary, imported rather than re-spelled: this
@@ -378,8 +383,23 @@ function narrowEvaluation(
  * `unresolvedScorerIds`: populated means a designed strictness catch;
  * `disagreeingScorerIds` alone means a real projection bug.
  */
+/**
+ * `{ evidenceInsufficiency }`, or nothing at all.
+ *
+ * A run that was fully measured says so by carrying no such key. Writing
+ * `{insufficient: false, reasons: []}` on every iteration would be a field
+ * nobody reads and a diff on every golden payload ever recorded.
+ */
+function evidenceInsufficiencyKey(
+  input: Parameters<typeof deriveEvidenceInsufficiency>[0],
+): { evidenceInsufficiency?: EvidenceInsufficiency } {
+  const derived = deriveEvidenceInsufficiency(input);
+  return derived.insufficient ? { evidenceInsufficiency: derived } : {};
+}
+
 function buildScoreMetadata(args: {
   mode: GradingEngineMode;
+  agentActivity?: AgentActivityAssessment;
   predicateResults?: unknown[];
   evaluation: Record<string, unknown>;
   matchOptions?: Record<string, unknown>;
@@ -404,6 +424,7 @@ function buildScoreMetadata(args: {
     evaluation: narrowEvaluation(args.evaluation),
     ...(args.matchOptions ? { matchOptions: args.matchOptions } : {}),
     ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
+    ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
     // The judge has not run yet on this pass; its row arrives in the second.
   });
   if (scores.length === 0) {
@@ -596,6 +617,13 @@ function buildSelectionToolCatalogMetadata(args: {
 export function buildIterationFinishParams(args: {
   iterationId: string | undefined;
   passed: boolean;
+  /**
+   * Whether this iteration showed any agent activity. @see assessAgentActivity
+   *
+   * Optional: absent means the caller did not ask, and every existing fixture
+   * produces exactly the metadata it always did.
+   */
+  agentActivity?: AgentActivityAssessment;
   /** `evaluation` drives both `toolsCalled` and `buildIterationMetadata`. */
   evaluation: { toolsCalled: ToolCallRecord[] } & Record<string, unknown>;
   usage: UsageTotals;
@@ -808,6 +836,7 @@ export function buildIterationFinishParams(args: {
     evaluation,
     passed,
     stageMetadata,
+    ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
     ...(args.runId ? { runId: args.runId } : {}),
     ...(iterationId ? { iterationId } : {}),
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
@@ -955,6 +984,39 @@ export function buildIterationFinishParams(args: {
       ...(toolPolicy ? { toolPolicy } : {}),
       ...stageMetadata,
       ...(frictionSignals ? { frictionSignals } : {}),
+      // ONLY WHEN THE GUARD SAID SOMETHING. `active` and every `exempt` reason
+      // are facts about a run that behaved, and writing them would put a new
+      // key on every persisted iteration — including every recorded golden —
+      // to say nothing.
+      ...(args.agentActivity?.status === "no_agent_activity"
+        ? { agentActivity: args.agentActivity }
+        : {}),
+      // HOW MUCH THIS RESULT RESTS ON, in one vocabulary. The pipeline knows
+      // four separate facts that all mean "we could not measure this" and says
+      // each of them differently; nobody could answer the question without
+      // knowing all four. NEVER feeds `passed` — that is decided above and by
+      // the score rows; this describes the verdict rather than producing it.
+      //
+      // WRITTEN ONLY WHEN INSUFFICIENT, for the same reason: a run that was
+      // fully measured says so by carrying no such key, and an
+      // `{insufficient:false, reasons:[]}` on every row is a field nobody
+      // reads and a diff on every golden payload ever recorded.
+      ...evidenceInsufficiencyKey({
+        // The SAME two facts `buildStageEvidence` derives, from the same
+        // inputs. Re-derived rather than plumbed because the stage evidence is
+        // consumed by the analyzer and never returned; the alternative is
+        // threading a value out of a function whose whole job is to build an
+        // argument for something else.
+        traceAbsent:
+          (args.spans?.length ?? 0) === 0 &&
+          (args.prompts?.length ?? 0) === 0 &&
+          (args.messages?.length ?? 0) === 0,
+        traceLacksSpanChannel:
+          (args.spans?.length ?? 0) === 0 &&
+          ((args.prompts?.length ?? 0) > 0 ||
+            (args.messages?.length ?? 0) > 0),
+        ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
+      }),
       ...scoreMetadata,
       ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),

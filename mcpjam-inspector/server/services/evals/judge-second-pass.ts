@@ -483,6 +483,11 @@ export function deriveIterationPayload(args: {
   const predicateRows = (asArray(metadata.predicates) ?? []).filter(
     isPredicateRow,
   );
+  // What the first pass concluded about activity, read back rather than
+  // re-derived: this pass has the stored metadata and no trace.
+  const storedAgentActivity = isNoAgentActivity(metadata.agentActivity)
+    ? metadata.agentActivity
+    : undefined;
   // Derived HERE from the run's own frozen case snapshot, through the SAME
   // function the runner used on the first pass, whenever the backend served
   // the raw `authoredCase`. The backend also serves a derived `stageCase` for
@@ -599,6 +604,14 @@ export function deriveIterationPayload(args: {
     // different `implementationHash` and orphan the first pass's row.
     ...(iteration.matchOptions ? { matchOptions: iteration.matchOptions } : {}),
     ...(iteration.isNegativeTest ? { isNegativeTest: true } : {}),
+    // REDECLARED from the FIRST PASS'S OWN metadata, for exactly the reason
+    // `toolMatchAuthored` above exists. The backend merges scores by
+    // `scorerId` and REPLACES `evaluationConfig` wholesale, so a definition
+    // this pass omits leaves the first pass's row unjoinable — a per-case
+    // `EVAL_RUN_CONFIG_CONFLICT`, and at `enforce` a GATING scorer silently
+    // dropped from the verdict. This pass cannot RE-ASSESS activity (it has no
+    // trace), so it reads what the first pass recorded rather than guessing.
+    ...(storedAgentActivity ? { agentActivity: storedAgentActivity } : {}),
     ...(judgeVerdict && isFiniteNumber(judgeVerdict.threshold)
       ? { judgeVerdict }
       : {}),
@@ -606,6 +619,24 @@ export function deriveIterationPayload(args: {
   return scores.length > 0
     ? { stage, scores, config: evaluationConfig }
     : { stage };
+}
+
+/**
+ * Is this stored metadata the first pass's `no_agent_activity` verdict?
+ *
+ * Narrow on PURPOSE: only that status redeclares a scorer, so an `active` or
+ * `exempt` assessment — and anything a future build writes here — is ignored
+ * rather than forwarded into a definition it would not belong in.
+ */
+function isNoAgentActivity(
+  value: unknown,
+): value is { status: "no_agent_activity"; detail: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { status?: unknown }).status === "no_agent_activity" &&
+    typeof (value as { detail?: unknown }).detail === "string"
+  );
 }
 
 /** The derivation-owned fields common to both judges' write bodies. */

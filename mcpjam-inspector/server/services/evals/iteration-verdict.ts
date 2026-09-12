@@ -35,6 +35,7 @@ import {
   toTranscriptToolInventory,
   type SelectionToolLike,
 } from "./transcript-evidence";
+import type { AgentActivityAssessment } from "./agent-activity";
 
 type EvalArgs = Parameters<typeof evaluateMultiTurnResults>;
 type TranscriptArgs = Parameters<typeof buildIterationTranscript>[0];
@@ -95,6 +96,13 @@ export interface EvalIterationVerdictInput {
   pinnedToolErrors: ToolErrorRecord[];
   /** Widget interaction-check failures, AFTER the caller flushed active checks. */
   scriptedCheckFailures: { toolName: string; reason: string }[];
+  /**
+   * Whether this iteration shows any agent activity at all.
+   *
+   * OPTIONAL, and absent means "do not ask" — every existing caller and every
+   * existing fixture gets the verdict it always got. @see assessAgentActivity
+   */
+  agentActivity?: AgentActivityAssessment;
 }
 
 export interface EvalIterationVerdict {
@@ -183,6 +191,20 @@ export function buildEvalIterationVerdict(
   // never rendered — fails the iteration unconditionally (the assertion is the
   // test). The caller flushes active checks before passing `scriptedCheckFailures`.
   if (passed && input.scriptedCheckFailures.length > 0) {
+    passed = false;
+  }
+
+  // NOTHING RAN. Last, and at the verdict boundary rather than only as a score
+  // row, because under the `shadow` and `off` grading modes the score rows do
+  // not decide anything and this boolean still does — a guard that only
+  // emitted a row would let a vacuous pass stand in exactly the modes most
+  // runs use.
+  //
+  // The matcher is satisfied when every expected call was made and none was
+  // forbidden, and a model that never ran made no forbidden call either. On a
+  // negative case, or one whose predicates read an empty transcript, "nothing
+  // happened" and "it behaved perfectly" are the same verdict.
+  if (passed && input.agentActivity?.status === "no_agent_activity") {
     passed = false;
   }
 
