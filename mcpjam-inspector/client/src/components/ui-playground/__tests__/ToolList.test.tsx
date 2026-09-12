@@ -569,7 +569,10 @@ describe("ToolList", () => {
         toolNames={[]}
         filteredToolNames={[]}
         searchQuery="grep"
-        builtinTools={[makeBuiltin("bash", "Bash"), makeBuiltin("grep", "Grep")]}
+        builtinTools={[
+          makeBuiltin("bash", "Bash"),
+          makeBuiltin("grep", "Grep"),
+        ]}
         onSelectBuiltin={vi.fn()}
       />,
     );
@@ -591,4 +594,15 @@ describe("ToolList", () => {
     );
     expect(screen.queryByText("Source:")).not.toBeInTheDocument();
   });
+});
+
+it("keeps catalog recovery visible when there are no server tools", () => {
+  const refreshPage = vi.fn();
+  render(<ToolList {...defaultProps} browserTools={{
+    attached: true, engine: "local", tools: [], page: null,
+    catalogError: true, refreshPage,
+    invokePage: async () => ({ ok: false, error: "no_browser_session" }),
+  }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(refreshPage).toHaveBeenCalledOnce();
 });

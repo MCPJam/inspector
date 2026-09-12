@@ -20,7 +20,10 @@ import {
 import type { DriverContext, DriverPage } from "./browser-page";
 import {
   BROWSERD_CONTEXT_OPTIONS,
+  BROWSERD_LOCAL_CONTEXT_OPTIONS,
   buildBrowserdLaunchArgs,
+  localChromeUserAgent,
+  type BrowserdSurface,
 } from "./launch-args";
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
@@ -732,6 +735,15 @@ export interface LaunchBrowserdContextOptions {
    * the engine depend on a filesystem layout we do not control.
    */
   executablePath?: string;
+  /**
+   * Which machine this browser is running on.
+   *
+   * Defaults to `sandbox`, so the hosted desktop's launch is byte-identical to
+   * what it was before this option existed. The local engine passes `local`,
+   * which drops the pins that would be lies on a user's own machine — see
+   * `BROWSERD_LOCAL_CONTEXT_OPTIONS` and `hardeningArgsFor`.
+   */
+  surface?: BrowserdSurface;
 }
 
 /**
@@ -741,24 +753,41 @@ export interface LaunchBrowserdContextOptions {
  * builds as root), so the sandbox is disabled only in that case.
  */
 /**
- * The context options, with the display's scale factor folded in.
+ * The context options for a surface, with the display's scale factor folded in.
  *
- * PERSISTENT ONLY. An ephemeral context is an eval or a swarm iteration, where
- * the whole point of the pinned options is that a screenshot on one host
- * matches a screenshot on another (L5) — so its scale factor stays 1 whatever
- * the box is configured for, and hosted and local eval captures stay identical.
+ * SCALE FACTOR IS PERSISTENT-ONLY. An ephemeral context is an eval or a swarm
+ * iteration, where the whole point of the pinned options is that a screenshot
+ * on one host matches a screenshot on another (L5) — so its scale factor stays
+ * 1 whatever the box is configured for, and hosted and local eval captures stay
+ * identical.
+ *
+ * THE SURFACE DECIDES THE REST. A `local` context keeps the viewport (the
+ * model's coordinate space) and drops every pin that would describe a machine
+ * the user is not running — the difference between an eval's determinism and a
+ * browser that claims to be a GPU-less Linux box sitting in UTC while it runs
+ * on someone's laptop. Ephemeral local runs drop them too: a local eval's
+ * captures were never comparable to a hosted one's (different OS, different
+ * fonts), so the pins bought nothing there and cost the same captchas.
  */
 export function contextOptionsFor(options: {
   contextMode: "persistent" | "ephemeral";
   deviceScaleFactor?: number;
-}): Omit<typeof BROWSERD_CONTEXT_OPTIONS, "deviceScaleFactor"> & {
+  surface?: BrowserdSurface;
+}): (
+  | Omit<typeof BROWSERD_CONTEXT_OPTIONS, "deviceScaleFactor">
+  | Omit<typeof BROWSERD_LOCAL_CONTEXT_OPTIONS, "deviceScaleFactor">
+) & {
   deviceScaleFactor: number;
 } {
+  const base =
+    options.surface === "local"
+      ? BROWSERD_LOCAL_CONTEXT_OPTIONS
+      : BROWSERD_CONTEXT_OPTIONS;
   const dpr = options.deviceScaleFactor ?? 1;
   if (options.contextMode !== "persistent" || dpr === 1) {
-    return BROWSERD_CONTEXT_OPTIONS;
+    return base;
   }
-  return { ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: dpr };
+  return { ...base, deviceScaleFactor: dpr };
 }
 
 export async function launchBrowserdContext(
@@ -830,7 +859,18 @@ export async function launchBrowserdContext(
       throw error;
     }
   };
+  const surface = options.surface ?? "sandbox";
   try {
+    // Local only, and a switch rather than a context option on purpose: it
+    // corrects the UA string Chromium sends (headless would otherwise announce
+    // `HeadlessChrome`) while leaving the REAL client hints in place, so header
+    // and `navigator.userAgentData` agree. See `localChromeUserAgent`.
+    const userAgent =
+      surface === "local"
+        ? await localChromeUserAgent({
+            customExecutable: Boolean(options.executablePath),
+          })
+        : undefined;
     const launchArgs = {
       ...(proxy ? { proxy: proxy.proxy } : {}),
       headless: options.headless ?? false,
@@ -841,7 +881,10 @@ export async function launchBrowserdContext(
       // Chromium cannot start its renderer sandbox as uid 0 (the image builds
       // as root), so it is disabled only in that case.
       chromiumSandbox: process.getuid?.() !== 0,
-      args: buildBrowserdLaunchArgs(options.extraArgs),
+      args: buildBrowserdLaunchArgs(options.extraArgs, {
+        surface,
+        ...(userAgent ? { userAgent } : {}),
+      }),
     };
 
     if (options.contextMode === "ephemeral") {
@@ -857,7 +900,7 @@ export async function launchBrowserdContext(
           permissions: [],
           // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
           // whatever the box says, so eval captures match across hosts.
-          ...contextOptionsFor({ contextMode: "ephemeral" }),
+          ...contextOptionsFor({ contextMode: "ephemeral", surface }),
           deviceScaleFactor: options.deviceScaleFactor ?? 1,
         });
       } catch (error) {
@@ -891,6 +934,7 @@ export async function launchBrowserdContext(
         permissions: [],
         ...contextOptionsFor({
           contextMode: "persistent",
+          surface,
           ...(options.deviceScaleFactor !== undefined
             ? { deviceScaleFactor: options.deviceScaleFactor }
             : {}),
