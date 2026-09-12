@@ -2962,6 +2962,39 @@ describe("ChromiumDriver — teardown is bounded, and nothing opens behind it", 
     }
   });
 
+  it("reaps the browser when a PAGE close never settles", async () => {
+    // The same rule one step later. `.catch` on a page close covers a
+    // rejection; nothing covers a promise that never settles, which is what a
+    // renderer still draining a navigation produces — a submitted form, a
+    // beforeunload. Unbounded, the loop never ends, the context close below it
+    // never runs, and the browser those pages belong to is never reaped.
+    vi.useFakeTimers();
+    try {
+      const page = fakePage({ url: "https://a.test/" });
+      page.close = () => new Promise<void>(() => {});
+      const fc = fakeContext({ pages: [page] });
+      const driver = new ChromiumDriver(fc.context);
+      await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }));
+
+      let settled = false;
+      const closing = driver.close().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(4_000);
+      // Not cut short while it might still finish on its own.
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await closing;
+
+      expect(settled).toBe(true);
+      // THE POINT. Everything the page close would have tidied goes with the
+      // context anyway; the context going is what cannot be skipped.
+      expect(fc.wasClosed()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("closes a page that lands after teardown instead of adopting it", async () => {
     vi.useFakeTimers();
     try {

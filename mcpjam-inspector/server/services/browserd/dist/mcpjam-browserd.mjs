@@ -7460,6 +7460,7 @@ function parsePoint(value) {
 }
 var DEFAULT_SCROLL_STEP = 600;
 var CLOSE_PENDING_TAB_GRACE_MS = 2e3;
+var CLOSE_SURFACE_GRACE_MS = 5e3;
 function parseScrollDelta(value) {
   const point = parsePoint(value);
   if (point) return [point.x, point.y];
@@ -9110,18 +9111,28 @@ var ChromiumDriver = class {
         timer.unref?.();
       })
     ]);
+    await Promise.race([
+      this.closeSurfaces(),
+      new Promise((resolve2) => {
+        const timer = setTimeout(resolve2, CLOSE_SURFACE_GRACE_MS);
+        timer.unref?.();
+      })
+    ]);
+    this.viewports.clear();
+    this.tabs.clear();
+    await this.context.close().catch(() => {
+    });
+  }
+  /** Close what this driver opened, in order. Bounded by its caller. */
+  async closeSurfaces() {
     for (const viewport of this.viewports.values()) {
       await viewport.then((v) => v?.dispose()).catch(() => {
       });
     }
-    this.viewports.clear();
     for (const entry of this.tabs.values()) {
       if (!entry.page.isClosed()) await entry.page.close().catch(() => {
       });
     }
-    this.tabs.clear();
-    await this.context.close().catch(() => {
-    });
   }
   /**
    * Build an observation result whose L3 state token is computed from the SAME
@@ -10998,6 +11009,13 @@ async function launchBrowserdContext(options) {
     throw error;
   }
 }
+var CONTEXT_CLOSE_GRACE_MS = 1e4;
+function closeGrace(ms = CONTEXT_CLOSE_GRACE_MS) {
+  return new Promise((resolve2) => {
+    const timer = setTimeout(resolve2, ms);
+    timer.unref?.();
+  });
+}
 function adaptContext(context, options = {}) {
   const startup = [...context.pages()];
   let adopted = 0;
@@ -11043,7 +11061,7 @@ function adaptContext(context, options = {}) {
     },
     async close() {
       try {
-        await context.close();
+        await Promise.race([context.close(), closeGrace()]);
       } finally {
         await options.onClose?.();
       }

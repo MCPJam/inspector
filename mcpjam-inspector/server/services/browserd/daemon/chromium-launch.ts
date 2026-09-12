@@ -991,6 +991,23 @@ export type AnyContext = {
  * visible and permanently outside the driver's tab map, where a headed user could
  * focus it while observations ran against a different tab (P2).
  */
+/**
+ * How long a teardown waits on a browser that may never answer.
+ *
+ * Long enough that an ordinary close — which is milliseconds — is never cut
+ * short, short enough that a hung one does not outlive the thing waiting on
+ * it. @see adaptContext
+ */
+const CONTEXT_CLOSE_GRACE_MS = 10_000;
+
+/** A timer that resolves, and is never the reason a process stays alive. */
+function closeGrace(ms: number = CONTEXT_CLOSE_GRACE_MS): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    (timer as { unref?: () => void }).unref?.();
+  });
+}
+
 export function adaptContext(
   context: AnyContext,
   options: {
@@ -1049,7 +1066,20 @@ export function adaptContext(
       // runs even when the context close fails, which is exactly the case
       // where something is already wrong.
       try {
-        await context.close();
+        // AND EVEN WHEN IT NEVER ANSWERS, which `finally` alone does not
+        // cover: a rejection runs the block below, an unsettled promise does
+        // not. `context.close()` waits for Chromium to acknowledge, and a
+        // renderer still draining a navigation — a submitted form, a
+        // beforeunload — can leave it pending indefinitely. Unbounded, the
+        // browser kill under `finally` is never reached, the process is
+        // orphaned anyway, and whoever awaited teardown waits forever: a
+        // server shutdown that never exits, or a test hook that times out.
+        //
+        // The close request has already been sent when the grace expires, so
+        // the context usually finishes on its own; and where it does not, the
+        // browser close below reaps it. Dropping the wait is what makes that
+        // line reachable.
+        await Promise.race([context.close(), closeGrace()]);
       } finally {
         await options.onClose?.();
       }

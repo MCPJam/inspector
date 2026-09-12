@@ -481,6 +481,15 @@ const DEFAULT_SCROLL_STEP = 600;
 const CLOSE_PENDING_TAB_GRACE_MS = 2_000;
 
 /**
+ * How long teardown spends closing pages and viewports before moving on.
+ *
+ * Generous for the ordinary case — closing a handful of pages is milliseconds
+ * — and finite for the one that is not, because everything left behind is
+ * taken by the context close that follows. @see ChromiumDriver.close
+ */
+const CLOSE_SURFACE_GRACE_MS = 5_000;
+
+/**
  * A scroll's `value`: `"down"`/`"up"`, a pixel count, or `"dx,dy"`. Anything
  * unrecognized scrolls down by the default step rather than erroring — a
  * scroll is cheap and recoverable, and refusing one teaches nothing.
@@ -2988,15 +2997,35 @@ export class ChromiumDriver implements BrowserDriver {
         (timer as { unref?: () => void }).unref?.();
       }),
     ]);
+    // BOUNDED FOR THE SAME REASON, and this is the half that matters: the
+    // context close below is what actually reaps the browser, and a page that
+    // will not close would otherwise stop us ever reaching it. `.catch` covers
+    // a rejection; neither it nor the loop covers a promise that simply never
+    // settles, which is what a renderer draining a navigation produces.
+    //
+    // Closing pages first is courtesy — it lets Chromium shut them down in
+    // order — so giving up on that courtesy costs nothing. The context close
+    // takes them with it.
+    await Promise.race([
+      this.closeSurfaces(),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, CLOSE_SURFACE_GRACE_MS);
+        (timer as { unref?: () => void }).unref?.();
+      }),
+    ]);
+    this.viewports.clear();
+    this.tabs.clear();
+    await this.context.close().catch(() => {});
+  }
+
+  /** Close what this driver opened, in order. Bounded by its caller. */
+  private async closeSurfaces(): Promise<void> {
     for (const viewport of this.viewports.values()) {
       await viewport.then((v) => v?.dispose()).catch(() => {});
     }
-    this.viewports.clear();
     for (const entry of this.tabs.values()) {
       if (!entry.page.isClosed()) await entry.page.close().catch(() => {});
     }
-    this.tabs.clear();
-    await this.context.close().catch(() => {});
   }
 
   /**
