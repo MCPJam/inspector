@@ -79,7 +79,7 @@ function runDoc(projectId: string, run: Record<string, any>) {
   return {
     _id: run.id,
     projectId,
-    suiteId: "suite_1",
+    suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
     runNumber: 1,
     status: run.status,
     result: run.result ?? null,
@@ -150,6 +150,18 @@ function makeApp(): Hono {
   return app;
 }
 
+/**
+ * The run id the REQUESTS use.
+ *
+ * Deliberately not `row.input.run.id`. The corpus is shared with the SDK, the
+ * CLI and the client, where `run-1` is only ever a label; here it is a path
+ * segment on a route that now checks the segment is shaped like a Convex
+ * document id before it forwards one. A hyphenated label is not, so requests
+ * carry a realistic id while the stubbed document keeps the corpus's own — the
+ * route never compares the two, exactly as production never does.
+ */
+const REQUEST_RUN_ID = "mh78djdyf2dqbmxky71sz9y6x58d5p2c";
+
 function request(path: string): Promise<Response> {
   return makeApp().request(`/api/v1${path}`, {
     method: "GET",
@@ -189,7 +201,7 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
     it(`${row.__name}: matches the shared golden corpus`, async () => {
       stubCorpusRow(row);
       const res = await request(
-        `/projects/${row.input.projectId}/eval-runs/${row.input.run.id}/decision-summary`
+        `/projects/${row.input.projectId}/eval-runs/${REQUEST_RUN_ID}/decision-summary`
       );
       expect(res.status).toBe(200);
       // Equal to the SAME object the SDK assembler is asserted to produce in
@@ -206,9 +218,7 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
     const { isGuestAllowedV1Request } = await import(
       "../guest-allowed-paths.js"
     );
-    const path = `/api/v1/projects/${corpus.cases[0]!.input.projectId}/eval-runs/${
-      corpus.cases[0]!.input.run.id
-    }/decision-summary`;
+    const path = `/api/v1/projects/${corpus.cases[0]!.input.projectId}/eval-runs/${REQUEST_RUN_ID}/decision-summary`;
     expect(isGuestAllowedV1Request("GET", path)).toBe(true);
     expect(isGuestAllowedV1Request("POST", path)).toBe(false);
 
@@ -216,9 +226,7 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
     // "measurements could not be read", which a viewer takes for a broken
     // backend rather than for a permission they never had. Its payload is
     // counts over the same iterations a guest can already GET.
-    const stagePath = `/api/v1/projects/${corpus.cases[0]!.input.projectId}/eval-runs/${
-      corpus.cases[0]!.input.run.id
-    }/stage-analytics`;
+    const stagePath = `/api/v1/projects/${corpus.cases[0]!.input.projectId}/eval-runs/${REQUEST_RUN_ID}/stage-analytics`;
     expect(isGuestAllowedV1Request("GET", stagePath)).toBe(true);
     expect(isGuestAllowedV1Request("POST", stagePath)).toBe(false);
     // Narrow, like every entry beside it: nothing hangs beneath this segment.
@@ -230,9 +238,7 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
       guestId: "guest_abc",
     });
     const res = await makeApp().request(
-      `/api/v1/projects/${corpus.cases[0]!.input.projectId}/eval-runs/${
-        corpus.cases[0]!.input.run.id
-      }/decision-summary`,
+      `/api/v1/projects/${corpus.cases[0]!.input.projectId}/eval-runs/${REQUEST_RUN_ID}/decision-summary`,
       {
         method: "GET",
         headers: { Authorization: "Bearer guest_bearer" },
@@ -245,9 +251,7 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
   it("refuses a run from another project as NOT_FOUND", async () => {
     stubCorpusRow(corpus.cases[0]!);
     const res = await request(
-      `/projects/some-other-project/eval-runs/${
-        corpus.cases[0]!.input.run.id
-      }/decision-summary`
+      `/projects/some-other-project/eval-runs/${REQUEST_RUN_ID}/decision-summary`
     );
     expect(res.status).toBe(404);
   });
@@ -261,7 +265,7 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
     )!;
     stubCorpusRow(row);
     const res = await request(
-      `/projects/${row.input.projectId}/eval-runs/${row.input.run.id}/decision-summary?cursor=page-2`
+      `/projects/${row.input.projectId}/eval-runs/${REQUEST_RUN_ID}/decision-summary?cursor=page-2`
     );
     const body = (await res.json()) as any;
     expect(body.diagnostics.complete).toBe(false);
@@ -272,11 +276,11 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
     const row = corpus.cases[0]!;
     stubCorpusRow(row);
     await request(
-      `/projects/${row.input.projectId}/eval-runs/${row.input.run.id}/decision-summary?limit=7`
+      `/projects/${row.input.projectId}/eval-runs/${REQUEST_RUN_ID}/decision-summary?limit=7`
     );
     expect(convexQueryMock).toHaveBeenCalledWith(
       "testSuites:listTestSuiteRunIterations",
-      { runId: row.input.run.id, paginationOpts: { numItems: 7, cursor: null } }
+      { runId: REQUEST_RUN_ID, paginationOpts: { numItems: 7, cursor: null } }
     );
   });
 
@@ -284,7 +288,7 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
     const row = corpus.cases[0]!;
     stubCorpusRow(row);
     await request(
-      `/projects/${row.input.projectId}/eval-runs/${row.input.run.id}/decision-summary?limit=9999`
+      `/projects/${row.input.projectId}/eval-runs/${REQUEST_RUN_ID}/decision-summary?limit=9999`
     );
     expect(convexQueryMock).toHaveBeenCalledWith(
       "testSuites:listTestSuiteRunIterations",
@@ -301,8 +305,12 @@ describe("the iteration DTO's declared case id", () => {
       (entry) => entry.__name === "policyV2-passing"
     )!;
     stubCorpusRow(row);
+    // A Convex-shaped run id in the URL, not the corpus's `run-1`: the
+    // iterations route gates the segment before it calls Convex
+    // (`convex-id-param.ts`), and the stub answers regardless of the id, so
+    // this still reads the corpus row the case is about.
     const res = await request(
-      `/projects/${row.input.projectId}/eval-runs/${row.input.run.id}/iterations`
+      `/projects/${row.input.projectId}/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations`
     );
     const body = (await res.json()) as any;
     expect(body.items[0].caseId).toBe("c_alpha");
@@ -339,7 +347,9 @@ describe("the iteration DTO's declared case id", () => {
       }
       return Promise.resolve(null);
     });
-    const res = await request(`/projects/p1/eval-runs/run-1/iterations`);
+    const res = await request(
+      `/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations`
+    );
     const body = (await res.json()) as any;
     expect("caseId" in body.items[0]).toBe(false);
   });
@@ -380,7 +390,7 @@ describe("openapi describes what the route returns", () => {
     it(`${row.__name}: validates against the published schema`, async () => {
       stubCorpusRow(row);
       const res = await request(
-        `/projects/${row.input.projectId}/eval-runs/${row.input.run.id}/decision-summary`
+        `/projects/${row.input.projectId}/eval-runs/${REQUEST_RUN_ID}/decision-summary`
       );
       const body = await res.json();
       const ok = validate(body);
