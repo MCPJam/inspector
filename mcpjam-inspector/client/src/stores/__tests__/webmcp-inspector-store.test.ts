@@ -1807,6 +1807,28 @@ describe("webmcp inspector store — frame transport", () => {
     }
   });
 
+  it("clears the channel BEFORE the teardown releases the bitmap", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    await ws.emitFrame(binaryFrame(2));
+    expect(webmcpFrameChannel.latest()).not.toBeNull();
+
+    // What the channel was still handing out at the instant the surface behind
+    // it was released. Ordered the other way, a reader in that window gets a
+    // frame whose bitmap is already gone.
+    let channelAtRelease: unknown = "never released";
+    const bitmap = bitmaps.at(-1)!;
+    const release = bitmap.close.bind(bitmap);
+    bitmap.close = () => {
+      channelAtRelease = webmcpFrameChannel.latest();
+      release();
+    };
+
+    useWebmcpInspectorStore.getState().disconnect();
+    expect(channelAtRelease).toBeNull();
+    expect(bitmap.closed).toBe(true);
+  });
+
   it("clears the frame and releases its bitmap when the stream stops", async () => {
     const { ws } = await openFrameSession();
     ws.open();

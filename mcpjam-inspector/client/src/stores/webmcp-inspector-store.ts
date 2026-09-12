@@ -998,6 +998,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         clearTimeout(frameRetryTimer);
         frameRetryTimer = undefined;
       }
+      // The channel FIRST, then the socket: `close()` releases the last bitmap
+      // synchronously, and until the channel stops handing that frame out
+      // anything reading it holds a surface that is already gone.
+      webmcpFrameChannel.publish(null);
       frameSocket?.close();
       frameSocket = undefined;
       frameAttempts = 0;
@@ -1010,11 +1014,6 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       hostedStream?.abort();
       hostedStream = undefined;
       sourceSessionId = undefined;
-      // The channel first, then the socket's own bitmap: the pane must have
-      // stopped pointing at the surface before it is released. `frameSocket`
-      // is already closed above, which released it — this is belt and braces
-      // for the path where the socket was never opened at all.
-      webmcpFrameChannel.publish(null);
       // Measurement samples belong to the session that produced them. `seq`
       // restarts per session, so a gesture still waiting on its echo would
       // otherwise be settled by an unrelated frame of the NEXT page and
