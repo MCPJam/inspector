@@ -1,0 +1,44 @@
+{
+  "__readme": "Planned renames for the evaluator-vocabulary program, read by index.mjs. `scope` decides what a match may be: `identifier` matches a bare identifier outside comments and strings; `subpath` matches an import specifier; `flag` matches a CLI flag token; `wire-field` matches an object KEY only, and only inside the files its `paths` names. Wire fields are path-restricted on purpose: `checks` and `repetitions` are ordinary English elsewhere in this repo, and a rename proposed against prose is a rename nobody can review.",
+  "renames": [
+    { "from": "Scorer", "to": "Evaluator", "scope": "identifier" },
+    { "from": "ScoreDefinition", "to": "EvaluatorDefinition", "scope": "identifier" },
+    { "from": "ResolvedScoreDefinition", "to": "ResolvedEvaluatorDefinition", "scope": "identifier" },
+    { "from": "ScorerContextV1", "to": "EvaluatorContextV1", "scope": "identifier" },
+    { "from": "ScoreRawOutcome", "to": "EvaluatorRawOutcome", "scope": "identifier" },
+    { "from": "ScoreStatus", "to": "EvaluatorStatus", "scope": "identifier" },
+    { "from": "ScorerRole", "to": "EvaluatorRole", "scope": "identifier" },
+    { "from": "ScorerErrorPolicy", "to": "EvaluatorErrorPolicy", "scope": "identifier" },
+    { "from": "ScorerIdSource", "to": "EvaluatorIdSource", "scope": "identifier" },
+    { "from": "ScoreResult", "to": "EvaluatorResult", "scope": "identifier", "note": "PROJECTION, not an alias — the runtime field names differ (`value` vs `score`). A mechanical rewrite of this one is wrong; it is listed so the report sizes the surface." },
+    { "from": "runScorers", "to": "runEvaluators", "scope": "identifier" },
+    { "from": "scoresPassed", "to": "evaluatorsPassed", "scope": "identifier" },
+    { "from": "predicateScorer", "to": "assertion", "scope": "identifier" },
+    { "from": "judgeScorer", "to": "judge", "scope": "identifier" },
+    { "from": "DEFAULT_SCORER_CONCURRENCY", "to": "DEFAULT_EVALUATOR_CONCURRENCY", "scope": "identifier" },
+    { "from": "DEFAULT_SCORER_TIMEOUT_MS", "to": "DEFAULT_EVALUATOR_TIMEOUT_MS", "scope": "identifier" },
+    { "from": "GRADER_STAGE", "to": "EVALUATOR_STAGE", "scope": "identifier" },
+    { "from": "PREDICATE_STAGE", "to": "ASSERTION_STAGE", "scope": "identifier" },
+    { "from": "GRADER_PRESENTATION_GROUP", "to": "EVALUATOR_PRESENTATION_GROUP", "scope": "identifier" },
+    { "from": "PREDICATE_KINDS", "to": "ASSERTION_KINDS", "scope": "identifier" },
+    { "from": "PredicateKind", "to": "AssertionKind", "scope": "identifier" , "paths": ["sdk/src/"], "note": "Scoped to the SDK: the legacy name stays exported as an alias, so no consumer has anything to rename." },
+    { "from": "RECOMMENDED_DEFAULT_PREDICATES", "to": "RECOMMENDED_DEFAULT_ASSERTIONS", "scope": "identifier", "note": "Re-export only. The literal stays declared in grader-stage.ts — the backend pins it through a whole-file capture of its three triples." },
+    { "from": "Predicate", "to": "Assertion", "scope": "identifier" , "paths": ["sdk/src/"], "note": "Scoped to the SDK: the legacy name stays exported as an alias, so no consumer has anything to rename." },
+    { "from": "PredicateResult", "to": "AssertionResult", "scope": "identifier" , "paths": ["sdk/src/"], "note": "Scoped to the SDK: the legacy name stays exported as an alias, so no consumer has anything to rename." },
+    { "from": "PredicateScope", "to": "AssertionScope", "scope": "identifier" , "paths": ["sdk/src/"], "note": "Scoped to the SDK: the legacy name stays exported as an alias, so no consumer has anything to rename." },
+    { "from": "evaluatePredicate", "to": "evaluateAssertion", "scope": "identifier" , "paths": ["sdk/src/"], "note": "Scoped to the SDK: the legacy name stays exported as an alias, so no consumer has anything to rename." },
+    { "from": "evaluatePredicates", "to": "evaluateAssertions", "scope": "identifier" , "paths": ["sdk/src/"], "note": "Scoped to the SDK: the legacy name stays exported as an alias, so no consumer has anything to rename." },
+    { "from": "allPredicatesPassed", "to": "allAssertionsPassed", "scope": "identifier" , "paths": ["sdk/src/"], "note": "Scoped to the SDK: the legacy name stays exported as an alias, so no consumer has anything to rename." },
+    { "from": "GraderRow", "to": "EvaluatorRow", "scope": "identifier" },
+    { "from": "GraderRowKind", "to": "EvaluatorRowKind", "scope": "identifier" },
+
+    { "from": "@mcpjam/sdk/predicates", "to": "@mcpjam/sdk/assertions", "scope": "subpath" },
+
+    { "from": "--repetitions", "to": "--iterations", "scope": "flag", "paths": ["cli/", "docs/"] },
+
+    { "from": "checks", "to": "assertions", "scope": "wire-field", "paths": ["sdk/src/platform/", "mcpjam-inspector/server/routes/v1/evals.ts", "cli/src/lib/eval-run-file.ts", "cli/src/lib/eval-suite-export.ts"] },
+    { "from": "predicates", "to": "assertions", "scope": "wire-field", "paths": ["sdk/src/platform/", "mcpjam-inspector/server/routes/v1/evals.ts"] },
+    { "from": "defaultPredicates", "to": "defaultAssertions", "scope": "wire-field", "paths": ["sdk/src/platform/", "mcpjam-inspector/server/routes/v1/evals.ts", "mcpjam-inspector/client/src/components/evals/"] },
+    { "from": "repetitions", "to": "iterations", "scope": "wire-field", "paths": ["sdk/src/platform/", "mcpjam-inspector/server/routes/v1/evals.ts", "cli/src/lib/eval-run-file.ts"] }
+  ]
+}
