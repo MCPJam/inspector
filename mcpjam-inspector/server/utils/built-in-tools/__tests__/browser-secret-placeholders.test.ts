@@ -312,6 +312,52 @@ describe("what leaves this process", () => {
     expect(delivered).toEqual([["GITHUB_PASSWORD"]]);
   });
 
+  it("records the delivery even when the response never arrives", async () => {
+    // THE VALUE LEFT THIS PROCESS the moment the body went out. The callback
+    // is read before deleting a credential believed dormant, so a daemon that
+    // received the POST and then timed out must not be recorded as never
+    // having had it — false "never delivered" is the dangerous direction.
+    const delivered: string[][] = [];
+    const ensureSession = vi.fn(async () => ({
+      engine: "hosted" as const,
+      target: "computer" as const,
+      sessionId: "session-1",
+      computerId: "computer-1",
+      bootId: "boot-1",
+      client: {
+        sendCommand: async () => {
+          throw new Error("socket hang up");
+        },
+        status: async () => ({
+          kind: "ok",
+          features: ["secret-placeholders"],
+        }),
+      } as never,
+      streamUrl: "https://stream.example/vnc.html",
+      streamPassword: "pw",
+      contextMode: "persistent" as const,
+      reused: true,
+    }));
+    const result = buildBrowserTools({
+      authHeader: "Bearer user",
+      projectId: "project-1",
+      approvalDelivery: { kind: "attested" },
+      ensureSession: ensureSession as never,
+      tokenMemory: new BrowserTokenMemory(),
+      secrets: {
+        available: SECRETS,
+        onDelivered: (names: readonly string[]) => delivered.push([...names]),
+      },
+    });
+    await expect(
+      act(result!.tools, {
+        verb: "type",
+        value: "{{secret:GITHUB_PASSWORD}}",
+      }),
+    ).rejects.toThrow(/socket hang up/);
+    expect(delivered).toEqual([["GITHUB_PASSWORD"]]);
+  });
+
   it("does not fire the delivery callback for an ordinary act", async () => {
     const delivered: string[][] = [];
     const { tools } = build({

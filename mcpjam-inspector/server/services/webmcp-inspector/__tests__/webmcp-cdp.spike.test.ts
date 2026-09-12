@@ -569,7 +569,14 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP support probing", () => {
  * comma-join it into `src/main.ts`'s single `appendSwitch("enable-features",
  * ...)` call. @see docs/chromium-bump-checklist.md
  */
-describe.skipIf(!WEBMCP_CDP_AVAILABLE)(
+// GATED ON CHROMIUM ALONE, not on `WEBMCP_CDP_AVAILABLE`. That probe launches
+// with `buildWebMcpLaunchArgs()` — the very flags this block exists to check —
+// so gating on it makes the suite skip in exactly the situation it was written
+// to catch: a bump where those flags stop being sufficient. The regression
+// would report itself as "0 tests, all skipped" and be read as a pass. Every
+// OTHER block in this file legitimately needs WebMCP working to say anything
+// about WebMCP behaviour; this one needs only a browser.
+describe.skipIf(!CHROMIUM_AVAILABLE)(
   "feature-flag sufficiency at the pinned Chromium",
   () => {
     /**

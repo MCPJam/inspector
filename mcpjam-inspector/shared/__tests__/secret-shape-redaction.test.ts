@@ -135,6 +135,31 @@ describe("the patterns are FACTORIES, not shared instances", () => {
    * braces unclosed, and a model told that something was hidden from it when
    * it had in fact been handed back the exact token it wrote.
    */
+  describe("a bearer token containing `~`", () => {
+    // `~` is UNRESERVED in a URI, so issuers use it. Leaving it out of the
+    // class was not a near miss: `Bearer ~abc` matched nothing, and
+    // `Bearer abc~def` matched only the first half — a partial redaction,
+    // which reads as a successful one while the rest of the credential sits
+    // in plain sight.
+    it("redacts a token that STARTS with one", () => {
+      expect(redactSecretShapes("Bearer ~token-value-here")).toBe(
+        "Bearer [redacted]",
+      );
+    });
+
+    it("redacts the whole token when one is embedded", () => {
+      expect(redactSecretShapes("Bearer abc~token~value")).toBe(
+        "Bearer [redacted]",
+      );
+    });
+
+    it("still stops at the token, not at the words after it", () => {
+      expect(redactSecretShapes("Bearer abc~def failed the request")).toBe(
+        "Bearer [redacted] failed the request",
+      );
+    });
+  });
+
   describe("a secret placeholder", () => {
     it("is left exactly as it is", () => {
       expect(redactSecretShapes("sign-in rejected {{secret:PW}}")).toBe(

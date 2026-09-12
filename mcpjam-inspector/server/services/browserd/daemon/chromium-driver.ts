@@ -539,6 +539,54 @@ function dropIndex(
   return list[last]?.id === activeTabId && list.length > 1 ? last - 1 : last;
 }
 
+/**
+ * How long an observation will wait for the tab's WebMCP bridge. @see settleBridge
+ *
+ * Generous for what it covers — the attach is milliseconds once the page has a
+ * CDP session — and short enough that the pathological case costs a pause
+ * rather than the command.
+ */
+const BRIDGE_SETTLE_MS = 2_000;
+
+/**
+ * Give the bridge a moment to finish attaching, BUT NEVER WAIT ON IT.
+ *
+ * `frameSessions()` is synchronous on purpose — the a11y read is on the hot
+ * path of every observation — and it answers off the bridge the tab started
+ * attaching at creation. An observation that lands before that settles sees an
+ * EMPTY session list, so `readAxForest` reads no out-of-process frame at all
+ * and hands back a tree with the iframes' contents silently missing. That
+ * window is small and exactly where it matters: the first observation after
+ * opening or navigating a tab.
+ *
+ * BOUNDED, because the first attempt at this was a bare `await page.webmcp()`
+ * and it deadlocked a real browser. `attachWebMcp` talks to the page, so on a
+ * browser being torn down — or one whose WebMCP domain never answers — that
+ * promise can simply never settle, and an unbounded await turns "an
+ * observation missed an iframe" into "the command never returns and teardown
+ * hangs behind it". Missing content is a bug; a hang is an outage.
+ *
+ * A timeout here is therefore not a guess at how long an attach takes. It is
+ * the statement that this read does not depend on the attach: the common path
+ * resolves in a microtask, and the pathological one degrades to exactly the
+ * main-document tree the previous release produced.
+ */
+async function settleBridge(page: DriverPage): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      page.webmcp().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), BRIDGE_SETTLE_MS);
+      }),
+    ]);
+  } finally {
+    // CLEARED, or the pending timer keeps an otherwise-idle process (and a
+    // test runner) alive for two seconds after every observation.
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export class ChromiumDriver implements BrowserDriver {
   private readonly context: DriverContext;
   private readonly settleOptions: SettleOptions;
@@ -3799,22 +3847,7 @@ export class ChromiumDriver implements BrowserDriver {
     | { ok: false; error: BrowserCommandResult }
   > {
     const filter = action.filter ?? "interactive";
-    // SETTLE THE BRIDGE BEFORE READING THE TREE.
-    //
-    // `frameSessions()` is deliberately synchronous — the a11y read is on the
-    // hot path of every observation — and it answers off `attachedBridge`,
-    // which only exists once the eager attach started at tab creation has
-    // resolved. An observation that lands inside that window sees an EMPTY
-    // session list, so `readAxForest` reads no out-of-process frame at all and
-    // returns a tree with the iframes' contents silently missing. The window
-    // is small and exactly where it matters: the first observation after
-    // opening or navigating a tab.
-    //
-    // Awaiting the MEMOISED promise closes it for nothing: the attach is
-    // already in flight, so this is one microtask on every observation after
-    // the first, and a failure is not this read's problem — `readAxForest`
-    // degrades to the main document, which is what it did before.
-    await entry.page.webmcp().catch(() => null);
+    await settleBridge(entry.page);
     const cdp = await entry.page.cdp();
     if (!cdp) {
       return {

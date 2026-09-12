@@ -1574,6 +1574,27 @@ export function buildBrowserTools(
         // Approval, handoff and queue waits may outlive the grant checked at
         // handle resolution. Re-check immediately before sending control.
         await state.verifyConsent();
+        // BEFORE THE AWAIT, which is the whole point and which the placement
+        // after it quietly contradicted. The question this callback answers is
+        // "did anything actually receive it", asked before deleting a
+        // credential believed dormant — so it must fire when the value LEAVES,
+        // not when a reply comes back. A daemon that received the POST and
+        // then timed out, or a socket that dropped after the body went, both
+        // put the credential on a box while recording that nothing ever had
+        // it. False "never delivered" is the dangerous direction here.
+        //
+        // NAMES ONLY, and it never throws into this path: the callback is a
+        // best-effort stamp, and a browser command must not fail over one.
+        if (args.secrets?.length) {
+          try {
+            opts.secrets?.onDelivered?.(
+              args.secrets.map((secret) => secret.name),
+            );
+          } catch {
+            // Recorded nowhere on purpose: this is a bookkeeping nicety, and
+            // the command it rides is the thing the user is waiting for.
+          }
+        }
         response = await client.sendCommand(
           { ...command, responsiveViewport: true },
           handle.bootId,
@@ -1602,13 +1623,6 @@ export function buildBrowserTools(
         throw error;
       }
       disarm?.();
-      // THE VALUES HAVE LEFT THIS PROCESS. That is the question this callback
-      // answers — "did anything actually receive it", asked before deleting a
-      // credential believed dormant — so it fires on the send rather than on
-      // the result: a command the browser then refused still carried the
-      // value out of here. NAMES ONLY.
-      if (args.secrets?.length)
-        opts.secrets?.onDelivered?.(args.secrets.map((secret) => secret.name));
       // A PERSON HAS THE BROWSER. Park instead of refusing, and come back with
       // a fresh look rather than with this command's result — which does not
       // exist, because the command was never run. @see browser-handoff.ts

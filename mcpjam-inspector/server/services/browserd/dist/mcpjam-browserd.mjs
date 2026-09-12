@@ -3285,7 +3285,7 @@ function parseViewportPolicy(value) {
 
 // shared/secret-shape-redaction.ts
 var authHeaderLike = () => /\b(authorization["']?\s*:\s*)["']?[^\n\r"'`]+/gi;
-var tokenLike = () => /\bBearer\s+[A-Za-z0-9._\-+/=]+\b/gi;
+var tokenLike = () => /\bBearer\s+[A-Za-z0-9._~\-+/=]+\b/gi;
 var skKeyLike = () => /\bsk-(?:[A-Za-z0-9]+-)*[A-Za-z0-9]{16,}\b/g;
 var jwtLike = () => /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
 var secretParamLike = () => /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|authorization|secret|password|passwd|pwd|token|auth|key|sig|signature)\s*[=:]\s*["']?)[^&\s"'`]+/gi;
@@ -7456,6 +7456,20 @@ function dropIndex(list, activeTabId) {
   const last = list.length - 1;
   return list[last]?.id === activeTabId && list.length > 1 ? last - 1 : last;
 }
+var BRIDGE_SETTLE_MS = 2e3;
+async function settleBridge(page) {
+  let timer;
+  try {
+    await Promise.race([
+      page.webmcp().catch(() => null),
+      new Promise((resolve2) => {
+        timer = setTimeout(() => resolve2(null), BRIDGE_SETTLE_MS);
+      })
+    ]);
+  } finally {
+    if (timer !== void 0) clearTimeout(timer);
+  }
+}
 var ChromiumDriver = class {
   context;
   settleOptions;
@@ -9632,7 +9646,7 @@ var ChromiumDriver = class {
    */
   async readA11y(tabId, entry, action) {
     const filter = action.filter ?? "interactive";
-    await entry.page.webmcp().catch(() => null);
+    await settleBridge(entry.page);
     const cdp = await entry.page.cdp();
     if (!cdp) {
       return {

@@ -5281,6 +5281,29 @@ describe("ChromiumDriver — acting inside a frame", () => {
     expect(lines[iframeLine + 1]).toMatch(/^\s+- textbox "Card number"/);
   });
 
+  it("reads the tree even when the bridge never attaches", async () => {
+    // THE HANG THIS BOUND EXISTS FOR. `attachWebMcp` talks to the page, so on
+    // a browser being torn down — or one whose WebMCP domain never answers —
+    // `webmcp()` can simply never settle. An unbounded await turned "this
+    // observation missed an iframe" into "the command never returns and
+    // teardown hangs behind it", which is how a real-browser integration test
+    // died in its `afterEach`.
+    vi.useFakeTimers();
+    try {
+      const { driver, page } = await observedFramedPage();
+      // Replace the memoised bridge with one that never resolves.
+      page.webmcp = () => new Promise(() => {});
+      const pending = driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+      await vi.advanceTimersByTimeAsync(2_000);
+      const res = await pending;
+      // Degraded, not failed: the MAIN document still reads, which is exactly
+      // what the release before the frame forest produced.
+      expect(res.ok).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clicks a frame ref at the HOST-TRANSLATED point", async () => {
     // (20,30)+(40,20)/2 inside the frame → centre (40,40); plus the host's
     // top-left (100,200) → (140,240). An untranslated click would land at

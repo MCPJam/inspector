@@ -55,8 +55,15 @@
 export const authHeaderLike = () =>
   /\b(authorization["']?\s*:\s*)["']?[^\n\r"'`]+/gi;
 
-/** `Bearer <token>`, the spelling that reaches a page's own console. */
-export const tokenLike = () => /\bBearer\s+[A-Za-z0-9._\-+/=]+\b/gi;
+/**
+ * `Bearer <token>`, the spelling that reaches a page's own console.
+ *
+ * `~` is in the class because it is an UNRESERVED character in a URI and real
+ * issuers use it. Without it `Bearer ~abc` matched nothing at all and
+ * `Bearer abc~def` matched only the `abc`, leaving the rest of the credential
+ * in plain sight — a partial redaction that reads as a successful one.
+ */
+export const tokenLike = () => /\bBearer\s+[A-Za-z0-9._~\-+/=]+\b/gi;
 
 /**
  * An OpenAI-style `sk-` key, and everything that copied the convention.
