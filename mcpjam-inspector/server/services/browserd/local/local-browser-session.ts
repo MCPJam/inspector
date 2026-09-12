@@ -649,7 +649,13 @@ async function startSession(
     // inspector, not in a sandbox, so there is no boot recipe to forward a
     // flag through. A developer dogfooding one sets it where they start the
     // app.
-    features: parseBrowserdFeatures(),
+    //
+    // Through `deps.env` rather than `process.env` directly, like every other
+    // environment read on this path (`wantsHeadedWindow`,
+    // `resolveLocalBrowserSurface`): it defaults to `process.env`, so the
+    // behaviour is the same, and a test that injects an env gets the session
+    // it configured instead of the one the runner happens to be in.
+    features: parseBrowserdFeatures(deps.env),
     /**
      * The Playground's browser follows its panel; every other caller does not.
      *

@@ -1508,6 +1508,18 @@ export class ChromiumDriver implements BrowserDriver {
     // (0, 0); a point read there and dispatched to the page lands wherever
     // that offset puts it. A SAME-PROCESS child needs none of this, which is
     // why this only fires for a node with its own session.
+    // A FRAME REF WITH NO TOPOLOGY IS REFUSED, not quietly aimed at. Falling
+    // through to `pointForBackendNodeId` on the frame's own session reads a
+    // point in the IFRAME's coordinate space and dispatches it to the PAGE —
+    // a real coordinate, on whatever happens to sit there. Refusing sends the
+    // model back for a fresh tree, which is the only thing that can fix it.
+    if (refNode.cdp && refNode.sessionFrameId && !refs?.frames) {
+      throw new ActError(
+        "stale_ref",
+        `${label} is inside a frame this observation no longer describes; ` +
+          "observe again and use a ref from the new tree",
+      );
+    }
     const point =
       refNode.cdp && refNode.sessionFrameId && refs?.frames
         ? await pointForRefAcrossFrames({
@@ -3787,6 +3799,22 @@ export class ChromiumDriver implements BrowserDriver {
     | { ok: false; error: BrowserCommandResult }
   > {
     const filter = action.filter ?? "interactive";
+    // SETTLE THE BRIDGE BEFORE READING THE TREE.
+    //
+    // `frameSessions()` is deliberately synchronous — the a11y read is on the
+    // hot path of every observation — and it answers off `attachedBridge`,
+    // which only exists once the eager attach started at tab creation has
+    // resolved. An observation that lands inside that window sees an EMPTY
+    // session list, so `readAxForest` reads no out-of-process frame at all and
+    // returns a tree with the iframes' contents silently missing. The window
+    // is small and exactly where it matters: the first observation after
+    // opening or navigating a tab.
+    //
+    // Awaiting the MEMOISED promise closes it for nothing: the attach is
+    // already in flight, so this is one microtask on every observation after
+    // the first, and a failure is not this read's problem — `readAxForest`
+    // degrades to the main document, which is what it did before.
+    await entry.page.webmcp().catch(() => null);
     const cdp = await entry.page.cdp();
     if (!cdp) {
       return {
@@ -4048,6 +4076,10 @@ export class ChromiumDriver implements BrowserDriver {
     // handed to a recreated tab of the same name and resolve — by role and
     // name — against a document that never issued them.
     this.refs.delete(tabId);
+    // And the render they were minted from, for the same reason: a `changed`
+    // section diffed against a previous incarnation's tree would report the
+    // whole new page as changes from a page this tab never showed.
+    this.lastRender.delete(tabId);
     await this.dropViewport(tabId);
   }
 

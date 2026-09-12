@@ -363,7 +363,19 @@ export class BrowserdClient {
           // Every command this client sends speaks this build's wire by
           // definition, and a caller that had to remember would eventually
           // forget on the one path that mattered.
-          command: { protocolVersion: BROWSERD_PROTOCOL_VERSION, ...command },
+          //
+          // EXPLICIT rather than by spread order. A caller that deliberately
+          // stamps its own version still wins — that affordance is what lets a
+          // test drive an old daemon on purpose — but an explicit `undefined`
+          // no longer does: under a leading-default spread it overwrote the
+          // stamp with `undefined`, `JSON.stringify` then dropped the field
+          // entirely, and the daemon's per-command mismatch gate was silently
+          // switched off for that command. `??` says which of the two cases is
+          // meant instead of leaving it to where the spread sits.
+          command: {
+            ...command,
+            protocolVersion: command.protocolVersion ?? BROWSERD_PROTOCOL_VERSION,
+          },
           expectedBootId,
           ...(options?.secrets?.length ? { secrets: options.secrets } : {}),
         }),

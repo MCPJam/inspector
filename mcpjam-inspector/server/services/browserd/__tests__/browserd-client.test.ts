@@ -85,8 +85,8 @@ describe("BrowserdClient.sendCommand", () => {
   });
 
   it("lets a caller that already stamped one keep its own version", async () => {
-    // The spread puts the default FIRST, so an explicit value wins. Nothing
-    // sends one today; a test that boots an old daemon deliberately would.
+    // An explicit value wins. Nothing sends one today; a test that boots an
+    // old daemon deliberately would.
     const { client, calls } = makeClient(
       json(200, { status: "ok", result: { ok: true }, bootId: "b" }),
     );
@@ -95,6 +95,25 @@ describe("BrowserdClient.sendCommand", () => {
       (JSON.parse(calls[0]!.init.body as string) as { command: unknown })
         .command,
     ).toMatchObject({ protocolVersion: 1 });
+  });
+
+  it("stamps anyway when a caller passes an explicit `undefined`", async () => {
+    // The hazard hiding inside the affordance above. Under a leading-default
+    // spread, `protocolVersion: undefined` overwrote the stamp; serialization
+    // then DROPPED the key, and the daemon — which gates on the field being
+    // present — waved the command through with no mismatch check at all. A
+    // caller cannot opt out of the wire it speaks by omission.
+    const { client, calls } = makeClient(
+      json(200, { status: "ok", result: { ok: true }, bootId: "b" }),
+    );
+    await client.sendCommand({ ...CMD, protocolVersion: undefined });
+    const body = JSON.parse(calls[0]!.init.body as string) as {
+      command: Record<string, unknown>;
+    };
+    expect(body.command).toMatchObject({
+      protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    });
+    expect(Object.hasOwn(body.command, "protocolVersion")).toBe(true);
   });
 
   it("maps a 409 protocol_mismatch to its own outcome, not to `expired`", async () => {

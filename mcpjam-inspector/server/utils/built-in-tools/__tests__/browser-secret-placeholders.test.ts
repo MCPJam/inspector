@@ -204,6 +204,19 @@ describe("refusing a placeholder that cannot work", () => {
     expect(out.error).toContain("materialized");
   });
 
+  it("still says `not typeable` when the environment is brokered-ONLY", async () => {
+    // The environment that has nothing to type and every reason to say so.
+    // The registry's gate read `browserSecrets?.length`, so an environment with
+    // only brokered rows dropped the brokered names along with the empty
+    // available list — and a name the user can plainly see configured came
+    // back as "check the spelling" instead of "switch it to materialized".
+    const { tools } = build({
+      secrets: { available: [], brokered: ["EGRESS_KEY"] },
+    });
+    const out = await act(tools, { verb: "type", value: "{{secret:EGRESS_KEY}}" });
+    expect(out.error).toContain("secret_not_typeable");
+  });
+
   it("refuses every name when the surface wired no secrets", async () => {
     // The fail-closed position: absent is not "somebody else will supply it".
     const { tools, sent } = build();

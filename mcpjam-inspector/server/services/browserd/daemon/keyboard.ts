@@ -141,7 +141,13 @@ export async function typeByKeystrokes(
 ): Promise<void> {
   for (const grapheme of graphemesOf(text)) {
     guard();
-    if (grapheme === "\n" || grapheme === "\r") {
+    // ALL THREE LINE ENDINGS, and `\r\n` is why this is not just two cases:
+    // a CR followed by an LF is ONE extended grapheme cluster, so `Segmenter`
+    // hands it over whole. Matching only the singles let it fall through to
+    // `describeKey`, which answers `null` for a two-character name, and the
+    // text went in through `Input.insertText` — no `keydown`, so Enter-driven
+    // submit and any `event.key` handler saw nothing on Windows-style input.
+    if (grapheme === "\n" || grapheme === "\r" || grapheme === "\r\n") {
       await pressKeyOn(cdp, "Enter");
       continue;
     }

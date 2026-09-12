@@ -74,16 +74,27 @@ export const MAX_CHANGED_LINES = 200;
  * Returns `null` when either side would exceed the cap, so the caller omits the
  * section rather than showing a partial one.
  */
+/** A rendered tree's lines, with the blanks an empty string would produce. */
+function linesOf(rendered: string): string[] {
+  return rendered.split("\n").filter((line) => line.length > 0);
+}
+
 export function diffA11yLines(
   previous: string,
   next: string,
 ): A11yDiff | null {
-  const previousKeys = new Set(previous.split("\n").map(keyOf));
-  const nextKeys = new Set(next.split("\n").map(keyOf));
+  // SPLIT ONCE, AND WITHOUT THE BLANKS. `"".split("\n")` is `[""]`, not `[]`,
+  // so an empty side contributes the empty string as a key and the other side
+  // reports it as a changed line — a first observation on a tab would open its
+  // `changed` section with a blank entry.
+  const previousLines = linesOf(previous);
+  const nextLines = linesOf(next);
+  const previousKeys = new Set(previousLines.map(keyOf));
+  const nextKeys = new Set(nextLines.map(keyOf));
 
   const added: string[] = [];
   const seenAdded = new Set<string>();
-  for (const line of next.split("\n")) {
+  for (const line of nextLines) {
     const key = keyOf(line);
     if (previousKeys.has(key) || seenAdded.has(key)) continue;
     seenAdded.add(key);
@@ -94,7 +105,7 @@ export function diffA11yLines(
 
   const removed: string[] = [];
   const seenRemoved = new Set<string>();
-  for (const line of previous.split("\n")) {
+  for (const line of previousLines) {
     const key = keyOf(line);
     if (nextKeys.has(key) || seenRemoved.has(key)) continue;
     seenRemoved.add(key);

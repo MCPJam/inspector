@@ -564,6 +564,19 @@ export async function pointForRefAcrossFrames(
     point = { x: Math.round(point.x + host.x), y: Math.round(point.y + host.y) };
     current = frame.parentSessionFrameId;
   }
+  // THE LOOP RAN OUT, NOT THE CHAIN. Sixteen hops without reaching the top
+  // frame means either a nesting depth nothing legitimate produces or a cycle
+  // in the topology — and `point` is then translated through SOME of the
+  // chain, which is worse than not translating it at all: a partial sum is a
+  // real coordinate on the page, so the click lands somewhere plausible and
+  // wrong rather than being refused.
+  if (current !== undefined) {
+    throw new ActError(
+      "stale_ref",
+      `${args.label} is nested deeper than this browser can aim through; ` +
+        "observe again and pick a target nearer the top of the page",
+    );
+  }
   return point;
 }
 

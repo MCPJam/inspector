@@ -14,6 +14,7 @@ import {
   coveringElementAt,
   focusBackendNodeId,
   pointForBackendNodeId,
+  pointForRefAcrossFrames,
   replaceTextInNode,
   resolveRefNode,
   selectOptionOnNode,
@@ -116,6 +117,84 @@ describe("pointForBackendNodeId", () => {
     await expect(pointForBackendNodeId(cdp, 41, "e7")).rejects.toThrow(
       /target_not_found/,
     );
+  });
+});
+
+/**
+ * Translating a point up a chain of nested frames.
+ *
+ * Every hop adds the host iframe's own top-left, so the answer is only right
+ * when the walk reaches the TOP frame. The cases here are the two ways it can
+ * fail to: a chain longer than the bound, and a chain that loops.
+ */
+describe("pointForRefAcrossFrames — a chain that does not finish", () => {
+  /** A topology of `depth` frames, each hosted by the next one out. */
+  const chainOf = (depth: number) =>
+    new Map(
+      Array.from({ length: depth }, (_, index) => [
+        `f${index}`,
+        {
+          frameId: `f${index}`,
+          hostBackendNodeId: 100 + index,
+          // The LAST one is hosted by the top frame, which has no id.
+          ...(index + 1 < depth ? { parentSessionFrameId: `f${index + 1}` } : {}),
+        },
+      ]),
+    );
+
+  /** Every session answers a host box 10px right and 10px down. */
+  const anySession = () => fakeCdp({ "DOM.getBoxModel": boxAt(10, 10, 500, 500) }).cdp;
+
+  it("translates a chain that DOES finish", async () => {
+    // The control. Two hops of +10 on a point at (5, 5).
+    const point = await pointForRefAcrossFrames({
+      cdp: fakeCdp({
+        "DOM.getBoxModel": boxAt(0, 0, 10, 10),
+      }).cdp,
+      backendNodeId: 41,
+      label: "e7",
+      sessionFrameId: "f0",
+      frames: chainOf(2),
+      sessionFor: anySession,
+    });
+    expect(point).toEqual({ x: 25, y: 25 });
+  });
+
+  it("REFUSES a chain longer than the bound, rather than aiming halfway", async () => {
+    // The bound exists so a cyclic or absurd topology cannot spin. Running out
+    // of hops used to `return point` — translated through SOME of the chain,
+    // which is a real coordinate on the page and therefore a click that lands
+    // somewhere plausible and wrong. A refusal sends the model back for a
+    // fresh tree, which is the only thing that can actually fix it.
+    await expect(
+      pointForRefAcrossFrames({
+        cdp: fakeCdp({ "DOM.getBoxModel": boxAt(0, 0, 10, 10) }).cdp,
+        backendNodeId: 41,
+        label: "e7",
+        sessionFrameId: "f0",
+        frames: chainOf(20),
+        sessionFor: anySession,
+      }),
+    ).rejects.toThrow(/stale_ref/);
+  });
+
+  it("REFUSES a cycle", async () => {
+    // Two frames each claiming the other as host. Nothing legitimate produces
+    // this; a bug in the topology writer would.
+    const cyclic = new Map([
+      ["f0", { frameId: "f0", hostBackendNodeId: 100, parentSessionFrameId: "f1" }],
+      ["f1", { frameId: "f1", hostBackendNodeId: 101, parentSessionFrameId: "f0" }],
+    ]);
+    await expect(
+      pointForRefAcrossFrames({
+        cdp: fakeCdp({ "DOM.getBoxModel": boxAt(0, 0, 10, 10) }).cdp,
+        backendNodeId: 41,
+        label: "e7",
+        sessionFrameId: "f0",
+        frames: cyclic,
+        sessionFor: anySession,
+      }),
+    ).rejects.toThrow(/stale_ref/);
   });
 });
 

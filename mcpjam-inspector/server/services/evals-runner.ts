@@ -4243,7 +4243,12 @@ const runLocalIteration = async ({
       agentActivity: assessAgentActivity({
         modelFree: isModelFreeCase(test),
         isNegativeTest: test.isNegativeTest === true,
-        expectedToolCalls: (test.expectedToolCalls ?? []).length,
+        // RESOLVED, not the raw field. A steps-authored case — which is what
+        // the backend emits now — carries its expectations inside `steps` and
+        // leaves the top-level list undefined, so reading it raw made every such
+        // case exempt as `no_tool_expected`: the guard was off for exactly the
+        // cases it was written to cover.
+        expectedToolCalls: resolveEvalTestCase(test).expectedToolCalls.length,
         toolSurface: {
           mcpTools: Object.keys(prepared?.allTools ?? {}).length,
           browserTools:
@@ -5762,7 +5767,12 @@ const runHostedIterationWithBrowser = async (
     agentActivity: assessAgentActivity({
       modelFree: isModelFreeCase(test),
       isNegativeTest: test.isNegativeTest === true,
-      expectedToolCalls: (test.expectedToolCalls ?? []).length,
+      // RESOLVED, not the raw field. A steps-authored case — which is what
+      // the backend emits now — carries its expectations inside `steps` and
+      // leaves the top-level list undefined, so reading it raw made every such
+      // case exempt as `no_tool_expected`: the guard was off for exactly the
+      // cases it was written to cover.
+      expectedToolCalls: resolveEvalTestCase(test).expectedToolCalls.length,
       toolSurface: {
         mcpTools: Object.keys(prepared?.allTools ?? {}).length,
         browserTools:

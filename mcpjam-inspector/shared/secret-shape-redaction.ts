@@ -113,6 +113,42 @@ export function redactSecretShapes(
   replacement = "[redacted]",
 ): string {
   if (!text) return text;
+  // AROUND THE PLACEHOLDERS, never through them.
+  //
+  // `{{secret:GITHUB_PASSWORD}}` is what an exact scrub puts back where a
+  // credential was, and it is the thing the model asked for — but it also
+  // reads to `secretParamLike` as the key `secret` followed by a value, so an
+  // unguarded pass rewrote it to `{{secret:[redacted]`: the name gone, the
+  // braces unclosed, and a model told a value was hidden from it when in fact
+  // it had been handed back exactly the token it wrote.
+  //
+  // Splitting on the placeholder and redacting only the GAPS is what keeps
+  // both true. It costs one extra pass on a string that contains a
+  // placeholder, and nothing at all on every other string — `split` with no
+  // match yields the input as a single segment.
+  const parts = text.split(SECRET_PLACEHOLDER);
+  if (parts.length === 1) return redactSegment(text, replacement);
+  return parts
+    .map((part, index) =>
+      // The odd segments are the capture group — the NAME — which is the
+      // thing being protected from the redactor rather than by it.
+      index % 2 === 1 ? `{{secret:${part}}}` : redactSegment(part, replacement),
+    )
+    .join("");
+}
+
+/**
+ * A `{{secret:NAME}}` as `secret-placeholders.ts` spells it.
+ *
+ * Capturing, so `split` hands the names back as the odd-indexed segments; a
+ * duplicate of the name charset rather than an import, because this module is
+ * bundled into the daemon and must stay free of server-side imports.
+ */
+const SECRET_PLACEHOLDER = /\{\{secret:([A-Z_][A-Z0-9_]*)\}\}/g;
+
+/** One stretch of text with no placeholder in it. @see redactSecretShapes */
+function redactSegment(text: string, replacement: string): string {
+  if (!text) return text;
   return text
     .replace(authHeaderLike(), `$1${replacement}`)
     .replace(tokenLike(), `Bearer ${replacement}`)

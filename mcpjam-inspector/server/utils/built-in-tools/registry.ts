@@ -834,10 +834,17 @@ export function resolveHostTools(
         // GATED HERE, once, rather than at each of the four surfaces. Off, the
         // builder sees no secrets, advertises the wording it always did, and
         // refuses every placeholder — whatever a surface has wired.
-        ...(browserSecretPlaceholdersEnabled() && ctx.browserSecrets?.length
+        //
+        // EITHER LIST ADMITS IT. A brokered-only environment has no value to
+        // type and every reason to say so: gating on `browserSecrets` alone
+        // dropped the brokered names too, and a name the user can plainly see
+        // configured came back as `secret_unknown` ("check the spelling")
+        // instead of `secret_not_typeable` ("switch it to materialized").
+        ...(browserSecretPlaceholdersEnabled() &&
+        (ctx.browserSecrets?.length || ctx.browserBrokeredSecretNames?.length)
           ? {
               secrets: {
-                available: ctx.browserSecrets,
+                available: ctx.browserSecrets ?? [],
                 ...(ctx.browserBrokeredSecretNames?.length
                   ? { brokered: ctx.browserBrokeredSecretNames }
                   : {}),

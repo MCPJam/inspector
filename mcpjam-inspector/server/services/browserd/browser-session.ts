@@ -707,6 +707,8 @@ async function trySandboxReuse(
   sandboxId: string,
   signal?: AbortSignal,
   logicalContext?: LogicalSessionContext,
+  /** Written when this gate is the one that refused. @see EnsureDiagnostics */
+  diagnostics?: EnsureDiagnostics,
 ): Promise<SandboxHostedBrowserSessionHandle | null> {
   const session = lookup.session;
   if (!session) return null;
@@ -715,6 +717,30 @@ async function trySandboxReuse(
   const status = await client.status().catch(() => null);
   if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
     return null;
+  }
+  // THE WIRE, NOT THE BYTES — the same unconditional check `tryReuse` makes on
+  // the computer arm, and for the same reason.
+  //
+  // Without it this arm could only fail LATER and FOREVER: the daemon's
+  // per-command gate refuses each stamped command with `protocol_mismatch`,
+  // but nothing here ever decides the session is unusable, so
+  // `ensureBrowserSession` hands back the same incompatible daemon on the next
+  // turn and the next. The relaunch this whole mechanism exists to trigger
+  // never happens, and a per-run browser is stuck until its sandbox dies.
+  {
+    const running = status.protocolVersion ?? session.protocolVersion;
+    if (running !== BROWSERD_PROTOCOL_VERSION) {
+      noteProtocolMismatch(
+        diagnostics,
+        {
+          expected: BROWSERD_PROTOCOL_VERSION,
+          running,
+          source: "reuse",
+        },
+        { sessionId: session.sessionId, bootId: session.bootId },
+      );
+      return null;
+    }
   }
   void deps.store
     .touch({ sessionId: session.sessionId, kind: "command", signal })
@@ -1615,6 +1641,7 @@ async function ensureOnSandbox(
     target.sandboxId,
     args.signal,
     logicalContext,
+    diagnostics,
   );
   if (reusedHandle) {
     if (
@@ -1664,6 +1691,7 @@ async function ensureOnSandbox(
       target.sandboxId,
       args.signal,
       logicalContext,
+      diagnostics,
     );
   let releaseClaim: () => Promise<void> = async () => {};
   let fence: RelaunchFence | null = null;

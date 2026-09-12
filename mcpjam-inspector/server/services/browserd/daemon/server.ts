@@ -268,12 +268,16 @@ export function buildBrowserdStack(
   // retains for a duplicate command and the row `recordRow` writes are both
   // taken from what comes out of here.
   //
-  // The SECRET scrub is outermost of the two. It replaces exact known values
-  // and knows what it is looking for; the shape scrub is a guess about strings
-  // nobody registered. Running the exact one last means a value that is both a
-  // registered secret AND credential-shaped comes back as its own
-  // `{{secret:NAME}}` — which the model asked for — rather than as a generic
-  // `[redacted]`.
+  // The SECRET scrub is INNERMOST of the two, which is what makes it run
+  // FIRST on the way back out: a result travels inner-to-outer, so the
+  // innermost wrapper sees it before anything else has rewritten it.
+  //
+  // That ordering is the whole point. The secret scrub replaces exact known
+  // values and knows what it is looking for; the shape scrub is a guess about
+  // strings nobody registered. A value that is both a registered secret AND
+  // credential-shaped must come back as its own `{{secret:NAME}}` — which the
+  // model asked for and can reason about — rather than as a generic
+  // `[redacted]`, and only this order produces that.
   //
   // ONE registry, and it is the DRIVER'S: the driver writes it (at
   // substitution time) and this reads it. Reached through the accessor rather
@@ -285,9 +289,9 @@ export function buildBrowserdStack(
     scrubber: () => driver.secretRegistry?.().scrubber() ?? null,
   };
   const queue = new CommandQueue(
-    withSecretScrub(
-      secrets,
-      guardErrorShapes(
+    guardErrorShapes(
+      withSecretScrub(
+        secrets,
         config.authority === "shared"
           ? guardStaleness(driver)
           : guardLease(lease, guardStaleness(driver, lease)),

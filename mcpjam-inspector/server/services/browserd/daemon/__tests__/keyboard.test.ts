@@ -197,6 +197,44 @@ describe("typeByKeystrokes", () => {
   });
 });
 
+describe("typeByKeystrokes — line endings", () => {
+  /**
+   * All three spellings reach the page as Enter.
+   *
+   * `\r\n` is the one that got away: CR-then-LF is a single extended grapheme
+   * cluster, so the segmenter hands it over whole and a condition testing only
+   * the singles misses it. It then fell through to `describeKey`, which has no
+   * name for a two-character grapheme, and went in as `Input.insertText` — no
+   * `keydown` at all. A Windows-style newline therefore filled the field and
+   * never submitted the form, which is the exact failure this module exists to
+   * prevent.
+   */
+  it.each([
+    ["\n", "LF"],
+    ["\r", "CR"],
+    ["\r\n", "CRLF"],
+  ])("presses Enter for %j (%s)", async (ending) => {
+    const { cdp, sent } = fakeCdp();
+    await typeByKeystrokes(cdp, `a${ending}b`, () => {});
+    expect(strokes(sent)).toEqual([
+      "keyDown:a",
+      "keyUp:a",
+      "keyDown:Enter",
+      "keyUp:Enter",
+      "keyDown:b",
+      "keyUp:b",
+    ]);
+  });
+
+  it("never reaches insertText for any line ending", async () => {
+    // The guard on the guard: an insert is how the bug was invisible, because
+    // the text still landed in the field.
+    const { cdp, sent } = fakeCdp();
+    await typeByKeystrokes(cdp, "a\r\nb\nc\rd", () => {});
+    expect(sent.map((call) => call.method)).not.toContain("Input.insertText");
+  });
+});
+
 describe("graphemesOf", () => {
   it("splits by what a person would call a character", () => {
     expect(graphemesOf("ab")).toEqual(["a", "b"]);

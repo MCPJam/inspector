@@ -139,4 +139,35 @@ describe("diffA11yLines", () => {
     );
     expect(diff?.added).toEqual(['  - listitem "First" [ref=e2]']);
   });
+
+  /**
+   * An EMPTY side is empty, not one blank line.
+   *
+   * `"".split("\n")` is `[""]`, not `[]`. The empty string therefore entered
+   * the key sets as a real key, and the opposite side reported it as a change
+   * — so the very first observation on a tab opened its `changed` section with
+   * a blank entry, and a page emptied to nothing claimed one line was removed.
+   *
+   * The tests above never saw it because each asserts only the side it cares
+   * about; these assert the WHOLE object, which is the only shape that pins it.
+   */
+  it("reports nothing but the real additions against an empty previous", () => {
+    expect(diffA11yLines("", lines('- button "Save" [ref=e7]'))).toEqual({
+      added: ['- button "Save" [ref=e7]'],
+      removed: [],
+    });
+  });
+
+  it("reports nothing but the real removals against an empty next", () => {
+    expect(diffA11yLines(lines('- dialog "Confirm" [ref=e7]'), "")).toEqual({
+      added: [],
+      removed: ['- dialog "Confirm" [ref=gone]'],
+    });
+  });
+
+  it("is null when BOTH sides are empty", () => {
+    // Two blank keys cancelling each other out would have looked like this
+    // too, which is why the two cases above are the ones that matter.
+    expect(diffA11yLines("", "")).toBeNull();
+  });
 });

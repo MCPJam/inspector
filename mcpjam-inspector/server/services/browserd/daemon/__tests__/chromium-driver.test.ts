@@ -5204,10 +5204,11 @@ describe("ChromiumDriver — acting inside a frame", () => {
   /**
    * A page with one out-of-process frame.
    *
-   * The frame's element sits at (20, 30) INSIDE its own session's viewport,
-   * and the iframe element sits at (100, 200) in the page's — so a correctly
-   * translated click lands at (120, 230) and an untranslated one at (20, 30),
-   * which is near the top-left corner of the window.
+   * The frame's element spans (20, 30)–(60, 50) INSIDE its own session's
+   * viewport, so its CENTRE — which is what an act aims at — is (40, 40); the
+   * iframe element's top-left sits at (100, 200) in the page's. A correctly
+   * translated click therefore lands at (140, 240), and an untranslated one at
+   * (40, 40), near the top-left corner of the window on whatever is there.
    */
   function framedPage() {
     const childSent: Array<{ method: string; params?: Record<string, unknown> }> = [];

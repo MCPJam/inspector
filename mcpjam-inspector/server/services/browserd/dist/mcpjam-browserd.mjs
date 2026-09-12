@@ -3292,6 +3292,19 @@ var secretParamLike = () => /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_
 var urlBasicAuthLike = () => /(\/\/[^\s/:@]+:)[^\s@/]+@/g;
 function redactSecretShapes(text, replacement = "[redacted]") {
   if (!text) return text;
+  const parts = text.split(SECRET_PLACEHOLDER);
+  if (parts.length === 1) return redactSegment(text, replacement);
+  return parts.map(
+    (part, index) => (
+      // The odd segments are the capture group — the NAME — which is the
+      // thing being protected from the redactor rather than by it.
+      index % 2 === 1 ? `{{secret:${part}}}` : redactSegment(part, replacement)
+    )
+  ).join("");
+}
+var SECRET_PLACEHOLDER = /\{\{secret:([A-Z_][A-Z0-9_]*)\}\}/g;
+function redactSegment(text, replacement) {
+  if (!text) return text;
   return text.replace(authHeaderLike(), `$1${replacement}`).replace(tokenLike(), `Bearer ${replacement}`).replace(jwtLike(), replacement).replace(urlBasicAuthLike(), `$1${replacement}@`).replace(skKeyLike(), replacement).replace(secretParamLike(), `$1${replacement}`);
 }
 
@@ -3509,9 +3522,9 @@ function buildBrowserdStack(driver, config) {
     scrubber: () => driver.secretRegistry?.().scrubber() ?? null
   };
   const queue = new CommandQueue(
-    withSecretScrub(
-      secrets,
-      guardErrorShapes(
+    guardErrorShapes(
+      withSecretScrub(
+        secrets,
         config.authority === "shared" ? guardStaleness(driver) : guardLease(lease, guardStaleness(driver, lease))
       )
     ),
@@ -4271,7 +4284,7 @@ async function readAxForest(root, frames, options = {}) {
   const maxDepth = options.maxDepth ?? MAX_A11Y_FRAME_DEPTH;
   let framesOmitted = 0;
   let read_ = 0;
-  const walk = async (parent, ownerCdp, ownerFrameId, depth) => {
+  const walk = async (parent, ownerCdp, ownerFrameId, depth, hosts2) => {
     if (depth > maxDepth) {
       framesOmitted += countFrames(parent);
       return;
@@ -4285,7 +4298,7 @@ async function readAxForest(root, frames, options = {}) {
       }
       const ownSession = sessionByFrame.get(childId);
       const owner = await ownerCdp.send("DOM.getFrameOwner", { frameId: childId }).catch(() => void 0);
-      const hostNode = typeof owner?.backendNodeId === "number" ? hosts.get(owner.backendNodeId) : void 0;
+      const hostNode = typeof owner?.backendNodeId === "number" ? hosts2.get(owner.backendNodeId) : void 0;
       if (!hostNode) {
         framesOmitted += 1 + countFrames(child);
         continue;
@@ -4310,11 +4323,14 @@ async function readAxForest(root, frames, options = {}) {
         child,
         ownSession ?? ownerCdp,
         childSessionFrameId,
-        depth + 1
+        depth + 1,
+        // Re-indexed against the document we just read, so this child's own
+        // iframes can be found when its children are walked.
+        iframeNodesByBackendId(childRead.tree)
       );
     }
   };
-  await walk(frameTree, root, void 0, 1);
+  await walk(frameTree, root, void 0, 1, hosts);
   return { ok: true, tree: read.tree, framesOmitted, frames: frames_ };
 }
 async function readAxTreeForFrame(cdp, frameId, options) {
@@ -4657,7 +4673,7 @@ function graphemesOf(text) {
 async function typeByKeystrokes(cdp, text, guard) {
   for (const grapheme of graphemesOf(text)) {
     guard();
-    if (grapheme === "\n" || grapheme === "\r") {
+    if (grapheme === "\n" || grapheme === "\r" || grapheme === "\r\n") {
       await pressKeyOn(cdp, "Enter");
       continue;
     }
@@ -4941,6 +4957,12 @@ async function pointForRefAcrossFrames(args) {
     }
     point = { x: Math.round(point.x + host2.x), y: Math.round(point.y + host2.y) };
     current = frame.parentSessionFrameId;
+  }
+  if (current !== void 0) {
+    throw new ActError(
+      "stale_ref",
+      `${args.label} is nested deeper than this browser can aim through; observe again and pick a target nearer the top of the page`
+    );
   }
   return point;
 }
@@ -5469,12 +5491,17 @@ function stripRefs(line2) {
   return line2.replace(REF_ATTR, "ref=gone");
 }
 var MAX_CHANGED_LINES = 200;
+function linesOf(rendered) {
+  return rendered.split("\n").filter((line2) => line2.length > 0);
+}
 function diffA11yLines(previous, next) {
-  const previousKeys = new Set(previous.split("\n").map(keyOf));
-  const nextKeys = new Set(next.split("\n").map(keyOf));
+  const previousLines = linesOf(previous);
+  const nextLines = linesOf(next);
+  const previousKeys = new Set(previousLines.map(keyOf));
+  const nextKeys = new Set(nextLines.map(keyOf));
   const added = [];
   const seenAdded = /* @__PURE__ */ new Set();
-  for (const line2 of next.split("\n")) {
+  for (const line2 of nextLines) {
     const key = keyOf(line2);
     if (previousKeys.has(key) || seenAdded.has(key)) continue;
     seenAdded.add(key);
@@ -5482,7 +5509,7 @@ function diffA11yLines(previous, next) {
   }
   const removed = [];
   const seenRemoved = /* @__PURE__ */ new Set();
-  for (const line2 of previous.split("\n")) {
+  for (const line2 of previousLines) {
     const key = keyOf(line2);
     if (nextKeys.has(key) || seenRemoved.has(key)) continue;
     seenRemoved.add(key);
@@ -8108,6 +8135,12 @@ var ChromiumDriver = class {
       );
     }
     const cdp = refNode.cdp ?? pageCdp;
+    if (refNode.cdp && refNode.sessionFrameId && !refs?.frames) {
+      throw new ActError2(
+        "stale_ref",
+        `${label} is inside a frame this observation no longer describes; observe again and use a ref from the new tree`
+      );
+    }
     const point = refNode.cdp && refNode.sessionFrameId && refs?.frames ? await pointForRefAcrossFrames({
       cdp,
       backendNodeId: refNode.backendNodeId,
@@ -9599,6 +9632,7 @@ var ChromiumDriver = class {
    */
   async readA11y(tabId, entry, action) {
     const filter = action.filter ?? "interactive";
+    await entry.page.webmcp().catch(() => null);
     const cdp = await entry.page.cdp();
     if (!cdp) {
       return {
@@ -9787,6 +9821,7 @@ var ChromiumDriver = class {
       await this.tabs.get(next)?.page.bringToFront?.().catch(() => {
       });
     this.refs.delete(tabId);
+    this.lastRender.delete(tabId);
     await this.dropViewport(tabId);
   }
   /**

@@ -225,16 +225,35 @@ describe("browserd server adapter — typed secrets do not come back", () => {
   /** A driver that types what it is given and then reads the field back. */
   function echoingDriver(): BrowserDriver {
     const registry = createBrowserSecretRegistry();
+    /** What this boot last typed, so a later failure can quote it back. */
+    let lastTyped: string | undefined;
     return {
       execute: async (command, context) => {
-        const action = command.action as { kind: string; value?: string };
+        const action = command.action as {
+          kind: string;
+          verb?: string;
+          value?: string;
+        };
         if (action.kind !== "act") return { ok: true };
+        // A NAVIGATION THAT FAILED, quoting the URL it was given — which is
+        // where an upstream error puts a whole query string, credential and
+        // all. The one shape that can tell the two scrubs apart.
+        // A failure that quotes the value BARE. Not inside `?token=…`: the
+        // shape redactor keys that form on the PARAM NAME, so it rewrites
+        // whatever follows — the placeholder included — and the case can no
+        // longer tell the two scrubs apart. (That is a real and accepted
+        // interaction: a credential in a `token=` param comes back
+        // `[redacted]` rather than named. It is still protected, just less
+        // informative, and no ordering changes it.)
+        if (action.verb === "press")
+          return { ok: false, error: `sign-in rejected ${lastTyped}` };
         const resolved = resolveActSecrets(
           action as never,
           context?.secrets,
         ) as { value?: string };
         if (resolved.value !== action.value && context?.secrets)
           registry.register(context.secrets);
+        lastTyped = resolved.value;
         // What the page hands back: the field now holds the typed value.
         return {
           ok: true,
@@ -315,6 +334,48 @@ describe("browserd server adapter — typed secrets do not come back", () => {
         }),
       });
       expect(await res.text()).not.toContain("hunter2");
+    });
+  });
+
+  it("names a credential-SHAPED secret in an ERROR rather than redacting it", async () => {
+    // THE ORDER OF THE TWO SCRUBS, and the only place that can tell them
+    // apart: `guardErrorShapes` touches `error` and nothing else, so an
+    // OUTPUT-only assertion passes whichever way round they are composed.
+    //
+    // A real credential is usually credential-shaped, so a registered value
+    // matches the shape redactor too. Whichever wrapper sees the result first
+    // decides what the model reads: the exact scrub gives back the
+    // `{{secret:NAME}}` the model itself wrote and can keep reasoning about;
+    // the shape guess gives back a bare `[redacted]` that says only that
+    // something was hidden. Composed the other way round the shape guess wins
+    // every time, and the placeholder the whole feature rests on never reaches
+    // the model at all.
+    await withEchoingStack(async (base) => {
+      const post = (body: unknown) =>
+        fetch(`${base}/v1/commands`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${TOKEN}` },
+          body: JSON.stringify(body),
+        });
+      // Shaped like an OpenAI key AND registered by this command.
+      await post({
+        command: {
+          commandId: "c4",
+          source: "chat",
+          action: { kind: "act", verb: "type", value: "{{secret:PW}}" },
+        },
+        secrets: [{ name: "PW", value: "sk-proj-abcdefghijklmnop" }],
+      });
+      const failed = await post({
+        command: {
+          commandId: "c5",
+          source: "chat",
+          action: { kind: "act", verb: "press", value: "Enter" },
+        },
+      });
+      const error = (await failed.json()).result.error as string;
+      expect(error).not.toContain("sk-proj");
+      expect(error).toBe("sign-in rejected {{secret:PW}}");
     });
   });
 

@@ -230,7 +230,15 @@ export function buildOtlpExport(input: WebMcpExportInput): unknown {
     endTimeUnixNano: nanos(latest),
     attributes: [
       attr("webmcp.session.id", sessionId),
-      attr("webmcp.session.url", input.session?.url ?? ""),
+      // REDACTED like the error message below. This is the page a person
+      // pointed the inspector at, and a URL is one of the places a credential
+      // shows up whole — `https://user:pass@host`, or a `?token=` a signed
+      // link carries. The shape redactor rewrites only those parts, so the
+      // span still says which page was inspected.
+      attr(
+        "webmcp.session.url",
+        redactSecretShapes(input.session?.url ?? ""),
+      ),
       attr("webmcp.session.tool_count", input.tools.length),
       attr(
         "webmcp.session.viewport",

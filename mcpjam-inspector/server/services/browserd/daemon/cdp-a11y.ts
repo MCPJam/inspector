@@ -527,6 +527,17 @@ export async function readAxForest(
     ownerCdp: CdpLike,
     ownerFrameId: string | undefined,
     depth: number,
+    /**
+     * The iframe nodes of the document `parent`'s children attach INTO.
+     *
+     * PER DOCUMENT, not the root's. `DOM.getFrameOwner` answers with a
+     * backendNodeId from the document the question was asked on, so at depth 2
+     * the grandchild's host lives in the CHILD's tree — a root-only index
+     * misses it, `hostNode` comes back undefined, and the frame is counted as
+     * omitted instead of spliced. Every nested frame disappeared, silently,
+     * while `maxDepth` said it was allowed to eight levels.
+     */
+    hosts: ReadonlyMap<number, A11yNode>,
   ): Promise<void> => {
     if (depth > maxDepth) {
       framesOmitted += countFrames(parent);
@@ -591,11 +602,14 @@ export async function readAxForest(
         ownSession ?? ownerCdp,
         childSessionFrameId,
         depth + 1,
+        // Re-indexed against the document we just read, so this child's own
+        // iframes can be found when its children are walked.
+        iframeNodesByBackendId(childRead.tree),
       );
     }
   };
 
-  await walk(frameTree, root, undefined, 1);
+  await walk(frameTree, root, undefined, 1, hosts);
   return { ok: true, tree: read.tree, framesOmitted, frames: frames_ };
 }
 

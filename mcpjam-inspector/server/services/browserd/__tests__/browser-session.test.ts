@@ -1301,7 +1301,14 @@ describe("ensureBrowserSession — sandbox target", () => {
   it("reuses a verified daemon with zero sandbox I/O", async () => {
     const f = makeFakes({
       lookups: [liveSandboxLookup()],
-      status: async () => ({ kind: "ok", bootId: SANDBOX_SESSION.bootId }),
+      // ANNOUNCES ITS WIRE, like every healthy fake on the computer path: a
+      // daemon that cannot prove which protocol it speaks is not reusable on
+      // EITHER target. The mismatch case has its own test below.
+      status: async () => ({
+        kind: "ok",
+        bootId: SANDBOX_SESSION.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
     });
     const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
 
@@ -1385,6 +1392,48 @@ describe("ensureBrowserSession — sandbox target", () => {
     expect(f.sandbox.disconnect).toHaveBeenCalled();
   });
 
+  /**
+   * The sandbox arm refuses a mismatched wire too.
+   *
+   * It did not, and the asymmetry was invisible because the failure arrived
+   * somewhere else entirely: the daemon's per-command gate refused each
+   * stamped command with `protocol_mismatch`, so the session LOOKED broken in
+   * a named way. But nothing on this path ever decided the daemon was
+   * unusable, so `ensureBrowserSession` handed the same incompatible one back
+   * on the next turn and the next — the relaunch this mechanism exists to
+   * trigger never happened, and a per-run browser stayed stuck until its
+   * sandbox died.
+   */
+  it("does NOT reuse a sandbox daemon on a different wire", async () => {
+    const f = makeFakes({
+      lookups: [liveSandboxLookup()],
+      status: async () => ({
+        kind: "ok",
+        bootId: SANDBOX_SESSION.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+      }),
+    });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+    // RELAUNCHED, which is the whole point: a fresh boot on the current wire.
+    expect(handle.reused).toBe(false);
+    expect(f.boot).toHaveBeenCalled();
+    expect(f.sandbox.killBrowserd).toHaveBeenCalled();
+  });
+
+  it("does NOT reuse a sandbox daemon that cannot say which wire it speaks", async () => {
+    // An older daemon announces nothing. Unproven is not the same as
+    // compatible — continuing would produce wrong answers rather than merely
+    // old ones, which is the case the version number exists for.
+    const f = makeFakes({
+      lookups: [liveSandboxLookup()],
+      status: async () => ({ kind: "ok", bootId: SANDBOX_SESSION.bootId }),
+    });
+    expect((await ensureBrowserSession(f.deps, SANDBOX_ARGS)).reused).toBe(
+      false,
+    );
+    expect(f.boot).toHaveBeenCalled();
+  });
+
   it("adopts a winner that appeared while we were connecting, WITHOUT killing it", async () => {
     // `killBrowserd` is a pkill on the box, so it would reap a daemon somebody
     // booted during our connect and leave their row addressing nothing — and
@@ -1395,7 +1444,11 @@ describe("ensureBrowserSession — sandbox target", () => {
         { reachable: true, session: null },
         liveSandboxLookup({ bootId: "boot-winner" }),
       ],
-      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
     });
     const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
     expect(handle.reused).toBe(true);
@@ -1416,7 +1469,11 @@ describe("ensureBrowserSession — sandbox target", () => {
         liveSandboxLookup({ bootId: "boot-winner" }),
       ],
       recordResult: { status: "conflict" },
-      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
     });
     const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
     expect(handle.reused).toBe(true);
@@ -1433,11 +1490,19 @@ describe("ensureBrowserSession — sandbox target", () => {
           order.push(`${label}-start`);
           await new Promise((resolve) => setTimeout(resolve, 30));
           order.push(`${label}-end`);
-          return { kind: "ok", bootId: SANDBOX_SESSION.bootId };
+          return {
+            kind: "ok",
+            bootId: SANDBOX_SESSION.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          };
         })
         .mockImplementation(async () => {
           order.push(`${label}-second`);
-          return { kind: "ok", bootId: SANDBOX_SESSION.bootId };
+          return {
+            kind: "ok",
+            bootId: SANDBOX_SESSION.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          };
         });
 
     const statusA = slowStatus("row-a");

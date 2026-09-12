@@ -53,6 +53,14 @@ describe("the Playwright pin", () => {
       const images = [
         ...source.matchAll(/mcr\.microsoft\.com\/playwright:v([0-9.]+)/g),
       ].map((match) => match[1]);
+      // AT LEAST ONE, before checking that they all agree. A `for` over an
+      // empty list passes, so a workflow that renamed or parameterised its
+      // image would quietly stop being checked at all — the pin would still
+      // be green while nothing enforced it.
+      expect(
+        images.length,
+        `${workflow} must run a pinned Playwright image`,
+      ).toBeGreaterThan(0);
       // Not `toContain`: EVERY job has to agree, and a single stale one is
       // exactly the drift this test exists to catch.
       for (const version of images) {

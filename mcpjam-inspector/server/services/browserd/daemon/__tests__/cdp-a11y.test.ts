@@ -25,9 +25,12 @@ import type { CdpLike } from "../webmcp-bridge";
 /** A `CdpLike` that answers from a table and records what it was asked. */
 function fakeCdp(replies: Record<string, unknown>) {
   const sent: string[] = [];
+  /** The params of each call, so a fixture can assert on the REQUEST. */
+  const params: Array<Record<string, unknown> | undefined> = [];
   const cdp: CdpLike = {
-    async send(method) {
+    async send(method, callParams) {
       sent.push(method);
+      params.push(callParams);
       if (method in replies) {
         const reply = replies[method];
         if (reply instanceof Error) throw reply;
@@ -37,7 +40,7 @@ function fakeCdp(replies: Record<string, unknown>) {
     },
     on() {},
   };
-  return { cdp, sent };
+  return { cdp, sent, params };
 }
 
 const TREE = {
@@ -305,7 +308,7 @@ describe("readScrollableNodes", () => {
     // and it cannot drift from what a wheel event will do. Re-deriving it with
     // `getComputedStyle` would mean running a script in a page that may be
     // hostile to learn something the browser already knows.
-    const { cdp, sent } = fakeCdp({
+    const { cdp, sent, params } = fakeCdp({
       "DOM.getDocument": {
         root: {
           backendNodeId: 1,
@@ -338,6 +341,13 @@ describe("readScrollableNodes", () => {
     // on the root of every tree and tell the model nothing.
     expect(await readScrollableNodes(cdp)).toEqual(new Set([3, 5, 6]));
     expect(sent).toEqual(["DOM.getDocument"]);
+    // THE REQUEST, not just the answer. Nodes 5 and 6 above sit behind a
+    // shadow root and a content document, so they are reachable ONLY because
+    // the call carries these two — and a fixture that asserts the result alone
+    // keeps passing if `pierce` is dropped, while the real daemon quietly
+    // stops marking every scroll container inside a shadow DOM, which is most
+    // component-library lists.
+    expect(params[0]).toEqual({ depth: -1, pierce: true });
   });
 
   it("answers an empty set rather than failing the observation", async () => {
@@ -436,6 +446,92 @@ describe("readAxForest — reading past an iframe", () => {
     expect(iframe?.children?.[0]?.sessionFrameId).toBeUndefined();
     // Nothing to translate: it shares the page's coordinate space.
     expect(forest.frames.size).toBe(0);
+  });
+
+  /**
+   * A frame INSIDE a frame — the case the depth cap says is allowed and the
+   * host index silently forbade.
+   *
+   * `DOM.getFrameOwner` answers with a backendNodeId from the document it was
+   * asked on. At depth 2 that is the CHILD's document, so a host map built once
+   * from the ROOT tree could not contain it: `hostNode` came back undefined and
+   * the grandchild was counted as omitted. Every nested frame disappeared while
+   * `MAX_A11Y_FRAME_DEPTH` said eight levels were fine, and no fixture here
+   * built two levels, so nothing noticed.
+   */
+  it("splices a GRANDCHILD frame, indexing each document's own hosts", async () => {
+    // The child document has its own `<iframe>` at backend node 88 — a number
+    // the ROOT tree has never heard of, which is the whole point.
+    const CHILD_WITH_IFRAME = {
+      nodes: [
+        { nodeId: "1", role: { value: "RootWebArea" }, childIds: ["2", "3"] },
+        {
+          nodeId: "2",
+          backendDOMNodeId: 500,
+          role: { value: "textbox" },
+          name: { value: "Card number" },
+        },
+        {
+          nodeId: "3",
+          backendDOMNodeId: 88,
+          role: { value: "Iframe" },
+          name: { value: "Verification" },
+        },
+      ],
+    };
+    const GRANDCHILD_TREE = {
+      nodes: [
+        { nodeId: "1", role: { value: "RootWebArea" }, childIds: ["2"] },
+        {
+          nodeId: "2",
+          backendDOMNodeId: 900,
+          role: { value: "textbox" },
+          name: { value: "One-time code" },
+        },
+      ],
+    };
+    const NESTED_FRAME_TREE = {
+      frameTree: {
+        frame: { id: "main" },
+        childFrames: [
+          {
+            frame: { id: "child-1", parentId: "main" },
+            childFrames: [{ frame: { id: "grandchild-1", parentId: "child-1" } }],
+          },
+        ],
+      },
+    };
+    let call = 0;
+    const cdp: CdpLike = {
+      async send(method, params) {
+        if (method === "Accessibility.getFullAXTree") {
+          call += 1;
+          if (call === 1) return PAGE_WITH_IFRAME;
+          return call === 2 ? CHILD_WITH_IFRAME : GRANDCHILD_TREE;
+        }
+        if (method === "Page.getFrameTree") return NESTED_FRAME_TREE;
+        if (method === "DOM.getFrameOwner") {
+          // The page owns `child-1` at 77; the CHILD owns `grandchild-1` at 88.
+          return (params as { frameId?: string })?.frameId === "child-1"
+            ? { backendNodeId: 77 }
+            : { backendNodeId: 88 };
+        }
+        return {};
+      },
+      on() {},
+    };
+    const forest = await readAxForest(cdp, []);
+    const iframe = forest.tree?.children?.find((n) => n.role === "Iframe");
+    const childRoot = iframe?.children?.[0];
+    const innerIframe = childRoot?.children?.find((n) => n.role === "Iframe");
+    expect(innerIframe?.children?.[0]).toMatchObject({
+      role: "RootWebArea",
+      children: [{ role: "textbox", name: "One-time code" }],
+    });
+    // NOTHING WAS DROPPED. The old behaviour spliced the child and reported
+    // the grandchild as omitted, which read as a frame the browser could not
+    // describe rather than one it never looked up correctly.
+    expect(forest.framesOmitted).toBe(0);
   });
 
   it("reads an OOPIF on its OWN session, and never sends it a frameId", async () => {
