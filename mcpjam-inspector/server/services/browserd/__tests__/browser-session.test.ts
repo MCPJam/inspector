@@ -2080,6 +2080,56 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
     expect(spies.recordStatus).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * …AND SO DO THE ARGUMENTS, which is the other half of the same lesson.
+   *
+   * The block above protects capabilities — a METHOD the wrapper forgot to
+   * rebuild. This protects the arguments of the one method it does rebuild by
+   * hand. `sendCommand` was written `(command, expectedBootId)` and called
+   * `client.sendCommand(command, expectedBootId)`, so a third argument added
+   * later was dropped on every hosted call with nothing in a log to say so.
+   *
+   * That has now happened twice: first the abort signal (a cancelled turn went
+   * on holding a lease read nobody was waiting for) and then `secrets` — a
+   * `{{secret:NAME}}` reaching the daemon with no value, refused as
+   * `secret_unresolved`, so the placeholder feature did not work on the hosted
+   * engine at all while every unit test around it passed.
+   */
+  it("forwards the third argument of sendCommand, not just the first two", async () => {
+    const sendCommand = vi.fn(async () => ({ kind: "ok" }) as never);
+    const f = makeFakes({ lookups: [liveLookup()] });
+    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({
+        status: async () =>
+          ({
+            kind: "ok",
+            bootId: ROW.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+            bundleHash: HASH,
+          }) as BrowserdStatus,
+        sendCommand,
+      }),
+    );
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    const controller = new AbortController();
+    const options = {
+      signal: controller.signal,
+      secrets: [{ name: "PW", value: "hunter2-hunter2" }],
+    };
+    await handle.client.sendCommand(
+      { commandId: "c1", source: "chat", action: { kind: "reload" } },
+      "boot-old",
+      options,
+    );
+
+    expect(sendCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ commandId: "c1" }),
+      "boot-old",
+      options,
+    );
+  });
+
   it("forwards exportProfile too", async () => {
     // The capability this describe block exists to protect, and the one that
     // was actually dropped: without forwarding, a daemon that CAN export a

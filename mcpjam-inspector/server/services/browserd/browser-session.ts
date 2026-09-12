@@ -98,11 +98,36 @@ export const BROWSERD_PROFILE_ARCHIVE_PATH =
  * person the browser (the rail, the panel) require them; a fake that only
  * needs `sendCommand` still satisfies this.
  */
+/**
+ * Everything that rides BESIDE a command, rather than inside it.
+ *
+ * Named once and shared, because the last two additions here were each
+ * dropped by a wrapper that had been written against the arity of the day: the
+ * abort signal (a cancelled turn went on holding a lease read nobody wanted)
+ * and then `secrets` (a `{{secret:NAME}}` reached the daemon with no value, so
+ * the act refused and the feature did not work on the hosted engine at all).
+ * A type every implementation names is what makes the next addition a compile
+ * error instead of a silent omission.
+ */
+export interface SessionCommandOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  /**
+   * Values for the `{{secret:NAME}}` placeholders this command carries.
+   *
+   * A SIBLING of the command, never a field on it: the command is echoed onto
+   * the ledger row, into `/v1/trace` and into the durable mirror, and a value
+   * there would be written before anything could scrub it.
+   */
+  secrets?: ReadonlyArray<{ name: string; value: string }>;
+}
+
 export interface SessionClient {
   status(options?: { signal?: AbortSignal }): Promise<BrowserdStatus>;
   sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
+    options?: SessionCommandOptions,
   ): Promise<BrowserdCommandResponse>;
   /**
    * Read the lease. The signal is what lets the handoff poll be cancelled;
@@ -1104,7 +1129,7 @@ function withActivityTouches(
   // not survive `{ ...client }`.
   return {
     status: (options) => client.status(options),
-    sendCommand: (command, expectedBootId) => {
+    sendCommand: (command, expectedBootId, options) => {
       // UNTHROTTLED on purpose: this one is load-bearing. It advances the
       // browser session's own clock and, for a sandbox box, that box's
       // `lastUsedAt` in the SAME backend transaction — which is what keeps the
@@ -1158,7 +1183,13 @@ function withActivityTouches(
       if (deps.touchActivity && computerId && shouldTouchActivity(computerId)) {
         void deps.touchActivity({ computerId }).catch(() => {});
       }
-      return client.sendCommand(command, expectedBootId);
+      // FORWARDED, exactly as the note below demands of the other wrappers in
+      // this file — and for the reason it gives. This one took two arguments
+      // and dropped the third, so a command carrying `secrets` reached the
+      // daemon without them: `{{secret:NAME}}` with no value, refused as
+      // `secret_unresolved`, and the placeholder feature simply did not work
+      // on the hosted engine.
+      return client.sendCommand(command, expectedBootId, options);
     },
     // ARGUMENTS FORWARDED, not just the call. A wrapper that took none
     // silently dropped the abort signal the handoff poll passes, so a

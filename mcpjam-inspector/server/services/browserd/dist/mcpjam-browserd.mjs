@@ -9646,7 +9646,7 @@ var ChromiumDriver = class {
    */
   async readA11y(tabId, entry, action) {
     const filter = action.filter ?? "interactive";
-    await settleBridge(entry.page);
+    if (this.features.a11yFrames) await settleBridge(entry.page);
     const cdp = await entry.page.cdp();
     if (!cdp) {
       return {

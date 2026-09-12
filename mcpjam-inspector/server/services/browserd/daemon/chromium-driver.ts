@@ -3847,7 +3847,12 @@ export class ChromiumDriver implements BrowserDriver {
     | { ok: false; error: BrowserCommandResult }
   > {
     const filter = action.filter ?? "interactive";
-    await settleBridge(entry.page);
+    // ONLY WHEN SOMETHING IS GOING TO READ A FRAME. `readAxForest` is the sole
+    // consumer of `frameSessions()`, and it runs only under this flag — so
+    // with the flag off (every deployment today) this costs not a bounded wait
+    // but no wait at all, and the read is byte-for-byte the one the previous
+    // release did.
+    if (this.features.a11yFrames) await settleBridge(entry.page);
     const cdp = await entry.page.cdp();
     if (!cdp) {
       return {

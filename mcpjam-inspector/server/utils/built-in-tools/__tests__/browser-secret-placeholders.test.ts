@@ -210,11 +210,15 @@ describe("refusing a placeholder that cannot work", () => {
     // only brokered rows dropped the brokered names along with the empty
     // available list — and a name the user can plainly see configured came
     // back as "check the spelling" instead of "switch it to materialized".
-    const { tools } = build({
+    const { tools, sent } = build({
       secrets: { available: [], brokered: ["EGRESS_KEY"] },
     });
     const out = await act(tools, { verb: "type", value: "{{secret:EGRESS_KEY}}" });
     expect(out.error).toContain("secret_not_typeable");
+    // AND THE PAGE WAS NEVER TOUCHED. The code alone does not say that: a
+    // regression could send the command, get a refusal from the daemon, and
+    // return the same string having already typed something.
+    expect(sent).toEqual([]);
   });
 
   it("refuses every name when the surface wired no secrets", async () => {
