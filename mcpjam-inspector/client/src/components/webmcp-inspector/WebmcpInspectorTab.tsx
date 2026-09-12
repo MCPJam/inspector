@@ -9,6 +9,10 @@ import {
 } from "@/lib/browser-shell/use-browser-session";
 import { decodeStateSnapshot } from "@/shared/browser-pane-wire";
 import { useViewportReporter } from "@/lib/browser-pane/use-viewport-reporter";
+import {
+  readLastWebMcpUrl,
+  writeLastWebMcpUrl,
+} from "@/lib/webmcp-inspector/last-url";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Globe } from "lucide-react";
@@ -73,6 +77,7 @@ const SCREENSHOT_POLL_MS = 1_000;
  */
 export function WebmcpInspectorTab() {
   const consent = useLocalBrowserConsent();
+  const [showBrowserSetup, setShowBrowserSetup] = useState(false);
   const {
     session,
     tools,
@@ -91,6 +96,7 @@ export function WebmcpInspectorTab() {
     setScreencast,
     sendInput,
     clearError,
+    clearActivity,
     reconnect,
     disconnect,
   } = useWebmcpInspectorStore(
@@ -112,12 +118,23 @@ export function WebmcpInspectorTab() {
       setScreencast: state.setScreencast,
       sendInput: state.sendInput,
       clearError: state.clearError,
+      clearActivity: state.clearActivity,
       reconnect: state.reconnect,
       disconnect: state.disconnect,
     })),
   );
 
-  const [url, setUrl] = useState("http://localhost:3000");
+  const [url, setUrlState] = useState(readLastWebMcpUrl);
+  const setUrl = useCallback((next: string) => {
+    setUrlState(next);
+    writeLastWebMcpUrl(next);
+  }, []);
+  // The field remounts when you leave this route. The session does not — so
+  // the live page URL is the source of truth, and we write it so the next
+  // visit still has it after the session is gone.
+  useEffect(() => {
+    if (session?.url) setUrl(session.url);
+  }, [session?.url, setUrl]);
   const [selectedToolKey, setSelectedToolKey] = useState<string | undefined>();
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [activityOpen, setActivityOpen] = useState(true);
@@ -345,6 +362,17 @@ export function WebmcpInspectorTab() {
     await startSession(url, startOptions());
   };
 
+  const allowAndOpenBrowser = async () => {
+    if (!(await consent.grant())) return false;
+    setShowBrowserSetup(false);
+    // The grant is already in shared storage, but this render still has
+    // consent.granted=false. Start directly so Allow needs no second click.
+    // Startup errors belong to the workspace's error banner, not the grant.
+    if (useWebmcpInspectorStore.getState().pageToolsLive()) reconnect();
+    else await startSession(url, startOptions());
+    return true;
+  };
+
   const pendingForSelected = pending.find(
     (item) => item.toolKey === selectedToolKey,
   );
@@ -409,6 +437,10 @@ export function WebmcpInspectorTab() {
     } else toast.error("Could not clear inspection site data");
   };
   const overflowActions = [
+    ...(!HOSTED_MODE && !hosted && consent.granted ? [{
+      label: "Enable for all clients",
+      onSelect: () => setShowBrowserSetup(true),
+    }] : []),
     ...(!HOSTED_MODE && !hosted && isPackaged && consent.granted
       ? [
           {
@@ -550,10 +582,10 @@ export function WebmcpInspectorTab() {
     </div>
   );
 
-  if (!HOSTED_MODE && !hosted && !consent.granted) {
+  if (!HOSTED_MODE && !hosted && (!consent.granted || showBrowserSetup)) {
     return (
       <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center overflow-auto p-6">
-        <LocalBrowserConsentGate onAllow={consent.grant} />
+        <LocalBrowserConsentGate onAllow={allowAndOpenBrowser} />
       </div>
     );
   }
@@ -618,6 +650,7 @@ export function WebmcpInspectorTab() {
             onCopy={(entries) => void copyActivity(entries)}
             onExportJson={() => exportAs("json")}
             onExportOtlp={() => exportAs("otlp")}
+            onClear={clearActivity}
             onClose={() => setActivityOpen(false)}
           />
         }

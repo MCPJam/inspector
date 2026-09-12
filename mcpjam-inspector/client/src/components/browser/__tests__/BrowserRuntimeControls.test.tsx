@@ -1,3 +1,4 @@
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
@@ -5,6 +6,7 @@ const state = vi.hoisted(() => ({
   setEngine: vi.fn(),
   newChat: vi.fn(async () => true),
   revoke: vi.fn(),
+  grant: vi.fn(async () => true),
   toggleVisible: true,
 }));
 vi.mock("@/hooks/useBrowserEngine", () => ({
@@ -14,7 +16,7 @@ vi.mock("@/hooks/useBrowserEngine", () => ({
     resolved: true,
     localAvailable: true,
     cloudAvailable: state.toggleVisible,
-    consent: { granted: true, revoke: state.revoke },
+    consent: { granted: true, revoke: state.revoke, grant: state.grant },
     setEngine: state.setEngine,
   }),
 }));
@@ -62,6 +64,15 @@ it("revokes only through the Browser permission controller", () => {
   render(<BrowserRuntimeControls projectId="p" />);
   fireEvent.click(screen.getByText("Revoke Browser"));
   expect(state.revoke).toHaveBeenCalledOnce();
+});
+
+it("offers existing grants explicit shared setup without applying it on mount", async () => {
+  render(<BrowserRuntimeControls projectId="p" settings />);
+  expect(state.grant).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Enable for all clients" }));
+  expect(state.grant).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+  await waitFor(() => expect(state.grant).toHaveBeenCalledOnce());
 });
 
 it("keeps runtime controls in the compact options menu", async () => {

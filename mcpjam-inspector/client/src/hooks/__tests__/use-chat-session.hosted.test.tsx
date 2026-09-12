@@ -296,7 +296,8 @@ vi.mock("@ai-sdk/react", async () => {
   };
 });
 
-vi.mock("ai", () => ({
+vi.mock("ai", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("ai")>()),
   DefaultChatTransport: class MockTransport {
     options: any;
     sendMessages: ReturnType<typeof vi.fn>;

@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
+import { useBrowserToolIds } from "./useBrowserToolIds";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useHost } from "@/hooks/useClients";
 import { resolveEffectiveHost } from "@/lib/effective-client";
@@ -145,7 +146,8 @@ export function useBrowserTools(args: {
   // this list say someone else has the browser, while the model can still
   // call the tools after the next hand-back.
   const paneHolder = usePaneHolderId();
-  const attached = (hostConfig?.builtInToolIds ?? []).includes(
+  const toolIds = useBrowserToolIds(hostConfig, engineState.selectedEngine);
+  const attached = (toolIds ?? []).includes(
     BROWSER_BUILT_IN_TOOL_ID,
   );
   // The BODY-side engine choice, exactly as the Browser pane resolves it, so
