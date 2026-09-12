@@ -55,8 +55,8 @@ vi.mock("../../../utils/route-error-report.js", async () => {
 import v1Routes from "../index.js";
 
 const PROJECT_ID = "p1";
-const RUN_ID = "run_1";
-const ITERATION_ID = "iter_1";
+const RUN_ID = "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const ITERATION_ID = "iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx";
 const BEARER = "caller-bearer-token";
 const SERVICE_TOKEN = "inspector-service-token";
 const CONVEX_HTTP_URL = "https://example.convex.site";
@@ -65,7 +65,7 @@ const AUDIT_URL = `${CONVEX_HTTP_URL}/internal/v1/evals/iteration-read`;
 const RUN_DOC = {
   _id: RUN_ID,
   projectId: PROJECT_ID,
-  suiteId: "suite_1",
+  suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
   runNumber: 1,
   status: "completed",
   result: "passed",
