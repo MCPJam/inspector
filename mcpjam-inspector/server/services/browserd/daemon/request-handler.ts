@@ -1323,6 +1323,45 @@ export class BrowserdRequestHandler {
         body: { error: "invalid_command", bootId: this.bootId },
       };
     }
+    // THE WIRE, BEFORE ANYTHING ELSE — before the lease gate, and before
+    // `lastActivityAt`.
+    //
+    // Before the lease gate because this is not a question about who may use
+    // the browser; it is a question about whether the two ends understand each
+    // other, and a mismatch answered `lease_held` sends the caller off to wait
+    // for a person who is not there.
+    //
+    // Before `lastActivityAt` because a command we will not run is not
+    // evidence that this box is in use. The lease refusal below IS such
+    // evidence — somebody is trying to drive — but a caller speaking a wire
+    // this daemon does not know is a caller that will be relaunching it, and
+    // counting its attempts as activity would hold the upgrade off with the
+    // very commands the upgrade exists to fix.
+    //
+    // The reuse gates in `browser-session.ts` already compare versions; this
+    // covers what they cannot see — a daemon replaced under a live session,
+    // where every command afterwards goes to a wire nobody checked.
+    if (
+      parsed.command.protocolVersion !== undefined &&
+      parsed.command.protocolVersion !== BROWSERD_PROTOCOL_VERSION
+    ) {
+      this.recordRow(parsed.command, startedAt, {
+        outcome: "refused",
+        errorCode: "protocol_mismatch",
+      });
+      return {
+        status: 409,
+        body: {
+          error: "protocol_mismatch",
+          // NAMED, both of them. "A protocol mismatch" is not actionable; "you
+          // speak 3 and I speak 2" tells the caller to relaunch and tells
+          // whoever reads the log which half is behind.
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bootId: this.bootId,
+        },
+      };
+    }
+
     // Recorded BEFORE the lease gate, on purpose. A command the lease refuses
     // is still evidence that somebody is trying to use this browser right now,
     // and an upgrade that relaunched the daemon between an agent's refusal and

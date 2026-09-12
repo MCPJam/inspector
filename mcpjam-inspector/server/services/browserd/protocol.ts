@@ -554,6 +554,25 @@ export type BrowserAction =
 export interface BrowserCommand {
   /** Caller reads dimensions from each observation instead of assuming 1024x768. */
   responsiveViewport?: boolean;
+  /**
+   * The wire the SENDER speaks, so a mismatch is refused rather than run.
+   *
+   * The reuse gates already compare protocol versions, and they are the right
+   * place for the decision — but they run once per ensure, against a daemon
+   * that was alive then. A daemon can be replaced under a live session (a box
+   * restarts, a prelaunched daemon is adopted, a replica wins a boot race),
+   * and every command after that goes to a wire nobody checked.
+   *
+   * What it costs to skip is specific rather than general: `fill_form` at
+   * protocol 1 falls through the verb switch and answers `ok` for a form it
+   * never touched. A refusal here is a sentence the caller can act on; `ok`
+   * for work that did not happen is not.
+   *
+   * OPTIONAL, and absent means "do not check". A daemon older than this field
+   * ignores it entirely, and a caller that does not send it gets exactly the
+   * behaviour it has always had.
+   */
+  protocolVersion?: number;
   commandId: string;
   tabId?: string;
   source: BrowserCommandSource;
@@ -842,6 +861,19 @@ export const BROWSERD_ERROR_CODES = [
   "origin_not_allowed",
   /** The session policy does not admit this command. */
   "tool_not_allowed",
+  /**
+   * The sender and this daemon do not speak the same wire.
+   *
+   * Refused BEFORE the lease gate and before anything runs, because the
+   * failure it prevents is a command that reports success: a `fill_form` sent
+   * to a protocol-1 daemon falls through its verb switch and answers `ok` for
+   * a form with every field still empty.
+   *
+   * Also the SERVER-side name for the same condition when a relaunch could not
+   * fix it, where it replaces a bare "browserd did not report listening within
+   * 30000ms" — a timeout that tells the user nothing about what went wrong.
+   */
+  "protocol_mismatch",
 ] as const;
 
 export type BrowserdErrorCode = (typeof BROWSERD_ERROR_CODES)[number];

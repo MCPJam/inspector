@@ -15,6 +15,7 @@ vi.mock("../../computers/browser-consent.js", () => ({
  */
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { BrowserProtocolMismatchError } from "../../../services/browserd/browser-session.js";
 import {
   buildBrowserTools,
   BrowserTokenMemory,
@@ -3803,5 +3804,45 @@ describe("buildBrowserTools — session policy", () => {
     });
     expect(JSON.stringify(answer)).toContain("origin_not_allowed");
     expect(daemon).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildBrowserTools — a daemon speaking the wrong wire", () => {
+  it("returns protocol_mismatch as the tool error rather than a raw boot timeout", async () => {
+    // `ensureBrowserSession` relaunches a daemon it cannot talk to, silently
+    // and first. When THAT also fails, what the model used to read was
+    // "browserd did not report listening within 30000ms" — a timeout from a
+    // boot that had nothing to do with the cause, which reads like a transient
+    // hiccup worth retrying forever.
+    const { result } = build({
+      ensureSession: vi.fn(async () => {
+        throw new BrowserProtocolMismatchError({
+          expected: 2,
+          running: 1,
+          source: "reuse",
+        });
+      }) as never,
+    });
+    const answer = (await run(result!.tools, "browser_navigate", {
+      url: "https://example.com",
+    })) as { error?: string };
+    expect(answer.error).toMatch(/protocol_mismatch: /);
+    expect(answer.error).toContain("version 1");
+    expect(answer.error).toContain("version 2");
+    // The hint is the actionable half: an agent told only "mismatch" retries.
+    expect(answer.error).toContain("restarted onto the current build");
+  });
+
+  it("still throws anything that is NOT a wire mismatch", async () => {
+    // The other half: a tool that swallowed unknown failures into `{ok:false}`
+    // would hide a real fault behind a sentence the model tries to work around.
+    const { result } = build({
+      ensureSession: vi.fn(async () => {
+        throw new Error("the computer is hibernating");
+      }) as never,
+    });
+    await expect(
+      run(result!.tools, "browser_navigate", { url: "https://example.com" }),
+    ).rejects.toThrow(/hibernating/);
   });
 });

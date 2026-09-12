@@ -361,7 +361,21 @@ export type BrowserAgentRefusalCode =
   | "busy"
   | "daemon_at_capacity"
   /** Provisioning or wake failed before a command could be sent. */
-  | "browser_unavailable";
+  | "browser_unavailable"
+  /**
+   * The running browser daemon speaks a wire this server cannot talk to.
+   *
+   * ITS OWN CODE rather than `browser_unavailable`, because the recoveries
+   * differ and an agent can act on the difference: `browser_unavailable` is
+   * transient and worth retrying, where this one refuses every retry until the
+   * daemon has been replaced. The server relaunches automatically and silently
+   * first; this code only reaches a caller when that relaunch also failed.
+   *
+   * What it prevents is worse than a refusal. A daemon one protocol version
+   * behind has no case for `fill_form`, so it falls through its verb switch
+   * and answers `ok` for a form with every field still empty.
+   */
+  | "protocol_mismatch";
 
 /** Why an outcome is unknowable. @see BrowserAgentResult */
 export type BrowserAgentUnknownReason =

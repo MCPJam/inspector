@@ -69,7 +69,16 @@ export type PageToolsPeekReason =
   | "busy"
   | "unsupported"
   | "unreachable"
-  | "timeout";
+  | "timeout"
+  /**
+   * A browser IS running; this build cannot talk to the daemon on it.
+   *
+   * Distinct from `no_browser_session`, which is what this used to report and
+   * which is a lie a person acts on: told there is no browser, they open one,
+   * and the box already has one — running, holding their logins, and speaking
+   * a wire the server was rolled forward past.
+   */
+  | "protocol_mismatch";
 
 export interface PageToolsPeek {
   tools: BrowserPageTool[];
@@ -211,7 +220,19 @@ async function peekHosted(
           })
         : await lookupProjectComputerSession(args, signal);
   const session = lookup?.session;
-  if (!session) return { tools: [], reason: "no_browser_session" };
+  if (!session) {
+    // The lookup above sends `expectedProtocolVersion`, so a daemon speaking a
+    // wire this build cannot talk to comes back as a STALE ROW rather than as
+    // a session. Saying "no browser session" there sends a person off to open
+    // the browser they already have.
+    return {
+      tools: [],
+      reason:
+        lookup?.stale === "protocol_changed"
+          ? "protocol_mismatch"
+          : "no_browser_session",
+    };
+  }
 
   const client = new BrowserdClient({
     baseUrl: session.publicOrigin,
@@ -224,6 +245,14 @@ async function peekHosted(
   const status = await client.status({ signal }).catch(() => null);
   if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
     return { tools: [], reason: "no_browser_session" };
+  }
+  // The row said this daemon speaks our wire; the daemon itself is the
+  // authority, and it can have been replaced since the row was written.
+  if (
+    status.protocolVersion !== undefined &&
+    status.protocolVersion !== BROWSERD_PROTOCOL_VERSION
+  ) {
+    return { tools: [], reason: "protocol_mismatch" };
   }
   return readTools(
     (command) => client.sendCommand(command, session.bootId, { signal }),
@@ -280,7 +309,16 @@ async function lookupConversationSession(
         });
   // The box may have been rebound since the owner lookup. Check the logical
   // identity just as the browser viewer does before using daemon credentials.
-  if (lookup.session?.logicalSessionId !== owner.sessionId) return null;
+  //
+  // ONLY WHEN THERE IS A SESSION TO MISMATCH. A row the control plane refused
+  // — `protocol_changed`, say — comes back with no session at all, so the
+  // identity comparison is `undefined !== owner.sessionId` and swallows the
+  // reason along with the row. There is nothing to borrow in that case and so
+  // nothing for this guard to prevent; the lookup is returned so the caller
+  // can say WHY it found no browser.
+  if (lookup.session && lookup.session.logicalSessionId !== owner.sessionId) {
+    return null;
+  }
   return lookup;
 }
 

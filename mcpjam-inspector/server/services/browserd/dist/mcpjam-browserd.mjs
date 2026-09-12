@@ -103,7 +103,20 @@ var BROWSERD_ERROR_CODES = [
   /** A result's URL is outside an unattended run's origin allowlist. */
   "origin_not_allowed",
   /** The session policy does not admit this command. */
-  "tool_not_allowed"
+  "tool_not_allowed",
+  /**
+   * The sender and this daemon do not speak the same wire.
+   *
+   * Refused BEFORE the lease gate and before anything runs, because the
+   * failure it prevents is a command that reports success: a `fill_form` sent
+   * to a protocol-1 daemon falls through its verb switch and answers `ok` for
+   * a form with every field still empty.
+   *
+   * Also the SERVER-side name for the same condition when a relaunch could not
+   * fix it, where it replaces a bare "browserd did not report listening within
+   * 30000ms" — a timeout that tells the user nothing about what went wrong.
+   */
+  "protocol_mismatch"
 ];
 var BROWSERD_ERROR_CODE_SET = new Set(
   BROWSERD_ERROR_CODES
@@ -2075,6 +2088,23 @@ var BrowserdRequestHandler = class {
       return {
         status: 400,
         body: { error: "invalid_command", bootId: this.bootId }
+      };
+    }
+    if (parsed.command.protocolVersion !== void 0 && parsed.command.protocolVersion !== BROWSERD_PROTOCOL_VERSION) {
+      this.recordRow(parsed.command, startedAt, {
+        outcome: "refused",
+        errorCode: "protocol_mismatch"
+      });
+      return {
+        status: 409,
+        body: {
+          error: "protocol_mismatch",
+          // NAMED, both of them. "A protocol mismatch" is not actionable; "you
+          // speak 3 and I speak 2" tells the caller to relaunch and tells
+          // whoever reads the log which half is behind.
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bootId: this.bootId
+        }
       };
     }
     this.lastActivityAt = Date.now();

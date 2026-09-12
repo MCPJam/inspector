@@ -436,6 +436,24 @@ export function toContractResult(args: {
         status: 409,
         result: unknownResult({ ...common, reason: "unknown_boot" }),
       };
+    case "protocol_mismatch":
+      // REFUSED, not unknown. The daemon checks the wire before its lease gate
+      // and before the queue, so nothing ran and nothing was observed — which
+      // is exactly what `refused` means, and the opposite of what `unknown`
+      // would tell a caller about a form submission.
+      return {
+        status: 409,
+        result: refusedResult({
+          ...common,
+          code: "protocol_mismatch",
+          message:
+            "this browser daemon speaks a different protocol version than " +
+            (response.running === undefined
+              ? "this server"
+              : `this server (it speaks ${response.running})`) +
+            "; nothing ran. It needs to be restarted onto the current build.",
+        }),
+      };
     default: {
       // Exhaustive: a new daemon outcome must be given one of the three
       // contract statuses deliberately, not fall into whichever arm is last.

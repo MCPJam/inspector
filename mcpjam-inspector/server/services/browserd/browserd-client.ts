@@ -17,7 +17,7 @@
  * replayed against a DIFFERENT boot is rejected (`unknown_boot`) rather than
  * re-run; the caller learns the current bootId from every response and stores it.
  */
-import type { BrowserCommand } from "./protocol";
+import { BROWSERD_PROTOCOL_VERSION, type BrowserCommand } from "./protocol";
 import {
   decodePaneCommand,
   decodePaneState,
@@ -345,7 +345,14 @@ export class BrowserdClient {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ command, expectedBootId }),
+        body: JSON.stringify({
+          // STAMPED HERE, once, rather than at each of the dozen callers.
+          // Every command this client sends speaks this build's wire by
+          // definition, and a caller that had to remember would eventually
+          // forget on the one path that mattered.
+          command: { protocolVersion: BROWSERD_PROTOCOL_VERSION, ...command },
+          expectedBootId,
+        }),
       },
       true,
       options?.timeoutMs,

@@ -82,7 +82,10 @@ import type {
 } from "@/shared/declared-tools";
 import { buildWebmcpPageTools, type PeekedPageTool } from "./page-tools.js";
 import { pageToolsFromObservation } from "@/shared/browser-page-tools";
-import type { BrowserSessionHandle } from "../../services/browserd/browser-session.js";
+import {
+  BrowserProtocolMismatchError,
+  type BrowserSessionHandle,
+} from "../../services/browserd/browser-session.js";
 import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
@@ -1202,7 +1205,29 @@ export function buildBrowserTools(
       raw?: boolean;
     },
   ): Promise<CommandOutcome & { tabId: string }> => {
-    const handle = await state.handle(args.signal);
+    let handle: BrowserSessionHandle;
+    try {
+      handle = await state.handle(args.signal);
+    } catch (error) {
+      // A WIRE MISMATCH IS AN ANSWER, not a tool crash.
+      //
+      // `ensureBrowserSession` relaunches a daemon it cannot talk to, silently
+      // and first. When that relaunch also fails it now throws a NAMED error —
+      // and before this catch existed the model read the raw boot timeout
+      // ("browserd did not report listening within 30000ms"), which says
+      // nothing about the cause and reads like a transient hiccup worth
+      // retrying forever. Everything else still propagates: a tool that
+      // swallowed unknown failures into `{ok:false}` would hide a real fault
+      // behind a sentence the model would try to work around.
+      if (error instanceof BrowserProtocolMismatchError) {
+        return {
+          ok: false,
+          error: error.message,
+          tabId: args.tabId ?? "@session",
+        };
+      }
+      throw error;
+    }
     lastBootId = handle.bootId;
     const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";

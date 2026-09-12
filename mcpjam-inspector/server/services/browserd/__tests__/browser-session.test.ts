@@ -18,6 +18,8 @@ import type { BrowserdHandle } from "../boot-browserd";
 import type { BrowserdLeaseState, BrowserdStatus } from "../browserd-client";
 import { HandoffLease } from "../daemon/lease";
 import { BROWSERD_PROTOCOL_VERSION } from "../protocol";
+import { BrowserProtocolMismatchError } from "../browser-session";
+import { logger } from "../../../utils/logger.js";
 import type {
   BrowserSessionLookup,
   BrowserSessionRecordResult,
@@ -1653,6 +1655,131 @@ describe("ensureBrowserSession — compatibility and the lazy upgrade", () => {
 
     expect(f.boot).toHaveBeenCalled();
     expect(handle.reused).toBe(false);
+  });
+
+  it("logs a structured protocol_mismatch event when the wire changed and it relaunches", async () => {
+    // The relaunch itself is unchanged and stays silent to the caller. What
+    // was missing is any record that it happened for THIS reason: three gates
+    // refuse on the wire by returning `null`, and a `null` carries nothing.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const f = makeFakes({
+        lookups: [liveLookup()],
+        status: async () => ({
+          kind: "ok",
+          bootId: ROW.bootId,
+          protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+          bundleHash: HASH,
+          ...BUSY,
+        }),
+      });
+      const handle = await ensureBrowserSession(f.deps, ARGS);
+      expect(handle.reused).toBe(false);
+      expect(warn).toHaveBeenCalledWith(
+        "[browser-session] browser.protocol_mismatch",
+        expect.objectContaining({
+          expected: BROWSERD_PROTOCOL_VERSION,
+          running: BROWSERD_PROTOCOL_VERSION + 1,
+          source: "reuse",
+        }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not log a mismatch event when the versions match", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const f = makeFakes({ lookups: [liveLookup()] });
+      await ensureBrowserSession(f.deps, ARGS);
+      expect(warn).not.toHaveBeenCalledWith(
+        "[browser-session] browser.protocol_mismatch",
+        expect.anything(),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("throws BrowserProtocolMismatchError naming both versions when the relaunch fails", async () => {
+    // What the user used to see here: `browserd did not report listening
+    // within 30000ms` — a timeout from a boot that had nothing to do with the
+    // cause, and nothing anywhere naming the wire.
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({
+        kind: "ok",
+        bootId: ROW.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+        bundleHash: HASH,
+        ...BUSY,
+      }),
+      bootError: new Error("browserd did not report listening within 30000ms"),
+    });
+
+    const error = await ensureBrowserSession(f.deps, ARGS).catch(
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(BrowserProtocolMismatchError);
+    const mismatch = error as BrowserProtocolMismatchError;
+    expect(mismatch.code).toBe("protocol_mismatch");
+    expect(mismatch.expected).toBe(BROWSERD_PROTOCOL_VERSION);
+    expect(mismatch.running).toBe(BROWSERD_PROTOCOL_VERSION + 1);
+    // Prefixed with the code so `parseBrowserdErrorCode` reads it back.
+    expect(mismatch.message.startsWith("protocol_mismatch:")).toBe(true);
+    expect(mismatch.message).toContain(String(BROWSERD_PROTOCOL_VERSION));
+    expect(mismatch.message).toContain(mismatch.hint);
+  });
+
+  it("rethrows the raw boot error when the relaunch fails with no mismatch observed", async () => {
+    // The other half, and the one that keeps this from becoming a wrapper that
+    // hides real faults: a boot that failed for its own reasons must keep
+    // reporting its own reason.
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      bootError: new Error("chromium would not start"),
+    });
+
+    const error = await ensureBrowserSession(f.deps, ARGS).catch(
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).not.toBeInstanceOf(BrowserProtocolMismatchError);
+    expect((error as Error).message).toBe("chromium would not start");
+  });
+
+  it("records a mismatch the CONTROL PLANE saw, without ever reaching the daemon", async () => {
+    // `stale: "protocol_changed"` has been parsed off the wire since V-4a and
+    // read by nothing. The relaunch was already right; the reason was lost.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const f = makeFakes({
+        lookups: [
+          {
+            reachable: true,
+            session: null,
+            stale: "protocol_changed",
+            observedSessionId: ROW.sessionId,
+          },
+        ],
+        bootError: new Error("browserd did not report listening within 30000ms"),
+      });
+      const error = await ensureBrowserSession(f.deps, ARGS).catch(
+        (thrown: unknown) => thrown,
+      );
+      expect(error).toBeInstanceOf(BrowserProtocolMismatchError);
+      expect((error as BrowserProtocolMismatchError).stale).toBe(
+        "protocol_changed",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[browser-session] browser.protocol_mismatch",
+        expect.objectContaining({ source: "lookup" }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("relaunches a daemon too old to say which wire it speaks", async () => {
