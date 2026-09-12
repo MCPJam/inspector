@@ -453,6 +453,10 @@ Playground follows the selected client's saved Browser enablement. Turn Browser 
 
 Browser tools are visible in the Tools rail as soon as the project's browser setting is on — a saved default client configuration is not required. If a specific client has browser tools explicitly disabled, the Tools rail shows a note explaining that and links to that client's Browser settings rather than showing another Allow prompt.
 
+If the Browser tool catalog fails to load, the Tools rail shows a **"Couldn't load Browser tools."** message with a **Retry** button instead of silently hiding the Browser section. Clicking Retry re-fetches the catalog; once it succeeds the tools appear and subsequent refreshes use the cached definitions.
+
+Share-link guests can see Browser and WebMCP tools in the Tools pane. Browser execution and page reads remain independently gated — guests still need device permission for local browsing.
+
 ## Related Features
 
 - [Clients](/inspector/clients) — Manage MCP server connections, transports, and OAuth.
