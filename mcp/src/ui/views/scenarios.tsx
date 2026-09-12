@@ -30,7 +30,7 @@ const MODE_PRESENTATIONS: Record<
   string,
   { label: string; icon: ComponentType<{ className?: string }> }
 > = {
-  project_members: { label: "Project members", icon: Users },
+  project_members: { label: "Team members", icon: Users },
   invited_only: { label: "Invited only", icon: Lock },
   anyone_with_link: { label: "Anyone with link", icon: Globe },
 };

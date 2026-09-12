@@ -18,8 +18,9 @@ import type {
 const RUN_PRESETS: readonly ShareAccessOption[] = [
   {
     value: "project_members",
-    label: "Project members",
-    description: "Only signed-in members of this project can open the share.",
+    // One name for one group of people — see `scenario-access-presets`.
+    label: "Team members",
+    description: "Only signed-in team members can open the share.",
   },
   {
     value: "invited_only",

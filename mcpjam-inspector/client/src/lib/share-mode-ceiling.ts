@@ -11,7 +11,7 @@ export const SHARE_MODE_RANK: Record<ShareMode, number> = {
 };
 
 export const SHARE_MODE_LABELS: Record<ShareMode, string> = {
-  project_members: "project members",
+  project_members: "team members",
   invited_only: "invited users only",
   anyone_with_link: "anyone with the link",
 };

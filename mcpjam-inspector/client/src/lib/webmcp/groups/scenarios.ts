@@ -57,7 +57,7 @@ export function buildScenariosUiTools(): UiToolDefinition[] {
             type: "string",
             enum: [...ACCESS_VALUES],
             description:
-              "Who may open the link: 'invited_only' (people invited by email), 'link_guests' (anyone with the link, including signed-out visitors, funded by this organization), or 'project' (signed-in project members). Applied when the scenario is created; defaults to 'invited_only'.",
+              "Who may open the link: 'invited_only' (people invited by email), 'link_guests' (anyone with the link, including signed-out visitors, funded by this organization), or 'project' (signed-in team members). Applied when the scenario is created; defaults to 'invited_only'.",
           },
           name: {
             type: "string",
