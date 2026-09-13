@@ -71,8 +71,11 @@ export interface DriverPage {
   clickSelector(selector: string): Promise<void>;
   hoverAt(point: ActPoint): Promise<void>;
   hoverSelector(selector: string): Promise<void>;
-  /** Type into the focused element (a click usually precedes this). */
-  typeText(text: string): Promise<void>;
+  /**
+   * Type into the focused element (a click usually precedes this).
+   * `keystrokes` asks for key events, for pages that read `event.key`.
+   */
+  typeText(text: string, options?: { keystrokes?: boolean }): Promise<void>;
   /**
    * Type into a specific element, replacing its current value.
    *
@@ -96,6 +99,11 @@ export interface DriverPage {
   /** Press one key or chord ("Enter", "Control+A"). */
   press(key: string): Promise<void>;
   scrollBy(delta: { dx: number; dy: number }): Promise<void>;
+  /**
+   * Scroll at a point, so the scroll container under it moves instead of the
+   * page. Optional; the driver falls back to `scrollBy`.
+   */
+  scrollAt?(point: ActPoint, delta: { dx: number; dy: number }): Promise<void>;
   dragTo(from: ActPoint, to: ActPoint): Promise<void>;
   selectOption(selector: string, value: string): Promise<void>;
   /** Focus this tab in the window (what a human sees, and what `activate_tab` does). */
@@ -188,6 +196,12 @@ export interface DriverPage {
    * `webContents.debugger` — none of which share anything else.
    */
   cdp(): Promise<CdpLike | null>;
+  /**
+   * CDP sessions of this page's child frames, already attached by the WebMCP
+   * bridge. The AX tree does not descend into child documents, so the reader
+   * needs these to see iframe content. Never triggers an attach.
+   */
+  frameSessions?(): ReadonlyArray<{ frameId: string; cdp: CdpLike }>;
   /** Resolve after a brief window with no in-flight requests, or on abort. */
   waitForNetworkIdle(signal: AbortSignal): Promise<void>;
   /** Resolve after one rendered frame, or on abort. */

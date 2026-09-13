@@ -25,7 +25,9 @@ import {
   type ScoreResult,
 } from "@mcpjam/sdk/contract";
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
+import type { AgentActivityAssessment } from "./agent-activity.js";
 import {
+  HOSTED_AGENT_ACTIVITY_SCORER_ID,
   HOSTED_JUDGE_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
   buildHostedEvaluationConfig,
@@ -102,6 +104,8 @@ export type HostedScoreRowInputs = {
    * not run it.
    */
   toolMatchAuthored?: boolean;
+  /** @see assessAgentActivity */
+  agentActivity?: AgentActivityAssessment;
 };
 
 function isFiniteNumber(value: unknown): value is number {
@@ -200,6 +204,9 @@ export function hostedScoreDefinitionInputs(
           },
         }
       : {}),
+    ...(inputs.agentActivity?.status === "no_agent_activity"
+      ? { agentActivityFired: true }
+      : {}),
   };
 }
 
@@ -258,6 +265,19 @@ export function buildHostedScoreRows(
         passed: inputs.evaluation.passed === true,
         reason: describeToolMatch(inputs.evaluation),
       })
+    );
+  }
+
+  const activityDefinition = byId.get(HOSTED_AGENT_ACTIVITY_SCORER_ID);
+  if (activityDefinition && inputs.agentActivity?.status === "no_agent_activity") {
+    // An error row, not a 0: nothing was measured. The paired `passed = false`
+    // lives in `buildEvalIterationVerdict`, since rows decide nothing under
+    // `shadow` and `off` grading.
+    rows.push(
+      errorScoreResult(
+        activityDefinition,
+        `no_agent_activity: ${inputs.agentActivity.detail}`,
+      ),
     );
   }
 

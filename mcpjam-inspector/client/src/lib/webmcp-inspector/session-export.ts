@@ -11,6 +11,7 @@
  * Both are built from what the store already holds. Nothing is fetched, so an
  * export works on a session whose browser has since closed.
  */
+import { redactSecretShapes } from "@/shared/secret-shape-redaction";
 import type {
   WebMcpActivityEntry,
   WebMcpSessionPublic,
@@ -210,7 +211,9 @@ export function buildOtlpExport(input: WebMcpExportInput): unknown {
           ? { code: 1 } // STATUS_CODE_OK
           : {
               code: 2, // STATUS_CODE_ERROR
-              message: entry.errorMessage ?? entry.state,
+              // An OTLP export leaves the machine, and a page's error text can
+              // quote a URL with `?api_key=…`.
+              message: redactSecretShapes(entry.errorMessage ?? entry.state),
             },
     });
   }
@@ -224,7 +227,11 @@ export function buildOtlpExport(input: WebMcpExportInput): unknown {
     endTimeUnixNano: nanos(latest),
     attributes: [
       attr("webmcp.session.id", sessionId),
-      attr("webmcp.session.url", input.session?.url ?? ""),
+      // A session URL can carry credentials (`user:pass@`, `?token=`).
+      attr(
+        "webmcp.session.url",
+        redactSecretShapes(input.session?.url ?? ""),
+      ),
       attr("webmcp.session.tool_count", input.tools.length),
       attr(
         "webmcp.session.viewport",

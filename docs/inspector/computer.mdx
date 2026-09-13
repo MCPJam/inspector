@@ -169,6 +169,27 @@ Closing the browser panel stops the viewer — it does not hand control back to 
 
 A hosted cloud browser box is reclaimed automatically when nobody has the panel open and visible. If you hide the panel or switch away from the tab, the box may be paused within a couple of minutes. When you re-open or re-show the panel, it wakes the box automatically — you will see a brief reconnecting state while it resumes, then the live view returns. No action is needed on your part.
 
+### Typing credentials without exposing them
+
+When a browser agent needs to sign into a site, it can use a **secret placeholder** instead of a literal credential. The model writes `{{secret:NAME}}` — where `NAME` is the environment-variable name of a [materialized project secret](/inspector/projects#secret-storage-for-env-vars-and-headers) — and the value is substituted at the last moment inside the browser, never appearing in the transcript, tool-call arguments, or trace.
+
+**How to use it**
+
+1. Add the credential as a **materialized** secret in your project environment (brokered secrets cannot be used here — their values never enter the server).
+2. The agent will see only the secret's name, not its value. It writes `{{secret:GITHUB_PASSWORD}}` (or whichever name you chose) in a `type` or `fill_form` browser action.
+3. The value is substituted immediately before the keystroke runs. Everything the page returns afterwards — the accessibility tree, page text, console output — shows `{{secret:NAME}}` again, not the real value.
+
+**Screenshot suppression**
+
+While the page that received the credential is still open, screenshots are suppressed and replaced with a `screenshotSuppressed` flag. The agent still receives the accessibility tree and page text. Screenshots resume automatically once the page navigates to a new document (for example, after a login form submits and loads the dashboard).
+
+**Constraints**
+
+- The secret must be at least 8 characters. Shorter values are refused before anything is typed.
+- Only **materialized** delivery works. Brokered secrets are refused with `secret_not_typeable`.
+- Placeholders only work on verbs that type text (`type`, `fill_form`). Using one on `click` or `scroll` is refused with `secret_verb_refused`.
+- If the named secret does not exist for the current environment, the action is refused with `secret_unknown` — nothing is typed.
+
 ### Browser panel layout
 
 The open and expanded state of the browser panel is tracked per conversation. Opening or closing the panel in one chat does not affect any other chat's panel state.

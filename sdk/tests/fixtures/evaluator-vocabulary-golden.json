@@ -31,6 +31,10 @@
             "onSkipped": "fail"
           }
         ]
+      },
+      "definitionHashes": {
+        "legacy:test": "0f4b9ae5b9454b551b2912b600281d1a775bc44e934e85789aa8900e5663d419",
+        "tool-match": "f5affa564f8de34a4e82babb20f56a103f87e14a9614c89f1a40db58e15bafa8"
       }
     },
     {
@@ -87,6 +91,12 @@
             "onSkipped": "fail"
           }
         ]
+      },
+      "definitionHashes": {
+        "legacy:test": "0f4b9ae5b9454b551b2912b600281d1a775bc44e934e85789aa8900e5663d419",
+        "tool-match": "f5affa564f8de34a4e82babb20f56a103f87e14a9614c89f1a40db58e15bafa8",
+        "predicate:responseContains#0": "da6cd5a26eee784397deb98a0c4cbe32c7b2165f36a34a8bcca0ac39d8a9b6b8",
+        "predicate:responseContains#1": "d3c409bad88cc115bb475276a75cf3f15653da0152144b0d4e913412a0c6dc53"
       }
     },
     {
@@ -144,6 +154,12 @@
             "onSkipped": "ignore"
           }
         ]
+      },
+      "definitionHashes": {
+        "legacy:test": "0f4b9ae5b9454b551b2912b600281d1a775bc44e934e85789aa8900e5663d419",
+        "tool-match": "f5affa564f8de34a4e82babb20f56a103f87e14a9614c89f1a40db58e15bafa8",
+        "predicate:noToolErrors#0": "9fd34dbc6b93d7dc6e875acd4b3780e0750fe089a6b905640a313cd19cd6e761",
+        "custom:tone": "29230ae73e8c4b37d82225c8a58ead849670c264bc1176a73eea68738c177477"
       }
     },
     {
@@ -176,6 +192,10 @@
             "onSkipped": "fail"
           }
         ]
+      },
+      "definitionHashes": {
+        "legacy:test": "0f4b9ae5b9454b551b2912b600281d1a775bc44e934e85789aa8900e5663d419",
+        "tool-match": "e9b710ee70d13190fef7cb2b50e1c1b2ea8b5b65f20eba04e0c1edf1282ea371"
       }
     },
     {
@@ -220,6 +240,11 @@
             "onSkipped": "fail"
           }
         ]
+      },
+      "definitionHashes": {
+        "legacy:test": "0f4b9ae5b9454b551b2912b600281d1a775bc44e934e85789aa8900e5663d419",
+        "tool-match": "f5affa564f8de34a4e82babb20f56a103f87e14a9614c89f1a40db58e15bafa8",
+        "nonempty-answer": "7267a47502b7602592686763bec8bb47f69b3b828bb0c533f9873de3715345bc"
       }
     },
     {
@@ -277,6 +302,12 @@
             "onSkipped": "ignore"
           }
         ]
+      },
+      "definitionHashes": {
+        "legacy:test": "0f4b9ae5b9454b551b2912b600281d1a775bc44e934e85789aa8900e5663d419",
+        "tool-match": "ab68d407a37f43be3561e7107fc19e21482cb0fb171024fe69934d9b207d853f",
+        "predicate:responseContains#0": "da6cd5a26eee784397deb98a0c4cbe32c7b2165f36a34a8bcca0ac39d8a9b6b8",
+        "custom:tone": "29230ae73e8c4b37d82225c8a58ead849670c264bc1176a73eea68738c177477"
       }
     },
     {
@@ -321,6 +352,11 @@
             "onSkipped": "fail"
           }
         ]
+      },
+      "definitionHashes": {
+        "legacy:test": "0f4b9ae5b9454b551b2912b600281d1a775bc44e934e85789aa8900e5663d419",
+        "tool-match": "f5affa564f8de34a4e82babb20f56a103f87e14a9614c89f1a40db58e15bafa8",
+        "predicate:responseContains#1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1": "97c28bd1f7bded0043ee80309c4910427ec308692176d7ab78cd38c4d9ce9462"
       }
     },
     {
@@ -365,6 +401,60 @@
             "onSkipped": "ignore"
           }
         ]
+      },
+      "definitionHashes": {
+        "legacy:test": "0f4b9ae5b9454b551b2912b600281d1a775bc44e934e85789aa8900e5663d419",
+        "tool-match": "f5affa564f8de34a4e82babb20f56a103f87e14a9614c89f1a40db58e15bafa8",
+        "policy-grounding": "de56f2e2378b0650e36078dc622e6607f696185be6dda330778ad95a541da0c4"
+      }
+    },
+    {
+      "label": "anonymous assertion carrying policy — the id keeps it, the implementation hash does not",
+      "snapshot": {
+        "hash": "c0aba0445ba5bb9eaea107789b233753ee920a7d20779aaf9ab506fe9c95dd70",
+        "definitions": [
+          {
+            "scorerId": "legacy:test",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "4e671f4627b3d66accaebabc6df72885a59c9f9adc9db9e47af371210468015c",
+            "label": "test()",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "tool-match",
+            "idSource": "explicit",
+            "scorerVersion": "1",
+            "implementationHash": "0bc72b69047c95a508d975471f9cb330b2fe2137eea30fcba8e425f087613b74",
+            "label": "expected tool calls",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "fail",
+            "onSkipped": "fail"
+          },
+          {
+            "scorerId": "predicate:responseContains#f54cf792125b3846651c875cae4d417bb1adf5d6dab0992cca5f661142c6d779",
+            "idSource": "generated",
+            "scorerVersion": "1",
+            "implementationHash": "1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1",
+            "label": "responseContains",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "advisory",
+            "onError": "ignore",
+            "onSkipped": "ignore"
+          }
+        ]
+      },
+      "definitionHashes": {
+        "legacy:test": "0f4b9ae5b9454b551b2912b600281d1a775bc44e934e85789aa8900e5663d419",
+        "tool-match": "f5affa564f8de34a4e82babb20f56a103f87e14a9614c89f1a40db58e15bafa8",
+        "predicate:responseContains#f54cf792125b3846651c875cae4d417bb1adf5d6dab0992cca5f661142c6d779": "ad7d80e1d880145d3a0ca1908d63dd120dfc80754f915631ad192541adffb07b"
       }
     }
   ]

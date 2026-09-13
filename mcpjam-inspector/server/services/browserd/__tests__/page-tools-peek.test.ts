@@ -668,3 +668,103 @@ describe("pageToolsSnapshotFrom", () => {
     expect(snapshot?.tools).toEqual([]);
   });
 });
+
+describe("peekPageTools — a browser this build cannot talk to", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getConversationSession.mockResolvedValue({
+      sessionId: "logical-1",
+      engine: "hosted",
+      state: "active",
+      box: { sandboxRowId: "box-1" },
+    });
+  });
+
+  it("says the wire changed rather than 'no browser session'", async () => {
+    // The lookup sends `expectedProtocolVersion`, so a daemon speaking a wire
+    // this build cannot talk to comes back as a STALE ROW. Reporting that as
+    // "no browser session" is a lie a person acts on: told there is no
+    // browser, they open one — and the box already has one, running, holding
+    // their logins.
+    lookupBrowserSession.mockResolvedValue({
+      session: null,
+      stale: "protocol_changed",
+    });
+    expect(
+      await peekPageTools({
+        engine: "hosted",
+        projectId: "p1",
+        bearer: "user",
+        conversationId: "c1",
+      }),
+    ).toEqual({ tools: [], reason: "protocol_mismatch" });
+    expect(clientSendCommand).not.toHaveBeenCalled();
+  });
+
+  it("still says 'no browser session' when the row is simply absent", async () => {
+    lookupBrowserSession.mockResolvedValue({ session: null });
+    expect(
+      await peekPageTools({
+        engine: "hosted",
+        projectId: "p1",
+        bearer: "user",
+        conversationId: "c1",
+      }),
+    ).toEqual({ tools: [], reason: "no_browser_session" });
+  });
+
+  it("names the wire when the DAEMON disagrees, even though the row did not", async () => {
+    // The row is the control plane's opinion, written when the daemon was last
+    // recorded. The daemon itself is the authority, and it can have been
+    // replaced since.
+    lookupBrowserSession.mockResolvedValue({
+      session: {
+        bootId: "boot-1",
+        logicalSessionId: "logical-1",
+        publicOrigin: "https://box.test",
+        browserdToken: "tok",
+      },
+    });
+    clientStatus.mockResolvedValue({
+      kind: "ok",
+      bootId: "boot-1",
+      protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+      features: ["webmcp-binding"],
+    });
+    expect(
+      await peekPageTools({
+        engine: "hosted",
+        projectId: "p1",
+        bearer: "user",
+        conversationId: "c1",
+        sandboxRowId: "box-1",
+      }),
+    ).toEqual({ tools: [], reason: "protocol_mismatch" });
+    expect(clientSendCommand).not.toHaveBeenCalled();
+  });
+
+  it("reads the tools from a daemon too old to announce a version at all", async () => {
+    // Absence is not a mismatch. Every daemon predating the field answers
+    // nothing here, and refusing them would take page tools away from boxes
+    // that work.
+    lookupBrowserSession.mockResolvedValue({
+      session: {
+        bootId: "boot-1",
+        logicalSessionId: "logical-1",
+        publicOrigin: "https://box.test",
+        browserdToken: "tok",
+      },
+    });
+    clientStatus.mockResolvedValue({ kind: "ok", bootId: "boot-1" });
+    clientSendCommand.mockResolvedValue(okObservation());
+    const peek = await peekPageTools({
+      engine: "hosted",
+      projectId: "p1",
+      bearer: "user",
+      conversationId: "c1",
+      sandboxRowId: "box-1",
+    });
+    expect(peek.reason).toBeUndefined();
+    expect(clientSendCommand).toHaveBeenCalled();
+  });
+});

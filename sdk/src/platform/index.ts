@@ -18,6 +18,7 @@ export {
 
 export {
   DEFAULT_PLATFORM_API_BASE_URL,
+  DEFAULT_PLATFORM_USER_AGENT,
   PlatformApiClient,
   RUN_LAUNCH_HEADERS,
   type PlatformApiClientOptions,

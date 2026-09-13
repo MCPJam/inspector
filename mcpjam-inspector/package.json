@@ -101,7 +101,7 @@
     "electron:publish": "cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-forge publish",
     "preelectron:dev": "node scripts/check-dev-env.mjs --task=electron-dev && node scripts/build-sdk-if-stale.mjs && npm run bundle:all",
     "electron:dev": "cross-env NODE_ENV=development electron-forge start",
-    "pretest": "node scripts/bundle-sandbox-proxy-html.js && node scripts/bundle-browser-harness.mjs && node scripts/bundle-plugin-shim.mjs && node scripts/bundle-codex-appserver-bridge.mjs",
+    "pretest": "node scripts/bundle-sandbox-proxy-html.js && node scripts/bundle-browser-harness.mjs && node scripts/bundle-plugin-shim.mjs && node scripts/bundle-codex-appserver-bridge.mjs && node scripts/bundle-browserd.mjs --check",
     "test": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest run",
     "test:watch": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest",
     "test:coverage": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest run --coverage",

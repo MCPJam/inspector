@@ -42,6 +42,7 @@ import { validateLocalProjectKey } from "../../../utils/computers/local-machine.
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup.js";
 import { buildBrowserdStack, type BrowserdStack } from "../daemon/server.js";
 import { ChromiumDriver } from "../daemon/chromium-driver.js";
+import { parseBrowserdFeatures } from "../daemon/config.js";
 import { HandoffLease } from "../daemon/lease.js";
 import {
   launchBrowserdContext,
@@ -644,6 +645,9 @@ async function startSession(
   );
   const driver = new ChromiumDriver(context, {
     lease,
+    // This driver runs in the inspector process, so flags come from its own
+    // env (via `deps.env`, so tests can inject one).
+    features: parseBrowserdFeatures(deps.env),
     /**
      * The Playground's browser follows its panel; every other caller does not.
      *

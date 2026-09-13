@@ -174,6 +174,7 @@ import {
 } from "./lib/inspector-command-handlers";
 import { resolveUiNavigationTarget } from "./lib/webmcp/ui-actions";
 import { useRegisterUiTools } from "./lib/webmcp/use-register-ui-tools";
+import { usePublishNativeUiTools } from "./lib/webmcp/use-publish-native-ui-tools";
 import { waitForUiCommit } from "./lib/wait-for-ui-commit";
 import { subscribeToOAuthDebuggerRequests } from "./lib/oauth/oauth-debugger-navigation";
 import {
@@ -3156,13 +3157,18 @@ export default function App() {
     [appState],
   );
   useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
-  // MCPJam UI tools: registered in both modes for the in-app "Ask MCPJam"
-  // agent (the registry's only consumer); the always-available side panel
-  // drives whichever inspector surface is open, so registration lives at the
-  // App root. Never exposed to browser-native agents. Disabled on the
-  // standalone scenario chat route: its end user is not the inspector
-  // operator, so inspector-driving tools must not exist on that page.
+  // MCPJam UI tools: registered in both modes; the always-available side
+  // panel drives whichever inspector surface is open, so registration lives
+  // at the App root. Disabled on the standalone scenario chat route: its end
+  // user is not the inspector operator, so inspector-driving tools must not
+  // exist on that page — for either agent below.
   useRegisterUiTools({ enabled: !isScenarioChatRoute });
+  // The same tools, published to whatever WebMCP agent the browser is running
+  // (`document.modelContext`), so an external agent can operate the inspector
+  // without anyone opening Ask MCPJam. Subscribes to the registry, so a
+  // surface's mount-scoped tools follow their screen. A no-op where the
+  // browser has no WebMCP API.
+  usePublishNativeUiTools({ enabled: !isScenarioChatRoute });
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
   useLocalStateMigration({

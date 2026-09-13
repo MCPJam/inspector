@@ -7,6 +7,7 @@ import {
   DEFAULT_BROWSERD_USER_DATA_DIR,
   extraArgsFor,
   formatReadyLine,
+  parseBrowserdFeatures,
   readBrowserdConfig,
 } from "../config";
 
@@ -350,5 +351,37 @@ describe("announcedFeatures", () => {
         MCPJAM_BROWSERD_VIEWPORT_POLICY: "followpane",
       }).viewportPolicy,
     ).toBe("fixed");
+  });
+});
+
+describe("parseBrowserdFeatures", () => {
+  it("turns the additive features on and keeps keystroke typing off by default", () => {
+    expect(parseBrowserdFeatures({})).toEqual({
+      a11yFrames: true,
+      scrollableMarkers: true,
+    });
+  });
+
+  it("switches off exactly the features the kill switch names", () => {
+    expect(
+      parseBrowserdFeatures({
+        MCPJAM_BROWSERD_DISABLE_FEATURES: "a11yFrames",
+      }),
+    ).toEqual({ scrollableMarkers: true });
+  });
+
+  it("turns on an opt-in feature only when it is named", () => {
+    expect(
+      parseBrowserdFeatures({ MCPJAM_BROWSERD_FEATURES: " keystrokeTyping " }),
+    ).toEqual({ a11yFrames: true, scrollableMarkers: true, keystrokeTyping: true });
+  });
+
+  it("ignores names it does not know rather than refusing to boot", () => {
+    expect(
+      parseBrowserdFeatures({
+        MCPJAM_BROWSERD_FEATURES: "keystroketyping,teleport",
+        MCPJAM_BROWSERD_DISABLE_FEATURES: "changedA11y",
+      }),
+    ).toEqual({ a11yFrames: true, scrollableMarkers: true });
   });
 });

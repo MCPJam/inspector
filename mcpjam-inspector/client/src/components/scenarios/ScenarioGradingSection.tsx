@@ -149,11 +149,18 @@ export function ScenarioGradingSection({
   return (
     <section
       data-testid="scenario-grading-section"
-      className="space-y-4 border-t border-border/40 pt-4"
+      // No top rule any more: the settings page gives this its own card, and a
+      // divider inside one draws a line to nothing.
+      className="space-y-4"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <h3 className="text-sm font-medium">Grading</h3>
+          {/* `h2`, like every other Settings card: this one is their peer, and
+              an `h3` would file it under whichever card precedes it for anyone
+              navigating by heading. */}
+          <h2 className="text-base font-medium tracking-tight text-foreground">
+            Grading
+          </h2>
           <p className="text-xs text-muted-foreground">
             Grade a sample of real tester sessions against checks after they go
             quiet. Verdicts appear on each session and in Insights.
@@ -179,9 +186,7 @@ export function ScenarioGradingSection({
           className="h-7 w-16 text-xs"
           inputMode="numeric"
           value={draft.samplingPercent}
-          onChange={(event) =>
-            update({ samplingPercent: event.target.value })
-          }
+          onChange={(event) => update({ samplingPercent: event.target.value })}
           aria-invalid={!samplingValid}
         />
         <span className="text-xs text-muted-foreground">
