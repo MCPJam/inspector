@@ -20,7 +20,7 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 
 Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
 
-`MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result’s trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`HostRunner`](/sdk/reference/host-runner) was constructed with [`mcpClientManager`](/sdk/reference/host-runner#parameters).
+`MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result's trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`HostRunner`](/sdk/reference/host-runner) was constructed with [`mcpClientManager`](/sdk/reference/host-runner#parameters).
 
 ---
 
@@ -231,7 +231,7 @@ Uploaded runs can show **Replay this run** / server-side MCP replay when the ing
 - **`HostRunner` vs reporter** — Putting `mcpClientManager` on [`HostRunner`](/sdk/reference/host-runner) fills **MCP App widget snapshots** on [`PromptResult`](/sdk/reference/prompt-result). The **reporter** (and one-shot `report*`) resolves **server replay** from its **own** `agent` / `mcpClientManager` fields. Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](#createevalrunreporter) as well; **agent-only** wiring can still upload traces and widgets but **omit** `hasServerReplayConfig`.
 - **Teardown order** — `finalize()` / one-shot reporting calls `getServerReplayConfigs()` against **connected** registrations. In `afterAll`, run **`await reporter.finalize()`** (or `reportEvalResults`) **before** **`await manager.disconnectAllServers()`**. Disconnecting first clears manager state and uploads **without** replay metadata.
 
-**LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite’s models.
+**LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite's models.
 
 ### Using with PromptResult
 
@@ -671,7 +671,3 @@ It is on by default and there is nothing to configure. Details worth knowing:
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
 - [EvalTest Reference](/sdk/reference/eval-test) - EvalTest API
 - [EvalSuite Reference](/sdk/reference/eval-suite) - EvalSuite API
-
-Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to advisory Warn. UVC reports these evaluator results without turning advisory failures into failed stages. Scored gating discovery failures can fail Discovery under analyzer 12; setup failure attribution takes precedence. Empty complete catalogs receive an explicit “no tools advertised” rationale.
-
-Cases can suppress suite check families with `suppressedSuiteStandardCheckIds` (for example, `["response.performance"]`). This filters suite defaults before inherit/extend/replace resolution, preserves explicit case and step assertions, and remains effective after a suite threshold changes. Omitted updates preserve suppression; `[]` clears it. Catalog IDs are authoring references; evaluator reporting keeps its existing content-derived scorer IDs.
