@@ -91,7 +91,7 @@ export function ScenarioTaskChecklist({
           size="sm"
           className="gap-2"
           data-testid="scenario-tasks-trigger"
-          aria-label={`Optional things to try — ${remainingLabel}`}
+          aria-label={`What to try — optional, ${remainingLabel}`}
         >
           <span className="font-medium">What to try</span>
           <span

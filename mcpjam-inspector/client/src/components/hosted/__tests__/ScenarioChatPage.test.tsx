@@ -1469,6 +1469,9 @@ describe("ScenarioChatPage", () => {
       render(<ScenarioChatPage />);
 
       const trigger = await screen.findByTestId("scenario-tasks-trigger");
+      // The accessible name must keep "What to try": the consent dialog tells
+      // every tester to look for that name, and a voice-control user says it.
+      expect(screen.getByRole("button", { name: /What to try/ })).toBe(trigger);
       expect(screen.getByTestId("scenario-tasks-remaining")).toHaveTextContent(
         "3 unchecked",
       );
