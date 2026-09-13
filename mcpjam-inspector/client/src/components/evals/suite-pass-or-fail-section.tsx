@@ -31,10 +31,10 @@ import type { EvalJudgeConfig } from "./types";
  * same sentence.
  */
 export const PASS_OR_FAIL_HINT =
-  "Scorers evaluate the evidence available for each trial. Gate results contribute to the trial verdict; Warn highlights an advisory result; Report records it.";
+  "Evaluators grade the evidence available for each iteration. Gate results contribute to the iteration verdict; Warn highlights an advisory result; Report records it.";
 
 export const JUDGE_HINT =
-  "A judge scores trial evidence from 0–1. Goal completion can gate after review-protocol and calibration requirements are met, or through an explicit owner acknowledgement once protocol readiness is met.";
+  "A judge scores iteration evidence from 0–1. Goal completion can gate after review-protocol and calibration requirements are met, or through an explicit owner acknowledgement once protocol readiness is met.";
 
 export function SuitePassOrFailSection({
   matchOptions,
@@ -61,7 +61,7 @@ export function SuitePassOrFailSection({
   judgeConfig: EvalJudgeConfig | undefined;
   onJudgeConfigChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
-  /** The "migrate scenario checks per case" warning, when the suite has any. */
+  /** The "migrate scenario assertions per case" warning, when the suite has any. */
   scenarioMigrationNotice?: React.ReactNode;
   /** S6 mounts the agreement line, the gate switch and its acknowledgement. */
   judgeAccessory?: React.ReactNode;

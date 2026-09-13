@@ -95,7 +95,7 @@ describe("only what changed is sent", () => {
   test("an updater is resolved against the authoritative draft", () => {
     // The form `AddCheckMenu` uses. Before this, the setter stored the
     // FUNCTION as the value: `describePredicates` and the checks list both
-    // iterate it, and `for...of` over a function throws — "Add check" broke
+    // iterate it, and `for...of` over a function throws — "Add assertion" broke
     // the sheet at runtime, with nothing in the type system to stop it
     // (the client has no typecheck in CI).
     let draft = draftOf();
@@ -556,8 +556,8 @@ describe("describeChange — verdict policy defaults", () => {
     };
     const row = describeChange("verdictPolicyDefaults", before, after);
     expect(row.label).not.toBe("Validity");
-    expect(row.before).toContain("3 repetitions");
-    expect(row.after).toContain("5 repetitions");
+    expect(row.before).toContain("3 iterations");
+    expect(row.after).toContain("5 iterations");
     expect(row.before).not.toBe(row.after);
   });
 
@@ -576,7 +576,7 @@ describe("describeChange — verdict policy defaults", () => {
     expect(row.before).toBe("None");
     expect(row.after).toContain("Run run_abc");
     expect(row.after).toContain("5% allowed drop");
-    expect(row.after).toContain("any gating scorer errored");
+    expect(row.after).toContain("any gating evaluator errored");
     expect(row.after).not.toContain("Previous run");
   });
 
@@ -597,7 +597,7 @@ describe("describeChange — verdict policy defaults", () => {
     const row = describeChange("gatePolicy", before, after);
     expect(row.before).toContain("0% allowed drop");
     expect(row.before).toContain("no deterministic regressions");
-    expect(row.after).toBe("any gating scorer errored");
+    expect(row.after).toBe("any gating evaluator errored");
     expect(row.after).not.toContain("allowed drop");
   });
 

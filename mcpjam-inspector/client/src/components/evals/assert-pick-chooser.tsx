@@ -244,7 +244,7 @@ export function AssertPickChooser({
             data-testid="assert-pick-confirm"
             onClick={confirm}
           >
-            Add check
+            Add assertion
           </Button>
         </DialogFooter>
       </DialogContent>

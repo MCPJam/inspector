@@ -18,7 +18,7 @@ describe("getSubsectionsForGroup", () => {
     const subs = getSubsectionsForGroup("grading", base);
     expect(subs.map((sub) => sub.label)).toEqual([
       "Quality gate",
-      "Scorers",
+      "Assertions",
     ]);
     expect(subs.some((sub) => sub.target.type === "stage")).toBe(false);
   });
@@ -30,7 +30,7 @@ describe("getSubsectionsForGroup", () => {
     });
     expect(subs.map((sub) => sub.label)).toEqual([
       "Quality gate",
-      "Scorers",
+      "Assertions",
     ]);
   });
 

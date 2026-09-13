@@ -162,7 +162,7 @@ function resultFromScore(
     return {
       state: "error",
       source: "scoreRow",
-      reason: score.error ?? "The scorer could not be evaluated.",
+      reason: score.error ?? "The evaluator could not run.",
     };
   }
   if (score.status === "skipped") {
@@ -437,7 +437,7 @@ function judgeResult(judge: JudgeCase): TrialRowResult {
     return {
       state: "error",
       source: "judgeCase",
-      reason: judge.reason ?? "The judge could not grade this trial.",
+      reason: judge.reason ?? "The judge could not grade this iteration.",
     };
   }
   if (judge.status === "skipped") {

@@ -469,7 +469,7 @@ export function stepScope(
 function rowTooltip(kindLabel: string, role: ScorerUiRole, inline: boolean) {
   const parts = [kindLabel, ROLE_LEGEND[role].meaning];
   if (inline) {
-    parts.push("Graded where it sits in the run, not over the whole trial.");
+    parts.push("Graded where it sits in the run, not over the whole iteration.");
   }
   return parts.join(" ");
 }
@@ -486,7 +486,7 @@ export function routeLabel(state: RouteState): string {
     case "noTool":
       return "No tool should be called";
     case "checks":
-      return "Any route — graded by the scorers below";
+      return "Any route — graded by the evaluators below";
     case "unset":
       return "Which tool should handle it?";
     case "locked":
@@ -760,7 +760,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
     editable: true,
     judge: facts,
     tooltip: rowTooltip(
-      "A judge scores trial evidence from 0 to 1.",
+      "A judge scores iteration evidence from 0 to 1.",
       judgeRole,
       false,
     ),

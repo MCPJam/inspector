@@ -101,12 +101,12 @@ export const ROLE_LEGEND: Record<
 > = {
   gate: {
     label: "Gate",
-    meaning: "If this check fails, the iteration fails.",
+    meaning: "If this assertion fails, the iteration fails.",
   },
   warn: {
     label: "Warn",
     meaning:
-      "If this check fails, a warning is shown without failing the iteration.",
+      "If this assertion fails, a warning is shown without failing the iteration.",
   },
   report: {
     label: "Report",
@@ -297,7 +297,7 @@ export type ScorerTableView = {
 const STAGE_CONFIG_CHIP_LABEL: Record<StageConfigState["state"], string> = {
   runner: "Observed by the runner",
   gated: "Gated",
-  gap: "No grader",
+  gap: "No evaluator",
   judgeOnRequest: "Judge on request",
   judgeAutomatic: "Judge automatic",
   judgeOff: "Judge off",

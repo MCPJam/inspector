@@ -85,7 +85,7 @@ function Body({
       return (
         <>
           <span className="text-xs text-muted-foreground">
-            The judge could not grade this trial
+            The judge could not grade this iteration
           </span>
           {onRetry ? <RetryButton onRetry={onRetry} /> : null}
         </>
@@ -121,7 +121,7 @@ function Body({
     return (
       <>
         <span className="text-xs text-muted-foreground">
-          The judge could not grade this trial
+          The judge could not grade this iteration
         </span>
         {onRetry ? <RetryButton onRetry={onRetry} /> : null}
       </>
@@ -170,7 +170,7 @@ function Body({
   }
   return (
     <span className="text-xs text-muted-foreground">
-      Not run for this trial
+      Not run for this iteration
     </span>
   );
 }

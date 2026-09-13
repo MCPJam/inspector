@@ -79,7 +79,7 @@ export function describeValidity(
   }
   if (validity.maxEvaluatorErrorRate !== undefined) {
     parts.push(
-      `at most ${formatFraction(validity.maxEvaluatorErrorRate)} grader errors`,
+      `at most ${formatFraction(validity.maxEvaluatorErrorRate)} evaluator errors`,
     );
   }
   return parts.length > 0 ? parts.join(", ") : "Contract defaults";
@@ -123,7 +123,7 @@ export function describeGatePolicy(
     parts.push(`${policy.maximumP95LatencyIncreaseMs}ms p95 increase`);
   }
   if (policy.noGatingScoreErrors === true) {
-    parts.push("any gating scorer errored");
+    parts.push("any gating evaluator errored");
   }
   return parts.length > 0 ? parts.join(", ") : "None";
 }

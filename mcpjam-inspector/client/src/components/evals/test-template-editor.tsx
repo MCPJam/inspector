@@ -435,7 +435,7 @@ function CaptureModeToggle({
 }) {
   const options: { value: "record" | "assert"; label: string }[] = [
     { value: "record", label: "Record actions" },
-    { value: "assert", label: "Add checks" },
+    { value: "assert", label: "Add assertions" },
   ];
   return (
     <div className="inline-flex overflow-hidden rounded-md border border-border">
@@ -677,23 +677,24 @@ function getWidgetAssertionGap(a: WidgetAssertion): string | null {
   // `isWidgetAssertion` only asserts that `kind` is a string, so an unknown one
   // has no label — and would otherwise fall past the switch as "complete".
   const name = WIDGET_ASSERTION_LABELS[a.kind];
-  if (!name) return "Pick a check type for the widget check.";
+  if (!name) return "Pick a type for the widget assertion.";
   const label = name.toLowerCase();
   if (!trimmedField(a.toolName)) {
-    return `Pick a view (tool) for the ${label} check.`;
+    return `Pick a view (tool) for the ${label} assertion.`;
   }
   switch (a.kind) {
     case "textVisible":
-      if (!trimmedField(a.text)) return "Enter the text the check looks for.";
+      if (!trimmedField(a.text))
+        return "Enter the text the assertion looks for.";
       return tooLong(a.text)
         ? `Shorten the expected text to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
         : null;
     case "elementVisible":
     case "elementHidden":
-      return getLocatorGap(a.target, `${label} check`);
+      return getLocatorGap(a.target, `${label} assertion`);
     case "inputValue":
       return (
-        getLocatorGap(a.target, `${label} check`) ??
+        getLocatorGap(a.target, `${label} assertion`) ??
         (tooLong(a.equals)
           ? `Shorten the expected value to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
           : null)
@@ -2209,7 +2210,7 @@ export function TestTemplateEditor({
       return getStepsBlockReason(editForm.steps);
     }
     if (!arePredicatesValid || !areStepChecksValid) {
-      return "Fix invalid checks before saving.";
+      return "Fix invalid assertions before saving.";
     }
     return null;
   }, [
@@ -3966,7 +3967,7 @@ export function TestTemplateEditor({
         </div>
       )}
       {/* Assert-mode pick chooser: opens when a click is captured in "Add
-          checks" mode, builds a widget assertion seeded with the derived
+          assertions" mode, builds a widget assertion seeded with the derived
           locator. Portaled, so its position here doesn't affect layout. */}
       <AssertPickChooser
         pick={pendingPick}
@@ -5370,7 +5371,7 @@ export function TestTemplateEditor({
                         />
                         <span className="truncate text-[11px] text-muted-foreground">
                           {captureMode === "assert"
-                            ? "Click an element to add a check about it."
+                            ? "Click an element to add an assertion about it."
                             : "Click inside a view to record actions."}
                         </span>
                       </div>

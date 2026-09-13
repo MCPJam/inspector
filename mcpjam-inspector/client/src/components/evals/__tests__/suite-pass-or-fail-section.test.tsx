@@ -1,11 +1,11 @@
 /**
- * The "Scorers and judges" section, and the policy controls beside it.
+ * The "Evaluators" section, and the policy controls beside it.
  *
  * Two properties are worth a test rather than a reading:
  *
  *   - an EMPTY stage says the right kind of nothing. `connection`, `discovery`
  *     and `call` have no authorable grader on this page — the runner measures
- *     them on every trial — so "No grader" there would read as a gap somebody
+ *     them on every iteration — so "No evaluator" there would read as a gap somebody
  *     should close. And neither answer may borrow `notMeasured`, which is a
  *     RUN-state word for a stage nobody observed.
  *   - the threshold field is a PERCENT over a stored FRACTION. Typing 80 must
@@ -81,9 +81,9 @@ describe("SuitePassOrFailSection", () => {
     }
   });
 
-  it("says 'No grader' for an unconfigured response stage", () => {
+  it("says 'No evaluator' for an unconfigured response stage", () => {
     const { container } = renderSection();
-    expect(emptyCopy(container, "response")).toBe("No grader");
+    expect(emptyCopy(container, "response")).toBe("No evaluator");
   });
 
   it("never tells a reader connection or discovery is ungraded", () => {
@@ -239,7 +239,7 @@ describe("VerdictPolicyUpgradeButton", () => {
         onUpgrade={onUpgrade}
       />,
     );
-    expect(screen.getByText(/3 repetitions, 80% threshold/)).toBeTruthy();
+    expect(screen.getByText(/3 iterations, 80% threshold/)).toBeTruthy();
     await user.click(
       screen.getByRole("button", { name: /switch to verdict policy v2/i }),
     );

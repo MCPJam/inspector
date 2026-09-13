@@ -138,6 +138,7 @@ function AssertStepBody({
   // the step row owns deletion.
   return (
     <CheckRow
+      noun="assertion"
       predicate={a}
       onChange={(next: Predicate) => setAssertion(next)}
       availableTools={availableTools.map((t) => t.name)}
@@ -508,7 +509,8 @@ export function StepListEditor({
             Steps
           </h3>
           <p className="text-[11px] text-muted-foreground">
-            An ordered sequence of prompts, tool calls, interactions, and checks.
+            An ordered sequence of prompts, tool calls, interactions, and
+            assertions.
           </p>
         </div>
       </header>

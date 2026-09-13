@@ -293,7 +293,7 @@ describe("SuiteScorerTable", () => {
   it("lists library categories that have kinds", async () => {
     const user = userEvent.setup();
     renderTable();
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     for (const name of [
       "Assertions · Tool selection",
       "Assertions · Answer and outcome",
@@ -310,7 +310,7 @@ describe("SuiteScorerTable", () => {
     const heads = Array.from(container.querySelectorAll("thead th")).map(
       (head) => head.textContent?.trim(),
     );
-    expect(heads).toEqual(["Scorer", "Kind", "Threshold", "Role"]);
+    expect(heads).toEqual(["Evaluator", "Kind", "Threshold", "Role"]);
     expect(container.textContent).not.toMatch(/Last run/i);
     expect(container.textContent).not.toMatch(/Trend/i);
   });
@@ -319,7 +319,7 @@ describe("SuiteScorerTable", () => {
     const { container } = renderTable({
       predicates: [{ type: "noToolErrors" }],
     });
-    expect(screen.queryByRole("group", { name: "Check role" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Assertion role" })).toBeNull();
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
@@ -336,7 +336,7 @@ describe("SuiteScorerTable", () => {
         { type: "noToolErrors", role: "advisory", severity: "warn" } as never,
       ],
     });
-    expect(screen.queryByRole("group", { name: "Check role" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Assertion role" })).toBeNull();
     const row = container.querySelector(
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;

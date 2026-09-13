@@ -137,7 +137,7 @@ export function SuiteScorerTable({
           <div className="space-y-1">
             <div className="flex items-center gap-1.5">
               <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                Scorers
+                Assertions
               </h3>
               <GlobalGatesSectionInfoHint />
             </div>
@@ -161,7 +161,7 @@ export function SuiteScorerTable({
           <table className="w-full min-w-[40rem] border-collapse text-left text-xs">
             <thead>
               <tr className="border-b border-border/60 text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
-                <th className="py-2 pr-3 font-medium">Scorer</th>
+                <th className="py-2 pr-3 font-medium">Evaluator</th>
                 <th className="py-2 pr-3 font-medium">Kind</th>
                 <th className="py-2 pr-3 font-medium">Threshold</th>
                 <th className="py-2 font-medium">Role</th>
@@ -207,7 +207,7 @@ export function SuiteScorerTable({
                       )}
                       data-stage-empty={group.stage}
                     >
-                      No grader
+                      No evaluator
                     </td>
                   </tr>
                 ) : (
@@ -436,6 +436,7 @@ function ScorerRow({
         <tr className="border-b border-border/40">
           <td colSpan={4} className="pb-3 pt-1">
             <CheckRow
+              noun="assertion"
               embedded
               predicate={predicate}
               onChange={(next) => onPredicateChange(row.predicateIndex!, next)}
@@ -659,7 +660,7 @@ function RoleCell({
         // and never as a Gate — the same rule the Zod schema enforces at the
         // save, surfaced as an absent segment rather than a refused save.
         roles={rolesForPredicateKind(predicate.type)}
-        ariaLabel="Check role"
+        ariaLabel="Assertion role"
         onChange={(role) =>
           onPredicateChange(
             row.predicateIndex!,

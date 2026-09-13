@@ -206,7 +206,7 @@ export function describeDiagnosticChain(
     chain.status !== "absent" ? chain.analyzerVersionAhead : undefined;
   const trustNote =
     chain.status === "unverified"
-      ? "This trial's stage chain did not validate, so the chain and both claims drawn from it are withheld."
+      ? "This iteration's stage chain did not validate, so the chain and both claims drawn from it are withheld."
       : versionAhead
         ? `Recorded by stage analyzer v${versionAhead.reported}, newer than the v${versionAhead.known} this build knows. Shown as reported.`
         : null;
