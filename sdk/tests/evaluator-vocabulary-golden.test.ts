@@ -91,9 +91,9 @@ const JUDGE_OPTIONS = {
  *
  * Its id digests the WHOLE rule, `role` and `severity` included, while its
  * `implementationHash` digests the rule with those stripped. The two therefore
- * differ, and the gate has to pin both or a later constructor could reuse the
- * implementation hash as the id and renumber every policy-bearing anonymous
- * evaluator without failing here.
+ * differ, and the gate has to pin both — otherwise a later constructor could
+ * reuse the implementation hash as the id and renumber every policy-bearing
+ * anonymous evaluator without failing here.
  */
 const policyBearing: Predicate = {
   type: "responseContains",
@@ -155,7 +155,7 @@ const legacyBuilders: Record<string, () => EvalTest> = {
       scorers: [
         predicateScorer(
           { type: "finalAssistantMessageNonEmpty" },
-          { id: "nonempty-answer" }
+          { id: "nonempty-answer" },
         ),
       ],
     }),
@@ -175,9 +175,7 @@ const legacyBuilders: Record<string, () => EvalTest> = {
       id: "c_anonymous",
       name: "anonymous",
       test: passing,
-      scorers: [
-        predicateScorer({ type: "responseContains", needle: "refund" }),
-      ],
+      scorers: [predicateScorer({ type: "responseContains", needle: "refund" })],
     }),
 
   [POLICY_LABEL]: () =>
@@ -200,15 +198,14 @@ const legacyBuilders: Record<string, () => EvalTest> = {
 describe("evaluation config identity is frozen", () => {
   it("covers every golden row with a builder, and every builder with a row", () => {
     expect(Object.keys(legacyBuilders).sort()).toEqual(
-      goldenCases.map((entry) => entry.label).sort()
+      goldenCases.map((entry) => entry.label).sort(),
     );
   });
 
   for (const entry of goldenCases) {
     describe(entry.label, () => {
       it("produces the pinned snapshot", () => {
-        const built =
-          legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
+        const built = legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
         expect(built).toEqual(entry.snapshot);
       });
 
@@ -221,18 +218,19 @@ describe("evaluation config identity is frozen", () => {
           legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
         expect(
           Object.fromEntries(
-            built.definitions.map((d) => [d.scorerId, definitionHash(d)])
-          )
+            built.definitions.map((d) => [d.scorerId, definitionHash(d)]),
+          ),
         ).toEqual(entry.definitionHashes);
       });
 
       it("keeps every evaluator id and id source, in order", () => {
-        const built =
-          legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
+        const built = legacyBuilders[entry.label]!().getEvaluationConfigSnapshot();
         expect(
-          built.definitions.map((d) => `${d.scorerId} (${d.idSource})`)
+          built.definitions.map((d) => `${d.scorerId} (${d.idSource})`),
         ).toEqual(
-          entry.snapshot.definitions.map((d) => `${d.scorerId} (${d.idSource})`)
+          entry.snapshot.definitions.map(
+            (d) => `${d.scorerId} (${d.idSource})`,
+          ),
         );
       });
     });
@@ -244,32 +242,34 @@ describe("evaluation config identity is frozen", () => {
     // otherwise get wrong: a built-in row minted against the wrong definition
     // carries a hash that joins to nothing, and the gate's fail-closed join
     // reads an unjoinable row as tampering.
-    expect(() =>
-      new EvalTest({
-        id: "c_reserved",
-        name: "reserved",
-        test: passing,
-        scorers: [
-          predicateScorer({ type: "noToolErrors" }, { id: "tool-match" }),
-        ],
-      }).getEvaluationConfigSnapshot()
+    expect(
+      () =>
+        new EvalTest({
+          id: "c_reserved",
+          name: "reserved",
+          test: passing,
+          scorers: [
+            predicateScorer({ type: "noToolErrors" }, { id: "tool-match" }),
+          ],
+        }).getEvaluationConfigSnapshot(),
     ).toThrow(/already used by this test's built-in scorers/);
   });
 
   it("refuses one id standing for two different evaluations", () => {
-    expect(() =>
-      new EvalTest({
-        id: "c_conflict",
-        name: "conflict",
-        test: passing,
-        scorers: [
-          predicateScorer({ type: "noToolErrors" }, { id: "same" }),
-          predicateScorer(
-            { type: "finalAssistantMessageNonEmpty" },
-            { id: "same" }
-          ),
-        ],
-      }).getEvaluationConfigSnapshot()
+    expect(
+      () =>
+        new EvalTest({
+          id: "c_conflict",
+          name: "conflict",
+          test: passing,
+          scorers: [
+            predicateScorer({ type: "noToolErrors" }, { id: "same" }),
+            predicateScorer(
+              { type: "finalAssistantMessageNonEmpty" },
+              { id: "same" },
+            ),
+          ],
+        }).getEvaluationConfigSnapshot(),
     ).toThrow();
   });
 
@@ -285,7 +285,7 @@ describe("evaluation config identity is frozen", () => {
     }).getEvaluationConfigSnapshot();
 
     expect(
-      snapshot.definitions.filter((d) => d.scorerId === "same")
+      snapshot.definitions.filter((d) => d.scorerId === "same"),
     ).toHaveLength(1);
   });
 
@@ -293,10 +293,10 @@ describe("evaluation config identity is frozen", () => {
     const row = goldenCases.find(
       (entry) =>
         entry.label ===
-        "anonymous assertion through scorers — the content-derived id"
+        "anonymous assertion through scorers — the content-derived id",
     )!;
     const generated = row.snapshot.definitions.find(
-      (definition) => definition.idSource === "generated"
+      (definition) => definition.idSource === "generated",
     )!;
 
     // A standalone evaluator has no position, so its id comes from its rule's
@@ -305,41 +305,43 @@ describe("evaluation config identity is frozen", () => {
     // covers that path: the `predicates` rows are positional and the other
     // scorer row is explicitly named.
     expect(generated.scorerId).toMatch(
-      /^predicate:responseContains#[0-9a-f]{64}$/
+      /^predicate:responseContains#[0-9a-f]{64}$/,
     );
     // Equal HERE only because this rule carries no policy fields. The row
-    // below is the general case, where they diverge.
-    expect(generated.implementationHash).toBe(generated.scorerId.split("#")[1]);
+    // below is the general case, where the two diverge.
+    expect(generated.implementationHash).toBe(
+      generated.scorerId.split("#")[1],
+    );
   });
 
   it("pins an anonymous assertion whose rule carries policy", () => {
     const row = goldenCases.find((entry) => entry.label === POLICY_LABEL)!;
     const generated = row.snapshot.definitions.find(
-      (definition) => definition.idSource === "generated"
+      (definition) => definition.idSource === "generated",
     )!;
 
     // The id digests the whole rule; the implementation hash digests it with
-    // `role` and `severity` stripped. Note the implementation hash is the
+    // `role` and `severity` stripped. Note that the implementation hash is the
     // POLICY-FREE rule's id suffix, which is why asserting the two are equal
     // in general would have frozen the wrong rule.
     expect(generated.scorerId).toBe(
-      "predicate:responseContains#f54cf792125b3846651c875cae4d417bb1adf5d6dab0992cca5f661142c6d779"
+      "predicate:responseContains#f54cf792125b3846651c875cae4d417bb1adf5d6dab0992cca5f661142c6d779",
     );
     expect(generated.implementationHash).toBe(
-      "1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1"
+      "1ed825dd8c4484fa231d4b04177afae713ed9ab60de848091d076ea2af8d00e1",
     );
     expect(generated.implementationHash).not.toBe(
-      generated.scorerId.split("#")[1]
+      generated.scorerId.split("#")[1],
     );
     expect(generated.role).toBe("advisory");
   });
 
   it("pins a real judge's rubric-and-template hash", () => {
     const row = goldenCases.find((entry) =>
-      entry.label.startsWith("a real judge")
+      entry.label.startsWith("a real judge"),
     )!;
     const judge = row.snapshot.definitions.find(
-      (definition) => definition.deterministic === false
+      (definition) => definition.deterministic === false,
     )!;
 
     // Derived by `judgeScorer` from the rubric, the prompt TEMPLATE VERSION and
