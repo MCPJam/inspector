@@ -78,17 +78,14 @@ vi.mock("@/lib/github-external-redirect", () => ({
 }));
 
 vi.mock("@/lib/app-navigation", () => ({
-  useCurrentLocationParts: () => ({
-    pathname: window.location.pathname,
-    search: window.location.search,
-    hash: window.location.hash,
-  }),
+  useCurrentLocationParts: () => ({ pathname: window.location.pathname, search: window.location.search, hash: window.location.hash }),
   useAppNavigate: () => mockNavigate,
 }));
 
 vi.mock("@/lib/toast", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
+
 
 import { toast } from "@/lib/toast";
 import { GithubInstallCallbackRoute } from "../GithubInstallCallbackRoute";
@@ -112,7 +109,7 @@ function renderCallback(query: string) {
           <Route path={PATH} element={<GithubInstallCallbackRoute />} />
         </Routes>
       </MemoryRouter>
-    </StrictMode>,
+    </StrictMode>
   );
 }
 
@@ -192,11 +189,11 @@ describe("waiting for authentication", () => {
             <Route path={PATH} element={<GithubInstallCallbackRoute />} />
           </Routes>
         </MemoryRouter>
-      </StrictMode>,
+      </StrictMode>
     );
 
     await waitFor(() =>
-      expect(mockCompleteUserAuthorization).toHaveBeenCalledTimes(1),
+      expect(mockCompleteUserAuthorization).toHaveBeenCalledTimes(1)
     );
     expect(mockCompleteUserAuthorization).toHaveBeenCalledWith({
       code: "gh-code",
@@ -226,7 +223,7 @@ describe("waiting for authentication", () => {
     renderCallback("?code=gh-code&state=raw-oauth-state");
 
     await waitFor(() =>
-      expect(screen.getByText(/not signed in to MCPJam/i)).toBeTruthy(),
+      expect(screen.getByText(/not signed in to MCPJam/i)).toBeTruthy()
     );
     expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
     expect(mockCompleteInstallSetup).not.toHaveBeenCalled();
@@ -238,7 +235,7 @@ describe("waiting for authentication", () => {
     renderCallback("?code=gh-code&state=raw-oauth-state");
 
     await waitFor(() =>
-      expect(screen.getByText(/not signed in to MCPJam/i)).toBeTruthy(),
+      expect(screen.getByText(/not signed in to MCPJam/i)).toBeTruthy()
     );
     expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
   });
@@ -252,7 +249,7 @@ describe("the setup leg", () => {
     renderCallback("?installation_id=4242&state=raw-install-state");
 
     await waitFor(() =>
-      expect(mockCompleteInstallSetup).toHaveBeenCalledTimes(1),
+      expect(mockCompleteInstallSetup).toHaveBeenCalledTimes(1)
     );
     // The state is passed EXACTLY as GitHub sent it. The backend matches by
     // hash, so trimming or lower-casing here would simply stop it matching.
@@ -262,8 +259,8 @@ describe("the setup leg", () => {
     });
     await waitFor(() =>
       expect(mockRedirectToGithub).toHaveBeenCalledWith(
-        "https://github.com/login/oauth/authorize?client_id=x",
-      ),
+        "https://github.com/login/oauth/authorize?client_id=x"
+      )
     );
   });
 
@@ -271,12 +268,12 @@ describe("the setup leg", () => {
     mockCompleteInstallSetup.mockRejectedValue(
       Object.assign(new Error("Server Error"), {
         data: "We could not verify that installation with GitHub. This is not a problem with your repositories — start the connection again from Settings.",
-      }),
+      })
     );
     renderCallback("?installation_id=4242&state=s");
 
     expect(
-      await screen.findByText(/could not verify that installation/i),
+      await screen.findByText(/could not verify that installation/i)
     ).toBeInTheDocument();
     expect(mockRedirectToGithub).not.toHaveBeenCalled();
   });
@@ -284,7 +281,7 @@ describe("the setup leg", () => {
   it("refuses an installation_id that is not a positive integer", async () => {
     renderCallback("?installation_id=not-a-number&state=s");
     expect(
-      await screen.findByText(/could not finish connecting/i),
+      await screen.findByText(/could not finish connecting/i)
     ).toBeInTheDocument();
     // Nothing was sent: there was nothing to send.
     expect(mockCompleteInstallSetup).not.toHaveBeenCalled();
@@ -300,7 +297,7 @@ describe("the setup leg", () => {
     renderCallback("?installation_id=1&state=s");
 
     await waitFor(() =>
-      expect(mockCompleteInstallSetup).toHaveBeenCalledTimes(1),
+      expect(mockCompleteInstallSetup).toHaveBeenCalledTimes(1)
     );
     // Let anything the second mount queued settle before asserting, so this
     // cannot pass merely by looking too early.
@@ -321,7 +318,7 @@ describe("the setup leg", () => {
     renderCallback("?installation_id=4242&state=s");
 
     expect(
-      await screen.findByText(/could not finish connecting/i),
+      await screen.findByText(/could not finish connecting/i)
     ).toBeInTheDocument();
   });
 });
@@ -338,12 +335,10 @@ describe("the OAuth leg", () => {
       expect(mockCompleteUserAuthorization).toHaveBeenCalledWith({
         code: "raw-code",
         state: "raw-oauth-state",
-      }),
+      })
     );
     await waitFor(() =>
-      expect(mockNavigate).toHaveBeenCalledWith(
-        "/settings/integrations/github",
-      ),
+      expect(mockNavigate).toHaveBeenCalledWith("/settings/integrations/github")
     );
     expect(toast.success).toHaveBeenCalledWith("Connected acme.");
   });
@@ -419,7 +414,7 @@ describe("the OAuth leg", () => {
       expect(mockClaimProvenInstallation).toHaveBeenCalledWith({
         linkSessionId: "sess-1",
         installationId: 11,
-      }),
+      })
     );
   });
 
@@ -438,11 +433,11 @@ describe("the OAuth leg", () => {
 
     await waitFor(() =>
       expect(mockRedirectToGithub).toHaveBeenCalledWith(
-        "https://github.com/apps/mcpjam/installations/new?state=xyz",
-      ),
+        "https://github.com/apps/mcpjam/installations/new?state=xyz"
+      )
     );
     expect(
-      screen.queryByText(/not installed on any account you administer/i),
+      screen.queryByText(/not installed on any account you administer/i)
     ).toBeNull();
   });
 
@@ -457,7 +452,7 @@ describe("the OAuth leg", () => {
     renderCallback("?code=c&state=s");
 
     expect(
-      await screen.findByText(/not installed on any account you administer/i),
+      await screen.findByText(/not installed on any account you administer/i)
     ).toBeInTheDocument();
     expect(mockRedirectToGithub).not.toHaveBeenCalled();
   });
@@ -500,11 +495,11 @@ describe("the OAuth leg", () => {
     await screen.findByText("acme");
 
     await user.click(
-      screen.getByRole("button", { name: /Install on another account/ }),
+      screen.getByRole("button", { name: /Install on another account/ })
     );
 
     expect(mockRedirectToGithub).toHaveBeenCalledWith(
-      "https://github.com/apps/mcpjam/installations/new?state=xyz",
+      "https://github.com/apps/mcpjam/installations/new?state=xyz"
     );
     // The redirect SUCCEEDED. Asserting the call alone would pass even if the
     // guard had thrown and the page had fallen back to a refusal.
@@ -527,7 +522,7 @@ describe("the OAuth leg", () => {
     await screen.findByText("acme");
 
     expect(
-      screen.queryByRole("button", { name: /Install on another account/ }),
+      screen.queryByRole("button", { name: /Install on another account/ })
     ).toBeNull();
   });
 
@@ -582,7 +577,7 @@ describe("the OAuth leg", () => {
     const noteId = taken.getAttribute("aria-describedby");
     expect(noteId).toBeTruthy();
     expect(document.getElementById(noteId as string)?.textContent).toMatch(
-      /Dana's Org/,
+      /Dana's Org/
     );
     // A connectable row describes nothing — there is no reason to give.
     expect(free).not.toHaveAttribute("aria-describedby");
@@ -632,7 +627,7 @@ describe("the OAuth leg", () => {
     renderCallback("?code=c&state=s");
 
     const note = await screen.findByText(
-      /already connected to another MCPJam organization/i,
+      /already connected to another MCPJam organization/i
     );
     expect(note).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
@@ -644,7 +639,7 @@ describe("the OAuth leg", () => {
     mockCompleteUserAuthorization.mockRejectedValue(
       Object.assign(new Error("Server Error"), {
         data: "That GitHub installation is already connected to a workspace. This is not a problem with your repositories — ask whoever set it up to disconnect it first, or install the app on a different account.",
-      }),
+      })
     );
     renderCallback("?code=c&state=s");
 
@@ -659,7 +654,7 @@ describe("neither leg", () => {
   it("explains a directly-opened callback instead of looking broken", async () => {
     renderCallback("");
     expect(
-      await screen.findByText(/opened without the details GitHub sends/i),
+      await screen.findByText(/opened without the details GitHub sends/i)
     ).toBeInTheDocument();
     expect(mockCompleteInstallSetup).not.toHaveBeenCalled();
     expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
@@ -669,7 +664,7 @@ describe("neither leg", () => {
     const user = userEvent.setup();
     renderCallback("");
     await user.click(
-      await screen.findByRole("button", { name: /Back to GitHub Checks/ }),
+      await screen.findByRole("button", { name: /Back to GitHub Checks/ })
     );
     expect(mockNavigate).toHaveBeenCalledWith("/settings/integrations/github");
   });

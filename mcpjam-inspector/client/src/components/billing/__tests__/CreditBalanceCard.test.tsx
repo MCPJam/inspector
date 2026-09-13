@@ -55,8 +55,8 @@ vi.mock("@/hooks/use-eval-iteration-quota", () => ({
     isLoading: evalQuotaLoadingState,
     isAtLimit: Boolean(
       evalQuotaState &&
-      evalQuotaState.allowed !== null &&
-      evalQuotaState.used >= evalQuotaState.allowed,
+        evalQuotaState.allowed !== null &&
+        evalQuotaState.used >= evalQuotaState.allowed,
     ),
   }),
 }));
@@ -116,9 +116,7 @@ describe("CreditBalanceCard", () => {
       screen.queryByRole("button", { name: "Buy credits" }),
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Manage" }));
-    expect(
-      screen.getByLabelText("Maximum monthly spend (optional)"),
-    ).toBeDisabled();
+    expect(screen.getByLabelText("Maximum monthly spend (optional)")).toBeDisabled();
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "Ask an organization admin",
     );

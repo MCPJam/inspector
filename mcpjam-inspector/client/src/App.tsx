@@ -632,12 +632,9 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <SupportRoute />;
     case "settings":
       if (pathname === "/settings/api-keys") return <ApiKeysSettingsRoute />;
-      if (pathname === "/settings/integrations/github/callback")
-        return <GithubInstallCallbackSettingsRoute />;
-      if (pathname === "/settings/integrations/github")
-        return <GithubChecksSettingsRoute />;
-      if (pathname === "/settings/integrations")
-        return <IntegrationsSettingsRoute />;
+      if (pathname === "/settings/integrations/github/callback") return <GithubInstallCallbackSettingsRoute />;
+      if (pathname === "/settings/integrations/github") return <GithubChecksSettingsRoute />;
+      if (pathname === "/settings/integrations") return <IntegrationsSettingsRoute />;
       return <SettingsRoute />;
     case "profile":
       return <ProfileRoute />;
@@ -2395,9 +2392,7 @@ export function IntegrationsSettingsRoute() {
     <OrganizationsRoute organizationId={activeOrganizationId}>
       <IntegrationsRoute activeOrganizationId={activeOrganizationId} />
     </OrganizationsRoute>
-  ) : (
-    <IntegrationsRoute />
-  );
+  ) : <IntegrationsRoute />;
 }
 
 export function GithubChecksSettingsRoute() {
@@ -2463,10 +2458,7 @@ export function ProfileRoute() {
   return <ProfileTab />;
 }
 
-export function OrganizationsRoute({
-  children,
-  organizationId,
-}: { children?: React.ReactNode; organizationId?: string } = {}) {
+export function OrganizationsRoute({ children, organizationId }: { children?: React.ReactNode; organizationId?: string } = {}) {
   const {
     routeOrganizationId,
     routeOrganizationSection,
@@ -2479,12 +2471,11 @@ export function OrganizationsRoute({
   return (
     <OrganizationsTab
       organizationId={organizationId ?? routeOrganizationId}
-      children={
-        children ??
-        (routeOrganizationSection === "integrations" ? (
-          <IntegrationsRoute activeOrganizationId={routeOrganizationId} />
-        ) : undefined)
-      }
+      children={children ?? (
+        routeOrganizationSection === "integrations"
+          ? <IntegrationsRoute activeOrganizationId={routeOrganizationId} />
+          : undefined
+      )}
       section={routeOrganizationSection ?? "overview"}
       checkoutIntent={checkoutIntentForBilling}
       onCheckoutIntentConsumed={consumeCheckoutIntent}
@@ -3146,10 +3137,7 @@ export default function App() {
   // gets a chance to run.
   const disconnectRuntimeServersForAuthExit = useCallback(async () => {
     const inspection = useWebmcpInspectorStore.getState();
-    if (
-      inspection.session &&
-      !inspection.session.sessionId.startsWith("hosted:")
-    ) {
+    if (inspection.session && !inspection.session.sessionId.startsWith("hosted:")) {
       await inspection.closeSession();
     }
     const serverNames = Object.keys(appState.servers);
@@ -5174,176 +5162,160 @@ export default function App() {
   const appChromeHeaderHidden =
     playgroundOnboarding || (activeTab === "home" && !!workOsUser);
 
-  const settingsProject =
-    activeProject?.organizationId === activeOrganizationId
-      ? activeProject
-      : Object.values(projects).find(
-          (project) => project.organizationId === activeOrganizationId,
-        );
+  const settingsProject = activeProject?.organizationId === activeOrganizationId
+    ? activeProject
+    : Object.values(projects).find(project => project.organizationId === activeOrganizationId);
   const settingsShellActive = [
-    "settings",
-    "profile",
-    "organizations",
-    "project-settings",
-    "billing",
+    "settings", "profile", "organizations", "project-settings", "billing",
   ].includes(activeTab);
   const appContent = (
-    <SettingsDraftProvider enabled={settingsShellActive}>
-      <SidebarProvider defaultOpen={true}>
-        {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
+    <SettingsDraftProvider enabled={settingsShellActive}><SidebarProvider defaultOpen={true}>
+      {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
           collapse the sidebar to its icon rail; navigating back out of them
           expands it again. */}
-        <SidebarAutoCollapse activeTab={activeTab} />
-        <AppChromeSidebar
-          hidden={playgroundOnboarding || settingsShellActive}
-          onNavigate={handleNavigate}
-          activeTab={activeTab}
-          projects={projects}
-          activeProjectId={activeProjectId}
-          onSwitchProject={handleSidebarSwitchProject}
-          onOpenProjectSettings={handleSidebarOpenProjectSettings}
-          onCreateProject={handleSidebarCreateProject}
-          onDeleteProject={handleDeleteProjectAndLeave}
-          isLoadingProjects={isLoadingRemoteProjects}
-          activeOrganizationId={activeOrganizationId}
-          activeOrganizationName={activeOrganizationName}
-          onSwitchOrganization={handleSidebarSwitchOrganization}
-          onProjectShared={handleProjectShared}
-          billingUiEnabled={billingUiEnabled}
-          billingGateDenied={sidebarGateDenied}
-          billingGateEnforcementActive={billingGateEnforcementActive}
-          isCreateProjectDisabled={isCreateProjectDisabled}
-          createProjectDisabledReason={createProjectDisabledReason}
-          onBeforeSignOut={disconnectRuntimeServersForAuthExit}
-        />
-        <SettingsNavigation
-          enabled={settingsShellActive}
-          context={{
-            organizationId: activeOrganizationId,
-            projectId: settingsProject?.sharedProjectId ?? settingsProject?.id,
-            authenticated: isAuthenticated,
-            remoteProject: !!settingsProject?.sharedProjectId,
-            personalOrganization: sortedOrganizations.find(
-              (org) => org._id === activeOrganizationId,
-            )?.isPersonal,
-          }}
-          organizations={sortedOrganizations}
-          projects={Object.values(projects).map((project) => ({
-            ...project,
-            id: project.sharedProjectId ?? project.id,
-            remoteProject: !!project.sharedProjectId,
-          }))}
-          defaultHub={defaultHubRoute}
-          onSwitchLocalProject={async (id) => {
-            await handleSwitchProject(id);
-          }}
-        />
-        {/* The inset is the linen shell: the sidebar and top bar read as one
+      <SidebarAutoCollapse activeTab={activeTab} />
+      <AppChromeSidebar
+        hidden={playgroundOnboarding || settingsShellActive}
+        onNavigate={handleNavigate}
+        activeTab={activeTab}
+        projects={projects}
+        activeProjectId={activeProjectId}
+        onSwitchProject={handleSidebarSwitchProject}
+        onOpenProjectSettings={handleSidebarOpenProjectSettings}
+        onCreateProject={handleSidebarCreateProject}
+        onDeleteProject={handleDeleteProjectAndLeave}
+        isLoadingProjects={isLoadingRemoteProjects}
+        activeOrganizationId={activeOrganizationId}
+        activeOrganizationName={activeOrganizationName}
+        onSwitchOrganization={handleSidebarSwitchOrganization}
+        onProjectShared={handleProjectShared}
+        billingUiEnabled={billingUiEnabled}
+        billingGateDenied={sidebarGateDenied}
+        billingGateEnforcementActive={billingGateEnforcementActive}
+        isCreateProjectDisabled={isCreateProjectDisabled}
+        createProjectDisabledReason={createProjectDisabledReason}
+        onBeforeSignOut={disconnectRuntimeServersForAuthExit}
+      />
+      <SettingsNavigation
+        enabled={settingsShellActive}
+        context={{
+          organizationId: activeOrganizationId,
+          projectId: settingsProject?.sharedProjectId ?? settingsProject?.id,
+          authenticated: isAuthenticated,
+          remoteProject: !!settingsProject?.sharedProjectId,
+          personalOrganization: sortedOrganizations.find(
+            org => org._id === activeOrganizationId,
+          )?.isPersonal,
+        }}
+        organizations={sortedOrganizations}
+        projects={Object.values(projects).map(project => ({
+          ...project,
+          id: project.sharedProjectId ?? project.id,
+          remoteProject: !!project.sharedProjectId,
+        }))}
+        defaultHub={defaultHubRoute}
+        onSwitchLocalProject={async id => { await handleSwitchProject(id); }}
+      />
+      {/* The inset is the linen shell: the sidebar and top bar read as one
           continuous outer chrome and the off-white panel below is the working
           surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-row has-[[data-agent-dock=bottom]]:flex-col">
-          <SidebarInset className="bg-sidebar flex flex-col min-h-0">
-            <AppChromeHeader
-              // "make nux clean" (#2868) hid this on Home for everyone, but that
-              // also hid guests' only Sign in / Create account affordance there
-              // (PUR-35). Keep Home clean for signed-in users; show the header
-              // for guests so they still get sign-in/sign-up.
-              settings={settingsShellActive}
-              hidden={appChromeHeaderHidden || settingsShellActive}
-              activeServerSelectorProps={activeServerSelectorProps}
-              globalHostBarProps={globalHostBarProps}
-            />
-            <AppChromePanel
-              settings={settingsShellActive}
-              headerHidden={appChromeHeaderHidden || settingsShellActive}
-            >
-              {showTrialDecisionNotice ? (
-                <div className="border-b border-border/60 px-4 py-3">
-                  <Alert>
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>Billing decision required</AlertTitle>
-                    <AlertDescription>
-                      This organization&apos;s trial has ended. An owner must
-                      upgrade or choose the free plan to restore full access.
-                    </AlertDescription>
-                  </Alert>
-                </div>
-              ) : null}
-              <AppRouteReactContext.Provider value={routeContext}>
-                {locationContext ? (
-                  <Outlet context={routeContext} />
-                ) : (
-                  <NoRouterRouteBody activeTab={activeTab} />
-                )}
-              </AppRouteReactContext.Provider>
-            </AppChromePanel>
-          </SidebarInset>
-          <div className={settingsShellActive ? "hidden" : "contents"}>
-            <AgentSidePanelMount
-              hidden={settingsShellActive}
-              projectId={activeProjectId ?? null}
-              organizationId={activeOrganizationId ?? null}
-              activeTab={activeTab}
-            />
-          </div>
-        </div>
-        <Dialog
-          open={showTrialDecisionModal}
-          onOpenChange={(open) => {
-            if (!open)
-              setTrialModalDismissedForOrg(billingOrganizationId ?? null);
-          }}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-row has-[[data-agent-dock=bottom]]:flex-col">
+      <SidebarInset className="bg-sidebar flex flex-col min-h-0">
+        <AppChromeHeader
+          // "make nux clean" (#2868) hid this on Home for everyone, but that
+          // also hid guests' only Sign in / Create account affordance there
+          // (PUR-35). Keep Home clean for signed-in users; show the header
+          // for guests so they still get sign-in/sign-up.
+          settings={settingsShellActive}
+          hidden={appChromeHeaderHidden || settingsShellActive}
+          activeServerSelectorProps={activeServerSelectorProps}
+          globalHostBarProps={globalHostBarProps}
+        />
+        <AppChromePanel settings={settingsShellActive} headerHidden={appChromeHeaderHidden || settingsShellActive}>
+          {showTrialDecisionNotice ? (
+            <div className="border-b border-border/60 px-4 py-3">
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Billing decision required</AlertTitle>
+                <AlertDescription>
+                  This organization&apos;s trial has ended. An owner must
+                  upgrade or choose the free plan to restore full access.
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
+          <AppRouteReactContext.Provider value={routeContext}>
+            {locationContext ? (
+              <Outlet context={routeContext} />
+            ) : (
+              <NoRouterRouteBody activeTab={activeTab} />
+            )}
+          </AppRouteReactContext.Provider>
+        </AppChromePanel>
+      </SidebarInset>
+      <div className={settingsShellActive ? "hidden" : "contents"}>
+      <AgentSidePanelMount
+        hidden={settingsShellActive}
+        projectId={activeProjectId ?? null}
+        organizationId={activeOrganizationId ?? null}
+        activeTab={activeTab}
+      />
+      </div>
+      </div>
+      <Dialog
+        open={showTrialDecisionModal}
+        onOpenChange={(open) => {
+          if (!open)
+            setTrialModalDismissedForOrg(billingOrganizationId ?? null);
+        }}
+      >
+        <DialogContent
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+          data-testid="trial-decision-modal"
         >
-          <DialogContent
-            onPointerDownOutside={(e) => e.preventDefault()}
-            onEscapeKeyDown={(e) => e.preventDefault()}
-            data-testid="trial-decision-modal"
-          >
-            <DialogHeader>
-              <DialogTitle>Choose how to continue</DialogTitle>
-              <DialogDescription>
-                Your trial has ended. Upgrade to keep paid features, or move
-                this organization to the Free plan.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter className="gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={isSelectingFreeAfterTrial}
-                onClick={() => {
-                  void (async () => {
-                    try {
-                      await selectFreeAfterTrial();
-                      toast.success(
-                        "This organization is now on the Free plan.",
-                      );
-                    } catch {
-                      toast.error("Could not update plan. Try again.");
-                    }
-                  })();
-                }}
-              >
-                {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
-              </Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  setTrialModalDismissedForOrg(billingOrganizationId ?? null);
-                  if (billingOrganizationId) {
-                    navigateToTarget(
-                      `organizations/${billingOrganizationId}/billing`,
-                    );
+          <DialogHeader>
+            <DialogTitle>Choose how to continue</DialogTitle>
+            <DialogDescription>
+              Your trial has ended. Upgrade to keep paid features, or move this
+              organization to the Free plan.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSelectingFreeAfterTrial}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await selectFreeAfterTrial();
+                    toast.success("This organization is now on the Free plan.");
+                  } catch {
+                    toast.error("Could not update plan. Try again.");
                   }
-                }}
-              >
-                Upgrade
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </SidebarProvider>
-    </SettingsDraftProvider>
+                })();
+              }}
+            >
+              {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setTrialModalDismissedForOrg(billingOrganizationId ?? null);
+                if (billingOrganizationId) {
+                  navigateToTarget(
+                    `organizations/${billingOrganizationId}/billing`,
+                  );
+                }
+              }}
+            >
+              Upgrade
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </SidebarProvider></SettingsDraftProvider>
   );
 
   // Vanity-domain caniuse.dev pages: render the matched route full-bleed

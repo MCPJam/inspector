@@ -61,14 +61,16 @@ const {
   mockConnectVerifiedRepo: vi.fn(async (_args?: Record<string, unknown>) => ({
     configId: "cfg-new",
   })),
-  mockListInstallationRepos: vi.fn(async (): Promise<unknown[]> => [
-    {
-      repositoryId: 2,
-      fullName: "mcpjam/other-repo",
-      installationRef: "bind-1",
-      accountLogin: "mcpjam",
-    },
-  ]),
+  mockListInstallationRepos: vi.fn(
+    async (): Promise<unknown[]> => [
+      {
+        repositoryId: 2,
+        fullName: "mcpjam/other-repo",
+        installationRef: "bind-1",
+        accountLogin: "mcpjam",
+      },
+    ],
+  ),
   mockBindings: { value: undefined as unknown[] | undefined },
   mockStartInstallation: vi.fn(async () => ({
     installUrl: "https://github.com/apps/mcpjam/installations/new?state=abc",

@@ -329,9 +329,7 @@ describe("ProjectSecretsSection — inline create form", () => {
     expect(
       screen.getByRole("button", { name: "Advanced settings" }),
     ).toHaveAttribute("aria-expanded", "true");
-    expect(
-      screen.getByRole("radio", { name: /add to API requests/i }),
-    ).toBeChecked();
+    expect(screen.getByRole("radio", { name: /add to API requests/i })).toBeChecked();
     fireEvent.change(screen.getByLabelText(/^hosts$/i), {
       target: { value: "api.example.com" },
     });

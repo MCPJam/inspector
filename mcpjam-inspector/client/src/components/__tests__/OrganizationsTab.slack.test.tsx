@@ -195,9 +195,7 @@ describe("OrganizationsTab Slack section", () => {
 
   it("keeps the old Slack strip removed when the flag is on", () => {
     render(<OrganizationsTab organizationId="org-1" />);
-    expect(
-      screen.queryByRole("button", { name: "Slack" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Slack" })).not.toBeInTheDocument();
   });
 
   it("renders the section for the slack route", () => {

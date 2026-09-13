@@ -201,32 +201,12 @@ export function TraceDestinationDialog({
     setEnabled(true);
   }, [destination, open]);
 
-  const dirty =
-    name !== (destination?.name ?? "") ||
-    preset !== (destination?.preset ?? "otlp") ||
-    endpointUrl !== (destination?.endpointUrl ?? "") ||
-    includeContent !== (destination?.includeContent ?? false) ||
-    allProjects !== (destination?.projectIds == null) ||
-    enabled !== (destination?.enabled ?? true) ||
-    compression !== (destination?.compression ?? "none") ||
-    JSON.stringify(sourceTypes) !==
-      JSON.stringify(destination?.sourceTypes ?? ["eval"]) ||
-    JSON.stringify(projectIds) !==
-      JSON.stringify(destination?.projectIds ?? []) ||
-    JSON.stringify(rowsToRecord(attrRows)) !==
-      JSON.stringify(destination?.resourceAttributes ?? {}) ||
-    headerRows.some((row) => !!row.value) ||
-    JSON.stringify(headerRows.map((row) => row.key).filter(Boolean)) !==
-      JSON.stringify(destination?.headerNames ?? []);
-  useSettingsDraft(
-    open && dirty,
-    () => {
-      setHeaderRows([]);
-      setAttrRows([]);
-      onOpenChange(false);
-    },
-    open && isSaving,
-  );
+  const dirty = name !== (destination?.name ?? "") || preset !== (destination?.preset ?? "otlp") || endpointUrl !== (destination?.endpointUrl ?? "") ||
+    includeContent !== (destination?.includeContent ?? false) || allProjects !== (destination?.projectIds == null) || enabled !== (destination?.enabled ?? true) || compression !== (destination?.compression ?? "none") ||
+    JSON.stringify(sourceTypes) !== JSON.stringify(destination?.sourceTypes ?? ["eval"]) || JSON.stringify(projectIds) !== JSON.stringify(destination?.projectIds ?? []) ||
+    JSON.stringify(rowsToRecord(attrRows)) !== JSON.stringify(destination?.resourceAttributes ?? {}) ||
+    headerRows.some(row => !!row.value) || JSON.stringify(headerRows.map(row => row.key).filter(Boolean)) !== JSON.stringify(destination?.headerNames ?? []);
+  useSettingsDraft(open && dirty, () => { setHeaderRows([]); setAttrRows([]); onOpenChange(false); }, open && isSaving);
 
   const selectedPreset = useMemo(() => presetById(preset), [preset]);
 
@@ -369,7 +349,11 @@ export function TraceDestinationDialog({
       // unrecognized one outright. On a create "every project" is expressed by
       // sending no `projectIds` at all — there is no stored allowlist to
       // clear, so a flag for clearing it has nothing to mean.
-      ...(allProjects ? (isEdit ? { allProjects: true } : {}) : { projectIds }),
+      ...(allProjects
+        ? isEdit
+          ? { allProjects: true }
+          : {}
+        : { projectIds }),
       compression,
       preset,
       enabled,

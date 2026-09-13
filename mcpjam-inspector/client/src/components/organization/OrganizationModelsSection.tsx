@@ -1177,13 +1177,9 @@ function OrgCustomProviderDialog({
   );
 }
 
+
 function ProviderKeyField({
-  id,
-  configured,
-  value,
-  onChange,
-  placeholder = "sk-...",
-  optional = false,
+  id, configured, value, onChange, placeholder = "sk-...", optional = false,
 }: {
   id: string;
   configured: boolean;
@@ -1200,12 +1196,7 @@ function ProviderKeyField({
           <CheckCircle2 aria-hidden="true" className="size-4" />
           API key configured
         </span>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setReplacing(true)}
-        >
+        <Button type="button" variant="outline" size="sm" onClick={() => setReplacing(true)}>
           Replace key
         </Button>
       </div>
@@ -1214,27 +1205,12 @@ function ProviderKeyField({
   return (
     <div className="space-y-2">
       <label htmlFor={id} className="text-sm font-medium">
-        {configured ? "New API key" : "API Key"}
-        {optional && !configured ? " (optional)" : ""}
+        {configured ? "New API key" : "API Key"}{optional && !configured ? " (optional)" : ""}
       </label>
-      <Input
-        id={id}
-        type="password"
-        autoComplete="new-password"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-      />
+      <Input id={id} type="password" autoComplete="new-password" value={value}
+        onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
       {configured && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            onChange("");
-            setReplacing(false);
-          }}
-        >
+        <Button type="button" variant="ghost" size="sm" onClick={() => { onChange(""); setReplacing(false); }}>
           Keep existing key
         </Button>
       )}

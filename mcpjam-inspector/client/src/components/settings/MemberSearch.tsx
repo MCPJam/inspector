@@ -80,12 +80,12 @@ export function MemberSearch({
               value === "owner"
                 ? Crown
                 : value === "admin"
-                  ? Shield
-                  : value === "pending"
-                    ? Clock
-                    : value === "guest"
-                      ? UserRound
-                      : UserRoundCheck;
+                ? Shield
+                : value === "pending"
+                ? Clock
+                : value === "guest"
+                ? UserRound
+                : UserRoundCheck;
             return (
               <SelectItem key={value} value={value}>
                 <span className="flex items-center gap-2 capitalize">
@@ -110,14 +110,15 @@ export function MemberListHeader({
   pendingCount?: number;
 } = {}) {
   return (
-    <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-3 text-xs font-medium text-foreground">
+    <div
+      className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-3 text-xs font-medium text-foreground"
+    >
       <span className="flex items-center gap-2">
         <UserRound aria-hidden="true" className="size-4" />
         User
         {activeCount !== undefined && (
           <span className="font-normal text-muted-foreground">
-            ({activeCount} active
-            {pendingCount > 0 ? ` · ${pendingCount} pending` : ""})
+            ({activeCount} active{pendingCount > 0 ? ` · ${pendingCount} pending` : ""})
           </span>
         )}
       </span>

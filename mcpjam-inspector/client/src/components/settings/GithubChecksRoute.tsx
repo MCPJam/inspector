@@ -365,21 +365,7 @@ export function GithubChecksRoute({
     GithubCheckOutagePolicy | ""
   >("");
 
-  useSettingsDraft(
-    !!pickerRepo || !!pickerSuite || !!pickerPolicy,
-    () => {
-      setPickerRepo("");
-      setPickerSuite("");
-      setPickerPolicy("");
-    },
-    connecting ||
-      bindingBusy ||
-      pendingToggles.size > 0 ||
-      pendingPolicies.size > 0 ||
-      pendingConformance.size > 0 ||
-      pendingFeedback.size > 0 ||
-      pendingOAuth.size > 0,
-  );
+  useSettingsDraft(!!pickerRepo || !!pickerSuite || !!pickerPolicy, () => { setPickerRepo(""); setPickerSuite(""); setPickerPolicy(""); }, connecting || bindingBusy || pendingToggles.size > 0 || pendingPolicies.size > 0 || pendingConformance.size > 0 || pendingFeedback.size > 0 || pendingOAuth.size > 0);
 
   // The organization a completion belongs to. `activeOrganizationId` is a prop
   // and this component stays mounted across a switch, so an in-flight connect

@@ -14,13 +14,9 @@ const context = {
 };
 describe("settings destinations", () => {
   it("makes Support a searchable Settings destination", () => {
-    expect(resolveSettingsDestination("/settings/support")?.id).toBe(
-      "personal-support",
-    );
+    expect(resolveSettingsDestination("/settings/support")?.id).toBe("personal-support");
     expect(settingsPath("personal-support", context)).toBe("/settings/support");
-    expect(searchSettings("help", context)[0].destination.id).toBe(
-      "personal-support",
-    );
+    expect(searchSettings("help", context)[0].destination.id).toBe("personal-support");
   });
   it("opens Profile by default and keeps Appearance separately reachable", () => {
     expect(resolveSettingsDestination("/settings")?.id).toBe(
@@ -92,7 +88,9 @@ describe("settings destinations", () => {
         "?checkout=ok&tab=activity",
         result.target,
       ),
-    ).toBe("/settings/integrations?checkout=ok&tab=activity&setting=slack");
+    ).toBe(
+      "/settings/integrations?checkout=ok&tab=activity&setting=slack",
+    );
     expect(searchSettings("invite", context)[0].destination.id).toBe(
       "org-members",
     );
@@ -113,11 +111,7 @@ describe("settings destinations", () => {
   it("searches integration controls only when their existing availability allows them", () => {
     expect(searchSettings("Slack", context)[0].target).toBe("slack");
     expect(searchSettings("GitHub", context)).toEqual([]);
-    expect(
-      searchSettings("Discord", context).some(
-        (result) => result.target === "discord",
-      ),
-    ).toBe(false);
+    expect(searchSettings("Discord", context).some((result) => result.target === "discord")).toBe(false);
     expect(searchSettings("OTLP", context)).toEqual([]);
     expect(
       searchSettings("spend limit", { ...context, personalOrganization: true }),

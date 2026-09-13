@@ -144,7 +144,9 @@ function XaaTestDefaultsSection({
         <div id="test-identity-fields">
           <div className="space-y-3 px-4 py-3 rounded-md border border-border/40">
             <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium">MCPJam Test IdP</span>
+              <span className="text-sm font-medium">
+                MCPJam Test IdP
+              </span>
               <span className="text-xs text-muted-foreground">
                 Used when an authenticated project member connects without a
                 server override.
@@ -284,17 +286,13 @@ export function ProjectSettingsTab({
           description={projectDescription}
           canEdit={canManageProjectSettings}
           onSave={(details) => onUpdateProject(activeProjectId, details)}
-          icon={
-            <ProjectIconPicker
-              currentIcon={project?.icon}
-              projectName={projectName}
-              onSelect={(iconName) =>
-                onUpdateProject(activeProjectId, { icon: iconName })
-              }
-              onRemove={() => onUpdateProject(activeProjectId, { icon: "" })}
-              size="sm"
-            />
-          }
+          icon={<ProjectIconPicker
+            currentIcon={project?.icon}
+            projectName={projectName}
+            onSelect={(iconName) => onUpdateProject(activeProjectId, {icon: iconName})}
+            onRemove={() => onUpdateProject(activeProjectId, {icon: ""})}
+            size="sm"
+          />}
         />
       )}
       {/* Members & Sharing */}
@@ -338,7 +336,7 @@ export function ProjectSettingsTab({
         />
       )}
 
-      {/* Auto-connect is a personal per-device switch on the Servers tab
+        {/* Auto-connect is a personal per-device switch on the Servers tab
             header (next to "Add Server"), not a project setting. */}
 
       {/* Danger Zone */}

@@ -73,17 +73,17 @@ describe("CreditTopupDialog", () => {
         lastUserMessage="hello"
         organizationId="org-1"
         source="chat_banner"
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("radio", { name: /500\s*credits/ }),
+      screen.getByRole("radio", { name: /500\s*credits/ })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("radio", { name: /1,000\s*credits/ }),
+      screen.getByRole("radio", { name: /1,000\s*credits/ })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("radio", { name: /2,000\s*credits/ }),
+      screen.getByRole("radio", { name: /2,000\s*credits/ })
     ).toBeInTheDocument();
   });
 
@@ -96,7 +96,7 @@ describe("CreditTopupDialog", () => {
         lastUserMessage="hello"
         organizationId="org-1"
         source="chat_banner"
-      />,
+      />
     );
 
     // Rerender with a *changed* impression dependency. Identical props would
@@ -110,12 +110,12 @@ describe("CreditTopupDialog", () => {
         lastUserMessage="hello"
         organizationId="org-1"
         source="limit_modal"
-      />,
+      />
     );
 
     await waitFor(() => {
       const impressions = trackMock.mock.calls.filter(
-        ([event]) => event === "credit_topup_dialog_shown",
+        ([event]) => event === "credit_topup_dialog_shown"
       );
       expect(impressions).toHaveLength(1);
       expect(impressions[0]?.[1]).toEqual(
@@ -125,7 +125,7 @@ describe("CreditTopupDialog", () => {
           package_count: 3,
           default_package_id: "credits_500",
           has_resume_context: true,
-        }),
+        })
       );
     });
   });
@@ -141,7 +141,7 @@ describe("CreditTopupDialog", () => {
         lastUserMessage="hello"
         organizationId="org-1"
         source="limit_modal"
-      />,
+      />
     );
 
     await user.click(screen.getByRole("radio", { name: /1,000\s*credits/ }));
@@ -153,19 +153,19 @@ describe("CreditTopupDialog", () => {
         package_id: "credits_1000",
         price_cents: 1000,
         package_index: 1,
-      }),
+      })
     );
     expect(trackMock).toHaveBeenCalledWith(
       "credit_topup_dialog_dismissed",
       expect.objectContaining({
         dismissal_method: "cancel",
         selected_package_id: "credits_1000",
-      }),
+      })
     );
     expect(
       trackMock.mock.calls.filter(
-        ([event]) => event === "credit_topup_dialog_dismissed",
-      ),
+        ([event]) => event === "credit_topup_dialog_dismissed"
+      )
     ).toHaveLength(1);
   });
 
@@ -178,22 +178,24 @@ describe("CreditTopupDialog", () => {
         lastUserMessage="hello"
         organizationId="org-1"
         source="chat_banner"
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("radio", { name: /500\s*credits/ }),
+      screen.getByRole("radio", { name: /500\s*credits/ })
     ).toHaveAttribute("aria-checked", "true");
     expect(
-      screen.getByText(/Credits cover usage across our product/),
+      screen.getByText(
+        /Credits cover usage across our product/
+      )
     ).toBeInTheDocument();
     expect(screen.getByText(/user testing, and CI\/CD/)).toBeInTheDocument();
     // The processing-fee disclaimer was removed so users can't back-compute
     // the take rate.
     expect(
       screen.queryByText(
-        /A portion of your payment covers payment processing and platform fees/,
-      ),
+        /A portion of your payment covers payment processing and platform fees/
+      )
     ).not.toBeInTheDocument();
     // Guard against regressions that surface a "credited" / "you'll receive
     // $X.XX" dollar value (which would leak the take rate).
@@ -211,12 +213,12 @@ describe("CreditTopupDialog", () => {
         lastUserMessage="please continue"
         organizationId="org-1"
         source="chat_banner"
-      />,
+      />
     );
 
     await user.click(screen.getByRole("radio", { name: /1,000\s*credits/ }));
     await user.click(
-      screen.getByRole("button", { name: /Continue with \$10/ }),
+      screen.getByRole("button", { name: /Continue with \$10/ })
     );
 
     expect(startCheckoutMock).toHaveBeenCalledTimes(1);
@@ -228,7 +230,7 @@ describe("CreditTopupDialog", () => {
         chatSessionId: "chat-1",
         lastUserMessage: "please continue",
         source: "chat_banner",
-      }),
+      })
     );
   });
 
@@ -242,18 +244,18 @@ describe("CreditTopupDialog", () => {
         lastUserMessage=""
         organizationId="org-1"
         source="billing_page"
-      />,
+      />
     );
 
     await user.click(screen.getByRole("radio", { name: /1,000\s*credits/ }));
     await user.click(
-      screen.getByRole("button", { name: /Continue with \$10/ }),
+      screen.getByRole("button", { name: /Continue with \$10/ })
     );
 
     expect(startCheckoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
         returnUrl: window.location.href,
-      }),
+      })
     );
   });
 
@@ -268,7 +270,7 @@ describe("CreditTopupDialog", () => {
         lastUserMessage="hello"
         organizationId="org-1"
         source="chat_banner"
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -286,12 +288,12 @@ describe("CreditTopupDialog", () => {
         lastUserMessage="hello"
         organizationId="org-1"
         source="chat_banner"
-      />,
+      />
     );
 
     expect(screen.getByText(/Loading amounts/)).toBeInTheDocument();
     expect(
-      screen.queryByRole("radio", { name: /500\s*credits/ }),
+      screen.queryByRole("radio", { name: /500\s*credits/ })
     ).not.toBeInTheDocument();
   });
 
@@ -306,11 +308,11 @@ describe("CreditTopupDialog", () => {
         lastUserMessage="hello"
         organizationId="org-1"
         source="chat_banner"
-      />,
+      />
     );
 
     expect(
-      screen.getByText(/Credit packages are unavailable/),
+      screen.getByText(/Credit packages are unavailable/)
     ).toBeInTheDocument();
   });
 
@@ -324,7 +326,7 @@ describe("CreditTopupDialog", () => {
         lastUserMessage="hello"
         organizationId="org-1"
         source="chat_banner"
-      />,
+      />
     );
 
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
@@ -339,11 +341,11 @@ describe("CreditTopupDialog", () => {
         chatSessionId="chat-1"
         lastUserMessage="hello"
         source="chat_banner"
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: /Continue with \$5/ }),
+      screen.getByRole("button", { name: /Continue with \$5/ })
     ).toBeDisabled();
   });
 });

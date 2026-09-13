@@ -58,14 +58,7 @@ export function CreateApiKeyDialog({
     });
   }, [open, organizations]);
 
-  useSettingsDraft(
-    open && !!name,
-    () => {
-      setName("");
-      onOpenChange(false);
-    },
-    open && isCreating,
-  );
+  useSettingsDraft(open && !!name, () => { setName(""); onOpenChange(false); }, open && isCreating);
   const trimmed = name.trim();
   const hasOrgs = organizations.length > 0;
   const canCreate =
@@ -90,10 +83,7 @@ export function CreateApiKeyDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent
-        showCloseButton={!isCreating}
-        className="gap-4 sm:max-w-md"
-      >
+      <DialogContent showCloseButton={!isCreating} className="gap-4 sm:max-w-md">
         <DialogHeader className="gap-2 text-left">
           <DialogTitle>Create API key</DialogTitle>
           <DialogDescription>

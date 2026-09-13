@@ -111,7 +111,8 @@ function getPlanColumnCta(params: {
       disabled: false,
       variant: "outline",
       onClick: () => {
-        window.location.href = "https://www.mcpjam.com/contact";
+        window.location.href =
+          "https://www.mcpjam.com/contact";
       },
     };
   }

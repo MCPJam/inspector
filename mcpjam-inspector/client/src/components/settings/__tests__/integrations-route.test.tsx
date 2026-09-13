@@ -90,11 +90,7 @@ vi.mock("@/hooks/useOrgSlackSettings", () => ({
 }));
 
 vi.mock("@/lib/app-navigation", () => ({
-  useCurrentLocationParts: () => ({
-    pathname: window.location.pathname,
-    search: window.location.search,
-    hash: window.location.hash,
-  }),
+  useCurrentLocationParts: () => ({ pathname: window.location.pathname, search: window.location.search, hash: window.location.hash }),
   useAppNavigate: () => mockNavigate,
   buildOrganizationPath: (id: string, section?: string) =>
     section ? `/organizations/${id}/${section}` : `/organizations/${id}`,
@@ -107,6 +103,7 @@ vi.mock("convex/react", () => ({
 vi.mock("@/hooks/useOrganizations", () => ({
   useOrganizationQueries: () => ({ isLoading: mockOrgsLoading.value }),
 }));
+
 
 vi.mock("@/hooks/useDiscordAgentEnabled", () => ({
   useDiscordAgentEnabled: () => mockDiscord.enabled,

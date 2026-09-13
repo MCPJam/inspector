@@ -1,6 +1,4 @@
-vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ user: { id: "member" } }),
-}));
+vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => ({ user: { id: "member" } }) }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
