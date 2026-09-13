@@ -167,6 +167,23 @@ The enable/connect toggle on a server card or detail modal reuses existing crede
 
 To start a full OAuth flow, use the explicit **Reconnect** button on the server card or detail modal. This is the only path that will open the OAuth consent screen when new credentials are needed.
 
+## Agent assistance
+
+When you are in the [Playground](/inspector/playground), the LLM can help you set up and step through OAuth flows on the OAuth Debugger tab using three built-in tools.
+
+| Tool | What it does |
+|---|---|
+| `ui_open_oauth_server_config` | Opens the Configure-Server modal, optionally prefilling the server name, MCP server URL, and registration mode. Credentials (client ID and secret) are never passed — you type those yourself. |
+| `ui_advance_oauth_flow` | Advances the flow exactly one protocol step, the same as clicking **Continue**. At the authorization step it opens the sign-in popup for you to complete; the agent cannot and does not complete consent on your behalf. Each call requires your approval because a step can make real requests to a third-party authorization server, including creating a persistent client registration via DCR. |
+| `ui_reset_oauth_flow` | Resets the flow back to the start so you can run it again. |
+
+A few things to keep in mind:
+
+- **Credentials stay with you.** The agent can prefill the server URL and registration mode, but it cannot supply a client ID, client secret, or any other credential. You enter those in the modal.
+- **Authorization is always human-gated.** When the flow reaches the authorization step, the agent opens the sign-in popup on the third party's page and stops. You complete the sign-in; the flow resumes automatically after the callback.
+- **`ui_advance_oauth_flow` requires approval.** Because advancing can POST a persistent client registration to a third-party authorization server, the Playground pauses and asks you to approve each advance before it runs.
+- **The agent observes state safely.** The snapshot the agent reads never contains tokens, PKCE material, authorization codes, or raw HTTP bodies — only step progress, HTTP status codes, token presence flags, and allowlisted OAuth error codes.
+
 ## Desktop app behavior
 
 When using the OAuth Debugger in the MCPJam Desktop app, the authorization step opens in your system browser instead of inside the app. After you approve access in the browser, you will see a **"Continue in MCPJam Desktop"** page that automatically hands control back to the desktop app. If the handoff does not happen automatically, click the link on that page to return.
