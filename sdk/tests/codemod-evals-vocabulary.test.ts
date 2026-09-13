@@ -22,7 +22,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
 const SCANNER = join(
@@ -34,6 +34,33 @@ const SCANNER = join(
   "evals-vocabulary",
   "index.mjs"
 );
+
+/**
+ * Run a child process WITHOUT blocking the worker's event loop.
+ *
+ * This file shells out for nearly every test (git for the throwaway repos, node
+ * for the scanner). With `spawnSync` those calls block the vitest worker thread
+ * outright, so it cannot answer the host's RPC while the file runs; on a loaded
+ * CI runner the blocked stretch crossed vitest's 60s RPC timeout and the host
+ * recorded `Timeout calling "onTaskUpdate"` as an unhandled error, failing the
+ * whole workspace with every test green. Awaiting `spawn` keeps the loop free.
+ */
+function run(
+  command: string,
+  args: string[]
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
 
 const trees: string[] = [];
 afterEach(() => {
@@ -59,31 +86,31 @@ function tree(files: Record<string, string>): string {
  * tree, so ignore rules and tracked-but-absent paths can only be exercised in
  * one. Nothing is committed: `git add` is enough to make a path "cached".
  */
-function gitTree(files: Record<string, string>): string {
+async function gitTree(files: Record<string, string>): Promise<string> {
   const root = tree(files);
-  const run = (...gitArgs: string[]) => {
-    const result = spawnSync("git", ["-C", root, ...gitArgs], {
-      encoding: "utf8",
-    });
+  const git = async (...gitArgs: string[]) => {
+    const result = await run("git", ["-C", root, ...gitArgs]);
     if (result.status !== 0) throw new Error(result.stderr);
   };
-  run("init", "-q");
-  run("add", "-A");
+  await git("init", "-q");
+  await git("add", "-A");
   return root;
 }
 
-function scan(root: string, mappingOverride?: unknown) {
+async function scan(root: string, mappingOverride?: unknown) {
   const extra: string[] = [];
   if (mappingOverride !== undefined) {
     const path = join(root, "__mapping.json");
     writeFileSync(path, JSON.stringify(mappingOverride));
     extra.push("--mapping", path);
   }
-  const result = spawnSync(
-    process.execPath,
-    [SCANNER, "--root", root, "--json", ...extra],
-    { encoding: "utf8" }
-  );
+  const result = await run(process.execPath, [
+    SCANNER,
+    "--root",
+    root,
+    "--json",
+    ...extra,
+  ]);
   return {
     status: result.status,
     stdout: result.stdout,
@@ -93,20 +120,19 @@ function scan(root: string, mappingOverride?: unknown) {
 }
 
 /** The markdown report, which is what a reviewer actually reads. */
-function render(root: string, mappingOverride?: unknown) {
+async function render(root: string, mappingOverride?: unknown) {
   const extra: string[] = [];
   if (mappingOverride !== undefined) {
     const path = join(root, "__mapping.json");
     writeFileSync(path, JSON.stringify(mappingOverride));
     extra.push("--mapping", path);
   }
-  const result = spawnSync(
-    process.execPath,
-    [SCANNER, "--root", root, ...extra],
-    {
-      encoding: "utf8",
-    }
-  );
+  const result = await run(process.execPath, [
+    SCANNER,
+    "--root",
+    root,
+    ...extra,
+  ]);
   return {
     status: result.status,
     stdout: result.stdout,
@@ -115,13 +141,13 @@ function render(root: string, mappingOverride?: unknown) {
 }
 
 describe("the evaluator-vocabulary scanner", () => {
-  it("proposes the renames the contract names, and says where", () => {
+  it("proposes the renames the contract names, and says where", async () => {
     const root = tree({
       "sdk/src/scorers/run.ts":
         `import type { Scorer } from "./types.js";\n` +
         `export async function runScorers(list: Scorer[]) { return list; }\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(json.status).toBe("ok");
@@ -131,13 +157,13 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(json.findings[0].file).toBe("sdk/src/scorers/run.ts");
   });
 
-  it("fails rather than proposing a rename inside a protected path", () => {
+  it("fails rather than proposing a rename inside a protected path", async () => {
     const root = tree({
       "mcpjam-inspector/server/routes/v1/eval-checks.ts":
         `import type { Scorer } from "@mcpjam/sdk";\n` +
         `export const repo: { scorer?: Scorer } = {};\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(2);
     expect(json.status).toBe("protected");
@@ -147,14 +173,14 @@ describe("the evaluator-vocabulary scanner", () => {
     );
   });
 
-  it("fails rather than proposing a rename OF a protected term", () => {
+  it("fails rather than proposing a rename OF a protected term", async () => {
     const root = tree({
       "sdk/src/platform/types.ts": `export type Row = { checkRunId: number };\n`,
     });
     // The committed mapping proposes no protected word, so the refusal is
     // exercised against one that does — which is the failure mode this guard
     // exists for: a mapping widened later until it swallows a GitHub check run.
-    const { status, json } = scan(root, {
+    const { status, json } = await scan(root, {
       renames: [
         { from: "checkRunId", to: "iterationRunId", scope: "wire-field" },
       ],
@@ -166,14 +192,14 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(json.violations[0].reason).toBe("protected term");
   });
 
-  it("treats a grading check beside a GitHub check-run id as review, not refusal", () => {
+  it("treats a grading check beside a GitHub check-run id as review, not refusal", async () => {
     const root = tree({
       // Both words on one line in an adapter the mapping covers. The first is
       // in scope, the second is not, and they are told apart by the token
       // rather than by the line — so this reports rather than refusing.
       "sdk/src/platform/types.ts": `export type Row = { checks: string[]; checkRunId: number };\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(json.findings.map((f: { matched: string }) => f.matched)).toEqual([
@@ -182,7 +208,7 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(json.reviewByHand[0].nearby).toContain("checkRunId");
   });
 
-  it("reports a rename that merely sits beside a protected term, without failing", () => {
+  it("reports a rename that merely sits beside a protected term, without failing", async () => {
     const root = tree({
       // `evaluatorErrorRate` is the EXISTING evaluator-error vocabulary and
       // already means the right thing. It lives beside real evaluator code all
@@ -191,26 +217,26 @@ describe("the evaluator-vocabulary scanner", () => {
         `import type { ScoreResult } from "./types.js";\n` +
         `export const rate = (rows: ScoreResult[], evaluatorErrorRate: number) => rows.length + evaluatorErrorRate;\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(json.reviewByHand.length).toBeGreaterThan(0);
     expect(json.reviewByHand[0].nearby).toContain("evaluatorErrorRate");
   });
 
-  it("leaves the word alone when it is prose, not an identifier", () => {
+  it("leaves the word alone when it is prose, not an identifier", async () => {
     const root = tree({
       "sdk/src/notes.ts":
         `// A Scorer is mentioned here in a comment, and "Scorer" in a string.\n` +
         `export const label = "Scorer";\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(json.findings).toHaveLength(0);
   });
 
-  it("leaves prose alone when it follows an interpolation", () => {
+  it("leaves prose alone when it follows an interpolation", async () => {
     const root = tree({
       // The regression that sent the first report wrong. A raw token scanner
       // has no parser context, so everything after `${...}` in a template came
@@ -220,24 +246,24 @@ describe("the evaluator-vocabulary scanner", () => {
         "export const message = (id: string) =>\n" +
         '  `Scorer id "${id}" is already used. Scorer ids must be unique.`;\n',
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(json.findings).toHaveLength(0);
   });
 
-  it("leaves JSX text alone", () => {
+  it("leaves JSX text alone", async () => {
     const root = tree({
       "mcpjam-inspector/client/src/components/evals/Row.tsx":
         "export const Row = () => <div>No Scorer configured</div>;\n",
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(json.findings).toHaveLength(0);
   });
 
-  it("finds a wire field however it is declared or read", () => {
+  it("finds a wire field however it is declared or read", async () => {
     const root = tree({
       "sdk/src/platform/types.ts":
         "export type A = { predicates?: string[] };\n" +
@@ -246,7 +272,7 @@ describe("the evaluator-vocabulary scanner", () => {
         "export const readPlain = (row: B) => row.predicates;\n" +
         "export const shorthand = (predicates: string[]) => ({ predicates });\n",
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     // Five shapes, five findings. The token lookahead this replaced saw only
@@ -257,7 +283,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toHaveLength(5);
   });
 
-  it("matches a whole flag, not a prefix of one", () => {
+  it("matches a whole flag, not a prefix of one", async () => {
     const root = tree({
       "cli/src/commands/eval.ts":
         `const a = "--scorer-timeout";\n` +
@@ -266,7 +292,7 @@ describe("the evaluator-vocabulary scanner", () => {
     });
     // An override, so the matcher is tested apart from whichever flags the
     // committed mapping happens to rename.
-    const { status, json } = scan(root, {
+    const { status, json } = await scan(root, {
       renames: [
         {
           from: "--scorer-timeout",
@@ -286,12 +312,12 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(lines).toEqual([1, 2]);
   });
 
-  it("keeps a subpath rename inside its own allowlist", () => {
+  it("keeps a subpath rename inside its own allowlist", async () => {
     const root = tree({
       "cli/src/a.ts": `import "@mcpjam/sdk/predicates";\n`,
       "sdk/src/b.ts": `import "@mcpjam/sdk/predicates";\n`,
     });
-    const { status, json } = scan(root, {
+    const { status, json } = await scan(root, {
       renames: [
         {
           from: "@mcpjam/sdk/predicates",
@@ -308,8 +334,8 @@ describe("the evaluator-vocabulary scanner", () => {
     ]);
   });
 
-  it("fails closed when a path cannot be inspected", () => {
-    const root = gitTree({
+  it("fails closed when a path cannot be inspected", async () => {
+    const root = await gitTree({
       "sdk/src/a.ts": "export const a = 1;\n",
       "sdk/src/b.ts": "export const b = 1;\n",
     });
@@ -318,7 +344,7 @@ describe("the evaluator-vocabulary scanner", () => {
     // unreadable, and a guard that only fires for some users is not a guard.
     rmSync(join(root, "sdk/src/b.ts"));
     mkdirSync(join(root, "sdk/src/b.ts"));
-    const { status, stderr } = scan(root);
+    const { status, stderr } = await scan(root);
 
     // An inventory with a hole in it reads as complete, and the next person
     // renames from it.
@@ -327,7 +353,7 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(stderr).toMatch(/sdk\/src\/b\.ts/);
   });
 
-  it("skips a dangling symlink instead of refusing the whole run", () => {
+  it("skips a dangling symlink instead of refusing the whole run", async () => {
     const root = tree({
       "sdk/src/a.ts": "export type A = Scorer;\n",
     });
@@ -335,7 +361,7 @@ describe("the evaluator-vocabulary scanner", () => {
     // was never checked out. It names no source, so there is nothing in it to
     // rename — and failing on it made the tool unrunnable on a normal laptop.
     symlinkSync(join(root, "gone"), join(root, "sdk/src/b.ts"));
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(json.findings.map((f: { file: string }) => f.file)).toEqual([
@@ -346,8 +372,8 @@ describe("the evaluator-vocabulary scanner", () => {
     ]);
   });
 
-  it("enumerates what git sees, so ignored directories are never walked", () => {
-    const root = gitTree({
+  it("enumerates what git sees, so ignored directories are never walked", async () => {
+    const root = await gitTree({
       ".gitignore": "worktrees/\nbuild-output/\n",
       "sdk/src/a.ts": "export type A = Scorer;\n",
       // A whole second checkout under an ignored directory: the reason a real
@@ -357,7 +383,7 @@ describe("the evaluator-vocabulary scanner", () => {
     });
     // Untracked but not ignored is still the developer's source.
     writeFileSync(join(root, "sdk/src/new.ts"), "export type B = Scorer;\n");
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(
@@ -365,9 +391,9 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toEqual(["sdk/src/a.ts", "sdk/src/new.ts"]);
   });
 
-  it("fails closed when it read nothing, even from a non-empty root", () => {
+  it("fails closed when it read nothing, even from a non-empty root", async () => {
     const root = tree({ "assets/logo.png": "not really a png" });
-    const { status, stderr } = scan(root);
+    const { status, stderr } = await scan(root);
 
     // The walk found a file. It read no SOURCE, so a clean empty report here
     // would be indistinguishable from a clean real one.
@@ -375,23 +401,23 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(stderr).toMatch(/No supported files were read/);
   });
 
-  it("does not propose a wire-field rename outside the adapters that own it", () => {
+  it("does not propose a wire-field rename outside the adapters that own it", async () => {
     const root = tree({
       // `checks` as an object key, but in a file the mapping does not list —
       // GitHub check settings, conformance results, a UI reducer. Out of scope
       // is out of scope; it is not a finding and not a failure.
       "mcpjam-inspector/client/src/state/app-reducer.ts": `export const state = { checks: [] as string[] };\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(json.findings).toHaveLength(0);
   });
 
-  it("fails closed when it scanned nothing", () => {
+  it("fails closed when it scanned nothing", async () => {
     const root = mkdtempSync(join(tmpdir(), "codemod-empty-"));
     trees.push(root);
-    const { status, stderr } = scan(root);
+    const { status, stderr } = await scan(root);
 
     // A scanner that reports "no occurrences" after reading zero files has said
     // nothing, and it looks exactly like a clean run.
@@ -399,7 +425,7 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(stderr).toMatch(/refusing to report a clean run/);
   });
 
-  it("fails closed when the parser reports a diagnostic", () => {
+  it("fails closed when the parser reports a diagnostic", async () => {
     const root = tree({
       "sdk/src/a.ts": "export const a = 1;\n",
       // `createSourceFile` does NOT throw on this. It recovers, and the
@@ -408,7 +434,7 @@ describe("the evaluator-vocabulary scanner", () => {
       // the absence of a throw would report this file as clean.
       "sdk/src/broken.ts": "const a = `unterminated\ntype Y = Scorer;\n",
     });
-    const { status, stderr } = scan(root);
+    const { status, stderr } = await scan(root);
 
     expect(status).toBe(1);
     expect(stderr).toMatch(/could not be inspected/);
@@ -416,7 +442,7 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(stderr).toMatch(/Unterminated template literal/);
   });
 
-  it("reports a subpath named somewhere other than an import", () => {
+  it("reports a subpath named somewhere other than an import", async () => {
     const root = tree({
       // The three shapes that broke the builds rather than the imports: an
       // alias key, an alias `find` value, and an `external` list entry.
@@ -426,7 +452,7 @@ describe("the evaluator-vocabulary scanner", () => {
       "mcpjam-inspector/server/vitest.config.ts": `export default { alias: [{ find: "@mcpjam/sdk/predicates", replacement: x }] };\n`,
       "sdk/src/a.ts": `import "@mcpjam/sdk/predicates";\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     const subpath = json.findings
@@ -447,7 +473,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ]);
   });
 
-  it("reports a wire field named in a string, still bounded by its paths", () => {
+  it("reports a wire field named in a string, still bounded by its paths", async () => {
     const root = tree({
       // A Zod issue path and a settings-key array: both name the field, and
       // neither is a property declaration.
@@ -456,7 +482,7 @@ describe("the evaluator-vocabulary scanner", () => {
       // Same string, outside every allowlist. Path scope still governs.
       "mcpjam-inspector/client/src/state/app-reducer.ts": `const k = ["predicates"];\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(
@@ -472,7 +498,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ]);
   });
 
-  it("reads a destructured field as the property, not the local it binds", () => {
+  it("reads a destructured field as the property, not the local it binds", async () => {
     const root = tree({
       "sdk/src/platform/types.ts":
         // The field is `checks`; `localChecks` is a local that happens to
@@ -485,7 +511,7 @@ describe("the evaluator-vocabulary scanner", () => {
         // field and names no field at all.
         `const [defaultPredicates] = values;\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(
@@ -496,7 +522,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toEqual(["1 checks", "2 predicates"]);
   });
 
-  it("sees an identifier rename destructured out of an import", () => {
+  it("sees an identifier rename destructured out of an import", async () => {
     const root = tree({
       // The import site is the one line that MUST change when the export is
       // renamed, and a shorthand binding was being counted as a field only —
@@ -506,7 +532,7 @@ describe("the evaluator-vocabulary scanner", () => {
         `const { runScorers } = await import("./scorers/run.js");\n` +
         `const rows = await runScorers([], ctx);\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(
@@ -516,7 +542,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toEqual(["1 identifier", "2 identifier"]);
   });
 
-  it("reports a subpath named in a manifest or in prose", () => {
+  it("reports a subpath named in a manifest or in prose", async () => {
     const root = tree({
       // No AST for these, so the subpath scope could not see them at all: a
       // packaging assertion that imports the subpath from inside a shell
@@ -530,7 +556,7 @@ describe("the evaluator-vocabulary scanner", () => {
       // text files, which is the noise this design exists to avoid.
       "docs/prose.mdx": `The suite runs its checks and reports repetitions.\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(
@@ -546,7 +572,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ]);
   });
 
-  it("lists every occurrence rather than the first sixty", () => {
+  it("lists every occurrence rather than the first sixty", async () => {
     // The defect this pins is specific: the committed report stated 74
     // occurrences of one rename and listed 60, so the 14 a reader most needed
     // the tool for were the 14 it withheld.
@@ -555,7 +581,7 @@ describe("the evaluator-vocabulary scanner", () => {
       (_, i) => `export const s${i}: Scorer = x;`
     ).join("\n");
     const root = tree({ "sdk/src/many.ts": `${lines}\n` });
-    const { status, stdout } = render(root);
+    const { status, stdout } = await render(root);
 
     expect(status).toBe(0);
     const rows = stdout
@@ -572,13 +598,13 @@ describe("the evaluator-vocabulary scanner", () => {
     "GithubCheckRepoConfigRow",
     "GITHUB_CHECKS_ENABLED",
     "connectEvalCheckRepoOperation",
-  ])("refuses %s because its whole family is protected", (member) => {
+  ])("refuses %s because its whole family is protected", async (member) => {
     const root = tree({
       "sdk/src/platform/types.ts": `export const ${member} = 1;\n`,
     });
     // An exact-string denylist protected `githubCheck` and nothing spelled
     // after it, so a mapping proposing `githubCheckRunId` exited 0.
-    const { status, json } = scan(root, {
+    const { status, json } = await scan(root, {
       renames: [{ from: member, to: "iterationRunId", scope: "identifier" }],
     });
 
@@ -594,11 +620,11 @@ describe("the evaluator-vocabulary scanner", () => {
     );
   });
 
-  it("refuses a protected family in the mapping even where no file uses it", () => {
+  it("refuses a protected family in the mapping even where no file uses it", async () => {
     const root = tree({ "sdk/src/a.ts": "export const a = 1;\n" });
     // A mapping is a proposal whether or not today's tree happens to contain
     // the word. The next checkout that does must not be the first to find out.
-    const { status, json } = scan(root, {
+    const { status, json } = await scan(root, {
       renames: [{ from: "githubCheckRunId", to: "runId", scope: "identifier" }],
     });
 
@@ -607,13 +633,13 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(json.violations[0].shape).toBe("mapping");
   });
 
-  it("refuses to rename a billing trial, however it is spelled", () => {
+  it("refuses to rename a billing trial, however it is spelled", async () => {
     const root = tree({
       "sdk/src/a.ts":
         "export const trialPlan = 'pro';\nexport const isTrial = true;\n",
     });
     for (const from of ["trialPlan", "isTrial", "starterTrialsEnabled"]) {
-      const { status, json } = scan(root, {
+      const { status, json } = await scan(root, {
         renames: [{ from, to: "iterationPlan", scope: "identifier" }],
       });
       // A bad sweep here changes who gets charged.
@@ -632,15 +658,15 @@ describe("the evaluator-vocabulary scanner", () => {
     "convex/billingNode.ts",
     "convex/billing/teamAllowance.ts",
     "convex/lib/pricing/resolve.ts",
-  ])("refuses any rename inside billing file %s", (file) => {
+  ])("refuses any rename inside billing file %s", async (file) => {
     const root = tree({ [file]: "export type T = Scorer;\n" });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(2);
     expect(json.violations[0].reason).toBe("protected path");
   });
 
-  it("leaves eval verdict counters out of billing protection", () => {
+  it("leaves eval verdict counters out of billing protection", async () => {
     const root = tree({
       "sdk/src/contract/verdict-policy.ts":
         "export const c = { configuredTrials: 1, attemptedTrials: 1, minGradeableTrials: 1 };\n",
@@ -648,7 +674,7 @@ describe("the evaluator-vocabulary scanner", () => {
     // Path-based billing protection is what lets a later eval-trial rename
     // proceed without touching billing. A pattern that swallowed these would
     // turn that rename into a fight with the guard.
-    const { status, json } = scan(root, {
+    const { status, json } = await scan(root, {
       renames: [
         "configuredTrials",
         "attemptedTrials",
@@ -676,11 +702,11 @@ describe("the evaluator-vocabulary scanner", () => {
     "sdk/src/oauth/client-identity.ts",
   ])(
     "refuses an assertion rename inside identity-assertion file %s",
-    (file) => {
+    async (file) => {
       const root = tree({ [file]: "export const assertion = sign(jwt);\n" });
       // These are identity assertions from a standards protocol (ID-JAG, SAML,
       // RFC 7523 client assertions), not eval assertions.
-      const { status, json } = scan(root, {
+      const { status, json } = await scan(root, {
         renames: [{ from: "assertion", to: "check", scope: "identifier" }],
       });
 
@@ -689,13 +715,13 @@ describe("the evaluator-vocabulary scanner", () => {
     }
   );
 
-  it("scans GitHub Checks code for eval renames, since it may import the eval SDK", () => {
+  it("scans GitHub Checks code for eval renames, since it may import the eval SDK", async () => {
     const root = tree({
       "mcpjam-inspector/server/services/github-checks/check-plan.ts":
         `import type { Scorer } from "@mcpjam/sdk";\n` +
         `export const githubCheckRunId = 1;\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     // The directory is not categorically denied; its GitHub-owned identifiers
     // are. An eval import in it is an eval import.
@@ -705,14 +731,14 @@ describe("the evaluator-vocabulary scanner", () => {
     ]);
   });
 
-  it("refuses to rename the customer-authored `checks:` key of mcpjam.yml", () => {
+  it("refuses to rename the customer-authored `checks:` key of mcpjam.yml", async () => {
     const root = tree({
       "mcpjam-inspector/server/services/github-checks/resolver/mcpjamYaml.ts":
         "export const read = (root: { checks: unknown }) => root.checks;\n",
     });
     // Customers wrote that key into their own repositories. Renaming the
     // reader breaks every one of them on the next pull request.
-    const scoped = scan(root, {
+    const scoped = await scan(root, {
       renames: [
         {
           from: "checks",
@@ -726,14 +752,14 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(scoped.json.violations[0].reason).toBe("protected field");
 
     // Repository-wide is the same proposal with less honesty about it.
-    const unscoped = scan(root, {
+    const unscoped = await scan(root, {
       renames: [{ from: "checks", to: "assertions", scope: "wire-field" }],
     });
     expect(unscoped.status).toBe(2);
     expect(unscoped.json.violations[0].reason).toBe("protected field");
   });
 
-  it("retires `repetitions` in the committed mapping, legacy floor first", () => {
+  it("retires `repetitions` in the committed mapping, legacy floor first", async () => {
     // `repetitions` is the legacy spelling of the configured count. The count
     // becomes `iterations`, but only after the legacy per-case field that
     // already answers to `iterations` (read as a FLOOR) has moved out of the
@@ -810,11 +836,11 @@ describe("the evaluator-vocabulary scanner", () => {
     paths: COUNT_PATHS,
   };
 
-  it("refuses to rename a field onto a name its files still use", () => {
+  it("refuses to rename a field onto a name its files still use", async () => {
     const root = tree(COUNT_CASE);
     // The legacy `iterations` is a floor and `repetitions` is exact. Renaming
     // one onto the other's name makes one field out of two counts.
-    const { status, json } = scan(root, { renames: [COUNT] });
+    const { status, json } = await scan(root, { renames: [COUNT] });
 
     expect(status).toBe(2);
     expect(
@@ -824,7 +850,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toEqual(["rename target in use iterations"]);
   });
 
-  it("lets a rename join a target that already means the same thing", () => {
+  it("lets a rename join a target that already means the same thing", async () => {
     const root = tree({
       // The suite file's deprecated `assertions` IS its `checks`: one list of
       // rules, two spellings. Joining them is the rename, not a merge of two
@@ -839,20 +865,24 @@ describe("the evaluator-vocabulary scanner", () => {
       paths: ["cli/src/lib/eval-run-file.ts"],
     };
 
-    const refused = scan(root, { renames: [rename] });
+    const refused = await scan(root, { renames: [rename] });
     expect(refused.status).toBe(2);
     expect(refused.json.violations[0].reason).toBe("rename target in use");
 
-    const joined = scan(root, { renames: [{ ...rename, sameMeaning: true }] });
+    const joined = await scan(root, {
+      renames: [{ ...rename, sameMeaning: true }],
+    });
     expect(joined.status).toBe(0);
     expect(
       joined.json.findings.map((f: { matched: string }) => f.matched)
     ).toEqual(["checks"]);
   });
 
-  it("refuses a rename onto a vacated name that does not say it lands after", () => {
+  it("refuses a rename onto a vacated name that does not say it lands after", async () => {
     const root = tree(COUNT_CASE);
-    const { status, json } = scan(root, { renames: [LEGACY_FIRST, COUNT] });
+    const { status, json } = await scan(root, {
+      renames: [LEGACY_FIRST, COUNT],
+    });
 
     // Both halves are present, but nothing says which lands first, and running
     // them in the wrong order is the blind sweep.
@@ -865,9 +895,9 @@ describe("the evaluator-vocabulary scanner", () => {
     });
   });
 
-  it("refuses an `after` that names no rename", () => {
+  it("refuses an `after` that names no rename", async () => {
     const root = tree(COUNT_CASE);
-    const { status, json } = scan(root, {
+    const { status, json } = await scan(root, {
       renames: [{ ...COUNT, to: "count", after: "iterations" }],
     });
 
@@ -875,12 +905,12 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(json.violations[0].reason).toBe("after names no rename");
   });
 
-  it("proposes both halves of an ordered rename, and says which lands first", () => {
+  it("proposes both halves of an ordered rename, and says which lands first", async () => {
     const root = tree(COUNT_CASE);
     const mapping = {
       renames: [LEGACY_FIRST, { ...COUNT, after: "iterations" }],
     };
-    const { status, json } = scan(root, mapping);
+    const { status, json } = await scan(root, mapping);
 
     expect(status).toBe(0);
     expect(
@@ -888,26 +918,26 @@ describe("the evaluator-vocabulary scanner", () => {
         .map((f: { from: string; to: string }) => `${f.from} → ${f.to}`)
         .sort()
     ).toEqual(["iterations → legacyIterations", "repetitions → iterations"]);
-    const report = render(root, mapping);
+    const report = await render(root, mapping);
     expect(report.status).toBe(0);
     expect(report.stdout).toMatch(
       /Lands after `iterations → legacyIterations`/
     );
   });
 
-  it("refuses to move the `repetitions` key of the configuration-revision payload", () => {
+  it("refuses to move the `repetitions` key of the configuration-revision payload", async () => {
     const root = tree({
       "convex/lib/evalConfigRevision.ts":
         "export const sig = (tc: { runs: number; repetitions?: number }) =>\n" +
         "  ({ runs: tc.runs, repetitions: tc.repetitions });\n",
     });
     // The committed mapping never reaches this file.
-    expect(scan(root).status).toBe(0);
+    expect((await scan(root)).status).toBe(0);
 
     // A widened one does. The literal key is part of every suite's revision
     // identity, so it stays frozen after the field is renamed, like `predicates`.
     for (const paths of [undefined, ["convex/lib/"]]) {
-      const { status, json } = scan(root, {
+      const { status, json } = await scan(root, {
         renames: [{ ...COUNT, paths }],
       });
       expect(status, String(paths)).toBe(2);
@@ -920,7 +950,7 @@ describe("the evaluator-vocabulary scanner", () => {
     }
   });
 
-  it("keeps the scanner's refusal code through the report command", () => {
+  it("keeps the scanner's refusal code through the report command", async () => {
     const REPORT = join(dirname(SCANNER), "report.mjs");
     const root = tree({ "sdk/src/a.ts": "export const a = 1;\n" });
     const mappingPath = join(root, "__mapping.json");
@@ -934,27 +964,33 @@ describe("the evaluator-vocabulary scanner", () => {
     );
     const out = join(root, "REPORT.md");
 
-    const refused = spawnSync(
-      process.execPath,
-      [REPORT, "--root", root, "--mapping", mappingPath, "--out", out],
-      { encoding: "utf8" }
-    );
+    const refused = await run(process.execPath, [
+      REPORT,
+      "--root",
+      root,
+      "--mapping",
+      mappingPath,
+      "--out",
+      out,
+    ]);
     // Exit 2 is the refusal. The old npm chain flattened it to 1, the code for
     // "scanned nothing", so a caller could not tell the two apart.
     expect(refused.status).toBe(2);
     expect(existsSync(out)).toBe(false);
     expect(existsSync(`${out}.tmp`)).toBe(false);
 
-    const clean = spawnSync(
-      process.execPath,
-      [REPORT, "--root", root, "--out", out],
-      { encoding: "utf8" }
-    );
+    const clean = await run(process.execPath, [
+      REPORT,
+      "--root",
+      root,
+      "--out",
+      out,
+    ]);
     expect(clean.status).toBe(0);
     expect(readFileSync(out, "utf8")).toMatch(/proposed renames/);
   });
 
-  it("labels a string in a type as such, not as a field", () => {
+  it("labels a string in a type as such, not as a field", async () => {
     const root = tree({
       // An enum value in a literal union spells `iterations` without naming a
       // field. It stays in the inventory, under a shape that says what it is.
@@ -962,7 +998,7 @@ describe("the evaluator-vocabulary scanner", () => {
         `export type Rate = { unit: "iterations" | "sessions" };\n` +
         `export const issue = { path: ["iterations"] };\n`,
     });
-    const { status, json } = scan(root, { renames: [LEGACY_FIRST] });
+    const { status, json } = await scan(root, { renames: [LEGACY_FIRST] });
 
     expect(status).toBe(0);
     expect(
@@ -972,7 +1008,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toEqual(["1 string in a type", "2 field named in a string"]);
   });
 
-  it("lists the count outside its paths as work left, and marks frozen keys", () => {
+  it("lists the count outside its paths as work left, and marks frozen keys", async () => {
     const root = tree({
       "sdk/src/platform/types.ts":
         "export type Case = { legacyIterations: number; repetitions?: number };\n",
@@ -1000,7 +1036,7 @@ describe("the evaluator-vocabulary scanner", () => {
         },
       ],
     };
-    const { status, json } = scan(root, mapping);
+    const { status, json } = await scan(root, mapping);
 
     expect(status).toBe(0);
     expect(json.findings.map((f: { file: string }) => f.file)).toEqual([
@@ -1017,16 +1053,16 @@ describe("the evaluator-vocabulary scanner", () => {
       "convex/lib/evalConfigRevision.ts:1 frozen",
       "mcpjam-inspector/client/src/settings.ts:1 work",
     ]);
-    expect(render(root, mapping).stdout).toMatch(
+    expect((await render(root, mapping)).stdout).toMatch(
       /## Outside the mapping: `repetitions → iterations`/
     );
   });
 
-  it("counts a flag named twice on one line as two occurrences", () => {
+  it("counts a flag named twice on one line as two occurrences", async () => {
     const root = tree({
       "cli/src/commands/eval.ts": `const help = "use --repetitions, not --repetitions=0";\n`,
     });
-    const { status, json } = scan(root, {
+    const { status, json } = await scan(root, {
       renames: [
         {
           from: "--repetitions",
@@ -1044,12 +1080,12 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toHaveLength(2);
   });
 
-  it("counts a subpath named twice on one text line as two occurrences", () => {
+  it("counts a subpath named twice on one text line as two occurrences", async () => {
     const root = tree({
       "docs/sdk.mdx":
         "Import `@mcpjam/sdk/predicates`, not a copy of `@mcpjam/sdk/predicates`.\n",
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(
@@ -1059,7 +1095,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toHaveLength(2);
   });
 
-  it("finds a subpath in a code comment, and only in real comments", () => {
+  it("finds a subpath in a code comment, and only in real comments", async () => {
     const root = tree({
       "sdk/src/predicates/index.ts":
         `/**\n * \`@mcpjam/sdk/predicates\` - the predicate library.\n */\n` +
@@ -1068,7 +1104,7 @@ describe("the evaluator-vocabulary scanner", () => {
         // the subpath either.
         `export const url = "https://x.test//@mcpjam/sdk/predicates";\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(
@@ -1085,7 +1121,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ]);
   });
 
-  it("lists the producer side of the subpath rename", () => {
+  it("lists the producer side of the subpath rename", async () => {
     const root = tree({
       "sdk/package.json":
         `{\n  "exports": {\n    "./predicates": {\n` +
@@ -1094,7 +1130,7 @@ describe("the evaluator-vocabulary scanner", () => {
       "sdk/tsup.config.ts": `export default { entry: ["src/index.ts", "src/predicates/index.ts"] };\n`,
       "mcpjam-inspector/client/vitest.config.ts": `export const alias = ["../sdk/src/predicates/index.ts"];\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     // An import of the new subpath resolves only once the package exports it,
     // so the export, its targets and its build entry are part of the rename.
@@ -1116,26 +1152,26 @@ describe("the evaluator-vocabulary scanner", () => {
     ]);
   });
 
-  it("writes --json whole through a pipe, past the pipe buffer", () => {
+  it("writes --json whole through a pipe, past the pipe buffer", async () => {
     const body = Array.from(
       { length: 1500 },
       (_, i) => `type T${i} = Scorer;`
     ).join("\n");
     const root = tree({ "sdk/src/big.ts": `${body}\n` });
     // `scan` parses stdout, so a truncated document fails here.
-    const { status, stdout, json } = scan(root);
+    const { status, stdout, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(stdout.length).toBeGreaterThan(65_536);
     expect(json.findings).toHaveLength(1500);
   });
 
-  it("skips its own test, whose mappings are fixtures", () => {
+  it("skips its own test, whose mappings are fixtures", async () => {
     const root = tree({
       "sdk/tests/codemod-evals-vocabulary.test.ts": `const fixture = { from: "@mcpjam/sdk/predicates" };\n`,
       "sdk/src/a.ts": `import "@mcpjam/sdk/predicates";\n`,
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     expect(status).toBe(0);
     expect(json.findings.map((f: { file: string }) => f.file)).toEqual([
@@ -1146,12 +1182,12 @@ describe("the evaluator-vocabulary scanner", () => {
     );
   });
 
-  it("does not read an object-rest binding as a field", () => {
+  it("does not read an object-rest binding as a field", async () => {
     const root = tree({
       "sdk/src/platform/types.ts":
         "export const f = (row: any) => { const { ...checks } = row; const { checks: real } = row; return [checks, real]; };\n",
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     // `...checks` gathers the remaining properties. Only `checks: real` reads
     // the field.
@@ -1161,7 +1197,7 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toHaveLength(1);
   });
 
-  it("sets aside a line its rule marks as another meaning, and lists it", () => {
+  it("sets aside a line its rule marks as another meaning, and lists it", async () => {
     const root = tree({
       "sdk/src/platform/operations.ts":
         "export type Eval = { checks: PublicCheck[] };\n" +
@@ -1172,7 +1208,7 @@ describe("the evaluator-vocabulary scanner", () => {
       "mcpjam-inspector/server/routes/v1/evals.ts":
         "export const page = { iterations: (rows ?? []).map(toIterationDto) };\n",
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
     const key = (f: { file: string; line: number; from: string }) =>
       `${f.file}:${f.line} ${f.from}`;
 
@@ -1186,9 +1222,9 @@ describe("the evaluator-vocabulary scanner", () => {
     ]);
   });
 
-  it("never lets a rule hide a protected occurrence", () => {
+  it("never lets a rule hide a protected occurrence", async () => {
     const root = tree({ "sdk/src/xaa/mint.ts": "export type S = Scorer;\n" });
-    const { status, json } = scan(root, {
+    const { status, json } = await scan(root, {
       renames: [
         {
           from: "Scorer",
@@ -1204,14 +1240,14 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(json.excludedByRule).toHaveLength(0);
   });
 
-  it("proposes the default-assertions rename only at its re-export", () => {
+  it("proposes the default-assertions rename only at its re-export", async () => {
     const root = tree({
       "sdk/src/contract/grader-stage.ts":
         "export const RECOMMENDED_DEFAULT_PREDICATES = [];\n",
       "sdk/src/contract/index.ts":
         'export { RECOMMENDED_DEFAULT_PREDICATES } from "./grader-stage.js";\n',
     });
-    const { status, json } = scan(root);
+    const { status, json } = await scan(root);
 
     // The declaration stays: the backend pins that file. Only the export site
     // gains the new name.
@@ -1225,15 +1261,14 @@ describe("the evaluator-vocabulary scanner", () => {
     ).toEqual(["sdk/src/contract/index.ts"]);
   });
 
-  it("has no --write, and says why rather than ignoring the flag", () => {
+  it("has no --write, and says why rather than ignoring the flag", async () => {
     const root = tree({ "sdk/src/a.ts": "export const a = 1;\n" });
-    const result = spawnSync(
-      process.execPath,
-      [SCANNER, "--root", root, "--write"],
-      {
-        encoding: "utf8",
-      }
-    );
+    const result = await run(process.execPath, [
+      SCANNER,
+      "--root",
+      root,
+      "--write",
+    ]);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/no --write/);

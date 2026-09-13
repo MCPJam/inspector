@@ -505,6 +505,14 @@ jobs:
         if: fromJSON(needs.preflight.outputs.publish_cli)
         run: npm run build -w @mcpjam/cli
 
+      # Without this the tarball's MCPJam host row falls back to the catalog's
+      # hand-stamped date, so `npx` shows a "Verified" date that stops moving
+      # while app.mcpjam.com's tracks each deploy. Must run before the client
+      # build that inlines the constant.
+      - name: Stamp inspector build time
+        if: fromJSON(needs.preflight.outputs.publish_inspector)
+        run: node .github/scripts/stamp-mcpjam-build-time.mjs
+
       - name: Build Inspector package
         if: fromJSON(needs.preflight.outputs.publish_inspector)
         run: npm run build -w @mcpjam/inspector

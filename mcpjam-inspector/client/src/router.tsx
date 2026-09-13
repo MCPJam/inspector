@@ -1,3 +1,4 @@
+import { CreditUsagePage } from "./components/billing/CreditUsagePage";
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import App, {
@@ -222,8 +223,11 @@ const ROUTE_ELEMENTS: Record<
   // so registration here does not expose the dark feature.
   sessions: { element: <SessionsRoute /> },
   playground: { element: <PlaygroundRoute /> },
-  support: { element: <SupportRoute /> },
+  support: { loader: () => redirect("/settings/support") },
+  "settings/support": { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },
+  "settings/appearance": { element: <SettingsRoute /> },
+  "settings/about": { element: <SettingsRoute /> },
   "settings/api-keys": { element: <ApiKeysSettingsRoute /> },
   "settings/integrations": { element: <IntegrationsSettingsRoute /> },
   "settings/integrations/github": { element: <GithubChecksSettingsRoute /> },
@@ -243,8 +247,25 @@ const ROUTE_ELEMENTS: Record<
     loader: () => redirect("/settings/integrations/github"),
   },
   profile: { element: <ProfileRoute /> },
+  "project-settings/members": { element: <ProjectSettingsRoute /> },
+  "project-settings/secrets": { element: <ProjectSettingsRoute /> },
   "project-settings": { element: <ProjectSettingsRoute /> },
   "client-config": { element: <ServersRedirectRoute /> },
+  "organizations/:orgId/members": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/sharing": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/billing/usage": {
+    element: (
+      <OrganizationsRoute>
+        <CreditUsagePage />
+      </OrganizationsRoute>
+    ),
+  },
+  "organizations/:orgId/models/usage": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/api-keys": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/plans": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/data-management": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/audit-log": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/integrations": { element: <OrganizationsRoute /> },
   organizations: { element: <OrganizationsRoute /> },
   "organizations/:orgId": { element: <OrganizationsRoute /> },
   "organizations/:orgId/billing": { element: <OrganizationsRoute /> },
@@ -252,7 +273,9 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId/slack": { element: <OrganizationsRoute /> },
   "organizations/:orgId/discord": { element: <OrganizationsRoute /> },
   "organizations/:orgId/observability": { element: <OrganizationsRoute /> },
-  "organizations/:orgId/budget": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/budget": {
+    loader: ({ params }) => redirect(`/organizations/${params.orgId}/billing`),
+  },
   "evals/shared/:token": { element: <EvalRunSharedRoute /> },
   evals: { element: <EvalsRoute /> },
   "evals/create": { element: <EvalsRoute /> },

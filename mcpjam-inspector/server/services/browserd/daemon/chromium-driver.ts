@@ -2772,28 +2772,31 @@ export class ChromiumDriver implements BrowserDriver {
         (timer as { unref?: () => void }).unref?.();
       }),
     ]);
-    // Bounded: a page close can hang forever, and the context close below is
-    // what actually reaps the browser.
-    await Promise.race([
-      this.closeSurfaces(),
-      new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, CLOSE_SURFACE_GRACE_MS);
-        (timer as { unref?: () => void }).unref?.();
+    // A navigating renderer may never answer CDP attachment, screencast stop,
+    // or page.close(). Start cleanup together and bound the whole group so one
+    // stuck page cannot prevent the owning context from closing every target.
+    const rendererCleanup = Promise.allSettled([
+      ...[...this.viewports.values()].map((viewport) =>
+        viewport.then((v) => v?.dispose()),
+      ),
+      ...[...this.tabs.values()].map(async ({ page }) => {
+        if (!page.isClosed()) await page.close();
       }),
     ]);
-    this.viewports.clear();
-    this.tabs.clear();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        rendererCleanup,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, CLOSE_SURFACE_GRACE_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+      this.viewports.clear();
+      this.tabs.clear();
+    }
     await this.context.close().catch(() => {});
-  }
-
-  /** Close what this driver opened, in order. Bounded by its caller. */
-  private async closeSurfaces(): Promise<void> {
-    for (const viewport of this.viewports.values()) {
-      await viewport.then((v) => v?.dispose()).catch(() => {});
-    }
-    for (const entry of this.tabs.values()) {
-      if (!entry.page.isClosed()) await entry.page.close().catch(() => {});
-    }
   }
 
   /**
