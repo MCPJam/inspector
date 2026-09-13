@@ -66,7 +66,7 @@ it("enables every guest local view only after explicit Allow, including views op
   expect(second.result.current).toBeUndefined();
 });
 
-it("never turns guest device consent into hosted tools or shared settings after sign-in", () => {
+it("never turns device consent into hosted tools or a shared project's answer", () => {
   localStorage.setItem(
     "mcp-local-browser-consent-v1",
     JSON.stringify({ token: "guest-device-browser-consent", grantedAt: "now" }),
@@ -78,12 +78,36 @@ it("never turns guest device consent into hosted tools or shared settings after 
   expect(
     renderHook(() => useBrowserToolIds(null, "local")).result.current,
   ).toBeUndefined();
+  // A project that never enabled Browser keeps its answer. `Allow` SKIPS
+  // projects the member cannot manage, so an unset default there is an org
+  // decision — not a gap for this machine's grant to fill.
   state.hosted = false;
   state.user = { id: "member" };
+  state.setting = { enabled: null };
   expect(
-    renderHook(() => useBrowserToolIds(null, "local")).result.current,
+    renderHook(() => useBrowserToolIds(null, "local", { projectId: "proj_1" }))
+      .result.current,
   ).toBeUndefined();
   expect(state.request).not.toHaveBeenCalled();
+});
+
+it("lets the device grant answer for a member with no shared setting to read", () => {
+  // A local-only project has no Convex row to store a default in, so the
+  // settings query never runs. Before this, Allow left the member in the same
+  // silent no-Browser turn as a guest: nothing stored, nothing consulted, no
+  // tool — on a machine they had explicitly authorized.
+  state.user = { id: "member" };
+  localStorage.setItem(
+    "mcp-local-browser-consent-v1",
+    JSON.stringify({ token: "member-device-browser-consent", grantedAt: "now" }),
+  );
+  const scope = { projectId: "local_1" };
+  expect(
+    renderHook(() => useBrowserToolIds(null, "local", scope)).result.current,
+  ).toEqual(["browser"]);
+  expect(state.queries.mock.calls.every(([, args]) => args === "skip")).toBe(
+    true,
+  );
 });
 
 it("preserves an explicit client opt-out for guests", () => {

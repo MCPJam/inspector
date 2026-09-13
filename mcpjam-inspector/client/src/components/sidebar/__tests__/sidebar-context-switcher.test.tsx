@@ -89,7 +89,7 @@ vi.mock("@mcpjam/design-system/dropdown-menu", async () => {
       if (asChild && React.isValidElement(children)) {
         return React.cloneElement(
           children as React.ReactElement<{ onClick?: () => void }>,
-          { onClick: handleClick }
+          { onClick: handleClick },
         );
       }
       return (
@@ -203,7 +203,7 @@ const projects = {
 function openMainDropdown() {
   // Trigger button has aria-label "Switch context: …" or "Switch project: …".
   fireEvent.click(
-    screen.getByRole("button", { name: /^Switch (context|project):/ })
+    screen.getByRole("button", { name: /^Switch (context|project):/ }),
   );
 }
 
@@ -243,7 +243,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     // Closed: menu content is absent.
     expect(screen.queryByTestId("org-header-button")).not.toBeInTheDocument();
@@ -266,7 +266,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     // The organization is the broader context, so it is the bold line. Read
     // the other way round, the heading changed every time you switched
@@ -295,7 +295,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     expect(screen.getByText("No organization")).toBeInTheDocument();
   });
@@ -309,7 +309,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
 
@@ -321,11 +321,11 @@ describe("SidebarContextSwitcher", () => {
     const createRow = screen.getByRole("button", { name: "Create project" });
     expect(
       header.compareDocumentPosition(sandbox) &
-        Node.DOCUMENT_POSITION_FOLLOWING
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       sandbox.compareDocumentPosition(createRow) &
-        Node.DOCUMENT_POSITION_FOLLOWING
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
 
     // Other orgs' projects are not in this org's list
@@ -343,16 +343,18 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     expect(screen.getByTestId("project-active-check-p1")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("project-active-check-p2")
+      screen.queryByTestId("project-active-check-p2"),
     ).not.toBeInTheDocument();
     // The check is decorative, so this is what a screen reader actually reads.
     const rows = screen.getAllByRole("menuitem");
-    const activeRow = rows.find((row) => row.textContent?.includes("Inspector"));
+    const activeRow = rows.find((row) =>
+      row.textContent?.includes("Inspector"),
+    );
     const otherRow = rows.find((row) => row.textContent?.includes("Sandbox"));
     expect(activeRow).toHaveAttribute("aria-current", "true");
     expect(otherRow).not.toHaveAttribute("aria-current");
@@ -367,7 +369,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     openOrgList();
@@ -377,7 +379,7 @@ describe("SidebarContextSwitcher", () => {
     expect(screen.getByTestId("org-row-org_a")).toBeInTheDocument();
     expect(screen.getByTestId("org-row-org_b")).toBeInTheDocument();
     expect(screen.getByTestId("org-list-back-button")).toHaveTextContent(
-      "Organizations"
+      "Organizations",
     );
     expect(screen.queryByText("Sandbox")).not.toBeInTheDocument();
 
@@ -395,20 +397,20 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     openOrgList();
     expect(screen.getByTestId("org-active-check-org_a")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("org-active-check-org_b")
+      screen.queryByTestId("org-active-check-org_b"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("org-row-org_a")).toHaveAttribute(
       "aria-current",
-      "true"
+      "true",
     );
     expect(screen.getByTestId("org-row-org_b")).not.toHaveAttribute(
-      "aria-current"
+      "aria-current",
     );
   });
 
@@ -421,7 +423,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     openOrgList();
@@ -447,7 +449,7 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onSwitchOrganization={onSwitchOrganization}
-      />
+      />,
     );
     openMainDropdown();
     openOrgList();
@@ -458,7 +460,7 @@ describe("SidebarContextSwitcher", () => {
     expect(screen.queryByTestId("org-switch-list")).not.toBeInTheDocument();
   });
 
-  it("has no organization gears — the org list only switches", () => {
+  it("shows settings on each organization row", () => {
     render(
       <SidebarContextSwitcher
         activeProjectId="p1"
@@ -468,16 +470,16 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onSwitchOrganization={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     openOrgList();
     expect(
-      screen.queryByRole("button", { name: "Open Acme settings" })
-    ).not.toBeInTheDocument();
+      screen.queryByRole("button", { name: "Open Acme settings" }),
+    ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Open Nimbus settings" })
-    ).not.toBeInTheDocument();
+      screen.queryByRole("button", { name: "Open Nimbus settings" }),
+    ).toBeInTheDocument();
   });
 
   // A `seatPending` org is a paid-seat invite whose membership hasn't linked
@@ -500,7 +502,7 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onSwitchOrganization={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     openOrgList();
@@ -528,7 +530,7 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onSwitchOrganization={onSwitchOrganization}
-      />
+      />,
     );
     openMainDropdown();
     openOrgList();
@@ -558,7 +560,7 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onSwitchOrganization={onSwitchOrganization}
-      />
+      />,
     );
     openMainDropdown();
     openOrgList();
@@ -577,7 +579,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={onSwitchProject}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     fireEvent.click(screen.getByText("Sandbox"));
@@ -594,14 +596,14 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onNavigateToSettings={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     expect(
-      screen.getByRole("button", { name: "Open Inspector settings" })
+      screen.getByRole("button", { name: "Open Inspector settings" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Open Sandbox settings" })
+      screen.getByRole("button", { name: "Open Sandbox settings" }),
     ).toBeInTheDocument();
   });
 
@@ -621,11 +623,11 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onNavigateToSettings={onNavigateToSettings}
-      />
+      />,
     );
     openMainDropdown();
     fireEvent.click(
-      screen.getByRole("button", { name: "Open Sandbox settings" })
+      screen.getByRole("button", { name: "Open Sandbox settings" }),
     );
     expect(onSwitchProject).not.toHaveBeenCalled();
     await waitFor(() => {
@@ -647,11 +649,11 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onNavigateToSettings={onNavigateToSettings}
-      />
+      />,
     );
     openMainDropdown();
     fireEvent.click(
-      screen.getByRole("button", { name: "Open Inspector settings" })
+      screen.getByRole("button", { name: "Open Inspector settings" }),
     );
     expect(onSwitchProject).not.toHaveBeenCalled();
     expect(onNavigateToSettings).toHaveBeenCalledWith("p1");
@@ -667,10 +669,10 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onNavigateToSettings={vi.fn()}
-      />
+      />,
     );
     expect(
-      screen.queryByRole("menuitem", { name: "Project Settings" })
+      screen.queryByRole("menuitem", { name: "Project Settings" }),
     ).not.toBeInTheDocument();
   });
 
@@ -698,7 +700,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     // Both initials render somewhere in the menu
@@ -745,7 +747,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     expect(screen.getByTitle("2 more")).toBeInTheDocument();
@@ -760,13 +762,13 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     // Not visible until you drill into the organization list — it's a rare
     // action, and the projects view is what the menu opens on.
     expect(
-      screen.queryByRole("button", { name: "New organization" })
+      screen.queryByRole("button", { name: "New organization" }),
     ).not.toBeInTheDocument();
     openOrgList();
     fireEvent.click(screen.getByRole("button", { name: "New organization" }));
@@ -792,12 +794,12 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     openOrgList();
     expect(
-      screen.queryByRole("button", { name: "New organization" })
+      screen.queryByRole("button", { name: "New organization" }),
     ).not.toBeInTheDocument();
   });
 
@@ -813,14 +815,14 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={onCreateProject}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
 
     expect(onCreateProject).not.toHaveBeenCalled();
     expect(screen.getByTestId("create-project-dialog")).toHaveTextContent(
-      "Project"
+      "Project",
     );
     const props = mockCreateProjectDialog.mock.calls.at(-1)?.[0];
     expect(props).toMatchObject({
@@ -846,7 +848,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
@@ -873,7 +875,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
@@ -881,7 +883,7 @@ describe("SidebarContextSwitcher", () => {
     expect(
       mockCreateProjectDialog.mock.calls
         .at(-1)?.[0]
-        .organizations.map((o: { _id: string }) => o._id)
+        .organizations.map((o: { _id: string }) => o._id),
     ).toEqual(["org_a"]);
   });
 
@@ -903,7 +905,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
@@ -911,14 +913,11 @@ describe("SidebarContextSwitcher", () => {
     expect(
       mockCreateProjectDialog.mock.calls
         .at(-1)?.[0]
-        .organizations.map((o: { _id: string }) => o._id)
+        .organizations.map((o: { _id: string }) => o._id),
     ).toEqual(["org_a"]);
   });
 
-  it("confirms before deleting a project from the switcher", async () => {
-    // Deleting takes every server in the project. It used to happen on one
-    // click of a button that only appears on hover.
-    const onDeleteProject = vi.fn();
+  it("keeps project settings but omits deletion from the switcher", () => {
     render(
       <SidebarContextSwitcher
         activeProjectId="p1"
@@ -926,47 +925,17 @@ describe("SidebarContextSwitcher", () => {
         projects={projects}
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
-        onDeleteProject={onDeleteProject}
-      />
+        onDeleteProject={vi.fn()}
+        onNavigateToSettings={vi.fn()}
+      />,
     );
     openMainDropdown();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Delete project Sandbox" })
-    );
-
-    expect(onDeleteProject).not.toHaveBeenCalled();
-    const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent("Delete project?");
-    expect(dialog).toHaveTextContent("Sandbox");
-
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
-    expect(onDeleteProject).toHaveBeenCalledWith("p2");
-  });
-
-  it("cancelling the delete confirmation leaves the project alone", async () => {
-    const onDeleteProject = vi.fn();
-    render(
-      <SidebarContextSwitcher
-        activeProjectId="p1"
-        activeOrganizationId="org_a"
-        projects={projects}
-        onSwitchProject={vi.fn()}
-        onCreateProject={vi.fn(async () => "")}
-        onDeleteProject={onDeleteProject}
-      />
-    );
-    openMainDropdown();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Delete project Sandbox" })
-    );
-
-    const dialog = await screen.findByRole("alertdialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-
-    await waitFor(() => {
-      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    });
-    expect(onDeleteProject).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: /Delete project/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open Sandbox settings" }),
+    ).toBeInTheDocument();
   });
 
   it("disables the Create project row when isCreateDisabled is true", () => {
@@ -980,14 +949,14 @@ describe("SidebarContextSwitcher", () => {
         onDeleteProject={vi.fn()}
         isCreateDisabled
         createDisabledReason="Project limit reached. Upgrade to add more."
-      />
+      />,
     );
     openMainDropdown();
     const button = screen.getByRole("button", { name: "Create project" });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute(
       "title",
-      "Project limit reached. Upgrade to add more."
+      "Project limit reached. Upgrade to add more.",
     );
   });
 
@@ -1001,34 +970,11 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         isLoading
-      />
+      />,
     );
     expect(
-      container.querySelectorAll("[data-slot='skeleton']").length
+      container.querySelectorAll("[data-slot='skeleton']").length,
     ).toBeGreaterThan(0);
-  });
-
-  it("computes delete permissions per project row", () => {
-    render(
-      <SidebarContextSwitcher
-        activeProjectId="p1"
-        activeOrganizationId="org_a"
-        projects={{
-          ...projects,
-          p2: {
-            ...projects.p2,
-            canDeleteProject: false,
-          },
-        }}
-        onSwitchProject={vi.fn()}
-        onCreateProject={vi.fn(async () => "")}
-        onDeleteProject={vi.fn()}
-      />
-    );
-    openMainDropdown();
-    expect(
-      screen.getByRole("button", { name: "Delete project Sandbox" })
-    ).toBeDisabled();
   });
 
   it("keeps the trigger wrapped with learn more content when onLearnMoreExpand is provided", () => {
@@ -1041,11 +987,11 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onLearnMoreExpand={vi.fn()}
-      />
+      />,
     );
     expect(screen.getByTestId("learn-more-projects")).toBeInTheDocument();
     expect(screen.getByTestId("learn-more-projects")).toHaveTextContent(
-      "Inspector"
+      "Inspector",
     );
   });
 
@@ -1059,17 +1005,17 @@ describe("SidebarContextSwitcher", () => {
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
         onLearnMoreExpand={vi.fn()}
-      />
+      />,
     );
     // Both open to the right of the same trigger, so they'd otherwise overlap.
     expect(screen.getByTestId("learn-more-projects")).toHaveAttribute(
       "data-suppressed",
-      "false"
+      "false",
     );
     openMainDropdown();
     expect(screen.getByTestId("learn-more-projects")).toHaveAttribute(
       "data-suppressed",
-      "true"
+      "true",
     );
   });
 
@@ -1091,11 +1037,11 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     expect(
-      screen.getByRole("button", { name: "Create project" })
+      screen.getByRole("button", { name: "Create project" }),
     ).toBeInTheDocument();
 
     openOrgList();
@@ -1103,7 +1049,7 @@ describe("SidebarContextSwitcher", () => {
     expect(screen.getByTestId("org-active-check-org_a")).toBeInTheDocument();
     expect(screen.queryByTestId("org-row-org_b")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "New organization" })
+      screen.getByRole("button", { name: "New organization" }),
     ).toBeInTheDocument();
   });
 
@@ -1122,13 +1068,13 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     openOrgList();
     expect(screen.getByTestId("org-row-org_a")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "New organization" })
+      screen.queryByRole("button", { name: "New organization" }),
     ).not.toBeInTheDocument();
   });
 
@@ -1152,7 +1098,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
         onDeleteProject={vi.fn()}
-      />
+      />,
     );
     openMainDropdown();
     // The sign-in row takes the org header's slot; there is no organization
@@ -1160,7 +1106,7 @@ describe("SidebarContextSwitcher", () => {
     expect(screen.queryByTestId("org-header-button")).not.toBeInTheDocument();
     expect(screen.queryByTestId("org-switch-list")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "New organization" })
+      screen.queryByRole("button", { name: "New organization" }),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("org-sign-in-button"));
     expect(signIn).toHaveBeenCalled();

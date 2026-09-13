@@ -8,6 +8,7 @@ import {
 } from "../case-scorecard/trial-results";
 import { TrialScorecardRow } from "../case-scorecard/trial-scorecard-row";
 import { ScorecardRowView } from "../case-scorecard/scorecard-row";
+import { ProvenanceChip } from "../case-scorecard/provenance-chip";
 import { afterTheRunRows } from "./case-spine-model";
 /**
  * The case, as one list.
@@ -484,33 +485,6 @@ export function CaseSpine({
               onSelectStep ? () => onSelectStep(action.step.id) : undefined
             }
           >
-            {action.ordinal === 1 ? (
-              <section className="space-y-2">
-                <Label
-                  className="text-lg font-semibold text-info"
-                  htmlFor="spine-expected-outcome"
-                >
-                  <Target className="size-4" aria-hidden="true" />
-                  Expected Outcome
-                </Label>
-                <Textarea
-                  id="spine-expected-outcome"
-                  ref={outcomeRef}
-                  value={expectedOutput ?? ""}
-                  onChange={(event) =>
-                    onExpectedOutputChange(event.target.value)
-                  }
-                  rows={3}
-                  readOnly={readOnly}
-                  placeholder={
-                    readOnly
-                      ? "No expected outcome captured"
-                      : "States the signed-in account's email address."
-                  }
-                  className={cnBorder(undefined)}
-                />
-              </section>
-            ) : null}
             {readOnly ? null : (
               <EvalAddDrawer
                 className="w-full"
@@ -636,6 +610,41 @@ export function CaseSpine({
           </ActionRow>
         ))}
       </ul>
+
+      {/* One outcome for the whole case, not one per prompt. It sits AFTER
+          the last action because the judge grades the end state of the run:
+          rendering it under prompt 1 read as "prompt 1's outcome", and a
+          second prompt then looked broken for having none. Per-step
+          expectations are the checks under each action. */}
+      <section
+        className="space-y-2"
+        data-testid="spine-expected-outcome-section"
+      >
+        <div className="flex items-center gap-2">
+          <Label
+            className="text-lg font-semibold text-info"
+            htmlFor="spine-expected-outcome"
+          >
+            <Target className="size-4" aria-hidden="true" />
+            Expected Outcome
+          </Label>
+          <ProvenanceChip provenance="judge" />
+        </div>
+        <Textarea
+          id="spine-expected-outcome"
+          ref={outcomeRef}
+          value={expectedOutput ?? ""}
+          onChange={(event) => onExpectedOutputChange(event.target.value)}
+          rows={3}
+          readOnly={readOnly}
+          placeholder={
+            readOnly
+              ? "No expected outcome captured"
+              : "States the signed-in account's email address."
+          }
+          className={cnBorder(undefined)}
+        />
+      </section>
 
       {wholeCaseRows.length > 0 && (
         <section className="space-y-2" aria-label="Whole-case assertions">

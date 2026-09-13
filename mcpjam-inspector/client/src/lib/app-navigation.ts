@@ -49,12 +49,18 @@ import type { InsightsView } from "@/hooks/useInsightsFlowController";
  */
 export const ORGANIZATION_ROUTE_SECTIONS = [
   "overview",
+  "members",
+  "sharing",
+  "audit-log",
+  "data-management",
+  "api-keys",
+  "plans",
+  "integrations",
   "billing",
   "models",
   "slack",
   "discord",
   "observability",
-  "budget",
 ] as const;
 
 export type OrganizationRouteSection =
@@ -68,12 +74,20 @@ export type OrganizationRouteSection =
 export function parseOrganizationSection(
   segment: string | undefined,
 ): OrganizationRouteSection {
+  if (
+    segment === "members" ||
+    segment === "sharing" ||
+    segment === "audit-log" ||
+    segment === "data-management" ||
+    segment === "integrations"
+  )
+    return segment;
+  if (segment === "api-keys" || segment === "plans") return segment;
   if (segment === "billing") return "billing";
   if (segment === "models") return "models";
   if (segment === "slack") return "slack";
   if (segment === "discord") return "discord";
   if (segment === "observability") return "observability";
-  if (segment === "budget") return "budget";
   return "overview";
 }
 
@@ -121,7 +135,7 @@ export const routePaths = {
   environments: "/environments",
   sessions: "/sessions",
   playground: "/playground",
-  support: "/support",
+  support: "/settings/support",
   settings: "/settings",
   profile: "/profile",
   projectSettings: "/project-settings",
@@ -418,6 +432,16 @@ export function buildOrganizationPath(
   orgId: string,
   section?: OrganizationRouteSection,
 ): string {
+  if (
+    section === "members" ||
+    section === "sharing" ||
+    section === "audit-log" ||
+    section === "data-management" ||
+    section === "integrations"
+  )
+    return `/organizations/${orgId}/${section}`;
+  if (section === "api-keys" || section === "plans")
+    return `/organizations/${orgId}/${section}`;
   if (section === "billing") return `/organizations/${orgId}/billing`;
   if (section === "models") return `/organizations/${orgId}/models`;
   // The Slack section's sub-tabs live in `?tab=`, not in the path: they are
@@ -432,10 +456,6 @@ export function buildOrganizationPath(
   // dialog rather than a view, so there is nothing for a `?tab=` to select.
   if (section === "observability")
     return `/organizations/${orgId}/observability`;
-  // The organization spend budget. One segment like the two above: the cap
-  // and its alert thresholds are one form, so there is nothing for a `?tab=`
-  // to select.
-  if (section === "budget") return `/organizations/${orgId}/budget`;
   return `/organizations/${orgId}`;
 }
 
@@ -531,7 +551,8 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       if (route.openCompare) params.set("compare", "1");
       if (route.checks) params.set("checks", "1");
       if (route.iteration) params.set("iteration", route.iteration);
-      if (route.fromEvalServer) params.set("fromEvalServer", route.fromEvalServer);
+      if (route.fromEvalServer)
+        params.set("fromEvalServer", route.fromEvalServer);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
         route.suiteId,
@@ -622,6 +643,12 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
     void router.navigate(target, { replace: options?.replace });
     return;
   }
+  if (
+    !window.dispatchEvent(
+      new Event("settings-before-navigation", { cancelable: true }),
+    )
+  )
+    return;
   if (options?.replace) {
     window.history.replaceState({}, "", target);
   } else {

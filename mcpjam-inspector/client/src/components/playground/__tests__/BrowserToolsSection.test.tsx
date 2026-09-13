@@ -280,7 +280,9 @@ describe("BrowserToolsSection", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
     expect(
-      screen.getByText(/Enable browser access from the Browser tab on the right pane/),
+      screen.getByText(
+        /Enable browser access from the Browser tab on the right pane/,
+      ),
     ).toBeInTheDocument();
     expect(onAllow).not.toHaveBeenCalled();
   });
@@ -347,4 +349,22 @@ it("explains an explicit client opt-out without another permission prompt", () =
     screen.getByText("Browser tools are disabled for this client."),
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+});
+
+it("shows a retry action instead of hiding a failed Browser catalog", () => {
+  const retry = vi.fn();
+  render(
+    <BrowserToolsSection
+      tools={[]}
+      page={null}
+      searchQuery=""
+      catalogError
+      onRetryCatalog={retry}
+    />,
+  );
+  expect(screen.getByRole("status").textContent).toContain(
+    "Couldn't load Browser tools.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(retry).toHaveBeenCalledOnce();
 });

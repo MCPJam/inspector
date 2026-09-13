@@ -77,6 +77,7 @@ export interface BrowserLocalConsentPrompt {
 export interface BrowserToolsState {
   /** True when the previewed host actually attaches the browser capability. */
   attached: boolean;
+  catalogError?: boolean;
   /** Which browser a call would drive. */
   engine: "hosted" | "local";
   /** The `browser_*` tools, as the model is shown them. */
@@ -221,10 +222,10 @@ export function useBrowserTools(args: {
   /** Whether a hosted read is possible at all — a boolean, so it can be a dep. */
   const hostedReadable = tokens !== null;
 
-  // Definitions. Cached per engine for the session; a failure leaves the list
-  // empty rather than surfacing an error, because a pane that cannot describe
-  // the browser is still a working pane.
+  const [catalogError, setCatalogError] = useState(false);
+  // Successful definitions stay cached; Refresh retries failed catalog reads.
   useEffect(() => {
+    setCatalogError(false);
     if (!attached) {
       setTools([]);
       return;
@@ -238,17 +239,22 @@ export function useBrowserTools(args: {
     let cancelled = false;
     fetchBrowserToolDefinitions(engine, controller.signal)
       .then((items) => {
+        if (cancelled) return;
+        if (items.length === 0) throw new Error("Empty Browser catalog");
         DEFINITIONS_CACHE.set(engine, items);
-        if (!cancelled) setTools(items);
+        setTools(items);
       })
       .catch(() => {
-        if (!cancelled) setTools([]);
+        if (!cancelled) {
+          setTools([]);
+          setCatalogError(true);
+        }
       });
     return () => {
       cancelled = true;
       controller.abort();
     };
-  }, [attached, engine]);
+  }, [attached, engine, pageNonce]);
 
   /**
    * The page read, which is a live look at a running browser.
@@ -424,6 +430,7 @@ export function useBrowserTools(args: {
     attached,
     engine,
     localConsent,
+    catalogError: attached && available && catalogError,
     tools: available ? tools : [],
     page: available
       ? page

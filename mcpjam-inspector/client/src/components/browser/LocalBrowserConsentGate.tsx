@@ -10,7 +10,48 @@ import { Globe } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
+import { routePaths, useAppNavigate } from "@/lib/app-navigation";
 import { useAuth } from "@workos-inc/authkit-react";
+
+/** Shared consent copy — one description across card, inline, and onboarding. */
+function LocalBrowserConsentDescription({
+  guest,
+  onOpenBrowserSettings,
+  linkClassName = "text-sm",
+}: {
+  guest: boolean;
+  onOpenBrowserSettings?: () => void;
+  linkClassName?: string;
+}) {
+  const navigate = useAppNavigate();
+  const openSettings =
+    onOpenBrowserSettings ?? (() => navigate(routePaths.hosts));
+
+  if (guest) {
+    return (
+      <>
+        Allow agents to navigate, click, type, and read pages on this machine.
+        Page content may be sent to your model. This enables Browser for your
+        local clients across WebMCP, Playground, and tabs on this device.
+      </>
+    );
+  }
+
+  return (
+    <>
+      Allow agents to navigate, click, type, and read pages on this machine.
+      Page content may be sent to your model. You can remove it in each{" "}
+      <Button
+        variant="link"
+        className={`h-auto p-0 ${linkClassName}`}
+        onClick={openSettings}
+      >
+        Browser settings
+      </Button>
+      .
+    </>
+  );
+}
 
 /** Explicit device consent and shared local-client setup. */
 export function LocalBrowserConsentGate({
@@ -116,18 +157,23 @@ export function LocalBrowserConsentGate({
               ? "Finish enabling browser tools"
               : "Let agents use your browser?"}
           </DialogTitle>
-          <DialogDescription>
-            {setupOnly
-              ? "Browser permission is saved. Finish setup to enable browser tools for your clients. "
-              : "Allow agents to navigate, click, type, and read pages in a browser on this machine. "}
-            Page content may be sent to your model.
+          <DialogDescription asChild>
+            <p className="text-sm text-muted-foreground">
+              {setupOnly ? (
+                <>
+                  Browser permission is saved. Finish setup to enable browser
+                  tools for your clients.
+                </>
+              ) : (
+                <LocalBrowserConsentDescription
+                  guest={!user}
+                  {...(onOpenClientSettings
+                    ? { onOpenBrowserSettings: onOpenClientSettings }
+                    : {})}
+                />
+              )}
+            </p>
           </DialogDescription>
-          <p className="text-sm text-muted-foreground">
-            {user
-              ? "Enables browser tools for clients in projects you manage. Clients you’ve explicitly disabled stay disabled."
-              : "Enables browser tools for your local clients on this device."}{" "}
-            You can change this in the Browser tab or client Browser settings.
-          </p>
           {error ? (
             <p
               role="alert"
@@ -162,8 +208,13 @@ export function LocalBrowserConsentGate({
         className="space-y-2 px-3"
       >
         <p className="text-xs leading-snug text-muted-foreground">
-          Allow agents to navigate, click, type, and read pages on this machine.
-          Page content may be sent to your model.
+          <LocalBrowserConsentDescription
+            guest={!user}
+            linkClassName="text-xs"
+            {...(onOpenClientSettings
+              ? { onOpenBrowserSettings: onOpenClientSettings }
+              : {})}
+          />
         </p>
         <Button
           size="sm"
@@ -175,20 +226,6 @@ export function LocalBrowserConsentGate({
         {error ? (
           <p className="text-xs text-destructive" data-testid="consent-error">
             {error}
-          </p>
-        ) : null}
-        {onOpenClientSettings ? (
-          <p className="text-xs leading-snug text-muted-foreground">
-            {user ? "Enables every client you manage. " : null}
-            To turn it off, open{" "}
-            <Button
-              variant="link"
-              className="h-auto p-0 text-xs"
-              onClick={onOpenClientSettings}
-            >
-              client Browser settings
-            </Button>
-            .
           </p>
         ) : null}
       </div>
@@ -204,11 +241,12 @@ export function LocalBrowserConsentGate({
         Enable local Browser for all clients
       </h2>
       <p className="text-sm leading-relaxed text-muted-foreground">
-        Allow agents to navigate, click, type, and read pages on this machine.
-        Page content may be sent to your model.{" "}
-        {user
-          ? "You can remove it in each client's Connect settings."
-          : "This enables Browser for your local clients across WebMCP, Playground, and tabs on this device."}
+        <LocalBrowserConsentDescription
+          guest={!user}
+          {...(onOpenClientSettings
+            ? { onOpenBrowserSettings: onOpenClientSettings }
+            : {})}
+        />
       </p>
       {user && (
         <p className="text-xs leading-relaxed text-muted-foreground">

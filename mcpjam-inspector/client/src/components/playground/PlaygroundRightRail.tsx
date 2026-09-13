@@ -1,7 +1,4 @@
 import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
-import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
-import { useAppNavigate } from "@/lib/app-navigation";
-import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -116,7 +113,6 @@ function RightRailTabbed({
   hostConfig: HostConfigDtoV2 | null;
   hostId: string | null;
 }) {
-  const navigate = useAppNavigate();
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
   const leftBrowserForLogs = useRef(false);
   const computersEnabled = useComputersEnabledState();
@@ -130,7 +126,11 @@ function RightRailTabbed({
   // harmless (the engine hooks no-op without a shared project) and deliberate.
   const engine = useComputerEngine(projectId);
   const browserEngine = useBrowserEngine(projectId);
-  const browserToolIds = useBrowserToolIds(hostConfig, browserEngine.selectedEngine, { projectId, hostId });
+  const browserToolIds = useBrowserToolIds(
+    hostConfig,
+    browserEngine.selectedEngine,
+    { projectId, hostId },
+  );
   // The BODY follows `selectedEngine` (consent-blind), mirroring the Computer
   // tab's face choice: someone who picked "This machine" but hasn't authorized
   // it yet must see the local body's pointer, not a cloud terminal they didn't
@@ -292,22 +292,6 @@ function RightRailTabbed({
           />
         ) : null}
         <div className="ml-auto flex items-center gap-1">
-          {hasBrowser && activeTab === "browser" ? (
-            <>
-              <BrowserRuntimeControls projectId={projectId} compact />
-              {hostId && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigate(buildHostFocusTabPath(hostId, "browser"))
-                  }
-                  className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                >
-                  Browser settings
-                </button>
-              )}
-            </>
-          ) : null}
           <button
             type="button"
             onClick={onClose}
@@ -368,6 +352,7 @@ function RightRailTabbed({
               sessionId={browserSessionId}
               consentGranted={browserEngine.consent.granted}
               consentToken={browserEngine.consent.token}
+              hostId={hostId}
               active={activeTab === "browser"}
             />
           ) : (
@@ -376,6 +361,7 @@ function RightRailTabbed({
               projectId={projectId}
               sessionId={browserSessionId}
               mintToken={mintHostedBrowserToken}
+              hostId={hostId}
               active={activeTab === "browser"}
             />
           )}

@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { OrganizationMemberRow } from "../OrganizationMemberRow";
@@ -31,6 +32,27 @@ function createMember(role: "owner" | "admin" | "member") {
 }
 
 describe("OrganizationMemberRow", () => {
+  it("keeps destructive and ownership actions in the member menu", async () => {
+    const user = userEvent.setup();
+    const onTransferOwnership = vi.fn();
+    render(
+      <OrganizationMemberRow
+        member={createMember("member")}
+        onTransferOwnership={onTransferOwnership}
+        onRemove={vi.fn()}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Actions for member@example.com" }),
+    );
+    expect(
+      screen.getByRole("menuitem", { name: "Remove member" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("menuitem", { name: "Transfer ownership" }),
+    );
+    expect(onTransferOwnership).toHaveBeenCalled();
+  });
   it("shows only one role label when role is editable", () => {
     render(
       <OrganizationMemberRow

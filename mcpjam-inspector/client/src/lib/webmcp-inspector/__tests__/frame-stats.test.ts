@@ -88,10 +88,10 @@ describe("frame stats", () => {
     noteFrameTransportRung("ws");
     notePainted({ ts: 999_990, seq: 1 });
     notePainted({ ts: 999_980, seq: 2 });
-    // The socket dies and the pane falls back; a p95 that mixed the two would
-    // describe neither, and "did the socket help?" is exactly the question
-    // this file exists to answer.
-    noteFrameTransportRung("sse-frames");
+    // A session that ends up with no stream at all still produces paints — a
+    // manual screenshot is one — and a p50 that mixed them with the socket's
+    // would describe neither.
+    noteFrameTransportRung("none");
     notePainted({ ts: 999_900, seq: 3 });
 
     const report = frameStatsReport();
@@ -99,29 +99,26 @@ describe("frame stats", () => {
     // those — and the split rides beside them.
     expect(report.captureToPaint.n).toBe(3);
     expect(report.byTransport.ws).toMatchObject({ n: 2, p50: 10, p95: 20 });
-    expect(report.byTransport["sse-frames"]).toMatchObject({ n: 1, p50: 100 });
-    expect(report.byTransport.poll).toBeUndefined();
+    expect(report.byTransport.none).toMatchObject({ n: 1, p50: 100 });
   });
 
-  it("measures a polled screenshot, which carries no seq", () => {
+  it("measures a manual screenshot, which carries no seq", () => {
     localStorage.setItem(FLAG, "1");
     resetFrameStatsFlagForTests();
     vi.setSystemTime(1_000_000);
 
-    noteFrameTransportRung("poll");
+    noteFrameTransportRung("none");
     noteInputSent(0);
-    // No `seq`: a screenshot is not part of the frame sequence. It still
-    // closes a capture-to-paint measurement, which is a property of the
-    // picture — and this is the rung somebody opening the report is most
-    // likely to be investigating, since it is the slowest.
-    notePainted({ ts: 999_500, rung: "poll" });
+    // No `seq`: a screenshot someone asked for is not part of the frame
+    // sequence. It still closes a capture-to-paint measurement, which is a
+    // property of the picture rather than of the stream.
+    notePainted({ ts: 999_500, rung: "none" });
 
     const report = frameStatsReport();
-    expect(report.byTransport.poll).toMatchObject({ n: 1, p50: 500 });
-    // And it settles no input echo. At a fixed once-a-second cadence, "time
-    // from gesture to next paint" measures the POLL INTERVAL rather than the
-    // input path — a number that would sit in the same percentile as socket
-    // echoes while describing something else entirely.
+    expect(report.byTransport.none).toMatchObject({ n: 1, p50: 500 });
+    // And it settles no input echo. A picture nobody's gesture was waiting on
+    // would otherwise sit in the same percentile as a real one while
+    // describing something else entirely.
     expect(report.inputToPaint.n).toBe(0);
   });
 
@@ -133,12 +130,12 @@ describe("frame stats", () => {
     noteFrameTransportRung("ws");
     // The frame came in on the socket, and the ladder moves while it decodes —
     // which on a real pane is tens of milliseconds of window.
-    noteFrameTransportRung("sse-frames");
+    noteFrameTransportRung("none");
     notePainted({ ts: 999_990, seq: 1, rung: "ws" });
 
     const report = frameStatsReport();
     expect(report.byTransport.ws).toMatchObject({ n: 1 });
-    expect(report.byTransport["sse-frames"]).toBeUndefined();
+    expect(report.byTransport.none).toBeUndefined();
   });
 
   it("keeps the active transport when the samples are cleared", () => {

@@ -517,9 +517,16 @@ export function UserTestingTab({
             name,
             mode,
           });
-          navigate(buildUserTestingScenarioPath(result.scenarioId), {
-            replace: true,
-          });
+          // ONLY when this call created it. An idempotent hit means the
+          // creator asked for a new study and got none; walking them into the
+          // one that already exists answers a question they did not ask, and
+          // loses the draft they were holding. The create screen reports it
+          // and keeps them there.
+          if (result.created) {
+            navigate(buildUserTestingScenarioPath(result.scenarioId), {
+              replace: true,
+            });
+          }
           return { scenarioId: result.scenarioId, created: result.created };
         }}
         onApplyStudySurfaces={async (scenarioId, surfaces) => {
@@ -615,6 +622,10 @@ export function UserTestingTab({
     return (
       <UserTestingScenarioDetail
         scenario={scenario}
+        // From the LIST row: the detail query carries no activity counters,
+        // and this only gates an edit — a stale-by-one count cannot lose data
+        // in either direction.
+        sessionCount={scenarioRow?.sessionCount}
         editMode={editOpen}
         onBack={goOverview}
         onDeleted={goOverview}

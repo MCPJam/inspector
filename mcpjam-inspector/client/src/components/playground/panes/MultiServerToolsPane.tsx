@@ -409,7 +409,7 @@ function FlatToolList({
   const hasBuiltin =
     builtinTools.length > 0 ||
     (browserTools?.tools.length ?? 0) > 0 ||
-    Boolean(browserTools?.localConsent);
+    Boolean(browserTools?.localConsent || browserTools?.catalogError);
   const uniqueServerIds = [...new Set(entries.map((entry) => entry.serverId))];
   const showServerBadge = uniqueServerIds.length > 1;
   const serversChip =
@@ -454,6 +454,8 @@ function FlatToolList({
                 selectedKey={selectedBrowserKey}
                 onSelect={onSelectBrowser}
                 localConsent={browserTools.localConsent}
+                catalogError={browserTools.catalogError}
+                onRetryCatalog={browserTools.refreshPage}
               />
             ) : null}
             {entries.length > 0 ? (
@@ -513,8 +515,7 @@ function FlatToolList({
                         {(() => {
                           const visibility = getToolVisibility(
                             entry.tool._meta as
-                              | Record<string, unknown>
-                              | undefined,
+                              Record<string, unknown> | undefined,
                           );
                           const visibilityLabel = `[${visibility
                             .map((v) => `"${v}"`)

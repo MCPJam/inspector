@@ -211,7 +211,9 @@ it("explains device scope for guests", () => {
   state.guest = true;
   render(<LocalBrowserOnboarding projectId={null} authReady />);
   expect(
-    screen.getByText(/your local clients on this device/),
+    screen.getByText(
+      /your local clients across WebMCP, Playground, and tabs on this device/,
+    ),
   ).toBeInTheDocument();
   expect(screen.queryByText(/projects you manage/)).toBeNull();
 });

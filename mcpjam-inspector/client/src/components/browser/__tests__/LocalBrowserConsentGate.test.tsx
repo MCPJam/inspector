@@ -12,6 +12,11 @@ vi.mock("@/lib/config", () => ({
   },
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigate,
+}));
 
 beforeEach(() => {
   mode.hosted = false;
@@ -38,12 +43,20 @@ describe("LocalBrowserConsentGate", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        /Allow agents to navigate, click, type, and read pages on this machine\. Page content may be sent to your model\. You can remove it in each client's Connect settings\./,
-      ),
+      screen.getByText(/Page content may be sent to your model/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/projects you manage/)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Browser settings" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Connect settings/)).toBeNull();
     expect(onAllow).not.toHaveBeenCalled();
+  });
+
+  it("opens the clients list from Browser settings when no handler is passed", () => {
+    navigate.mockClear();
+    render(<LocalBrowserConsentGate onAllow={() => true} />);
+    fireEvent.click(screen.getByRole("button", { name: "Browser settings" }));
+    expect(navigate).toHaveBeenCalledWith("/hosts");
   });
 
   it("requires Allow and reports failed setup for an explicit retry", async () => {

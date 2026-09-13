@@ -254,6 +254,29 @@ describe("the spine", () => {
     expect(screen.queryByText("Steps")).toBeNull();
   });
 
+  it("keeps one Expected Outcome for the whole case, after the last action, marked as the judge's", async () => {
+    await openSpine({ steps: twoTurn });
+    const outcome = screen.getByLabelText("Expected Outcome");
+    const section = screen.getByTestId("spine-expected-outcome-section");
+    expect(section).toContainElement(outcome);
+    // Not inside any prompt row: under prompt 1 it read as that prompt's
+    // outcome, and prompt 2 then looked broken for having none.
+    for (const row of screen.getAllByTestId("spine-action-row")) {
+      expect(row).not.toContainElement(outcome);
+    }
+    const actions = screen.getByTestId("spine-actions");
+    expect(
+      actions.compareDocumentPosition(section) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(section).getByText("Judge").getAttribute("data-provenance"),
+    ).toBe("judge");
+    // The chip is beside the label, not inside it, so the field's name stays
+    // "Expected Outcome".
+    expect(screen.getByLabelText("Expected Outcome")).toBe(outcome);
+  });
+
   it("nests each check under the action it follows", async () => {
     await openSpine({ steps: withClick });
     const [prompt, click] = screen.getAllByTestId("spine-action-row");

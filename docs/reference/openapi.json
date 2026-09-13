@@ -2498,6 +2498,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -2562,6 +2565,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -2623,6 +2629,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -2687,6 +2696,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -2735,6 +2747,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -2800,6 +2815,11 @@
                     },
                     "nextCursor": {
                       "type": "string"
+                    },
+                    "evidence": {
+                      "type": "string",
+                      "enum": ["resolved", "unavailable"],
+                      "description": "Whether the evidence read behind these verdicts completed. `resolved` means it did (a step may still have produced no `evidence`); `unavailable` means it failed and the verdicts are all that could be served. Absent on a deployment that predates the marker."
                     }
                   },
                   "additionalProperties": true
@@ -2821,6 +2841,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -2867,6 +2890,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -2922,6 +2948,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -2989,6 +3018,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -9988,6 +10020,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -10044,6 +10079,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -11941,6 +11979,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       },
@@ -11982,6 +12023,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -12028,6 +12072,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
