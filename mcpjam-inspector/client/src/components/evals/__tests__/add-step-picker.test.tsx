@@ -21,7 +21,7 @@ describe("AddStepPicker", () => {
     expect(screen.queryByText("Tool was called at least once")).toBeNull();
     expect(screen.queryByText("Text visible")).toBeNull();
     expect(screen.getByTestId("add-step-expand-more")).toHaveTextContent(
-      `More checks (${secondaryCount()})`,
+      `More assertions (${secondaryCount()})`,
     );
   });
 

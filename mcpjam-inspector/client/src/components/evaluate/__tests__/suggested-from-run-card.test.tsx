@@ -241,7 +241,7 @@ describe("read state", () => {
 describe("always", () => {
   it("says Response is not gradable in this release", () => {
     renderCard();
-    expect(screen.getByText(/Nothing checks Response yet/)).toBeTruthy();
+    expect(screen.getByText(/No assertion covers Response yet/)).toBeTruthy();
   });
 
   it("says so when nothing was stable", () => {

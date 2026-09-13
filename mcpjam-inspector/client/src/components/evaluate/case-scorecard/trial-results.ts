@@ -437,7 +437,7 @@ function judgeResult(judge: JudgeCase): TrialRowResult {
     return {
       state: "error",
       source: "judgeCase",
-      reason: judge.reason ?? "The judge could not grade this trial.",
+      reason: judge.reason ?? "The judge could not grade this iteration.",
     };
   }
   if (judge.status === "skipped") {

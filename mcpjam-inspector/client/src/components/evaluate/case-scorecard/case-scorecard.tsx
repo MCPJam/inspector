@@ -111,7 +111,7 @@ export function CaseScorecard({
           className="text-[11px] text-muted-foreground"
           data-testid="case-scorecard-replaced"
         >
-          Suite scorers replaced for this case —{" "}
+          Suite evaluators replaced for this case —{" "}
           {card.hiddenSuiteCount === 1
             ? "1 is not applied"
             : `${card.hiddenSuiteCount} are not applied`}

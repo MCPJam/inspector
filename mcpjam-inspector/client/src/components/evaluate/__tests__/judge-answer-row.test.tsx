@@ -183,7 +183,7 @@ describe("JudgeAnswerRow", () => {
     // A score the judge did not produce from evidence is a non-answer.
     expect(screen.queryByTestId("judge-answer-word")).toBeNull();
     expect(
-      screen.getByText("The judge could not grade this trial"),
+      screen.getByText("The judge could not grade this iteration"),
     ).toBeTruthy();
   });
 

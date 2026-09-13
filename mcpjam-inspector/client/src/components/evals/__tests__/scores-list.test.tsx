@@ -396,7 +396,7 @@ describe("ScoresList", () => {
       />,
     );
     expect(screen.getByTestId("score-row-hidden").textContent).toBe(
-      "Judge score hidden until you label this trial",
+      "Judge score hidden until you label this iteration",
     );
     expect(screen.queryByText("0.42 / 0.7")).toBeNull();
     expect(screen.queryByText(/The answer never named the file/)).toBeNull();

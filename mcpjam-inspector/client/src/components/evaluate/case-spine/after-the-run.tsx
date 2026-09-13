@@ -80,7 +80,7 @@ export function AfterTheRunSection({
           data-testid="case-scorecard-replaced"
         >
           <span>
-            Suite scorers replaced for this case —{" "}
+            Suite evaluators replaced for this case —{" "}
             {card.hiddenSuiteCount === 1
               ? "1 is not applied"
               : `${card.hiddenSuiteCount} are not applied`}
@@ -97,7 +97,7 @@ export function AfterTheRunSection({
               className="h-6 px-1.5 text-[11px]"
               onClick={onApplySuiteScorers}
             >
-              Apply suite scorers too
+              Apply suite evaluators too
             </Button>
           )}
         </div>

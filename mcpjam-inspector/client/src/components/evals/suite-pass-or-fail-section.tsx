@@ -61,7 +61,7 @@ export function SuitePassOrFailSection({
   judgeConfig: EvalJudgeConfig | undefined;
   onJudgeConfigChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
-  /** The "migrate scenario checks per case" warning, when the suite has any. */
+  /** The "migrate scenario assertions per case" warning, when the suite has any. */
   scenarioMigrationNotice?: React.ReactNode;
   /** S6 mounts the agreement line, the gate switch and its acknowledgement. */
   judgeAccessory?: React.ReactNode;

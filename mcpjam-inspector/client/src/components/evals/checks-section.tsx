@@ -2116,17 +2116,17 @@ export function CaseChecksSection({
         </div>
         {suiteScenarioAsserts.length > 0 ? (
           <p className="text-[11px] text-warning">
-            Suite defaults include {suiteScenarioAsserts.length} scenario check
-            {suiteScenarioAsserts.length === 1 ? "" : "s"} — review in Suite
-            settings.
+            Suite defaults include {suiteScenarioAsserts.length} scenario
+            assertion{suiteScenarioAsserts.length === 1 ? "" : "s"} — review in
+            Suite settings.
           </p>
         ) : null}
         {caseScenarioAsserts.length > 0 ? (
           <div className="rounded-md border border-border/50 bg-muted/20 p-2.5 space-y-2">
             <p className="text-[11px] text-muted-foreground">
-              {caseScenarioAsserts.length} scenario check
-              {caseScenarioAsserts.length === 1 ? "" : "s"} here — move to
-              Steps for inline checks.
+              {caseScenarioAsserts.length} scenario assertion
+              {caseScenarioAsserts.length === 1 ? "" : "s"} here — move to Steps for
+              inline assertions.
             </p>
             {onAppendScenarioToSteps ? (
               <Button

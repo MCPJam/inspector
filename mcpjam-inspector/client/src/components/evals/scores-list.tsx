@@ -402,7 +402,7 @@ function ScoreGroup({
               data-testid="score-row-hidden"
               className="rounded border border-border/40 bg-background/40 p-2 text-[11px] text-muted-foreground"
             >
-              Judge score hidden until you label this trial
+              Judge score hidden until you label this iteration
             </li>
           ) : (
             <ScoreRow key={`${keyPrefix}-${index}`} row={row} />

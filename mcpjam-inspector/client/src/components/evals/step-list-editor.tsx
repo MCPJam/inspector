@@ -508,7 +508,8 @@ export function StepListEditor({
             Steps
           </h3>
           <p className="text-[11px] text-muted-foreground">
-            An ordered sequence of prompts, tool calls, interactions, and checks.
+            An ordered sequence of prompts, tool calls, interactions, and
+            assertions.
           </p>
         </div>
       </header>

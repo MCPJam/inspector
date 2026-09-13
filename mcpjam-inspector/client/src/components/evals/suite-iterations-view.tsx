@@ -2647,7 +2647,7 @@ export function SuiteIterationsView({
                         scenarioMigrationNotice={
                           suiteScenarioMigrationCount > 0 ? (
                             <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                              {suiteScenarioMigrationCount} scenario check
+                              {suiteScenarioMigrationCount} scenario assertion
                               {suiteScenarioMigrationCount === 1 ? "" : "s"} in
                               defaults — migrate per case in Steps.
                             </p>

@@ -152,12 +152,12 @@ export function PredicatesList({
   return (
     <div
       role="region"
-      aria-label="Checks"
+      aria-label="Assertions"
       className="space-y-2 rounded-md border border-border/40 bg-muted/10 p-3"
     >
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Checks
+          Assertions
         </div>
         <div
           className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${

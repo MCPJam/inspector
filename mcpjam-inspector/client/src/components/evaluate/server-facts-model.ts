@@ -290,7 +290,7 @@ export function discoveryLines(
       label: "Output schemas",
       value: `${server.outputSchema.present}/${server.outputSchema.total}`,
       tone: server.outputSchema.present > 0 ? "set" : "empty",
-      note: "optional under the spec; present schemas let a check grade the shape of a result",
+      note: "optional under the spec; present schemas let an assertion grade the shape of a result",
     });
   }
   return lines;

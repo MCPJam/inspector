@@ -304,7 +304,7 @@ export function EvalGeneratedDrafts({
                             sessionId,
                             `Read the generated draft titled ${JSON.stringify(
                               draft.input.title,
-                            )} and suggest a focused improvement to its steps and checks. Do not save it or generate more cases.`,
+                            )} and suggest a focused improvement to its steps and assertions. Do not save it or generate more cases.`,
                           );
                       }}
                     >

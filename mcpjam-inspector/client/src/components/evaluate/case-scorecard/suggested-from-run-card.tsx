@@ -200,8 +200,8 @@ export function SuggestedFromRunCard({
       ) : null}
 
       <p className="text-muted-foreground">
-        Nothing checks Response yet — tool results and latency are not gradable
-        in this release.
+        No assertion covers Response yet — tool results and latency are not
+        gradable in this release.
       </p>
     </section>
   );
