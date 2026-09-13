@@ -252,6 +252,31 @@ describe("ProjectRunsTable", () => {
     ]);
   });
 
+  it("keeps Git columns hidden for non-GitHub platform filters", async () => {
+    const user = userEvent.setup();
+    setRows([
+      makeRow({ source: "sdk" }),
+      makeRow({ _id: "run_github", source: "github_check" }),
+    ]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    await user.click(
+      screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
+    );
+    await user.keyboard("{Escape}");
+
+    expect(
+      inTable().queryByRole("columnheader", { name: "Commit" }),
+    ).toBeNull();
+    expect(inTable().queryByRole("columnheader", { name: "PR" })).toBeNull();
+    expect(
+      inTable().queryByRole("columnheader", { name: "Branch" }),
+    ).toBeNull();
+  });
+
   it("keeps the chips reachable when a filter matches nothing", async () => {
     const user = userEvent.setup();
     mocks.backendFiltersOrigins = true;
@@ -1092,6 +1117,13 @@ describe("GitHub run context", () => {
           historyMetricsEnabled={historyMetricsEnabled}
         />,
       );
+      await user.click(
+        screen.getByRole("button", { name: "Filter by platform" }),
+      );
+      await user.click(
+        screen.getByRole("menuitemcheckbox", { name: "GitHub" }),
+      );
+      await user.keyboard("{Escape}");
       expect(
         inTable().getByRole("columnheader", { name: "Platform" }),
       ).toBeVisible();
@@ -1145,6 +1177,12 @@ describe("GitHub run context", () => {
       }),
     ]);
     render(<ProjectRunsTable projectId="proj_1" onSelectRun={onSelectRun} />);
+    expect(inTable().queryByText("Commit")).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "GitHub" }));
+    await user.keyboard("{Escape}");
     expect(inTable().getByText("Commit")).toBeVisible();
     expect(inTable().getByText("PR")).toBeVisible();
     expect(inTable().getByText("Branch")).toBeVisible();
@@ -1180,8 +1218,8 @@ describe("GitHub run context", () => {
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.getByText(/3 of 3 loaded runs/)).toBeVisible();
     expect(
-      screen.getByRole("textbox", { name: "Filter by commit" }),
-    ).toHaveValue("");
+      screen.queryByRole("textbox", { name: "Filter by commit" }),
+    ).toBeNull();
   });
 });
 

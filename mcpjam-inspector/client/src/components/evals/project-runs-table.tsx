@@ -389,8 +389,7 @@ export function ProjectRunsTable({
       repositoryFilter !== ALL_EVAL_FILTER_VALUES ||
       branchFilter !== ALL_EVAL_FILTER_VALUES ||
       Boolean(commitFilter.trim());
-    const showGitContext =
-      sourceFilter.has("github") || hasGitFilter || rows.some(isGithubRun);
+    const showGitContext = sourceFilter.has("github");
     const matching = sourceAndSuiteRows.filter(
       (row) =>
         (clientFilter === ALL_EVAL_FILTER_VALUES ||
@@ -558,6 +557,11 @@ export function ProjectRunsTable({
     hasGitFilter;
 
   const toggleSource = (value: string) => {
+    if (value === "github" && sourceFilter.has("github")) {
+      setRepositoryFilter(ALL_EVAL_FILTER_VALUES);
+      setBranchFilter(ALL_EVAL_FILTER_VALUES);
+      setCommitFilter("");
+    }
     setSourceFilter((prev) => {
       const next = new Set(prev);
       if (next.has(value)) next.delete(value);
