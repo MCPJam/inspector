@@ -17,10 +17,6 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
-    // The root CI job runs this suite beside nine other package lanes. Letting
-    // Vitest consume every reported CPU repeatedly starves its worker RPC long
-    // enough for onTaskUpdate to time out after all tests have passed.
-    maxWorkers: process.env.CI ? 2 : undefined,
     // `src/**/__tests__` as well as `tests/`: contract-shaped suites that
     // must live beside the module they pin (the permalink route registry, the
     // tool-policy table) were invisible to the runner while only `tests/` was
