@@ -336,8 +336,8 @@ export function ProjectSettingsTab({
         />
       )}
 
-      {/* Project Servers auto-connect lives on the Servers tab header
-            (single toggle next to "Add Server"), not here. */}
+        {/* Auto-connect is a personal per-device switch on the Servers tab
+            header (next to "Add Server"), not a project setting. */}
 
       {/* Danger Zone */}
       {section === "general" && (
