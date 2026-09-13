@@ -13,7 +13,7 @@
  * is the one place all of them meet.
  */
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useBlocker } from "react-router";
 
 export function useUnsavedChangesGuard(
@@ -28,7 +28,8 @@ export function useUnsavedChangesGuard(
    * the prompt becomes a lie the second time it appears.
    */
   onDiscard?: () => void,
-  message = "You have unsaved settings. Leave without saving?"
+  message = "You have unsaved settings. Leave without saving?",
+  pendingSave = false,
 ) {
   // Stable across renders that do not change the answer: react-router
   // re-registers the blocker whenever this function's identity moves, and this
@@ -38,26 +39,37 @@ export function useUnsavedChangesGuard(
       currentLocation,
       nextLocation,
     }: {
-      currentLocation: { pathname: string };
-      nextLocation: { pathname: string };
+      currentLocation: { pathname: string; search?: string; hash?: string };
+      nextLocation: { pathname: string; search?: string; hash?: string };
     }) =>
-      hasUnsavedChanges && currentLocation.pathname !== nextLocation.pathname,
+      hasUnsavedChanges &&
+      (currentLocation.pathname !== nextLocation.pathname ||
+        currentLocation.search !== nextLocation.search ||
+        currentLocation.hash !== nextLocation.hash),
     [hasUnsavedChanges],
   );
   const blocker = useBlocker(shouldBlock);
 
+  const handled = useRef<unknown>(null);
   useEffect(() => {
-    if (blocker.state !== "blocked") return;
+    if (blocker.state !== "blocked" || handled.current === blocker.proceed)
+      return;
+    handled.current = blocker.proceed;
     // `confirm` rather than a styled dialog on purpose: this fires DURING a
     // navigation the router has already paused, and a component-rendered
     // dialog would have to survive a route that is mid-transition.
+    if (pendingSave) {
+      window.alert("Wait for your settings to finish saving.");
+      blocker.reset();
+      return;
+    }
     if (window.confirm(message)) {
       onDiscard?.();
       blocker.proceed();
     } else {
       blocker.reset();
     }
-  }, [blocker, message, onDiscard]);
+  }, [blocker, message, onDiscard, pendingSave]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) return;

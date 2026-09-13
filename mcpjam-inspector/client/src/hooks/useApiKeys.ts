@@ -31,6 +31,7 @@ export interface UseApiKeysOptions {
    * an empty key list — never a spurious error.
    */
   enabled: boolean;
+  organizationId?: string;
 }
 
 export interface UseApiKeysResult {
@@ -55,7 +56,10 @@ export interface UseApiKeysResult {
   isRevoking: boolean;
 }
 
-export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
+export function useApiKeys({
+  enabled,
+  organizationId,
+}: UseApiKeysOptions): UseApiKeysResult {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   // Starts true whenever the hook is (or becomes) enabled, so the gap between
   // "auth resolved" and "the effect fired the list request" reads as loading
@@ -99,7 +103,7 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
     const isCurrent = () => refreshGeneration.current === generation;
     setLoading(true);
     try {
-      const items = await listApiKeys();
+      const items = await listApiKeys(organizationId);
       if (!isCurrent()) return;
       setKeys(items);
       setError(null);
@@ -116,7 +120,7 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
     }
     // Stable: `enabled` is read through `enabledRef`, so a mutation's
     // trailing refresh can never be a stale, still-enabled closure.
-  }, []);
+  }, [organizationId]);
 
   // Unconditional, because `refresh` owns BOTH branches. An inline
   // `if (!enabled) { …reset… }` here instead is what let a request fired while
@@ -125,7 +129,7 @@ export function useApiKeys({ enabled }: UseApiKeysOptions): UseApiKeysResult {
   // is stable — it's what re-fires this on the sign-in / sign-out toggle.
   useEffect(() => {
     void refresh();
-  }, [enabled, refresh]);
+  }, [organizationId, enabled, refresh]);
 
   // Both mutations resolve on their OWN request and let the list refresh
   // settle in the background. Awaiting the refresh here would hold

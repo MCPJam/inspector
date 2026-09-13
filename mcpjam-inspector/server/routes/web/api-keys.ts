@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { getInternalBackendConfig } from "../../services/internal-backend.js";
 import { z } from "zod";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { logger } from "../../utils/logger.js";
@@ -14,6 +15,7 @@ import { handleRoute } from "./auth.js";
 import { resolveUserByExternalId } from "../../services/identity.js";
 import { resolveWorkosApiBaseUrl } from "../../services/workos-api-base.js";
 import {
+  lookupWorkosKeyBinding,
   createWorkosKeyBinding,
   removeWorkosKeyBinding,
   WorkosKeyBindingError,
@@ -128,6 +130,8 @@ async function resolveSessionContext(c: any): Promise<SessionContext> {
   return { userId: session.sub };
 }
 
+const WORKOS_CALL_TIMEOUT_MS = 15_000;
+
 async function callWorkOS(
   method: string,
   path: string,
@@ -139,6 +143,8 @@ async function callWorkOS(
   const baseUrl = resolveWorkosApiBaseUrl(process.env).baseUrl;
   const response = await fetch(`${baseUrl}${path}`, {
     method,
+    // A stalled WorkOS call must not pin a user request open indefinitely.
+    signal: AbortSignal.timeout(WORKOS_CALL_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
@@ -153,6 +159,31 @@ async function callWorkOS(
     // Empty body (204) — leave null.
   }
   return { status: response.status, body: parsed };
+}
+
+/** Max in-flight Convex binding lookups while labeling a user's key list. */
+const BINDING_LOOKUP_CONCURRENCY = 8;
+/** Max owners whose WorkOS key lists are walked at once for the org inventory. */
+const OWNER_LIST_CONCURRENCY = 4;
+
+/** `Promise.all` with at most `limit` calls of `fn` in flight; keeps order. */
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  limit: number,
+  fn: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(values.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < values.length) {
+      const index = next++;
+      results[index] = await fn(values[index]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, worker),
+  );
+  return results;
 }
 
 function mapWorkOSError(status: number, body: any, fallback: string): never {
@@ -225,13 +256,19 @@ async function resolveWorkosOrgId(
   );
   if (!readiness.ready || !readiness.workosOrganizationId) {
     const messages: Record<string, string> = {
-      org_pending: "This organization is still being set up for API keys — please try again shortly.",
-      org_failed: "This organization couldn't be set up for API keys. Please try again or contact support.",
-      membership_pending: "Your access to this organization is still syncing — please try again shortly.",
-      membership_failed: "Your access to this organization couldn't be synced. Please try again or contact support.",
+      org_pending:
+        "This organization is still being set up for API keys — please try again shortly.",
+      org_failed:
+        "This organization couldn't be set up for API keys. Please try again or contact support.",
+      membership_pending:
+        "Your access to this organization is still syncing — please try again shortly.",
+      membership_failed:
+        "Your access to this organization couldn't be synced. Please try again or contact support.",
     };
     throw new OrganizationNotReadyError(
-      readiness.reason ? messages[readiness.reason] : "This organization isn't ready to create API keys yet.",
+      readiness.reason
+        ? messages[readiness.reason]
+        : "This organization isn't ready to create API keys yet.",
       readiness.reason,
     );
   }
@@ -323,11 +360,7 @@ apiKeys.post("/", async (c) =>
         throw new WebRouteError(error.status, code, error.message);
       }
       if (error instanceof OrganizationNotReadyError) {
-        throw new WebRouteError(
-          409,
-          ErrorCode.VALIDATION_ERROR,
-          error.message,
-        );
+        throw new WebRouteError(409, ErrorCode.VALIDATION_ERROR, error.message);
       }
       throw error;
     }
@@ -445,6 +478,190 @@ apiKeys.post("/", async (c) =>
   }),
 );
 
+const organizationIdParamSchema = z.string().trim().min(1);
+
+// Session-only, admin-authorized organization inventory; returns no key secrets.
+//
+// Trust boundary: the owner/admin decision lives in the backend
+// (`workosApiKeyBindings.listForOrganization` returns null for anyone below
+// admin, and reads bindings through the org index, so it cannot return
+// another org's rows). This route adds two local checks so a backend
+// regression cannot silently widen who sees what: a membership floor via the
+// readiness check (a non-member 403s before the inventory is even asked
+// for), and a per-key cross-check that each returned key's own binding
+// points at the requested org.
+apiKeys.get("/organization/:organizationId", async (c) =>
+  handleRoute(c, async () => {
+    const session = await resolveSessionContext(c);
+    const actor = await resolveUserByExternalId(session.userId);
+    if (!actor)
+      throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, "Unknown user");
+    const organizationId = parseWithSchema(
+      organizationIdParamSchema,
+      c.req.param("organizationId"),
+    );
+    try {
+      await resolveApiKeyReadiness(organizationId, actor._id);
+    } catch (error) {
+      if (error instanceof ApiKeyReadinessError) {
+        const code =
+          error.status === 404
+            ? ErrorCode.NOT_FOUND
+            : error.status === 403
+              ? ErrorCode.FORBIDDEN
+              : ErrorCode.VALIDATION_ERROR;
+        throw new WebRouteError(error.status, code, error.message);
+      }
+      throw new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "Organization API keys are unavailable. Please try again later.",
+      );
+    }
+    const { convexUrl, serviceToken } = getInternalBackendConfig();
+    const params = new URLSearchParams({
+      organizationId,
+      actorUserId: actor._id,
+    });
+    const response = await fetch(
+      `${convexUrl}/internal/v1/organization-api-keys?${params}`,
+      {
+        headers: { "x-inspector-service-token": serviceToken },
+      },
+    );
+    if (response.status === 403)
+      throw new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Only organization owners and admins can view API keys.",
+      );
+    if (!response.ok)
+      throw new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "Organization API keys are unavailable. Please try again later.",
+      );
+    const { items: bindings } = (await response.json()) as {
+      items: Array<{
+        workosApiKeyId: string;
+        owner: {
+          id: string;
+          name: string;
+          email: string;
+          externalId: string | null;
+        };
+      }>;
+    };
+    const items: Array<{
+      id: string;
+      name: string;
+      obfuscated_value: string;
+      created_at: string;
+      last_used_at: string | null;
+      organizationId: string;
+      owner: { id: string; name: string; email: string };
+    }> = [];
+    // Fetch once per owner, then include only keys explicitly bound to this
+    // org. Owners are walked with bounded concurrency so a large org neither
+    // serializes every WorkOS call nor fans them all out at once.
+    type InventoryItem = (typeof items)[number];
+    const listOwnerKeys = async (
+      externalId: string,
+    ): Promise<InventoryItem[]> => {
+      const owned: InventoryItem[] = [];
+      let after: string | null = null;
+      for (let page = 0; page < 10; page++) {
+        const query = new URLSearchParams({ limit: "100" });
+        if (after) query.set("after", after);
+        const { status, body } = await callWorkOS(
+          "GET",
+          `/user_management/users/${encodeURIComponent(externalId)}/api_keys?${query}`,
+        );
+        if (status < 200 || status >= 300)
+          mapWorkOSError(status, body, "Failed to list organization API keys");
+        for (const key of body?.data ?? []) {
+          const binding = bindings.find(
+            (b) =>
+              b.workosApiKeyId === key.id && b.owner.externalId === externalId,
+          );
+          if (binding)
+            owned.push({
+              id: key.id,
+              name: key.name,
+              obfuscated_value: key.obfuscated_value,
+              created_at: key.created_at,
+              last_used_at: key.last_used_at,
+              organizationId,
+              owner: {
+                id: binding.owner.id,
+                name: binding.owner.name,
+                email: binding.owner.email,
+              },
+            });
+        }
+        after =
+          typeof body?.list_metadata?.after === "string"
+            ? body.list_metadata.after
+            : null;
+        if (!after) break;
+        if (page === 9)
+          throw new WebRouteError(
+            502,
+            ErrorCode.SERVER_UNREACHABLE,
+            "Could not load the complete organization key list.",
+          );
+      }
+      return owned;
+    };
+    const ownerExternalIds = [
+      ...new Set(
+        bindings
+          .map((b) => b.owner.externalId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const perOwner = await mapWithConcurrency(
+      ownerExternalIds,
+      OWNER_LIST_CONCURRENCY,
+      listOwnerKeys,
+    );
+    items.push(...perOwner.flat());
+    // Cross-check each key's own binding against the requested org. A key
+    // whose binding is missing, points elsewhere, or cannot be read is
+    // dropped rather than shown: on this route an unlabeled key would be an
+    // authorization claim, not decoration.
+    let droppedKeys = 0;
+    const verified = await mapWithConcurrency(
+      items,
+      BINDING_LOOKUP_CONCURRENCY,
+      async (item) => {
+        try {
+          const binding = await lookupWorkosKeyBinding(item.id);
+          return binding?.mcpjamOrganizationId === organizationId;
+        } catch {
+          return false;
+        }
+      },
+    );
+    const scoped = items.filter((_, index) => {
+      if (verified[index]) return true;
+      droppedKeys += 1;
+      return false;
+    });
+    if (droppedKeys > 0) {
+      logger.warn(
+        "Dropped organization API keys whose binding did not verify",
+        {
+          organization_id: organizationId,
+          dropped: droppedKeys,
+          total: items.length,
+        },
+      );
+    }
+    return { items: scoped };
+  }),
+);
+
 apiKeys.get("/", async (c) =>
   handleRoute(c, async () => {
     const session = await resolveSessionContext(c);
@@ -490,7 +707,49 @@ apiKeys.get("/", async (c) =>
         break;
       }
     }
-    return { items };
+    // Org labels are decoration on this list, not authorization: the org
+    // boundary is enforced at USE time in bearer-auth.ts. So a binding lookup
+    // that fails (Convex down, route not deployed, misconfigured service
+    // token) must not take the list down or leak its message — before the
+    // labels existed this list depended on WorkOS alone, and it still should.
+    // Lookups are bounded so a long key list cannot fan out one service-token
+    // fetch per key all at once.
+    let lookupFailures = 0;
+    let firstFailure: unknown;
+    const organizationIds = await mapWithConcurrency(
+      items,
+      BINDING_LOOKUP_CONCURRENCY,
+      async (key): Promise<string | null> => {
+        try {
+          const binding = await lookupWorkosKeyBinding(key.id);
+          return binding?.mcpjamOrganizationId ?? null;
+        } catch (error) {
+          lookupFailures += 1;
+          firstFailure ??= error;
+          return null;
+        }
+      },
+    );
+    if (lookupFailures > 0) {
+      logger.warn("API key org binding lookup failed; listing keys unlabeled", {
+        failed: lookupFailures,
+        total: items.length,
+        error:
+          firstFailure instanceof Error
+            ? firstFailure.message
+            : String(firstFailure),
+      });
+    }
+    return {
+      items: items.map((key, index) => ({
+        id: key.id,
+        name: key.name,
+        obfuscated_value: key.obfuscated_value,
+        created_at: key.created_at,
+        last_used_at: key.last_used_at,
+        organizationId: organizationIds[index],
+      })),
+    };
   }),
 );
 

@@ -661,6 +661,8 @@ export const APP_SURFACES = [
     // coverage test matches these against `kind: "screen"` routes exactly.
     routePatterns: [
       "settings",
+      "settings/about",
+      "settings/appearance",
       "settings/api-keys",
       "settings/integrations",
       "settings/integrations/github",
@@ -686,7 +688,11 @@ export const APP_SURFACES = [
     id: "project-settings",
     scope: "project",
     canonicalPath: "/project-settings",
-    routePatterns: ["project-settings"],
+    routePatterns: [
+      "project-settings",
+      "project-settings/members",
+      "project-settings/secrets",
+    ],
     navSegments: ["project-settings"],
     title: "Project settings",
     purpose:
@@ -706,7 +712,16 @@ export const APP_SURFACES = [
     routePatterns: [
       "organizations",
       "organizations/:orgId",
+      "organizations/:orgId/integrations",
+      "organizations/:orgId/members",
+      "organizations/:orgId/sharing",
+      "organizations/:orgId/audit-log",
+      "organizations/:orgId/data-management",
+      "organizations/:orgId/api-keys",
+      "organizations/:orgId/plans",
       "organizations/:orgId/billing",
+      "organizations/:orgId/models/usage",
+      "organizations/:orgId/billing/usage",
       "organizations/:orgId/models",
       // Slack agent settings. Listed so the route-coverage test passes, but
       // deliberately NOT added to `userActivities` while the section is behind
@@ -721,11 +736,6 @@ export const APP_SURFACES = [
       // reasoning again: listed for route coverage, kept out of
       // `userActivities` while `trace-destinations` is off.
       "organizations/:orgId/observability",
-      // Spend budget. Unlike the three above this is NOT behind a flag, so it
-      // earns a `userActivities` entry: an admin looking for "where do I cap
-      // what this org can spend" is a question the agent should be able to
-      // answer with a route.
-      "organizations/:orgId/budget",
     ],
     navSegments: ["organizations"],
     title: "Organizations",
@@ -735,7 +745,6 @@ export const APP_SURFACES = [
       "Manage organization members",
       "Review or change billing",
       "Configure allowed models and provider keys",
-      "Set or raise the organization's spend budget",
     ],
     agentTools: {
       kind: "none",
@@ -763,8 +772,8 @@ export const APP_SURFACES = [
   {
     id: "support",
     scope: "global",
-    canonicalPath: "/support",
-    routePatterns: ["support"],
+    canonicalPath: "/settings/support",
+    routePatterns: ["settings/support"],
     navSegments: ["support"],
     title: "Support",
     purpose: "Get help and contact MCPJam support.",
