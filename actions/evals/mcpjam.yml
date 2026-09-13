@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: MCPJam/inspector/actions/evals@evals-v1
+      - uses: MCPJam/inspector/actions/evals@636810a8c666817632f720cd0c0d75658a60eb8b # evals-v1
         with:
           # Add your API key as MCPJAM_API_KEY in GitHub Actions secrets.
           api-key: ${{ secrets.MCPJAM_API_KEY }}
