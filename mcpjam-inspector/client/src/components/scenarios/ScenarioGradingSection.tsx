@@ -82,8 +82,9 @@ export function ScenarioGradingSection({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [hasInvalidDraft, setHasInvalidDraft] = useState(false);
-  // Set by a Save attempt that found an incomplete check; stays on so a field
-  // the user blanks again is flagged as they do it.
+  // Set by a Save attempt that found an incomplete check; stays on through the
+  // episode so a field the user blanks again is flagged as they do it, and
+  // ends with the save that goes through or a scenario switch.
   const [showAllErrors, setShowAllErrors] = useState(false);
 
   // Reseed only when the SCENARIO changes, never on subscription churn of the
@@ -150,6 +151,9 @@ export function ScenarioGradingSection({
         },
       } as never);
       if (draftRef.current === submitted) setDirty(false);
+      // The refusal episode ends here: with it on, the next row added would
+      // be red on arrival and Add check would re-fire the alert.
+      setShowAllErrors(false);
       toast.success(
         submitted.enabled
           ? "Grading enabled — new sessions get checked once testers go quiet"
@@ -216,6 +220,11 @@ export function ScenarioGradingSection({
       ) : null}
 
       <JourneyRubricEditor
+        // Remount on a scenario switch. The rows below keep per-instance state
+        // (touched fields, textarea drafts) keyed by position, and a reseed of
+        // the same length would hand scenario A's touched rows to scenario B's
+        // predicates — red on arrival for checks this user never touched.
+        key={scenario.scenarioId}
         value={draft.rubric}
         onChange={(next) => update({ rubric: next })}
         onDraftValidityChange={setHasInvalidDraft}

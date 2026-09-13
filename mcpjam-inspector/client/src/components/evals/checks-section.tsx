@@ -470,15 +470,19 @@ export function CheckRow({
   );
 
   // Issues no field renders itself. Zod's own wording, since we know nothing
-  // more specific about them; shown once the row has been touched anywhere.
+  // more specific about them. Shown as soon as they exist, NOT behind the
+  // touched gate: a blank check only ever fails on the four field-owned paths
+  // (see `blankPredicate`), so an issue here means the user typed something —
+  // a zero into a count that must be positive — and hiding it would leave a
+  // disabled Save with no explanation in the editors that never turn on
+  // `showAllErrors`.
   const rowLevelError = useMemo(() => {
     const rest = [...issues.entries()]
       .filter(([path]) => !FIELD_OWNED_PATHS.has(path))
       .map(([, message]) => message);
     return rest.length > 0 ? rest.join("; ") : null;
   }, [issues]);
-  const showRowLevelError =
-    rowLevelError !== null && (showAllErrors || touched.size > 0);
+  const showRowLevelError = rowLevelError !== null;
   const anyErrorShown =
     showRowLevelError ||
     [...issues.keys()].some(
@@ -528,7 +532,12 @@ export function CheckRow({
           </FieldValidationContext.Provider>
 
           {showRowLevelError ? (
-            <div className="text-[11px] text-destructive">{rowLevelError}</div>
+            // An alert: it appears in direct response to the keystroke that
+            // caused it, and the number inputs it speaks for carry no
+            // aria-describedby to it.
+            <div role="alert" className="text-[11px] text-destructive">
+              {rowLevelError}
+            </div>
           ) : null}
           {legacyScenarioGate ? (
             <p className="text-[11px] text-muted-foreground">

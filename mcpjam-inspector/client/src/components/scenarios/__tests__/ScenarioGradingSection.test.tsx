@@ -6,10 +6,13 @@
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { JourneyCriterion } from "@/shared/journey-rubric";
 
 const setProductionScoringMock = vi.hoisted(() => vi.fn());
+/** How many times the rubric editor stub has mounted — a remount resets rows. */
+const rubricMounts = vi.hoisted(() => ({ count: 0 }));
 vi.mock("@/hooks/useScenarios", () => ({
   useScenarioMutations: () => ({
     setProductionScoring: setProductionScoringMock,
@@ -29,71 +32,76 @@ vi.mock("@/components/swarms/journey-rubric-editor", () => ({
     onChange: (next: JourneyCriterion[]) => void;
     onDraftValidityChange?: (hasInvalidDraft: boolean) => void;
     showAllErrors?: boolean;
-  }) => (
-    <div>
-      <span data-testid="rubric-count">{value.length}</span>
-      <span data-testid="rubric-show-all">
-        {String(showAllErrors ?? false)}
-      </span>
-      <button
-        type="button"
-        onClick={() =>
-          onChange([
-            ...value,
-            {
-              id: "crit-blank",
-              predicate: { type: "toolCalledAtLeastOnce", toolName: "" },
-            } as JourneyCriterion,
-          ])
-        }
-      >
-        add incomplete check
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          onChange(
-            value.map((entry) =>
-              entry.id === "crit-blank"
-                ? ({
-                    ...entry,
-                    predicate: {
-                      type: "toolCalledAtLeastOnce",
-                      toolName: "search",
-                    },
-                  } as JourneyCriterion)
-                : entry,
-            ),
-          )
-        }
-      >
-        complete check
-      </button>
-      <button type="button" onClick={() => onDraftValidityChange?.(true)}>
-        break json
-      </button>
-      <button type="button" onClick={() => onDraftValidityChange?.(false)}>
-        fix json
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          onChange([
-            ...value,
-            {
-              id: "crit-new",
-              predicate: { type: "noToolErrors" },
-            } as JourneyCriterion,
-          ])
-        }
-      >
-        add check
-      </button>
-      <button type="button" onClick={() => onChange([])}>
-        clear checks
-      </button>
-    </div>
-  ),
+  }) => {
+    useEffect(() => {
+      rubricMounts.count += 1;
+    }, []);
+    return (
+      <div>
+        <span data-testid="rubric-count">{value.length}</span>
+        <span data-testid="rubric-show-all">
+          {String(showAllErrors ?? false)}
+        </span>
+        <button
+          type="button"
+          onClick={() =>
+            onChange([
+              ...value,
+              {
+                id: "crit-blank",
+                predicate: { type: "toolCalledAtLeastOnce", toolName: "" },
+              } as JourneyCriterion,
+            ])
+          }
+        >
+          add incomplete check
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            onChange(
+              value.map((entry) =>
+                entry.id === "crit-blank"
+                  ? ({
+                      ...entry,
+                      predicate: {
+                        type: "toolCalledAtLeastOnce",
+                        toolName: "search",
+                      },
+                    } as JourneyCriterion)
+                  : entry,
+              ),
+            )
+          }
+        >
+          complete check
+        </button>
+        <button type="button" onClick={() => onDraftValidityChange?.(true)}>
+          break json
+        </button>
+        <button type="button" onClick={() => onDraftValidityChange?.(false)}>
+          fix json
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            onChange([
+              ...value,
+              {
+                id: "crit-new",
+                predicate: { type: "noToolErrors" },
+              } as JourneyCriterion,
+            ])
+          }
+        >
+          add check
+        </button>
+        <button type="button" onClick={() => onChange([])}>
+          clear checks
+        </button>
+      </div>
+    );
+  },
 }));
 
 import { ScenarioGradingSection } from "../ScenarioGradingSection";
@@ -122,6 +130,7 @@ function scenarioWith(
 
 beforeEach(() => {
   setProductionScoringMock.mockReset().mockResolvedValue({ cleared: false });
+  rubricMounts.count = 0;
 });
 
 describe("ScenarioGradingSection", () => {
@@ -340,6 +349,66 @@ describe("ScenarioGradingSection", () => {
     );
     const rubric = setProductionScoringMock.mock.calls[0]![0].config.rubric;
     expect(rubric).toHaveLength(2);
+  });
+
+  it("a check added after a successful save arrives neutral, with no alert", async () => {
+    // A refused save turns showAllErrors on. The save that then goes through
+    // must turn it off, or every later row is red on arrival and Add check
+    // re-fires the alert — the untouched-state bug, reached by using the
+    // refusal once.
+    const user = userEvent.setup();
+    render(
+      <ScenarioGradingSection
+        scenario={scenarioWith({
+          enabled: true,
+          samplingRate: 1,
+          rubric: RUBRIC,
+        })}
+      />,
+    );
+    const save = screen.getByTestId(
+      "scenario-grading-save",
+    ) as HTMLButtonElement;
+
+    await user.click(screen.getByText("add incomplete check"));
+    await user.click(save);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    await user.click(screen.getByText("complete check"));
+    await user.click(save);
+    await waitFor(() =>
+      expect(setProductionScoringMock).toHaveBeenCalledTimes(1),
+    );
+
+    await user.click(screen.getByText("add incomplete check"));
+    expect(screen.getByTestId("rubric-show-all")).toHaveTextContent("false");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a scenario switch remounts the rubric editor, so no row state carries over", () => {
+    const first = scenarioWith({
+      enabled: true,
+      samplingRate: 1,
+      rubric: RUBRIC,
+    });
+    const { rerender } = render(<ScenarioGradingSection scenario={first} />);
+    expect(rubricMounts.count).toBe(1);
+
+    rerender(
+      <ScenarioGradingSection
+        scenario={{ ...first, scenarioId: "scenario-2" } as ScenarioSettings}
+      />,
+    );
+    expect(rubricMounts.count).toBe(2);
+
+    // Subscription churn on the SAME scenario must not remount: that would
+    // throw away the user's unsaved rows.
+    rerender(
+      <ScenarioGradingSection
+        scenario={{ ...first, scenarioId: "scenario-2" } as ScenarioSettings}
+      />,
+    );
+    expect(rubricMounts.count).toBe(2);
   });
 
   it("save stays disabled while pristine", () => {

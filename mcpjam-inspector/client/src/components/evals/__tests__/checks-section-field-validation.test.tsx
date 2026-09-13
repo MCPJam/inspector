@@ -203,6 +203,27 @@ describe("CheckRow untouched state", () => {
     );
   });
 
+  it("an issue no field owns shows as typed, and is announced", () => {
+    // A blank check never fails on these paths, so an issue here means the
+    // user typed the offending value. Hiding it behind the touched gate left
+    // a disabled Save with no explanation in editors that never turn on
+    // showAllErrors.
+    render(
+      <Harness initial={[{ type: "turnCountUnder", turns: 3 } as Predicate]} />,
+    );
+    const turns = screen.getByRole("spinbutton");
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    fireEvent.change(turns, { target: { value: "0" } });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/>0|positive/);
+    expect(rowCardOf(turns).className).toContain("border-destructive");
+
+    fireEvent.change(turns, { target: { value: "2" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(rowCardOf(turns).className).not.toContain("border-destructive");
+  });
+
   it("a saved check with a legacy empty field stays neutral until touched", () => {
     render(
       <Harness
