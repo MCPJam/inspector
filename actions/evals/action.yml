@@ -45,7 +45,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
         node-version: "24"
     - name: Run evals and optional gates
@@ -69,7 +69,7 @@ runs:
     - name: Save eval reports
       id: upload
       if: ${{ always() && steps.evaluate.outputs.report-path != '' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: ${{ steps.evaluate.outputs.artifact-name }}
         path: ${{ steps.evaluate.outputs.report-path }}
