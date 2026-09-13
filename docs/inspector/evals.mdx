@@ -113,18 +113,18 @@ The right column resolves to one of these views, in precedence order:
 
 ### History inspect
 
-Click **History** in the trial header to open a list of past iterations. Selecting one freezes the left form on that trial's snapshot — the exact steps, checks, and settings that were in effect when it ran — so you can compare what you see in the trace against what was authored at the time.
+The run timeline below the case form lists past iterations. Click any row to open that trial's evidence in a drawer — the Scorecard, Chat, Tool Calls, Trace, and Steps tabs are all available there. The case form stays editable while the drawer is open; close it to return to the workspace.
 
-While a trial is frozen, an **Inspecting** banner appears at the top of the left column. If the current draft differs from the frozen snapshot, a **Changed** indicator appears. Click **Edit case** to return to the live draft; the selected trial stays visible on the right.
+When you open a trial from history, the drawer shows the trial's snapshot — the exact steps, checks, and settings that were in effect when it ran — so you can compare what you see in the trace against what was authored at the time.
 
-### Next run sheet
+### Setup Run sheet (case workspace)
 
-Click the **Model**, **Trials**, or **Host** chip above the form to open the **Next run** sheet. It separates two kinds of settings:
+Click **Setup Run** above the case form to open the **Setup Run** sheet. It owns the trial count, client, and model choice for the next run:
 
 - **Saved with this case** — *Trials* and *Model* are written to the case before every quick run and on Save. Changes here persist.
 - **For this run** — *Host* applies only to the next run and is not saved to the case.
 
-Click **Suite settings** in the sheet to configure hosts and other suite-level defaults.
+Click **Run test case** inside the sheet to launch. Click **Suite settings** to configure hosts and other suite-level defaults.
 
 ## Case attachments
 
@@ -281,9 +281,9 @@ A run needs three things, all picked from the suite header:
   If **Run all** is disabled, a connected server is missing, no models are selected, or a run for that suite is already in progress. The header pickers will tell you which condition applies.
 </Tip>
 
-### Run review
+### Setup Run sheet
 
-When you click **Run** on a suite from the **Suites** landing list, a review sheet opens before the run launches. It shows the suite's current configuration — clients, iteration count, and settings — so you can confirm or adjust before committing. The run only starts when you confirm in the sheet; closing it leaves the suite unchanged.
+Click **Setup Run** in the suite header or on the **Suites** landing list to open the **Setup Run** sheet. It owns the trial count, client, and model choice for the next run, so you can confirm or adjust before committing. The run only starts when you click **Run test case** (or **Run all**) inside the sheet; closing it leaves the suite unchanged.
 
 ### Pre-run credit estimate
 
@@ -334,7 +334,7 @@ Each eval suite has a **Default Execution Config** section that controls the mod
 
 - **Model and prompt** — Set the default model ID, system prompt, and temperature for all runs in the suite. When running evals against MCP Apps that render widgets, the eval harness automatically enables browser interaction (screenshot, click, type) for any model that supports both vision and tool calling — not just Claude. Models that lack vision or tool calling run without browser interaction.
 - **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run.
-- **Minimum iterations** — Set a floor on how many times each case runs. Every case runs at least this many times, regardless of its own iteration count. Use `mcpjam cloud eval update --suite <name> --min-iterations <1-10>` to set this from the CLI; `off` removes the floor.
+- **Minimum iterations** — Set a floor on how many times each case runs. Every case runs at least this many times, regardless of its own iteration count. New suites default to **5 runs per test**. Use `mcpjam cloud eval update --suite <name> --min-iterations <1-10>` to set this from the CLI; `off` removes the floor.
 - **Server selection** — Servers are not configured here. They come from the suite's environment. The server picker is intentionally hidden in this editor.
 - **Save / Reset** — Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
 
@@ -422,7 +422,7 @@ Opening the Evaluate tab lands on the **Runs** view by default, showing run hist
 
 - **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
 - **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole.
-- **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown. The table shows **Date** first, then **Run**; suite group rows show a date range and a chevron on the left. Client/model pairings are shown inline per run row; when there are more than two, a **+N** badge appears — hover it to see all pairings in a tooltip.
+- **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown. The table shows **Date** first, then **Run**; individual run rows are labelled **#1**, **#2**, and so on. Client/model pairings are shown inline per run row; when there are more than two, a **+N** badge appears — hover it to see all pairings in a tooltip.
 - **Cases tab** — every case with its latest verdict and a quick replay button.
 - **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
 
@@ -524,6 +524,12 @@ Any completed chat session can be turned into a test case without rewriting it f
 **From the Swarms tab** — Open a completed run, click a session row to select it, then click **Promote to test case** above the session viewer. The session must belong to a completed run attempt; sessions from in-progress runs show an error in the dialog instead of blocking at submit.
 
 In both cases the dialog shows the servers recorded for that session, lets you set a case title and suite name, and (when attachment pickers are enabled) lets you configure the server attachment and client host for the new suite.
+
+## Importing cases from Markdown
+
+If you have existing documentation, runbooks, or specification files, you can extract test cases from them directly. Click **Import from Markdown** in the suite header, paste or upload your Markdown content, and an AI extractor proposes cases based on the passages it finds.
+
+Each proposed case opens in a review editor before it is saved. Cases flagged as unsupported remain blocked with the reason shown — review the note and either edit the case to fit a supported shape or discard it. Cases you approve are saved with a source provenance record that traces each case back to the file, its SHA-256 hash, and the line range the extractor read.
 
 ## Generating cases from your tools
 
