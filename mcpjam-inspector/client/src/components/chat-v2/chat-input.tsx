@@ -62,6 +62,12 @@ import { SystemPromptSelector } from "@/components/chat-v2/chat-input/system-pro
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { useTextareaCaretPosition } from "@/hooks/use-textarea-caret-position";
 import {
+  caretIsOnFirstLine,
+  caretIsOnLastLine,
+  navigateInputHistory,
+  type InputHistoryNavigation,
+} from "@/components/chat-v2/chat-input/input-history";
+import {
   Context,
   ContextTrigger,
   ContextContent,
@@ -259,9 +265,18 @@ function getFilesFromClipboardData(dataTransfer: DataTransfer): File[] {
   return Array.from(dataTransfer.files);
 }
 
+/** Stable identity, so the default never re-triggers a memo downstream. */
+const EMPTY_INPUT_HISTORY: readonly string[] = [];
+
 interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * What Up/Down walk through, newest first — the thread's own user messages
+   * (see `input-history.ts`). Omitted by surfaces with no thread behind them,
+   * and the arrows then belong entirely to the caret.
+   */
+  inputHistory?: readonly string[];
   onSubmit: (
     event: FormEvent<HTMLFormElement>,
     additionalInput?: string
@@ -413,6 +428,7 @@ interface ChatInputProps {
 export function ChatInput({
   value,
   onChange,
+  inputHistory = EMPTY_INPUT_HISTORY,
   onSubmit,
   stop,
   disabled = false,
@@ -528,6 +544,13 @@ export function ChatInput({
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /**
+   * Where an Up/Down walk through past messages currently stands — see
+   * `input-history.ts`. A ref, not state: nothing renders off it (the recalled
+   * text goes out through `onChange` like any other edit), and it must be
+   * readable by the very next keypress rather than after a commit.
+   */
+  const historyNavigationRef = useRef<InputHistoryNavigation | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
@@ -1292,6 +1315,61 @@ export function ChatInput({
       event.preventDefault();
       setMcpPromptPopoverKeyTrigger(event.key);
       return;
+    }
+
+    // Up/Down through your own past messages (BB-183). AFTER the prompts
+    // popover, which owns the arrows while it is open, and never with a
+    // modifier held: Shift+Up selects, and the rest belong to the OS.
+    //
+    // Not while the composer is disabled, and NOT while the mic is open. While
+    // recording, the box shows "Listening..." and `value` holds the draft
+    // underneath it — a recall there would measure the caret against one
+    // string, test it against another, and overwrite a draft nobody can see.
+    // The textarea's own `onChange` already refuses writes in that state; this
+    // path reaches `onChange` directly, so it has to refuse them too.
+    if (
+      (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      !disabled &&
+      voiceInputState === "idle" &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.nativeEvent.isComposing
+    ) {
+      const older = event.key === "ArrowUp";
+      const atEdge = older
+        ? caretIsOnFirstLine(value, currentCaretIndex)
+        : caretIsOnLastLine(value, currentCaretIndex);
+      if (atEdge) {
+        const next = navigateInputHistory({
+          direction: older ? "older" : "newer",
+          entries: inputHistory,
+          value,
+          navigation: historyNavigationRef.current,
+        });
+        if (next) {
+          event.preventDefault();
+          historyNavigationRef.current = next.navigation;
+          if (next.value !== value) {
+            onChange(next.value);
+            // Land the caret at the end of the recalled text, where a terminal
+            // leaves it — the next thing anyone does is keep typing. After the
+            // controlled re-render, hence the frame.
+            const textarea = event.currentTarget;
+            requestAnimationFrame(() => {
+              const end = textarea.value.length;
+              textarea.setSelectionRange(end, end);
+              // Mirrored into state like every other programmatic caret move
+              // here: `caretIndex` is what the `/`-prompt and skill detection
+              // slice the value on, and leaving it behind would have them read
+              // a recalled message against the caret of the one before it.
+              setCaretIndex(end);
+            });
+          }
+          return;
+        }
+      }
     }
 
     if (
