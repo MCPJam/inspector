@@ -115,7 +115,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-1",
           hostScopeKey: "host-a",
-          requiredServerNames: ["alpha", "beta"],
+          serverNames: ["alpha", "beta"],
         }),
       {
         wrapper: ({ children }) =>
@@ -142,7 +142,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-empty",
           hostScopeKey: "host-a",
-          requiredServerNames: [],
+          serverNames: [],
         }),
       {
         wrapper: ({ children }) =>
@@ -164,7 +164,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-disabled",
           hostScopeKey: "host-a",
-          requiredServerNames: ["alpha"],
+          serverNames: ["alpha"],
         }),
       {
         wrapper: ({ children }) =>
@@ -198,7 +198,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-2",
           hostScopeKey: "host-a",
-          requiredServerNames: ["alpha", "beta", "gamma", "delta"],
+          serverNames: ["alpha", "beta", "gamma", "delta"],
         }),
       {
         wrapper: ({ children }) =>
@@ -220,7 +220,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-3",
           hostScopeKey: "host-a",
-          requiredServerNames: ["alpha"],
+          serverNames: ["alpha"],
         }),
       {
         wrapper: ({ children }) =>
@@ -247,14 +247,14 @@ describe("useAutoConnectProjectServers", () => {
     const appState = makeAppState(["alpha"]);
 
     const { rerender } = renderHook(
-      ({ requiredServerNames }: { requiredServerNames: string[] }) =>
+      ({ serverNames }: { serverNames: string[] }) =>
         useAutoConnectProjectServers({
           projectId: "proj-toggle",
           hostScopeKey: "host-a",
-          requiredServerNames,
+          serverNames,
         }),
       {
-        initialProps: { requiredServerNames: ["alpha"] },
+        initialProps: { serverNames: ["alpha"] },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
       }
@@ -263,12 +263,12 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
 
-    rerender({ requiredServerNames: [] });
+    rerender({ serverNames: [] });
     await flushMicrotasks();
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
 
     resetAutoConnectAttempts("proj-toggle");
-    rerender({ requiredServerNames: ["alpha"] });
+    rerender({ serverNames: ["alpha"] });
     await flushMicrotasks();
 
     expect(ensureServersReady).toHaveBeenCalledTimes(2);
@@ -300,7 +300,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-reconcile",
           hostScopeKey: "host-mcpjam-no-required",
-          requiredServerNames: ["alpha"],
+          serverNames: ["alpha"],
         }),
       {
         wrapper: ({ children }) =>
@@ -340,7 +340,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-reconnect-failure",
           hostScopeKey: "host-a",
-          requiredServerNames: [],
+          serverNames: [],
         }),
       {
         wrapper: ({ children }) =>
@@ -386,7 +386,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-reconnect-progress",
           hostScopeKey: "host-a",
-          requiredServerNames: [],
+          serverNames: [],
         }),
       {
         wrapper: ({ children }) =>
@@ -421,7 +421,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-empty-required",
           hostScopeKey: "host-mcpjam",
-          requiredServerNames: [],
+          serverNames: [],
         }),
       {
         wrapper: ({ children }) =>
@@ -459,7 +459,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-mixed",
           hostScopeKey: "host-a",
-          requiredServerNames: ["needed"],
+          serverNames: ["needed"],
         }),
       {
         wrapper: ({ children }) =>
@@ -496,7 +496,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-same-scope",
           hostScopeKey: "host-lead",
-          requiredServerNames: ["alpha"],
+          serverNames: ["alpha"],
         }),
       {
         wrapper: ({ children }) =>
@@ -527,7 +527,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-switch",
           hostScopeKey,
-          requiredServerNames: ["alpha"],
+          serverNames: ["alpha"],
         }),
       {
         initialProps: { hostScopeKey: "host-a" },
@@ -581,7 +581,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-manual-add",
           hostScopeKey: "host-learn-only",
-          requiredServerNames: ["learn"],
+          serverNames: ["learn"],
         }),
       {
         wrapper: ({ children }) =>
@@ -642,7 +642,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-user-disconnect",
           hostScopeKey: "host-bart",
-          requiredServerNames: ["bart"],
+          serverNames: ["bart"],
         }),
       {
         wrapper: ({ children }) =>
@@ -708,7 +708,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-user-disconnect-multi",
           hostScopeKey: "host-multi",
-          requiredServerNames: ["bart", "foo"],
+          serverNames: ["bart", "foo"],
         }),
       {
         wrapper: ({ children }) =>
@@ -756,7 +756,7 @@ describe("useAutoConnectProjectServers", () => {
         useAutoConnectProjectServers({
           projectId: "proj-sit",
           hostScopeKey: "host-a",
-          requiredServerNames: ["alpha"],
+          serverNames: ["alpha"],
         }),
       {
         wrapper: ({ children }) =>

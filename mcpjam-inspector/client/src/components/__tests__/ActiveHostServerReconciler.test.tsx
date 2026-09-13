@@ -138,36 +138,67 @@ describe("ActiveHostServerReconciler — auto-connect preference", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetAutoConnectAttempts();
-    viewsMocks.servers = [{ _id: "srv-alpha", name: "alpha" }];
+    viewsMocks.servers = [
+      { _id: "srv-alpha", name: "alpha" },
+      { _id: "srv-beta", name: "beta" },
+    ];
     localStorage.removeItem(AUTO_CONNECT_SERVERS_KEY);
   });
 
-  it("calls ensureServersReady for host-required servers when Auto-connect is on", async () => {
+  it("connects every catalog server when Auto-connect is on, regardless of the host's serverIds", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
-      readyServerNames: ["alpha"],
+      readyServerNames: ["alpha", "beta"],
       failedServerNames: [],
       missingServerNames: [],
       reauthServerNames: [],
     });
 
     renderReconciler({
-      appState: makeAppState({ alpha: "disconnected" }, []),
+      appState: makeAppState(
+        { alpha: "disconnected", beta: "disconnected" },
+        [],
+      ),
       setSelectedServerNames: vi.fn(),
       ensureServersReady,
+      // The host claims only alpha; the catalog still wins.
       activeHost: { id: "host-1", serverIds: ["srv-alpha"] },
       activeHostId: "host-1",
     });
 
     await flush();
-    expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"]);
   });
 
-  it("does not auto-connect host-required servers when Auto-connect is off", async () => {
+  it("connects the catalog even when no host is active (fresh project)", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: ["alpha", "beta"],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+
+    renderReconciler({
+      appState: makeAppState(
+        { alpha: "disconnected", beta: "disconnected" },
+        [],
+      ),
+      setSelectedServerNames: vi.fn(),
+      ensureServersReady,
+    });
+
+    await flush();
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"]);
+  });
+
+  it("does not auto-connect anything when Auto-connect is off", async () => {
     localStorage.setItem(AUTO_CONNECT_SERVERS_KEY, "false");
     const ensureServersReady = vi.fn();
 
     renderReconciler({
-      appState: makeAppState({ alpha: "disconnected" }, []),
+      appState: makeAppState(
+        { alpha: "disconnected", beta: "disconnected" },
+        [],
+      ),
       setSelectedServerNames: vi.fn(),
       ensureServersReady,
       activeHost: { id: "host-1", serverIds: ["srv-alpha"] },
