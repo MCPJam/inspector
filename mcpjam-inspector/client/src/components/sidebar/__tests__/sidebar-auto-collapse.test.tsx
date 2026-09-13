@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, beforeEach } from "vitest";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 
 import {
   SidebarProvider,
@@ -7,6 +7,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { SidebarAutoCollapse } from "@/components/sidebar/sidebar-auto-collapse";
+import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 
 function OpenProbe() {
   const { open } = useSidebar();
@@ -38,7 +39,17 @@ function renderAt(activeTab: string | undefined) {
 
 const state = () => screen.getByTestId("open").textContent;
 
+function setAgentPanelOpen(next: boolean) {
+  act(() => {
+    useAgentPanelStore.setState({ isOpen: next });
+  });
+}
+
 describe("SidebarAutoCollapse", () => {
+  beforeEach(() => {
+    useAgentPanelStore.setState({ isOpen: false });
+  });
+
   it.each([
     "playground",
     "evals",
@@ -89,6 +100,66 @@ describe("SidebarAutoCollapse", () => {
     expect(state()).toBe("closed");
 
     navigate("tools");
+
+    expect(state()).toBe("closed");
+  });
+
+  it("collapses the sidebar when Ask MCPJam opens on a normal tab", () => {
+    renderAt("home");
+    expect(state()).toBe("open");
+
+    setAgentPanelOpen(true);
+
+    expect(state()).toBe("closed");
+  });
+
+  it("expands again when Ask MCPJam closes on a normal tab", () => {
+    renderAt("home");
+    setAgentPanelOpen(true);
+    expect(state()).toBe("closed");
+
+    setAgentPanelOpen(false);
+
+    expect(state()).toBe("open");
+  });
+
+  it("collapses even if the user had expanded the rail on a wide tab", () => {
+    renderAt("playground");
+    expect(state()).toBe("closed");
+
+    fireEvent.click(screen.getByRole("button", { name: /toggle sidebar/i }));
+    expect(state()).toBe("open");
+
+    setAgentPanelOpen(true);
+
+    expect(state()).toBe("closed");
+  });
+
+  it("stays collapsed after Ask MCPJam closes on a wide tab", () => {
+    renderAt("playground");
+    setAgentPanelOpen(true);
+    expect(state()).toBe("closed");
+
+    setAgentPanelOpen(false);
+
+    expect(state()).toBe("closed");
+  });
+
+  it("does not re-expand a sidebar the user had already collapsed", () => {
+    renderAt("home");
+    fireEvent.click(screen.getByRole("button", { name: /toggle sidebar/i }));
+    expect(state()).toBe("closed");
+
+    setAgentPanelOpen(true);
+    setAgentPanelOpen(false);
+
+    expect(state()).toBe("closed");
+  });
+
+  it("collapses when the app loads with Ask MCPJam already open", () => {
+    useAgentPanelStore.setState({ isOpen: true });
+
+    renderAt("home");
 
     expect(state()).toBe("closed");
   });

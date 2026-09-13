@@ -197,6 +197,45 @@ describe("NavMain", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("hides the New badge on the icon rail — a 32px button cannot hold it", () => {
+    mockSidebarOpen = false;
+
+    render(
+      <NavMain
+        items={[
+          {
+            title: "XAA Debugger",
+            url: "#xaa-flow",
+            icon: FakeIcon,
+            badge: "New",
+          },
+        ]}
+      />
+    );
+
+    expect(screen.queryByText("New")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "XAA Debugger" })
+    ).toBeInTheDocument();
+  });
+
+  it("shows the New badge next to the label while the sidebar is expanded", () => {
+    render(
+      <NavMain
+        items={[
+          {
+            title: "XAA Debugger",
+            url: "#xaa-flow",
+            icon: FakeIcon,
+            badge: "New",
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByText("New")).toBeInTheDocument();
+  });
+
   it("suppresses the built-in collapsed tooltip when learn more is handling it", () => {
     mockSidebarOpen = false;
 
