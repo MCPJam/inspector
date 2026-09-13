@@ -189,10 +189,6 @@ const reporter = createEvalRunReporter({
   suiteName: "Integration Tests",
   passCriteria: { minimumPassRate: 85 },
   agent,
-  ci: {
-    branch: process.env.GITHUB_REF_NAME,
-    commitSha: process.env.GITHUB_SHA,
-  },
 });
 ```
 
@@ -422,9 +418,11 @@ Advanced replay override. Most users should not construct this manually.
 
 ### EvalCiMetadata
 
+Automatically detected when `ci` is omitted for supported CI services. An explicit object is preserved without filling missing fields; `ci: {}` disables detection. This includes incremental reporters, which accept and preserve `provider`. See [automatic CI metadata](/sdk/concepts/saving-results#automatic-ci-metadata) for providers and available fields.
+
 | Property | Type | Description |
 |----------|------|-------------|
-| `provider` | `string` | CI provider (e.g., `"github"`, `"gitlab"`) |
+| `provider` | `string` | CI provider (e.g., `"github_actions"`, `"gitlab_ci"`) |
 | `pipelineId` | `string` | Pipeline/workflow identifier |
 | `jobId` | `string` | Job identifier |
 | `runUrl` | `string` | URL to the CI run |

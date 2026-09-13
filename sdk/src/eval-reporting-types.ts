@@ -210,6 +210,7 @@ export type MCPJamReportingConfig = {
   failOnToolError?: boolean;
   externalRunId?: string;
   framework?: string;
+  /** Auto-detected when omitted. An explicit object is preserved; `{}` opts out. */
   ci?: EvalCiMetadata;
   expectedIterations?: number;
   tags?: string[];

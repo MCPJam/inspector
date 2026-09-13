@@ -589,4 +589,6 @@ If you instead run evals inside your own CI job with [`@mcpjam/sdk`](/sdk/concep
         run: npx vitest run evals/
 ```
 
+The SDK automatically attaches available CI metadata on GitHub Actions, GitLab CI, CircleCI, Buildkite, Jenkins, Vercel, and Netlify. You do not need to pass `mcpjam.ci`; an explicit object still replaces detection, and `mcpjam: { ci: {} }` disables it. This SDK behavior is separate from the hosted CLI launch detector, which supports GitHub Actions only.
+
 See [Save Results to MCPJam](/sdk/concepts/saving-results) for auto-save, the manual reporting APIs, CI metadata (branch, commit SHA, run URL), and artifact upload (JUnit XML, Jest/Vitest JSON).
