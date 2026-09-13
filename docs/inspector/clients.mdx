@@ -122,10 +122,12 @@ The Apps Extension tab contains two independent capability matrices that never c
 5. Click **Save**.
 
 <Note>
-  Server selection is project-wide, not per-client. The **Auto-connect**
-  switch in the Servers tab header connects every project server for you in
-  this browser; it is a personal setting, not a project one. Per-server
-  overrides (headers, timeout) are configured on the Servers tab too.
+  The **Auto-connect** switch in the Connect tab header is project-wide: it
+  connects every project server for you in this browser, whichever Client is
+  active. It is a personal setting, not a project one. Which servers an eval
+  suite or swarm run actually uses is chosen per run through its
+  [server attachment](#server-attachments). Per-server overrides (headers,
+  timeout) are configured on the Connect tab too.
 </Note>
 
 The canvas on the left shows a live diagram of the Client — the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Clients so you can see what changed.
