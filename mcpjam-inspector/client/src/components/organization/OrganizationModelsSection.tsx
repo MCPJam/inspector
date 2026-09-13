@@ -179,7 +179,7 @@ export function OrganizationModelsSection(
   props: OrganizationModelsSectionProps,
 ) {
   const pathname = useCurrentPathname();
-  return pathname.endsWith("/models/usage") ? (
+  return /\/models\/usage\/?$/.test(pathname) ? (
     <OrganizationModelUsage {...props} />
   ) : (
     <OrganizationProviderSettings {...props} />

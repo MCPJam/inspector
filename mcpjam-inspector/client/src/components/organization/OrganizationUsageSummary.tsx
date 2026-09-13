@@ -36,19 +36,41 @@ export function OrganizationUsageSummary({
     {
       label: "Tool executions",
       value: executions?.value,
+      loading: executions === undefined,
       icon: Zap,
       period: `Last ${executions?.windowDays ?? 30} days`,
     },
     {
       label: "Messages sent",
       value: messages?.value,
+      loading: messages === undefined,
       icon: MessageSquare,
       period: `Last ${messages?.windowDays ?? 30} days`,
     },
-    { label: "Teammates", value: data?.memberCount, icon: Users },
-    { label: "Projects", value: data?.projects?.length, icon: FolderOpen },
-    { label: "Servers", value: data?.totalServerCount, icon: Server },
-    { label: "Eval suites", value: data?.evalSuiteCount, icon: FlaskConical },
+    {
+      label: "Teammates",
+      value: data?.memberCount,
+      loading: data === undefined,
+      icon: Users,
+    },
+    {
+      label: "Projects",
+      value: data?.projects?.length,
+      loading: data === undefined,
+      icon: FolderOpen,
+    },
+    {
+      label: "Servers",
+      value: data?.totalServerCount,
+      loading: data === undefined,
+      icon: Server,
+    },
+    {
+      label: "Eval suites",
+      value: data?.evalSuiteCount,
+      loading: data === undefined,
+      icon: FlaskConical,
+    },
   ];
 
   return (
@@ -65,18 +87,25 @@ export function OrganizationUsageSummary({
         </p>
       </div>
       <dl className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
-        {stats.map(({ label, value, icon: Icon, period }) => (
+        {stats.map(({ label, value, loading, icon: Icon, period }) => (
           <div key={label} className={period ? "col-span-1 sm:col-span-2" : ""}>
             <dt className="flex items-center gap-1.5 text-xs text-foreground/80">
               <Icon aria-hidden="true" className="size-3.5" />
               {label}
             </dt>
             <dd className="mt-2">
-              {value == null ? (
+              {loading ? (
                 <>
                   <Skeleton className="h-8 w-20" />
                   <span className="sr-only">Loading {label.toLowerCase()}</span>
                 </>
+              ) : value == null ? (
+                <span
+                  className="text-xl font-semibold text-muted-foreground"
+                  aria-label={`${label} unavailable`}
+                >
+                  &mdash;
+                </span>
               ) : (
                 <span
                   className={

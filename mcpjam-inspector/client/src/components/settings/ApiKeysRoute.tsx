@@ -26,7 +26,6 @@ import { SettingsStatePanel } from "./SettingsStatePanel";
  * only way to mint/revoke — there is no privilege escalation path here.
  */
 interface ApiKeysRouteProps {
-  activeOrganizationId?: string | null;
   organizationId?: string;
 }
 
@@ -159,7 +158,9 @@ export function ApiKeysRoute({ organizationId }: ApiKeysRouteProps = {}) {
           </div>
         ) : loadError ? null : keys.length === 0 ? (
           <div className="flex items-center justify-center px-4 py-8 text-sm text-muted-foreground">
-            No API keys yet. Create one to start using the v1 API.
+            {organizationId
+              ? "This organization has no API keys."
+              : "No API keys yet. Create one to start using the v1 API."}
           </div>
         ) : (
           keys.map((key) => (

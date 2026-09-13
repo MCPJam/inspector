@@ -84,6 +84,7 @@ export function SettingsTab({
                     <input
                       type="radio"
                       aria-label={label}
+                      aria-describedby={`theme-${value}-description`}
                       name="theme-preference"
                       value={value}
                       checked={themePreference === value}
@@ -96,7 +97,12 @@ export function SettingsTab({
                         <Icon aria-hidden="true" className="size-4" />
                         {label}
                       </span>
-                      <span className="sr-only">{description}</span>
+                      <span
+                        id={`theme-${value}-description`}
+                        className="sr-only"
+                      >
+                        {description}
+                      </span>
                     </span>
                   </label>
                 ))}

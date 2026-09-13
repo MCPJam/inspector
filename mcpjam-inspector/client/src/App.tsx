@@ -570,8 +570,13 @@ import { BenchResultsPage } from "@/components/score/BenchResultsPage";
  * Both are explicit arms now, pointing at the same destinations `router.tsx`
  * uses. When you add a route there, add it here.
  */
+/** Drop trailing slashes so `/settings/` dispatches like `/settings`. */
+function normalizePathname(pathname: string): string {
+  return pathname.replace(/\/+$/, "") || "/";
+}
+
 function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
-  const pathname = useCurrentPathname();
+  const pathname = normalizePathname(useCurrentPathname());
   switch (activeTab) {
     // Legacy aliases, mirroring router.tsx's ChatAliasRoute /
     // ServersRedirectRoute. A navigate-away effect also fires for these; the
@@ -2361,7 +2366,7 @@ export function ProjectSettingsRoute() {
 
 export function SettingsRoute() {
   const { activeOrganizationId, handleNavigate } = useAppRouteContext();
-  const pathname = useCurrentPathname();
+  const pathname = normalizePathname(useCurrentPathname());
   if (pathname === "/settings") return <ProfileTab />;
   return (
     <SettingsTab
@@ -2372,8 +2377,9 @@ export function SettingsRoute() {
 }
 
 export function ApiKeysSettingsRoute() {
-  const { activeOrganizationId } = useAppRouteContext();
-  return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
+  // Personal keys. The organization inventory mounts ApiKeysRoute with an
+  // explicit organizationId from OrganizationsTab instead.
+  return <ApiKeysRoute />;
 }
 
 export function IntegrationsSettingsRoute() {

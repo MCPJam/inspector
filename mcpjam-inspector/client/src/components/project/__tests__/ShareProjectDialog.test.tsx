@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareProjectDialog } from "../ShareProjectDialog";
@@ -768,9 +774,19 @@ describe("ShareProjectDialog", () => {
     const editorButtons = screen.getAllByRole("button", { name: /Editor/ });
     await user.click(editorButtons[editorButtons.length - 1]);
 
-    // Click "Remove from project" in the dropdown
-    const removeItem = await screen.findByText("Remove from project");
+    // Click "Remove from project" in the dropdown, then confirm.
+    const removeItem = await screen.findByRole("menuitem", {
+      name: "Remove from project",
+    });
     await user.click(removeItem);
+    expect(mockRemoveProjectMember).not.toHaveBeenCalled();
+    const confirmDialog = await screen.findByRole("alertdialog");
+    expect(confirmDialog).toHaveTextContent("member@example.com");
+    await user.click(
+      within(confirmDialog).getByRole("button", {
+        name: "Remove from project",
+      }),
+    );
 
     await waitFor(() => {
       expect(mockRemoveProjectMember).toHaveBeenCalledWith({

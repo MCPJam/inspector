@@ -459,7 +459,7 @@ export function SidebarContextSwitcher({
                     type="button"
                     aria-label={`Open ${org.name} settings`}
                     title="Organization general settings"
-                    className="invisible group-hover/org:visible group-focus-within/org:visible shrink-0 rounded p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
+                    className="invisible group-hover/org:visible group-focus-within/org:visible [@media(hover:none)]:visible shrink-0 rounded p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
                     onKeyDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();

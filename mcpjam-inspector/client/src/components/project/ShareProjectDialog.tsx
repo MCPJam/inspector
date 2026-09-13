@@ -16,6 +16,15 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@mcpjam/design-system/alert-dialog";
 import { Input } from "@mcpjam/design-system/input";
 import {
   Avatar,
@@ -164,6 +173,9 @@ export function ShareProjectDialog({
   const appNavigate = useAppNavigate();
   const [memberSearch, setMemberSearch] = useState("");
   const [memberRoleFilter, setMemberRoleFilter] = useState("all");
+  const [memberToRemove, setMemberToRemove] = useState<string | null>(null);
+  const [isRemovingMember, setIsRemovingMember] = useState(false);
+  const removingMemberRef = useRef(false);
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
   const [currentVisibility, setCurrentVisibility] = useState<ProjectVisibility>(
@@ -442,6 +454,9 @@ export function ShareProjectDialog({
 
   const handleRemoveMember = async (memberEmail: string) => {
     if (!selectedProject.sharedProjectId) return;
+    if (removingMemberRef.current) return;
+    removingMemberRef.current = true;
+    setIsRemovingMember(true);
 
     try {
       const result = await removeProjectMember({
@@ -451,6 +466,7 @@ export function ShareProjectDialog({
 
       if (!result.changed) {
         toast.success("No project access to remove.");
+        setMemberToRemove(null);
         return;
       }
 
@@ -465,8 +481,12 @@ export function ShareProjectDialog({
         removed_kind: result.removed,
         project_visibility: currentVisibility,
       });
+      setMemberToRemove(null);
     } catch (error) {
       toast.error((error as Error).message || "Failed to remove member");
+    } finally {
+      removingMemberRef.current = false;
+      setIsRemovingMember(false);
     }
   };
 
@@ -474,6 +494,47 @@ export function ShareProjectDialog({
     [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ") ||
     "You";
   const displayInitials = getInitials(displayName);
+
+  const filteredActiveMembers = activeMembers.filter((member) =>
+    matchesMember(member, memberSearch, member.projectRole, memberRoleFilter),
+  );
+  const filteredPendingMembers = pendingMembers.filter((member) =>
+    matchesMember(member, memberSearch, "pending", memberRoleFilter),
+  );
+
+  const removeConfirmDialog = (
+    <AlertDialog
+      open={memberToRemove !== null}
+      onOpenChange={(open) => {
+        if (!open && !removingMemberRef.current) setMemberToRemove(null);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove from project?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Remove {memberToRemove ?? "this member"} from {selectedProject.name}
+            ? They will lose access to this project. You can invite them again
+            later.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isRemovingMember}>
+            Cancel
+          </AlertDialogCancel>
+          <Button
+            variant="destructive"
+            disabled={isRemovingMember}
+            onClick={() => {
+              if (memberToRemove) void handleRemoveMember(memberToRemove);
+            }}
+          >
+            {isRemovingMember ? "Removing…" : "Remove from project"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 
   const content = (
     <div className="space-y-6">
@@ -761,14 +822,8 @@ export function ShareProjectDialog({
 
           {embedded &&
             selectedProject.sharedProjectId &&
-            !activeMembers.some((member) =>
-              matchesMember(
-                member,
-                memberSearch,
-                member.projectRole,
-                memberRoleFilter,
-              ),
-            ) && (
+            filteredActiveMembers.length === 0 &&
+            filteredPendingMembers.length === 0 && (
               <p
                 role="status"
                 className="p-6 text-center text-sm text-foreground"
@@ -776,112 +831,101 @@ export function ShareProjectDialog({
                 No active members found.
               </p>
             )}
-          {activeMembers
-            .filter((member) =>
-              matchesMember(
-                member,
-                memberSearch,
-                member.projectRole,
-                memberRoleFilter,
-              ),
-            )
-            .map((member) => {
-              const name = member.user?.name || member.email;
-              const memberEmail = member.email;
-              const initials = getInitials(name);
-              const isSelf =
-                memberEmail.toLowerCase() === currentUser.email?.toLowerCase();
+          {filteredActiveMembers.map((member) => {
+            const name = member.user?.name || member.email;
+            const memberEmail = member.email;
+            const initials = getInitials(name);
+            const isSelf =
+              memberEmail.toLowerCase() === currentUser.email?.toLowerCase();
 
-              return (
-                <div
-                  key={member._id}
-                  className="flex items-center gap-3 px-3 py-3 hover:bg-muted/30"
-                >
-                  <Avatar className="size-9">
-                    <AvatarImage
-                      src={member.user?.imageUrl || undefined}
-                      alt={name}
-                    />
-                    <AvatarFallback className="text-sm">
-                      {initials}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-sm font-medium truncate">{name}</p>
-                      {isSelf && (
-                        <span className="text-xs text-muted-foreground">
-                          (you)
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {memberEmail}
-                    </p>
+            return (
+              <div
+                key={member._id}
+                className="flex items-center gap-3 px-3 py-3 hover:bg-muted/30"
+              >
+                <Avatar className="size-9">
+                  <AvatarImage
+                    src={member.user?.imageUrl || undefined}
+                    alt={name}
+                  />
+                  <AvatarFallback className="text-sm">
+                    {initials}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm font-medium truncate">{name}</p>
+                    {isSelf && (
+                      <span className="text-xs text-muted-foreground">
+                        (you)
+                      </span>
+                    )}
                   </div>
-                  {member.canChangeRole ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="shrink-0 gap-1 text-sm"
-                        >
-                          {projectRoleLabel(member.projectRole)}
-                          <ChevronDown className="size-3" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuRadioGroup
-                          value={member.projectRole}
-                          onValueChange={(v) =>
-                            void handleRoleChange(member, v as ProjectRole)
-                          }
-                        >
-                          <DropdownMenuRadioItem value="editor">
-                            <div>
-                              <div className="font-medium">Editor</div>
-                              <p className="text-xs text-muted-foreground font-normal">
-                                {projectRoleDescription("editor")}
-                              </p>
-                            </div>
-                          </DropdownMenuRadioItem>
-                          <DropdownMenuRadioItem value="admin">
-                            <div>
-                              <div className="font-medium">Admin</div>
-                              <p className="text-xs text-muted-foreground font-normal">
-                                {projectRoleDescription("admin")}
-                              </p>
-                            </div>
-                          </DropdownMenuRadioItem>
-                        </DropdownMenuRadioGroup>
-                        {member.canRemove && (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onClick={() =>
-                                void handleRemoveMember(memberEmail)
-                              }
-                            >
-                              Remove from project
-                            </DropdownMenuItem>
-                          </>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : (
-                    <span className="text-sm text-muted-foreground shrink-0">
-                      {projectRoleLabel(member.projectRole)}
-                    </span>
-                  )}
+                  <p className="text-xs text-muted-foreground truncate">
+                    {memberEmail}
+                  </p>
                 </div>
-              );
-            })}
+                {member.canChangeRole ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="shrink-0 gap-1 text-sm"
+                      >
+                        {projectRoleLabel(member.projectRole)}
+                        <ChevronDown className="size-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuRadioGroup
+                        value={member.projectRole}
+                        onValueChange={(v) =>
+                          void handleRoleChange(member, v as ProjectRole)
+                        }
+                      >
+                        <DropdownMenuRadioItem value="editor">
+                          <div>
+                            <div className="font-medium">Editor</div>
+                            <p className="text-xs text-muted-foreground font-normal">
+                              {projectRoleDescription("editor")}
+                            </p>
+                          </div>
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="admin">
+                          <div>
+                            <div className="font-medium">Admin</div>
+                            <p className="text-xs text-muted-foreground font-normal">
+                              {projectRoleDescription("admin")}
+                            </p>
+                          </div>
+                        </DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                      {member.canRemove && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setMemberToRemove(memberEmail)}
+                          >
+                            Remove from project
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  <span className="text-sm text-muted-foreground shrink-0">
+                    {projectRoleLabel(member.projectRole)}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {pendingMembers.length > 0 && (
+      {filteredPendingMembers.length > 0 && (
         <div className="space-y-2">
           <label className="text-sm font-medium">Invited</label>
           <div
@@ -891,89 +935,78 @@ export function ShareProjectDialog({
                 : "space-y-1 max-h-[220px] overflow-y-auto"
             }
           >
-            {pendingMembers
-              .filter((member) =>
-                matchesMember(
-                  member,
-                  memberSearch,
-                  "pending",
-                  memberRoleFilter,
-                ),
-              )
-              .map((member) => (
-                <div
-                  key={member._id}
-                  className="flex items-center gap-3 px-3 py-3 hover:bg-muted/30"
-                >
-                  <div className="size-9 rounded-full bg-muted flex items-center justify-center">
-                    <Clock className="size-4 text-muted-foreground" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">
-                      {member.email}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Invited to the organization and project
-                    </p>
-                  </div>
-                  {member.canChangeRole ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="shrink-0 gap-1 text-sm"
-                        >
-                          {projectRoleLabel(member.projectRole)}
-                          <ChevronDown className="size-3" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuRadioGroup
-                          value={member.projectRole}
-                          onValueChange={(v) =>
-                            void handleRoleChange(member, v as ProjectRole)
-                          }
-                        >
-                          <DropdownMenuRadioItem value="editor">
-                            <div>
-                              <div className="font-medium">Editor</div>
-                              <p className="text-xs text-muted-foreground font-normal">
-                                {projectRoleDescription("editor")}
-                              </p>
-                            </div>
-                          </DropdownMenuRadioItem>
-                          <DropdownMenuRadioItem value="admin">
-                            <div>
-                              <div className="font-medium">Admin</div>
-                              <p className="text-xs text-muted-foreground font-normal">
-                                {projectRoleDescription("admin")}
-                              </p>
-                            </div>
-                          </DropdownMenuRadioItem>
-                        </DropdownMenuRadioGroup>
-                        {member.canRemove && (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onClick={() =>
-                                void handleRemoveMember(member.email)
-                              }
-                            >
-                              Cancel invite
-                            </DropdownMenuItem>
-                          </>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : (
-                    <span className="text-sm text-muted-foreground shrink-0">
-                      {projectRoleLabel(member.projectRole)}
-                    </span>
-                  )}
+            {filteredPendingMembers.map((member) => (
+              <div
+                key={member._id}
+                className="flex items-center gap-3 px-3 py-3 hover:bg-muted/30"
+              >
+                <div className="size-9 rounded-full bg-muted flex items-center justify-center">
+                  <Clock className="size-4 text-muted-foreground" />
                 </div>
-              ))}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{member.email}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Invited to the organization and project
+                  </p>
+                </div>
+                {member.canChangeRole ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="shrink-0 gap-1 text-sm"
+                      >
+                        {projectRoleLabel(member.projectRole)}
+                        <ChevronDown className="size-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuRadioGroup
+                        value={member.projectRole}
+                        onValueChange={(v) =>
+                          void handleRoleChange(member, v as ProjectRole)
+                        }
+                      >
+                        <DropdownMenuRadioItem value="editor">
+                          <div>
+                            <div className="font-medium">Editor</div>
+                            <p className="text-xs text-muted-foreground font-normal">
+                              {projectRoleDescription("editor")}
+                            </p>
+                          </div>
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="admin">
+                          <div>
+                            <div className="font-medium">Admin</div>
+                            <p className="text-xs text-muted-foreground font-normal">
+                              {projectRoleDescription("admin")}
+                            </p>
+                          </div>
+                        </DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                      {member.canRemove && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() =>
+                              void handleRemoveMember(member.email)
+                            }
+                          >
+                            Cancel invite
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  <span className="text-sm text-muted-foreground shrink-0">
+                    {projectRoleLabel(member.projectRole)}
+                  </span>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -989,6 +1022,7 @@ export function ShareProjectDialog({
           </SettingsPageDescription>
         </header>
         {content}
+        {removeConfirmDialog}
       </div>
     );
   return (
@@ -1001,6 +1035,7 @@ export function ShareProjectDialog({
           </DialogDescription>
         </DialogHeader>
         {content}
+        {removeConfirmDialog}
       </DialogContent>
     </Dialog>
   );

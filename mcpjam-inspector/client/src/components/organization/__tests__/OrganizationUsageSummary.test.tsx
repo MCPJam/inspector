@@ -58,4 +58,25 @@ describe("Organization usage summary", () => {
     expect(screen.getByText("Loading tool executions")).toBeInTheDocument();
     expect(screen.getByText("Loading messages sent")).toBeInTheDocument();
   });
+
+  it("shows a dash, not a skeleton, for a loaded metric with a null value", () => {
+    query.mockImplementation((name) =>
+      name === "home:getOrgHomeData"
+        ? {
+            memberCount: 1,
+            projects: [],
+            totalServerCount: 0,
+            evalSuiteCount: 0,
+          }
+        : { value: null, windowDays: 30 },
+    );
+    render(<OrganizationUsageSummary organizationId="org-1" />);
+    expect(screen.queryByText(/^Loading/)).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Tool executions unavailable"),
+    ).toHaveTextContent("—");
+    expect(
+      screen.getByLabelText("Messages sent unavailable"),
+    ).toHaveTextContent("—");
+  });
 });
