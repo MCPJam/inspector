@@ -183,29 +183,22 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     effectiveHostConfig?.chatUiOverride ?? prefChatUiOverride;
   const shellStyle = getScenarioShellStyle(hostStyle, themeMode);
 
-  // Auto-connect the effective host's REQUIRED servers once per session.
-  // Preview mode wins; otherwise fall back to the project default host so
-  // the connect path matches the host config this surface renders with.
-  // Optional servers stay disconnected until the user manually toggles them
-  // in the Servers tab.
+  // Auto-connect every project server once per session (personal
+  // preference; see `useAutoConnectProjectServers`). The effective host only
+  // supplies the scope key: preview mode wins; otherwise the project default
+  // host, so a client switch re-runs the handshake under the new identity.
   const { servers: projectServersList } = useProjectServers({
     projectId: props.sharedProjectId ?? null,
     isAuthenticated: isConvexAuthenticated,
   });
-  const effectiveHostRequiredNames = useMemo(() => {
-    const requiredIds = effectiveHostConfig?.serverIds ?? [];
-    if (requiredIds.length === 0 || !projectServersList) return [];
-    const byId = new Map(
-      projectServersList.map((s) => [s._id, s.name] as const),
-    );
-    return requiredIds
-      .map((id) => byId.get(id))
-      .filter((name): name is string => !!name);
-  }, [effectiveHostConfig?.serverIds, projectServersList]);
+  const projectServerNames = useMemo(
+    () => (projectServersList ?? []).map((s) => s.name),
+    [projectServersList],
+  );
   useAutoConnectProjectServers({
     projectId: props.sharedProjectId ?? props.activeProjectId ?? null,
     hostScopeKey: previewedHostId ?? effectiveHostConfig?.id ?? null,
-    requiredServerNames: effectiveHostRequiredNames,
+    serverNames: projectServerNames,
   });
 
   const playgroundState = usePlaygroundState({
@@ -549,6 +542,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           >
                             <PlaygroundBrowserPanel
                               projectId={projectScope}
+                              hostId={previewedHostId ?? null}
                               // MOUNTED but not claiming while the panel is off
                               // screen. Dropping the socket would stop the
                               // screencast and lose whatever the agent was

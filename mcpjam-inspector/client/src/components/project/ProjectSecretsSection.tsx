@@ -422,8 +422,8 @@ function BrokerFields({
 
 /** Split the comma-separated host field, dropping blanks. */
 /**
- * Mirrors `MIN_SCRUBBABLE_LENGTH` in
- * `server/utils/secrets/secret-scrubber.ts`. Values shorter than this are not
+ * Mirrors `MIN_SCRUBBABLE_LENGTH` in `shared/secret-scrubber.ts`. Values
+ * shorter than this are not
  * registered with the transcript scrubber, because replacing every occurrence
  * of a four-character value would corrupt unrelated text — a tool result
  * mentioning `test` coming back as `[secret:MY_KEY]` is a transcript that lies

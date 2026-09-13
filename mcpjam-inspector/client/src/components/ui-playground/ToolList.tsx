@@ -17,7 +17,11 @@ import {
   getToolVisibility,
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
 import { BrowserToolsSection } from "@/components/playground/BrowserToolsSection";
@@ -101,7 +105,7 @@ export function ToolList({
     useShallow((s) => ({
       aliases: s.aliases,
       instancesByBridgeId: s.instancesByBridgeId,
-    }))
+    })),
   );
   const appEntries = useMemo<AppEntry[]>(() => {
     const aliasByBridgeAndName = new Map<string, string>();
@@ -111,7 +115,9 @@ export function ToolList({
     const out: AppEntry[] = [];
     for (const inst of instancesByBridgeId.values()) {
       for (const tool of inst.tools) {
-        const alias = aliasByBridgeAndName.get(`${inst.bridgeId}\0${tool.name}`);
+        const alias = aliasByBridgeAndName.get(
+          `${inst.bridgeId}\0${tool.name}`,
+        );
         if (!alias) continue;
         out.push({
           alias,
@@ -179,7 +185,10 @@ export function ToolList({
   // Local Browser permission is a row of its own: until it is granted the
   // browser's tools are withheld, and the section is where Allow lives.
   const browserConsentShown =
-    browserTools?.localConsent && !searchQuery.trim() ? 1 : 0;
+    (browserTools?.localConsent || browserTools?.catalogError) &&
+    !searchQuery.trim()
+      ? 1
+      : 0;
   const totalShown =
     browserConsentShown +
     filteredToolNames.length +
@@ -198,7 +207,8 @@ export function ToolList({
     appEntries.length === 0 &&
     builtinTools.length === 0 &&
     (browserTools?.tools.length ?? 0) === 0 &&
-    !browserTools?.localConsent;
+    !browserTools?.localConsent &&
+    !browserTools?.catalogError;
 
   return (
     <div className="h-full flex flex-col">
@@ -224,8 +234,8 @@ export function ToolList({
               {!hasNoTools
                 ? "No tools match your search"
                 : hasConnectedServer
-                ? "No tools found. Try refreshing and make sure the server is running."
-                : "No server connected yet. Connect one to load its tools and use them in chat."}
+                  ? "No tools found. Try refreshing and make sure the server is running."
+                  : "No server connected yet. Connect one to load its tools and use them in chat."}
             </p>
             {hasNoTools && !hasConnectedServer && (
               <Button
@@ -254,6 +264,8 @@ export function ToolList({
                 selectedKey={selectedBrowserKey}
                 onSelect={onSelectBrowser}
                 localConsent={browserTools.localConsent}
+                catalogError={browserTools.catalogError}
+                onRetryCatalog={browserTools.refreshPage}
               />
             ) : null}
             {filteredToolNames.length > 0 || filteredAppEntries.length > 0 ? (

@@ -31,6 +31,8 @@ import {
 } from "./browser-pane-tools";
 
 interface BrowserToolsSectionProps {
+  catalogError?: boolean;
+  onRetryCatalog?: () => void;
   tools: SerializedModelRequestTool[];
   page: BrowserPageToolsResponse | null;
   searchQuery: string;
@@ -99,6 +101,8 @@ export function BrowserToolsSection({
   selectedKey = null,
   onSelect,
   localConsent = null,
+  catalogError = false,
+  onRetryCatalog,
 }: BrowserToolsSectionProps) {
   const navigate = useAppNavigate();
   const query = searchQuery.trim().toLowerCase();
@@ -126,6 +130,24 @@ export function BrowserToolsSection({
     );
   }, [browserItems, query]);
 
+  if (catalogError && !localConsent && !query) {
+    return (
+      <ToolSourceHeader title="Browser">
+        <p className="px-3 text-xs text-muted-foreground" role="status">
+          Couldn't load Browser tools.
+          {onRetryCatalog && (
+            <Button
+              variant="link"
+              className="h-auto px-1 py-0 text-xs"
+              onClick={onRetryCatalog}
+            >
+              Retry
+            </Button>
+          )}
+        </p>
+      </ToolSourceHeader>
+    );
+  }
   if (tools.length === 0 && !localConsent) return null;
   if (query && filteredTools.length === 0 && filteredPageTools.length === 0) {
     return null;
@@ -178,10 +200,10 @@ export function BrowserToolsSection({
               {query
                 ? "No page tools match your search."
                 : page.webmcpSupported
-                ? `This page offers no WebMCP tools${
-                    page.url ? ` (${page.url})` : ""
-                  }.`
-                : "This page doesn't use WebMCP."}
+                  ? `This page offers no WebMCP tools${
+                      page.url ? ` (${page.url})` : ""
+                    }.`
+                  : "This page doesn't use WebMCP."}
             </p>
           ) : (
             <div className="space-y-0.5">

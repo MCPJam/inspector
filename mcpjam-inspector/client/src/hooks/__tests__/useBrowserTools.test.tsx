@@ -12,7 +12,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
  * panel beside it said no server was connected.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 
 const state = vi.hoisted(() => ({
   setting: undefined as { enabled: boolean | null } | undefined,
@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   } | null,
   selectedEngine: "cloud" as "cloud" | "local",
   consentToken: null as string | null,
+  catalogFailures: 0,
   definitions: [{ name: "browser_navigate", description: "Open a URL." }],
   definitionCalls: [] as string[],
   pageCalls: [] as string[],
@@ -94,6 +95,7 @@ vi.mock("@/lib/hosted-browser/client", () => ({
 vi.mock("@/lib/browser-page-tools/client", () => ({
   fetchBrowserToolDefinitions: vi.fn(async (engine: string) => {
     state.definitionCalls.push(engine);
+    if (state.catalogFailures-- > 0) throw new Error("catalog unavailable");
     return state.definitions;
   }),
   fetchHostedPageTools: vi.fn(
@@ -167,6 +169,30 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe("useBrowserTools — which host it describes", () => {
+  it("surfaces catalog failures and retries without remounting, then caches success", async () => {
+    state.projectDefault = WITH_BROWSER;
+    state.catalogFailures = 1;
+    const { result } = renderHook(() =>
+      useBrowserTools({ projectId: "project-1", hostId: null }),
+    );
+    await waitFor(() => expect(result.current.catalogError).toBe(true));
+    expect(result.current.tools).toEqual([]);
+    const definitions = state.definitions;
+    state.definitions = [];
+    act(() => result.current.refreshPage());
+    await waitFor(() => expect(state.definitionCalls).toHaveLength(2));
+    await waitFor(() => expect(result.current.catalogError).toBe(true));
+    state.definitions = definitions;
+    act(() => result.current.refreshPage());
+    await waitFor(() =>
+      expect(result.current.tools).toEqual(state.definitions),
+    );
+    expect(result.current.catalogError).toBe(false);
+    const reads = state.definitionCalls.length;
+    act(() => result.current.refreshPage());
+    expect(state.definitionCalls).toHaveLength(reads);
+  });
+
   it("lists Browser after shared local setup without requiring a legacy tool attachment", async () => {
     state.selectedEngine = "local";
     state.consentToken = "saved-device-consent";

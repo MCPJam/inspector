@@ -1,10 +1,14 @@
 /**
- * Mount/It gating for the catalog registration hook: the registry must be
- * empty on surfaces where the end user is not the inspector operator — the
+ * Mount gating for the catalog registration hook: the registry must be empty
+ * on surfaces where the end user is not the inspector operator — the
  * standalone scenario chat route passes `enabled: false` — and must follow
- * `enabled` toggles across rerenders. Also guards the removal of the
- * browser-native WebMCP mirror: registering the catalog must never touch
- * `document.modelContext` / `navigator.modelContext`.
+ * `enabled` toggles across rerenders.
+ *
+ * This hook fills the REGISTRY and nothing else. Which of those tools reach a
+ * browser-native WebMCP agent is the publisher's decision, tested in
+ * `use-publish-native-ui-tools.test.tsx` and `native-tool-publisher.test.ts`;
+ * the test below only holds the two apart, so registering the catalog can
+ * never become a native side effect of its own.
  */
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,14 +47,13 @@ describe("useRegisterUiTools", () => {
     unmount();
   });
 
-  describe("browser-native WebMCP exposure (removed)", () => {
+  describe("registration is not publication", () => {
     const documentRegisterTool = vi.fn();
     const navigatorRegisterTool = vi.fn();
 
     beforeEach(() => {
-      // Fake native WebMCP surfaces on BOTH homes (`document.modelContext`
-      // preferred, `navigator.modelContext` the deprecated fallback). If any
-      // mirroring code is reintroduced, one of these spies records a call.
+      // Fake WebMCP surfaces on BOTH homes (`document.modelContext`
+      // preferred, `navigator.modelContext` the deprecated alias).
       Object.defineProperty(document, "modelContext", {
         configurable: true,
         value: { registerTool: documentRegisterTool },
@@ -66,14 +69,15 @@ describe("useRegisterUiTools", () => {
       delete (navigator as { modelContext?: unknown }).modelContext;
     });
 
-    it("registering the catalog makes zero native registerTool calls", () => {
+    it("filling the registry publishes nothing by itself", () => {
+      // Publication is `usePublishNativeUiTools`, mounted separately at the
+      // App root, so a surface that registers tools without it (or with it
+      // disabled) stays internal-only.
       const { unmount } = renderHook(() => useRegisterUiTools());
       expect(useUiToolsRegistry.getState().tools.size).toBeGreaterThan(0);
       expect(documentRegisterTool).not.toHaveBeenCalled();
       expect(navigatorRegisterTool).not.toHaveBeenCalled();
       unmount();
-      expect(documentRegisterTool).not.toHaveBeenCalled();
-      expect(navigatorRegisterTool).not.toHaveBeenCalled();
     });
   });
 });

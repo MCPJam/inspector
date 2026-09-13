@@ -11,6 +11,7 @@
  *
  * Pure policy, no browser: every budget here is unit-tested directly.
  */
+import { redactForModel } from "./shape-redaction";
 
 /** A node of the accessibility tree, as Playwright's snapshot yields it. */
 export interface A11yNode {
@@ -30,6 +31,12 @@ export interface A11yBudget {
 }
 
 export const DEFAULT_A11Y_BUDGET: A11yBudget = { maxNodes: 400, maxDepth: 12 };
+
+/** Max child frames read per observation; each costs a CDP round trip. */
+export const MAX_A11Y_FRAMES = 32;
+
+/** Max frame nesting depth read; separate from `maxDepth`, which bounds nodes. */
+export const MAX_A11Y_FRAME_DEPTH = 8;
 
 export interface CappedA11yTree {
   tree: A11yNode | null;
@@ -211,7 +218,10 @@ export const DEFAULT_CONSOLE_BUDGET: ConsoleBudget = {
   maxEntryBytes: 2_000,
 };
 
-/** Take the NEWEST entries within budget, each byte-capped. */
+/**
+ * Take the NEWEST entries within budget, each byte-capped and shape-scrubbed.
+ * Scrubbed after truncation so a cut cannot split a redaction marker.
+ */
 export function capConsole(
   entries: readonly ConsoleEntry[],
   budget: ConsoleBudget = DEFAULT_CONSOLE_BUDGET,
@@ -220,7 +230,7 @@ export function capConsole(
   return {
     entries: kept.map((entry) => ({
       ...entry,
-      text: capText(entry.text, budget.maxEntryBytes),
+      text: redactForModel(capText(entry.text, budget.maxEntryBytes)),
     })),
     omitted: Math.max(0, entries.length - kept.length),
   };

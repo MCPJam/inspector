@@ -84,6 +84,9 @@ export const CONTENT_ROLES = new Set([
 export function isRefWorthy(node: A11yNode): boolean {
   const role = node.role;
   if (typeof role !== "string") return false;
+  // Scroll containers get a ref whatever their role (usually a bare `generic`),
+  // so the model can scroll them.
+  if (node.scrollable === true) return true;
   if (INTERACTIVE_ROLES.has(role)) return true;
   return (
     CONTENT_ROLES.has(role) &&
@@ -106,6 +109,13 @@ export interface RefEntry {
   name: string;
   /** Index among nodes sharing this role+name, set ONLY when it is ambiguous. */
   nth?: number;
+  /** The frame this element lives in; absent on the main document. */
+  frameId?: string;
+  /**
+   * The frame whose session can resolve this node id; absent for the page
+   * session. Absent for a same-process child even though `frameId` is set.
+   */
+  sessionFrameId?: string;
 }
 
 export interface RefMap {
@@ -116,6 +126,20 @@ export interface RefMap {
    */
   stateToken?: ObservationStateToken;
   entries: Map<string, RefEntry>;
+  /**
+   * Frame topology keyed by session frame id, bound to the same `stateToken`
+   * as the entries. Absent when nothing was spliced.
+   */
+  frames?: Map<
+    string,
+    {
+      /** The DOM node of the `<iframe>` that hosts it, in the PARENT document. */
+      hostBackendNodeId: number;
+      /** Its parent's session frame id, absent when the parent is the page. */
+      parentSessionFrameId?: string;
+      frameId: string;
+    }
+  >;
 }
 
 /**
@@ -225,6 +249,11 @@ export function assignRefs(root: A11yNode | null): Map<string, RefEntry> {
         role,
         name,
         ...((seen.get(key) ?? 0) > 1 ? { nth: index } : {}),
+        // Stamped by `readAxForest`; absent on pages with no frames.
+        ...(typeof node.frameId === "string" ? { frameId: node.frameId } : {}),
+        ...(typeof node.sessionFrameId === "string"
+          ? { sessionFrameId: node.sessionFrameId }
+          : {}),
       });
     }
     for (const child of node.children ?? []) visit(child);

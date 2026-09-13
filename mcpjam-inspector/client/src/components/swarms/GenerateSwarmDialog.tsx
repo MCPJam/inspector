@@ -404,8 +404,8 @@ export function GenerateSwarmDialog({
               role="alert"
               className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
             >
-              {joinLabels(noServers.labels)} has no servers assigned. Turn on
-              Auto-connect on the{" "}
+              {joinLabels(noServers.labels)} has no servers assigned. Pick a
+              server group above, or add servers on the{" "}
               <button
                 type="button"
                 className="underline underline-offset-2 hover:text-foreground"
@@ -416,7 +416,7 @@ export function GenerateSwarmDialog({
               >
                 Servers tab
               </button>
-              , or pick a server group above.
+              .
             </p>
           ) : null}
 

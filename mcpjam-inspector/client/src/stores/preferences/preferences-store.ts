@@ -39,10 +39,11 @@ export type PreferencesState = {
   chatUiOverride: ChatUiOverride | undefined;
   /**
    * When true (default), entering the Servers tab, a host page, or the
-   * Playground triggers a one-shot batch connect of all project servers.
-   * The toggle in the Servers tab header writes here. Disabling it leaves
-   * every server untouched until the user manually flips its per-card
-   * connect switch.
+   * Playground triggers a one-shot batch connect of every server in the
+   * project catalog. Personal and per-device: the Auto-connect switch in
+   * the Servers tab header writes here, and nothing project-side reads it.
+   * Disabling it leaves every server untouched until the user manually
+   * flips its per-card connect switch.
    */
   autoConnectServersEnabled: boolean;
   setThemeMode: (mode: ThemeMode) => void;

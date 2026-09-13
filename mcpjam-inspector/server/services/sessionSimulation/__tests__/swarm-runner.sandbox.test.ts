@@ -30,6 +30,7 @@ const heartbeatJourneyRunMock = vi.fn();
 const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
 const resolveHostToolsMock = vi.fn();
+const resolveBrowserSecretsMock = vi.fn();
 const resolveHarnessSandboxMock = vi.fn();
 const dataPlaneConfiguredMock = vi.fn(() => true);
 
@@ -74,6 +75,11 @@ vi.mock("../../../utils/chat-v2-orchestration.js", async () => {
     prepareChatV2: (...args: unknown[]) => prepareChatV2Mock(...args),
   };
 });
+
+vi.mock("../../../utils/secrets/browser-secrets.js", () => ({
+  resolveBrowserSecrets: (...args: unknown[]) =>
+    resolveBrowserSecretsMock(...args),
+}));
 
 vi.mock("../../browser-session-context.js", async () => {
   const actual = await vi.importActual<
@@ -368,6 +374,7 @@ beforeEach(() => {
   outboxFlushMock.mockReset();
   dataPlaneConfiguredMock.mockReset().mockReturnValue(true);
   resolveHostToolsMock.mockReset();
+  resolveBrowserSecretsMock.mockReset().mockResolvedValue([]);
   resolveHarnessSandboxMock.mockReset();
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
   heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
@@ -707,6 +714,28 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
       kind: "unattended",
       policy: { mode: "allowlist", originAllowlist: ["example.com"] },
     });
+  });
+
+  it("wires onBrowserSecretDelivered only when browser secrets resolved", async () => {
+    const opts = {
+      builtInToolIds: ["browser"],
+      browserToolPolicy: {
+        mode: "allowlist",
+        originAllowlist: ["example.com"],
+      },
+    };
+    await startJourneyRun(baseOpts(opts));
+    expect(resolverContexts()[0]!.onBrowserSecretDelivered).toBeUndefined();
+
+    resolveHostToolsMock.mockClear();
+    resolveBrowserSecretsMock.mockResolvedValue([{ name: "PW", value: "x" }]);
+    await startJourneyRun(baseOpts(opts));
+    expect(resolverContexts()[0]!.browserSecrets).toEqual([
+      { name: "PW", value: "x" },
+    ]);
+    expect(typeof resolverContexts()[0]!.onBrowserSecretDelivered).toBe(
+      "function"
+    );
   });
 
   it("passes NO delivery when the target declares no policy (fail-closed)", async () => {

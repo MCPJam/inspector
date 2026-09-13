@@ -306,7 +306,6 @@ export const navigationSections: NavSection[] = [
         title: "XAA Debugger",
         url: "/xaa-flow",
         icon: ShieldCheck,
-        badge: "New",
         featureFlag: "xaa",
       },
       {
@@ -361,6 +360,7 @@ export const navigationSections: NavSection[] = [
         title: "WebMCP",
         url: "/webmcp",
         icon: Globe,
+        badge: "New",
         featureFlag: WEBMCP_INSPECTOR_FEATURE_FLAG,
       },
     ],

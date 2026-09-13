@@ -26,6 +26,11 @@ export type BrowserdCommandResponse =
   | { status: "at_capacity"; bootId: string }
   | { status: "stale_observation"; result?: BrowserCommandResult; bootId: string }
   | { status: "unknown_boot"; bootId: string }
+  /**
+   * The daemon refused the command because it speaks a different protocol.
+   * `running` is the version it announced, if any.
+   */
+  | { status: "protocol_mismatch"; running?: number; bootId: string }
   /** A person is holding (or has parked) the browser — see `daemon/lease.ts`.
    *  Not an error: the correct response is to wait and tell the user, which is
    *  why it is a normal outcome variant rather than a thrown client error. */
@@ -315,6 +320,18 @@ export function decodeCommandResponse(
       }
       if (body.error === "command_unknown_boot") {
         return { status: "unknown_boot", bootId };
+      }
+      if (body.error === "protocol_mismatch") {
+        // Not `expired`: that is retryable, while a mismatch refuses every
+        // retry until the daemon is replaced.
+        return {
+          status: "protocol_mismatch",
+          running:
+            typeof body.protocolVersion === "number"
+              ? body.protocolVersion
+              : undefined,
+          bootId,
+        };
       }
       return { status: "expired", bootId };
     default:

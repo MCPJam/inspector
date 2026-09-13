@@ -1,20 +1,20 @@
 name: Tests
 
 on:
+  # Run on every PR regardless of its base branch. `branches` filters on the
+  # PR's BASE, and a stacked PR is based on the branch below it until that one
+  # merges — so any base filter, `main` alone or `main` plus a hand-added
+  # pattern, skips every PR above the root of a stack and leaves the required
+  # check stuck at "Expected — waiting for status" once the base re-targets to
+  # main.
+  #
+  # Worth keeping the reason: this bit us on the UVH stack, where a test
+  # asserted a label's wording verbatim, a later PR in the same stack changed
+  # that wording, and the break sat unnoticed because every PR above the root
+  # was green on previews and review bots alone. The fix is no base filter at
+  # all — not a pattern added by hand while some stack happens to be in flight,
+  # which only works for the stack somebody remembered to name.
   pull_request:
-    # `branches` filters on the PR's BASE. A stacked PR is based on the branch
-    # below it rather than on main, so with `main` alone every PR above the
-    # root of a stack merges without these tests having run against it once.
-    # Add a pattern while a stack is in flight; drop it once that stack lands.
-    #
-    # Worth keeping the reason: this bit us on the UVH stack, where a test
-    # asserted a label's wording verbatim, a later PR in the same stack changed
-    # that wording, and the break sat unnoticed because every PR above the root
-    # was green on previews and review bots alone. That stack has landed and
-    # its pattern is gone; the lesson is why the mechanism stays.
-    branches:
-      - main
-      - "claude/mcp-benchmarks-v2-b0tw4b-**"
   push:
     branches: [main]
 
