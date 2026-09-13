@@ -211,17 +211,6 @@ export function browserShapeRedactionEnabled(
   return env.MCPJAM_BROWSER_SHAPE_REDACTION !== "0";
 }
 
-/**
- * Let a model type a credential it has not been shown: `{{secret:NAME}}`.
- * Defaults off because enabling it changes tool descriptions the model reads.
- * Read at call time so it can be flipped per process or per test.
- */
-export function browserSecretPlaceholdersEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env.MCPJAM_BROWSER_SECRET_PLACEHOLDERS === "1";
-}
-
 export type WebmcpPageToolsMode = "verbs" | "first_class";
 
 export function webmcpPageToolsMode(

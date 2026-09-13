@@ -117,7 +117,6 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
-import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 
 export interface SimulationManagerFactory {
   /**
@@ -663,23 +662,12 @@ export async function runSyntheticHostSession(
           })
         : undefined,
     );
-    // Secrets the browser may type. They are substituted inside the daemon and
-    // never become env vars (see the `runtimeSecrets` note below).
-    const browserSecrets = browserApprovalDelivery
-      ? await resolveBrowserSecrets({
-          bearer: authHeader,
-          projectId,
-          ...(environmentId ? { environmentId } : {}),
-          chatSessionId,
-        })
-      : [];
     const builtInTools = resolveHostTools(
       { builtInToolIds, computer },
       {
         authHeader,
         projectId,
         chatSessionId,
-        ...(browserSecrets.length > 0 ? { browserSecrets } : {}),
         isScenarioSession: true,
         // Journey (swarm) surface: WITHOUT a sandbox binding the resolver
         // suppresses computer-backed tools here, because every session in a run

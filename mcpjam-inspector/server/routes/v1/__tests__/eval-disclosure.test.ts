@@ -46,7 +46,7 @@ vi.mock("../../../config.js", async (importOriginal) => {
 import evalDisclosure from "../eval-disclosure.js";
 import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
-import { runnerCapabilities } from "../../../services/evals/runner-capabilities.js";
+import { RUNNER_CAPABILITIES } from "../../../services/evals/runner-capabilities.js";
 
 const PROJECT = "proj_a";
 const SUITE = "suite_a";
@@ -390,7 +390,7 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     queryMock.mockResolvedValue(baseDisclosure());
     await get();
     const args = queryMock.mock.calls[0]![1] as Record<string, unknown>;
-    expect(args.runnerCapabilities).toEqual([...runnerCapabilities()]);
+    expect(args.runnerCapabilities).toEqual([...RUNNER_CAPABILITIES]);
   });
 
   it("answers 404 — not a 502 incident page — for a host that is not attached", async () => {

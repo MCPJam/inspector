@@ -73,9 +73,6 @@ merely re-run:
   itself, or the bridge must.
 - **`_blank` loss.** Whether a `target="_blank"` navigation drops the opener's
   registrations.
-- **Password AX value.** What `Accessibility.getFullAXTree` reports for a filled
-  `<input type="password">` — the fact the secret-placeholder masking depends
-  on.
 
 ## 4. The prose
 

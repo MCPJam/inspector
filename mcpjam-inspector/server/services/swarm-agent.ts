@@ -7,7 +7,6 @@ import type {
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
-import { runnerCapabilities } from "./evals/runner-capabilities.js";
 
 /**
  * Inspector-side adapter for the backend swarm (journey-execution)
@@ -473,9 +472,6 @@ export async function createJourneyRun(
       ...(args.environmentIds?.length
         ? { environmentIds: args.environmentIds }
         : {}),
-      // Asserted by this process, never a caller: the runner is the only
-      // honest source for what it can execute.
-      runnerCapabilities: [...runnerCapabilities()],
     },
     NON_LLM_TIMEOUT_MS,
   );

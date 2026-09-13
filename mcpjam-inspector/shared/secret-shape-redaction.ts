@@ -7,8 +7,8 @@
  * it does not redact emails or by key name, and it is not applied to page
  * content, where false positives would hide what the model reads.
  *
- * Shape-based only: a second line behind placeholders and the daemon's
- * exact-value registry.
+ * Shape-based only: it catches strings that look like credentials, not exact
+ * known values.
  */
 
 /**
@@ -57,27 +57,6 @@ export function redactSecretShapes(
   text: string,
   replacement = "[redacted]",
 ): string {
-  if (!text) return text;
-  // Redact only between `{{secret:NAME}}` placeholders; `secretParamLike`
-  // would otherwise mangle them into `{{secret:[redacted]`.
-  const parts = text.split(SECRET_PLACEHOLDER);
-  if (parts.length === 1) return redactSegment(text, replacement);
-  return parts
-    .map((part, index) =>
-      // Odd segments are the captured names.
-      index % 2 === 1 ? `{{secret:${part}}}` : redactSegment(part, replacement),
-    )
-    .join("");
-}
-
-/**
- * `{{secret:NAME}}`, capturing so `split` returns names as odd segments.
- * Duplicated from `secret-placeholders.ts` to keep server imports out.
- */
-const SECRET_PLACEHOLDER = /\{\{secret:([A-Z_][A-Z0-9_]*)\}\}/g;
-
-/** One stretch of text with no placeholder in it. @see redactSecretShapes */
-function redactSegment(text: string, replacement: string): string {
   if (!text) return text;
   return text
     .replace(authHeaderLike(), `$1${replacement}`)

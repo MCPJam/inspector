@@ -5,7 +5,6 @@ import {
   PinnedSkillIntegrityError,
   reportAttempt,
 } from "../swarm-agent.js";
-import { runnerCapabilities } from "../evals/runner-capabilities.js";
 
 /**
  * CONTRACT-LEVEL tests for the inspector→backend journey-execution boundary.
@@ -76,11 +75,6 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
       journeyRefId: "journey-1",
       launchKey: "lk-1",
       maxHosts: 1,
-      // ASSERTED BY THIS PROCESS, never taken from the caller's args above: we
-      // are the runner, so we are the only honest source for what we can
-      // execute. The backend reads it to decide whether an environment's
-      // materialized secrets make this wave unrunnable.
-      runnerCapabilities: [...runnerCapabilities()],
     });
     // projectId is the field whose omission would produce the guaranteed 400.
     expect(body.projectId).toBe("proj-1");

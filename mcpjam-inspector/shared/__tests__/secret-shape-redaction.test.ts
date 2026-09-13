@@ -83,8 +83,8 @@ describe("redactSecretShapes", () => {
 
   it("takes a replacement, so a caller can say what it put there", () => {
     expect(
-      redactSecretShapes("?token=abc123def456", "{{secret:NAME}}"),
-    ).toContain("token={{secret:NAME}}");
+      redactSecretShapes("?token=abc123def456", "***"),
+    ).toContain("token=***");
   });
 
   it("is idempotent, because two layers apply it", () => {
@@ -125,16 +125,6 @@ describe("the patterns are FACTORIES, not shared instances", () => {
     expect(scrubbed).not.toContain("bbbbbbbbbb");
   });
 
-  /**
-   * A `{{secret:NAME}}` survives this pass intact.
-   *
-   * The two features meet here: an exact scrub puts the placeholder back where
-   * a credential was, and this redactor then runs over the same string. Its
-   * `secretParamLike` reads `secret:PW}}` as the key `secret` with a value, so
-   * an unguarded pass produced `{{secret:[redacted]` — the name gone, the
-   * braces unclosed, and a model told that something was hidden from it when
-   * it had in fact been handed back the exact token it wrote.
-   */
   describe("a bearer token containing `~`", () => {
     // `~` is UNRESERVED in a URI, so issuers use it. Leaving it out of the
     // class was not a near miss: `Bearer ~abc` matched nothing, and
@@ -157,43 +147,6 @@ describe("the patterns are FACTORIES, not shared instances", () => {
       expect(redactSecretShapes("Bearer abc~def failed the request")).toBe(
         "Bearer [redacted] failed the request",
       );
-    });
-  });
-
-  describe("a secret placeholder", () => {
-    it("is left exactly as it is", () => {
-      expect(redactSecretShapes("sign-in rejected {{secret:PW}}")).toBe(
-        "sign-in rejected {{secret:PW}}",
-      );
-    });
-
-    it("survives beside a real credential shape, which is still redacted", () => {
-      // The gap on either side is redacted normally; only the placeholder is
-      // carried through.
-      expect(
-        redactSecretShapes(
-          "typed {{secret:GITHUB_PASSWORD}} then sk-proj-abcdefghijklmnop",
-        ),
-      ).toBe("typed {{secret:GITHUB_PASSWORD}} then [redacted]");
-    });
-
-    it("carries several through, in order", () => {
-      expect(
-        redactSecretShapes("{{secret:A_ONE}}/{{secret:B_TWO}}"),
-      ).toBe("{{secret:A_ONE}}/{{secret:B_TWO}}");
-    });
-
-    it("does NOT spare something that merely looks like one", () => {
-      // The carve-out is the exact spelling and nothing near it: a lowercase
-      // name is not a placeholder, so `secret: lower` is an ordinary
-      // key-and-value and stays redacted.
-      expect(redactSecretShapes("{{secret:lower}}")).toContain("[redacted]");
-    });
-
-    it("honours a custom replacement in the gaps", () => {
-      expect(
-        redactSecretShapes("{{secret:PW}} sk-proj-abcdefghijklmnop", "***"),
-      ).toBe("{{secret:PW}} ***");
     });
   });
 });

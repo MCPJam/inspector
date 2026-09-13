@@ -31,7 +31,6 @@ import type {
   BrowserCommandSource,
   ObservationStateToken,
 } from "../protocol";
-import { hasSecretPlaceholder } from "../../../utils/secrets/secret-placeholders";
 
 /**
  * Who issued a command.
@@ -85,23 +84,6 @@ export type BrowserLedgerCommandRecord = {
   value?: string;
   /** Present when the value was redacted (`type`). Shape, never content. */
   redactedValue?: { redacted: true; chars: number };
-  /**
-   * The `{{secret:NAME}}` text the caller sent, verbatim. A placeholder is a
-   * name, not a credential, so recording it keeps a login legible in a trace.
-   */
-  placeholderValue?: string;
-  /**
-   * `fill_form` only: one entry per field, in fill order, redacted under the
-   * same policy as `type`.
-   */
-  fields?: Array<{
-    selector?: string;
-    value?: string;
-    redactedValue?: { redacted: true; chars: number };
-    placeholderValue?: string;
-  }>;
-  /** Whether Enter followed (`type`, `fill_form`). */
-  submit?: boolean;
   /** `navigate` only, already stripped of query and fragment. */
   url?: string;
   /** `webmcp_invoke` only. The tool's name; its input is never recorded. */
@@ -321,29 +303,6 @@ export function sanitizeLedgerUrl(value: unknown): string | undefined {
  * the values back. It is refused on a persistent profile by the door, not here:
  * this function records what it was told to record.
  */
-/**
- * The capture policy for one typed string, shared by `value` and each field.
- * Placeholders are checked first, so their length is never reported as the
- * typed value's.
- */
-function redactTypedValue(
-  value: string | undefined,
-  verb: string,
-  options: { captureTypedText?: boolean },
-): Pick<
-  BrowserLedgerCommandRecord,
-  "value" | "redactedValue" | "placeholderValue"
-> {
-  if (typeof value !== "string") return {};
-  if (hasSecretPlaceholder(value)) return { placeholderValue: value };
-  // `press` keys, `select` options and scroll amounts are not secrets and a
-  // trace without them cannot explain what happened. `type` is.
-  if (verb === "type" && !options.captureTypedText) {
-    return { redactedValue: { redacted: true, chars: value.length } };
-  }
-  return { value };
-}
-
 export function redactAction(
   action: BrowserAction,
   options: { captureTypedText?: boolean } = {},
@@ -377,15 +336,14 @@ export function redactAction(
           : {}),
       };
       if (typeof action.value === "string") {
-        Object.assign(record, redactTypedValue(action.value, action.verb, options));
+        // `press` keys, `select` options and scroll amounts are not secrets and
+        // a trace without them cannot explain what happened. `type` is.
+        if (action.verb === "type" && !options.captureTypedText) {
+          record.redactedValue = { redacted: true, chars: action.value.length };
+        } else {
+          record.value = action.value;
+        }
       }
-      if (action.fields?.length) {
-        record.fields = action.fields.map((field) => ({
-          ...(field.selector ? { selector: field.selector } : {}),
-          ...redactTypedValue(field.value, "type", options),
-        }));
-      }
-      if (action.submit !== undefined) record.submit = action.submit;
       return record;
     }
     case "observe":

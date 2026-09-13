@@ -38,21 +38,7 @@ import {
  */
 export type CommandExecutor = (
   command: BrowserCommand,
-  /**
-   * What travels with this command but not inside it. Separate from the
-   * envelope, which is echoed into the ledger, trace and durable mirror.
-   */
-  context?: CommandContext,
 ) => Promise<BrowserCommandResult>;
-
-/** @see CommandExecutor */
-export interface CommandContext {
-  /**
-   * Values for this command's `{{secret:NAME}}` placeholders, only the names it
-   * references: the daemon scrubs observations for everything it is given.
-   */
-  secrets?: ReadonlyArray<{ name: string; value: string }>;
-}
 
 /**
  * Is this a control message rather than work on the page?
@@ -191,10 +177,7 @@ export class CommandQueue {
     return true;
   }
 
-  async submit(
-    command: BrowserCommand,
-    context?: CommandContext,
-  ): Promise<BrowserCommandOutcome> {
+  async submit(command: BrowserCommand): Promise<BrowserCommandOutcome> {
     // A STOP DOES NOT WAIT ITS TURN. Everything else here is ordered against
     // the tab's other work; a cancellation is ordered against the very command
     // it cancels, and putting it behind that command in the FIFO means it can
@@ -206,11 +189,11 @@ export class CommandQueue {
     // page: it names an invocation, it is idempotent, and a cancellation for
     // one that already finished (or never existed) is a no-op. The lease gate
     // upstream has already run, so this bypasses ordering only, not permission.
-    if (isOutOfBand(command)) return this.runOutOfBand(command, context);
+    if (isOutOfBand(command)) return this.runOutOfBand(command);
     // Reads run on the FIFO like anything else — ordering still matters, and
     // the depth cap still applies — but they are never tracked by id, so they
     // spend no part of the per-boot budget. See `isReplayable`.
-    if (isReplayable(command)) return this.runUntracked(command, context);
+    if (isReplayable(command)) return this.runUntracked(command);
 
     const existing = this.lookup(command.commandId);
     if (existing) {
@@ -248,7 +231,7 @@ export class CommandQueue {
     const prior = this.tails.get(key) ?? Promise.resolve();
     const raw = prior
       .catch(() => undefined) // a prior command's failure must not stall the tab
-      .then(() => this.executor(command, context));
+      .then(() => this.executor(command));
     this.tails.set(key, raw);
     // The shared promise both the first caller and any duplicate await. It
     // resolves to a normalized result and NEVER rejects, so an executor throw
@@ -278,7 +261,6 @@ export class CommandQueue {
    */
   private async runUntracked(
     command: BrowserCommand,
-    context?: CommandContext,
   ): Promise<BrowserCommandOutcome> {
     const key = queueKeyFor(command);
     if ((this.depth.get(key) ?? 0) >= this.perQueueDepthCap) {
@@ -286,9 +268,7 @@ export class CommandQueue {
     }
     this.depth.set(key, (this.depth.get(key) ?? 0) + 1);
     const prior = this.tails.get(key) ?? Promise.resolve();
-    const raw = prior
-      .catch(() => undefined)
-      .then(() => this.executor(command, context));
+    const raw = prior.catch(() => undefined).then(() => this.executor(command));
     this.tails.set(key, raw);
     try {
       const result = await raw.then((r) => r, normalizeError);
@@ -311,9 +291,8 @@ export class CommandQueue {
    */
   private async runOutOfBand(
     command: BrowserCommand,
-    context?: CommandContext,
   ): Promise<BrowserCommandOutcome> {
-    const result = await this.executor(command, context).then(
+    const result = await this.executor(command).then(
       (value) => value,
       normalizeError,
     );

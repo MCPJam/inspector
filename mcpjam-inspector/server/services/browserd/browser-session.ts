@@ -105,11 +105,6 @@ export const BROWSERD_PROFILE_ARCHIVE_PATH =
 export interface SessionCommandOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
-  /**
-   * Values for the command's `{{secret:NAME}}` placeholders. Never a command
-   * field: the command is echoed into the ledger, trace and durable mirror.
-   */
-  secrets?: ReadonlyArray<{ name: string; value: string }>;
 }
 
 export interface SessionClient {
@@ -1138,7 +1133,7 @@ function withActivityTouches(
       if (deps.touchActivity && computerId && shouldTouchActivity(computerId)) {
         void deps.touchActivity({ computerId }).catch(() => {});
       }
-      // Options forwarded: dropping them loses `secrets` and the abort signal.
+      // Options forwarded: dropping them loses the timeout and the abort signal.
       return client.sendCommand(command, expectedBootId, options);
     },
     // ARGUMENTS FORWARDED, not just the call. A wrapper that took none

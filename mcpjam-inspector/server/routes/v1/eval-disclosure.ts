@@ -41,7 +41,7 @@ import {
   translateConvexReadError,
 } from "./convex-read-errors.js";
 import { HOSTED_MODE } from "../../config.js";
-import { runnerCapabilities } from "../../services/evals/runner-capabilities.js";
+import { RUNNER_CAPABILITIES } from "../../services/evals/runner-capabilities.js";
 
 const evalDisclosure = new Hono();
 
@@ -263,7 +263,7 @@ evalDisclosure.get(
         // constant) or the disclosure would describe an engine the launch
         // never uses. Accepting it from a caller would let a query claim a
         // capability this runner does not have — and be believed.
-        runnerCapabilities: runnerCapabilities(),
+        runnerCapabilities: RUNNER_CAPABILITIES,
       } as never)) as Record<string, unknown> | null;
     } catch (error) {
       // A host that is not attached to this suite. STRUCTURED on the backend
