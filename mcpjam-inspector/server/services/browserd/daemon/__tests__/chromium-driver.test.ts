@@ -2934,6 +2934,56 @@ describe("ChromiumDriver — teardown is bounded, and nothing opens behind it", 
     };
   }
 
+  it("closes the context even when multiple pages never acknowledge close", async () => {
+    vi.useFakeTimers();
+    try {
+      const pages = [fakePage(), fakePage()];
+      for (const page of pages)
+        vi.spyOn(page, "close").mockImplementation(() => new Promise(() => {}));
+      const { context, wasClosed } = fakeContext({ pages });
+      const driver = new ChromiumDriver(context);
+      for (let i = 0; i < pages.length; i++) {
+        await driver.execute({
+          ...cmd(
+            {
+              kind: "navigate",
+              url: "about:blank",
+              newTab: true,
+              observe: "none",
+            },
+            `tab-${i}`,
+          ),
+          source: "manual",
+        });
+      }
+      const closing = driver.close();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await closing;
+      expect(wasClosed()).toBe(true);
+      for (const page of pages) expect(page.close).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes the context when viewport CDP attachment never finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      const page = fakePage();
+      vi.spyOn(page, "cdp").mockImplementation(() => new Promise(() => {}));
+      const { context, wasClosed } = fakeContext({ pages: [page] });
+      const driver = new ChromiumDriver(context);
+      void driver.viewport();
+      await vi.advanceTimersByTimeAsync(0);
+      const closing = driver.close();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await closing;
+      expect(wasClosed()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("gives up on a tab creation that never lands rather than hanging shutdown", async () => {
     // A `newPage()` against a browser that has stopped answering never
     // settles. Waiting on it forever is not caution: `close()` runs on the
