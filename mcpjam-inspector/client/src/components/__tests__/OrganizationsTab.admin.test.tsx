@@ -182,10 +182,19 @@ function createMember({
 
 describe("OrganizationsTab member management", () => {
   it("renders Data management instead of falling back to General", () => {
-    render(<OrganizationsTab organizationId="org-1" section="data-management" />);
-    expect(screen.getByRole("heading", {name: "Data management"})).toBeInTheDocument();
-    expect(screen.getByRole("link", {name: "Contact us"})).toHaveAttribute("href", "https://www.mcpjam.com/contact");
-    expect(screen.queryByRole("heading", {name: "General"})).not.toBeInTheDocument();
+    render(
+      <OrganizationsTab organizationId="org-1" section="data-management" />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Data management" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Contact us" })).toHaveAttribute(
+      "href",
+      "https://www.mcpjam.com/contact",
+    );
+    expect(
+      screen.queryByRole("heading", { name: "General" }),
+    ).not.toBeInTheDocument();
   });
   let currentUserEmail = "owner@example.com";
   let activeMembers = [
@@ -315,7 +324,9 @@ describe("OrganizationsTab member management", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: "Members & sharing" }),
     ).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Email address")).toHaveClass("sm:w-80");
+    expect(
+      screen.getByRole("textbox", { name: "Invite with email" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("change-role-member@example.com"));
 
@@ -346,32 +357,58 @@ describe("OrganizationsTab member management", () => {
   it("requires confirmation before removing a member and supports canceling", async () => {
     render(<OrganizationsTab organizationId="org-1" section="members" />);
     fireEvent.click(screen.getByText("remove-member@example.com"));
-    expect(screen.getByRole("alertdialog")).toHaveTextContent("member@example.com");
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "member@example.com",
+    );
     expect(mockRemoveMember).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel", exact: true }),
+    );
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(mockRemoveMember).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("remove-member@example.com"));
-    fireEvent.click(screen.getByRole("button", { name: "Remove member", exact: true }));
-    await waitFor(() => expect(mockRemoveMember).toHaveBeenCalledWith({ organizationId: "org-1", email: "member@example.com" }));
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove member", exact: true }),
+    );
+    await waitFor(() =>
+      expect(mockRemoveMember).toHaveBeenCalledWith({
+        organizationId: "org-1",
+        email: "member@example.com",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
   });
 
   it("keeps a failed removal open for retry and blocks repeated submissions", async () => {
     let rejectRemoval!: (error: Error) => void;
-    mockRemoveMember.mockImplementationOnce(() => new Promise((_, reject) => { rejectRemoval = reject; }));
+    mockRemoveMember.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectRemoval = reject;
+        }),
+    );
     render(<OrganizationsTab organizationId="org-1" section="members" />);
     fireEvent.click(screen.getByText("remove-member@example.com"));
-    fireEvent.click(screen.getByRole("button", { name: "Remove member", exact: true }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove member", exact: true }),
+    );
     expect(screen.getByRole("button", { name: "Removing…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Removing…" }));
     expect(mockRemoveMember).toHaveBeenCalledTimes(1);
     rejectRemoval(new Error("Network unavailable"));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Remove member", exact: true }));
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove member", exact: true }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
     expect(mockRemoveMember).toHaveBeenCalledTimes(2);
   });
 
@@ -800,10 +837,13 @@ describe("OrganizationsTab member management", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="members" />);
 
-    fireEvent.change(screen.getByPlaceholderText("Email address"), {
-      target: { value: "new@example.com" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Invite with email" }),
+      {
+        target: { value: "new@example.com" },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
 
     await waitFor(() => {
       expect(mockAddMember).toHaveBeenCalledWith({
