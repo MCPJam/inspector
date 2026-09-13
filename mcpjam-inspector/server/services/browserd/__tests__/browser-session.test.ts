@@ -2115,9 +2115,11 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
    * `client.sendCommand(command, expectedBootId)`, so a third argument added
    * later was dropped on every hosted call with nothing in a log to say so.
    *
-   * That happened with the abort signal: a cancelled turn went on holding a
-   * lease read nobody was waiting for, and the per-command timeout was lost
-   * the same way.
+   * That has now happened twice: first the abort signal (a cancelled turn went
+   * on holding a lease read nobody was waiting for) and then `secrets` — a
+   * `{{secret:NAME}}` reaching the daemon with no value, refused as
+   * `secret_unresolved`, so the placeholder feature did not work on the hosted
+   * engine at all while every unit test around it passed.
    */
   it("forwards the third argument of sendCommand, not just the first two", async () => {
     const sendCommand = vi.fn(async () => ({ kind: "ok" }) as never);
@@ -2139,7 +2141,7 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
     const controller = new AbortController();
     const options = {
       signal: controller.signal,
-      timeoutMs: 1234,
+      secrets: [{ name: "PW", value: "hunter2-hunter2" }],
     };
     await handle.client.sendCommand(
       { commandId: "c1", source: "chat", action: { kind: "reload" } },

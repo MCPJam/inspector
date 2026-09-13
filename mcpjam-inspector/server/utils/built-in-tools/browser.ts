@@ -106,6 +106,8 @@ import {
   provisionPlaygroundSandbox,
   wakePlaygroundSandbox,
 } from "../computers/control-plane-client.js";
+import { planSecretPlaceholders } from "../secrets/secret-placeholders.js";
+import { createSecretScrubber } from "../../../shared/secret-scrubber";
 
 // Re-exported so the server's existing importers keep their one import site;
 // the value itself now lives in `shared/client-fulfilled-tools.ts` beside the
@@ -227,6 +229,22 @@ export interface BrowserToolsOptions {
    * added per call.
    */
   correlation?: BrowserCommandCorrelation;
+  /**
+   * Credentials the model may type as `{{secret:NAME}}` without reading them.
+   * The value travels beside the command and the daemon substitutes it. Absent
+   * means every placeholder is refused.
+   */
+  secrets?: {
+    /** Materialized `{name, value}` pairs, already resolved for this turn. */
+    available: ReadonlyArray<{ name: string; value: string }>;
+    /**
+     * Brokered names: injected at egress, so never typeable. Kept separate so
+     * the refusal can say why.
+     */
+    brokered?: readonly string[];
+    /** Fired with the NAMES (never values) that actually reached a browser. */
+    onDelivered?: (names: readonly string[]) => void;
+  };
   /**
    * The host's Tool Approval switch.
    *
@@ -491,7 +509,11 @@ interface CommandSender {
   sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
+    options?: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      secrets?: ReadonlyArray<{ name: string; value: string }>;
+    },
   ): Promise<{
     status: string;
     result?: {
@@ -1001,6 +1023,38 @@ export function buildBrowserTools(
   const readOnly = policy?.mode === "read_only";
   let handoffDeadline: number | undefined;
   const engine: BrowserEngine = opts.engine ?? "hosted";
+  /**
+   * Secret names (never values) offered to the model, hosted engine only: the
+   * local engine would ship a credential to a machine we do not run. An empty
+   * `secretNote` keeps descriptions, and the host-config hash, unchanged.
+   */
+  const secretNames =
+    engine === "hosted"
+      ? (opts.secrets?.available ?? []).map((secret) => secret.name)
+      : [];
+  const secretNote =
+    secretNames.length > 0
+      ? " To fill in a credential you have not been given, write " +
+        `{{secret:NAME}} — available: ${secretNames.join(", ")}. The value is ` +
+        "substituted inside the browser and never shown to you; it works on " +
+        "`type` and `fill_form` only. While a page you typed one into is " +
+        "still open, its screenshots come back as `screenshotSuppressed: " +
+        "true` with no image — a site that does not mask the field would " +
+        "draw the value into the picture, where no scrub can reach it. Read " +
+        "the tree instead: it names the field and says `{{secret:NAME}}`. " +
+        "Pictures resume once the page moves on."
+      : "";
+  /**
+   * Server-side backstop to the daemon's scrub of typed values, for daemons
+   * that predate it or lost their registry on relaunch. Null without secrets.
+   */
+  const serverScrubber =
+    secretNames.length > 0
+      ? createSecretScrubber(opts.secrets?.available ?? [], {
+          // Match the daemon's placeholder spelling.
+          replacement: (name) => `{{secret:${name}}}`,
+        })
+      : null;
   // DERIVED, never configured. A surface that can ask a person is interactive
   // and keeps its logins; one that cannot is unattended and must start blank.
   // Letting these be set independently is how an eval ends up running against
@@ -1222,6 +1276,11 @@ export function buildBrowserTools(
       raw?: boolean;
       /** AI SDK tool call id; absent for the server's own internal reads. */
       toolCallId?: string;
+      /**
+       * Placeholder values, kept out of the action because the action is
+       * persisted to the ledger and trace.
+       */
+      secrets?: ReadonlyArray<{ name: string; value: string }>;
     },
   ): Promise<CommandOutcome & { tabId: string }> => {
     let handle: BrowserSessionHandle;
@@ -1365,15 +1424,58 @@ export function buildBrowserTools(
               command.source,
             )
           : undefined;
+      // An older daemon would type the literal placeholder and report
+      // success, so check its features first.
+      if (args.secrets?.length) {
+        try {
+          const status = await handle.client.status({
+            ...(args.signal ? { signal: args.signal } : {}),
+          });
+          if (
+            status.kind !== "ok" ||
+            !status.features?.includes("secret-placeholders")
+          )
+            return {
+              ok: false,
+              error:
+                "secret_unsupported_daemon: this browser is running an older " +
+                "build that cannot fill in a {{secret:...}} placeholder, so " +
+                "nothing was typed. Ask the user to restart the browser " +
+                "session, or have them type the credential themselves.",
+              tabId,
+            };
+        } catch (error) {
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+            tabId,
+          };
+        }
+      }
       let response;
       try {
         // Approval, handoff and queue waits may outlive the grant checked at
         // handle resolution. Re-check immediately before sending control.
         await state.verifyConsent();
+        // Fired before the await: the value may reach the daemon even if the
+        // reply fails, and a false "never delivered" is the dangerous error.
+        if (args.secrets?.length) {
+          try {
+            opts.secrets?.onDelivered?.(
+              args.secrets.map((secret) => secret.name),
+            );
+          } catch {
+            // Best-effort; must not fail the command.
+          }
+        }
         response = await client.sendCommand(
           { ...command, responsiveViewport: true },
           handle.bootId,
-          { ...(args.signal ? { signal: args.signal } : {}) },
+          {
+            ...(args.signal ? { signal: args.signal } : {}),
+            // Beside the command, never in it: the command is persisted.
+            ...(args.secrets?.length ? { secrets: args.secrets } : {}),
+          },
         );
       } catch (error) {
         disarm?.();
@@ -1513,8 +1615,8 @@ export function buildBrowserTools(
   // The refresher owns the advertised set once it exists (it starts from the
   // minted one), so asking it is the same question asked of whoever can
   // answer it.
-  const presented = (outcome: CommandOutcome & { tabId: string }) =>
-    present(outcome, {
+  const presented = (outcome: CommandOutcome & { tabId: string }) => {
+    const shown = present(outcome, {
       advertised:
         (refresher ? refresher.current().length : page.minted.length) > 0,
       arriving: refresher !== undefined,
@@ -1522,6 +1624,14 @@ export function buildBrowserTools(
       listVerb: built.includes("browser_webmcp_tools"),
       invokeVerb: built.includes("browser_webmcp_invoke"),
     });
+    if (!serverScrubber) return shown;
+    // Skip the base64 screenshot; a value cannot occur in it.
+    const { screenshot, ...rest } = shown;
+    return {
+      ...serverScrubber.scrubDeep(rest),
+      ...(screenshot === undefined ? {} : { screenshot }),
+    };
+  };
 
   const tools: ToolSet = {};
   // The verb names actually built, in order — what a page tool may not be
@@ -1643,7 +1753,8 @@ export function buildBrowserTools(
           .describe(
             'Text to type, key to press ("Enter"), scroll amount ("down"/"up"/pixels), ' +
               'drag destination ("x,y" in the same viewport coordinates), or option ' +
-              "value to select.",
+              "value to select." +
+              secretNote,
           ),
         ref: z
           .string()
@@ -1655,7 +1766,7 @@ export function buildBrowserTools(
         fields: z
           .array(z.object({ selector: z.string(), value: z.string() }))
           .optional()
-          .describe("For fill_form: fields to fill, in order."),
+          .describe("For fill_form: fields to fill, in order." + secretNote),
         submit: z
           .boolean()
           .optional()
@@ -1696,6 +1807,25 @@ export function buildBrowserTools(
               "`viewport`, and pick a point inside it.",
           };
         }
+        // Plan placeholders before building the command so an unusable name
+        // is refused before anything is typed.
+        const secretPlan = planSecretPlaceholders({
+          verb,
+          ...(value !== undefined ? { value } : {}),
+          ...(fields ? { fields } : {}),
+          available: opts.secrets?.available ?? [],
+          ...(opts.secrets?.brokered ? { brokered: opts.secrets.brokered } : {}),
+        });
+        if (secretPlan.refusal) return { error: secretPlan.refusal.message };
+        const withSecrets = secretPlan.deliver.length > 0;
+        if (withSecrets && engine !== "hosted") {
+          return {
+            error:
+              "secret_engine_unsupported: this browser runs on the user's own " +
+              "machine, where a project credential cannot be filled in for " +
+              "you; nothing was typed. Ask the user to type it themselves.",
+          };
+        }
         // REF FIRST. It is the only target the model did not have to invent:
         // the tree it just read named the element and handed it this handle,
         // where a coordinate is a guess off a picture and a selector is CSS
@@ -1724,10 +1854,23 @@ export function buildBrowserTools(
               // about what today's act plus its follow-up observe already
               // costs, with one fewer round trip. Flip this to "a11y" once
               // acts accept refs.
-              observe: observe ?? "both",
+              //
+              // No screenshot after typing a secret: an unmasked field would
+              // draw the value into the image, which cannot be scrubbed.
+              observe: withSecrets
+                ? observe === "none"
+                  ? "none"
+                  : "a11y"
+                : observe ?? "both",
             },
             // Pin to the observation the model actually saw (L3).
-            { tabId, signal: abortSignal, toolCallId, expectedState: true },
+            {
+              tabId,
+              signal: abortSignal,
+              toolCallId,
+              expectedState: true,
+              ...(withSecrets ? { secrets: secretPlan.deliver } : {}),
+            },
           ),
         );
       },

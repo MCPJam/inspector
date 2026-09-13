@@ -23,6 +23,7 @@ import {
   guardLease,
   guardErrorShapes,
   guardStaleness,
+  withSecretScrub,
   type BrowserDriver,
 } from "./browser-driver";
 import { HandoffLease } from "./lease";
@@ -262,13 +263,26 @@ export function buildBrowserdStack(
   // The lease check wraps the staleness guard rather than the other way round:
   // reading a tab's current state token to compare it IS an observation of the
   // page, so it must not happen for a command the lease is about to refuse.
-  // guardErrorShapes wraps the guards (covering their refusals) and sits
-  // inside the queue, so retained duplicates and ledger rows are scrubbed.
+  // The scrubs wrap the guards (covering their refusals) and sit inside the
+  // queue, so retained duplicates and ledger rows are scrubbed. The secret
+  // scrub is innermost so it runs first on results: a registered secret comes
+  // back as `{{secret:NAME}}`, not the shape scrub's `[redacted]`.
+  //
+  // The registry is the driver's own, read through its accessor so the two
+  // cannot drift; no registry yields `null` and the wrapper does nothing.
+  const secrets = {
+    scrubber: () => driver.secretRegistry?.().scrubber() ?? null,
+    exposedAt: (url: string | undefined) =>
+      driver.secretRegistry?.().exposedAt(url) ?? false,
+  };
   const queue = new CommandQueue(
     guardErrorShapes(
-      config.authority === "shared"
-        ? guardStaleness(driver)
-        : guardLease(lease, guardStaleness(driver, lease)),
+      withSecretScrub(
+        secrets,
+        config.authority === "shared"
+          ? guardStaleness(driver)
+          : guardLease(lease, guardStaleness(driver, lease)),
+      ),
     ),
     bootId,
   );

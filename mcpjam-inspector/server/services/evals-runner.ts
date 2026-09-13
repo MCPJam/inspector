@@ -182,6 +182,7 @@ import {
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
+import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -4967,6 +4968,17 @@ const runHostedIterationWithBrowser = async (
           })
         : undefined,
     );
+    // Secrets the browser may type. They are substituted inside the daemon and
+    // never become env vars; the box itself still receives none.
+    const browserSecrets = browserApprovalDelivery
+      ? await resolveBrowserSecrets({
+          bearer: convexAuthToken,
+          ...(builtInTarget && "projectId" in builtInTarget
+            ? { projectId: builtInTarget.projectId }
+            : {}),
+          ...(projectEnvironmentId ? { environmentId: projectEnvironmentId } : {}),
+        })
+      : [];
     return resolveHostTools(
       { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInTarget && "projectId" in builtInTarget
@@ -4974,6 +4986,7 @@ const runHostedIterationWithBrowser = async (
             authHeader: convexAuthToken,
             projectId: builtInTarget.projectId,
             ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+            ...(browserSecrets.length > 0 ? { browserSecrets } : {}),
             // Names THIS iteration, so an unattended browser gets a profile no
             // other iteration of this suite can reach. The suite's project is
             // not enough: iterations run concurrently against it.

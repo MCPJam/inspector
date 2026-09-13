@@ -338,7 +338,15 @@ export class BrowserdClient {
   async sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
+    options?: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      /**
+       * Values for the command's `{{secret:NAME}}` placeholders. Not a command
+       * field, so the ledger, trace and mirror writers never see them.
+       */
+      secrets?: ReadonlyArray<{ name: string; value: string }>;
+    },
   ): Promise<BrowserdCommandResponse> {
     const res = await this.request(
       "/v1/commands",
@@ -354,6 +362,7 @@ export class BrowserdClient {
             protocolVersion: command.protocolVersion ?? BROWSERD_PROTOCOL_VERSION,
           },
           expectedBootId,
+          ...(options?.secrets?.length ? { secrets: options.secrets } : {}),
         }),
       },
       true,

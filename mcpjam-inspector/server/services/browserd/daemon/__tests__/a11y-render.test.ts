@@ -263,3 +263,54 @@ describe("a scroll container's line", () => {
     ).toBe('- generic [scrollable ref=e4]\n  - listitem "Row 1"');
   });
 });
+
+/**
+ * The last line of defence for a secret too SHORT to scrub.
+ *
+ * The string scrubber refuses anything under eight characters, because
+ * replacing a four-character value throughout a page would corrupt unrelated
+ * text. A field's `value` is the one place that objection does not hold: it is
+ * the whole contents of one control, so an exact match is not a coincidence.
+ */
+describe("renderA11yTree — maskedValues", () => {
+  const masked = new Map([["1234", "{{secret:PIN}}"]]);
+
+  it("shows the placeholder when a control holds the value EXACTLY", () => {
+    expect(
+      renderA11yTree({ role: "textbox", name: "PIN", value: "1234" }, {
+        maskedValues: masked,
+      }),
+    ).toBe('- textbox "PIN": "{{secret:PIN}}"');
+  });
+
+  it("leaves a value that merely CONTAINS it alone", () => {
+    // The ambiguous case the length floor exists for: "order 1234 shipped" is
+    // page content, not a credential, and rewriting it would be a lie about
+    // what the page says.
+    expect(
+      renderA11yTree({ role: "textbox", name: "Note", value: "order 1234" }, {
+        maskedValues: masked,
+      }),
+    ).toBe('- textbox "Note": "order 1234"');
+  });
+
+  it("renders IDENTICALLY when no values are masked", () => {
+    // The byte-identity bar: a session that typed no credential must produce
+    // exactly the tree the previous release produced.
+    const tree = { role: "textbox", name: "PIN", value: "1234" };
+    const plain = renderA11yTree(tree);
+    expect(renderA11yTree(tree, {})).toBe(plain);
+    expect(renderA11yTree(tree, { maskedValues: new Map() })).toBe(plain);
+    expect(plain).toBe('- textbox "PIN": "1234"');
+  });
+
+  it("does not touch a NAME that happens to equal the value", () => {
+    // A name is what the page CALLS the control, not what somebody typed into
+    // it; masking it would rename the field the model is trying to act on.
+    expect(
+      renderA11yTree({ role: "button", name: "1234" }, {
+        maskedValues: masked,
+      }),
+    ).toBe('- button "1234"');
+  });
+});

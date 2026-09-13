@@ -103,7 +103,11 @@ function attributes(node: A11yNode): string {
 }
 
 /** One node's line, without its children. */
-function line(node: A11yNode, indent: number): string {
+function line(
+  node: A11yNode,
+  indent: number,
+  maskedValues?: ReadonlyMap<string, string>,
+): string {
   const role = typeof node.role === "string" ? node.role : "node";
   let text = `${"  ".repeat(indent)}- ${role}`;
   if (typeof node.name === "string" && node.name.length > 0) {
@@ -123,10 +127,14 @@ function line(node: A11yNode, indent: number): string {
     String(value).length > 0 &&
     String(value) !== node.name
   ) {
+    // Short secrets fall under the scrubber's `MIN_SCRUBBABLE_LENGTH`, but a
+    // control whose whole value matches exactly is safe to mask. Exact
+    // equality only; substrings are left alone.
+    const masked = maskedValues?.get(String(value));
     // QUOTED, like the name and for the same reason: a textarea holding a
     // newline would otherwise end this line, and everything after it would
     // read as more nodes in the tree.
-    text += `: ${JSON.stringify(String(value))}`;
+    text += `: ${JSON.stringify(masked ?? String(value))}`;
   }
   return text;
 }
@@ -134,6 +142,11 @@ function line(node: A11yNode, indent: number): string {
 export interface RenderOptions {
   /** Shapes the "nothing to show" answer; the filtering itself happened earlier. */
   interactiveOnly?: boolean;
+  /**
+   * Replacements for controls whose value matches exactly, for short typed
+   * secrets the scrubber skips. @see BrowserSecretRegistry.maskedValues
+   */
+  maskedValues?: ReadonlyMap<string, string>;
 }
 
 /** Render a (already filtered, already capped, already ref'd) tree as text. */
@@ -164,7 +177,7 @@ export function renderA11yTree(
       return;
     }
     const transparent = isTransparent(node);
-    if (!transparent) lines.push(line(node, indent));
+    if (!transparent) lines.push(line(node, indent, options.maskedValues));
     const ref = typeof node.ref === "string" ? node.ref : parentRef;
     for (const child of node.children ?? []) {
       visit(child, transparent ? indent : indent + 1, ref);
