@@ -41,7 +41,7 @@ const SESSION: WebMcpSessionPublic = {
 };
 
 const TRANSPORT = {
-  rung: "sse-frames" as const,
+  rung: "none" as const,
   attempts: 4,
   latched: true,
 };
