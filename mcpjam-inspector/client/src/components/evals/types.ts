@@ -641,13 +641,7 @@ export type EditorMode = "config" | "run";
 
 /** Compare run column trace mode — same values as TraceViewer view modes. */
 export type RunColumnTab =
-  | "scorecard"
-  | "timeline"
-  | "chat"
-  | "raw"
-  | "tools"
-  | "browser"
-  | "steps";
+  "scorecard" | "timeline" | "chat" | "raw" | "tools" | "browser" | "steps";
 
 export type CompareRunRecord = {
   modelValue: string;
@@ -998,8 +992,10 @@ export type EvalSuiteRun = {
     pipelineId?: string;
     jobId?: string;
     runUrl?: string;
+    repositoryUrl?: string;
     /** Recorded pull request URL, when supplied by the CI integration. */
     prUrl?: string;
+    branchUrl?: string;
     branch?: string;
     commitSha?: string;
   };
