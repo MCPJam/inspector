@@ -92,6 +92,8 @@ The hosted app requires all MCP server connections to use **HTTPS**. If your ser
 
 STDIO servers are not available in the hosted version of MCPJam. Use a Streamable HTTP endpoint instead, or switch to the [local inspector](/installation).
 
+**Exception — plugin `stdio` components with a Project Computer.** If your project has a Computer and the feature is enabled on your account, plugin `stdio` components run inside your own project computer rather than being refused. MCPJam verifies the bundle and connects to the child process as a remote server; no local install is required. See [Where plugin servers run](/inspector/plugins#where-plugin-servers-run).
+
 ### OAuth tokens can't auto-refresh for local authorization servers
 
 In hosted mode, the cloud backend handles token refresh on your behalf. If your MCP server's OAuth authorization server runs on a private address (localhost, a LAN IP, or a `.local`/`.internal` hostname), the cloud cannot reach it to refresh tokens after they expire.
