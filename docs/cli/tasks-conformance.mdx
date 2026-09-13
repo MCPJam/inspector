@@ -120,6 +120,16 @@ Typical success summary:
 }
 ```
 
+## Conformance score
+
+After each run, the CLI prints a `Score:` line to stderr (suppressed by `--quiet`):
+
+```
+Score: 100/100 — 8/8 applicable checks passed [2026-07-28]
+```
+
+The score is 0–100: MUSTs own 95 points, per-check `warnings` strings deduct 1 point each (capped at 5 total). `not-applicable` checks leave the denominator entirely; `could-not-run` checks stay in it. A failed or incomplete run caps at 94. The score also appears in `ConformanceReport.score` (JSON output) and in a `<properties>` block in JUnit XML.
+
 ## Outcomes: passed, failed, incomplete
 
 A run reports one of three outcomes, and `passed` is `true` only for the first:

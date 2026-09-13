@@ -39,6 +39,20 @@ Verification
 listTools: PASS (8 tools)
 ```
 
+## Conformance score
+
+After each run, the CLI prints a `Score:` line to stderr (suppressed by `--quiet`):
+
+```
+Score: 95/100 — 10/10 applicable checks passed [2025-11-25]
+```
+
+When the server serves without auth (`outcome: "not-applicable"`), authorization is OPTIONAL per the spec, so no score is printed — the run has nothing to score.
+
+The score is 0–100: MUSTs own 95 points, `not-applicable` steps leave the denominator entirely, and `could-not-run` steps stay in it. A failed or incomplete run caps at 94. The score also appears in `ConformanceReport.score` (JSON output) and in a `<properties>` block in JUnit XML (value `"not-scored"` for not-applicable runs).
+
+For suite runs, a per-flow score line is printed for each flow.
+
 ## What it tests
 
 Each conformance run walks through:
