@@ -267,7 +267,10 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId/slack": { element: <OrganizationsRoute /> },
   "organizations/:orgId/discord": { element: <OrganizationsRoute /> },
   "organizations/:orgId/observability": { element: <OrganizationsRoute /> },
-  "organizations/:orgId/budget": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/budget": {
+    loader: ({ params }) =>
+      redirect(`/organizations/${params.orgId}/billing`),
+  },
   "evals/shared/:token": { element: <EvalRunSharedRoute /> },
   evals: { element: <EvalsRoute /> },
   "evals/create": { element: <EvalsRoute /> },

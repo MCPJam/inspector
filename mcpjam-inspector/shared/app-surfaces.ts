@@ -736,11 +736,6 @@ export const APP_SURFACES = [
       // reasoning again: listed for route coverage, kept out of
       // `userActivities` while `trace-destinations` is off.
       "organizations/:orgId/observability",
-      // Spend budget. Unlike the three above this is NOT behind a flag, so it
-      // earns a `userActivities` entry: an admin looking for "where do I cap
-      // what this org can spend" is a question the agent should be able to
-      // answer with a route.
-      "organizations/:orgId/budget",
     ],
     navSegments: ["organizations"],
     title: "Organizations",
@@ -750,7 +745,6 @@ export const APP_SURFACES = [
       "Manage organization members",
       "Review or change billing",
       "Configure allowed models and provider keys",
-      "Set or raise the organization's spend budget",
     ],
     agentTools: {
       kind: "none",

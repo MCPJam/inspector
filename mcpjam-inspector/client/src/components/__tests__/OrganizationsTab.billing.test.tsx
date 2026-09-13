@@ -344,10 +344,6 @@ vi.mock("@/hooks/useInvoiceHistory", () => ({
   }),
 }));
 
-vi.mock("../organization/OrganizationSpendBudgetSection", () => ({
-  OrganizationSpendBudgetSection: () => <div>Spend budget</div>,
-}));
-
 vi.mock("../organization/OrganizationAuditLog", () => ({
   OrganizationAuditLog: () => <div data-testid="organization-audit-log" />,
 }));
@@ -420,7 +416,9 @@ describe("OrganizationsTab billing", () => {
         name: "Organization settings sections",
       }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Current plan" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Current plan" }),
+    ).toBeInTheDocument();
     expect(panel.getByText("Current")).toBeInTheDocument();
     expect(panel.queryByText("Billing cycle")).not.toBeInTheDocument();
     expect(panel.queryByText("Subscription status")).not.toBeInTheDocument();
@@ -1275,7 +1273,7 @@ describe("OrganizationsTab billing", () => {
     fireEvent.change(screen.getByPlaceholderText("Email address"), {
       target: { value: "new-user@example.com" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
 
     await waitFor(() => {
       expect(addMemberMock).toHaveBeenCalledWith({
@@ -1338,7 +1336,7 @@ describe("OrganizationsTab billing", () => {
     expect(
       screen.getByRole("button", { name: "Upgrade to Team" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add member" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Invite" })).toBeDisabled();
   });
 
   it("shows inline owner-directed copy when member invites are denied for non-owners", () => {

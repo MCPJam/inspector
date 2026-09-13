@@ -60,9 +60,6 @@ describe("settings destinations", () => {
     expect(settingsPath("org-byok", context)).toBe(
       "/organizations/org-a/models",
     );
-    expect(resolveSettingsDestination("/organizations/org-a/budget")?.id).toBe(
-      "org-billing",
-    );
     expect(resolveSettingsDestination("/organizations/org-a/slack")?.id).toBe(
       "org-integrations",
     );
@@ -82,8 +79,8 @@ describe("settings destinations", () => {
     expect(searchSettings("models", context)[0].destination.id).toBe(
       "org-byok",
     );
-    const result = searchSettings("spend limit", context)[0];
-    expect(result.target).toBe("spend-budget");
+    const result = searchSettings("channels", context)[0];
+    expect(result.target).toBe("slack");
     expect(
       settingsPath(
         result.destination.id,
@@ -92,7 +89,7 @@ describe("settings destinations", () => {
         result.target,
       ),
     ).toBe(
-      "/organizations/org-a/billing?checkout=ok&tab=activity&setting=spend-budget",
+      "/settings/integrations?checkout=ok&tab=activity&setting=slack",
     );
     expect(searchSettings("invite", context)[0].destination.id).toBe(
       "org-members",

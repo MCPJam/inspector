@@ -175,15 +175,7 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
       "auto-top-up",
     ]),
     matches: (p) =>
-      /^\/organizations\/[^/]+\/(billing(?:\/usage)?|budget)$/.test(p) || p === "/billing",
-    sections: [
-      {
-        target: "spend-budget",
-        visible: (c) => !c.personalOrganization,
-        label: "Spend budget",
-        aliases: ["spend limit", "budget", "spending cap"],
-      },
-    ],
+      /^\/organizations\/[^/]+\/billing(?:\/usage)?$/.test(p) || p === "/billing",
   },
   org("audit-log", "Audit log", "/audit-log", ["activity", "CSV export"]),
   org("data-management", "Data management", "/data-management", ["retention", "enterprise"]),

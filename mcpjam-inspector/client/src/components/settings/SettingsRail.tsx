@@ -108,17 +108,6 @@ export function SettingsRail({
       );
       return;
     }
-    if (location.pathname.endsWith("/budget")) {
-      const params = new URLSearchParams(location.search);
-      params.set("setting", "spend-budget");
-      navigate(
-        location.pathname.replace(/\/budget$/, "/billing") +
-          `?${params}` +
-          location.hash,
-        { replace: true },
-      );
-      return;
-    }
     setQuery("");
     const target =
       new URLSearchParams(location.search).get("setting") ?? undefined;

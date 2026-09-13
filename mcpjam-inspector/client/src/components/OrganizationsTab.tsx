@@ -1,5 +1,9 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
-import { DataManagementSettings, PermissionGroupsDialog, enterpriseContactHref } from "./organization/EnterpriseSettings";
+import {
+  DataManagementSettings,
+  PermissionGroupsDialog,
+  enterpriseContactHref,
+} from "./organization/EnterpriseSettings";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ApiKeysRoute } from "./settings/ApiKeysRoute";
 import { DeleteOrganizationDialog } from "./organization/DeleteOrganizationDialog";
@@ -37,11 +41,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-} from "@mcpjam/design-system/card";
+import { Card, CardContent, CardHeader } from "@mcpjam/design-system/card";
 import {
   Alert,
   AlertDescription,
@@ -97,7 +97,6 @@ import { useSlackAgentSettingsEnabled } from "@/hooks/useSlackAgentSettingsEnabl
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
 import { useTraceDestinationsEnabled } from "@/hooks/useTraceDestinationsEnabled";
 import { TraceDestinationsSection } from "./organization/observability/TraceDestinationsSection";
-import { OrganizationSpendBudgetSection } from "./organization/OrganizationSpendBudgetSection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   useAppNavigate,
@@ -673,11 +672,13 @@ function OrganizationPage({
   // lands somewhere real instead of on a blank panel.
   const rawSurfaceTab = useCurrentSearchParam("tab");
   const activeSection: OrganizationRouteSection =
-    section === "api-keys" || section === "plans" || section === "data-management"
+    section === "api-keys" ||
+    section === "plans" ||
+    section === "data-management"
       ? section
       : section === "models"
         ? "models"
-        : section === "billing" || section === "budget"
+        : section === "billing"
           ? "billing"
           : // Flag OFF collapses the Slack section back to the overview rather
             // than rendering an empty page: a user who kept the URL from a
@@ -978,7 +979,10 @@ function OrganizationPage({
     }
   };
 
-  const [memberToRemove, setMemberToRemove] = useState<{ email: string; pending: boolean } | null>(null);
+  const [memberToRemove, setMemberToRemove] = useState<{
+    email: string;
+    pending: boolean;
+  } | null>(null);
   const [isRemovingMember, setIsRemovingMember] = useState(false);
   const removingMemberRef = useRef(false);
   const [removeMemberError, setRemoveMemberError] = useState("");
@@ -997,14 +1001,18 @@ function OrganizationPage({
         organizationId: organization._id,
         email: memberToRemove.email,
       });
-      toast.success(memberToRemove.pending ? "Invitation canceled" : "Member removed");
+      toast.success(
+        memberToRemove.pending ? "Invitation canceled" : "Member removed",
+      );
       setMemberToRemove(null);
     } catch (error) {
-      setRemoveMemberError(getBillingErrorMessage(
-        error,
-        "Could not remove this member. Please try again.",
-        billingStatus?.canManageBilling ?? false,
-      ));
+      setRemoveMemberError(
+        getBillingErrorMessage(
+          error,
+          "Could not remove this member. Please try again.",
+          billingStatus?.canManageBilling ?? false,
+        ),
+      );
     } finally {
       removingMemberRef.current = false;
       setIsRemovingMember(false);
@@ -1423,19 +1431,6 @@ function OrganizationPage({
               onStartAutoPlanChange={handleAutoPlanChange}
               checkoutIntent={checkoutIntent}
               onCheckoutIntentConsumed={onCheckoutIntentConsumed}
-              spendBudgetPanel={
-                activeSection === "billing" &&
-                organization.isPersonal !== true ? (
-                  <ErrorBoundary name="organization_spend_budget">
-                    <div id="setting-spend-budget">
-                      <OrganizationSpendBudgetSection
-                        organizationId={organization._id}
-                        isAdmin={canEdit}
-                      />
-                    </div>
-                  </ErrorBoundary>
-                ) : null
-              }
               currentPlanPanel={
                 billingUiEnabled ? (
                   <Card className="gap-3 border-0 bg-transparent py-0 shadow-none">
@@ -1513,37 +1508,46 @@ function OrganizationPage({
                     access.
                   </SettingsPageDescription>
                 </CardHeader>
-                <CardContent className="space-y-4 p-0">
+                <CardContent className="space-y-6 p-0">
                   {canInvite ? (
                     <div className="space-y-3">
                       {pendingSeatPaymentNotice}
-                      <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
-                        <Input
-                          placeholder="Email address"
-                          value={inviteEmail}
-                          onChange={(e) => setInviteEmail(e.target.value)}
-                          onKeyDown={(e) =>
-                            e.key === "Enter" && void handleInvite()
-                          }
-                          className="h-9 w-full sm:w-80"
-                        />
-                        <Button
-                          size="sm"
-                          className="h-9"
-                          onClick={handleInvite}
-                          disabled={
-                            !inviteEmail.trim() ||
-                            isInviting ||
-                            isHandlingSeatPayment ||
-                            memberInviteGate.isLoading ||
-                            memberInviteGate.isDenied
-                          }
+                      <div className="space-y-2">
+                        <label
+                          htmlFor="organization-invite-email"
+                          className="text-sm font-medium"
                         >
-                          <UserPlus className="mr-2 size-4" />
-                          {isInviting || isHandlingSeatPayment
-                            ? "Working..."
-                            : "Add member"}
-                        </Button>
+                          Invite with email
+                        </label>
+                        <div className="flex gap-2">
+                          <Input
+                            id="organization-invite-email"
+                            type="email"
+                            placeholder="Email address"
+                            value={inviteEmail}
+                            onChange={(e) => setInviteEmail(e.target.value)}
+                            onKeyDown={(e) =>
+                              e.key === "Enter" && void handleInvite()
+                            }
+                            className="min-w-0 flex-1"
+                          />
+                          <Button
+                            className="shrink-0"
+                            onClick={handleInvite}
+                            disabled={
+                              !inviteEmail.trim() ||
+                              isInviting ||
+                              isHandlingSeatPayment ||
+                              memberInviteGate.isLoading ||
+                              memberInviteGate.isDenied
+                            }
+                          >
+                            <UserPlus aria-hidden="true" className="size-4" />
+                            {isInviting || isHandlingSeatPayment
+                              ? "Working..."
+                              : "Invite"}
+                          </Button>
+                        </div>
                       </div>
 
                       {billingStatus?.plan &&
@@ -1598,11 +1602,19 @@ function OrganizationPage({
                     role={memberRoleFilter}
                     onRoleChange={setMemberRoleFilter}
                     roles={["owner", "admin", "member", "guest", "pending"]}
-                    actions={<PermissionGroupsDialog enterprise={billingStatus?.effectivePlan === "enterprise"} />}
+                    actions={
+                      <PermissionGroupsDialog
+                        enterprise={
+                          billingStatus?.effectivePlan === "enterprise"
+                        }
+                      />
+                    }
                   />
                   <div className="overflow-hidden rounded-lg border border-border">
                     <MemberListHeader
-                      activeCount={membersLoading ? undefined : activeMembers.length}
+                      activeCount={
+                        membersLoading ? undefined : activeMembers.length
+                      }
                       pendingCount={pendingMembers.length}
                     />
                     {membersLoading ? (
@@ -1681,7 +1693,8 @@ function OrganizationPage({
                               isPending
                               onRemove={
                                 canRemovePendingMember()
-                                  ? () => requestMemberRemoval(member.email, true)
+                                  ? () =>
+                                      requestMemberRemoval(member.email, true)
                                   : undefined
                               }
                             />
@@ -1719,13 +1732,24 @@ function OrganizationPage({
               </div>
             )}
 
-            {activeSection === "data-management" && <DataManagementSettings enterprise={billingStatus?.effectivePlan === "enterprise"} />}
+            {activeSection === "data-management" && (
+              <DataManagementSettings
+                enterprise={billingStatus?.effectivePlan === "enterprise"}
+              />
+            )}
             {activeSection === "audit-log" && (
               <section className="space-y-8">
                 <header className="space-y-1">
                   <div className="flex items-center gap-3">
-                    <h1 className="text-2xl font-semibold text-accent-foreground">Audit log</h1>
-                    <Badge variant="secondary" className="text-xs uppercase tracking-wide">Enterprise</Badge>
+                    <h1 className="text-2xl font-semibold text-accent-foreground">
+                      Audit log
+                    </h1>
+                    <Badge
+                      variant="secondary"
+                      className="text-xs uppercase tracking-wide"
+                    >
+                      Enterprise
+                    </Badge>
                   </div>
                   <SettingsPageDescription>
                     Review organization activity and export it as CSV.
@@ -1740,13 +1764,22 @@ function OrganizationPage({
                     </div>
                   ) : auditLogLocked ? (
                     <div className="flex min-h-56 flex-col items-center justify-center gap-5 rounded-lg border border-border bg-muted/20 px-6 py-10 text-center">
-                      <LockKeyhole aria-hidden="true" className="size-7 text-muted-foreground" />
-                      <p className="text-base text-muted-foreground">Audit logs are available on Enterprise plans.</p>
+                      <LockKeyhole
+                        aria-hidden="true"
+                        className="size-7 text-muted-foreground"
+                      />
+                      <p className="text-base text-muted-foreground">
+                        Audit logs are available on Enterprise plans.
+                      </p>
                       {billingUiEnabled ? (
-                        <Button asChild><a href={enterpriseContactHref}>Contact us</a></Button>
+                        <Button asChild>
+                          <a href={enterpriseContactHref}>Contact us</a>
+                        </Button>
                       ) : null}
                       {!billingStatus?.canManageBilling ? (
-                        <p className="text-xs text-muted-foreground">Ask an organization owner to upgrade your plan.</p>
+                        <p className="text-xs text-muted-foreground">
+                          Ask an organization owner to upgrade your plan.
+                        </p>
                       ) : null}
                     </div>
                   ) : (
@@ -1808,7 +1841,9 @@ function OrganizationPage({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {memberToRemove?.pending ? "Cancel invitation?" : "Remove member?"}
+              {memberToRemove?.pending
+                ? "Cancel invitation?"
+                : "Remove member?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {memberToRemove?.pending
@@ -1816,15 +1851,25 @@ function OrganizationPage({
                 : `Remove ${memberToRemove?.email ?? "this member"} from ${organization.name}? They will lose their organization membership and the access it grants. You can invite them again later.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {removeMemberError && <p role="alert" className="text-sm text-destructive">{removeMemberError}</p>}
+          {removeMemberError && (
+            <p role="alert" className="text-sm text-destructive">
+              {removeMemberError}
+            </p>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isRemovingMember}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isRemovingMember}>
+              Cancel
+            </AlertDialogCancel>
             <Button
               variant="destructive"
               disabled={isRemovingMember}
               onClick={() => void handleRemoveMember()}
             >
-              {isRemovingMember ? "Removing…" : memberToRemove?.pending ? "Cancel invitation" : "Remove member"}
+              {isRemovingMember
+                ? "Removing…"
+                : memberToRemove?.pending
+                  ? "Cancel invitation"
+                  : "Remove member"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

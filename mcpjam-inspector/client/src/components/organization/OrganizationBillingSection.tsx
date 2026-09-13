@@ -663,7 +663,6 @@ interface OrganizationBillingSectionProps {
   onCheckoutIntentConsumed?: () => void;
   /** Rendered below the credit usage card (above payments history). */
   currentPlanPanel?: ReactNode;
-  spendBudgetPanel?: ReactNode;
 }
 
 export function OrganizationBillingSection({
@@ -686,7 +685,6 @@ export function OrganizationBillingSection({
   checkoutIntent = null,
   onCheckoutIntentConsumed,
   currentPlanPanel,
-  spendBudgetPanel,
 }: OrganizationBillingSectionProps) {
   useCreditTopupReturnFlowBilling({ enabled: showCredits });
 
@@ -940,7 +938,6 @@ export function OrganizationBillingSection({
           <CreditBalanceCard
             organizationId={organizationId}
             canManageCredits={canManageCredits}
-            autoManagePanel={spendBudgetPanel}
           />
         </ErrorBoundary>
       ) : null}

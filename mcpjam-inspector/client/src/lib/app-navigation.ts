@@ -61,7 +61,6 @@ export const ORGANIZATION_ROUTE_SECTIONS = [
   "slack",
   "discord",
   "observability",
-  "budget",
 ] as const;
 
 export type OrganizationRouteSection =
@@ -89,7 +88,6 @@ export function parseOrganizationSection(
   if (segment === "slack") return "slack";
   if (segment === "discord") return "discord";
   if (segment === "observability") return "observability";
-  if (segment === "budget") return "budget";
   return "overview";
 }
 
@@ -458,10 +456,6 @@ export function buildOrganizationPath(
   // dialog rather than a view, so there is nothing for a `?tab=` to select.
   if (section === "observability")
     return `/organizations/${orgId}/observability`;
-  // The organization spend budget. One segment like the two above: the cap
-  // and its alert thresholds are one form, so there is nothing for a `?tab=`
-  // to select.
-  if (section === "budget") return `/organizations/${orgId}/budget`;
   return `/organizations/${orgId}`;
 }
 

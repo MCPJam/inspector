@@ -78,7 +78,7 @@ describe("Settings breadcrumbs", () => {
     expect(
       settingsBreadcrumbs(
         "/organizations/org/billing",
-        "?setting=spend-budget",
+        "?setting=auto-reload",
       ),
     ).toEqual([{ label: "Usage & billing", icon: "org-billing" }]);
     expect(settingsBreadcrumbs("/settings")[0].label).toBe("Profile");

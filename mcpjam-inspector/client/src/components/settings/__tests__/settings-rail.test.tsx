@@ -61,7 +61,7 @@ function Harness({ pending = false }: { pending?: boolean }) {
       />
       <main id="settings-content" tabIndex={-1}>
         <Draft pending={pending} />
-        <div id="setting-spend-budget">Budget content</div>
+        <div id="setting-slack">Slack content</div>
       </main>
       <button onClick={() => navigate("/settings")}>Open settings</button>
       <output aria-label="Location">
@@ -126,15 +126,15 @@ describe("full-screen settings navigation", () => {
       expect(document.activeElement?.id).toBe("settings-content"),
     );
     const search = screen.getByRole("combobox", { name: "Search settings" });
-    await user.type(search, "spend limit");
+    await user.type(search, "channels");
     await user.keyboard("{ArrowDown}{Enter}");
     await waitFor(() =>
       expect(screen.getByLabelText("Location")).toHaveTextContent(
-        "/organizations/org-a/billing?checkout=ok&setting=spend-budget",
+        "/settings/integrations?checkout=ok&setting=slack",
       ),
     );
     await waitFor(() =>
-      expect(document.activeElement?.id).toBe("setting-spend-budget"),
+      expect(document.activeElement?.id).toBe("setting-slack"),
     );
     await user.type(search, "unfindable");
     expect(screen.getByText("No settings found.")).toBeInTheDocument();
@@ -200,13 +200,5 @@ describe("full-screen settings navigation", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "About MCPJam" }));
     expect(nav).toBeInTheDocument();
-  });
-  it("redirects legacy budgets to the spend section with checkout state intact", async () => {
-    setup("/organizations/org-a/budget?checkout=ok");
-    await waitFor(() =>
-      expect(screen.getByLabelText("Location")).toHaveTextContent(
-        "/organizations/org-a/billing?checkout=ok&setting=spend-budget",
-      ),
-    );
   });
 });
