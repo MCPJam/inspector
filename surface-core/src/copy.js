@@ -138,7 +138,7 @@ export const CHAIN_REASON_LABELS = Object.freeze({
 	toolError: "the server reported a tool error",
 	protocolError: "the call never produced a result",
 	renderFailed: "the widget did not render",
-	predicateFailed: "a check on the result did not hold",
+	predicateFailed: "an assertion on the result did not hold",
 	observed: "the evidence was inspected and the stage held",
 	impliedByLaterEvidence: "a later stage's success implies it",
 	judgeObserved: "the LLM judge scored at or above the threshold",

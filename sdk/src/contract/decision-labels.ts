@@ -185,7 +185,7 @@ export const STAGE_REASON_LABELS = Object.freeze({
   toolError: "the server reported a tool error",
   protocolError: "the call never produced a result",
   renderFailed: "the widget did not render",
-  predicateFailed: "a check on the result did not hold",
+  predicateFailed: "an assertion on the result did not hold",
   observed: "the evidence was inspected and the stage held",
   impliedByLaterEvidence: "a later stage's success implies it",
   // "LLM judge", not "judge". These five are the only reasons in the
@@ -502,7 +502,7 @@ export const FRICTION_NOT_MEASURED_REASON_LABELS = Object.freeze({
   noToolCalls: "no tool calls to look at",
   resultsUnavailable: "tool results were not retained",
   orderingUnknown: "the calls cannot be placed in a causal order",
-  evidenceIncomplete: "the evidence for this trial has a known hole",
+  evidenceIncomplete: "the evidence for this iteration has a known hole",
   truncated: "too many tool calls to measure",
 } satisfies Record<FrictionNotMeasuredReason, string>);
 
