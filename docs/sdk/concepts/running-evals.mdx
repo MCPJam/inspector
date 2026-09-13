@@ -218,6 +218,12 @@ The built-in predicate types. **Measures** is the link of the [user-value chain]
 
 When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass — a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example, and [The user-value chain](/sdk/concepts/user-value-chain) for what a set of checks leaves unmeasured.
 
+### Standard checks
+
+Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to advisory Warn. UVC reports these evaluator results without turning advisory failures into failed stages. Scored gating discovery failures can fail Discovery under analyzer 12; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
+
+Cases can suppress suite check families with `suppressedSuiteStandardCheckIds` (for example, `["response.performance"]`). This filters suite defaults before inherit/extend/replace resolution, preserves explicit case and step assertions, and remains effective after a suite threshold changes. Omitted updates preserve suppression; `[]` clears it. Catalog IDs are authoring references; evaluator reporting keeps its existing content-derived scorer IDs.
+
 ### Suite Results
 
 ```typescript
