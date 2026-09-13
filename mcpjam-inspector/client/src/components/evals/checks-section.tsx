@@ -2201,7 +2201,12 @@ function ToolResultSchemaFields({
   // null included, so the key must not fold null into {} while the value
   // written is null — that made the box snap back to {} over a stored null.
   const schemaKey = schemaKeyOf(predicate.schema);
-  const formatSchema = () => JSON.stringify(predicate.schema ?? {}, null, 2);
+  // The undefined branch is required, not defensive: JSON.stringify(undefined)
+  // is not a string. Everything else, null included, renders as itself.
+  const formatSchema = () =>
+    predicate.schema === undefined
+      ? "{}"
+      : JSON.stringify(predicate.schema, null, 2);
   const [draftState, setDraftState] = useState(() => ({
     text: formatSchema(),
     forSchema: schemaKey,

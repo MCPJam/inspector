@@ -294,6 +294,27 @@ describe("ChecksSection raw-JSON draft validity", () => {
     expect(screen.queryByText(/Not valid JSON/)).toBeNull();
   });
 
+  // The LOADING path, not the typing one: a saved schema must render as
+  // itself. null is legal to write through and passes areAllChecksValid, so a
+  // row reopened with schema: null that shows {} disagrees with the store
+  // silently. undefined is the one value the formatter must special-case —
+  // JSON.stringify(undefined) is not a string.
+  it.each([
+    ["null", null, "null"],
+    ["{}", {}, "{}"],
+    ["undefined", undefined, "{}"],
+  ])("renders a loaded schema of %s as itself", (_label, schema, expected) => {
+    render(
+      <Harness
+        initial={[{ type: "toolResultMatchesSchema", schema } as Predicate]}
+        onDraftValidityChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByLabelText(/JSON Schema the result must match/),
+    ).toHaveValue(expected);
+  });
+
   it("covers the tool-result schema editor the same way", () => {
     const onDraftValidityChange = vi.fn();
     render(
