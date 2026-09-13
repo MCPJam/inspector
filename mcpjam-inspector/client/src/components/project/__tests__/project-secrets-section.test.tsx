@@ -312,7 +312,7 @@ describe("ProjectSecretsSection — inline create form", () => {
   const expand = (name: RegExp) =>
     fireEvent.click(screen.getByRole("button", { name }));
 
-  it("shows key and value in the empty state and saves without opening config", async () => {
+  it("defaults to brokered delivery and opens Advanced when the broker fields are missing", async () => {
     mocks.secrets = [];
     renderSection();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -323,6 +323,43 @@ describe("ProjectSecretsSection — inline create form", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
     });
+    // Nothing is written into the sandbox without an explicit choice.
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/hosts and header/i);
+    expect(
+      screen.getByRole("button", { name: "Advanced settings" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("radio", { name: /add to API requests/i })).toBeChecked();
+    fireEvent.change(screen.getByLabelText(/^hosts$/i), {
+      target: { value: "api.example.com" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
+    });
+    expect(mocks.create).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      name: "MY_KEY",
+      value: "secret_value",
+      delivery: "brokered",
+      brokerHosts: ["api.example.com"],
+      brokerHeader: "Authorization",
+      brokerTemplate: "Bearer {}",
+      sharing: "project",
+    });
+    expect(screen.getByLabelText(/^value$/i)).toHaveValue("");
+  });
+
+  it("saves a materialized secret only after the user picks it explicitly", async () => {
+    mocks.secrets = [];
+    renderSection();
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(
+      screen.getByRole("radio", { name: /set as an environment variable/i }),
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
+    });
     expect(mocks.create).toHaveBeenCalledWith({
       projectId: "proj-1",
       name: "MY_KEY",
@@ -330,7 +367,6 @@ describe("ProjectSecretsSection — inline create form", () => {
       delivery: "materialized",
       sharing: "project",
     });
-    expect(screen.getByLabelText(/^value$/i)).toHaveValue("");
   });
 
   it("reveals all advanced options together and preserves them when collapsed", () => {
@@ -362,14 +398,21 @@ describe("ProjectSecretsSection — inline create form", () => {
     fireEvent.click(
       screen.getByRole("radio", { name: /add to API requests/i }),
     );
-    expect(screen.getByRole("button", { name: "Save secret" })).toBeDisabled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
+    });
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/hosts and header/i);
     fireEvent.change(screen.getByLabelText(/^hosts$/i), {
       target: { value: "api.example.com" },
     });
     fireEvent.change(screen.getByLabelText(/^header value$/i), {
       target: { value: "invalid" },
     });
-    expect(screen.getByRole("button", { name: "Save secret" })).toBeDisabled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
+    });
+    expect(mocks.create).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText(/^header value$/i), {
       target: { value: "Bearer {}" },
     });
@@ -408,7 +451,12 @@ describe("ProjectSecretsSection — inline create form", () => {
     );
     renderSection();
     fill();
+    expand(/^advanced settings$/i);
+    fireEvent.change(screen.getByLabelText(/^hosts$/i), {
+      target: { value: "api.example.com" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
+    expect(mocks.create).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(screen.getByLabelText(/^value$/i)).toHaveValue("");
     fill();
@@ -424,22 +472,29 @@ describe("ProjectSecretsSection — inline create form", () => {
     fireEvent.change(screen.getByLabelText(/^value$/i), {
       target: { value: "short" },
     });
-    expect(screen.getByText(/not be redacted/i)).toBeInTheDocument();
+    // Brokered by default: the value never enters the sandbox, no warning.
+    expect(screen.queryByText(/not be redacted/i)).not.toBeInTheDocument();
     expand(/^advanced settings$/i);
     fireEvent.click(
-      screen.getByRole("radio", { name: /add to API requests/i }),
+      screen.getByRole("radio", { name: /set as an environment variable/i }),
     );
+    expect(screen.getByText(/not be redacted/i)).toBeInTheDocument();
     expand(/^advanced settings$/i);
-    expect(screen.queryByText(/not be redacted/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/not be redacted/i)).toBeInTheDocument();
   });
 
   it("preserves input when saving fails", async () => {
-    mocks.create.mockRejectedValueOnce(new Error("Could not save"));
     renderSection();
     fill();
+    expand(/^advanced settings$/i);
+    fireEvent.change(screen.getByLabelText(/^hosts$/i), {
+      target: { value: "api.example.com" },
+    });
+    mocks.create.mockRejectedValueOnce(new Error("Could not save"));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
     });
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not save");
     expect(screen.getByRole("alert")).toHaveTextContent("Could not save");
     expect(screen.getByLabelText(/^value$/i)).toHaveValue("secret_value");
   });

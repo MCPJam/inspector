@@ -12,7 +12,10 @@ describe("Support settings", () => {
       ["Open Docs", "https://docs.mcpjam.com/"],
       ["Open Issue", "https://github.com/MCPJam/inspector/issues/new"],
     ]) {
-      const link = screen.getByRole("link", { name: new RegExp(`^${name}\\s*\\(opens in a new tab\\)$`) });
+      const link = screen.getByRole("link", {
+        name: (accessibleName) =>
+          accessibleName.replace(/\s*\(opens in a new tab\)$/, "") === name,
+      });
       expect(link).toHaveAttribute("href", href);
       expect(link).toHaveAttribute("rel", "noopener noreferrer");
     }

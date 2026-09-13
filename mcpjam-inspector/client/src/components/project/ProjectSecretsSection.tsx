@@ -488,7 +488,9 @@ function CreateSecretForm({
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [description, setDescription] = useState("");
-  const [delivery, setDelivery] = useState<SecretDelivery>("materialized");
+  // Brokered by default: the value stays outside the sandbox unless the user
+  // explicitly opts into an environment variable the run can read.
+  const [delivery, setDelivery] = useState<SecretDelivery>("brokered");
   const [hosts, setHosts] = useState("");
   const [header, setHeader] = useState("Authorization");
   const [template, setTemplate] = useState("Bearer {}");
@@ -508,7 +510,7 @@ function CreateSecretForm({
       !!value ||
       !!description ||
       !!hosts ||
-      delivery !== "materialized" ||
+      delivery !== "brokered" ||
       header !== "Authorization" ||
       template !== "Bearer {}",
     () => close(),
@@ -519,7 +521,7 @@ function CreateSecretForm({
     setName("");
     setValue("");
     setDescription("");
-    setDelivery("materialized");
+    setDelivery("brokered");
     setHosts("");
     setHeader("Authorization");
     setTemplate("Bearer {}");
@@ -539,6 +541,17 @@ function CreateSecretForm({
 
   const submit = async () => {
     if (!canSubmit) return;
+    if (!brokerValid) {
+      // The default delivery needs hosts and a header. Open the section that
+      // holds them and say so, rather than failing silently on a disabled
+      // button the user cannot see the reason for.
+      setAdvancedOpen(true);
+      setError(
+        "Add the hosts and header this secret is sent with, or choose \"Set as an environment variable\" under Advanced settings.",
+      );
+      setTimeout(() => document.getElementById("secret-hosts")?.focus(), 0);
+      return;
+    }
     const mine = attempt.current;
     setBusy(true);
     setError(null);
@@ -583,7 +596,7 @@ function CreateSecretForm({
     (parseHosts(hosts).length > 0 &&
       header.trim().length > 0 &&
       template.includes("{}"));
-  const canSubmit = nameValid && value.length > 0 && brokerValid && !busy;
+  const canSubmit = nameValid && value.length > 0 && !busy;
 
   return (
     <form
@@ -746,12 +759,6 @@ function CreateSecretForm({
           </div>
         )}
         <ShortValueWarning delivery={delivery} value={value} />
-        {delivery === "brokered" && !brokerValid && !advancedOpen && (
-          <p className="text-xs text-muted-foreground">
-            Expand Advanced settings to add the required hosts and header
-            settings.
-          </p>
-        )}
         {error ? (
           <p role="alert" className="text-xs text-destructive">
             {error}

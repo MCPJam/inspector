@@ -44,6 +44,8 @@ export class WorkosKeyBindingError extends Error {
  * routing-level 404 (route not deployed / wrong `CONVEX_HTTP_URL`), so the
  * caller can 500 instead of mis-reporting a config error as an orphaned key.
  */
+const BINDING_LOOKUP_TIMEOUT_MS = 5_000;
+
 export async function lookupWorkosKeyBinding(
   workosApiKeyId: string
 ): Promise<WorkosKeyBinding | null> {
@@ -54,6 +56,9 @@ export async function lookupWorkosKeyBinding(
   const response = await fetch(url, {
     method: "GET",
     headers: { "x-inspector-service-token": serviceToken },
+    // Bounded concurrency caps how many lookups run, not how long one may
+    // hang; a stalled internal response must not pin the caller's request.
+    signal: AbortSignal.timeout(BINDING_LOOKUP_TIMEOUT_MS),
   });
   if (response.status === 404) {
     if (await isEntityNotFound(response, "Binding not found")) {
