@@ -5,6 +5,7 @@ import {
   RUN_LAUNCH_HEADERS,
 } from "@mcpjam/sdk/platform";
 import { detectCiMetadata, detectLauncherKind } from "@mcpjam/sdk";
+import { readFileSync } from "node:fs";
 import packageJson from "../../package.json" with { type: "json" };
 import { getAuthFilePath, readStoredAuth } from "./auth-store.js";
 import { CliError, cliError, usageError } from "./output.js";
@@ -23,8 +24,18 @@ export interface PlatformClientOptions {
 }
 
 export type ApiUrlInspection =
-  | { ok: true; apiUrl: string }
-  | { ok: false; error: string };
+  { ok: true; apiUrl: string } | { ok: false; error: string };
+
+function readGithubEvent(env: NodeJS.ProcessEnv): string | undefined {
+  if (!env.GITHUB_EVENT_PATH) return undefined;
+  try {
+    const payload = readFileSync(env.GITHUB_EVENT_PATH, "utf8");
+    JSON.parse(payload);
+    return payload;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Classify an explicit API URL without throwing. `cloud status` reports the
@@ -118,15 +129,21 @@ function parseHeader(raw: string, source: string): [string, string] {
   const name = raw.slice(0, separator).trim();
   const value = raw.slice(separator + 1).trim();
   if (!HEADER_NAME_RE.test(name)) {
-    throw usageError(`${source} has an invalid header name ${JSON.stringify(name)}`);
+    throw usageError(
+      `${source} has an invalid header name ${JSON.stringify(name)}`,
+    );
   }
   if (value.length === 0) {
-    throw usageError(`${source} has an empty value for ${JSON.stringify(name)}`);
+    throw usageError(
+      `${source} has an empty value for ${JSON.stringify(name)}`,
+    );
   }
   // A newline in a value is header injection, not a header. Native fetch
   // rejects it too, but a named error beats a runtime TypeError.
   if (/[\r\n]/.test(value)) {
-    throw usageError(`${source} value for ${JSON.stringify(name)} contains a line break`);
+    throw usageError(
+      `${source} value for ${JSON.stringify(name)} contains a line break`,
+    );
   }
   const lower = name.toLowerCase();
   if (RESERVED_HEADER_NAMES.has(lower)) {
@@ -201,7 +218,9 @@ export function buildPlatformClient(
   // so a staging login never silently sends its token to prod.
   let baseUrl = resolveExplicitApiUrl(options, env);
   if (!baseUrl && credential.kind === "oauth") {
-    const stored = readStoredAuth(deps.authFilePath ?? getAuthFilePath({ env }));
+    const stored = readStoredAuth(
+      deps.authFilePath ?? getAuthFilePath({ env }),
+    );
     baseUrl = stored?.apiUrl;
   }
 
@@ -231,7 +250,12 @@ export function buildPlatformClient(
       version: packageJson.version,
     },
     ...(() => {
-      const ci = detectCiMetadata(env);
+      const githubEvent = readGithubEvent(env);
+      const ci = detectCiMetadata(
+        githubEvent
+          ? { ...env, MCPJAM_GITHUB_EVENT_PAYLOAD: githubEvent }
+          : env,
+      );
       return ci ? { ci } : {};
     })(),
     ...(extraHeaders ? { extraHeaders } : {}),

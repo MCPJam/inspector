@@ -28,153 +28,150 @@ export function readRunPullRequest(
 
 export function RunPlatformBadge({
   run,
-  metadata,
 }: {
   /** The run row (or a `{ source }` stand-in). See `RunSourceBadge`. */
   run: RunOriginInput;
-  metadata: EvalSuiteRun["ciMetadata"] | null;
 }) {
-  const pr = readRunPullRequest(metadata);
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <RunSourceBadge run={run} />
-      {pr && (
-        <a
-          href={pr.url}
-          target="_blank"
-          rel="noreferrer"
-          className="rounded border border-border px-1.5 py-0 text-[10px] font-medium text-foreground hover:bg-muted hover:underline focus-visible:outline-ring"
-          title={`Open pull request #${pr.number}`}
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
-        >
-          #{pr.number}
-        </a>
-      )}
-    </div>
-  );
+  return <RunSourceBadge run={run} />;
 }
 
-/** Existing persisted CI fields; repository is recoverable from GitHub URLs. */
+function safeHttpUrl(raw: string | null | undefined): string | null {
+  try {
+    const url = new URL(raw?.trim() ?? "");
+    if (
+      !["https:", "http:"].includes(url.protocol) ||
+      url.username ||
+      url.password
+    ) {
+      return null;
+    }
+    return url.href.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function repositoryFromUrl(raw: string | null): {
+  name: string;
+  url: string;
+} | null {
+  if (!raw) return null;
+  const url = new URL(raw);
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length < 2) return null;
+  return {
+    name: `${parts[0]}/${parts[1]}`,
+    url: `${url.origin}/${parts[0]}/${parts[1]}`,
+  };
+}
+
+/** Git values and their safe, explicit destinations. */
 export function readRunGitMetadata(
   metadata: EvalSuiteRun["ciMetadata"] | null,
 ) {
   const branch = metadata?.branch?.trim() || null;
   const commitSha = metadata?.commitSha?.trim() || null;
-  let runUrl: string | null = null;
-  let repository: string | null = null;
-  let repositoryUrl: string | null = null;
-  try {
-    const url = new URL(metadata?.runUrl?.trim() ?? "");
-    if (
-      ["https:", "http:"].includes(url.protocol) &&
-      !url.username &&
-      !url.password
-    ) {
-      runUrl = url.href;
-      const parts = url.pathname.split("/").filter(Boolean);
-      if (url.hostname === "github.com" && parts.length >= 2) {
-        repository = `${parts[0]}/${parts[1]}`;
-        repositoryUrl = `${url.origin}/${repository}`;
-      }
-    }
-  } catch {
-    /* Old runs may not contain a CI URL. */
-  }
+  const runUrl = safeHttpUrl(metadata?.runUrl);
+  let repositoryInfo = repositoryFromUrl(safeHttpUrl(metadata?.repositoryUrl));
   const pr = readRunPullRequest(metadata);
-  if (!repository && pr) {
-    const url = new URL(pr.url);
-    const parts = url.pathname.split("/").filter(Boolean);
-    repository = `${parts[0]}/${parts[1]}`;
-    repositoryUrl = `${url.origin}/${repository}`;
+  if (!repositoryInfo && pr) {
+    repositoryInfo = repositoryFromUrl(pr.url);
   }
+  if (!repositoryInfo && runUrl) {
+    const url = new URL(runUrl);
+    if (url.hostname === "github.com") {
+      repositoryInfo = repositoryFromUrl(runUrl);
+    }
+  }
+  const repositoryUrl = repositoryInfo?.url ?? null;
+  const branchUrl =
+    safeHttpUrl(metadata?.branchUrl) ??
+    (repositoryUrl && branch
+      ? `${repositoryUrl}/tree/${encodeURIComponent(branch)}`
+      : null);
+  const commitUrl =
+    repositoryUrl && commitSha
+      ? `${repositoryUrl}/commit/${encodeURIComponent(commitSha)}`
+      : null;
   return {
     branch,
+    branchUrl,
     commitSha,
+    commitUrl,
     runUrl,
-    repository,
+    repository: repositoryInfo?.name ?? null,
     repositoryUrl,
+    pullRequestNumber: pr?.number ?? null,
+    pullRequestUrl: pr?.url ?? null,
     pipelineId: metadata?.pipelineId?.trim() || null,
     jobId: metadata?.jobId?.trim() || null,
   };
 }
 
-export function RunGitMetadata({
-  metadata,
+export type RunGitMetadataValue = ReturnType<typeof readRunGitMetadata>;
+
+function GitLink({
+  href,
+  label,
+  title,
+  mono = false,
 }: {
-  metadata: EvalSuiteRun["ciMetadata"] | null;
+  href: string | null;
+  label: string | null;
+  title?: string;
+  mono?: boolean;
 }) {
-  const git = readRunGitMetadata(metadata);
-  const hasMetadata = Object.values(git).some(Boolean);
-  if (!hasMetadata)
-    return <span className="text-muted-foreground">Not recorded</span>;
-  const linkClass =
-    "truncate text-foreground hover:underline focus-visible:outline-ring";
+  if (!href || !label) return <span className="text-muted-foreground">—</span>;
   return (
-    <div
-      className="flex max-w-64 flex-col gap-1 text-xs"
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className={`block max-w-48 truncate text-xs text-foreground hover:underline focus-visible:outline-ring ${mono ? "font-mono" : ""}`}
+      title={title ?? label}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      {git.repository && (
-        <a
-          href={git.repositoryUrl!}
-          target="_blank"
-          rel="noreferrer"
-          className={linkClass}
-          title={git.repository}
-        >
-          {git.repository}
-        </a>
-      )}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
-        {git.branch && (
-          <span className="max-w-40 truncate" title={`Branch: ${git.branch}`}>
-            {git.branch}
-          </span>
-        )}
-        {git.commitSha &&
-          (git.repositoryUrl ? (
-            <a
-              href={`${git.repositoryUrl}/commit/${encodeURIComponent(
-                git.commitSha,
-              )}`}
-              target="_blank"
-              rel="noreferrer"
-              className={`${linkClass} font-mono`}
-              title={git.commitSha}
-            >
-              {git.commitSha.slice(0, 7)}
-            </a>
-          ) : (
-            <span className="font-mono" title={git.commitSha}>
-              {git.commitSha.slice(0, 7)}
-            </span>
-          ))}
-        {git.runUrl && (
-          <a
-            href={git.runUrl}
-            target="_blank"
-            rel="noreferrer"
-            className={linkClass}
-          >
-            Open CI run
-          </a>
-        )}
-      </div>
-      {(git.pipelineId || git.jobId) && (
-        <span
-          className="truncate text-[10px] text-muted-foreground"
-          title={[git.pipelineId, git.jobId].filter(Boolean).join(" · ")}
-        >
-          {[
-            git.pipelineId && `Pipeline ${git.pipelineId}`,
-            git.jobId && `Job ${git.jobId}`,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-        </span>
-      )}
-    </div>
+      {label}
+    </a>
+  );
+}
+
+export function RunCommitCell({ git }: { git: RunGitMetadataValue | null }) {
+  return (
+    <GitLink
+      href={git?.commitUrl ?? null}
+      label={git?.commitSha?.slice(0, 7) ?? null}
+      title={git?.commitSha ?? undefined}
+      mono
+    />
+  );
+}
+
+export function RunPullRequestCell({
+  git,
+}: {
+  git: RunGitMetadataValue | null;
+}) {
+  return (
+    <GitLink
+      href={git?.pullRequestUrl ?? null}
+      label={git?.pullRequestNumber ? `#${git.pullRequestNumber}` : null}
+      title={
+        git?.pullRequestNumber
+          ? `Open pull request #${git.pullRequestNumber}`
+          : undefined
+      }
+    />
+  );
+}
+
+export function RunBranchCell({ git }: { git: RunGitMetadataValue | null }) {
+  return (
+    <GitLink
+      href={git?.branchUrl ?? null}
+      label={git?.branch ?? null}
+      title={git?.branch ? `Open branch ${git.branch}` : undefined}
+    />
   );
 }
