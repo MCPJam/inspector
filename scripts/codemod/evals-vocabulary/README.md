@@ -21,7 +21,7 @@ node scripts/codemod/evals-vocabulary/index.mjs --root ../mcpjam-backend
 | ---: | ------------------------------------------------------- |
 |    0 | a report was written                                    |
 |    1 | it scanned nothing, or was asked to `--write`           |
-|    2 | the mapping proposes to mutate a protected term or path |
+|    2 | the mapping proposes to mutate a protected term or path, or to merge two fields |
 
 ## Why there is no `--write`
 
@@ -35,7 +35,7 @@ for a different thing.
 So the value here is the inventory, not the edit. A reviewer reads the report to
 size the surface and to find the places where the same token means two things;
 the renames themselves land in PRs a human reviews against the pinned contract.
-A script that rewrote 690 occurrences across 102 files and asked for a rubber
+A script that rewrote 803 occurrences across 106 files and asked for a rubber
 stamp would be asking for the one thing nobody can give it.
 
 ## The two severities
@@ -50,6 +50,32 @@ the same thing as deciding the term was not protected after all.
 note.** `evaluatorErrorRate` sits beside genuine evaluator code throughout the
 verdict policy; failing on proximity would make the tool unrunnable, and a tool
 nobody runs protects nothing.
+
+## Two fields must not become one
+
+A wire-field rename onto a name its own files still use is refused (`rename
+target in use`). The configured count is why: `repetitions` is its legacy
+spelling and becomes `iterations`, but the same adapters already carry a legacy
+`iterations` that the legacy resolver reads as a floor. Renaming onto it would
+make one field out of two counts.
+
+So the occupied name is vacated first, by its own rename (`iterations →
+legacyIterations`), and the dependent rename says so with `"after":
+"iterations"`. A vacated target without `after` is refused at the mapping
+(`unordered rename`), because an inventory that does not say which lands first
+invites the blind sweep. The report prints the order under each dependent
+rename.
+
+A rename may instead declare `"sameMeaning": true` when the occupied name
+already means the same thing, so joining the spellings is the rename itself.
+The three renames onto `assertions` declare it: the suite file's deprecated
+`assertions` is the same list of rules as `checks`. The count rename must never
+declare it, because a floor and an exact count are two fields.
+
+The `repetitions` key inside the configuration-revision payload
+(`convex/lib/evalConfigRevision.ts`) is a different matter: it never moves.
+`protected.json` protects it, with `runs`, `predicates` and
+`defaultPredicates`, so a rename widened far enough to reach that file fails.
 
 ## Why it parses
 
@@ -105,8 +131,8 @@ Three ways it refuses to produce a report rather than produce a misleading one:
 
 - `mapping.json` — what to rename, at what scope, and where. `identifier` and
   `subpath` renames are repository-wide unless a `paths` allowlist narrows them;
-  `wire-field` renames are always path-restricted, because those four words are
-  English.
+  `wire-field` renames are always path-restricted, because those words are
+  English. `after` names the rename that must land first.
 - `protected.json` — what means something else. `terms` are exact tokens;
   `termFamilies` are patterns that protect every member of a family
   (`githubCheck*` covers `githubCheckRunId` and `GithubCheckRepoConfigRow`),

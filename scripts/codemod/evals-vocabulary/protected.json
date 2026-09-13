@@ -108,6 +108,26 @@
       "paths": ["mcpjam-inspector/server/services/github-checks/"],
       "pathSuffixes": ["mcpjam.yml", "mcpjam.yaml"],
       "why": "The customer-authored `checks:` section of mcpjam.yml, read in github-checks/resolver/mcpjamYaml.ts and documented in resolve-and-start.ts. Customers wrote this key into their own repositories; renaming the reader breaks all of them."
+    },
+    {
+      "name": "repetitions",
+      "paths": ["convex/lib/evalConfigRevision.ts"],
+      "why": "A key inside the configuration-revision payload. The payload is a string that identifies every suite's configuration, so the literal stays frozen after the field it came from is renamed (contract invariant 3); moving it rotates every suite's revision with no authored change."
+    },
+    {
+      "name": "runs",
+      "paths": ["convex/lib/evalConfigRevision.ts"],
+      "why": "A key inside the configuration-revision payload. The payload is a string that identifies every suite's configuration, so the literal stays frozen after the field it came from is renamed (contract invariant 3); moving it rotates every suite's revision with no authored change."
+    },
+    {
+      "name": "predicates",
+      "paths": ["convex/lib/evalConfigRevision.ts"],
+      "why": "A key inside the configuration-revision payload. The payload is a string that identifies every suite's configuration, so the literal stays frozen after the field it came from is renamed (contract invariant 3); moving it rotates every suite's revision with no authored change."
+    },
+    {
+      "name": "defaultPredicates",
+      "paths": ["convex/lib/evalConfigRevision.ts"],
+      "why": "A key inside the configuration-revision payload. The payload is a string that identifies every suite's configuration, so the literal stays frozen after the field it came from is renamed (contract invariant 3); moving it rotates every suite's revision with no authored change."
     }
   ],
   "paths": [

@@ -54,8 +54,14 @@
  * either scanned under its own path or is not this repository's to rename, and
  * a dangling one names nothing at all.
  *
+ * TWO FIELDS MUST NOT BECOME ONE. A wire-field rename onto a name its own
+ * files still use is refused ("rename target in use") unless another rename
+ * vacates that name first, and the dependent rename must say so with `after`
+ * ("unordered rename"). See `vacatesAt` below.
+ *
  * Exit codes: 0 clean report · 1 scan error (fails closed, like the runtime
- * guards) · 2 a protected term or path was proposed for mutation.
+ * guards) · 2 a protected term or path was proposed for mutation, or a rename
+ * would merge two fields.
  */
 
 import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -273,6 +279,30 @@ const identifierRenames = new Map(
 const subpathRenames = new Map(byScope("subpath").map((r) => [r.from, r]));
 const wireFieldRenames = byScope("wire-field");
 const flagRenames = byScope("flag");
+
+/**
+ * Two wire fields must not become one.
+ *
+ * A rename onto a name its own files already use merges two fields, and from
+ * then on the token cannot say which one a row meant. The configured count is
+ * the case that forced this: `repetitions` becomes `iterations` in adapters
+ * where a legacy `iterations` — which the legacy resolver reads as a FLOOR —
+ * already sits on the same object. So the target has to be vacated first, by a
+ * rename whose `from` is that name, and the dependent rename names it in
+ * `after`. An occurrence of the target with nothing vacating it is refused;
+ * a vacated target without `after` is refused at the mapping, because an
+ * inventory that does not say which rename lands first invites the blind sweep.
+ *
+ * `sameMeaning` is the one exemption, and it is a claim about the domain, not
+ * a way to go green: the target already names the SAME thing, so joining the
+ * spellings is the rename. `checks → assertions` is that case — the suite
+ * file's deprecated `assertions` and `checks` are one list of rules. The count
+ * is not: a floor and an exact count are two fields, so it may not claim it.
+ */
+const overlappingPaths = (a, b) =>
+  !a || !b || a.some((p) => b.some((q) => p.startsWith(q) || q.startsWith(p)));
+const vacatesAt = (rel, name) =>
+  wireFieldRenames.some((r) => r.from === name && inAllowedPaths(rel, r.paths));
 
 /**
  * Compiler options for a one-file program that resolves nothing.
@@ -553,6 +583,25 @@ for (const rename of mapping.renames) {
       );
     if (reaches) violations.push({ ...base, reason: "protected field" });
   }
+  if (rename.scope === "wire-field") {
+    const vacated = wireFieldRenames.some(
+      (other) =>
+        other !== rename &&
+        other.from === rename.to &&
+        overlappingPaths(rename.paths, other.paths)
+    );
+    if (vacated && rename.after !== rename.to) {
+      violations.push({ ...base, reason: "unordered rename" });
+    }
+  }
+  if (
+    rename.after !== undefined &&
+    !mapping.renames.some(
+      (other) => other !== rename && other.from === rename.after
+    )
+  ) {
+    violations.push({ ...base, reason: "after names no rename" });
+  }
 }
 
 const skipped = [];
@@ -663,6 +712,23 @@ for (const rel of candidates) {
             node.isField ? "field" : "field named in a string"
           );
         }
+        for (const rename of wireFieldRenames) {
+          if (node.value !== rename.to) continue;
+          if (rename.sameMeaning) continue;
+          if (!inAllowedPaths(rel, rename.paths)) continue;
+          if (vacatesAt(rel, rename.to)) continue;
+          violations.push({
+            file: rel,
+            line,
+            matched: node.value,
+            shape: node.isField ? "field" : "field named in a string",
+            from: rename.from,
+            to: rename.to,
+            scope: rename.scope,
+            text: lineText.trim().slice(0, 160),
+            reason: "rename target in use",
+          });
+        }
       }
     }
   }
@@ -765,12 +831,21 @@ if (violations.length > 0) {
     console.error(`  ✗ ${where}  ${v.from} → ${v.to}  (${v.reason})`);
     console.error(`      ${v.text}`);
   }
-  console.error(
-    `\nThese words mean something else — GitHub check runs, OAuth conformance, ` +
-      `SAML assertions, billing trials, the evaluator-ERROR family. Narrow the ` +
-      `mapping's \`paths\`, or take the occurrence out of scope. Do not widen ` +
-      `protected.json to make this pass.\n`
-  );
+  if (violations.some((v) => v.reason.startsWith("protected"))) {
+    console.error(
+      `\nThese words mean something else — GitHub check runs, OAuth conformance, ` +
+        `SAML assertions, billing trials, the evaluator-ERROR family. Narrow the ` +
+        `mapping's \`paths\`, or take the occurrence out of scope. Do not widen ` +
+        `protected.json to make this pass.\n`
+    );
+  }
+  if (violations.some((v) => !v.reason.startsWith("protected"))) {
+    console.error(
+      `\nA rename onto a name its files still use merges two fields into one. ` +
+        `Rename the existing field to an explicit legacy name first, and mark ` +
+        `the dependent rename \`"after"\` it.\n`
+    );
+  }
   process.exit(2);
 }
 
@@ -886,6 +961,13 @@ for (const [key, entries] of [...grouped].sort(
   out.push("");
   if (rename?.note) {
     out.push(`> ${rename.note}`);
+    out.push("");
+  }
+  const first = rename?.after
+    ? mapping.renames.find((r) => r.from === rename.after)
+    : undefined;
+  if (first) {
+    out.push(`> Lands after \`${first.from} → ${first.to}\`.`);
     out.push("");
   }
   out.push("| file:line | shape | line |");

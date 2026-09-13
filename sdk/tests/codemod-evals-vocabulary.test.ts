@@ -263,9 +263,8 @@ describe("the evaluator-vocabulary scanner", () => {
         `const b = "--scorer-timeout=3";\n` +
         `const c = "--scorer-timeout-old";\n`,
     });
-    // An override: the committed mapping renames no flag. The count flag it
-    // once proposed (`--repetitions` to `--iterations`) is canonical, and the
-    // flag matcher is tested here on a flag nobody is keeping.
+    // An override, so the matcher is tested apart from whichever flags the
+    // committed mapping happens to rename.
     const { status, json } = scan(root, {
       renames: [
         {
@@ -733,19 +732,191 @@ describe("the evaluator-vocabulary scanner", () => {
     expect(unscoped.json.violations[0].reason).toBe("protected field");
   });
 
-  it("keeps the configured count canonical in the committed mapping", () => {
-    // Settled 2026-09-08 (#4774): `repetitions` is the configured count and
-    // `--repetitions` its flag, with `--iterations` a deprecated alias.
-    // `iteration` names one execution. Mapping the count onto `iterations`
-    // would restore the retired word as canonical.
+  it("retires `repetitions` in the committed mapping, legacy floor first", () => {
+    // `repetitions` is the legacy spelling of the configured count. The count
+    // becomes `iterations`, but only after the legacy per-case field that
+    // already answers to `iterations` (read as a FLOOR) has moved out of the
+    // way, and the revision-payload key never moves at all.
+    const dir = dirname(SCANNER);
     const mapping = JSON.parse(
-      readFileSync(join(dirname(SCANNER), "mapping.json"), "utf8")
-    ) as { renames: Array<{ from: string; to: string }> };
-    const counts = ["repetitions", "--repetitions", "--max-trials"];
-    expect(mapping.renames.filter((r) => counts.includes(r.from))).toEqual([]);
+      readFileSync(join(dir, "mapping.json"), "utf8")
+    ) as {
+      renames: Array<{
+        from: string;
+        to: string;
+        scope: string;
+        after?: string;
+        sameMeaning?: boolean;
+      }>;
+    };
+    // `sameMeaning` is picked on purpose: a floor and an exact count are two
+    // fields, so neither count rename may claim the exemption.
+    const pick = (from: string) =>
+      mapping.renames
+        .filter((r) => r.from === from)
+        .map((r) => ({
+          from: r.from,
+          to: r.to,
+          scope: r.scope,
+          after: r.after,
+          sameMeaning: r.sameMeaning,
+        }));
+
+    expect(pick("iterations")).toEqual([
+      { from: "iterations", to: "legacyIterations", scope: "wire-field" },
+    ]);
+    expect(pick("repetitions")).toEqual([
+      {
+        from: "repetitions",
+        to: "iterations",
+        scope: "wire-field",
+        after: "iterations",
+      },
+    ]);
+    expect(pick("--repetitions")).toEqual([
+      { from: "--repetitions", to: "--iterations", scope: "flag" },
+    ]);
+    expect(pick("--max-trials")).toEqual([
+      { from: "--max-trials", to: "--max-iterations", scope: "flag" },
+    ]);
+
+    const protectedSpec = JSON.parse(
+      readFileSync(join(dir, "protected.json"), "utf8")
+    ) as { fields: Array<{ name: string; paths?: string[] }> };
     expect(
-      mapping.renames.filter((r) => /^(--)?iterations$/.test(r.to))
-    ).toEqual([]);
+      protectedSpec.fields
+        .filter((f) => f.paths?.includes("convex/lib/evalConfigRevision.ts"))
+        .map((f) => f.name)
+        .sort()
+    ).toEqual(["defaultPredicates", "predicates", "repetitions", "runs"]);
+  });
+
+  const COUNT_CASE = {
+    "sdk/src/platform/types.ts":
+      "export type Case = { iterations: number; repetitions?: number };\n",
+  };
+  const COUNT_PATHS = ["sdk/src/platform/"];
+  const LEGACY_FIRST = {
+    from: "iterations",
+    to: "legacyIterations",
+    scope: "wire-field",
+    paths: COUNT_PATHS,
+  };
+  const COUNT = {
+    from: "repetitions",
+    to: "iterations",
+    scope: "wire-field",
+    paths: COUNT_PATHS,
+  };
+
+  it("refuses to rename a field onto a name its files still use", () => {
+    const root = tree(COUNT_CASE);
+    // The legacy `iterations` is a floor and `repetitions` is exact. Renaming
+    // one onto the other's name makes one field out of two counts.
+    const { status, json } = scan(root, { renames: [COUNT] });
+
+    expect(status).toBe(2);
+    expect(
+      json.violations.map(
+        (v: { reason: string; matched: string }) => `${v.reason} ${v.matched}`
+      )
+    ).toEqual(["rename target in use iterations"]);
+  });
+
+  it("lets a rename join a target that already means the same thing", () => {
+    const root = tree({
+      // The suite file's deprecated `assertions` IS its `checks`: one list of
+      // rules, two spellings. Joining them is the rename, not a merge of two
+      // fields.
+      "cli/src/lib/eval-run-file.ts":
+        "export const f = (c: { assertions: string[] }) => ({ checks: c.assertions });\n",
+    });
+    const rename = {
+      from: "checks",
+      to: "assertions",
+      scope: "wire-field",
+      paths: ["cli/src/lib/eval-run-file.ts"],
+    };
+
+    const refused = scan(root, { renames: [rename] });
+    expect(refused.status).toBe(2);
+    expect(refused.json.violations[0].reason).toBe("rename target in use");
+
+    const joined = scan(root, { renames: [{ ...rename, sameMeaning: true }] });
+    expect(joined.status).toBe(0);
+    expect(
+      joined.json.findings.map((f: { matched: string }) => f.matched)
+    ).toEqual(["checks"]);
+  });
+
+  it("refuses a rename onto a vacated name that does not say it lands after", () => {
+    const root = tree(COUNT_CASE);
+    const { status, json } = scan(root, { renames: [LEGACY_FIRST, COUNT] });
+
+    // Both halves are present, but nothing says which lands first, and running
+    // them in the wrong order is the blind sweep.
+    expect(status).toBe(2);
+    expect(json.violations).toHaveLength(1);
+    expect(json.violations[0]).toMatchObject({
+      reason: "unordered rename",
+      shape: "mapping",
+      from: "repetitions",
+    });
+  });
+
+  it("refuses an `after` that names no rename", () => {
+    const root = tree(COUNT_CASE);
+    const { status, json } = scan(root, {
+      renames: [{ ...COUNT, to: "count", after: "iterations" }],
+    });
+
+    expect(status).toBe(2);
+    expect(json.violations[0].reason).toBe("after names no rename");
+  });
+
+  it("proposes both halves of an ordered rename, and says which lands first", () => {
+    const root = tree(COUNT_CASE);
+    const mapping = {
+      renames: [LEGACY_FIRST, { ...COUNT, after: "iterations" }],
+    };
+    const { status, json } = scan(root, mapping);
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .map((f: { from: string; to: string }) => `${f.from} → ${f.to}`)
+        .sort()
+    ).toEqual(["iterations → legacyIterations", "repetitions → iterations"]);
+    const report = render(root, mapping);
+    expect(report.status).toBe(0);
+    expect(report.stdout).toMatch(
+      /Lands after `iterations → legacyIterations`/
+    );
+  });
+
+  it("refuses to move the `repetitions` key of the configuration-revision payload", () => {
+    const root = tree({
+      "convex/lib/evalConfigRevision.ts":
+        "export const sig = (tc: { runs: number; repetitions?: number }) =>\n" +
+        "  ({ runs: tc.runs, repetitions: tc.repetitions });\n",
+    });
+    // The committed mapping never reaches this file.
+    expect(scan(root).status).toBe(0);
+
+    // A widened one does. The literal key is part of every suite's revision
+    // identity, so it stays frozen after the field is renamed, like `predicates`.
+    for (const paths of [undefined, ["convex/lib/"]]) {
+      const { status, json } = scan(root, {
+        renames: [{ ...COUNT, paths }],
+      });
+      expect(status, String(paths)).toBe(2);
+      expect(
+        json.violations.some(
+          (v: { reason: string }) => v.reason === "protected field"
+        ),
+        String(paths)
+      ).toBe(true);
+    }
   });
 
   it("has no --write, and says why rather than ignoring the flag", () => {
