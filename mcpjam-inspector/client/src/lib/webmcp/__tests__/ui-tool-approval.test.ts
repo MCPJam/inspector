@@ -86,7 +86,7 @@ describe("createUiAwareApprovalResponseHandler", () => {
 
     expect(def.execute).toHaveBeenCalledWith(
       { target: "servers" },
-      { toolCallId: "tc-1" },
+      { toolCallId: "tc-1", caller: "ask_mcpjam" },
     );
     expect(addToolOutput).toHaveBeenCalledWith(
       expect.objectContaining({ tool: "ui_navigate", toolCallId: "tc-1" }),
