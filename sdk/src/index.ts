@@ -1302,6 +1302,47 @@ export type {
   ScorerRole,
 } from "./contract/index.js";
 
+// The same contract under the canonical evaluator vocabulary — an evaluator is
+// an assertion or a judge, and both report one result shape. Additive: every
+// name above keeps working, and the definitions underneath are the same objects
+// with the same hash payload, so nothing an author already wrote changes
+// identity by adopting these. See `docs/evals-vocabulary-consolidation.md`.
+export {
+  EVALUATOR_KINDS,
+  EVALUATOR_RESULT_SCHEMA_VERSION,
+  allGatingEvaluatorsPassed,
+  errorEvaluatorResult,
+  evaluatorDefinitionHash,
+  evaluatorKindOf,
+  evaluatorKindSchema,
+  evaluatorResultArraySchema,
+  evaluatorResultSchema,
+  evaluatorStatusSchema,
+  finalizeEvaluatorResult,
+  fromEvaluatorResult,
+  notApplicableEvaluatorResult,
+  resolveEvaluatorDefinition,
+  skippedEvaluatorResult,
+  toEvaluatorResult,
+  toScoreRawOutcome,
+} from "./contract/index.js";
+export type {
+  Assertion,
+  AssertionResult,
+  AssertionScope,
+  EvaluatorConfigSnapshot,
+  EvaluatorContextV1,
+  EvaluatorDefinition,
+  EvaluatorErrorPolicy,
+  EvaluatorIdSource,
+  EvaluatorKind,
+  EvaluatorRawOutcome,
+  EvaluatorResult,
+  EvaluatorRole,
+  EvaluatorStatus,
+  ResolvedEvaluatorDefinition,
+} from "./contract/index.js";
+
 // The v2 run verdict policy (browser-safe; exported in full from
 // `@mcpjam/sdk/contract`). Re-exported here for the same reason as the scoring
 // contract above: a code-first author reading a decision should not need a

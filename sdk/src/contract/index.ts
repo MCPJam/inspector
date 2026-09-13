@@ -194,6 +194,76 @@ export {
   type PredicateKind,
 } from "./grader-stage.js";
 
+/**
+ * The same tables under the canonical vocabulary. Same objects, not copies —
+ * `EVALUATOR_STAGE === GRADER_STAGE` is an identity a test pins, because two
+ * tables that merely agree today are two tables that can stop agreeing.
+ */
+export {
+  ASSERTION_KINDS,
+  ASSERTION_STAGE,
+  EVALUATOR_PRESENTATION_GROUP,
+  EVALUATOR_STAGE,
+  isSelectionStageAssertionKind,
+  type AssertionKind,
+} from "./evaluator-stage.js";
+
+/**
+ * The seed under its canonical name. Declared in `grader-stage.ts` and
+ * re-exported here rather than moved — the backend pins the literal through a
+ * whole-file capture, and a capture that matches nothing passes forever. See
+ * the note on the declaration.
+ */
+export {
+  RECOMMENDED_DEFAULT_PREDICATES as RECOMMENDED_DEFAULT_ASSERTIONS,
+  isRecommendedDefaultPredicateKind as isRecommendedDefaultAssertionKind,
+} from "./grader-stage.js";
+
+/**
+ * The canonical evaluator contract: one word per concept, and one result shape
+ * for assertions and judges alike. See
+ * `docs/evals-vocabulary-consolidation.md`.
+ */
+export {
+  EVALUATOR_KINDS,
+  EVALUATOR_RESULT_SCHEMA_VERSION,
+  evaluatorKindOf,
+} from "./evaluator-types.js";
+export type {
+  Assertion,
+  AssertionResult,
+  AssertionScope,
+  EvaluatorConfigSnapshot,
+  EvaluatorContextV1,
+  EvaluatorDefinition,
+  EvaluatorErrorPolicy,
+  EvaluatorIdSource,
+  EvaluatorKind,
+  EvaluatorRawOutcome,
+  EvaluatorResult,
+  EvaluatorRole,
+  EvaluatorStatus,
+  ResolvedEvaluatorDefinition,
+} from "./evaluator-types.js";
+export {
+  allGatingEvaluatorsPassed,
+  errorEvaluatorResult,
+  evaluatorDefinitionHash,
+  finalizeEvaluatorResult,
+  fromEvaluatorResult,
+  notApplicableEvaluatorResult,
+  resolveEvaluatorDefinition,
+  skippedEvaluatorResult,
+  toEvaluatorResult,
+  toScoreRawOutcome,
+} from "./evaluator-derive.js";
+export {
+  evaluatorKindSchema,
+  evaluatorResultArraySchema,
+  evaluatorResultSchema,
+  evaluatorStatusSchema,
+} from "./evaluator-schemas.js";
+
 // ── server facts (F1) ────────────────────────────────────────────────────────
 /**
  * What the SERVER SNAPSHOT a run was taken against looked like, and what the
