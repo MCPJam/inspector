@@ -13,7 +13,13 @@ import {
   dispatchInspectorCommand,
   navigateAction,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
+import {
+  PUBLISH_NATIVE,
+  PUBLISH_NATIVE_UNTRUSTED,
+  asOptionalString,
+  errorResult,
+  fromActionResult,
+} from "./shared";
 
 /**
  * The Connect screen owns `openServerForm` (the Add-server modal's open
@@ -134,6 +140,7 @@ function connectScreenServerTool(config: {
   commandType: "connectServer" | "disconnectServer" | "removeServer";
   verb: string;
   annotations: NonNullable<UiToolDefinition["annotations"]>;
+  nativePublication: NonNullable<UiToolDefinition["nativePublication"]>;
 }): UiToolDefinition {
   return {
     name: config.name,
@@ -151,6 +158,7 @@ function connectScreenServerTool(config: {
     },
     readOnly: false,
     annotations: config.annotations,
+    nativePublication: config.nativePublication,
     mayNavigate: true,
     execute: async (args) => {
       const serverName = asOptionalString(args.serverName);
@@ -182,6 +190,7 @@ export function buildServersUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async (args) => {
         const notOpen = await ensureConnectOpen("openServerForm");
@@ -209,6 +218,7 @@ export function buildServersUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
       mayNavigate: true,
       execute: async (args) => {
         const draft = readServerDraft(args);
@@ -237,6 +247,7 @@ export function buildServersUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE_UNTRUSTED,
     }),
     connectScreenServerTool({
       name: "ui_disconnect_server",
@@ -251,6 +262,7 @@ export function buildServersUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: true,
       },
+      nativePublication: PUBLISH_NATIVE,
     }),
     connectScreenServerTool({
       name: "ui_remove_server",
@@ -266,6 +278,7 @@ export function buildServersUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: false,
       },
+      nativePublication: PUBLISH_NATIVE,
     }),
   ];
 }

@@ -203,10 +203,11 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     });
 
     // The context carries this session's id, which is what lets a parked
-    // `ui_ask_user` be cancelled per conversation.
+    // `ui_ask_user` be cancelled per conversation — and names Ask MCPJam as
+    // the caller, which is what a browser-native call never is.
     expect(def.execute).toHaveBeenCalledWith(
       { target: "playground" },
-      { toolCallId: "tc-1", scope: SESSION_ID },
+      { toolCallId: "tc-1", caller: "ask_mcpjam", scope: SESSION_ID },
     );
     expect(mockState.addToolOutput).toHaveBeenCalledWith({
       tool: "ui_navigate",

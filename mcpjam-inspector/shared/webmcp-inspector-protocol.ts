@@ -4,12 +4,6 @@ import {
   BROWSER_INPUT_TEXT_MAX_CHARS,
   type BrowserPaneInputEvent,
 } from "./browser-pane-input";
-import {
-  encodeFrameStreamRecord,
-  createFrameStreamDecoder,
-  FRAME_STREAM_HEADER_BYTES,
-  FRAME_STREAM_KIND,
-} from "./browserd-frame-stream";
 
 /**
  * Wire contract between the WebMCP Inspector's client surface and its server
@@ -181,6 +175,35 @@ export type WebMcpViewportTransport =
   | { kind: "frame-stream"; width: number; height: number }
   /** Main-owned WebContentsView, placed through the existing native surface IPC. */
   | { kind: "electron-native"; bootId: string };
+
+/**
+ * Whether the SERVER paints this session's picture into the pane.
+ *
+ * One answer for both sides of the client: the store opens the frame socket on
+ * it, and the pane asks for a stream on it. Two copies are how a pane ends up
+ * requesting frames that no transport carries.
+ *
+ * A `native-window` or `headless` session is mirrored into the pane just as a
+ * `frame-stream` one is — the difference is only whether the pane drives it.
+ * `undefined` (no session yet) answers like the window arm.
+ */
+export function webMcpServerPaints(
+  kind: WebMcpViewportTransport["kind"] | undefined,
+): boolean {
+  switch (kind) {
+    case undefined:
+    case "native-window":
+    case "headless":
+    case "frame-stream":
+      return true;
+    case "remote-interactive-url":
+    case "electron-native":
+      return false;
+    default:
+      kind satisfies never;
+      return false;
+  }
+}
 
 /** Retain WebMCP's existing persistent Electron profile across the ownership migration. */
 export const WEBMCP_BROWSER_PARTITION = "persist:webmcp-inspector";
@@ -505,14 +528,7 @@ export type WebMcpEvent =
    * correct on arrival no matter what it missed.
    */
   | { type: "tools"; seq: number; tools: WebMcpToolDescriptor[] }
-  | { type: "activity"; seq: number; entry: WebMcpActivityEntry }
-  /**
-   * Coalesced, not queued: the hub keeps ONE of these per session and replaces
-   * it, so a page animating at 10fps cannot flush the activity ring. `seq` is
-   * still stamped from the session's own counter so a replayed frame sorts into
-   * place beside the events around it.
-   */
-  | { type: "frame"; seq: number; frame: WebMcpFrame };
+  | { type: "activity"; seq: number; entry: WebMcpActivityEntry };
 
 /**
  * Cap on a result, both for what we persist in the timeline and what a model
@@ -572,76 +588,16 @@ export const WEBMCP_FRAME_BOOST_WINDOW_MS =
   BROWSER_VIEWPORT_POLICY.inputBoostWindowMs;
 
 /**
- * Size of the fixed header on a binary frame message. See
- * {@link encodeWebMcpBinaryFrame}.
+ * NO BINARY FRAME ADAPTER HERE ANY MORE.
+ *
+ * The inspection frame socket used to carry its own message format, which this
+ * file encoded and decoded. It was already the daemon's frame-stream record
+ * byte for byte — the adapter simply wrapped `encodeFrameStreamRecord` and
+ * re-validated a single-record decode — so the socket now speaks that codec
+ * directly (`shared/browserd-frame-stream.ts`) and the client reads it with the
+ * same `createFrameWireReader` the Playground panes use. One codec, one reader,
+ * one place a framing bug can live.
  */
-export const WEBMCP_FRAME_WS_HEADER_BYTES = FRAME_STREAM_HEADER_BYTES;
-
-/** A frame as it travels on the binary wire, and as `decode` hands it back. */
-export interface WebMcpBinaryFrame {
-  deviceWidth: number;
-  deviceHeight: number;
-  /** Device pixels per CSS pixel; see {@link WebMcpFrame.scale}. */
-  scale?: number;
-  /** Wall-clock capture time, from the publishing server. */
-  ts: number;
-  /** The session's monotonic event counter, shared with the SSE stream. */
-  seq: number;
-  /** Raw JPEG bytes — NOT base64. */
-  jpeg: Uint8Array;
-}
-
-/**
- * Pack one frame as a single binary message: a fixed 24-byte little-endian
- * header followed by the JPEG bytes.
- *
- *   offset  type  field
- *   0       u8    version (1)
- *   1       u8    kind (1 = JPEG)
- *   2       u16   deviceWidth
- *   4       u16   deviceHeight
- *   6       u16   scale x 1000 (0 = 1.0)
- *   8       f64   ts
- *   16      u32   seq
- *   20      u32   jpegByteLength
- *   24      …     JPEG bytes
- *
- * ONE message per frame rather than a meta/payload pair: a pair needs pairing
- * state on the receiver — and a receiver that loses track of which half it is
- * holding paints one frame's pixels with another frame's dimensions, which is
- * exactly the bug that puts every click in the wrong place. One atomic message
- * also halves the message count on a 30fps stream.
- *
- * `DataView` and `Uint8Array` only, no `Buffer`: this runs in the browser on
- * the decode side, and one file compiled for both ends is the only way the two
- * cannot drift.
- */
-export function encodeWebMcpBinaryFrame(frame: WebMcpBinaryFrame): Uint8Array {
-  return encodeFrameStreamRecord({
-    ...frame,
-    kind: FRAME_STREAM_KIND.frame,
-    scale: frame.scale ?? 1,
-  });
-}
-
-/** Message adapter for the same codec used by daemon byte streams. */
-export function decodeWebMcpBinaryFrame(
-  buffer: ArrayBuffer | Uint8Array,
-): WebMcpBinaryFrame | undefined {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  if (bytes.byteLength < FRAME_STREAM_HEADER_BYTES) return undefined;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  // This endpoint carries one complete frame per message, never a partial record.
-  if (view.getUint32(20, true) !== bytes.byteLength - FRAME_STREAM_HEADER_BYTES)
-    return undefined;
-  const result = createFrameStreamDecoder().push(bytes);
-  if (!result.ok || result.records.length !== 1) return undefined;
-  const record = result.records[0];
-  if (record.kind !== FRAME_STREAM_KIND.frame || record.jpeg.length === 0)
-    return undefined;
-  const { kind: _kind, ...frame } = record;
-  return frame;
-}
 
 /** Marker appended to a truncated string result. */
 export function truncationMarker(totalBytes: number): string {
