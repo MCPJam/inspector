@@ -1,3 +1,4 @@
+import { resolveThemeMode } from "@/lib/theme-mode";
 import { createStore } from "zustand/vanilla";
 
 import {
@@ -5,10 +6,16 @@ import {
   type ScenarioHostStyle,
 } from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
-import type { ThemeMode, ThemePreset } from "@/types/preferences/theme";
+import type {
+  ThemeMode,
+  ThemePreference,
+  ThemePreset,
+} from "@/types/preferences/theme";
 
 export type PreferencesState = {
   themeMode: ThemeMode;
+  themePreference: ThemePreference;
+  setThemePreference: (preference: ThemePreference) => void;
   themePreset: ThemePreset;
   hostStyle: ScenarioHostStyle;
   /**
@@ -138,6 +145,7 @@ function getStoredHostCapabilitiesOverride():
 export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
   createStore<PreferencesState>()((set) => ({
     themeMode: init?.themeMode ?? "light",
+    themePreference: init?.themePreference ?? init?.themeMode ?? "light",
     themePreset: init?.themePreset ?? "default",
     hostStyle: init?.hostStyle ?? getStoredHostStyle(),
     hostCapabilitiesOverride:
@@ -156,7 +164,18 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
       } catch (error) {
         console.warn("Failed to persist theme mode:", error);
       }
-      set({ themeMode: mode });
+      set({ themeMode: mode, themePreference: mode });
+    },
+    setThemePreference: (preference) => {
+      try {
+        localStorage.setItem(THEME_MODE_KEY, preference);
+      } catch (error) {
+        console.warn("Failed to persist theme preference:", error);
+      }
+      set({
+        themePreference: preference,
+        themeMode: resolveThemeMode(preference),
+      });
     },
     setThemePreset: (preset) => {
       try {

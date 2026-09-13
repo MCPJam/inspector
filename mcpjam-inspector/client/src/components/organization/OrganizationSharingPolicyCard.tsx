@@ -1,10 +1,4 @@
-import { Share2 } from "lucide-react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@mcpjam/design-system/card";
+import { Card, CardContent, CardHeader } from "@mcpjam/design-system/card";
 import {
   Alert,
   AlertDescription,
@@ -51,18 +45,19 @@ export function OrganizationSharingPolicyCard({
   };
 
   return (
-    <Card className="border-border/60" data-testid="org-sharing-policy-card">
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-xl">
-          <Share2 className="size-4 text-muted-foreground" />
+    <Card
+      className="gap-4 border-0 bg-transparent py-0 shadow-none"
+      data-testid="org-sharing-policy-card"
+    >
+      <CardHeader className="px-0">
+        <h2 className="text-lg font-semibold text-accent-foreground">
           Sharing
-        </CardTitle>
+        </h2>
         <p className="text-sm text-muted-foreground">
-          Limit how far organization resources can be shared. Tightening takes
-          effect immediately; existing share rows are not rewritten.
+          Control who can access shared resources and receive invitations.
         </p>
       </CardHeader>
-      <CardContent className="space-y-4 pt-0">
+      <CardContent className="space-y-4 p-0">
         {error ? (
           <Alert variant="destructive" data-testid="org-sharing-policy-error">
             <AlertTitle>Couldn&apos;t save sharing policy</AlertTitle>
@@ -70,7 +65,7 @@ export function OrganizationSharingPolicyCard({
           </Alert>
         ) : null}
 
-        <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <label className="text-sm font-medium" htmlFor="org-share-max-mode">
             Maximum share access
           </label>
@@ -130,7 +125,9 @@ export function OrganizationSharingPolicyCard({
         ) : null}
 
         {isLoading ? (
-          <p className="text-xs text-muted-foreground">Loading sharing policy…</p>
+          <p className="text-xs text-muted-foreground">
+            Loading sharing policy…
+          </p>
         ) : null}
       </CardContent>
     </Card>

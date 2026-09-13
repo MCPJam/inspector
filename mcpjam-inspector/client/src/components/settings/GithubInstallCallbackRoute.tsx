@@ -283,7 +283,7 @@ export function GithubInstallCallbackRoute() {
   };
 
   return (
-    <SettingsPageShell active="integrations">
+    <SettingsPageShell>
       <div className="space-y-2">
         <h2 className="text-lg font-medium">Connect a GitHub account</h2>
       </div>

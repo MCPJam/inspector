@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { getInternalBackendConfig } from "../../services/internal-backend.js";
 import { z } from "zod";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { logger } from "../../utils/logger.js";
@@ -14,6 +15,7 @@ import { handleRoute } from "./auth.js";
 import { resolveUserByExternalId } from "../../services/identity.js";
 import { resolveWorkosApiBaseUrl } from "../../services/workos-api-base.js";
 import {
+  lookupWorkosKeyBinding,
   createWorkosKeyBinding,
   removeWorkosKeyBinding,
   WorkosKeyBindingError,
@@ -225,13 +227,19 @@ async function resolveWorkosOrgId(
   );
   if (!readiness.ready || !readiness.workosOrganizationId) {
     const messages: Record<string, string> = {
-      org_pending: "This organization is still being set up for API keys — please try again shortly.",
-      org_failed: "This organization couldn't be set up for API keys. Please try again or contact support.",
-      membership_pending: "Your access to this organization is still syncing — please try again shortly.",
-      membership_failed: "Your access to this organization couldn't be synced. Please try again or contact support.",
+      org_pending:
+        "This organization is still being set up for API keys — please try again shortly.",
+      org_failed:
+        "This organization couldn't be set up for API keys. Please try again or contact support.",
+      membership_pending:
+        "Your access to this organization is still syncing — please try again shortly.",
+      membership_failed:
+        "Your access to this organization couldn't be synced. Please try again or contact support.",
     };
     throw new OrganizationNotReadyError(
-      readiness.reason ? messages[readiness.reason] : "This organization isn't ready to create API keys yet.",
+      readiness.reason
+        ? messages[readiness.reason]
+        : "This organization isn't ready to create API keys yet.",
       readiness.reason,
     );
   }
@@ -323,11 +331,7 @@ apiKeys.post("/", async (c) =>
         throw new WebRouteError(error.status, code, error.message);
       }
       if (error instanceof OrganizationNotReadyError) {
-        throw new WebRouteError(
-          409,
-          ErrorCode.VALIDATION_ERROR,
-          error.message,
-        );
+        throw new WebRouteError(409, ErrorCode.VALIDATION_ERROR, error.message);
       }
       throw error;
     }
@@ -445,6 +449,99 @@ apiKeys.post("/", async (c) =>
   }),
 );
 
+// Session-only, admin-authorized organization inventory; returns no key secrets.
+apiKeys.get("/organization/:organizationId", async (c) =>
+  handleRoute(c, async () => {
+    const session = await resolveSessionContext(c);
+    const actor = await resolveUserByExternalId(session.userId);
+    if (!actor)
+      throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, "Unknown user");
+    const organizationId = c.req.param("organizationId");
+    const { convexUrl, serviceToken } = getInternalBackendConfig();
+    const params = new URLSearchParams({
+      organizationId,
+      actorUserId: actor._id,
+    });
+    const response = await fetch(
+      `${convexUrl}/internal/v1/organization-api-keys?${params}`,
+      {
+        headers: { "x-inspector-service-token": serviceToken },
+      },
+    );
+    if (response.status === 403)
+      throw new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Only organization owners and admins can view API keys.",
+      );
+    if (!response.ok)
+      throw new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "Organization API keys are unavailable. Please try again later.",
+      );
+    const { items: bindings } = (await response.json()) as {
+      items: Array<{
+        workosApiKeyId: string;
+        owner: {
+          id: string;
+          name: string;
+          email: string;
+          externalId: string | null;
+        };
+      }>;
+    };
+    const items = [];
+    // Fetch once per owner, then include only keys explicitly bound to this org.
+    for (const externalId of new Set(
+      bindings
+        .map((b) => b.owner.externalId)
+        .filter((id): id is string => !!id),
+    )) {
+      let after: string | null = null;
+      for (let page = 0; page < 10; page++) {
+        const query = new URLSearchParams({ limit: "100" });
+        if (after) query.set("after", after);
+        const { status, body } = await callWorkOS(
+          "GET",
+          `/user_management/users/${encodeURIComponent(externalId)}/api_keys?${query}`,
+        );
+        if (status < 200 || status >= 300)
+          mapWorkOSError(status, body, "Failed to list organization API keys");
+        for (const key of body?.data ?? []) {
+          const binding = bindings.find(
+            (b) =>
+              b.workosApiKeyId === key.id && b.owner.externalId === externalId,
+          );
+          if (binding)
+            items.push({
+              id: key.id,
+              name: key.name,
+              obfuscated_value: key.obfuscated_value,
+              created_at: key.created_at,
+              last_used_at: key.last_used_at,
+              organizationId,
+              owner: {
+                id: binding.owner.id,
+                name: binding.owner.name,
+                email: binding.owner.email,
+              },
+            });
+        }
+        after = body?.list_metadata?.after ?? null;
+        if (!after) break;
+        if (page === 9)
+          throw new WebRouteError(
+            502,
+            ErrorCode.SERVER_UNREACHABLE,
+            "Could not load the complete organization key list.",
+          );
+      }
+    }
+    return { items };
+  }),
+);
+
 apiKeys.get("/", async (c) =>
   handleRoute(c, async () => {
     const session = await resolveSessionContext(c);
@@ -490,7 +587,21 @@ apiKeys.get("/", async (c) =>
         break;
       }
     }
-    return { items };
+    return {
+      items: await Promise.all(
+        items.map(async (key) => {
+          const binding = await lookupWorkosKeyBinding(key.id);
+          return {
+            id: key.id,
+            name: key.name,
+            obfuscated_value: key.obfuscated_value,
+            created_at: key.created_at,
+            last_used_at: key.last_used_at,
+            organizationId: binding?.mcpjamOrganizationId ?? null,
+          };
+        }),
+      ),
+    };
   }),
 );
 

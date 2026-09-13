@@ -56,10 +56,9 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
 }));
 
 vi.mock("@/lib/billing-gates", async () => {
-  const actual =
-    await vi.importActual<typeof import("@/lib/billing-gates")>(
-      "@/lib/billing-gates",
-    );
+  const actual = await vi.importActual<typeof import("@/lib/billing-gates")>(
+    "@/lib/billing-gates",
+  );
 
   return {
     ...actual,
@@ -75,8 +74,7 @@ vi.mock("@/hooks/useProjects", async () => {
 
   return {
     ...actual,
-    useProjectMembers: (...args: unknown[]) =>
-      mockUseProjectMembers(...args),
+    useProjectMembers: (...args: unknown[]) => mockUseProjectMembers(...args),
     useProjectMutations: () => ({
       createProject: mockCreateProject,
       inviteProjectMember: mockInviteProjectMember,
@@ -170,6 +168,24 @@ function renderDialog(
 }
 
 describe("ShareProjectDialog", () => {
+  it("renders a searchable member page without a dialog in embedded mode", () => {
+    renderDialog({ embedded: true });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Members & Sharing" }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search members" }), {
+      target: { value: "nobody-matches" },
+    });
+    expect(screen.getByText("No active members found.")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "Filter members by role" }),
+    );
+    fireEvent.click(screen.getByRole("option", { name: "editor" }));
+    expect(
+      screen.getByRole("combobox", { name: "Filter members by role" }),
+    ).toHaveTextContent("editor");
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     window.location.hash = "";
@@ -705,9 +721,7 @@ describe("ShareProjectDialog", () => {
       />,
     );
 
-    expect(
-      screen.queryByTestId("member-limit-upsell"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("member-limit-upsell")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Invite" })).toBeEnabled();
   });
 

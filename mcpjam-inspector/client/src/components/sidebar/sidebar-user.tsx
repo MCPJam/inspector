@@ -272,7 +272,7 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
                 ) : null}
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => appNavigate("/support")}
+                onClick={() => appNavigate("/settings/support")}
                 className="cursor-pointer"
               >
                 <MessageCircleQuestion className="size-4" />

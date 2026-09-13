@@ -300,35 +300,106 @@ describe("ProjectSecretsSection — delete confirmation", () => {
   });
 });
 
-describe("ProjectSecretsSection — create dialog", () => {
-  const openCreate = () =>
-    fireEvent.click(screen.getByRole("button", { name: /new secret/i }));
-
-  it("clears a cancelled draft, including the value", () => {
-    renderSection();
-
-    openCreate();
-    fireEvent.change(screen.getByLabelText(/^name$/i), {
-      target: { value: "MY_KEY" },
+describe("ProjectSecretsSection — inline create form", () => {
+  const fill = () => {
+    fireEvent.change(screen.getByLabelText(/^key$/i), {
+      target: { value: "my_key" },
     });
     fireEvent.change(screen.getByLabelText(/^value$/i), {
-      target: { value: "sk_live_typed" },
+      target: { value: "secret_value" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  };
+  const expand = (name: RegExp) =>
+    fireEvent.click(screen.getByRole("button", { name }));
 
-    openCreate();
-    expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).value).toBe(
-      "",
-    );
-    expect((screen.getByLabelText(/^value$/i) as HTMLInputElement).value).toBe(
-      "",
+  it("shows key and value in the empty state and saves without opening config", async () => {
+    mocks.secrets = [];
+    renderSection();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^hosts$/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save secret" })).toBeDisabled();
+    fill();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
+    });
+    expect(mocks.create).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      name: "MY_KEY",
+      value: "secret_value",
+      delivery: "materialized",
+      sharing: "project",
+    });
+    expect(screen.getByLabelText(/^value$/i)).toHaveValue("");
+  });
+
+  it("reveals all advanced options together and preserves them when collapsed", () => {
+    renderSection();
+    const toggle = screen.getByRole("button", { name: "Advanced settings" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText(/description/i)).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("radio", { name: /only me/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: /add to API requests/i }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/description/i), {
+      target: { value: "Test credential" },
+    });
+    fireEvent.click(toggle);
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.getByLabelText(/description/i)).toHaveValue(
+      "Test credential",
     );
   });
 
-  it("leaves the reopened dialog usable after a stale create settles", async () => {
-    // The create-side twin of the rotate race: Escape closes mid-write, the
-    // abandoned request skips its own `setBusy(false)`, and without clearing
-    // `busy` on close the dialog reopens permanently disabled.
+  it("expands proxy config, validates it, and preserves it when collapsed", async () => {
+    renderSection();
+    fill();
+    expand(/^advanced settings$/i);
+    fireEvent.click(
+      screen.getByRole("radio", { name: /add to API requests/i }),
+    );
+    expect(screen.getByRole("button", { name: "Save secret" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/^hosts$/i), {
+      target: { value: "api.example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/^header value$/i), {
+      target: { value: "invalid" },
+    });
+    expect(screen.getByRole("button", { name: "Save secret" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/^header value$/i), {
+      target: { value: "Bearer {}" },
+    });
+    expand(/^advanced settings$/i);
+    expect(screen.queryByLabelText(/^hosts$/i)).not.toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
+    });
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        delivery: "brokered",
+        brokerHosts: ["api.example.com"],
+        brokerHeader: "Authorization",
+        brokerTemplate: "Bearer {}",
+      }),
+    );
+  });
+
+  it("keeps project access unavailable to non-admins", () => {
+    render(
+      <ProjectSecretsSection projectId="proj-1" canManageShared={false} />,
+    );
+    expand(/^advanced settings$/i);
+    expect(
+      screen.getByRole("radio", { name: /everyone in this project/i }),
+    ).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /only me/i })).toBeChecked();
+  });
+
+  it("clears a draft and ignores a late response after clearing", async () => {
     let resolve!: (value: unknown) => void;
     mocks.create.mockReturnValueOnce(
       new Promise((r) => {
@@ -336,82 +407,40 @@ describe("ProjectSecretsSection — create dialog", () => {
       }),
     );
     renderSection();
-
-    const fillDraft = (name: string, value: string) => {
-      fireEvent.change(screen.getByLabelText(/^name$/i), {
-        target: { value: name },
-      });
-      fireEvent.change(screen.getByLabelText(/^value$/i), {
-        target: { value },
-      });
-      // The default delivery is brokered, which needs a host before Save is
-      // reachable at all — otherwise this would assert on `brokerValid`, not
-      // on `busy`.
-      fireEvent.change(screen.getByLabelText(/^hosts$/i), {
-        target: { value: "api.stripe.com" },
-      });
-    };
-
-    openCreate();
-    fillDraft("MY_KEY", "sk_live_typed");
+    fill();
     fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
-    fireEvent.keyDown(document.activeElement ?? document.body, {
-      key: "Escape",
-      code: "Escape",
-    });
-
-    openCreate();
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(screen.getByLabelText(/^value$/i)).toHaveValue("");
+    fill();
     await act(async () => {
       resolve({});
-      await Promise.resolve();
     });
-
-    // Cancel is gated on `busy` ALONE, so it isolates the bug exactly.
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
-    fillDraft("OTHER_KEY", "sk_live_other");
+    expect(screen.getByLabelText(/^value$/i)).toHaveValue("secret_value");
     expect(screen.getByRole("button", { name: "Save secret" })).toBeEnabled();
   });
 
-  it("warns that a short MATERIALIZED value will not be redacted", () => {
-    // The scrubber skips values under 8 characters on purpose — replacing a
-    // 4-character string would rewrite unrelated transcript text. That trade is
-    // right and invisible, so the form says it where the value is typed rather
-    // than leaving it to be found later in a saved conversation.
+  it("keeps short-value warnings visible with config collapsed", () => {
     renderSection();
-    openCreate();
-
-    fireEvent.click(screen.getByRole("radio", { name: /materialized/i }));
     fireEvent.change(screen.getByLabelText(/^value$/i), {
       target: { value: "short" },
     });
     expect(screen.getByText(/not be redacted/i)).toBeInTheDocument();
-
-    // Gone once the value is long enough to be registered.
-    fireEvent.change(screen.getByLabelText(/^value$/i), {
-      target: { value: "sk_live_long_enough" },
-    });
+    expand(/^advanced settings$/i);
+    fireEvent.click(
+      screen.getByRole("radio", { name: /add to API requests/i }),
+    );
+    expand(/^advanced settings$/i);
     expect(screen.queryByText(/not be redacted/i)).not.toBeInTheDocument();
   });
 
-  it("does not warn for a short BROKERED value, which never enters the box", () => {
+  it("preserves input when saving fails", async () => {
+    mocks.create.mockRejectedValueOnce(new Error("Could not save"));
     renderSection();
-    openCreate();
-
-    fireEvent.change(screen.getByLabelText(/^value$/i), {
-      target: { value: "short" },
+    fill();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
     });
-    expect(screen.queryByText(/not be redacted/i)).not.toBeInTheDocument();
-  });
-
-  it("submits nothing when the draft is cancelled", () => {
-    renderSection();
-
-    openCreate();
-    fireEvent.change(screen.getByLabelText(/^value$/i), {
-      target: { value: "sk_live_typed" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-    expect(mocks.create).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not save");
+    expect(screen.getByLabelText(/^value$/i)).toHaveValue("secret_value");
   });
 });

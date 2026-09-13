@@ -1,3 +1,6 @@
+import { useCurrentPathname } from "./lib/app-navigation";
+import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
+import { SettingsNavigation } from "./components/settings/SettingsNavigation";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
@@ -534,11 +537,12 @@ function AppChromeSidebar({ hidden, ...props }: AppChromeSidebarProps) {
 
 type AppChromeHeaderProps = ComponentProps<typeof Header> & {
   hidden: boolean;
+  settings?: boolean;
 };
 
-function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
+function AppChromeHeader({ hidden, settings, ...props }: AppChromeHeaderProps) {
   const { isMobile } = useSidebar();
-  if (hidden && !isMobile) {
+  if (settings || (hidden && !isMobile)) {
     return null;
   }
 
@@ -566,6 +570,7 @@ import { BenchResultsPage } from "@/components/score/BenchResultsPage";
  * uses. When you add a route there, add it here.
  */
 function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
+  const pathname = useCurrentPathname();
   switch (activeTab) {
     // Legacy aliases, mirroring router.tsx's ChatAliasRoute /
     // ServersRedirectRoute. A navigate-away effect also fires for these; the
@@ -620,6 +625,10 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
     case "support":
       return <SupportRoute />;
     case "settings":
+      if (pathname === "/settings/api-keys") return <ApiKeysSettingsRoute />;
+      if (pathname === "/settings/integrations/github/callback") return <GithubInstallCallbackSettingsRoute />;
+      if (pathname === "/settings/integrations/github") return <GithubChecksSettingsRoute />;
+      if (pathname === "/settings/integrations") return <IntegrationsSettingsRoute />;
       return <SettingsRoute />;
     case "profile":
       return <ProfileRoute />;
@@ -2351,6 +2360,8 @@ export function ProjectSettingsRoute() {
 
 export function SettingsRoute() {
   const { activeOrganizationId, handleNavigate } = useAppRouteContext();
+  const pathname = useCurrentPathname();
+  if (pathname === "/settings") return <ProfileTab />;
   return (
     <SettingsTab
       activeOrganizationId={activeOrganizationId}
@@ -2370,7 +2381,11 @@ export function IntegrationsSettingsRoute() {
   // GitHub availability, and `IntegrationsRoute` already wraps that card in its
   // own boundary so a GitHub-side failure hides one card instead of the page.
   // Slack has to stay reachable regardless.
-  return <IntegrationsRoute activeOrganizationId={activeOrganizationId} />;
+  return activeOrganizationId ? (
+    <OrganizationsRoute organizationId={activeOrganizationId}>
+      <IntegrationsRoute activeOrganizationId={activeOrganizationId} />
+    </OrganizationsRoute>
+  ) : <IntegrationsRoute />;
 }
 
 export function GithubChecksSettingsRoute() {
@@ -2390,7 +2405,9 @@ export function GithubChecksSettingsRoute() {
       }
       fallback={<Navigate to="/settings" replace />}
     >
-      <GithubChecksRoute activeOrganizationId={activeOrganizationId} />
+      <OrganizationsRoute organizationId={activeOrganizationId}>
+        <GithubChecksRoute activeOrganizationId={activeOrganizationId} />
+      </OrganizationsRoute>
     </ErrorBoundary>
   );
 }
@@ -2434,7 +2451,7 @@ export function ProfileRoute() {
   return <ProfileTab />;
 }
 
-export function OrganizationsRoute() {
+export function OrganizationsRoute({ children, organizationId }: { children?: React.ReactNode; organizationId?: string } = {}) {
   const {
     routeOrganizationId,
     routeOrganizationSection,
@@ -2446,7 +2463,12 @@ export function OrganizationsRoute() {
 
   return (
     <OrganizationsTab
-      organizationId={routeOrganizationId}
+      organizationId={organizationId ?? routeOrganizationId}
+      children={children ?? (
+        routeOrganizationSection === "integrations"
+          ? <IntegrationsRoute activeOrganizationId={routeOrganizationId} />
+          : undefined
+      )}
       section={routeOrganizationSection ?? "overview"}
       checkoutIntent={checkoutIntentForBilling}
       onCheckoutIntentConsumed={consumeCheckoutIntent}
@@ -5128,14 +5150,20 @@ export default function App() {
   const appChromeHeaderHidden =
     playgroundOnboarding || (activeTab === "home" && !!workOsUser);
 
+  const settingsProject = activeProject?.organizationId === activeOrganizationId
+    ? activeProject
+    : Object.values(projects).find(project => project.organizationId === activeOrganizationId);
+  const settingsShellActive = [
+    "settings", "profile", "organizations", "project-settings", "billing",
+  ].includes(activeTab);
   const appContent = (
-    <SidebarProvider defaultOpen={true}>
+    <SettingsDraftProvider enabled={settingsShellActive}><SidebarProvider defaultOpen={true}>
       {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
           collapse the sidebar to its icon rail; navigating back out of them
           expands it again. */}
       <SidebarAutoCollapse activeTab={activeTab} />
       <AppChromeSidebar
-        hidden={playgroundOnboarding}
+        hidden={playgroundOnboarding || settingsShellActive}
         onNavigate={handleNavigate}
         activeTab={activeTab}
         projects={projects}
@@ -5156,6 +5184,26 @@ export default function App() {
         createProjectDisabledReason={createProjectDisabledReason}
         onBeforeSignOut={disconnectRuntimeServersForAuthExit}
       />
+      <SettingsNavigation
+        enabled={settingsShellActive}
+        context={{
+          organizationId: activeOrganizationId,
+          projectId: settingsProject?.sharedProjectId ?? settingsProject?.id,
+          authenticated: isAuthenticated,
+          remoteProject: !!settingsProject?.sharedProjectId,
+          personalOrganization: sortedOrganizations.find(
+            org => org._id === activeOrganizationId,
+          )?.isPersonal,
+        }}
+        organizations={sortedOrganizations}
+        projects={Object.values(projects).map(project => ({
+          ...project,
+          id: project.sharedProjectId ?? project.id,
+          remoteProject: !!project.sharedProjectId,
+        }))}
+        defaultHub={defaultHubRoute}
+        onSwitchLocalProject={async id => { await handleSwitchProject(id); }}
+      />
       {/* The inset is the linen shell: the sidebar and top bar read as one
           continuous outer chrome and the off-white panel below is the working
           surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
@@ -5166,11 +5214,12 @@ export default function App() {
           // also hid guests' only Sign in / Create account affordance there
           // (PUR-35). Keep Home clean for signed-in users; show the header
           // for guests so they still get sign-in/sign-up.
-          hidden={appChromeHeaderHidden}
+          settings={settingsShellActive}
+          hidden={appChromeHeaderHidden || settingsShellActive}
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />
-        <AppChromePanel headerHidden={appChromeHeaderHidden}>
+        <AppChromePanel settings={settingsShellActive} headerHidden={appChromeHeaderHidden || settingsShellActive}>
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
               <Alert>
@@ -5192,11 +5241,14 @@ export default function App() {
           </AppRouteReactContext.Provider>
         </AppChromePanel>
       </SidebarInset>
+      <div className={settingsShellActive ? "hidden" : "contents"}>
       <AgentSidePanelMount
+        hidden={settingsShellActive}
         projectId={activeProjectId ?? null}
         organizationId={activeOrganizationId ?? null}
         activeTab={activeTab}
       />
+      </div>
       </div>
       <Dialog
         open={showTrialDecisionModal}
@@ -5251,7 +5303,7 @@ export default function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </SidebarProvider>
+    </SidebarProvider></SettingsDraftProvider>
   );
 
   // Vanity-domain caniuse.dev pages: render the matched route full-bleed

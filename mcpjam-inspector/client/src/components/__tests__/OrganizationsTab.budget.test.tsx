@@ -1,18 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-/**
- * The Budget entry in the org settings strip.
- *
- * Unlike Slack, Discord and Observability the budget is behind no flag, so
- * what gates it is the ORGANIZATION: a personal (guest-owned) org has no
- * admins to configure anything, and must neither show the tab nor render the
- * section for a hand-typed URL.
- *
- * The SECTION additionally re-checks the server's answer — the strip is an
- * advertising decision and access is the server's — which is covered in
- * `organization/__tests__/OrganizationSpendBudgetSection.test.tsx`.
- */
+/** Budget controls live in Billing, including for legacy Budget links. */
 
 const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
@@ -130,6 +119,12 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
   isPaidPlan: (plan: string) => plan !== "free",
 }));
 
+vi.mock("../organization/OrganizationBillingSection", () => ({
+  OrganizationBillingSection: ({ spendBudgetPanel }: any) => (
+    <div data-testid="billing-section-stub">{spendBudgetPanel}</div>
+  ),
+}));
+
 import { OrganizationsTab } from "../OrganizationsTab";
 
 const organization = {
@@ -210,15 +205,21 @@ beforeEach(() => {
 });
 
 describe("OrganizationsTab Budget section", () => {
-  it("shows the Budget tab for an ordinary organization", () => {
+  it("consolidates the Budget tab into Billing", () => {
     render(<OrganizationsTab organizationId="org-1" />);
-    expect(screen.getByRole("button", { name: "Budget" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Budget" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Organization settings sections" })).not.toBeInTheDocument();
   });
 
-  it("renders the section for the budget route", () => {
-    render(<OrganizationsTab organizationId="org-1" section="budget" />);
-    expect(screen.getByTestId("budget-section-stub")).toBeInTheDocument();
-  });
+  it.each(["billing", "budget"] as const)(
+    "renders the budget inside %s",
+    (section) => {
+      render(<OrganizationsTab organizationId="org-1" section={section} />);
+      expect(screen.getByTestId("billing-section-stub")).toContainElement(
+        screen.getByTestId("budget-section-stub"),
+      );
+    },
+  );
 
   it("hides the Budget tab for a personal organization", () => {
     // A guest's own org exists to give their projects a billing subject. It
@@ -231,13 +232,15 @@ describe("OrganizationsTab Budget section", () => {
     expect(screen.queryByRole("button", { name: "Budget" })).toBeNull();
   });
 
-  it("falls back to the overview when a personal org's URL says budget", () => {
-    mockUseOrganizationQueries.mockReturnValue({
-      sortedOrganizations: [{ ...organization, isPersonal: true }],
-      isLoading: false,
-    });
-    render(<OrganizationsTab organizationId="org-1" section="budget" />);
-    expect(screen.queryByTestId("budget-section-stub")).toBeNull();
-    expect(screen.getByText("Members")).toBeInTheDocument();
-  });
+  it.each(["billing", "budget"] as const)(
+    "hides the budget for a personal org on %s",
+    (section) => {
+      mockUseOrganizationQueries.mockReturnValue({
+        sortedOrganizations: [{ ...organization, isPersonal: true }],
+        isLoading: false,
+      });
+      render(<OrganizationsTab organizationId="org-1" section={section} />);
+      expect(screen.queryByTestId("budget-section-stub")).toBeNull();
+    },
+  );
 });

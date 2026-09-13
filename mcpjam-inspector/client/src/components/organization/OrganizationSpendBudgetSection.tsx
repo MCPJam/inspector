@@ -1,3 +1,4 @@
+import { useSettingsDraft } from "../settings/SettingsDraftProvider";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -20,8 +21,7 @@ import {
  * billing window, with alert thresholds.
  *
  * SELF-ENFORCES AVAILABILITY, like the Slack, Discord and Observability
- * sections do: the nav strip hides the entry for a personal org, but someone
- * who types `/organizations/:id/budget` bypasses the strip entirely. The
+ * sections do: Billing hides the card for a personal org. The
  * check is the SERVER's answer (`supported`), not a client flag.
  *
  * MUST BE RENDERED INSIDE AN `ErrorBoundary`. `useOrgSpendBudget` re-throws
@@ -90,6 +90,10 @@ export function OrganizationSpendBudgetSection({
     );
     setAlertInput(budget.alertPercents.join(", "));
   }, [budget?.capCredits, budget?.alertPercents.join(",")]);
+
+  const storedCap = budget?.capCredits == null ? "" : creditsToUsdString(budget.capCredits);
+  const storedAlerts = budget?.alertPercents.join(", ") ?? "";
+  useSettingsDraft(!!budget && (capInput !== storedCap || alertInput !== storedAlerts), () => { setCapInput(storedCap); setAlertInput(storedAlerts); setFormError(null); }, isSaving);
 
   const meter = useMemo(() => {
     if (!budget || budget.capCredits === null) return null;

@@ -1,3 +1,4 @@
+import { useSettingsDraft } from "./SettingsDraftProvider";
 import { GithubForkCredentialsToggle } from "./github-fork-credentials-toggle";
 import { GithubPrServerOAuthControl } from "./github-pr-server-oauth-control";
 import {
@@ -363,6 +364,8 @@ export function GithubChecksRoute({
   const [pickerPolicy, setPickerPolicy] = useState<
     GithubCheckOutagePolicy | ""
   >("");
+
+  useSettingsDraft(!!pickerRepo || !!pickerSuite || !!pickerPolicy, () => { setPickerRepo(""); setPickerSuite(""); setPickerPolicy(""); }, connecting || bindingBusy || pendingToggles.size > 0 || pendingPolicies.size > 0 || pendingConformance.size > 0 || pendingFeedback.size > 0 || pendingOAuth.size > 0);
 
   // The organization a completion belongs to. `activeOrganizationId` is a prop
   // and this component stays mounted across a switch, so an in-flight connect
@@ -834,10 +837,7 @@ export function GithubChecksRoute({
   const bindingRows: GithubInstallationBinding[] = bindings ?? [];
 
   return (
-    <SettingsPageShell
-      active="integrations"
-      activeOrganizationId={activeOrganizationId}
-    >
+    <SettingsPageShell>
       {/* This page sits one level below the Integrations directory, and the
             nav's Integrations tab reads as active while you are on it — so
             without this there is no visible way back up. */}

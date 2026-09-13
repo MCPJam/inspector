@@ -193,9 +193,9 @@ describe("OrganizationsTab Slack section", () => {
     expect(screen.queryByRole("button", { name: "Slack" })).toBeNull();
   });
 
-  it("shows the Slack tab when the flag is on", () => {
+  it("keeps the old Slack strip removed when the flag is on", () => {
     render(<OrganizationsTab organizationId="org-1" />);
-    expect(screen.getByRole("button", { name: "Slack" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Slack" })).not.toBeInTheDocument();
   });
 
   it("renders the section for the slack route", () => {
@@ -209,6 +209,6 @@ describe("OrganizationsTab Slack section", () => {
     slackFlagMock.mockReturnValue(false);
     render(<OrganizationsTab organizationId="org-1" section="slack" />);
     expect(screen.queryByTestId("slack-section-stub")).toBeNull();
-    expect(screen.getByText("Members")).toBeInTheDocument();
+    expect(screen.getByText("Danger Zone")).toBeInTheDocument();
   });
 });

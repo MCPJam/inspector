@@ -186,14 +186,10 @@ describe("CreditTopupDialog", () => {
     ).toHaveAttribute("aria-checked", "true");
     expect(
       screen.getByText(
-        /Credits cover model usage in chat, playground, and agents/
+        /Credits cover usage across our product/
       )
     ).toBeInTheDocument();
-    // Names the boundary explicitly so nobody buys credits expecting a higher
-    // eval-iteration cap.
-    expect(
-      screen.getByText(/doesn't change your plan limits/)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/user testing, and CI\/CD/)).toBeInTheDocument();
     // The processing-fee disclaimer was removed so users can't back-compute
     // the take rate.
     expect(

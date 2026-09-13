@@ -45,6 +45,15 @@ describe("AppChromePanel", () => {
     expect(cls).toContain("shadow-chrome-panel");
   });
 
+  it("keeps the same mounted content when switching to full-screen settings on mobile", () => {
+    isMobile.current = true;
+    const { rerender } = render(<AppChromePanel headerHidden={false}><input aria-label="Running state" defaultValue="running" /></AppChromePanel>);
+    const child = screen.getByLabelText("Running state");
+    rerender(<AppChromePanel settings headerHidden><input aria-label="Running state" defaultValue="running" /></AppChromePanel>);
+    expect(screen.getByLabelText("Running state")).toBe(child);
+    expect(screen.getByTestId("app-chrome-panel").className).not.toContain("rounded-t-2xl");
+  });
+
   it("always paints the working surface and renders its children", () => {
     isMobile.current = false;
     render(

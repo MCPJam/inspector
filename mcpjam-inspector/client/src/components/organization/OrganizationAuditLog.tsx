@@ -106,7 +106,9 @@ function downloadCsv(events: AuditEvent[], organizationName: string) {
   const link = document.createElement("a");
   const datePart = new Date().toISOString().slice(0, 10);
   link.href = objectUrl;
-  link.download = `organization-audit-${toDownloadSlug(organizationName)}-${datePart}.csv`;
+  link.download = `organization-audit-${toDownloadSlug(
+    organizationName,
+  )}-${datePart}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -143,21 +145,15 @@ export function OrganizationAuditLog({
     errorType === "missing"
       ? "Audit export is unavailable because the backend audit function is not deployed yet."
       : errorType === "permission"
-        ? "You don't have permission to access organization audit events."
-        : (error?.message ?? null);
+      ? "You don't have permission to access organization audit events."
+      : error?.message ?? null;
 
   const hasEvents = events.length > 0;
   const showHint = !hasEvents && !isLoading && !errorMessage;
 
   return (
     <section className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-semibold">Audit Log</h3>
-          <p className="text-sm text-muted-foreground">
-            Export organization activity as CSV.
-          </p>
-        </div>
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <div className="flex items-center gap-2">
           <Button
             variant="outline"

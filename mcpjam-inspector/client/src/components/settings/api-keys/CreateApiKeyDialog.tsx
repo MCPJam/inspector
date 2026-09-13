@@ -1,3 +1,4 @@
+import { useSettingsDraft } from "../SettingsDraftProvider";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -57,6 +58,7 @@ export function CreateApiKeyDialog({
     });
   }, [open, organizations]);
 
+  useSettingsDraft(open && !!name, () => { setName(""); onOpenChange(false); }, open && isCreating);
   const trimmed = name.trim();
   const hasOrgs = organizations.length > 0;
   const canCreate =

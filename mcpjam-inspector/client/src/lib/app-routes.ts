@@ -61,6 +61,75 @@ export type AppRouteEntry =
     };
 
 export const APP_ROUTES: readonly AppRouteEntry[] = [
+  {
+    path: "settings/appearance",
+    kind: "screen",
+    surfaceId: "settings",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/integrations",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "settings/about",
+    kind: "screen",
+    surfaceId: "settings",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/members",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/sharing",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  { path: "organizations/:orgId/billing/usage", kind: "screen", surfaceId: "organizations", scope: "global" },
+  {
+    path: "organizations/:orgId/models/usage",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/api-keys",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/plans",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  { path: "organizations/:orgId/data-management", kind: "screen", surfaceId: "organizations", scope: "global" },
+  {
+    path: "organizations/:orgId/audit-log",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "project-settings/members",
+    kind: "screen",
+    surfaceId: "project-settings",
+    scope: "project",
+  },
+  {
+    path: "project-settings/secrets",
+    kind: "screen",
+    surfaceId: "project-settings",
+    scope: "project",
+  },
+
   { path: "/", kind: "screen", surfaceId: "home", scope: "project" },
   { path: "home", kind: "screen", surfaceId: "home", scope: "project" },
   { path: "servers", kind: "screen", surfaceId: "servers", scope: "project" },
@@ -278,7 +347,8 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "playground",
     scope: "project",
   },
-  { path: "support", kind: "screen", surfaceId: "support", scope: "global" },
+  { path: "settings/support", kind: "screen", surfaceId: "support", scope: "global" },
+  { path: "support", kind: "redirect", note: "Support moved to Settings", scope: "global" },
   { path: "settings", kind: "screen", surfaceId: "settings", scope: "global" },
   {
     path: "settings/api-keys",

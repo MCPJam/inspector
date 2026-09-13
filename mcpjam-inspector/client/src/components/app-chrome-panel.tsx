@@ -19,13 +19,15 @@ import { cn } from "@/lib/utils";
 
 export function AppChromePanel({
   headerHidden,
+  settings = false,
   children,
 }: {
   headerHidden: boolean;
+  settings?: boolean;
   children: ReactNode;
 }) {
   const { isMobile } = useSidebar();
-  const headerVisible = !headerHidden || isMobile;
+  const headerVisible = !settings && (!headerHidden || isMobile);
 
   return (
     <div

@@ -458,7 +458,7 @@ describe("SidebarContextSwitcher", () => {
     expect(screen.queryByTestId("org-switch-list")).not.toBeInTheDocument();
   });
 
-  it("has no organization gears — the org list only switches", () => {
+  it("shows settings on each organization row", () => {
     render(
       <SidebarContextSwitcher
         activeProjectId="p1"
@@ -474,10 +474,10 @@ describe("SidebarContextSwitcher", () => {
     openOrgList();
     expect(
       screen.queryByRole("button", { name: "Open Acme settings" })
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Open Nimbus settings" })
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
   });
 
   // A `seatPending` org is a paid-seat invite whose membership hasn't linked
@@ -915,10 +915,7 @@ describe("SidebarContextSwitcher", () => {
     ).toEqual(["org_a"]);
   });
 
-  it("confirms before deleting a project from the switcher", async () => {
-    // Deleting takes every server in the project. It used to happen on one
-    // click of a button that only appears on hover.
-    const onDeleteProject = vi.fn();
+  it("keeps project settings but omits deletion from the switcher", () => {
     render(
       <SidebarContextSwitcher
         activeProjectId="p1"
@@ -926,47 +923,13 @@ describe("SidebarContextSwitcher", () => {
         projects={projects}
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "")}
-        onDeleteProject={onDeleteProject}
+        onDeleteProject={vi.fn()}
+        onNavigateToSettings={vi.fn()}
       />
     );
     openMainDropdown();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Delete project Sandbox" })
-    );
-
-    expect(onDeleteProject).not.toHaveBeenCalled();
-    const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent("Delete project?");
-    expect(dialog).toHaveTextContent("Sandbox");
-
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
-    expect(onDeleteProject).toHaveBeenCalledWith("p2");
-  });
-
-  it("cancelling the delete confirmation leaves the project alone", async () => {
-    const onDeleteProject = vi.fn();
-    render(
-      <SidebarContextSwitcher
-        activeProjectId="p1"
-        activeOrganizationId="org_a"
-        projects={projects}
-        onSwitchProject={vi.fn()}
-        onCreateProject={vi.fn(async () => "")}
-        onDeleteProject={onDeleteProject}
-      />
-    );
-    openMainDropdown();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Delete project Sandbox" })
-    );
-
-    const dialog = await screen.findByRole("alertdialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-
-    await waitFor(() => {
-      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    });
-    expect(onDeleteProject).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /Delete project/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Sandbox settings" })).toBeInTheDocument();
   });
 
   it("disables the Create project row when isCreateDisabled is true", () => {
@@ -1006,29 +969,6 @@ describe("SidebarContextSwitcher", () => {
     expect(
       container.querySelectorAll("[data-slot='skeleton']").length
     ).toBeGreaterThan(0);
-  });
-
-  it("computes delete permissions per project row", () => {
-    render(
-      <SidebarContextSwitcher
-        activeProjectId="p1"
-        activeOrganizationId="org_a"
-        projects={{
-          ...projects,
-          p2: {
-            ...projects.p2,
-            canDeleteProject: false,
-          },
-        }}
-        onSwitchProject={vi.fn()}
-        onCreateProject={vi.fn(async () => "")}
-        onDeleteProject={vi.fn()}
-      />
-    );
-    openMainDropdown();
-    expect(
-      screen.getByRole("button", { name: "Delete project Sandbox" })
-    ).toBeDisabled();
   });
 
   it("keeps the trigger wrapped with learn more content when onLearnMoreExpand is provided", () => {

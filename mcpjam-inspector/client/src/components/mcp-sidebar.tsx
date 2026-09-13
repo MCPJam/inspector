@@ -52,7 +52,7 @@ import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { SidebarCredits } from "@/components/sidebar/sidebar-credits";
-import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
+import { InviteTeamMembersDialog } from "@/components/organization/InviteTeamMembersDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -385,7 +385,7 @@ export const navigationSections: NavSection[] = [
 const signedOutUtilityItems: NavItem[] = [
   {
     title: "Support",
-    url: "/support",
+    url: "/settings/support",
     icon: MessageCircleQuestionIcon,
   },
   {
@@ -499,7 +499,6 @@ export function MCPSidebar({
   activeOrganizationId,
   activeOrganizationName,
   onSwitchOrganization,
-  onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
@@ -560,19 +559,7 @@ export function MCPSidebar({
   const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
   const activeProject = projects[activeProjectId];
-  const inviteableProjects = useMemo(() => {
-    if (!activeProject?.organizationId) {
-      return projects;
-    }
-
-    return Object.fromEntries(
-      Object.entries(projects).filter(
-        ([, project]) =>
-          project.organizationId === activeProject.organizationId,
-      ),
-    );
-  }, [activeProject?.organizationId, projects]);
-  const canOpenInviteDialog = isAuthenticated && !!user && !!activeProject;
+  const canOpenInviteDialog = isAuthenticated && !!user && !!activeOrganizationId;
   // Guests get the CTA too (hosted only — a local/self-hosted install has no
   // WorkOS to sign up through). The click opens a sign-up nudge instead of the
   // share dialog, and the nudge's marker reopens it after the round trip.
@@ -857,6 +844,17 @@ export function MCPSidebar({
               ))}
             </div>
           ) : null}
+          {isAuthenticated && user && activeOrganizationId ? (
+            <SidebarCredits
+              organizationId={activeOrganizationId}
+              billingUiEnabled={billingUiEnabled}
+              onExplorePlans={() =>
+                appNavigate(
+                  buildOrganizationPath(activeOrganizationId, "billing"),
+                )
+              }
+            />
+          ) : null}
           {shouldShowInviteCta ? (
             <SidebarMenu>
               <SidebarMenuItem>
@@ -884,34 +882,15 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
-          {isAuthenticated && user && activeOrganizationId ? (
-            <SidebarCredits
-              organizationId={activeOrganizationId}
-              billingUiEnabled={billingUiEnabled}
-              onExplorePlans={() =>
-                appNavigate(
-                  buildOrganizationPath(activeOrganizationId, "billing"),
-                )
-              }
-            />
-          ) : null}
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
-      {canOpenInviteDialog && user && activeProject ? (
-        <ShareProjectDialog
-          isOpen={showInviteDialog}
-          onClose={() => setShowInviteDialog(false)}
-          projectName={activeProject.name}
-          projectServers={activeProject.servers}
-          sharedProjectId={activeProject.sharedProjectId}
-          organizationId={activeProject.organizationId}
-          visibility={activeProject.visibility}
+      {canOpenInviteDialog && showInviteDialog && activeOrganizationId ? (
+        <InviteTeamMembersDialog
+          key={activeOrganizationId}
+          organizationId={activeOrganizationId}
           organizationName={activeOrganizationName}
-          currentUser={user}
-          onProjectShared={onProjectShared}
-          availableProjects={inviteableProjects}
-          activeProjectId={activeProjectId}
+          onClose={() => setShowInviteDialog(false)}
         />
       ) : null}
       {showGuestInviteCta ? (

@@ -1,3 +1,10 @@
+import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
+import { useSettingsDraft } from "../settings/SettingsDraftProvider";
+import {
+  MemberSearch,
+  MemberListHeader,
+  matchesMember,
+} from "../settings/MemberSearch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
@@ -10,10 +17,25 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
-import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
-import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
 import { getInitials } from "@/lib/utils";
-import { ChevronDown, Clock, CreditCard, Globe, Lock } from "lucide-react";
+import {
+  ChevronDown,
+  Clock,
+  CreditCard,
+  Globe,
+  Lock,
+  UserPlus,
+} from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   DropdownMenu,
@@ -46,6 +68,7 @@ import type { User } from "@workos-inc/authkit-js";
 import { useAppNavigate } from "@/lib/app-navigation";
 
 interface ShareProjectDialogProps {
+  embedded?: boolean;
   isOpen: boolean;
   onClose: () => void;
   projectName: string;
@@ -55,10 +78,7 @@ interface ShareProjectDialogProps {
   visibility?: ProjectVisibility;
   organizationName?: string;
   currentUser: User;
-  onProjectShared?: (
-    sharedProjectId: string,
-    sourceProjectId?: string,
-  ) => void;
+  onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   availableProjects?: Record<string, Project>;
   activeProjectId?: string;
 }
@@ -127,6 +147,7 @@ function ProjectPickerBadge({
 }
 
 export function ShareProjectDialog({
+  embedded = false,
   isOpen,
   onClose,
   projectName,
@@ -141,18 +162,26 @@ export function ShareProjectDialog({
   activeProjectId,
 }: ShareProjectDialogProps) {
   const appNavigate = useAppNavigate();
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberRoleFilter, setMemberRoleFilter] = useState("all");
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
-  const [currentVisibility, setCurrentVisibility] =
-    useState<ProjectVisibility>(visibility ?? "public");
+  const [currentVisibility, setCurrentVisibility] = useState<ProjectVisibility>(
+    visibility ?? "public",
+  );
   const [isUpdatingVisibility, setIsUpdatingVisibility] = useState(false);
 
+  useSettingsDraft(
+    embedded && !!email.trim(),
+    () => setEmail(""),
+    embedded && (isInviting || isUpdatingVisibility),
+  );
   const { isAuthenticated } = useConvexAuth();
   const { profilePictureUrl } = useProfilePicture();
   const [inviteRole, setInviteRole] = useState<ProjectRole>("editor");
-  const [selectedProjectId, setSelectedProjectId] = useState<
-    string | null
-  >(activeProjectId ?? null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    activeProjectId ?? null,
+  );
   const previousIsOpenRef = useRef(isOpen);
   const sortedAvailableProjects = useMemo(
     () => (availableProjects ? sortProjects(availableProjects) : []),
@@ -184,13 +213,12 @@ export function ShareProjectDialog({
       : null;
   const selectedProject = useMemo(
     () => ({
-      localProjectId:
-        selectedProjectRecord?.id ?? activeProjectId ?? undefined,
+      localProjectId: selectedProjectRecord?.id ?? activeProjectId ?? undefined,
       name: selectedProjectRecord?.name ?? projectName,
       servers: selectedProjectRecord?.servers ?? projectServers,
       sharedProjectId: selectedProjectRecord
-        ? selectedProjectRecord.sharedProjectId ?? null
-        : sharedProjectId ?? null,
+        ? (selectedProjectRecord.sharedProjectId ?? null)
+        : (sharedProjectId ?? null),
       organizationId: selectedProjectRecord?.organizationId ?? organizationId,
       visibility: selectedProjectRecord?.visibility ?? visibility,
       icon: selectedProjectRecord?.icon,
@@ -276,12 +304,7 @@ export function ShareProjectDialog({
     } else {
       setSelectedProjectId(activeProjectId ?? null);
     }
-  }, [
-    activeProjectId,
-    availableProjects,
-    isOpen,
-    sortedAvailableProjects,
-  ]);
+  }, [activeProjectId, availableProjects, isOpen, sortedAvailableProjects]);
 
   useEffect(() => {
     setCurrentVisibility(selectedProject.visibility ?? "public");
@@ -361,10 +384,7 @@ export function ShareProjectDialog({
 
         if (currentProjectId) {
           if (selectedProject.localProjectId) {
-            onProjectShared?.(
-              currentProjectId,
-              selectedProject.localProjectId,
-            );
+            onProjectShared?.(currentProjectId, selectedProject.localProjectId);
           } else {
             onProjectShared?.(currentProjectId);
           }
@@ -455,6 +475,522 @@ export function ShareProjectDialog({
     "You";
   const displayInitials = getInitials(displayName);
 
+  const content = (
+    <div className="space-y-6">
+      {showProjectPicker && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Project</label>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Select project"
+                className="flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <ProjectPickerBadge
+                  icon={selectedProject.icon}
+                  projectName={selectedProject.name}
+                />
+                <span className="flex-1 text-left">{selectedProject.name}</span>
+                <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              className="w-[--radix-dropdown-menu-trigger-width]"
+            >
+              <DropdownMenuRadioGroup
+                value={resolvedSelectedProjectId ?? ""}
+                onValueChange={setSelectedProjectId}
+              >
+                {sortedAvailableProjects.map((project) => (
+                  <DropdownMenuRadioItem key={project.id} value={project.id}>
+                    <div className="flex items-center gap-2">
+                      <ProjectPickerBadge
+                        icon={project.icon}
+                        projectName={project.name}
+                      />
+                      <span>{project.name}</span>
+                    </div>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+
+      {selectedProject.sharedProjectId && !canManageMembers && (
+        <p className="text-sm text-muted-foreground">
+          Only project admins can invite people.
+        </p>
+      )}
+
+      {canManageMembers && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Invite with email</label>
+          <div className="flex gap-2">
+            <div className="flex flex-1 items-center rounded-md border border-input focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+              <Input
+                type="email"
+                placeholder="Add people, emails..."
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void handleInvite()}
+                aria-invalid={emailValidationError ? true : undefined}
+                className="flex-1 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+              />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 gap-1 mr-1 text-muted-foreground"
+                  >
+                    {projectRoleLabel(inviteRole)}
+                    <ChevronDown className="size-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuRadioGroup
+                    value={inviteRole}
+                    onValueChange={(v) => setInviteRole(v as ProjectRole)}
+                  >
+                    <DropdownMenuRadioItem value="editor">
+                      <div>
+                        <div className="font-medium">Editor</div>
+                        <p className="text-xs text-muted-foreground font-normal">
+                          Can edit servers
+                        </p>
+                      </div>
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="admin">
+                      <div>
+                        <div className="font-medium">Admin</div>
+                        <p className="text-xs text-muted-foreground font-normal">
+                          Can manage members and settings
+                        </p>
+                      </div>
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <Button
+              onClick={() => void handleInvite()}
+              disabled={
+                !normalizedEmail ||
+                !!emailValidationError ||
+                isInviting ||
+                memberInviteGate.isLoading ||
+                memberInviteGate.isDenied
+              }
+            >
+              <UserPlus aria-hidden="true" className="size-4" />
+              {isInviting ? "..." : "Invite"}
+            </Button>
+          </div>
+
+          {emailValidationError ? (
+            <p className="text-sm text-destructive">{emailValidationError}</p>
+          ) : null}
+
+          {memberInviteGate.isDenied && (
+            <Alert
+              className="border-primary/20 bg-primary/[0.04]"
+              data-testid="member-limit-upsell"
+            >
+              <CreditCard className="size-4 text-primary" />
+              <AlertTitle>Need more members?</AlertTitle>
+              <AlertDescription className="gap-2">
+                {memberInviteGate.denialMessage ? (
+                  <p>{memberInviteGate.denialMessage}</p>
+                ) : null}
+                {memberUpsellTeaser ? (
+                  <p className="text-foreground/80">{memberUpsellTeaser}</p>
+                ) : null}
+                {billingStatus?.canManageBilling ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mt-1"
+                    onClick={() => {
+                      if (selectedProject.organizationId) {
+                        appNavigate(
+                          `/organizations/${selectedProject.organizationId}/billing`,
+                        );
+                        onClose();
+                      }
+                    }}
+                  >
+                    {memberUpsellCtaLabel}
+                  </Button>
+                ) : (
+                  <p className="font-medium text-foreground/80">
+                    Ask an organization owner to review billing options.
+                  </p>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
+      )}
+
+      {/* Access settings */}
+      {canManageMembers ? (
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Access settings</label>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
+                disabled={isUpdatingVisibility}
+              >
+                {currentVisibility === "public" ? (
+                  <Globe className="size-4 shrink-0" />
+                ) : (
+                  <Lock className="size-4 shrink-0" />
+                )}
+                <span className="flex-1 text-left">
+                  {currentVisibility === "public"
+                    ? organizationName || "Organization"
+                    : "Private to members"}
+                </span>
+                <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              className="w-[--radix-dropdown-menu-trigger-width]"
+            >
+              <DropdownMenuRadioGroup
+                value={currentVisibility}
+                onValueChange={handleVisibilityChange}
+              >
+                <DropdownMenuRadioItem value="public" className="items-start">
+                  <div>
+                    <div className="font-medium flex items-center gap-2">
+                      <Globe className="size-4" />{" "}
+                      {organizationName || "Organization"}
+                    </div>
+                    <p className="text-xs text-muted-foreground font-normal">
+                      Everyone in your organization can find and access this
+                      project.
+                    </p>
+                  </div>
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="private" className="items-start">
+                  <div>
+                    <div className="font-medium flex items-center gap-2">
+                      <Lock className="size-4" /> Private to members
+                    </div>
+                    <p className="text-xs text-muted-foreground font-normal">
+                      Only invited members can find and access this project.
+                    </p>
+                  </div>
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Access settings</label>
+          <div className="flex items-center gap-2 px-3 py-2 text-sm rounded-md border border-input bg-muted/50">
+            {currentVisibility === "public" ? (
+              <Globe className="size-4 shrink-0" />
+            ) : (
+              <Lock className="size-4 shrink-0" />
+            )}
+            <span>
+              {currentVisibility === "public"
+                ? organizationName || "Organization"
+                : "Private to members"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {embedded && (
+        <MemberSearch
+          query={memberSearch}
+          onQueryChange={setMemberSearch}
+          role={memberRoleFilter}
+          onRoleChange={setMemberRoleFilter}
+          roles={["admin", "editor", "pending"]}
+        />
+      )}
+      <div
+        className={
+          embedded
+            ? "overflow-hidden rounded-lg border border-border"
+            : "space-y-2"
+        }
+      >
+        {embedded ? (
+          <MemberListHeader />
+        ) : (
+          <label className="text-sm font-medium">Has access</label>
+        )}
+        <div
+          className={
+            embedded
+              ? "divide-y divide-border"
+              : "space-y-1 max-h-[300px] overflow-y-auto"
+          }
+        >
+          {!selectedProject.sharedProjectId && (
+            <div className="flex items-center gap-3 p-2 rounded-md">
+              <Avatar className="size-9">
+                <AvatarImage src={profilePictureUrl} alt={displayName} />
+                <AvatarFallback className="text-sm">
+                  {displayInitials}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-medium truncate">{displayName}</p>
+                  <span className="text-xs text-muted-foreground">(you)</span>
+                </div>
+                <p className="text-xs text-muted-foreground truncate">
+                  {currentUser.email}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {embedded &&
+            selectedProject.sharedProjectId &&
+            !activeMembers.some((member) =>
+              matchesMember(
+                member,
+                memberSearch,
+                member.projectRole,
+                memberRoleFilter,
+              ),
+            ) && (
+              <p
+                role="status"
+                className="p-6 text-center text-sm text-foreground"
+              >
+                No active members found.
+              </p>
+            )}
+          {activeMembers
+            .filter((member) =>
+              matchesMember(
+                member,
+                memberSearch,
+                member.projectRole,
+                memberRoleFilter,
+              ),
+            )
+            .map((member) => {
+              const name = member.user?.name || member.email;
+              const memberEmail = member.email;
+              const initials = getInitials(name);
+              const isSelf =
+                memberEmail.toLowerCase() === currentUser.email?.toLowerCase();
+
+              return (
+                <div
+                  key={member._id}
+                  className="flex items-center gap-3 px-3 py-3 hover:bg-muted/30"
+                >
+                  <Avatar className="size-9">
+                    <AvatarImage
+                      src={member.user?.imageUrl || undefined}
+                      alt={name}
+                    />
+                    <AvatarFallback className="text-sm">
+                      {initials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm font-medium truncate">{name}</p>
+                      {isSelf && (
+                        <span className="text-xs text-muted-foreground">
+                          (you)
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {memberEmail}
+                    </p>
+                  </div>
+                  {member.canChangeRole ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0 gap-1 text-sm"
+                        >
+                          {projectRoleLabel(member.projectRole)}
+                          <ChevronDown className="size-3" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuRadioGroup
+                          value={member.projectRole}
+                          onValueChange={(v) =>
+                            void handleRoleChange(member, v as ProjectRole)
+                          }
+                        >
+                          <DropdownMenuRadioItem value="editor">
+                            <div>
+                              <div className="font-medium">Editor</div>
+                              <p className="text-xs text-muted-foreground font-normal">
+                                {projectRoleDescription("editor")}
+                              </p>
+                            </div>
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="admin">
+                            <div>
+                              <div className="font-medium">Admin</div>
+                              <p className="text-xs text-muted-foreground font-normal">
+                                {projectRoleDescription("admin")}
+                              </p>
+                            </div>
+                          </DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                        {member.canRemove && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() =>
+                                void handleRemoveMember(memberEmail)
+                              }
+                            >
+                              Remove from project
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <span className="text-sm text-muted-foreground shrink-0">
+                      {projectRoleLabel(member.projectRole)}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+      </div>
+
+      {pendingMembers.length > 0 && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Invited</label>
+          <div
+            className={
+              embedded
+                ? "divide-y divide-border rounded-lg border border-border"
+                : "space-y-1 max-h-[220px] overflow-y-auto"
+            }
+          >
+            {pendingMembers
+              .filter((member) =>
+                matchesMember(
+                  member,
+                  memberSearch,
+                  "pending",
+                  memberRoleFilter,
+                ),
+              )
+              .map((member) => (
+                <div
+                  key={member._id}
+                  className="flex items-center gap-3 px-3 py-3 hover:bg-muted/30"
+                >
+                  <div className="size-9 rounded-full bg-muted flex items-center justify-center">
+                    <Clock className="size-4 text-muted-foreground" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {member.email}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Invited to the organization and project
+                    </p>
+                  </div>
+                  {member.canChangeRole ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0 gap-1 text-sm"
+                        >
+                          {projectRoleLabel(member.projectRole)}
+                          <ChevronDown className="size-3" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuRadioGroup
+                          value={member.projectRole}
+                          onValueChange={(v) =>
+                            void handleRoleChange(member, v as ProjectRole)
+                          }
+                        >
+                          <DropdownMenuRadioItem value="editor">
+                            <div>
+                              <div className="font-medium">Editor</div>
+                              <p className="text-xs text-muted-foreground font-normal">
+                                {projectRoleDescription("editor")}
+                              </p>
+                            </div>
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="admin">
+                            <div>
+                              <div className="font-medium">Admin</div>
+                              <p className="text-xs text-muted-foreground font-normal">
+                                {projectRoleDescription("admin")}
+                              </p>
+                            </div>
+                          </DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                        {member.canRemove && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() =>
+                                void handleRemoveMember(member.email)
+                              }
+                            >
+                              Cancel invite
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <span className="text-sm text-muted-foreground shrink-0">
+                      {projectRoleLabel(member.projectRole)}
+                    </span>
+                  )}
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+  if (embedded)
+    return (
+      <div className="space-y-7 text-accent-foreground">
+        <header className="space-y-1">
+          <h1 className="text-2xl font-semibold">Members & Sharing</h1>
+          <SettingsPageDescription>
+            Invite people, manage roles, and control access to this project.
+          </SettingsPageDescription>
+        </header>
+        {content}
+      </div>
+    );
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[520px]">
@@ -464,461 +1000,7 @@ export function ShareProjectDialog({
             Invite people and manage access for the selected project.
           </DialogDescription>
         </DialogHeader>
-
-        <div className="space-y-6">
-          {showProjectPicker && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Project</label>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label="Select project"
-                    className="flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                  >
-                    <ProjectPickerBadge
-                      icon={selectedProject.icon}
-                      projectName={selectedProject.name}
-                    />
-                    <span className="flex-1 text-left">
-                      {selectedProject.name}
-                    </span>
-                    <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="start"
-                  className="w-[--radix-dropdown-menu-trigger-width]"
-                >
-                  <DropdownMenuRadioGroup
-                    value={resolvedSelectedProjectId ?? ""}
-                    onValueChange={setSelectedProjectId}
-                  >
-                    {sortedAvailableProjects.map((project) => (
-                      <DropdownMenuRadioItem
-                        key={project.id}
-                        value={project.id}
-                      >
-                        <div className="flex items-center gap-2">
-                          <ProjectPickerBadge
-                            icon={project.icon}
-                            projectName={project.name}
-                          />
-                          <span>{project.name}</span>
-                        </div>
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          )}
-
-          {selectedProject.sharedProjectId && !canManageMembers && (
-            <p className="text-sm text-muted-foreground">
-              Only project admins can invite people.
-            </p>
-          )}
-
-          {canManageMembers && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Invite with email</label>
-              <div className="flex gap-2">
-                <div className="flex flex-1 items-center rounded-md border border-input focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                  <Input
-                    type="email"
-                    placeholder="Add people, emails..."
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && void handleInvite()}
-                    aria-invalid={emailValidationError ? true : undefined}
-                    className="flex-1 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                  />
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="shrink-0 gap-1 mr-1 text-muted-foreground"
-                      >
-                        {projectRoleLabel(inviteRole)}
-                        <ChevronDown className="size-3" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuRadioGroup
-                        value={inviteRole}
-                        onValueChange={(v) => setInviteRole(v as ProjectRole)}
-                      >
-                        <DropdownMenuRadioItem value="editor">
-                          <div>
-                            <div className="font-medium">Editor</div>
-                            <p className="text-xs text-muted-foreground font-normal">
-                              Can edit servers
-                            </p>
-                          </div>
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="admin">
-                          <div>
-                            <div className="font-medium">Admin</div>
-                            <p className="text-xs text-muted-foreground font-normal">
-                              Can manage members and settings
-                            </p>
-                          </div>
-                        </DropdownMenuRadioItem>
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-                <Button
-                  onClick={() => void handleInvite()}
-                  disabled={
-                    !normalizedEmail ||
-                    !!emailValidationError ||
-                    isInviting ||
-                    memberInviteGate.isLoading ||
-                    memberInviteGate.isDenied
-                  }
-                >
-                  {isInviting ? "..." : "Invite"}
-                </Button>
-              </div>
-
-              {emailValidationError ? (
-                <p className="text-sm text-destructive">
-                  {emailValidationError}
-                </p>
-              ) : null}
-
-              {memberInviteGate.isDenied && (
-                <Alert
-                  className="border-primary/20 bg-primary/[0.04]"
-                  data-testid="member-limit-upsell"
-                >
-                  <CreditCard className="size-4 text-primary" />
-                  <AlertTitle>Need more members?</AlertTitle>
-                  <AlertDescription className="gap-2">
-                    {memberInviteGate.denialMessage ? (
-                      <p>{memberInviteGate.denialMessage}</p>
-                    ) : null}
-                    {memberUpsellTeaser ? (
-                      <p className="text-foreground/80">{memberUpsellTeaser}</p>
-                    ) : null}
-                    {billingStatus?.canManageBilling ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="mt-1"
-                        onClick={() => {
-                          if (selectedProject.organizationId) {
-                            appNavigate(
-                              `/organizations/${selectedProject.organizationId}/billing`,
-                            );
-                            onClose();
-                          }
-                        }}
-                      >
-                        {memberUpsellCtaLabel}
-                      </Button>
-                    ) : (
-                      <p className="font-medium text-foreground/80">
-                        Ask an organization owner to review billing options.
-                      </p>
-                    )}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </div>
-          )}
-
-          {/* Access settings */}
-          {canManageMembers ? (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Access settings</label>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
-                    disabled={isUpdatingVisibility}
-                  >
-                    {currentVisibility === "public" ? (
-                      <Globe className="size-4 shrink-0" />
-                    ) : (
-                      <Lock className="size-4 shrink-0" />
-                    )}
-                    <span className="flex-1 text-left">
-                      {currentVisibility === "public"
-                        ? organizationName || "Organization"
-                        : "Private to members"}
-                    </span>
-                    <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="start"
-                  className="w-[--radix-dropdown-menu-trigger-width]"
-                >
-                  <DropdownMenuRadioGroup
-                    value={currentVisibility}
-                    onValueChange={handleVisibilityChange}
-                  >
-                    <DropdownMenuRadioItem
-                      value="public"
-                      className="items-start"
-                    >
-                      <div>
-                        <div className="font-medium flex items-center gap-2">
-                          <Globe className="size-4" />{" "}
-                          {organizationName || "Organization"}
-                        </div>
-                        <p className="text-xs text-muted-foreground font-normal">
-                          Everyone in your organization can find and access this
-                          project.
-                        </p>
-                      </div>
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem
-                      value="private"
-                      className="items-start"
-                    >
-                      <div>
-                        <div className="font-medium flex items-center gap-2">
-                          <Lock className="size-4" /> Private to members
-                        </div>
-                        <p className="text-xs text-muted-foreground font-normal">
-                          Only invited members can find and access this
-                          project.
-                        </p>
-                      </div>
-                    </DropdownMenuRadioItem>
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Access settings</label>
-              <div className="flex items-center gap-2 px-3 py-2 text-sm rounded-md border border-input bg-muted/50">
-                {currentVisibility === "public" ? (
-                  <Globe className="size-4 shrink-0" />
-                ) : (
-                  <Lock className="size-4 shrink-0" />
-                )}
-                <span>
-                  {currentVisibility === "public"
-                    ? organizationName || "Organization"
-                    : "Private to members"}
-                </span>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Has access</label>
-            <div className="space-y-1 max-h-[300px] overflow-y-auto">
-              {!selectedProject.sharedProjectId && (
-                <div className="flex items-center gap-3 p-2 rounded-md">
-                  <Avatar className="size-9">
-                    <AvatarImage src={profilePictureUrl} alt={displayName} />
-                    <AvatarFallback className="text-sm">
-                      {displayInitials}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-sm font-medium truncate">
-                        {displayName}
-                      </p>
-                      <span className="text-xs text-muted-foreground">
-                        (you)
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {currentUser.email}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {activeMembers.map((member) => {
-                const name = member.user?.name || member.email;
-                const memberEmail = member.email;
-                const initials = getInitials(name);
-                const isSelf =
-                  memberEmail.toLowerCase() ===
-                  currentUser.email?.toLowerCase();
-
-                return (
-                  <div
-                    key={member._id}
-                    className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50"
-                  >
-                    <Avatar className="size-9">
-                      <AvatarImage
-                        src={member.user?.imageUrl || undefined}
-                        alt={name}
-                      />
-                      <AvatarFallback className="text-sm">
-                        {initials}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-medium truncate">{name}</p>
-                        {isSelf && (
-                          <span className="text-xs text-muted-foreground">
-                            (you)
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {memberEmail}
-                      </p>
-                    </div>
-                    {member.canChangeRole ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="shrink-0 gap-1 text-sm"
-                          >
-                            {projectRoleLabel(member.projectRole)}
-                            <ChevronDown className="size-3" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuRadioGroup
-                            value={member.projectRole}
-                            onValueChange={(v) =>
-                              void handleRoleChange(member, v as ProjectRole)
-                            }
-                          >
-                            <DropdownMenuRadioItem value="editor">
-                              <div>
-                                <div className="font-medium">Editor</div>
-                                <p className="text-xs text-muted-foreground font-normal">
-                                  {projectRoleDescription("editor")}
-                                </p>
-                              </div>
-                            </DropdownMenuRadioItem>
-                            <DropdownMenuRadioItem value="admin">
-                              <div>
-                                <div className="font-medium">Admin</div>
-                                <p className="text-xs text-muted-foreground font-normal">
-                                  {projectRoleDescription("admin")}
-                                </p>
-                              </div>
-                            </DropdownMenuRadioItem>
-                          </DropdownMenuRadioGroup>
-                          {member.canRemove && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                className="text-destructive focus:text-destructive"
-                                onClick={() =>
-                                  void handleRemoveMember(memberEmail)
-                                }
-                              >
-                                Remove from project
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    ) : (
-                      <span className="text-sm text-muted-foreground shrink-0">
-                        {projectRoleLabel(member.projectRole)}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {pendingMembers.length > 0 && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Invited</label>
-              <div className="space-y-1 max-h-[220px] overflow-y-auto">
-                {pendingMembers.map((member) => (
-                  <div
-                    key={member._id}
-                    className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50"
-                  >
-                    <div className="size-9 rounded-full bg-muted flex items-center justify-center">
-                      <Clock className="size-4 text-muted-foreground" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">
-                        {member.email}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Invited to the organization and project
-                      </p>
-                    </div>
-                    {member.canChangeRole ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="shrink-0 gap-1 text-sm"
-                          >
-                            {projectRoleLabel(member.projectRole)}
-                            <ChevronDown className="size-3" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuRadioGroup
-                            value={member.projectRole}
-                            onValueChange={(v) =>
-                              void handleRoleChange(member, v as ProjectRole)
-                            }
-                          >
-                            <DropdownMenuRadioItem value="editor">
-                              <div>
-                                <div className="font-medium">Editor</div>
-                                <p className="text-xs text-muted-foreground font-normal">
-                                  {projectRoleDescription("editor")}
-                                </p>
-                              </div>
-                            </DropdownMenuRadioItem>
-                            <DropdownMenuRadioItem value="admin">
-                              <div>
-                                <div className="font-medium">Admin</div>
-                                <p className="text-xs text-muted-foreground font-normal">
-                                  {projectRoleDescription("admin")}
-                                </p>
-                              </div>
-                            </DropdownMenuRadioItem>
-                          </DropdownMenuRadioGroup>
-                          {member.canRemove && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                className="text-destructive focus:text-destructive"
-                                onClick={() =>
-                                  void handleRemoveMember(member.email)
-                                }
-                              >
-                                Cancel invite
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    ) : (
-                      <span className="text-sm text-muted-foreground shrink-0">
-                        {projectRoleLabel(member.projectRole)}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        {content}
       </DialogContent>
     </Dialog>
   );

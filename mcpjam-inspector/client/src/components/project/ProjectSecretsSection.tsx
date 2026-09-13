@@ -1,9 +1,11 @@
+import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
+import { useSettingsDraft } from "../settings/SettingsDraftProvider";
 import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   KeyRound,
   Loader2,
-  Plus,
+  ChevronDown,
   RefreshCw,
   ShieldCheck,
   Trash2,
@@ -84,7 +86,6 @@ export function ProjectSecretsSection({
   const environments = useProjectEnvironments(projectId);
   const deleteSecret = useDeleteProjectSecret();
 
-  const [createOpen, setCreateOpen] = useState(false);
   const [rotating, setRotating] = useState<ProjectSecretView | null>(null);
   const [deleting, setDeleting] = useState<ProjectSecretView | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -105,7 +106,7 @@ export function ProjectSecretsSection({
 
   /**
    * Which delete attempt is current. Bumped by every close, captured by every
-   * confirm — the same token `CreateSecretDialog` uses below, for the same
+   * confirm — the same token `CreateSecretForm` uses below, for the same
    * reason.
    *
    * Only the Cancel BUTTON is disabled while a delete is in flight; Esc and the
@@ -151,92 +152,83 @@ export function ProjectSecretsSection({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium text-muted-foreground">Secrets</h2>
-        <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-          <Plus className="size-3.5" /> New secret
-        </Button>
+        <h1 className="text-2xl font-semibold">Environment variables</h1>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Credentials a workflow needs — a <code>stripe</code> run,{" "}
-        <code>gh</code>, <code>psql</code>. Select them on an environment to
-        grant them to the runs it launches. Values are write-only: once saved,
-        nobody can read one back, here or through the API.
-      </p>
+      <SettingsPageDescription>
+        Add credentials here, then select them in an environment to use them in
+        runs. Saved values are encrypted and cannot be viewed.
+      </SettingsPageDescription>
 
-      <div className="rounded-md border">
-        {secrets === undefined ? (
-          <div className="flex items-center gap-2 px-4 py-6 text-xs text-muted-foreground">
-            <Loader2 className="size-3.5 animate-spin" /> Loading secrets…
-          </div>
-        ) : secrets.length === 0 ? (
-          <p className="px-4 py-6 text-xs italic text-muted-foreground">
-            No secrets yet. Add one, then select it on the environment whose
-            runs should receive it.
-          </p>
-        ) : (
-          <ul className="divide-y">
-            {secrets.map((secret) => (
-              <li
-                key={secret.secretId}
-                className="flex items-center gap-3 px-4 py-3"
-              >
-                <KeyRound className="size-4 shrink-0 text-muted-foreground" />
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate font-mono text-sm">
-                    {secret.name}
-                  </span>
-                  {secret.description ? (
-                    <span className="truncate text-xs text-muted-foreground">
-                      {secret.description}
-                    </span>
-                  ) : null}
-                </div>
-                <DeliveryBadge secret={secret} />
-                <Badge variant="outline" className="shrink-0">
-                  {secret.sharing === "project" ? "Project" : "Personal"}
-                </Badge>
-                <span className="w-36 shrink-0 text-right text-xs text-muted-foreground">
-                  {secret.lastDeliveredAt
-                    ? `Delivered ${new Date(
-                        secret.lastDeliveredAt,
-                      ).toLocaleDateString()}`
-                    : "Never delivered"}
-                </span>
-                <div className="flex shrink-0 gap-1">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={!canEdit(secret, canManageShared)}
-                    onClick={() => setRotating(secret)}
-                    title="Rotate this secret's value"
-                  >
-                    <RefreshCw className="size-3.5" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={!canEdit(secret, canManageShared)}
-                    onClick={() => {
-                      setDeleteError(null);
-                      setDeleting(secret);
-                    }}
-                    title="Delete this secret"
-                  >
-                    <Trash2 className="size-3.5 text-destructive" />
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <CreateSecretDialog
+      <CreateSecretForm
+        key={projectId}
         projectId={projectId}
-        open={createOpen}
         canManageShared={canManageShared}
-        onOpenChange={setCreateOpen}
       />
+
+      {secrets?.length === 0 ? null : (
+        <div className="rounded-md border">
+          {secrets === undefined ? (
+            <div className="flex items-center gap-2 px-4 py-6 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" /> Loading secrets…
+            </div>
+          ) : (
+            <ul className="divide-y">
+              {secrets.map((secret) => (
+                <li
+                  key={secret.secretId}
+                  className="flex items-center gap-3 px-4 py-3"
+                >
+                  <KeyRound className="size-4 shrink-0 text-muted-foreground" />
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate font-mono text-sm">
+                      {secret.name}
+                    </span>
+                    {secret.description ? (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {secret.description}
+                      </span>
+                    ) : null}
+                  </div>
+                  <DeliveryBadge secret={secret} />
+                  <Badge variant="outline" className="shrink-0">
+                    {secret.sharing === "project" ? "Project" : "Personal"}
+                  </Badge>
+                  <span className="w-36 shrink-0 text-right text-xs text-muted-foreground">
+                    {secret.lastDeliveredAt
+                      ? `Delivered ${new Date(
+                          secret.lastDeliveredAt,
+                        ).toLocaleDateString()}`
+                      : "Never delivered"}
+                  </span>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={!canEdit(secret, canManageShared)}
+                      onClick={() => setRotating(secret)}
+                      title="Rotate this secret's value"
+                    >
+                      <RefreshCw className="size-3.5" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={!canEdit(secret, canManageShared)}
+                      onClick={() => {
+                        setDeleteError(null);
+                        setDeleting(secret);
+                      }}
+                      title="Delete this secret"
+                    >
+                      <Trash2 className="size-3.5 text-destructive" />
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <RotateSecretDialog
         projectId={projectId}
@@ -376,6 +368,7 @@ function BrokerFields({
 }) {
   return (
     <div className="space-y-3 rounded-md border p-3">
+      <p className="text-sm font-medium">API request settings</p>
       <div className="space-y-1">
         <Label htmlFor="secret-hosts">Hosts</Label>
         <Input
@@ -386,9 +379,7 @@ function BrokerFields({
           onChange={(event) => onHosts(event.target.value)}
         />
         <p className="text-[11px] text-muted-foreground">
-          Comma-separated, exact hostnames. No scheme, port, or wildcard — the
-          proxy matches a host, and a URL installs a rule that never fires.
-          HTTPS only.
+          HTTPS hostnames, separated by commas. No URLs, ports, or wildcards.
         </p>
       </div>
       <div className="space-y-1">
@@ -420,8 +411,7 @@ function BrokerFields({
             </>
           ) : (
             <>
-              Must contain <code>{"{}"}</code>, which is replaced with the
-              secret. Without it the header never carries the credential.
+              Include <code>{"{}"}</code> where the secret value should go.
             </>
           )}
         </p>
@@ -474,7 +464,7 @@ function ShortValueWarning({
         strings cannot be replaced safely — doing so would rewrite unrelated
         text wherever those characters appear. The credential still works; it
         will just be readable in the saved conversation. Use a longer value, or
-        switch this secret to brokered.
+        use the API request option.
       </span>
     </p>
   );
@@ -487,22 +477,18 @@ function parseHosts(raw: string): string[] {
     .filter((host) => host.length > 0);
 }
 
-function CreateSecretDialog({
+function CreateSecretForm({
   projectId,
-  open,
   canManageShared,
-  onOpenChange,
 }: {
   projectId: string;
-  open: boolean;
   canManageShared: boolean;
-  onOpenChange: (open: boolean) => void;
 }) {
   const createSecret = useCreateProjectSecret();
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [description, setDescription] = useState("");
-  const [delivery, setDelivery] = useState<SecretDelivery>("brokered");
+  const [delivery, setDelivery] = useState<SecretDelivery>("materialized");
   const [hosts, setHosts] = useState("");
   const [header, setHeader] = useState("Authorization");
   const [template, setTemplate] = useState("Bearer {}");
@@ -515,53 +501,44 @@ function CreateSecretDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  useSettingsDraft(
+    sharing !== (canManageShared ? "project" : "user") ||
+      !!name ||
+      !!value ||
+      !!description ||
+      !!hosts ||
+      delivery !== "materialized" ||
+      header !== "Authorization" ||
+      template !== "Bearer {}",
+    () => close(),
+    busy,
+  );
+
   const reset = () => {
     setName("");
     setValue("");
     setDescription("");
-    setDelivery("brokered");
+    setDelivery("materialized");
     setHosts("");
     setHeader("Authorization");
     setTemplate("Bearer {}");
     setSharing(canManageShared ? "project" : "user");
     setError(null);
+    setAdvancedOpen(false);
   };
 
-  /**
-   * The ONLY way this dialog closes.
-   *
-   * Radix fires its own `onOpenChange` for user-initiated closes (Esc, overlay,
-   * the X) but NOT for a close driven by the `open` prop — so a Cancel button
-   * that called the prop directly would skip `reset()` and leave a typed
-   * credential sitting in component state for the next time the dialog opens.
-   */
-  /**
-   * Which attempt is current. Bumped by every close, and captured by every
-   * submit — see `submit` for why an in-flight write must not touch state it
-   * no longer owns.
-   */
+  // Ignore a request's late result after its draft has been cleared.
   const attempt = useRef(0);
 
   const close = () => {
     attempt.current += 1;
-    // `busy` has to be cleared HERE, not left to the in-flight request's
-    // `finally`. That block is gated on still owning the attempt, so a request
-    // abandoned by this close skips it — and `busy` would stay true forever on
-    // a component that is reused rather than unmounted, disabling Save and
-    // Cancel on every subsequent open. The dialog is not busy once it is shut.
     setBusy(false);
     reset();
-    onOpenChange(false);
   };
 
   const submit = async () => {
-    // Esc and the overlay close this dialog even mid-write (only the Cancel
-    // BUTTON is disabled while busy), so a create can still be in flight when
-    // the dialog is closed and reopened. Without this token its late `reset()`
-    // would wipe whatever the user had typed into the fresh dialog, and its
-    // late `setError` would show a failure belonging to a secret they are no
-    // longer creating. The write itself still lands — cancelling the UI does
-    // not cancel the request — which is why the guard is on the STATE writes.
+    if (!canSubmit) return;
     const mine = attempt.current;
     setBusy(true);
     setError(null);
@@ -581,12 +558,8 @@ function CreateSecretDialog({
           : {}),
         sharing,
       });
-      // The value is gone from this process the moment the dialog closes, and
-      // nothing can bring it back — which is why the field is cleared here
-      // rather than left populated "in case they want to edit it".
       if (attempt.current !== mine) return;
       reset();
-      onOpenChange(false);
     } catch (caught) {
       if (attempt.current !== mine) return;
       setError(
@@ -613,28 +586,18 @@ function CreateSecretDialog({
   const canSubmit = nameValid && value.length > 0 && brokerValid && !busy;
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) {
-          close();
-          return;
-        }
-        onOpenChange(next);
+    <form
+      aria-label="Add environment variable"
+      className="space-y-4 rounded-md border p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
       }}
     >
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>New secret</DialogTitle>
-          <DialogDescription>
-            The value is stored encrypted and cannot be read back — not here,
-            not through the API. To change it later you replace it.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
-          <div className="space-y-1">
-            <Label htmlFor="secret-name">Name</Label>
+      <fieldset disabled={busy} className="space-y-4">
+        <fieldset className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="secret-name">Key</Label>
             <Input
               id="secret-name"
               value={name}
@@ -642,138 +605,168 @@ function CreateSecretDialog({
               className="font-mono"
               onChange={(event) => onName(event.target.value)}
             />
-            <p className="text-[11px] text-muted-foreground">
-              The environment-variable name. Immutable — to rename it later you
-              create a new secret and delete this one.
-            </p>
           </div>
-
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <Label htmlFor="secret-value">Value</Label>
             <Textarea
+              rows={1}
+              autoComplete="off"
               id="secret-value"
               value={value}
-              rows={3}
-              className="font-mono text-xs"
+              className="h-9 min-h-9 font-mono text-xs"
               onChange={(event) => setValue(event.target.value)}
             />
           </div>
+        </fieldset>
 
-          <div className="space-y-1">
-            <Label htmlFor="secret-description">Description</Label>
-            <Input
-              id="secret-description"
-              value={description}
-              placeholder="What this credential is for"
-              onChange={(event) => setDescription(event.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Delivery</Label>
-            <RadioGroup
-              value={delivery}
-              onValueChange={(next) => setDelivery(next as SecretDelivery)}
-              className="gap-2"
-            >
-              <Label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
-                <RadioGroupItem value="brokered" className="mt-0.5" />
-                <span className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium">
-                    Brokered (recommended)
-                  </span>
-                  <span className="text-[11px] font-normal text-muted-foreground">
-                    The egress proxy adds the header outside the sandbox, so the
-                    box never holds the value and an agent has nothing to
-                    exfiltrate. It prevents extraction, not use — anything in
-                    the box can still call the bound hosts. HTTPS APIs only, and{" "}
-                    <strong>a CLI cannot read it</strong>.
-                  </span>
-                </span>
-              </Label>
-              <Label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
-                <RadioGroupItem value="materialized" className="mt-0.5" />
-                <span className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium">Materialized</span>
-                  <span className="text-[11px] font-normal text-muted-foreground">
-                    A real environment variable in the sandbox — which is what a
-                    CLI like <code>stripe</code> needs, and what makes the value{" "}
-                    <strong>visible inside the box</strong> to <code>env</code>{" "}
-                    and to anything the agent runs. Pick this when a command has
-                    to read the credential itself.
-                  </span>
-                </span>
-              </Label>
-            </RadioGroup>
-          </div>
-
-          <ShortValueWarning delivery={delivery} value={value} />
-
-          {delivery === "brokered" ? (
-            <BrokerFields
-              hosts={hosts}
-              header={header}
-              template={template}
-              onHosts={setHosts}
-              onHeader={setHeader}
-              onTemplate={setTemplate}
-            />
-          ) : null}
-
-          <div className="space-y-2">
-            <Label>Who gets it</Label>
-            <RadioGroup
-              value={sharing}
-              onValueChange={(next) => setSharing(next as SecretSharing)}
-              className="gap-2"
-            >
-              <Label
-                className={
-                  canManageShared
-                    ? "flex cursor-pointer items-start gap-2 rounded-md border p-3"
-                    : "flex cursor-not-allowed items-start gap-2 rounded-md border p-3 opacity-60"
-                }
-              >
-                <RadioGroupItem
-                  value="project"
-                  className="mt-0.5"
-                  disabled={!canManageShared}
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          aria-expanded={advancedOpen}
+          aria-controls="secret-advanced-options"
+          onClick={() => setAdvancedOpen(!advancedOpen)}
+        >
+          <ChevronDown
+            aria-hidden="true"
+            className={`size-3.5 ${advancedOpen ? "rotate-180" : ""}`}
+          />
+          Advanced settings
+        </Button>
+        {advancedOpen && (
+          <div id="secret-advanced-options" className="space-y-5">
+            <div id="secret-description-options">
+              <div className="space-y-1.5">
+                <Label htmlFor="secret-description">
+                  Description (optional)
+                </Label>
+                <Input
+                  id="secret-description"
+                  value={description}
+                  placeholder="What this is used for"
+                  onChange={(event) => setDescription(event.target.value)}
                 />
-                <span className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium">Project</span>
-                  <span className="text-[11px] font-normal text-muted-foreground">
-                    {canManageShared
-                      ? "Delivered in every member's sessions of any environment that selects it."
-                      : "Only project admins can create a project-shared secret."}
+              </div>
+            </div>
+            <fieldset id="secret-access-options" className="space-y-2">
+              <legend
+                id="secret-sharing-label"
+                className="mb-2 text-sm font-semibold"
+              >
+                Who can use it
+              </legend>
+              <RadioGroup
+                aria-labelledby="secret-sharing-label"
+                value={sharing}
+                onValueChange={(next) => setSharing(next as SecretSharing)}
+                className="gap-2 sm:grid-cols-2"
+              >
+                <Label className="flex cursor-pointer items-start gap-2 rounded-md border p-3 has-[[data-state=checked]]:border-ring has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60">
+                  <RadioGroupItem
+                    value="project"
+                    className="mt-0.5"
+                    disabled={!canManageShared}
+                  />
+                  <span className="flex flex-col gap-1">
+                    <span className="text-sm font-medium">
+                      Everyone in this project
+                    </span>
+                    <span className="text-xs font-normal leading-relaxed text-muted-foreground">
+                      {canManageShared
+                        ? "Available in any member’s runs."
+                        : "Only project admins can add shared variables."}
+                    </span>
                   </span>
-                </span>
-              </Label>
-              <Label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
-                <RadioGroupItem value="user" className="mt-0.5" />
-                <span className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium">Personal</span>
-                  <span className="text-[11px] font-normal text-muted-foreground">
-                    Delivered only in sessions YOU start. A teammate running the
-                    same environment simply does not receive it.
+                </Label>
+                <Label className="flex cursor-pointer items-start gap-2 rounded-md border p-3 has-[[data-state=checked]]:border-ring">
+                  <RadioGroupItem value="user" className="mt-0.5" />
+                  <span className="flex flex-col gap-1">
+                    <span className="text-sm font-medium">Only me</span>
+                    <span className="text-xs font-normal leading-relaxed text-muted-foreground">
+                      Available only in runs you start.
+                    </span>
                   </span>
-                </span>
-              </Label>
-            </RadioGroup>
+                </Label>
+              </RadioGroup>
+              <p className="text-xs text-muted-foreground">
+                Runs receive it only when their environment selects it.
+              </p>
+            </fieldset>
+            <fieldset id="secret-delivery-options" className="space-y-3">
+              <legend
+                id="secret-delivery-label"
+                className="mb-2 text-sm font-semibold"
+              >
+                How runs receive it
+              </legend>
+              <RadioGroup
+                aria-labelledby="secret-delivery-label"
+                value={delivery}
+                onValueChange={(next) => setDelivery(next as SecretDelivery)}
+                className="gap-2"
+              >
+                <Label className="flex cursor-pointer items-start gap-2 rounded-md border p-3 has-[[data-state=checked]]:border-ring">
+                  <RadioGroupItem value="brokered" className="mt-0.5" />
+                  <span className="flex flex-col gap-1">
+                    <span className="text-sm font-medium">
+                      Add to API requests (recommended)
+                    </span>
+                    <span className="text-xs font-normal leading-relaxed text-muted-foreground">
+                      The proxy adds the value to HTTPS requests. Agents can
+                      call the allowed hosts, but cannot read the value. Not for
+                      CLIs that need the value directly.
+                    </span>
+                  </span>
+                </Label>
+                <Label className="flex cursor-pointer items-start gap-2 rounded-md border p-3 has-[[data-state=checked]]:border-ring">
+                  <RadioGroupItem value="materialized" className="mt-0.5" />
+                  <span className="flex flex-col gap-1">
+                    <span className="text-sm font-medium">
+                      Set as an environment variable
+                    </span>
+                    <span className="text-xs font-normal leading-relaxed text-muted-foreground">
+                      For CLIs and commands that need the value directly. Agents
+                      and programs in the run can read it.
+                    </span>
+                  </span>
+                </Label>
+              </RadioGroup>
+
+              {delivery === "brokered" ? (
+                <BrokerFields
+                  hosts={hosts}
+                  header={header}
+                  template={template}
+                  onHosts={setHosts}
+                  onHeader={setHeader}
+                  onTemplate={setTemplate}
+                />
+              ) : null}
+            </fieldset>
           </div>
-
-          {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" disabled={busy} onClick={close}>
-            Cancel
-          </Button>
-          <Button disabled={!canSubmit} onClick={() => void submit()}>
-            {busy ? "Saving…" : "Save secret"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        )}
+        <ShortValueWarning delivery={delivery} value={value} />
+        {delivery === "brokered" && !brokerValid && !advancedOpen && (
+          <p className="text-xs text-muted-foreground">
+            Expand Advanced settings to add the required hosts and header
+            settings.
+          </p>
+        )}
+        {error ? (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        ) : null}
+      </fieldset>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={close}>
+          Clear
+        </Button>
+        <Button type="submit" disabled={!canSubmit}>
+          {busy ? "Saving…" : "Save secret"}
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -797,6 +790,15 @@ function RotateSecretDialog({
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  useSettingsDraft(
+    !!secret && !!value,
+    () => {
+      setValue("");
+      setError(null);
+      onOpenChange(false);
+    },
+    !!secret && busy,
+  );
 
   /**
    * The ONLY way this dialog closes.

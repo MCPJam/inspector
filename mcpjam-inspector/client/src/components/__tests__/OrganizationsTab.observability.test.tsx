@@ -211,11 +211,11 @@ describe("OrganizationsTab Observability section", () => {
     expect(screen.queryByRole("button", { name: "Observability" })).toBeNull();
   });
 
-  it("shows the Observability tab when the flag is on", () => {
+  it("keeps the old Observability strip removed when the flag is on", () => {
     render(<OrganizationsTab organizationId="org-1" />);
     expect(
-      screen.getByRole("button", { name: "Observability" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Observability" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the section for the observability route", () => {
@@ -231,6 +231,6 @@ describe("OrganizationsTab Observability section", () => {
     observabilityFlagMock.mockReturnValue(false);
     render(<OrganizationsTab organizationId="org-1" section="observability" />);
     expect(screen.queryByTestId("observability-section-stub")).toBeNull();
-    expect(screen.getByText("Members")).toBeInTheDocument();
+    expect(screen.getByText("Danger Zone")).toBeInTheDocument();
   });
 });

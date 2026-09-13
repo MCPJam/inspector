@@ -16,6 +16,7 @@ interface AgentSidePanelMountProps {
   projectId: string | null;
   organizationId: string | null;
   activeTab: string;
+  hidden?: boolean;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -30,6 +31,7 @@ export function AgentSidePanelMount({
   projectId,
   organizationId,
   activeTab,
+  hidden = false,
 }: AgentSidePanelMountProps) {
   const sessionId = useAgentPanelStore((s) => s.activeSessionId);
   const scoped = useEvalAgentScopes(
@@ -45,12 +47,12 @@ export function AgentSidePanelMount({
   const resolvedProjectId = inEvaluate && host ? host.projectId : projectId;
 
   useEffect(() => {
-    if (!inEvaluate && scoped && isOpen)
+    if (!hidden && !inEvaluate && scoped && isOpen)
       useAgentPanelStore.getState().setOpen(false);
-  }, [inEvaluate, scoped, isOpen]);
+  }, [hidden, inEvaluate, scoped, isOpen]);
 
   useEffect(() => {
-    if (inEvaluate && !describeReady) return;
+    if (hidden || (inEvaluate && !describeReady)) return;
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "\\") return;
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -77,7 +79,7 @@ export function AgentSidePanelMount({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTab, inEvaluate, describeReady, describeScope, scoped, toggle]);
+  }, [hidden, activeTab, inEvaluate, describeReady, describeScope, scoped, toggle]);
 
   // Drop the persisted session pointer whenever the panel state and the
   // current active project disagree about which project the session belongs

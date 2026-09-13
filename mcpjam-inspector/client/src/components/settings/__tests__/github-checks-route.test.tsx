@@ -152,9 +152,6 @@ vi.mock("@/hooks/useOrganizations", () => ({
 }));
 
 // The nav resolves availability itself now; it is not what this file tests.
-vi.mock("../SettingsNav", () => ({
-  SettingsNav: () => <nav data-testid="settings-nav" />,
-}));
 
 import { toast } from "@/lib/toast";
 import { GithubChecksRoute } from "../GithubChecksRoute";

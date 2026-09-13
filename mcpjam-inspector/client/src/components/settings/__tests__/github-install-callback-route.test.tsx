@@ -78,6 +78,7 @@ vi.mock("@/lib/github-external-redirect", () => ({
 }));
 
 vi.mock("@/lib/app-navigation", () => ({
+  useCurrentLocationParts: () => ({ pathname: window.location.pathname, search: window.location.search, hash: window.location.hash }),
   useAppNavigate: () => mockNavigate,
 }));
 
@@ -85,9 +86,6 @@ vi.mock("@/lib/toast", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
-vi.mock("../SettingsNav", () => ({
-  SettingsNav: () => <nav data-testid="settings-nav" />,
-}));
 
 import { toast } from "@/lib/toast";
 import { GithubInstallCallbackRoute } from "../GithubInstallCallbackRoute";

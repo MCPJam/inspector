@@ -1,3 +1,4 @@
+import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { useCallback, useEffect, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -26,9 +27,10 @@ import { SettingsStatePanel } from "./SettingsStatePanel";
  */
 interface ApiKeysRouteProps {
   activeOrganizationId?: string | null;
+  organizationId?: string;
 }
 
-export function ApiKeysRoute({ activeOrganizationId }: ApiKeysRouteProps = {}) {
+export function ApiKeysRoute({ organizationId }: ApiKeysRouteProps = {}) {
   const [createOpen, setCreateOpen] = useState(false);
   const [revealValue, setRevealValue] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
@@ -49,7 +51,7 @@ export function ApiKeysRoute({ activeOrganizationId }: ApiKeysRouteProps = {}) {
     isCreating,
     revoke,
     isRevoking,
-  } = useApiKeys({ enabled: isSignedIn });
+  } = useApiKeys({ enabled: isSignedIn, organizationId });
 
   // The hook RETURNS list errors so its other caller (the eval quickstart)
   // can render them inline; this page's behavior is unchanged — surface them
@@ -101,10 +103,7 @@ export function ApiKeysRoute({ activeOrganizationId }: ApiKeysRouteProps = {}) {
   // away — replacing the page with a bare sign-in button strands the user.
   if (isAuthLoading) {
     return (
-      <SettingsPageShell
-        active="api-keys"
-        activeOrganizationId={activeOrganizationId}
-      >
+      <SettingsPageShell>
         <SettingsStatePanel>
           <span className="text-sm text-muted-foreground">Loading…</span>
         </SettingsStatePanel>
@@ -114,10 +113,7 @@ export function ApiKeysRoute({ activeOrganizationId }: ApiKeysRouteProps = {}) {
 
   if (!isSignedIn) {
     return (
-      <SettingsPageShell
-        active="api-keys"
-        activeOrganizationId={activeOrganizationId}
-      >
+      <SettingsPageShell>
         <SettingsStatePanel>
           <h2 className="text-lg font-semibold">Sign in to manage API keys</h2>
           <p className="max-w-prose text-sm text-muted-foreground">
@@ -132,27 +128,36 @@ export function ApiKeysRoute({ activeOrganizationId }: ApiKeysRouteProps = {}) {
   }
 
   return (
-    <SettingsPageShell
-      active="api-keys"
-      activeOrganizationId={activeOrganizationId}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <p className="max-w-prose text-sm text-muted-foreground">
-          Use these keys to call the MCPJam v1 public API from CI, scripts, or
-          other non-browser contexts. Keys carry your account's permissions and
-          can be revoked any time.
-        </p>
-        <Button onClick={() => setCreateOpen(true)} className="shrink-0">
+    <SettingsPageShell>
+      <header className="space-y-1">
+        <h1 className="text-2xl font-semibold text-accent-foreground">
+          API keys
+        </h1>
+        <SettingsPageDescription>
+          {organizationId
+            ? "Review keys scoped to this organization and the users they belong to. Key owners manage revocation in Personal → API Keys."
+            : "Create keys for scripts, CI/CD, CLI, and SDK usage. Each key belongs to you and uses your permissions within one selected organization."}
+        </SettingsPageDescription>
+      </header>
+      {!organizationId && (
+        <Button onClick={() => setCreateOpen(true)} className="self-start">
           <Plus className="mr-2 size-4" aria-hidden /> Create API key
         </Button>
-      </div>
+      )}
 
-      <SettingsSection title="Your keys">
+      {loadError && (
+        <p role="alert" className="text-sm text-destructive">
+          {loadError}
+        </p>
+      )}
+      <SettingsSection
+        title={organizationId ? "Organization keys" : "Your keys"}
+      >
         {loading ? (
           <div className="flex items-center justify-center px-4 py-8 text-sm text-muted-foreground">
             Loading…
           </div>
-        ) : keys.length === 0 ? (
+        ) : loadError ? null : keys.length === 0 ? (
           <div className="flex items-center justify-center px-4 py-8 text-sm text-muted-foreground">
             No API keys yet. Create one to start using the v1 API.
           </div>
@@ -170,22 +175,33 @@ export function ApiKeysRoute({ activeOrganizationId }: ApiKeysRouteProps = {}) {
                   <span className="text-sm font-medium truncate">
                     {key.name}
                   </span>
+                  <span className="text-xs text-foreground">
+                    {organizationId
+                      ? `${key.owner?.name ?? "Unknown user"} · ${key.owner?.email ?? ""}`
+                      : (sortedOrganizations.find(
+                          (org) => org._id === key.organizationId,
+                        )?.name ??
+                        key.organizationId ??
+                        "Organization unavailable")}
+                  </span>
                   <span className="text-xs text-muted-foreground font-mono truncate">
                     {key.obfuscated_value}
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={() => setRevokeTarget(key)}
-                  aria-label={`Revoke ${key.name}`}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
+              {!organizationId && (
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => setRevokeTarget(key)}
+                    aria-label={`Revoke ${key.name}`}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              )}
             </div>
           ))
         )}
