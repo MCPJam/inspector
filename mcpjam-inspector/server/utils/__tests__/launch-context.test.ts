@@ -100,6 +100,9 @@ describe("parseCiHeader", () => {
           branch: "main",
           commitSha: "a1b2c3",
           runUrl: "https://github.test/run/1234",
+          repositoryUrl: "https://github.test/acme/widgets",
+          prUrl: "https://github.test/acme/widgets/pull/12",
+          branchUrl: "https://github.test/acme/widgets/tree/main",
         }),
       ),
     ).toEqual({
@@ -109,6 +112,9 @@ describe("parseCiHeader", () => {
       branch: "main",
       commitSha: "a1b2c3",
       runUrl: "https://github.test/run/1234",
+      repositoryUrl: "https://github.test/acme/widgets",
+      prUrl: "https://github.test/acme/widgets/pull/12",
+      branchUrl: "https://github.test/acme/widgets/tree/main",
     });
   });
 
@@ -166,6 +172,19 @@ describe("parseCiHeader", () => {
       JSON.stringify({ provider: "github_actions", runUrl }),
     );
     expect(parsed).toEqual({ provider: "github_actions" });
+  });
+
+  it("drops unsafe Git destination URLs independently", () => {
+    expect(
+      parseCiHeader(
+        JSON.stringify({
+          commitSha: "abc123",
+          repositoryUrl: "javascript:alert(1)",
+          prUrl: "data:text/html,test",
+          branchUrl: "/relative",
+        }),
+      ),
+    ).toEqual({ commitSha: "abc123" });
   });
 
   it.each([

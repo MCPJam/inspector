@@ -105,6 +105,9 @@ describe("declared launch context", () => {
         job: "evals",
         runUrl: "https://github.com/acme/widgets/actions/runs/42",
         runId: "42.1",
+        repositoryUrl: "https://github.com/acme/widgets",
+        prUrl: "https://github.com/acme/widgets/pull/12",
+        branchUrl: "https://github.com/acme/widgets/tree/main",
       },
     }).createEvalRun({ projectId: "p1", body: { suiteId: "s1" } });
 
@@ -116,6 +119,9 @@ describe("declared launch context", () => {
       job: "evals",
       runUrl: "https://github.com/acme/widgets/actions/runs/42",
       runId: "42.1",
+      repositoryUrl: "https://github.com/acme/widgets",
+      prUrl: "https://github.com/acme/widgets/pull/12",
+      branchUrl: "https://github.com/acme/widgets/tree/main",
     });
   });
 

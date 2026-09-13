@@ -2,7 +2,9 @@ import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { Input } from "@mcpjam/design-system/input";
 import {
   readRunGitMetadata,
-  RunGitMetadata,
+  RunBranchCell,
+  RunCommitCell,
+  RunPullRequestCell,
   RunPlatformBadge,
 } from "./run-git-metadata";
 import { EvalListFilter, ALL_EVAL_FILTER_VALUES } from "./eval-list-filter";
@@ -183,6 +185,11 @@ function metricLabel(row: ProjectRunRow): string {
   return (row.source ?? row.suiteSource) === "sdk" ? "Pass rate" : "Accuracy";
 }
 
+export function isGithubRun(row: ProjectRunRow): boolean {
+  const origin = resolveRunOrigin(row);
+  return origin === "github_check" || origin === "github_action";
+}
+
 /**
  * The project-wide runs feed: EVERY run in the project in one list, with
  * origin as a per-row badge rather than as a separate surface.
@@ -359,19 +366,22 @@ export function ProjectRunsTable({
     ].sort();
     const serverOptions = [...new Set([...runServers.values()].flat())].sort();
     const gitByRunId = new Map(
-      rows.map((row) => [row._id, readRunGitMetadata(row.ciMetadata)]),
+      rows.map((row) => [
+        row._id,
+        isGithubRun(row) ? readRunGitMetadata(row.ciMetadata) : null,
+      ]),
     );
     const repositoryOptions = [
       ...new Set(
         [...gitByRunId.values()].flatMap((git) =>
-          git.repository ? [git.repository] : [],
+          git?.repository ? [git.repository] : [],
         ),
       ),
     ].sort();
     const branchOptions = [
       ...new Set(
         [...gitByRunId.values()].flatMap((git) =>
-          git.branch ? [git.branch] : [],
+          git?.branch ? [git.branch] : [],
         ),
       ),
     ].sort();
@@ -380,11 +390,7 @@ export function ProjectRunsTable({
       branchFilter !== ALL_EVAL_FILTER_VALUES ||
       Boolean(commitFilter.trim());
     const showGitContext =
-      sourceFilter.has("github") ||
-      hasGitFilter ||
-      rows.some(
-        (row) => row.source === "github_check" || row.ciMetadata != null,
-      );
+      sourceFilter.has("github") || hasGitFilter || rows.some(isGithubRun);
     const matching = sourceAndSuiteRows.filter(
       (row) =>
         (clientFilter === ALL_EVAL_FILTER_VALUES ||
@@ -684,8 +690,8 @@ export function ProjectRunsTable({
                 <span className="min-w-0 flex-1 truncate text-left">
                   {suiteFilter === ALL_SUITES
                     ? "Suite"
-                    : suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
-                      "Suite"}
+                    : (suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
+                      "Suite")}
                 </span>
               </SelectTrigger>
               <SelectContent className="max-w-[min(24rem,calc(100vw-2rem))]">
@@ -865,7 +871,11 @@ export function ProjectRunsTable({
                   {historyMetricsEnabled ? "Client : model" : "Platform"}
                 </TableHead>
                 {showGitContext && (
-                  <TableHead className="min-w-[200px]">Git / CI</TableHead>
+                  <>
+                    <TableHead className="min-w-[100px]">Commit</TableHead>
+                    <TableHead className="min-w-[80px]">PR</TableHead>
+                    <TableHead className="min-w-[160px]">Branch</TableHead>
+                  </>
                 )}
                 <TableHead>
                   {historyMetricsEnabled ? "Status" : "Verdict"}
@@ -897,7 +907,7 @@ export function ProjectRunsTable({
                 <TableRow>
                   <TableCell
                     colSpan={
-                      (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 1 : 0)
+                      (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 3 : 0)
                     }
                     className="h-32 text-center text-muted-foreground"
                   >
@@ -908,7 +918,7 @@ export function ProjectRunsTable({
                 <TableRow>
                   <TableCell
                     colSpan={
-                      (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 1 : 0)
+                      (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 3 : 0)
                     }
                     className="h-24 text-center text-sm text-muted-foreground"
                   >
@@ -1089,6 +1099,7 @@ function ProjectRunTableRow({
   const canonicalUnit = summary
     ? decisionMeasurementUnitLabel(summary.counts)
     : null;
+  const git = isGithubRun(row) ? readRunGitMetadata(row.ciMetadata) : null;
 
   return (
     <TableRow
@@ -1121,14 +1132,14 @@ function ProjectRunTableRow({
           <span className="block truncate font-medium">
             {grouped
               ? `#${row.runNumber}`
-              : row.suiteName ?? (
+              : (row.suiteName ?? (
                   <span
                     className="text-muted-foreground"
                     title="This run's suite no longer exists, so its detail view can't be opened."
                   >
                     Deleted suite
                   </span>
-                )}
+                ))}
           </span>
           <span className="text-[10px] text-muted-foreground" title={row._id}>
             {grouped
@@ -1144,7 +1155,7 @@ function ProjectRunTableRow({
       ) : (
         <TableCell>
           <div className="flex flex-col items-start gap-1">
-            <RunPlatformBadge run={row} metadata={row.ciMetadata} />
+            <RunPlatformBadge run={row} />
             {row.ciMetadata && !showGitContext && (
               <CiMetadataDisplay
                 ciMetadata={row.ciMetadata}
@@ -1157,13 +1168,17 @@ function ProjectRunTableRow({
         </TableCell>
       )}
       {showGitContext && (
-        <TableCell>
-          {row.ciMetadata || row.source === "github_check" ? (
-            <RunGitMetadata metadata={row.ciMetadata} />
-          ) : (
-            "—"
-          )}
-        </TableCell>
+        <>
+          <TableCell>
+            <RunCommitCell git={git} />
+          </TableCell>
+          <TableCell>
+            <RunPullRequestCell git={git} />
+          </TableCell>
+          <TableCell>
+            <RunBranchCell git={git} />
+          </TableCell>
+        </>
       )}
       <TableCell>
         {historyMetricsEnabled ? (
@@ -1200,16 +1215,16 @@ function ProjectRunTableRow({
                 passRateChange.points > 0
                   ? "text-success"
                   : passRateChange.points < 0
-                  ? "text-destructive"
-                  : "text-muted-foreground",
+                    ? "text-destructive"
+                    : "text-muted-foreground",
               )}
               title={`Compared with run #${passRateChange.previousRunNumber} in this suite (loaded history)`}
               aria-label={`${
                 passRateChange.points > 0
                   ? "Up"
                   : passRateChange.points < 0
-                  ? "Down"
-                  : "Unchanged"
+                    ? "Down"
+                    : "Unchanged"
               } ${Math.abs(
                 passRateChange.points,
               )} percentage points versus run #${
@@ -1219,8 +1234,8 @@ function ProjectRunTableRow({
               {passRateChange.points > 0
                 ? "↑"
                 : passRateChange.points < 0
-                ? "↓"
-                : "→"}
+                  ? "↓"
+                  : "→"}
               {Math.abs(passRateChange.points)} pp
             </span>
           )}
@@ -1279,7 +1294,7 @@ function ProjectRunTableRow({
           </TableCell>
           <TableCell>
             <div className="flex flex-col items-start gap-1">
-              <RunPlatformBadge run={row} metadata={row.ciMetadata} />
+              <RunPlatformBadge run={row} />
               {row.ciMetadata && !showGitContext && (
                 <CiMetadataDisplay
                   ciMetadata={row.ciMetadata}

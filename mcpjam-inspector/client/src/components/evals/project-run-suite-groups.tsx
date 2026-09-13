@@ -8,7 +8,15 @@ import type { ProjectRunHistoryDetail } from "./use-project-run-history";
 import { resultCounts } from "../evaluate/run-results-matrix-model";
 import { computeRunEffectiveStats } from "./suite-runs-list";
 import { RunClientsCell } from "./run-clients-cell";
-import { RunPlatformBadge } from "./run-git-metadata";
+import {
+  readRunGitMetadata,
+  RunBranchCell,
+  RunCommitCell,
+  RunPlatformBadge,
+  RunPullRequestCell,
+  type RunGitMetadataValue,
+} from "./run-git-metadata";
+import { resolveRunOrigin } from "@/lib/evals/run-origin";
 import {
   buildSuiteRunHistoryAggregates,
   formatRunHistoryDate,
@@ -140,7 +148,7 @@ export function ProjectRunSuiteGroup({
       {expanded && !ready && (
         <TableRow>
           <TableCell
-            colSpan={9 + (shared.showGitContext ? 1 : 0)}
+            colSpan={9 + (shared.showGitContext ? 3 : 0)}
             className="h-16 px-7"
           >
             {loading ? (
@@ -186,7 +194,7 @@ export function ProjectRunSuiteGroup({
         })}
       {expanded && ready && group.launches.length > 5 && (
         <TableRow>
-          <TableCell colSpan={9 + (shared.showGitContext ? 1 : 0)}>
+          <TableCell colSpan={9 + (shared.showGitContext ? 3 : 0)}>
             <Button
               variant="ghost"
               size="sm"
@@ -237,6 +245,46 @@ export function GroupSummaryRow({
   const sources = [
     ...new Set(rows.map((row) => row.source ?? row.suiteSource ?? "ui")),
   ];
+  const gitRows = rows.map((row) => {
+    const origin = resolveRunOrigin(row);
+    return origin === "github_check" || origin === "github_action"
+      ? readRunGitMetadata(row.ciMetadata)
+      : null;
+  });
+  const firstGit = gitRows[0] ?? null;
+  const allGithub = gitRows.length > 0 && gitRows.every(Boolean);
+  const sharedPair = (
+    value: keyof RunGitMetadataValue,
+    url: keyof RunGitMetadataValue,
+  ) =>
+    !suite &&
+    allGithub &&
+    firstGit?.[value] &&
+    firstGit?.[url] &&
+    gitRows.every(
+      (git) => git?.[value] === firstGit[value] && git?.[url] === firstGit[url],
+    );
+  const sharedGit: RunGitMetadataValue | null = firstGit
+    ? {
+        ...firstGit,
+        commitSha: sharedPair("commitSha", "commitUrl")
+          ? firstGit.commitSha
+          : null,
+        commitUrl: sharedPair("commitSha", "commitUrl")
+          ? firstGit.commitUrl
+          : null,
+        pullRequestNumber: sharedPair("pullRequestNumber", "pullRequestUrl")
+          ? firstGit.pullRequestNumber
+          : null,
+        pullRequestUrl: sharedPair("pullRequestNumber", "pullRequestUrl")
+          ? firstGit.pullRequestUrl
+          : null,
+        branch: sharedPair("branch", "branchUrl") ? firstGit.branch : null,
+        branchUrl: sharedPair("branch", "branchUrl")
+          ? firstGit.branchUrl
+          : null,
+      }
+    : null;
   const Icon = expanded ? ChevronDown : ChevronRight;
   const dateLabel =
     date ??
@@ -316,7 +364,17 @@ export function GroupSummaryRow({
         />
       </TableCell>
       {showGitContext && (
-        <TableCell className="text-muted-foreground">—</TableCell>
+        <>
+          <TableCell>
+            <RunCommitCell git={sharedGit} />
+          </TableCell>
+          <TableCell>
+            <RunPullRequestCell git={sharedGit} />
+          </TableCell>
+          <TableCell>
+            <RunBranchCell git={sharedGit} />
+          </TableCell>
+        </>
       )}
       <TableCell className="text-[10px] text-muted-foreground">
         {!rollup
@@ -350,18 +408,7 @@ export function GroupSummaryRow({
       <TableCell>
         <div className="flex flex-wrap gap-1">
           {sources.map((source) => (
-            <RunPlatformBadge
-              key={source}
-              run={{ source }}
-              metadata={
-                suite
-                  ? undefined
-                  : rows.find(
-                      (row) =>
-                        (row.source ?? row.suiteSource ?? "ui") === source,
-                    )?.ciMetadata
-              }
-            />
+            <RunPlatformBadge key={source} run={{ source }} />
           ))}
         </div>
       </TableCell>

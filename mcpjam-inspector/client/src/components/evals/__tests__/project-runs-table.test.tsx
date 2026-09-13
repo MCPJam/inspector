@@ -58,6 +58,7 @@ import {
   ProjectRunsTable,
   PROJECT_RUNS_PAGE_SIZE,
 } from "../project-runs-table";
+import { GroupSummaryRow } from "../project-run-suite-groups";
 import {
   formatRunHistoryDate,
   formatRunHistoryDateRange,
@@ -954,8 +955,83 @@ describe("project run history metrics", () => {
 });
 
 describe("GitHub run context", () => {
+  it("shows only Git values shared by every run in a grouped launch", () => {
+    const common = {
+      commitSha: "abcdef123456",
+      repositoryUrl: "https://github.com/acme/server",
+      prUrl: "https://github.com/acme/server/pull/4764",
+    };
+    render(
+      <table>
+        <tbody>
+          <GroupSummaryRow
+            rows={[
+              makeRow({
+                source: "github_check",
+                ciMetadata: {
+                  ...common,
+                  branch: "feature/one",
+                  branchUrl:
+                    "https://github.com/acme/server/tree/feature%2Fone",
+                },
+              }),
+              makeRow({
+                _id: "run_bbbbbbbbbbbb",
+                source: "github_check",
+                ciMetadata: {
+                  ...common,
+                  branch: "feature/two",
+                  branchUrl:
+                    "https://github.com/acme/server/tree/feature%2Ftwo",
+                },
+              }),
+            ]}
+            details={new Map()}
+            historyRows={new Map()}
+            showGitContext
+            label="#1"
+          />
+        </tbody>
+      </table>,
+    );
+
+    expect(screen.getByRole("link", { name: "abcdef1" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "#4764" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: /feature\// })).toBeNull();
+  });
+
+  it("keeps Git values blank on suite summary rows", () => {
+    render(
+      <table>
+        <tbody>
+          <GroupSummaryRow
+            rows={[
+              makeRow({
+                source: "github_check",
+                ciMetadata: {
+                  commitSha: "abcdef123456",
+                  repositoryUrl: "https://github.com/acme/server",
+                  branch: "main",
+                  branchUrl: "https://github.com/acme/server/tree/main",
+                  prUrl: "https://github.com/acme/server/pull/4764",
+                },
+              }),
+            ]}
+            details={new Map()}
+            historyRows={new Map()}
+            showGitContext
+            label="Checkout suite"
+            suite
+          />
+        </tbody>
+      </table>,
+    );
+
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
   it.each([false, true])(
-    "shows a PR link in the Platform cell (metrics: %s) without opening the eval run",
+    "shows a PR link in its own column (metrics: %s) without opening the eval run",
     async (historyMetricsEnabled) => {
       const user = userEvent.setup();
       const onSelectRun = vi.fn();
@@ -983,6 +1059,7 @@ describe("GitHub run context", () => {
       expect(
         inTable().getByRole("columnheader", { name: "Platform" }),
       ).toBeVisible();
+      expect(inTable().getByRole("columnheader", { name: "PR" })).toBeVisible();
       expect(
         screen.getByRole("button", { name: "Filter by platform" }),
       ).toBeVisible();
@@ -994,7 +1071,7 @@ describe("GitHub run context", () => {
         "href",
         "https://github.com/acme/server/pull/4674",
       );
-      expect(within(link.closest("td")!).getByText("GitHub")).toBeVisible();
+      expect(within(link.closest("td")!).queryByText("GitHub")).toBeNull();
       await user.click(link);
       link.focus();
       await user.keyboard("{Enter}");
@@ -1032,9 +1109,10 @@ describe("GitHub run context", () => {
       }),
     ]);
     render(<ProjectRunsTable projectId="proj_1" onSelectRun={onSelectRun} />);
-    expect(inTable().getByText("Git / CI")).toBeVisible();
-    expect(inTable().getByText("Not recorded")).toBeVisible();
-    expect(inTable().getByText("main")).toBeVisible();
+    expect(inTable().getByText("Commit")).toBeVisible();
+    expect(inTable().getByText("PR")).toBeVisible();
+    expect(inTable().getByText("Branch")).toBeVisible();
+    expect(inTable().getByRole("link", { name: "main" })).toBeVisible();
     expect(inTable().getByText("abcdef1")).toBeVisible();
     // Link clicks and keyboard activation must not also navigate to the eval run.
     const link = screen.getByRole("link", { name: "abcdef1" });
