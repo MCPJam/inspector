@@ -229,7 +229,12 @@ export function ScenarioGradingSection({
 
       <div className="flex items-center justify-end gap-3">
         {blockedByIncompleteCheck ? (
+          // An alert, because the click otherwise produces nothing a screen
+          // reader can notice: focus stays put, the button's state does not
+          // change, and the field messages showAllErrors reveals mount
+          // silently. Assertive is right here — the user just acted.
           <p
+            role="alert"
             className="text-xs text-destructive"
             data-testid="scenario-grading-incomplete"
           >

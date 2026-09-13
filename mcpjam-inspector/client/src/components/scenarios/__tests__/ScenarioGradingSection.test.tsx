@@ -325,7 +325,9 @@ describe("ScenarioGradingSection", () => {
     await user.click(save);
     expect(setProductionScoringMock).not.toHaveBeenCalled();
     expect(screen.getByTestId("rubric-show-all")).toHaveTextContent("true");
-    expect(screen.getByTestId("scenario-grading-incomplete")).toHaveTextContent(
+    // Announced, not just mounted: the click moves no focus and changes no
+    // button state, so this line is the only thing a screen reader gets.
+    expect(screen.getByRole("alert")).toHaveTextContent(
       "Fix the highlighted check to save.",
     );
 
