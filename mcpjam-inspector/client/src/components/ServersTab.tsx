@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
-import { Switch } from "@mcpjam/design-system/switch";
+import { ServersAutoConnectSwitch } from "./ServersAutoConnectSwitch";
 import {
   Plus,
   FileText,
@@ -125,7 +125,6 @@ import {
 } from "@/lib/quick-connect-pending";
 import {
   useProjectServers as useRemoteProjectServers,
-  useProjectMembers,
   useServerMutations,
   shouldQueryProjectId,
   type RemoteServer,
@@ -731,28 +730,10 @@ export function ServersTab({
     [remoteServersByName, projects, moveServerToProject, onDisconnect, onRemove]
   );
 
-  // Project-wide auto-connect toggle. Single switch in the header that
-  // either enrolls every catalog server in project.serverIds (ON) or
-  // clears the set (OFF). Overrides on still-included servers are
-  // preserved on ON so existing per-server header/timeout config isn't
-  // wiped by a toggle round-trip. Per-server granularity is intentionally
-  // deferred — this is the simplest user-facing surface for the project-
-  // scoped server config rollout.
-  //
-  // Stale-server note: when this is ON and a user adds a new server to
-  // the catalog later, the new server isn't auto-included — they'd
-  // toggle OFF/ON to refresh. Acceptable for v1; a later pass can fold
-  // newly-added servers in automatically when the toggle is on.
-  // Permission gate for the Auto-connect toggle. Backend
-  // `projectServerConfig:setConfig` requires project admin
-  // (`canManageProjectMembers`); mirror that check on the client so
-  // non-admins see a disabled switch instead of an enabled control that
-  // toasts an authorization error when toggled. Matches the
-  // canManageProjectSettings pattern in ProjectSettingsTab.
-  const { canManageMembers: canManageProjectServers } = useProjectMembers({
-    isAuthenticated,
-    projectId: sharedProjectIdForHostScope,
-  });
+  // Project server config (`projects.serverIds` + per-server overrides).
+  // Only the protocol-pin path below still writes it; the header
+  // Auto-connect switch is a personal preference and no longer touches it
+  // (see `ServersAutoConnectSwitch`).
   const isUserReady = useDbUserReady();
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as any,
@@ -766,113 +747,36 @@ export function ServersTab({
     projectId: string;
     input: ProjectServerConfigInput;
   }) => Promise<ProjectServerConfigDto>;
-  const [isTogglingAutoConnect, setIsTogglingAutoConnect] = useState(false);
-  const catalogServerIds = useMemo(
-    () => (viewProjectServersList ?? []).map((s) => s._id),
+  const projectServerNames = useMemo(
+    () => (viewProjectServersList ?? []).map((s) => s.name),
     [viewProjectServersList]
   );
-  const autoConnectAll = useMemo(() => {
-    if (!projectServerConfigDto || catalogServerIds.length === 0) return false;
-    const enrolled = new Set(projectServerConfigDto.serverIds);
-    if (enrolled.size !== catalogServerIds.length) return false;
-    return catalogServerIds.every((id) => enrolled.has(id));
-  }, [projectServerConfigDto, catalogServerIds]);
-  const handleToggleAutoConnect = useCallback(
-    async (next: boolean) => {
-      if (!sharedProjectIdForHostScope) return;
-      setIsTogglingAutoConnect(true);
-      // Treat an explicit project toggle like a fresh host transition so the
-      // current host re-runs reconciliation instead of reusing stale attempts.
+  // Flipping the personal switch ON is a fresh intent: clear the attempt
+  // log so servers connect now instead of waiting for the next client
+  // switch. OFF needs nothing — the hook simply stops firing.
+  const handleAutoConnectToggled = useCallback(
+    (next: boolean) => {
+      if (!next) return;
       resetAutoConnectAttempts(activeProjectId);
-      resetAutoConnectAttempts(sharedProjectIdForHostScope);
-      try {
-        if (next) {
-          // Preserve overrides for servers that remain in the catalog —
-          // backend rejects override keys not in serverIds, so we filter
-          // before sending.
-          const catalogIdSet = new Set(catalogServerIds);
-          const preservedOverrides = Object.fromEntries(
-            Object.entries(projectServerConfigDto?.overrides ?? {}).filter(
-              ([id]) => catalogIdSet.has(id)
-            )
-          );
-          await setProjectServerConfigMutation({
-            projectId: sharedProjectIdForHostScope,
-            input: {
-              serverIds: catalogServerIds,
-              overrides: preservedOverrides,
-            },
-          });
-        } else {
-          await setProjectServerConfigMutation({
-            projectId: sharedProjectIdForHostScope,
-            input: { serverIds: [], overrides: {} },
-          });
-        }
-      } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Failed to update project auto-connect";
-        toast.error(message);
-      } finally {
-        setIsTogglingAutoConnect(false);
+      if (sharedProjectIdForHostScope) {
+        resetAutoConnectAttempts(sharedProjectIdForHostScope);
       }
     },
-    [
-      activeProjectId,
-      sharedProjectIdForHostScope,
-      catalogServerIds,
-      projectServerConfigDto,
-      setProjectServerConfigMutation,
-    ]
+    [activeProjectId, sharedProjectIdForHostScope]
   );
 
   const renderAutoConnectToggle = () => {
-    // Hide entirely when the project hasn't synced or when there's no
-    // catalog to toggle against. Both states make the switch
-    // semantically meaningless.
+    // Hide when there's no cloud project or no catalog to connect — the
+    // switch would have nothing to act on.
     if (!sharedProjectIdForHostScope || !isAuthenticated) return null;
-    if (catalogServerIds.length === 0) return null;
-    if (projectServerConfigDto === undefined) return null;
-    const disabled = isTogglingAutoConnect || !canManageProjectServers;
-    return (
-      <label
-        className={cn(
-          "flex items-center gap-2 text-xs text-muted-foreground select-none",
-          disabled ? "cursor-not-allowed" : "cursor-pointer"
-        )}
-        title={
-          canManageProjectServers
-            ? "Auto-connect every project server when a client opens"
-            : "Only project admins can change auto-connect"
-        }
-      >
-        <Switch
-          checked={autoConnectAll}
-          disabled={disabled}
-          onCheckedChange={handleToggleAutoConnect}
-          aria-label="Auto-connect project servers"
-        />
-        <span>Auto-connect</span>
-      </label>
-    );
+    if (projectServerNames.length === 0) return null;
+    return <ServersAutoConnectSwitch onToggled={handleAutoConnectToggled} />;
   };
 
-  const previewedHostRequiredNames = useMemo(() => {
-    const requiredIds = previewedHost?.config?.serverIds ?? [];
-    if (requiredIds.length === 0 || !viewProjectServersList) return [];
-    const byId = new Map(
-      viewProjectServersList.map((s) => [s._id, s.name] as const)
-    );
-    return requiredIds
-      .map((id) => byId.get(id))
-      .filter((name): name is string => !!name);
-  }, [previewedHost?.config?.serverIds, viewProjectServersList]);
   useAutoConnectProjectServers({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
-    requiredServerNames: previewedHostRequiredNames,
+    serverNames: projectServerNames,
   });
 
   const appReady = useAppReady();

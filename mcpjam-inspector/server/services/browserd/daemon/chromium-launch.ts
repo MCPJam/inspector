@@ -342,6 +342,8 @@ export function wrapPage(
   // rather than attaching its own — a page serving both a tool call and the
   // pane would otherwise hold two.
   let webmcpPromise: Promise<WebMcpBridge | null> | null = null;
+  /** The resolved bridge, for the synchronous `frameSessions()` reader. */
+  let attachedBridge: WebMcpBridge | null = null;
   // The CDP session itself is memoized separately and shared: the WebMCP
   // bridge and the viewport both want one, and attaching twice to the same
   // page gives two sessions whose events interleave unpredictably.
@@ -452,6 +454,12 @@ export function wrapPage(
       page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
     press: (key) => page.keyboard.press(key),
     scrollBy: ({ dx, dy }) => page.mouse.wheel(dx, dy),
+    // Move first: `mouse.wheel` delivers at the pointer's current position,
+    // not at the element the caller named.
+    async scrollAt(point, { dx, dy }) {
+      await page.mouse.move(point.x, point.y);
+      await page.mouse.wheel(dx, dy);
+    },
     async dragTo(from, to) {
       // Explicit down/move/up rather than `dragAndDrop`: HTML5 drag handlers
       // and canvas apps both need the intermediate move to fire, and a single
@@ -515,9 +523,12 @@ export function wrapPage(
         // ONE attach. Two sessions on a page is two of everything the CDP
         // domains keep per session, for one page's worth of truth.
         const session = await adapted.cdp();
-        return session
-          ? attachWebMcp(page, session, localSecurity, localBudget)
+        const bridge = session
+          ? await attachWebMcp(page, session, localSecurity, localBudget)
           : null;
+        // Held so `frameSessions()` can stay synchronous.
+        attachedBridge = bridge;
+        return bridge;
       })();
       return webmcpPromise;
     },
@@ -528,6 +539,12 @@ export function wrapPage(
         return attach.page().catch(() => null);
       })();
       return cdpPromise;
+    },
+    frameSessions() {
+      // Synchronous on purpose: awaiting `webmcp()` on the a11y hot path would
+      // attach a session to tabs that never asked. The bridge is attached
+      // eagerly at tab creation, so it has almost always resolved.
+      return attachedBridge?.attachedFrameSessions() ?? [];
     },
   };
   return adapted;
@@ -966,6 +983,17 @@ export type AnyContext = {
  * visible and permanently outside the driver's tab map, where a headed user could
  * focus it while observations ran against a different tab (P2).
  */
+/** How long a teardown waits on a browser that may never answer. @see adaptContext */
+const CONTEXT_CLOSE_GRACE_MS = 10_000;
+
+/** A timer that resolves, and is never the reason a process stays alive. */
+function closeGrace(ms: number = CONTEXT_CLOSE_GRACE_MS): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    (timer as { unref?: () => void }).unref?.();
+  });
+}
+
 export function adaptContext(
   context: AnyContext,
   options: {
@@ -1024,7 +1052,10 @@ export function adaptContext(
       // runs even when the context close fails, which is exactly the case
       // where something is already wrong.
       try {
-        await context.close();
+        // Bounded: `context.close()` can stay pending forever while a renderer
+        // drains a navigation, and `finally` does not run for an unsettled
+        // promise. The browser close below reaps whatever is left.
+        await Promise.race([context.close(), closeGrace()]);
       } finally {
         await options.onClose?.();
       }

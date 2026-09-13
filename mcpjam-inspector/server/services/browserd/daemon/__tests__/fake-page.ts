@@ -68,6 +68,8 @@ export type ActLog = string[];
 
 export interface FakePage extends DriverPage {
   setUrl(u: string): void;
+  /** Replace the document, as a page-initiated navigation (a submit) does. */
+  loadDocument(u: string): void;
   /** Record a request, as a page fetching something would. */
   pushNetwork(row: NetworkEntry): void;
   /** Raise a dialog, as a page calling `confirm()` would. */
@@ -171,6 +173,19 @@ export function fakePage(init: {
     webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> }
       ? B | null
       : never;
+    /**
+     * The per-frame CDP sessions this page's bridge has attached.
+     *
+     * `hostBackendNodeId` is the fixture's convenience, not the driver's: it
+     * is what `DOM.getFrameOwner` would answer for this frame, so a test can
+     * say "this session belongs to the iframe at node 77" in one place rather
+     * than hand-wiring a reply table per frame.
+     */
+    frameSessions?: Array<{
+      frameId: string;
+      cdp: CdpLike;
+      hostBackendNodeId?: number;
+    }>;
   } = {},
 ): FakePage {
   let url = init.url ?? "about:blank";
@@ -189,8 +204,23 @@ export function fakePage(init: {
     front: 0,
 
   };
+  // `performance.timeOrigin`: new per document load, unchanged by `setUrl`,
+  // which models pushState and fragment changes.
+  let timeOrigin = 1_000;
+  const newDocument = () => {
+    timeOrigin += 1;
+  };
+  const userEvaluate = init.cdpReplies?.["Runtime.evaluate"];
   const defaultCdp = fakeCdpSession({
     ...(init.cdpReplies ?? {}),
+    "Runtime.evaluate": (params?: Record<string, unknown>) => {
+      if (params?.expression === "performance.timeOrigin") {
+        return { result: { type: "number", value: timeOrigin } };
+      }
+      return typeof userEvaluate === "function"
+        ? (userEvaluate as (p?: Record<string, unknown>) => unknown)(params)
+        : (userEvaluate ?? {});
+    },
     // Wrapped so `onA11y` fires at the moment the tree is READ — the window a
     // person taking the browser mid-observation has to be caught in.
     ...(init.cdpReplies?.["Accessibility.getFullAXTree"] !== undefined ||
@@ -224,10 +254,10 @@ export function fakePage(init: {
     if (init.actError) throw init.actError;
   };
   const page: FakePage = {
-    async goto(u) { calls.goto.push(u); url = u; },
-    async reload() { calls.reload++; },
-    async goBack() { calls.goBack++; },
-    async goForward() { calls.goForward++; },
+    async goto(u) { calls.goto.push(u); url = u; newDocument(); },
+    async reload() { calls.reload++; newDocument(); },
+    async goBack() { calls.goBack++; newDocument(); },
+    async goForward() { calls.goForward++; newDocument(); },
     async setViewportSize(size: { width: number; height: number }) {
       calls.viewportSizes.push(size);
     },
@@ -259,6 +289,13 @@ export function fakePage(init: {
     async fillSelector(selector, text) { act(`fill:${selector}:${text}`); },
     async press(key) { act(`press:${key}`); },
     async scrollBy({ dx, dy }) { act(`scroll:${dx},${dy}`); },
+    // Logged DIFFERENTLY from `scrollBy`, which is the whole assertion: a
+    // `scroll` at a ref used to reach `scrollBy` and move the document behind
+    // the element while reporting success, and the two are indistinguishable
+    // in a log that spells them the same.
+    async scrollAt(point, { dx, dy }) {
+      act(`scroll:${dx},${dy}@${point.x},${point.y}`);
+    },
     async dragTo(from, to) { act(`drag:${from.x},${from.y}->${to.x},${to.y}`); },
     async selectOption(selector, value) { act(`select:${selector}:${value}`); },
     async pageText() {
@@ -299,8 +336,17 @@ export function fakePage(init: {
     async cdp() {
       return page.cdpSession === undefined ? defaultCdp : page.cdpSession;
     },
+    // OPTIONAL on purpose: an engine with no child sessions omits the method
+    // entirely (Electron does), which is a different thing from having none.
+    ...(init.frameSessions
+      ? { frameSessions: () => init.frameSessions! }
+      : {}),
 
     setUrl,
+    loadDocument: (u: string) => {
+      url = u;
+      newDocument();
+    },
     setDom,
     setText,
     pushConsole: (e: { type: string; text: string; at: number }) =>

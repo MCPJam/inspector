@@ -82,17 +82,21 @@ export type BrowserAgentTarget =
    */
   | { ref: string };
 
-export type BrowserAgentActVerb =
-  | "click"
-  | "type"
-  | "press"
-  | "scroll"
-  | "hover"
-  | "drag"
-  | "select"
+/**
+ * The published act verbs as a runtime list, so the parity test can check
+ * every surface against it. Adding a verb here publishes it.
+ */
+export const BROWSER_AGENT_ACT_VERBS = [
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "hover",
+  "drag",
+  "select",
   /** Tab lifecycle rides `act_in_browser`; the protocol already has the verbs. */
-  | "close_tab"
-  | "activate_tab"
+  "close_tab",
+  "activate_tab",
   /**
    * Answer the dialog blocking this page. `accept_dialog` takes a `prompt`
    * reply in `value`.
@@ -102,8 +106,11 @@ export type BrowserAgentActVerb =
    * client with its own rules answers here, and opens its session with the
    * daemon deciding nothing.
    */
-  | "accept_dialog"
-  | "dismiss_dialog";
+  "accept_dialog",
+  "dismiss_dialog",
+] as const;
+
+export type BrowserAgentActVerb = (typeof BROWSER_AGENT_ACT_VERBS)[number];
 
 export type BrowserAgentObserveMode =
   | "a11y"
@@ -198,7 +205,12 @@ export type BrowserAgentCommand =
       /** `a11y` only: `interactive` (default) or `all` to keep the prose too. */
       filter?: "interactive" | "all";
     }
-  | { op: "invoke_page_tool"; toolKey: string; frameId?: string; input: unknown }
+  | {
+      op: "invoke_page_tool";
+      toolKey: string;
+      frameId?: string;
+      input: unknown;
+    }
   | { op: "cancel_page_tool"; invocationId: string };
 
 /** An artifact the result points at; a second call fetches the payload. */
@@ -338,7 +350,12 @@ export type BrowserAgentRefusalCode =
   | "busy"
   | "daemon_at_capacity"
   /** Provisioning or wake failed before a command could be sent. */
-  | "browser_unavailable";
+  | "browser_unavailable"
+  /**
+   * The daemon speaks an incompatible wire protocol, and the automatic
+   * relaunch also failed. Unlike `browser_unavailable`, retrying will not help.
+   */
+  | "protocol_mismatch";
 
 /** Why an outcome is unknowable. @see BrowserAgentResult */
 export type BrowserAgentUnknownReason =
