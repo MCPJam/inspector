@@ -2153,6 +2153,18 @@ function ToolResultContainsFields({
   );
 }
 
+/**
+ * Identity of a schema value for the draft's "which value am I the text
+ * for" check. `undefined` gets its own sentinel: `JSON.stringify(undefined)`
+ * is not a string, and folding it into `{}` would hide a real move from
+ * unset to `{}`. Only malformed stored data can be `undefined` here — the SDK
+ * type requires `schema` — so the sentinel is a guard, not a code path the
+ * editor itself produces.
+ */
+function schemaKeyOf(schema: unknown): string {
+  return schema === undefined ? "\u0000undefined" : JSON.stringify(schema);
+}
+
 function parseSchemaDraft(
   text: string,
 ):
@@ -2184,7 +2196,11 @@ function ToolResultSchemaFields({
   const id = useId();
   // Same draft model as `RawArgsJsonEditor`: the text knows which schema it is
   // for, and is re-derived in render when the schema arrives from outside.
-  const schemaKey = JSON.stringify(predicate.schema ?? {});
+  // The identity comes from ONE function in all three places (initial state,
+  // the render-phase check, the write-through). Any JSON root is legal here,
+  // null included, so the key must not fold null into {} while the value
+  // written is null — that made the box snap back to {} over a stored null.
+  const schemaKey = schemaKeyOf(predicate.schema);
   const formatSchema = () => JSON.stringify(predicate.schema ?? {}, null, 2);
   const [draftState, setDraftState] = useState(() => ({
     text: formatSchema(),
@@ -2214,7 +2230,7 @@ function ToolResultSchemaFields({
             const { parsed, ok } = parseSchemaDraft(next);
             setDraftState({
               text: next,
-              forSchema: ok ? JSON.stringify(parsed) : schemaKey,
+              forSchema: ok ? schemaKeyOf(parsed) : schemaKey,
             });
             // Written through only when it parses: a half-typed schema is not
             // an assertion, and persisting one would make the check

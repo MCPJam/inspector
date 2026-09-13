@@ -267,6 +267,33 @@ describe("ChecksSection raw-JSON draft validity", () => {
     expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
   });
 
+  it("keeps a null schema in the box and writes null through", () => {
+    // Any JSON root is legal here, null included. The draft must stay in
+    // step with what was written: a box that snaps back to {} over a stored
+    // null shows one value and saves another, with no error under it.
+    const onDraftValidityChange = vi.fn();
+    const onValue = vi.fn();
+    render(
+      <Harness
+        initial={[{ type: "toolResultMatchesSchema", schema: {} } as Predicate]}
+        onDraftValidityChange={onDraftValidityChange}
+        onValue={onValue}
+      />,
+    );
+    const textarea = screen.getByLabelText(/JSON Schema the result must match/);
+    fireEvent.change(textarea, { target: { value: "null" } });
+
+    expect(textarea).toHaveValue("null");
+    expect(onValue).toHaveBeenLastCalledWith([
+      expect.objectContaining({
+        type: "toolResultMatchesSchema",
+        schema: null,
+      }),
+    ]);
+    expect(onDraftValidityChange).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByText(/Not valid JSON/)).toBeNull();
+  });
+
   it("covers the tool-result schema editor the same way", () => {
     const onDraftValidityChange = vi.fn();
     render(
