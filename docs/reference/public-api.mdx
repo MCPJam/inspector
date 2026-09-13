@@ -456,8 +456,8 @@ exists.
 
 | Endpoint | What it does |
 | --- | --- |
-| `PUT .../environments/{environmentId}/scenario` | **Publish.** Idempotent — republishing returns the existing scenario, and `created: false` says so. Project **admin** |
-| `DELETE .../environments/{environmentId}/scenario` | **Unpublish.** The link dies and live sessions end. `deleted: false` when there was nothing published |
+| `PUT .../environments/{environmentId}/scenario` | **Publish.** An environment may back more than one study; each publish creates a new one. The only uniqueness constraint is the study **name** within the project — a taken name returns `CONFLICT` (`409`) with `field: "name"`. Project **admin** |
+| `DELETE .../environments/{environmentId}/scenario` | **Unpublish.** The link dies and live sessions end. `deleted: false` when there was nothing published. Pass `?scenarioId=` to target a specific study when the environment backs more than one; omit it for the single-study case |
 | `PATCH .../user-testing/scenarios/{scenarioId}` | Rename, re-describe, or change `mode` |
 | `GET .../user-testing/scenarios/{scenarioId}/sessions` | What visitors did: one row per session, with feedback and a first-message preview |
 | `GET .../user-testing/scenarios/{scenarioId}/sessions/{sessionId}` | One session's transcript, paged. Tool payloads and blobs are dropped |
