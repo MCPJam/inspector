@@ -23,6 +23,11 @@ node scripts/codemod/evals-vocabulary/index.mjs --root ../mcpjam-backend
 |    1 | it scanned nothing, or was asked to `--write`           |
 |    2 | the mapping proposes to mutate a protected term or path, or to merge two fields |
 
+`npm run codemod:evals-vocabulary:report` runs `report.mjs`, which writes
+`REPORT.md` only on a clean run and exits with the scanner's own code. The
+earlier shell chain turned every failure into exit 1, so a refusal looked the
+same as a run that scanned nothing.
+
 ## Why there is no `--write`
 
 The words this program renames are ordinary English in this repository and
@@ -76,6 +81,28 @@ The `repetitions` key inside the configuration-revision payload
 (`convex/lib/evalConfigRevision.ts`) is a different matter: it never moves.
 `protected.json` protects it, with `runs`, `predicates` and
 `defaultPredicates`, so a rename widened far enough to reach that file fails.
+
+The guard works per file, not per row. `iterations → legacyIterations` and
+`repetitions → iterations` share their `paths`, so inside those files the
+target always reads as vacated. Those same files hold the legacy floor, the
+deprecated alias of the count, and lists of iteration records side by side,
+and only a person can tell which `iterations` is which. Triage each row under
+`iterations → legacyIterations`. The "lands after" line is an ordering, not a
+proof.
+
+## Outside the mapping
+
+A rename that sets `"inventoryOutsidePaths": true` also lists every spelling of
+its `from` outside its `paths`, at the end of the report, as work left rather
+than as proposals. The count rename sets it. Widening its `paths` instead is
+not an option: that reaches files where `iterations` already names lists of
+iteration records, and the target-in-use guard refuses the merge. Protected
+paths are not listed. A protected field, such as the configuration-revision
+`repetitions` key, is listed as frozen rather than as work. Run with
+`--root ../mcpjam-backend` for the backend's share.
+
+A string in a type position, like `unit: "iterations" | "sessions"`, is reported
+with the shape `string in a type`. It usually names an enum value, not a field.
 
 ## Why it parses
 

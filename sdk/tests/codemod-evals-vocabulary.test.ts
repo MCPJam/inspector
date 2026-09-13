@@ -17,6 +17,7 @@ import {
   writeFileSync,
   rmSync,
   symlinkSync,
+  existsSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -917,6 +918,108 @@ describe("the evaluator-vocabulary scanner", () => {
         String(paths)
       ).toBe(true);
     }
+  });
+
+  it("keeps the scanner's refusal code through the report command", () => {
+    const REPORT = join(dirname(SCANNER), "report.mjs");
+    const root = tree({ "sdk/src/a.ts": "export const a = 1;\n" });
+    const mappingPath = join(root, "__mapping.json");
+    writeFileSync(
+      mappingPath,
+      JSON.stringify({
+        renames: [
+          { from: "trialEndsAt", to: "iterationEndsAt", scope: "identifier" },
+        ],
+      })
+    );
+    const out = join(root, "REPORT.md");
+
+    const refused = spawnSync(
+      process.execPath,
+      [REPORT, "--root", root, "--mapping", mappingPath, "--out", out],
+      { encoding: "utf8" }
+    );
+    // Exit 2 is the refusal. The old npm chain flattened it to 1, the code for
+    // "scanned nothing", so a caller could not tell the two apart.
+    expect(refused.status).toBe(2);
+    expect(existsSync(out)).toBe(false);
+    expect(existsSync(`${out}.tmp`)).toBe(false);
+
+    const clean = spawnSync(
+      process.execPath,
+      [REPORT, "--root", root, "--out", out],
+      { encoding: "utf8" }
+    );
+    expect(clean.status).toBe(0);
+    expect(readFileSync(out, "utf8")).toMatch(/proposed renames/);
+  });
+
+  it("labels a string in a type as such, not as a field", () => {
+    const root = tree({
+      // An enum value in a literal union spells `iterations` without naming a
+      // field. It stays in the inventory, under a shape that says what it is.
+      "sdk/src/platform/types.ts":
+        `export type Rate = { unit: "iterations" | "sessions" };\n` +
+        `export const issue = { path: ["iterations"] };\n`,
+    });
+    const { status, json } = scan(root, { renames: [LEGACY_FIRST] });
+
+    expect(status).toBe(0);
+    expect(
+      json.findings
+        .map((f: { line: number; shape: string }) => `${f.line} ${f.shape}`)
+        .sort()
+    ).toEqual(["1 string in a type", "2 field named in a string"]);
+  });
+
+  it("lists the count outside its paths as work left, and marks frozen keys", () => {
+    const root = tree({
+      "sdk/src/platform/types.ts":
+        "export type Case = { legacyIterations: number; repetitions?: number };\n",
+      // Outside the rename's paths, and still the count: work left.
+      "mcpjam-inspector/client/src/settings.ts":
+        "export const draft = { repetitions: 3 };\n",
+      // The revision-payload key never moves: listed, but never work.
+      "convex/lib/evalConfigRevision.ts":
+        "export const sig = { repetitions: 1 };\n",
+      // A protected path is another program's word, not this inventory's.
+      "sdk/src/xaa/mint.ts": "export const plan = { repetitions: 1 };\n",
+      // `checks` does not opt in, so it is never listed outside its paths.
+      "mcpjam-inspector/client/src/state/app-reducer.ts":
+        "export const state = { checks: [] };\n",
+    });
+    const mapping = {
+      renames: [
+        { ...COUNT, inventoryOutsidePaths: true },
+        {
+          from: "checks",
+          to: "assertions",
+          scope: "wire-field",
+          sameMeaning: true,
+          paths: COUNT_PATHS,
+        },
+      ],
+    };
+    const { status, json } = scan(root, mapping);
+
+    expect(status).toBe(0);
+    expect(json.findings.map((f: { file: string }) => f.file)).toEqual([
+      "sdk/src/platform/types.ts",
+    ]);
+    expect(
+      json.outsideMapping
+        .map(
+          (e: { file: string; line: number; frozen: boolean }) =>
+            `${e.file}:${e.line} ${e.frozen ? "frozen" : "work"}`
+        )
+        .sort()
+    ).toEqual([
+      "convex/lib/evalConfigRevision.ts:1 frozen",
+      "mcpjam-inspector/client/src/settings.ts:1 work",
+    ]);
+    expect(render(root, mapping).stdout).toMatch(
+      /## Outside the mapping: `repetitions → iterations`/
+    );
   });
 
   it("has no --write, and says why rather than ignoring the flag", () => {

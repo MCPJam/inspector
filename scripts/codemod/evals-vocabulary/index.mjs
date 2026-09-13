@@ -304,6 +304,14 @@ const overlappingPaths = (a, b) =>
 const vacatesAt = (rel, name) =>
   wireFieldRenames.some((r) => r.from === name && inAllowedPaths(rel, r.paths));
 
+/** How a matched field-shaped node reads to a reviewer. */
+const shapeOf = (node) =>
+  node.isField
+    ? "field"
+    : node.isTypeLiteral
+    ? "string in a type"
+    : "field named in a string";
+
 /**
  * Compiler options for a one-file program that resolves nothing.
  *
@@ -452,6 +460,12 @@ function interestingNodes(text, file) {
 
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       const parent = node.parent;
+      // A string in a TYPE position, like `unit: "iterations" | "sessions"`, is
+      // a member of a literal union: usually an enum value, not the name of a
+      // field. It still spells the token, so it stays in the inventory, but
+      // under its own shape. Labelling it "field named in a string" sent a
+      // reviewer looking for a field that is not there.
+      const isTypeLiteral = ts.isLiteralTypeNode(parent);
       const isSpecifier =
         ((ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) &&
           parent.moduleSpecifier === node) ||
@@ -470,6 +484,7 @@ function interestingNodes(text, file) {
         start: node.getStart(source),
         isSpecifier,
         isField: isKey,
+        isTypeLiteral,
         // Matchable wherever it sits. A subpath and a wire field are both
         // named by strings in places that are neither an import nor a
         // property key, and those places break just as loudly: the alias keys
@@ -510,6 +525,20 @@ const lineIndexOf = (text) => {
 const findings = [];
 const violations = [];
 const reviewByHand = [];
+/**
+ * Spellings of a rename's `from` that sit outside its `paths`.
+ *
+ * Not proposals, so no guard runs over them. Collected only for a rename that
+ * opts in with `inventoryOutsidePaths`, because for most wire fields the word
+ * outside the adapters is English or another subsystem's field, and listing it
+ * is the noise path scoping exists to avoid. The configured count is the
+ * exception: `repetitions` outside the adapters is still the count, and a
+ * report that sized the rename by the adapters alone made a fraction of the
+ * work look like all of it. Widening `paths` instead is not an option: it
+ * reaches files where `iterations` already names lists of iteration records,
+ * and the target-in-use guard rightly refuses that merge.
+ */
+const outsideMapping = [];
 /**
  * Files the walk or a read could not inspect.
  *
@@ -702,15 +731,25 @@ for (const rel of candidates) {
       if (node.isField || node.isString) {
         for (const rename of wireFieldRenames) {
           if (node.value !== rename.from) continue;
-          if (!inAllowedPaths(rel, rename.paths)) continue;
-          record(
-            rel,
-            line,
-            lineText,
-            rename,
-            node.value,
-            node.isField ? "field" : "field named in a string"
-          );
+          if (!inAllowedPaths(rel, rename.paths)) {
+            if (rename.inventoryOutsidePaths && !isProtectedPath(rel)) {
+              outsideMapping.push({
+                file: rel,
+                line,
+                matched: node.value,
+                shape: shapeOf(node),
+                from: rename.from,
+                to: rename.to,
+                scope: rename.scope,
+                text: lineText.trim().slice(0, 160),
+                // A hash-payload key that must never move: listed, so the
+                // count of what is left says plainly what is not work.
+                frozen: Boolean(protectedFieldAt(rel, node.value)),
+              });
+            }
+            continue;
+          }
+          record(rel, line, lineText, rename, node.value, shapeOf(node));
         }
         for (const rename of wireFieldRenames) {
           if (node.value !== rename.to) continue;
@@ -721,7 +760,7 @@ for (const rel of candidates) {
             file: rel,
             line,
             matched: node.value,
-            shape: node.isField ? "field" : "field named in a string",
+            shape: shapeOf(node),
             from: rename.from,
             to: rename.to,
             scope: rename.scope,
@@ -812,6 +851,7 @@ if (AS_JSON) {
         skipped,
         findings,
         reviewByHand,
+        outsideMapping,
         violations,
       },
       null,
@@ -917,6 +957,18 @@ for (const [key, entries] of [...grouped].sort(
 }
 out.push("");
 
+if (outsideMapping.length > 0) {
+  const live = outsideMapping.filter((entry) => !entry.frozen);
+  out.push(
+    `Outside the mapping: ${live.length} more occurrence(s) across ${
+      new Set(live.map((entry) => entry.file)).size
+    } file(s) still spell a renamed field and are not proposed, plus ${
+      outsideMapping.length - live.length
+    } frozen. They are listed at the end.`
+  );
+  out.push("");
+}
+
 if (skipped.length > 0) {
   out.push("## Skipped");
   out.push("");
@@ -980,6 +1032,38 @@ for (const [key, entries] of [...grouped].sort(
       `| \`${entry.file}:${entry.line}\` | ${entry.shape ?? "—"} | ${codeCell(
         entry.text
       )} |`
+    );
+  }
+  out.push("");
+}
+
+const outsideByRename = new Map();
+for (const entry of outsideMapping) {
+  const key = `${entry.from} → ${entry.to}`;
+  if (!outsideByRename.has(key)) outsideByRename.set(key, []);
+  outsideByRename.get(key).push(entry);
+}
+for (const [key, entries] of outsideByRename) {
+  const frozen = entries.filter((entry) => entry.frozen).length;
+  out.push(`## Outside the mapping: \`${key}\``);
+  out.push("");
+  out.push(
+    `> Not proposed. ${
+      entries.length - frozen
+    } occurrence(s) outside this rename's \`paths\` ` +
+      `still spell \`${entries[0].from}\`, and ${frozen} are frozen hash-payload keys that ` +
+      `never move. The rename is not done until the rest are triaged. They are listed rather ` +
+      `than proposed because widening \`paths\` reaches files where \`${entries[0].to}\` ` +
+      `already names something else, and the scanner refuses that merge.`
+  );
+  out.push("");
+  out.push("| file:line | shape | frozen | line |");
+  out.push("|---|---|---|---|");
+  for (const entry of entries) {
+    out.push(
+      `| \`${entry.file}:${entry.line}\` | ${entry.shape} | ${
+        entry.frozen ? "yes" : ""
+      } | ${codeCell(entry.text)} |`
     );
   }
   out.push("");
