@@ -92,6 +92,15 @@ export function SuitePassOrFailSection({
           )
         }
         judgeSkipped={judgeConfig?.goalCompletion?.enabled === false}
+        onJudgeSkippedChange={(skipped) =>
+          onJudgeConfigChange({
+            ...judgeConfig,
+            goalCompletion: {
+              ...(judgeConfig?.goalCompletion ?? {}),
+              enabled: !skipped,
+            },
+          })
+        }
         onEditRules={() =>
           document
             .getElementById("standard-check-rules")

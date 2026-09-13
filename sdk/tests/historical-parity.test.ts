@@ -216,6 +216,11 @@ describe("parity corpus manifest", () => {
   });
 
   it("declares the analyzer version it was recorded under", () => {
+    // Pinned by hand rather than to STAGE_ANALYZER_VERSION on purpose: the
+    // corpus is immutable v11 evidence, and v12 changed only discovery-stage
+    // assertion routing, which no v11 record exercises. The per-record test
+    // below proves every row still derives identically under v12; only the
+    // stamped version moves.
     expect(manifest.stageAnalyzerVersion).toBe(11);
     expect(STAGE_ANALYZER_VERSION).toBe(12);
     expect(manifest.origin).toBe("synthetic");

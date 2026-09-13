@@ -868,6 +868,27 @@ function connectionPositivelyReached(e: StageEvidence): boolean {
   return false;
 }
 
+/**
+ * Discovery, analyzer 12. Precedence, top to bottom:
+ *
+ *   1. An explicit tools/list FAILURE from setup, with the v6+ attribution
+ *      rules (`toolsListFailed` only when connection was positively reached
+ *      and the failure is theirs; ours ⇒ `setupAborted`; unknown ⇒
+ *      `egressUnverified`). A server that never listed cannot be graded on
+ *      what it listed.
+ *   2. A failed, scored, GATING discovery assertion ⇒ `failed/predicateFailed`.
+ *      This must sit ABOVE the success returns below: before v12 a completed
+ *      tools/list short-circuited to `passed`, so an authored catalog check
+ *      could never fail the stage it files at. Advisory and errored rows are
+ *      excluded by `gatingPredicateResults`, so a Warn never fails a stage.
+ *   3. Success. A completed tools/list signal, a non-zero inventory, or a
+ *      PASSING scored discovery assertion all establish `passed/observed`.
+ *      The last is deliberate: every discovery kind errors unless the raw
+ *      catalog capture is `complete`, so a scored row is itself evidence that
+ *      a tools/list round-trip finished.
+ *   4. Tool spans imply discovery (`impliedByLaterEvidence`); otherwise the
+ *      stage is `notMeasured`.
+ */
 function deriveDiscovery(e: StageEvidence): StageResultRow {
   const signal = e.setupSignals?.discovery;
   if (signal?.outcome === "failed") {

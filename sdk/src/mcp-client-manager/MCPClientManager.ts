@@ -3742,6 +3742,12 @@ export class MCPClientManager {
       (config.logJsonRpc || this.defaultLogJsonRpc
         ? createDefaultRpcLogger()
         : this.defaultRpcLogger);
+    // Always a function now, so every connection goes through
+    // `wrapTransportForLogging`, logger or not. That wrapper is transparent:
+    // it forwards onmessage/onclose/onerror, sessionId, hasPerRequestStream
+    // and setProtocolVersion, and swallows logger throws — so the only cost
+    // is one observe() per frame, and no consumer's error or close semantics
+    // change.
     return (event) => {
       // Observation is local only. It neither enables body logging nor sends
       // another discovery request. Failure must not interfere with transport.

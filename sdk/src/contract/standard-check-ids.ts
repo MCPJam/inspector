@@ -1,5 +1,14 @@
-/** Stable authoring families. Kept separate from content-derived scorer ids.
- * Mirrored in the backend: changes require catalog/validator parity tests.
+/**
+ * Stable authoring families. Kept separate from content-derived scorer ids.
+ * Mirrored in the backend (`convex/lib/mirrors.json` id `standard-check-ids`);
+ * changes require catalog/validator parity tests.
+ *
+ * FROZEN once shipped: these keys are persisted on
+ * `testCase.suppressedSuiteStandardCheckIds` and hashed into the backend's
+ * `configRevision` and every revision snapshot, both of which normalize and
+ * THROW on an unknown id. Removing or renaming a key breaks every stored case
+ * that suppressed it. Treat this map like the scorer id template: add, never
+ * remove.
  */
 export const STANDARD_CHECK_ASSERTION_KINDS = {
   "discovery.description": "toolDescriptionsPresent",
