@@ -1,3 +1,4 @@
+import { suppressedSuiteStandardCheckIdsSchema } from "../contract/standard-checks.js";
 import { platformBrowserToolPolicySchema } from "./browser-policy.js";
 import { BROWSER_AGENT_ACT_VERBS } from "./browser-agent-contract.js";
 import type { PlatformSessionBrowserCommand } from "./types.js";
@@ -4962,6 +4963,8 @@ const evalCaseInput = z.object({
     .describe(
       "Per-case check gate (advanced): `{ mode: inherit | replace | extend, list: [...] }`. `predicates` is the deprecated spelling of this field; passing both is an error."
     ),
+  suppressedSuiteStandardCheckIds:
+    suppressedSuiteStandardCheckIdsSchema.optional(),
   /** @deprecated Use `checks`. */
   predicates: z
     .record(z.string(), z.any())
@@ -5216,6 +5219,8 @@ const caseFieldsShape = {
   // untouched (omitted). On create, null is treated as "no override".
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
   checks: publicCheckOverrideSchema.nullable().optional(),
+  suppressedSuiteStandardCheckIds:
+    suppressedSuiteStandardCheckIdsSchema.optional(),
   // THE CONVERTER'S CLAIM, on the operation surface too.
   //
   // Without it Zod strips the key and `buildCaseBody` never sees it, so a

@@ -93,7 +93,7 @@ describe("shape invariants", () => {
   });
 
   test("stamps the analyzer version on every derivation", () => {
-    expect(STAGE_ANALYZER_VERSION).toBe(11);
+    expect(STAGE_ANALYZER_VERSION).toBe(12);
     expect(derive().stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
     expect(
       derive({ iteration: { status: "cancelled" } }).stageAnalyzerVersion
@@ -1298,7 +1298,7 @@ describe("the grader→stage map is total and agrees with the analyzer", () => {
     // moves `noToolErrors` to `response` (it used to fail there AND at
     // userValue on the same evidence), and stops an unscorable row
     // (`status: "error"`) from establishing any state.
-    expect(STAGE_ANALYZER_VERSION).toBe(11);
+    expect(STAGE_ANALYZER_VERSION).toBe(12);
   });
 });
 

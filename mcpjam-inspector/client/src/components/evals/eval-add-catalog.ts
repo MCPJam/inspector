@@ -66,6 +66,12 @@ export type EvalAddEntry = {
   choice: EvalAddChoice;
 };
 const predicateMeta: Record<PredicateKind, [AddSection, LucideIcon]> = {
+  toolDescriptionsPresent: [ADD_SECTIONS[2], FileJson],
+  toolAnnotationsPresent: [ADD_SECTIONS[2], FileJson],
+  toolNamesUnique: [ADD_SECTIONS[2], FileJson],
+  toolInputSchemasWellFormed: [ADD_SECTIONS[2], FileJson],
+  toolOutputSchemasPresent: [ADD_SECTIONS[2], FileJson],
+  noDeprecatedToolExposed: [ADD_SECTIONS[6], Archive],
   toolCalledWith: [ADD_SECTIONS[1], Wrench],
   toolCalledAtLeastOnce: [ADD_SECTIONS[1], CheckCheck],
   toolNeverCalled: [ADD_SECTIONS[1], Ban],

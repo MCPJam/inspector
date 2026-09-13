@@ -1,11 +1,19 @@
 import { Button } from "@mcpjam/design-system/button";
-import { useState } from "react";
 import type { CasePredicates, Predicate } from "@/shared/eval-matching";
+import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { SuiteStageChecks } from "@/components/evals/suite-stage-checks";
+import {
+  toggleCaseStandardCheck,
+  type StandardCheckDraft,
+} from "@/components/evals/standard-checks-model";
 
 export function CaseChecksPage({
   title,
-  disabledChecks,
+  predicates,
+  suppressedSuiteStandardCheckIds,
+  suitePredicates,
+  onChecksChange,
+  capabilities,
   judgeSkipped,
   onJudgeSkippedChange,
   onSave,
@@ -14,11 +22,11 @@ export function CaseChecksPage({
   onConfigureSuite,
 }: {
   title: string;
-  disabledChecks?: string[];
   predicates?: CasePredicates;
+  suppressedSuiteStandardCheckIds?: string[];
   suitePredicates: Predicate[];
-  availableTools: string[];
-  onPredicatesChange: (next: CasePredicates | undefined) => void;
+  onChecksChange: (next: StandardCheckDraft) => void;
+  capabilities?: SuiteCapabilities | null;
   judgeSkipped: boolean;
   onJudgeSkippedChange: (skipped: boolean) => void;
   onSave: () => void;
@@ -26,17 +34,7 @@ export function CaseChecksPage({
   onBack?: () => void;
   onConfigureSuite?: () => void;
 }) {
-  const suiteDisabled = disabledChecks ?? [];
-  const [stageOverrides, setStageOverrides] = useState<Record<string, boolean>>(
-    {},
-  );
-  const effectiveDisabled = new Set(suiteDisabled);
-  if (judgeSkipped) effectiveDisabled.add("userValue.outcome");
-  for (const [id, enabled] of Object.entries(stageOverrides)) {
-    if (enabled) effectiveDisabled.delete(id);
-    else effectiveDisabled.add(id);
-  }
-  const hasUnsavedStageChanges = Object.keys(stageOverrides).length > 0;
+  const draft = { predicates, suppressedSuiteStandardCheckIds };
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
       <div className="mx-auto max-w-4xl space-y-6">
@@ -53,45 +51,28 @@ export function CaseChecksPage({
             <Button variant="ghost" onClick={onBack}>
               Back to case
             </Button>
-            <Button
-              onClick={onSave}
-              disabled={saveDisabled || hasUnsavedStageChanges}
-            >
+            <Button onClick={onSave} disabled={saveDisabled}>
               Save overrides
             </Button>
           </div>
         </div>
         <SuiteStageChecks
-          disabledChecks={[...effectiveDisabled]}
-          suiteDisabledChecks={suiteDisabled}
-          onChange={(next) => {
-            const nextDisabled = next ?? [];
-            const overrides: Record<string, boolean> = {};
-            for (const id of new Set([...nextDisabled, ...suiteDisabled])) {
-              if (id === "userValue.outcome" && !suiteDisabled.includes(id))
-                continue;
-              if (nextDisabled.includes(id) !== suiteDisabled.includes(id)) {
-                overrides[id] = !nextDisabled.includes(id);
-              }
-            }
-            setStageOverrides(overrides);
-            if (!suiteDisabled.includes("userValue.outcome")) {
-              onJudgeSkippedChange(nextDisabled.includes("userValue.outcome"));
-            }
-          }}
+          suitePredicates={suitePredicates}
+          caseDraft={draft}
+          capabilities={capabilities}
+          onToggle={(check, enabled) =>
+            onChecksChange(
+              toggleCaseStandardCheck(suitePredicates, draft, check, enabled),
+            )
+          }
+          judgeSkipped={judgeSkipped}
+          onJudgeSkippedChange={onJudgeSkippedChange}
+          onEditRules={onBack}
         />
-        {hasUnsavedStageChanges ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            These stage changes are a preview. Saving them requires case-level
-            stage override support in the backend.
-          </p>
-        ) : null}
         {onConfigureSuite ? (
-          <div className="border-t border-border pt-4">
-            <Button variant="outline" size="sm" onClick={onConfigureSuite}>
-              Configure suite checks
-            </Button>
-          </div>
+          <Button variant="outline" size="sm" onClick={onConfigureSuite}>
+            Configure suite checks
+          </Button>
         ) : null}
       </div>
     </div>

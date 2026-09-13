@@ -520,18 +520,21 @@ function ThresholdCell({
       );
     }
     if (
+      predicate.type === "toolDescriptionsPresent" ||
       predicate.type === "toolLatencyUnder" ||
       predicate.type === "toolResultSizeUnder" ||
       predicate.type === "toolCallCountUnder"
     ) {
       const { field, value, label } =
-        predicate.type === "toolLatencyUnder"
+        predicate.type === "toolDescriptionsPresent"
           ? {
-              field: "ms" as const,
-              value: predicate.ms,
-              label: "Tool latency budget in ms",
+              field: "minLength" as const,
+              value: predicate.minLength ?? 20,
+              label: "Minimum tool description length",
             }
-          : predicate.type === "toolResultSizeUnder"
+          : predicate.type === "toolLatencyUnder"
+            ? { field: "ms" as const, value: predicate.ms, label: "Tool latency budget in ms" }
+            : predicate.type === "toolResultSizeUnder"
             ? {
                 field: "maxBytes" as const,
                 value: predicate.maxBytes,

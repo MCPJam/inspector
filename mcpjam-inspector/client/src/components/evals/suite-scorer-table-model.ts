@@ -167,12 +167,13 @@ export function withGoalCompletionRole(
 }
 
 export type ScorerLibraryCategoryId =
-  "selection" | "call" | "userValue" | "budget" | "response";
+  "discovery" | "selection" | "call" | "userValue" | "budget" | "response";
 
 export const SCORER_LIBRARY_CATEGORY_LABELS: Record<
   ScorerLibraryCategoryId,
   string
 > = {
+  discovery: "Discovery",
   selection: "Selection",
   call: "Tool call",
   userValue: "User value",
@@ -181,6 +182,7 @@ export const SCORER_LIBRARY_CATEGORY_LABELS: Record<
 };
 
 const LIBRARY_CATEGORY_ORDER: readonly ScorerLibraryCategoryId[] = [
+  "discovery",
   "selection",
   "call",
   "userValue",
@@ -200,6 +202,7 @@ export function libraryCategoryOfKind(
 ): ScorerLibraryCategoryId {
   if (GRADER_PRESENTATION_GROUP[kind] === "budget") return "budget";
   const stage = PREDICATE_STAGE[kind];
+  if (stage === "discovery") return "discovery";
   if (stage === "selection") return "selection";
   if (stage === "call") return "call";
   if (stage === "response") return "response";
@@ -241,6 +244,7 @@ export function scorerLibraryCategories(
   ),
 ): ScorerLibraryCategory[] {
   const buckets: Record<ScorerLibraryCategoryId, PredicateKind[]> = {
+    discovery: [],
     selection: [],
     call: [],
     userValue: [],
@@ -339,6 +343,8 @@ function predicateKindLabel(predicate: Predicate): string {
  * not, and showing "1" says so without pretending there is a knob.
  */
 function budgetThreshold(predicate: Predicate): string {
+  if (predicate.type === "toolDescriptionsPresent")
+    return String(predicate.minLength ?? 20);
   if (predicate.type === "tokenBudgetUnder") return String(predicate.tokens);
   if (predicate.type === "turnCountUnder") return String(predicate.turns);
   if (predicate.type === "toolLatencyUnder") return String(predicate.ms);
@@ -359,6 +365,7 @@ function budgetThreshold(predicate: Predicate): string {
  */
 function hasAuthoredThreshold(predicate: Predicate): boolean {
   return (
+    predicate.type === "toolDescriptionsPresent" ||
     predicate.type === "tokenBudgetUnder" ||
     predicate.type === "turnCountUnder" ||
     predicate.type === "toolLatencyUnder" ||
@@ -465,7 +472,7 @@ function rowsForStage(
 
   if (stage === "connection" || stage === "discovery") {
     rows.push(observedRow(stage));
-    return rows;
+    if (stage === "connection") return rows;
   }
 
   if (stage === "call") {

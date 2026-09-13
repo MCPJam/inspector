@@ -608,6 +608,108 @@ export function evaluatePredicate(
   predicate: Predicate
 ): PredicateResult {
   switch (predicate.type) {
+    case "toolDescriptionsPresent":
+    case "toolAnnotationsPresent":
+    case "toolNamesUnique":
+    case "noDeprecatedToolExposed":
+    case "toolInputSchemasWellFormed":
+    case "toolOutputSchemasPresent": {
+      if (
+        transcript.capture?.toolDeclarations !== "complete" ||
+        !transcript.toolDeclarations
+      ) {
+        return evidenceError(
+          predicate,
+          "complete raw tool declarations were not captured"
+        );
+      }
+      if (predicate.type === "toolDescriptionsPresent" &&
+          (!Number.isInteger(predicate.minLength ?? 20) || (predicate.minLength ?? 20) < 1)) {
+        return evidenceError(predicate, "minLength must be a positive integer");
+      }
+      const declarations = transcript.toolDeclarations;
+      const seen = new Map<string, Set<string>>();
+      const failures: string[] = [];
+      for (const tool of declarations) {
+        let valid = true;
+        switch (predicate.type) {
+          case "toolDescriptionsPresent": {
+            const minimum = predicate.minLength ?? 20;
+            valid =
+              typeof tool.description === "string" &&
+              tool.description.trim().length >= minimum;
+            break;
+          }
+          case "toolAnnotationsPresent":
+            valid =
+              !!tool.annotations &&
+              (predicate.require ?? []).every(
+                (key) => typeof tool.annotations?.[key] === "boolean"
+              );
+            break;
+          case "toolNamesUnique": {
+            const names = seen.get(tool.serverKey) ?? new Set<string>();
+            valid = !names.has(tool.name);
+            names.add(tool.name);
+            seen.set(tool.serverKey, names);
+            break;
+          }
+          case "noDeprecatedToolExposed":
+            valid = !describesItselfAsDeprecated(tool.description);
+            break;
+          case "toolInputSchemasWellFormed": {
+            const schema = tool.inputSchema;
+            if (
+              !schema ||
+              typeof schema !== "object" ||
+              Array.isArray(schema)
+            ) {
+              valid = false;
+              break;
+            }
+            const shape = schema as Record<string, unknown>;
+            const properties = shape.properties;
+            valid =
+              shape.type === "object" &&
+              (properties === undefined ||
+                (!!properties &&
+                  typeof properties === "object" &&
+                  !Array.isArray(properties) &&
+                  Object.values(properties).every(
+                    (value) =>
+                      !!value &&
+                      typeof value === "object" &&
+                      !Array.isArray(value) &&
+                      typeof (value as Record<string, unknown>).description ===
+                        "string" &&
+                      (
+                        (value as Record<string, unknown>).description as string
+                      ).trim().length > 0
+                  )));
+            break;
+          }
+          case "toolOutputSchemasPresent":
+            valid =
+              tool.outputSchema !== undefined && tool.outputSchema !== null;
+            break;
+        }
+        if (!valid) failures.push(`${tool.serverKey}/${tool.name}`);
+      }
+      return failures.length > 0
+        ? fail(
+            predicate,
+            `${failures.length} tool declaration(s) failed ${predicate.type}: ${failures
+              .slice(0, MAX_ITEMS_SHOWN)
+              .map((name) => scrubText(name))
+              .join(", ")}`
+          )
+        : pass(
+            predicate,
+            declarations.length === 0
+              ? "no tools advertised in the complete catalog"
+              : `all ${declarations.length} tool declarations satisfy ${predicate.type}`
+          );
+    }
     case "toolCalledWith": {
       const minCount = predicate.minCount ?? 1;
       // A malformed minCount (0, negative, fractional) would otherwise disable
