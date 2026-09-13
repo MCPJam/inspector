@@ -37,7 +37,7 @@ Uploaded iterations have a single boolean `passed` that drives pass rate on the 
 
 **Manual `reportEvalResults`:** If you build `results[]` yourself and set `passed` explicitly, MCPJam stores your values as-is. The execution gate applies to code paths that **compute** `passed` from prompts, traces, and iterations.
 
-**Programmatic reuse:** `@mcpjam/sdk` also exports `finalizePassedForEval`, `traceIndicatesToolExecutionFailure`, `isCallToolResultError`, and `traceMessagePartIndicatesToolFailure` for custom ingestion pipelines. The `@mcpjam/sdk/predicates` subpath exports the full predicate evaluator (`evaluatePredicate`, `evaluatePredicates`, `allPredicatesPassed`, `buildIterationTranscript`), the tool-error extractor `extractToolErrors`, and all predicate types.
+**Programmatic reuse:** `@mcpjam/sdk` also exports `finalizePassedForEval`, `traceIndicatesToolExecutionFailure`, `isCallToolResultError`, and `traceMessagePartIndicatesToolFailure` for custom ingestion pipelines. The `@mcpjam/sdk/predicates` subpath exports the full predicate evaluator (`evaluatePredicate`, `evaluatePredicates`, `allPredicatesPassed`, `buildIterationTranscript`), the tool-error extractor `extractToolErrors`, and all predicate types. The `@mcpjam/sdk/assertions` subpath re-exports the same library under canonical names (`evaluateAssertion`, `evaluateAssertions`, `allAssertionsPassed`, `assertionSchema`, etc.) — import one subpath per consumer; do not mix them in the same module.
 
 ---
 
@@ -568,6 +568,49 @@ const results = evaluatePredicates(transcript, predicates);
 // failures rejects a run over a finding that was never meant to gate.
 const allPassed = allPredicatesPassed(results);
 ```
+
+#### Canonical evaluator API
+
+`@mcpjam/sdk` exports `assertion()`, `judge()`, and `runEvaluators()` as the canonical way to build and run evaluators in code-first pipelines. They delegate to the same underlying functions as `predicateScorer` and `judgeScorer`, so a rule authored either way produces the same opaque id, `implementationHash`, and `definitionHash` — migrating one rule at a time does not change the evaluation config hash of the suite.
+
+```typescript
+import { assertion, judge, runEvaluators, evaluatorsPassed } from "@mcpjam/sdk";
+import { buildEvaluationConfigSnapshot } from "@mcpjam/sdk/contract";
+
+// Build evaluators
+const assertNoErrors = assertion({ type: "noToolErrors" });
+const assertContains = assertion({
+  type: "responseContains",
+  needle: "confirmed",
+  id: "booking-confirmed",   // optional stable id; keeps the name out of the hash
+});
+const grader = judge({
+  id: "policy-grounding",
+  model: "anthropic/claude-sonnet-4-6",
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+  rubric: ["The answer cites the retrieved policy."],
+});
+
+// Run them — accepts canonical evaluators and legacy scorers in one list
+const results = await runEvaluators(
+  [assertNoErrors, assertContains, grader],
+  context
+);
+
+// Gate: reads role from the definitions, not the rows
+const definitions = buildEvaluationConfigSnapshot([
+  assertNoErrors.definition,
+  assertContains.definition,
+  grader.definition,
+]).definitions;
+const passed = evaluatorsPassed(results, definitions);
+```
+
+**`assertion()` validates rules at construction.** Widget rules (`widgetRendered`, etc.) that need hosted render observations are rejected immediately — accepting them would fail every local iteration with "no render observations" rather than a useful message. Observation kinds (`noEndingQuestion`, etc.) require `role: "advisory"` and are refused as gating rules.
+
+**`id` is identity, not rule content.** Naming a rule with `id` does not change the digest of what that rule does, so adding or changing a name does not read as an edit to the rule on comparisons against earlier runs.
+
+**`@mcpjam/sdk/assertions` subpath.** The same predicate library is available under canonical names via `@mcpjam/sdk/assertions` (`evaluateAssertion`, `evaluateAssertions`, `allAssertionsPassed`, `assertionSchema`, `Assertion` type, etc.). `@mcpjam/sdk/predicates` keeps working — the two subpaths are one library with two spellings. Import one subpath per consumer; do not compare values across them with `===` or `instanceof`.
 
 #### Predicate results in metadata
 
