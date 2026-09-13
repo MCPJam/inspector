@@ -7,15 +7,17 @@
  * that ships a client bundle to users has to write it, or that surface falls
  * back to a catalog date that ages independently of the app:
  *
- *   - deploy-webapp.yml  → app.mcpjam.com (Railway)
- *   - release.yml        → the `@mcpjam/inspector` tarball behind `npx`
+ *   - deploy-webapp.yml    → app.mcpjam.com (Railway)
+ *   - release.yml          → the `@mcpjam/inspector` tarball behind `npx`
+ *   - mac-release.yml      → the macOS desktop app
+ *   - windows-release.yml  → the Windows desktop app
  *
  * Writing a tracked input also invalidates Docker's client-build layer when the
  * same SHA is deliberately redeployed.
  *
- * The file is committed as `null` — local, desktop, and non-production builds
- * keep the catalog date — so this only ever runs in CI, on a throwaway
- * checkout, and is never committed back.
+ * The file is committed as `null` — local and non-production builds keep the
+ * catalog date — so this only ever runs in CI, on a throwaway checkout, and is
+ * never committed back.
  */
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

@@ -69,6 +69,12 @@ jobs:
           $bytes = [System.Convert]::FromBase64String($env:WINDOWS_PFX_BASE64)
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\\codesign.pfx", $bytes)
 
+      # Must run before the client build that inlines the constant — see the
+      # script for why every user-facing bundle has to write it.
+      - name: Stamp desktop build time
+        run: node .github/scripts/stamp-mcpjam-build-time.mjs
+        shell: powershell
+
       - name: Build app
         run: npm run build -w @mcpjam/inspector
         shell: powershell
