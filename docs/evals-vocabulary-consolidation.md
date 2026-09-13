@@ -351,7 +351,21 @@ Absent means 1, which is byte-for-byte today's contract: the same request fields
 the same response projection. A response that varies by vocabulary sends
 `Vary: x-mcpjam-eval-vocabulary`. Any value other than `"1"` or `"2"` is a 400.
 
-Under **both** vocabularies every spelling of a field is accepted and any two of them together is a
+The header is the **only** thing that decides which spellings a request may use, and vocabulary 1 is
+not widened to meet vocabulary 2 half way:
+
+| | vocabulary 1 (no header) | vocabulary 2 |
+|---|---|---|
+| accepted on a write | exactly today's fields — `checks`, `iterations`, `repetitions`, `defaultPredicates` | those, plus the canonical `assertions`, `defaultAssertions`, `legacyIterations` and the legacy `predicates` and `runs` |
+| refused | `assertions`, `defaultAssertions`, `predicates`, `runs`, `legacyIterations`, as unknown keys | a canonical spelling sent together with a legacy one |
+| read projection | unchanged | `checks` → `assertions`, the configured count → `iterations` |
+
+A headerless request is therefore byte-for-byte today's request, including its refusals: the case
+schemas are `z.strictObject`, so a canonical spelling is an unknown key and a `VALIDATION_ERROR`, not
+a silently dropped field. That is what keeps the negotiation boundary decidable — two implementations
+reading this document cannot disagree about whether the same headerless body is valid.
+
+Under vocabulary 2, where both spellings of one field are accepted, any two of them together is a
 refusal, reported with the conflicting paths and decided by presence rather than truthiness so an
 explicit `null` clear still reaches storage:
 
@@ -359,10 +373,8 @@ explicit `null` clear still reaches storage:
 Send <canonical> or <legacy>, not both — they are two spellings of one field.
 ```
 
-Under vocabulary 2 the canonical spellings are `assertions` and `iterations`; the read projection
-renames `checks` to `assertions` and reports the configured count as `iterations`. Under vocabulary 1
-nothing moves. A canonical client must project a GET result into a valid write request rather than
-echoing both spellings back into a PATCH.
+A canonical client must project a GET result into a valid write request rather than echoing both
+spellings back into a PATCH.
 
 The count family is the one place where meaning, not just spelling, differs, because the legacy API
 carries two counts with different semantics on the same object: `iterations` (a spelling of `runs`,
@@ -377,12 +389,24 @@ the floor leaves it exactly as it was. An unchanged PATCH that also wrote `runs`
 floor of 10 to an exact count of 3 with no authored edit, and rotate the configuration revision,
 which hashes both keys. `runs` is required storage, so a CREATE that names no floor still needs a
 value: it takes the case's `iterations`, which is what the legacy resolver would have floored to
-anyway. Sending
-`iterations` on a legacy-policy suite is the same `VALIDATION_ERROR` naming the upgrade that
+anyway.
+
+A CREATE may legitimately name **neither** count — on a verdict-policy-2 suite the exact count
+inherits the suite default, and on a legacy-policy suite naming it is refused outright — and then
+`runs` is **1**. That is not a new default chosen here: it is the value a headerless create of the
+same body stores today, `Math.max(1, Math.floor(runs ?? 1))` in `createTestCase`
+(`convex/testSuites.ts`). It is deliberately **not** the suite's `verdictPolicyDefaults.repetitions`:
+inlining the suite default would write a different `runs` than vocabulary 1 writes for the same body,
+and `runs` is in the configuration-revision payload, so the two vocabularies would mint different
+revisions for one authored configuration. The v2 override stays absent, which is how a case inherits
+the suite default at run time rather than freezing a copy of it.
+
+Sending `iterations` on a legacy-policy suite is the same `VALIDATION_ERROR` naming the upgrade that
 `repetitions` is today.
 
-The order is the guard. The legacy field is renamed to `legacyIterations` in its own step, with both
-vocabularies accepting it, **before** any adapter reads `iterations` as the configured count. A step
+The order is the guard. The legacy field is renamed to `legacyIterations` in its own step — accepted
+under vocabulary 2, which is the only vocabulary that accepts it at all — **before** any adapter reads
+`iterations` as the configured count. A step
 that makes `iterations` mean the count while the floor field still answers to that name merges two
 counts into one, and the codemod refuses to propose it (`scripts/codemod/evals-vocabulary`,
 "rename target in use").
@@ -396,13 +420,15 @@ vocabulary: {
   version: 2,
   evaluatorKinds: ["assertion", "judge"],
   assertionKinds: PREDICATE_KINDS,
-  fields: { assertions: ["checks", "predicates"], defaultAssertions: ["defaultPredicates"], iterations: ["repetitions"], legacyIterations: ["iterations", "runs"] },
+  fields: { assertions: ["checks", "predicates"], defaultAssertions: ["defaultPredicates"], iterations: ["repetitions"], legacyIterations: ["runs"] },
 }
 ```
 
-`iterations` appears on both sides on purpose: vocabulary 1's `iterations` is vocabulary 2's
-`legacyIterations`. That is exactly why the negotiated vocabulary, never the presence of a field, says
-which one a body means.
+Each list is the legacy spellings a **vocabulary-2** body may use for that field. `iterations` is
+absent from `legacyIterations` on purpose, even though vocabulary 1's `iterations` is what vocabulary 2
+calls `legacyIterations`: under vocabulary 2 that key is the exact count. One key means two things
+across the boundary, which is exactly why the negotiated vocabulary — never the presence of a field —
+says which sense a body means.
 
 `scorers.predicateKinds` is retained for existing consumers. Absence of `vocabulary` selects the
 existing contract. A client reads the capability value; it never infers support from the presence of
