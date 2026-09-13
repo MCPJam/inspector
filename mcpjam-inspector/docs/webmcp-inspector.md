@@ -3,6 +3,12 @@
 A managed browser pointed at a page, so the WebMCP tools that page registers can
 be listed, invoked, watched across navigations, and handed to a model.
 
+This is WebMCP pointed OUTWARD, at somebody else's page. The other direction —
+the `ui_*` tools MCPJam itself publishes, so a browser agent can drive the
+inspector — is [`webmcp-native-tools.md`](./webmcp-native-tools.md). The two
+share a protocol and nothing else: page tools are third-party and never
+trusted to describe themselves, MCPJam's own are first-party and curated.
+
 Visibility follows `local-browser-enabled` in Node/Electron and
 `hosted-browser-enabled` in hosted deployments.
 
