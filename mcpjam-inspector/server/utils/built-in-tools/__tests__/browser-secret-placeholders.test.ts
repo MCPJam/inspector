@@ -1,4 +1,3 @@
-import { verifyLocalBrowserConsent } from "../../computers/browser-consent.js";
 vi.mock("../../computers/browser-consent.js", () => ({
   verifyLocalBrowserConsent: vi.fn(async () => true),
 }));
