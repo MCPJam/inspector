@@ -56,7 +56,12 @@ import {
 } from "@/shared/client-fulfilled-tools";
 import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
-import { webmcpPageToolsMode } from "../../config.js";
+import {
+  browserShapeRedactionEnabled,
+  webmcpPageToolsMode,
+} from "../../config.js";
+import { redactSecretShapes } from "@/shared/secret-shape-redaction";
+import { capText } from "../../services/browserd/daemon/observation-budget.js";
 import { logger } from "../logger.js";
 import { observedToolBinding } from "../../services/browser-tool-binding";
 import { parkForHandoff } from "./browser-handoff.js";
@@ -65,10 +70,12 @@ import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
 import { MAX_SESSION_VIEWPORT } from "@/shared/browser-viewport";
 import {
   DEFAULT_QUEUE_KEY,
+  isBrowserCommandCorrelation,
   isPointInViewport,
   type BrowserAction,
   type BrowserActTarget,
   type BrowserCommand,
+  type BrowserCommandCorrelation,
   type ObservationStateToken,
   type WebMcpToolsRevision,
 } from "../../services/browserd/protocol.js";
@@ -82,7 +89,10 @@ import type {
 } from "@/shared/declared-tools";
 import { buildWebmcpPageTools, type PeekedPageTool } from "./page-tools.js";
 import { pageToolsFromObservation } from "@/shared/browser-page-tools";
-import type { BrowserSessionHandle } from "../../services/browserd/browser-session.js";
+import {
+  BrowserProtocolMismatchError,
+  type BrowserSessionHandle,
+} from "../../services/browserd/browser-session.js";
 import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
@@ -122,8 +132,42 @@ export { BROWSER_BUILT_IN_TOOL_ID };
  * host-configuration hash — so dragging a panel would invalidate every cached
  * tool manifest, several times a second.
  */
+/** Bound on a daemon error string before it reaches a model's context. */
+const MODEL_ERROR_MAX_BYTES = 4_000;
+
+/**
+ * Cap, then scrub credential shapes from, an error message bound for the model.
+ * Needed server-side because hosted daemons are reused across deploys and an
+ * older one does not scrub. Capping first keeps a redaction from being cut.
+ */
+function forModel(text: string): string {
+  const capped = capText(text, MODEL_ERROR_MAX_BYTES);
+  return browserShapeRedactionEnabled() ? redactSecretShapes(capped) : capped;
+}
+
 const VIEWPORT_MAX_W = MAX_SESSION_VIEWPORT.width;
 const VIEWPORT_MAX_H = MAX_SESSION_VIEWPORT.height;
+
+/**
+ * Act verbs offered to the model: published contract minus the tab verbs
+ * (the model passes `tabId` instead) plus daemon-only verbs. The parity test
+ * checks this formula.
+ */
+export const BROWSER_ACT_TOOL_VERBS = [
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "hover",
+  "drag",
+  "select",
+  "fill_form",
+  "accept_dialog",
+  "dismiss_dialog",
+] as const;
+
+/** The published verbs the model tool deliberately withholds. @see BROWSER_ACT_TOOL_VERBS */
+export const MODEL_WITHHELD_ACT_VERBS = ["close_tab", "activate_tab"] as const;
 
 /**
  * How approval reaches the user for this turn — the thing a surface must
@@ -178,6 +222,11 @@ export interface BrowserToolsOptions {
   /** Project whose computer this turn drives. */
   projectId: string;
   executionScope?: ExecutionScope;
+  /**
+   * Surface ids echoed onto ledger rows, never interpreted. `toolCallId` is
+   * added per call.
+   */
+  correlation?: BrowserCommandCorrelation;
   /**
    * The host's Tool Approval switch.
    *
@@ -515,7 +564,9 @@ function unwrapCommand(response: {
   if (!result.ok) {
     return {
       ok: false,
-      error: result.error ?? "the browser could not complete the action",
+      error: forModel(
+        result.error ?? "the browser could not complete the action",
+      ),
       stateToken: result.stateToken,
       output: result.output,
       ...(result.webmcpTools ? { webmcpTools: result.webmcpTools } : {}),
@@ -1169,9 +1220,25 @@ export function buildBrowserTools(
        * the observation the act was decided from.
        */
       raw?: boolean;
+      /** AI SDK tool call id; absent for the server's own internal reads. */
+      toolCallId?: string;
     },
   ): Promise<CommandOutcome & { tabId: string }> => {
-    const handle = await state.handle(args.signal);
+    let handle: BrowserSessionHandle;
+    try {
+      handle = await state.handle(args.signal);
+    } catch (error) {
+      // A protocol mismatch (after a failed relaunch) becomes a readable
+      // refusal; any other error still propagates.
+      if (error instanceof BrowserProtocolMismatchError) {
+        return {
+          ok: false,
+          error: error.message,
+          tabId: args.tabId ?? "@session",
+        };
+      }
+      throw error;
+    }
     lastBootId = handle.bootId;
     const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";
@@ -1179,9 +1246,19 @@ export function buildBrowserTools(
       ? state.tokenFor(args.tabId, handle.bootId)
       : undefined;
     const commandId = randomUUID();
+    const correlation: BrowserCommandCorrelation | undefined = (() => {
+      const merged = {
+        ...(opts.correlation ?? {}),
+        ...(args.toolCallId ? { toolCallId: args.toolCallId } : {}),
+      };
+      if (Object.keys(merged).length === 0) return undefined;
+      // An invalid map is dropped whole rather than failing the command.
+      return isBrowserCommandCorrelation(merged) ? merged : undefined;
+    })();
     const command: BrowserCommand = {
       commandId,
       source: unattended ? "eval" : "chat",
+      ...(correlation ? { correlation } : {}),
       ...(args.tabId ? { tabId: args.tabId } : {}),
       action:
         pinned && action.kind === "act"
@@ -1296,9 +1373,7 @@ export function buildBrowserTools(
         response = await client.sendCommand(
           { ...command, responsiveViewport: true },
           handle.bootId,
-          {
-            ...(args.signal ? { signal: args.signal } : {}),
-          },
+          { ...(args.signal ? { signal: args.signal } : {}) },
         );
       } catch (error) {
         disarm?.();
@@ -1490,7 +1565,10 @@ export function buildBrowserTools(
           .describe("Open in a NEW tab; requires an unused tabId."),
       }),
       needsApproval,
-      execute: async ({ url, action, tabId, newTab }, { abortSignal }) => {
+      execute: async (
+        { url, action, tabId, newTab },
+        { abortSignal, toolCallId },
+      ) => {
         const verb = action ?? "goto";
         if (verb === "goto" && !url) return { error: "navigate needs a url" };
         if (url && policy && !isOriginAllowed(url, policy.originAllowlist)) {
@@ -1524,7 +1602,7 @@ export function buildBrowserTools(
             // a whole extra call getting the refs — the round trip refs exist
             // to remove.
             { ...browserAction, observe: "both" },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         );
       },
@@ -1545,18 +1623,7 @@ export function buildBrowserTools(
         "resized while you work, so take its size from the `viewport` on your " +
         "last observation; a coordinate outside it is refused, not clamped.",
       inputSchema: z.object({
-        verb: z.enum([
-          "click",
-          "type",
-          "press",
-          "scroll",
-          "hover",
-          "drag",
-          "select",
-          "fill_form",
-          "accept_dialog",
-          "dismiss_dialog",
-        ]),
+        verb: z.enum(BROWSER_ACT_TOOL_VERBS),
         selector: z.string().optional().describe("CSS selector to target."),
         x: z
           .number()
@@ -1602,7 +1669,7 @@ export function buildBrowserTools(
       needsApproval,
       execute: async (
         { verb, ref, selector, x, y, value, fields, submit, observe, tabId },
-        { abortSignal },
+        { abortSignal, toolCallId },
       ) => {
         if (
           x !== undefined &&
@@ -1660,7 +1727,7 @@ export function buildBrowserTools(
               observe: observe ?? "both",
             },
             // Pin to the observation the model actually saw (L3).
-            { tabId, signal: abortSignal, expectedState: true },
+            { tabId, signal: abortSignal, toolCallId, expectedState: true },
           ),
         );
       },
@@ -1678,14 +1745,14 @@ export function buildBrowserTools(
         tabId: z.string().describe("The tab to act on."),
       }),
       needsApproval,
-      execute: async ({ action, tabId }, { abortSignal }) =>
+      execute: async ({ action, tabId }, { abortSignal, toolCallId }) =>
         presented(
           await send(
             {
               kind: "act",
               verb: action === "activate" ? "activate_tab" : "close_tab",
             },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         ),
     }),
@@ -1749,7 +1816,7 @@ export function buildBrowserTools(
       needsApproval: observationNeedsApproval,
       execute: async (
         { mode, filter, rootRef, rootSelector, requestId, tabId },
-        { abortSignal },
+        { abortSignal, toolCallId },
       ) =>
         presented(
           await send(
@@ -1761,7 +1828,7 @@ export function buildBrowserTools(
               ...(rootSelector ? { rootSelector } : {}),
               ...(requestId ? { requestId } : {}),
             },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         ),
     }),
@@ -1775,11 +1842,11 @@ export function buildBrowserTools(
         "let you act through their own API instead of clicking; most pages offer none.",
       inputSchema: z.object({ tabId: z.string().optional() }),
       needsApproval: observationNeedsApproval,
-      execute: async ({ tabId }, { abortSignal }) =>
+      execute: async ({ tabId }, { abortSignal, toolCallId }) =>
         presented(
           await send(
             { kind: "observe", mode: "webmcp_tools" },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         ),
     }),
@@ -1807,7 +1874,10 @@ export function buildBrowserTools(
         tabId: z.string().optional(),
       }),
       needsApproval,
-      execute: async ({ toolName, input, tabId }, { abortSignal }) => {
+      execute: async (
+        { toolName, input, tabId },
+        { abortSignal, toolCallId },
+      ) => {
         if (
           policy?.mode === "allowlist" &&
           policy.toolAllowlist?.length &&
@@ -1822,7 +1892,7 @@ export function buildBrowserTools(
         return presented(
           await send(
             { kind: "webmcp_invoke", toolKey: toolName, input },
-            { tabId, signal: abortSignal },
+            { tabId, signal: abortSignal, toolCallId },
           ),
         );
       },
@@ -2806,9 +2876,9 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
       value: [{ type: "text", text: JSON.stringify(output ?? null) }],
     };
   }
-  const rest: Record<string, unknown> = {
+  const rest: Record<string, unknown> = scrubPageMessages({
     ...(output as Record<string, unknown>),
-  };
+  });
   const shot = takeScreenshot(rest);
   if (shot) {
     value.push({
@@ -2828,6 +2898,41 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
     value.push({ type: "text", text: fencePageContent(page, originOf(rest)) });
   }
   return { type: "content", value };
+}
+
+/**
+ * Scrub credential shapes from `console[].text` and `network[].failure` only;
+ * page content is left alone because a false positive would hide what the
+ * model reads. Duplicates the daemon's idempotent scrub for older daemons.
+ */
+function scrubPageMessages(
+  rest: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!browserShapeRedactionEnabled()) return rest;
+  const console_ = rest.console;
+  if (Array.isArray(console_)) {
+    rest.console = console_.map((entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { text?: unknown }).text === "string"
+        ? { ...entry, text: redactSecretShapes((entry as { text: string }).text) }
+        : entry,
+    );
+  }
+  const network = rest.network;
+  if (Array.isArray(network)) {
+    rest.network = network.map((row) =>
+      typeof row === "object" &&
+      row !== null &&
+      typeof (row as { failure?: unknown }).failure === "string"
+        ? {
+            ...row,
+            failure: redactSecretShapes((row as { failure: string }).failure),
+          }
+        : row,
+    );
+  }
+  return rest;
 }
 
 /**
@@ -3036,7 +3141,8 @@ function present(
 ): Record<string, unknown> {
   if (!outcome.ok) {
     return {
-      error: outcome.error,
+      // Also covers errors from local catch blocks and refusals.
+      error: forModel(outcome.error),
       ...(outcome.output !== undefined ? { page: outcome.output } : {}),
     };
   }

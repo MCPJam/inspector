@@ -1,4 +1,5 @@
 import { negotiateViewport } from "../../../../shared/browser-viewport";
+import { redactForModel } from "./shape-redaction";
 /**
  * The seam between the daemon's control plane (queue + HTTP) and the real
  * browser. The control plane owns ordering, de-duplication, auth, and boot
@@ -205,6 +206,20 @@ export function stateTokensMatch(
  * The check lives here, above the driver, so it is pure and testable with a
  * fake driver: the real driver never has to special-case staleness.
  */
+/**
+ * Scrub credential shapes from a result's `error` before the queue retains it
+ * and the ledger records it. Not `output`: false positives there hide page
+ * content.
+ */
+export function guardErrorShapes(executor: CommandExecutor): CommandExecutor {
+  return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
+    const result = await executor(command);
+    if (typeof result.error !== "string") return result;
+    const scrubbed = redactForModel(result.error);
+    return scrubbed === result.error ? result : { ...result, error: scrubbed };
+  };
+}
+
 export function guardStaleness(
   driver: BrowserDriver,
   lease?: Pick<HandoffLease, "state">,

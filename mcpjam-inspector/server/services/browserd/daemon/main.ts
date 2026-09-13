@@ -23,6 +23,7 @@ import {
   announcedFeatures,
   extraArgsFor,
   formatReadyLine,
+  parseBrowserdFeatures,
   readBrowserdConfig,
   readBundleHash,
 } from "./config";
@@ -129,6 +130,7 @@ async function main(): Promise<void> {
     ).exitCode === 0;
   const driver = new ChromiumDriver(context, {
     lease,
+    features: parseBrowserdFeatures(),
     viewport: {
       /**
        * The DAEMON's default is `fixed`, and the door widens it.

@@ -1323,6 +1323,27 @@ export class BrowserdRequestHandler {
         body: { error: "invalid_command", bootId: this.bootId },
       };
     }
+    // Protocol check first. Before the lease gate, so a mismatch is not
+    // answered `lease_held`; before `lastActivityAt`, so a caller that will
+    // relaunch this daemon does not keep it looking busy.
+    if (
+      parsed.command.protocolVersion !== undefined &&
+      parsed.command.protocolVersion !== BROWSERD_PROTOCOL_VERSION
+    ) {
+      this.recordRow(parsed.command, startedAt, {
+        outcome: "refused",
+        errorCode: "protocol_mismatch",
+      });
+      return {
+        status: 409,
+        body: {
+          error: "protocol_mismatch",
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bootId: this.bootId,
+        },
+      };
+    }
+
     // Recorded BEFORE the lease gate, on purpose. A command the lease refuses
     // is still evidence that somebody is trying to use this browser right now,
     // and an upgrade that relaunched the daemon between an agent's refusal and

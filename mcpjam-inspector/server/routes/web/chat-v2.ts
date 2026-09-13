@@ -1749,6 +1749,9 @@ chatV2.post("/", async (c) => {
         projectId: hostedBody.projectId,
         ...(executionScope ? { executionScope } : {}),
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+        ...(body.chatSessionId
+          ? { browserCorrelation: { chatSessionId: body.chatSessionId } }
+          : {}),
         isGuest: Boolean(c.get("guestId")),
         isScenarioSession,
         // Lets a spend inside a shared scenario bill the scenario OWNER instead

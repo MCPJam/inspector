@@ -140,6 +140,42 @@ describe("adaptContext — ephemeral ownership (review follow-up)", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("closes the browser even when closing the CONTEXT never answers", async () => {
+    // The other half, and the one `finally` does not cover: a REJECTION runs
+    // the block below, an unsettled promise does not. `context.close()` waits
+    // for Chromium to acknowledge, and a renderer still draining a navigation
+    // — a submitted form, a beforeunload — can leave it pending forever.
+    //
+    // Unbounded, the browser kill is never reached: the process is orphaned
+    // anyway and whoever awaited teardown waits with it. That is a server
+    // shutdown that never exits, and a test hook that times out.
+    vi.useFakeTimers();
+    try {
+      const onClose = vi.fn(async () => {});
+      const adapted = adaptContext(
+        fakeAnyContext({ close: () => new Promise<void>(() => {}) }),
+        { onClose },
+      );
+
+      let settled = false;
+      const closing = adapted.close().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(9_000);
+      // Not cut short: an ordinary close is milliseconds, and giving up on one
+      // that is merely slow would strand pages this could have closed cleanly.
+      expect(settled).toBe(false);
+      expect(onClose).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await closing;
+      expect(settled).toBe(true);
+      expect(onClose).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("closes the browser after a clean context close", async () => {
     const onClose = vi.fn(async () => {});
     const adapted = adaptContext(fakeAnyContext(), { onClose });

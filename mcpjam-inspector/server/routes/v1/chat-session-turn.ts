@@ -1466,6 +1466,10 @@ async function handleTurn(c: Context): Promise<Response> {
         onToolSuppressed: (item) => {
           browserReason = item.reason;
         },
+        browserCorrelation: {
+          chatSessionId: runtimeChatSessionId,
+          turnId: leaseTurnId,
+        },
       };
       const eligible = resolveHostTools(
         { builtInToolIds: ["browser"] },

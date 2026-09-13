@@ -2962,6 +2962,39 @@ describe("ChromiumDriver — teardown is bounded, and nothing opens behind it", 
     }
   });
 
+  it("reaps the browser when a PAGE close never settles", async () => {
+    // The same rule one step later. `.catch` on a page close covers a
+    // rejection; nothing covers a promise that never settles, which is what a
+    // renderer still draining a navigation produces — a submitted form, a
+    // beforeunload. Unbounded, the loop never ends, the context close below it
+    // never runs, and the browser those pages belong to is never reaped.
+    vi.useFakeTimers();
+    try {
+      const page = fakePage({ url: "https://a.test/" });
+      page.close = () => new Promise<void>(() => {});
+      const fc = fakeContext({ pages: [page] });
+      const driver = new ChromiumDriver(fc.context);
+      await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }));
+
+      let settled = false;
+      const closing = driver.close().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(4_000);
+      // Not cut short while it might still finish on its own.
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await closing;
+
+      expect(settled).toBe(true);
+      // THE POINT. Everything the page close would have tidied goes with the
+      // context anyway; the context going is what cannot be skipped.
+      expect(fc.wasClosed()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("closes a page that lands after teardown instead of adopting it", async () => {
     vi.useFakeTimers();
     try {
@@ -3965,7 +3998,18 @@ describe("ChromiumDriver — acting on a ref", () => {
   async function observedThenActed(
     action: Extract<Parameters<typeof cmd>[0], { kind: "act" }>,
     replies: Record<string, unknown> = {},
-    opts: { navigateBetween?: string } = {},
+    opts: {
+      navigateBetween?: string;
+      /**
+       * Options for the driver under test.
+       *
+       * Present so a flagged behaviour can be exercised through the SAME
+       * sequence as the default one — a ref only exists because an observation
+       * minted it, so a flag test that built its own driver would be testing a
+       * different path as well as a different flag.
+       */
+      driverOptions?: ConstructorParameters<typeof ChromiumDriver>[1];
+    } = {},
   ) {
     // Replies go through `cdpReplies` rather than a hand-built session: the
     // fake's default session carries the baseline every observation needs, and
@@ -3991,6 +4035,10 @@ describe("ChromiumDriver — acting on a ref", () => {
       "DOM.getBoxModel",
       "DOM.focus",
       "Input.insertText",
+      // Recorded because the keystroke typing path sends these INSTEAD of
+      // `Input.insertText`: a test that only watched the insert would read a
+      // keystroke-typed field as a field nothing was typed into.
+      "Input.dispatchKeyEvent",
       "Runtime.callFunctionOn",
     ]) {
       const reply = base[method] ?? {};
@@ -4003,7 +4051,7 @@ describe("ChromiumDriver — acting on a ref", () => {
     }
     const page = fakePage({ url: "https://x.test/", cdpReplies: recorded });
     const { context } = fakeContext({ pages: [page] });
-    const driver = new ChromiumDriver(context);
+    const driver = new ChromiumDriver(context, opts.driverOptions);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
     const observed = await driver.execute(
       cmd({ kind: "observe", mode: "a11y" }),
@@ -4185,6 +4233,168 @@ describe("ChromiumDriver — acting on a ref", () => {
     expect(sent.map((c) => c.method)).toContain("DOM.focus");
     const inserted = sent.find((c) => c.method === "Input.insertText");
     expect(inserted?.params).toMatchObject({ text: "someone@example.com" });
+  });
+
+  it("with keystrokeTyping on, types a ref field as key events and never inserts", async () => {
+    // The flag's whole point: `Input.insertText` fires no keydown, so a page
+    // that reads `event.key` sees a field that changed with nobody typing.
+    const { res, sent } = await observedThenActed(
+      {
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: "e2" },
+        value: "hi",
+      },
+      {},
+      { driverOptions: { features: { keystrokeTyping: true } } },
+    );
+    expect(res.ok).toBe(true);
+    // Still focused and still select-all first: the verb means REPLACE
+    // whichever way the text arrives.
+    expect(sent.map((call) => call.method)).toContain("DOM.focus");
+    expect(sent.some((call) => call.method === "Input.insertText")).toBe(false);
+    expect(
+      sent
+        .filter((call) => call.method === "Input.dispatchKeyEvent")
+        .map((call) => `${String(call.params?.type)}:${String(call.params?.key)}`),
+    ).toEqual(["keyDown:h", "keyUp:h", "keyDown:i", "keyUp:i"]);
+  });
+
+  it("with keystrokeTyping on, falls back to an insert for a grapheme it cannot key", async () => {
+    const { res, sent } = await observedThenActed(
+      {
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: "e2" },
+        value: "a漢",
+      },
+      {},
+      { driverOptions: { features: { keystrokeTyping: true } } },
+    );
+    expect(res.ok).toBe(true);
+    expect(
+      sent.filter((call) => call.method === "Input.insertText").map((c) => c.params),
+    ).toEqual([{ text: "漢" }]);
+    expect(
+      sent.filter((call) => call.method === "Input.dispatchKeyEvent").length,
+    ).toBe(2);
+  });
+
+  it("with keystrokeTyping on, presses Enter for a newline", async () => {
+    const { sent } = await observedThenActed(
+      {
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: "e2" },
+        value: "a\n",
+      },
+      {},
+      { driverOptions: { features: { keystrokeTyping: true } } },
+    );
+    expect(
+      sent
+        .filter((call) => call.method === "Input.dispatchKeyEvent")
+        .map((call) => String(call.params?.key)),
+    ).toEqual(["a", "a", "Enter", "Enter"]);
+  });
+
+  it("stops typing when the browser changes hands mid-word", async () => {
+    // A word typed letter by letter CAN be interrupted, where an insertion
+    // cannot — so the guard runs per grapheme and the rest of the sentence
+    // does not arrive under the person's cursor. Nothing else opens this
+    // window: by the time a test could take the lease itself, an insertion
+    // would already have delivered the whole string.
+    const lease = new HandoffLease();
+    const typed: string[] = [];
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [{ role: "textbox", name: "Email", id: 42 }],
+        }),
+        "DOM.getBoxModel": BOX,
+        "DOM.resolveNode": { object: { objectId: "obj-1" } },
+        "Input.dispatchKeyEvent": (params?: Record<string, unknown>) => {
+          if (params?.type !== "keyDown") return {};
+          typed.push(String(params.key));
+          if (typed.length === 1) lease.acquire("person-1", 60_000);
+          return {};
+        },
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, {
+      lease,
+      features: { keystrokeTyping: true },
+    });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: "e1" },
+        value: "a-long-password",
+      }),
+    );
+    expect(res.ok).toBe(false);
+    // One letter, then stopped — not the whole password under their cursor.
+    expect(typed).toEqual(["a"]);
+  });
+
+  it("scrolls AT a ref's point, not the document behind it", async () => {
+    // THE BUG. `scroll` has always accepted a ref, resolved it, and then
+    // ignored it — wheeling at the pointer's current position while reporting
+    // success. A model that asked a long list to scroll saw the whole page
+    // jump instead, and nothing in the observation afterwards told the two
+    // apart.
+    const { res, page } = await observedThenActed({
+      kind: "act",
+      verb: "scroll",
+      target: { a11yRef: "e2" },
+      value: "250",
+    });
+    expect(res.ok).toBe(true);
+    // The fixture logs a targeted wheel differently from a document one, which
+    // is the entire assertion: the two were indistinguishable before.
+    expect(page.calls.acts).toContain("scroll:0,250@100,50");
+    expect(page.calls.acts).not.toContain("scroll:0,250");
+  });
+
+  it("scrolls at coordinates when the model gives them", async () => {
+    const { res, page } = await observedThenActed({
+      kind: "act",
+      verb: "scroll",
+      target: { coordinates: [7, 9] },
+      value: "down",
+    });
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("scroll:0,600@7,9");
+  });
+
+  it("still scrolls the DOCUMENT for a bare scroll", async () => {
+    // Unchanged, and pinned: a bare `scroll` is the overwhelmingly common
+    // call, and the verb matrix above asserts its exact log line.
+    const { res, page } = await observedThenActed({
+      kind: "act",
+      verb: "scroll",
+      value: "250",
+    });
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("scroll:0,250");
+  });
+
+  it("does not refuse a scroll target something is sitting on top of", async () => {
+    // A scroll container is very often under a sticky header or an overlay,
+    // and a wheel event reaches the scroller regardless. The occlusion check
+    // that rightly refuses a CLICK would refuse the case this exists for.
+    const { res, page } = await observedThenActed(
+      { kind: "act", verb: "scroll", target: { a11yRef: "e2" }, value: "250" },
+      { "Runtime.callFunctionOn": { result: { value: "div.sticky-header" } } },
+    );
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("scroll:0,250@100,50");
   });
 
   it("focuses the ref before pressing a key, so Enter lands where it was aimed", async () => {
@@ -4718,5 +4928,271 @@ describe("daemon-owned popup lifecycle", () => {
     await vi.waitFor(() => expect(driver.tabsSnapshot().list).toHaveLength(2));
     expect(driver.tabsSnapshot().active).toBe("@session");
     await driver.close();
+  });
+});
+
+describe("ChromiumDriver — acting inside a frame", () => {
+  /** The page's own tree: one button, one iframe at node 77. */
+  const PAGE = {
+    nodes: [
+      { nodeId: "1", role: { value: "RootWebArea" }, childIds: ["2", "3"] },
+      {
+        nodeId: "2",
+        backendDOMNodeId: 10,
+        role: { value: "button" },
+        name: { value: "Outside" },
+        properties: [],
+        childIds: [],
+      },
+      {
+        nodeId: "3",
+        backendDOMNodeId: 77,
+        role: { value: "Iframe" },
+        name: { value: "Payment" },
+        properties: [],
+        childIds: [],
+      },
+    ],
+  };
+  /** The OOPIF's own tree: one field, at node 500 in ITS session. */
+  const CHILD = {
+    nodes: [
+      { nodeId: "1", role: { value: "RootWebArea" }, childIds: ["2"] },
+      {
+        nodeId: "2",
+        backendDOMNodeId: 500,
+        role: { value: "textbox" },
+        name: { value: "Card number" },
+        properties: [],
+        childIds: [],
+      },
+    ],
+  };
+  const FRAME_TREE = {
+    frameTree: {
+      frame: { id: "main" },
+      childFrames: [{ frame: { id: "child-1", parentId: "main" } }],
+    },
+  };
+
+  /**
+   * A page with one out-of-process frame.
+   *
+   * The frame's element spans (20, 30)–(60, 50) INSIDE its own session's
+   * viewport, so its CENTRE — which is what an act aims at — is (40, 40); the
+   * iframe element's top-left sits at (100, 200) in the page's. A correctly
+   * translated click therefore lands at (140, 240), and an untranslated one at
+   * (40, 40), near the top-left corner of the window on whatever is there.
+   */
+  function framedPage() {
+    const childSent: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const pageSent: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const childCdp = {
+      async send(method: string, params?: Record<string, unknown>) {
+        childSent.push({ method, ...(params ? { params } : {}) });
+        if (method === "Accessibility.getFullAXTree") return CHILD;
+        if (method === "DOM.getBoxModel") {
+          // (20,30) to (60,50) in the FRAME's own space.
+          return { model: { content: [20, 30, 60, 30, 60, 50, 20, 50] } };
+        }
+        if (method === "DOM.resolveNode") return { object: { objectId: "obj-c" } };
+        return {};
+      },
+      on() {},
+    };
+    const page = fakePage({
+      url: "https://x.test/",
+      frameSessions: [{ frameId: "child-1", cdp: childCdp as never }],
+      cdpReplies: {
+        "Accessibility.getFullAXTree": PAGE,
+        "Page.getFrameTree": FRAME_TREE,
+        "DOM.getFrameOwner": { backendNodeId: 77 },
+        "DOM.getBoxModel": (params?: Record<string, unknown>) => {
+          pageSent.push({ method: "DOM.getBoxModel", ...(params ? { params } : {}) });
+          // The IFRAME element, at (100,200) to (400,500) on the page.
+          if (params?.backendNodeId === 77) {
+            return { model: { content: [100, 200, 400, 200, 400, 500, 100, 500] } };
+          }
+          return { model: { content: [10, 10, 50, 10, 50, 30, 10, 30] } };
+        },
+        "DOM.resolveNode": { object: { objectId: "obj-p" } },
+        "Input.dispatchKeyEvent": (params?: Record<string, unknown>) => {
+          pageSent.push({ method: "Input.dispatchKeyEvent", ...(params ? { params } : {}) });
+          return {};
+        },
+        "Input.insertText": (params?: Record<string, unknown>) => {
+          pageSent.push({ method: "Input.insertText", ...(params ? { params } : {}) });
+          return {};
+        },
+      },
+    });
+    return { page, childSent, pageSent, childCdp };
+  }
+
+  async function observedFramedPage() {
+    const fixture = framedPage();
+    const { context } = fakeContext({ pages: [fixture.page] });
+    const driver = new ChromiumDriver(context, {
+      features: { a11yFrames: true },
+    });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const observed = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    return { ...fixture, driver, observed };
+  }
+
+  it("shows the frame's controls indented under its Iframe line", async () => {
+    // Without this the model sees an `Iframe` leaf and cannot see a single
+    // control inside it — a login form, a payment field, an embedded app, all
+    // invisible with nothing saying so.
+    const { observed } = await observedFramedPage();
+    const output = observed.output as { a11y: string };
+    expect(output.a11y).toContain('- Iframe "Payment"');
+    expect(output.a11y).toContain("Card number");
+    // One deeper: the child's own `RootWebArea` is transparent, so its
+    // children land directly under the iframe line.
+    const lines = output.a11y.split("\n");
+    const iframeLine = lines.findIndex((line) => line.includes("Iframe"));
+    expect(lines[iframeLine + 1]).toMatch(/^\s+- textbox "Card number"/);
+  });
+
+  it("reads the tree even when the bridge never attaches", async () => {
+    // THE HANG THIS BOUND EXISTS FOR. `attachWebMcp` talks to the page, so on
+    // a browser being torn down — or one whose WebMCP domain never answers —
+    // `webmcp()` can simply never settle. An unbounded await turned "this
+    // observation missed an iframe" into "the command never returns and
+    // teardown hangs behind it", which is how a real-browser integration test
+    // died in its `afterEach`.
+    vi.useFakeTimers();
+    try {
+      const { driver, page } = await observedFramedPage();
+      // Replace the memoised bridge with one that never resolves.
+      page.webmcp = () => new Promise(() => {});
+      const pending = driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+      await vi.advanceTimersByTimeAsync(2_000);
+      const res = await pending;
+      // Degraded, NOT failed — and the difference is the tree, not the status.
+      // `ok` alone passes on an empty or missing one, which would be the same
+      // outage wearing a success: the point of the bound is that the main
+      // document still reads, exactly as it did before the frame forest.
+      expect(res.ok).toBe(true);
+      const a11y = (res.output as { a11y?: string } | undefined)?.a11y;
+      expect(a11y).toEqual(expect.any(String));
+      expect(a11y).toContain("Outside");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clicks a frame ref at the HOST-TRANSLATED point", async () => {
+    // (20,30)+(40,20)/2 inside the frame → centre (40,40); plus the host's
+    // top-left (100,200) → (140,240). An untranslated click would land at
+    // (40,40), near the top-left corner of the window, on whatever is there.
+    const { driver, page } = await observedFramedPage();
+    const refs = (
+      (await driver.execute(cmd({ kind: "observe", mode: "a11y" })))
+        .output as { refs: Record<string, { name: string }> }
+    ).refs;
+    const frameRef = Object.entries(refs).find(
+      ([, value]) => value.name === "Card number",
+    )![0];
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { a11yRef: frameRef } }),
+    );
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("click:140,240");
+  });
+
+  it("resolves a frame ref on the FRAME's session, not the page's", async () => {
+    // A backend node id is meaningful only to the session that issued it.
+    const { driver, childSent } = await observedFramedPage();
+    const refs = (
+      (await driver.execute(cmd({ kind: "observe", mode: "a11y" })))
+        .output as { refs: Record<string, { name: string }> }
+    ).refs;
+    const frameRef = Object.entries(refs).find(
+      ([, value]) => value.name === "Card number",
+    )![0];
+    childSent.length = 0;
+    await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { a11yRef: frameRef } }),
+    );
+    expect(childSent.map((call) => call.method)).toContain("DOM.describeNode");
+  });
+
+  it("types into a frame ref: focus on the FRAME, text on the PAGE", async () => {
+    // Input is dispatched to whatever has focus in the BROWSER, and an
+    // out-of-process frame's session does not own the browser's focus —
+    // keystrokes sent there type into nothing.
+    const { driver, childSent, pageSent } = await observedFramedPage();
+    const refs = (
+      (await driver.execute(cmd({ kind: "observe", mode: "a11y" })))
+        .output as { refs: Record<string, { name: string }> }
+    ).refs;
+    const frameRef = Object.entries(refs).find(
+      ([, value]) => value.name === "Card number",
+    )![0];
+    childSent.length = 0;
+    pageSent.length = 0;
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: frameRef },
+        value: "4242",
+      }),
+    );
+    expect(res.ok).toBe(true);
+    expect(childSent.map((call) => call.method)).toContain("DOM.focus");
+    expect(pageSent.map((call) => call.method)).toContain("Input.insertText");
+    expect(childSent.map((call) => call.method)).not.toContain(
+      "Input.insertText",
+    );
+  });
+
+  it("refuses a frame ref whose session is GONE, as stale_ref", async () => {
+    // The whole document it lived in has left — not an element missing from a
+    // page we can still see.
+    const fixture = framedPage();
+    const { context } = fakeContext({ pages: [fixture.page] });
+    const driver = new ChromiumDriver(context, {
+      features: { a11yFrames: true },
+    });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y" }),
+    );
+    const refs = (observed.output as { refs: Record<string, { name: string }> })
+      .refs;
+    const frameRef = Object.entries(refs).find(
+      ([, value]) => value.name === "Card number",
+    )![0];
+    // The frame's target goes away between the observation and the act.
+    (fixture.page as { frameSessions?: unknown }).frameSessions = () => [];
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { a11yRef: frameRef } }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/^stale_ref:/);
+    expect(res.error).toContain("has gone away");
+  });
+
+  it("renders a page with an iframe BYTE-IDENTICALLY with the flag off", async () => {
+    // The compatibility guarantee the eval transcripts rest on: with the flag
+    // off the iframe stays a leaf and every line is what it was.
+    const fixture = framedPage();
+    const { context } = fakeContext({ pages: [fixture.page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y" }),
+    );
+    const output = observed.output as { a11y: string };
+    expect(output.a11y).toBe(
+      [
+        '- button "Outside" [ref=e1]',
+        '- Iframe "Payment" [ref=e2]',
+      ].join("\n"),
+    );
+    expect(output).not.toHaveProperty("framesOmitted");
   });
 });

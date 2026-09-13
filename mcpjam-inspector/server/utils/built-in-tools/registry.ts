@@ -53,7 +53,10 @@ import { requireGithubToolSelection } from "../../services/github-checks/credent
 import type { ToolSet } from "ai";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
-import { LOCAL_BROWSER_ENABLED, hostedBrowserEnabled } from "../../config.js";
+import {
+  LOCAL_BROWSER_ENABLED,
+  hostedBrowserEnabled,
+} from "../../config.js";
 import {
   isHostedBrowserExposable,
   isHostedBrowserRefused,
@@ -264,6 +267,8 @@ export interface BuiltInToolContext {
   browserSessionScope?: BrowserSessionScope;
   /** Explicit profile pin from a host/eval config. */
   browserProfileId?: string;
+  /** Surface ids (chat session, eval iteration, swarm) echoed onto browser ledger rows. */
+  browserCorrelation?: Parameters<typeof buildBrowserTools>[0]["correlation"];
   browserHandoffMaxWaitMs?: number;
   onBrowserHandoffWaiting?: Parameters<
     typeof buildBrowserTools
@@ -788,6 +793,9 @@ export function resolveHostTools(
         ...(conversationBrowser ? { sessionScope: conversationBrowser } : {}),
         ...(ctx.browserProfileId
           ? { browserProfileId: ctx.browserProfileId }
+          : {}),
+        ...(ctx.browserCorrelation
+          ? { correlation: ctx.browserCorrelation }
           : {}),
         ...(ctx.onBrowserNotice
           ? { onBrowserNotice: ctx.onBrowserNotice }

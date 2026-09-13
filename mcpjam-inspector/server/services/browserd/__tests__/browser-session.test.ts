@@ -18,6 +18,8 @@ import type { BrowserdHandle } from "../boot-browserd";
 import type { BrowserdLeaseState, BrowserdStatus } from "../browserd-client";
 import { HandoffLease } from "../daemon/lease";
 import { BROWSERD_PROTOCOL_VERSION } from "../protocol";
+import { BrowserProtocolMismatchError } from "../browser-session";
+import { logger } from "../../../utils/logger.js";
 import type {
   BrowserSessionLookup,
   BrowserSessionRecordResult,
@@ -1299,7 +1301,14 @@ describe("ensureBrowserSession — sandbox target", () => {
   it("reuses a verified daemon with zero sandbox I/O", async () => {
     const f = makeFakes({
       lookups: [liveSandboxLookup()],
-      status: async () => ({ kind: "ok", bootId: SANDBOX_SESSION.bootId }),
+      // ANNOUNCES ITS WIRE, like every healthy fake on the computer path: a
+      // daemon that cannot prove which protocol it speaks is not reusable on
+      // EITHER target. The mismatch case has its own test below.
+      status: async () => ({
+        kind: "ok",
+        bootId: SANDBOX_SESSION.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
     });
     const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
 
@@ -1383,6 +1392,48 @@ describe("ensureBrowserSession — sandbox target", () => {
     expect(f.sandbox.disconnect).toHaveBeenCalled();
   });
 
+  /**
+   * The sandbox arm refuses a mismatched wire too.
+   *
+   * It did not, and the asymmetry was invisible because the failure arrived
+   * somewhere else entirely: the daemon's per-command gate refused each
+   * stamped command with `protocol_mismatch`, so the session LOOKED broken in
+   * a named way. But nothing on this path ever decided the daemon was
+   * unusable, so `ensureBrowserSession` handed the same incompatible one back
+   * on the next turn and the next — the relaunch this mechanism exists to
+   * trigger never happened, and a per-run browser stayed stuck until its
+   * sandbox died.
+   */
+  it("does NOT reuse a sandbox daemon on a different wire", async () => {
+    const f = makeFakes({
+      lookups: [liveSandboxLookup()],
+      status: async () => ({
+        kind: "ok",
+        bootId: SANDBOX_SESSION.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+      }),
+    });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+    // RELAUNCHED, which is the whole point: a fresh boot on the current wire.
+    expect(handle.reused).toBe(false);
+    expect(f.boot).toHaveBeenCalled();
+    expect(f.sandbox.killBrowserd).toHaveBeenCalled();
+  });
+
+  it("does NOT reuse a sandbox daemon that cannot say which wire it speaks", async () => {
+    // An older daemon announces nothing. Unproven is not the same as
+    // compatible — continuing would produce wrong answers rather than merely
+    // old ones, which is the case the version number exists for.
+    const f = makeFakes({
+      lookups: [liveSandboxLookup()],
+      status: async () => ({ kind: "ok", bootId: SANDBOX_SESSION.bootId }),
+    });
+    expect((await ensureBrowserSession(f.deps, SANDBOX_ARGS)).reused).toBe(
+      false,
+    );
+    expect(f.boot).toHaveBeenCalled();
+  });
+
   it("adopts a winner that appeared while we were connecting, WITHOUT killing it", async () => {
     // `killBrowserd` is a pkill on the box, so it would reap a daemon somebody
     // booted during our connect and leave their row addressing nothing — and
@@ -1393,7 +1444,11 @@ describe("ensureBrowserSession — sandbox target", () => {
         { reachable: true, session: null },
         liveSandboxLookup({ bootId: "boot-winner" }),
       ],
-      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
     });
     const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
     expect(handle.reused).toBe(true);
@@ -1414,7 +1469,11 @@ describe("ensureBrowserSession — sandbox target", () => {
         liveSandboxLookup({ bootId: "boot-winner" }),
       ],
       recordResult: { status: "conflict" },
-      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
     });
     const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
     expect(handle.reused).toBe(true);
@@ -1431,11 +1490,19 @@ describe("ensureBrowserSession — sandbox target", () => {
           order.push(`${label}-start`);
           await new Promise((resolve) => setTimeout(resolve, 30));
           order.push(`${label}-end`);
-          return { kind: "ok", bootId: SANDBOX_SESSION.bootId };
+          return {
+            kind: "ok",
+            bootId: SANDBOX_SESSION.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          };
         })
         .mockImplementation(async () => {
           order.push(`${label}-second`);
-          return { kind: "ok", bootId: SANDBOX_SESSION.bootId };
+          return {
+            kind: "ok",
+            bootId: SANDBOX_SESSION.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          };
         });
 
     const statusA = slowStatus("row-a");
@@ -1653,6 +1720,157 @@ describe("ensureBrowserSession — compatibility and the lazy upgrade", () => {
 
     expect(f.boot).toHaveBeenCalled();
     expect(handle.reused).toBe(false);
+  });
+
+  it("logs a structured protocol_mismatch event when the wire changed and it relaunches", async () => {
+    // The relaunch itself is unchanged and stays silent to the caller. What
+    // was missing is any record that it happened for THIS reason: three gates
+    // refuse on the wire by returning `null`, and a `null` carries nothing.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const f = makeFakes({
+        lookups: [liveLookup()],
+        status: async () => ({
+          kind: "ok",
+          bootId: ROW.bootId,
+          protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+          bundleHash: HASH,
+          ...BUSY,
+        }),
+      });
+      const handle = await ensureBrowserSession(f.deps, ARGS);
+      expect(handle.reused).toBe(false);
+      expect(warn).toHaveBeenCalledWith(
+        "[browser-session] browser.protocol_mismatch",
+        expect.objectContaining({
+          expected: BROWSERD_PROTOCOL_VERSION,
+          running: BROWSERD_PROTOCOL_VERSION + 1,
+          source: "reuse",
+        }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not log a mismatch event when the versions match", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const f = makeFakes({ lookups: [liveLookup()] });
+      await ensureBrowserSession(f.deps, ARGS);
+      expect(warn).not.toHaveBeenCalledWith(
+        "[browser-session] browser.protocol_mismatch",
+        expect.anything(),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("throws BrowserProtocolMismatchError naming both versions when the relaunch fails", async () => {
+    // What the user used to see here: `browserd did not report listening
+    // within 30000ms` — a timeout from a boot that had nothing to do with the
+    // cause, and nothing anywhere naming the wire.
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({
+        kind: "ok",
+        bootId: ROW.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+        bundleHash: HASH,
+        ...BUSY,
+      }),
+      bootError: new Error("browserd did not report listening within 30000ms"),
+    });
+
+    const error = await ensureBrowserSession(f.deps, ARGS).catch(
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(BrowserProtocolMismatchError);
+    const mismatch = error as BrowserProtocolMismatchError;
+    expect(mismatch.code).toBe("protocol_mismatch");
+    expect(mismatch.expected).toBe(BROWSERD_PROTOCOL_VERSION);
+    expect(mismatch.running).toBe(BROWSERD_PROTOCOL_VERSION + 1);
+    // Prefixed with the code so `parseBrowserdErrorCode` reads it back.
+    expect(mismatch.message.startsWith("protocol_mismatch:")).toBe(true);
+    expect(mismatch.message).toContain(String(BROWSERD_PROTOCOL_VERSION));
+    expect(mismatch.message).toContain(mismatch.hint);
+  });
+
+  it("rethrows the PUBLICATION error when the replacement daemon did come up", async () => {
+    // The mismatch is RECOVERED here: a daemon on the expected wire is
+    // running, and what failed afterwards — the stream, the row, the logical
+    // boot — has nothing to do with the protocol. Naming the wire would report
+    // a solved problem as the cause of a live one, and dress a transient
+    // failure as the single thing a retry cannot fix.
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({
+        kind: "ok",
+        bootId: ROW.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+        bundleHash: HASH,
+        ...BUSY,
+      }),
+      streamError: new Error("the stream would not start"),
+    });
+
+    const error = await ensureBrowserSession(f.deps, ARGS).catch(
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).not.toBeInstanceOf(BrowserProtocolMismatchError);
+    expect((error as Error).message).toBe("the stream would not start");
+  });
+
+  it("rethrows the raw boot error when the relaunch fails with no mismatch observed", async () => {
+    // The other half, and the one that keeps this from becoming a wrapper that
+    // hides real faults: a boot that failed for its own reasons must keep
+    // reporting its own reason.
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      bootError: new Error("chromium would not start"),
+    });
+
+    const error = await ensureBrowserSession(f.deps, ARGS).catch(
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).not.toBeInstanceOf(BrowserProtocolMismatchError);
+    expect((error as Error).message).toBe("chromium would not start");
+  });
+
+  it("records a mismatch the CONTROL PLANE saw, without ever reaching the daemon", async () => {
+    // `stale: "protocol_changed"` has been parsed off the wire since V-4a and
+    // read by nothing. The relaunch was already right; the reason was lost.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const f = makeFakes({
+        lookups: [
+          {
+            reachable: true,
+            session: null,
+            stale: "protocol_changed",
+            observedSessionId: ROW.sessionId,
+          },
+        ],
+        bootError: new Error("browserd did not report listening within 30000ms"),
+      });
+      const error = await ensureBrowserSession(f.deps, ARGS).catch(
+        (thrown: unknown) => thrown,
+      );
+      expect(error).toBeInstanceOf(BrowserProtocolMismatchError);
+      expect((error as BrowserProtocolMismatchError).stale).toBe(
+        "protocol_changed",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[browser-session] browser.protocol_mismatch",
+        expect.objectContaining({ source: "lookup" }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("relaunches a daemon too old to say which wire it speaks", async () => {
@@ -1886,6 +2104,54 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
       fps: 15,
     });
     expect(spies.recordStatus).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * …AND SO DO THE ARGUMENTS, which is the other half of the same lesson.
+   *
+   * The block above protects capabilities — a METHOD the wrapper forgot to
+   * rebuild. This protects the arguments of the one method it does rebuild by
+   * hand. `sendCommand` was written `(command, expectedBootId)` and called
+   * `client.sendCommand(command, expectedBootId)`, so a third argument added
+   * later was dropped on every hosted call with nothing in a log to say so.
+   *
+   * That happened with the abort signal: a cancelled turn went on holding a
+   * lease read nobody was waiting for, and the per-command timeout was lost
+   * the same way.
+   */
+  it("forwards the third argument of sendCommand, not just the first two", async () => {
+    const sendCommand = vi.fn(async () => ({ kind: "ok" }) as never);
+    const f = makeFakes({ lookups: [liveLookup()] });
+    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({
+        status: async () =>
+          ({
+            kind: "ok",
+            bootId: ROW.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+            bundleHash: HASH,
+          }) as BrowserdStatus,
+        sendCommand,
+      }),
+    );
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    const controller = new AbortController();
+    const options = {
+      signal: controller.signal,
+      timeoutMs: 1234,
+    };
+    await handle.client.sendCommand(
+      { commandId: "c1", source: "chat", action: { kind: "reload" } },
+      "boot-old",
+      options,
+    );
+
+    expect(sendCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ commandId: "c1" }),
+      "boot-old",
+      options,
+    );
   });
 
   it("forwards exportProfile too", async () => {

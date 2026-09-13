@@ -69,7 +69,12 @@ export type PageToolsPeekReason =
   | "busy"
   | "unsupported"
   | "unreachable"
-  | "timeout";
+  | "timeout"
+  /**
+   * A browser is running but its daemon speaks a different protocol. Distinct
+   * from `no_browser_session`, which would send a person to open another.
+   */
+  | "protocol_mismatch";
 
 export interface PageToolsPeek {
   tools: BrowserPageTool[];
@@ -211,7 +216,16 @@ async function peekHosted(
           })
         : await lookupProjectComputerSession(args, signal);
   const session = lookup?.session;
-  if (!session) return { tools: [], reason: "no_browser_session" };
+  if (!session) {
+    // A protocol mismatch comes back as a stale row, not a session.
+    return {
+      tools: [],
+      reason:
+        lookup?.stale === "protocol_changed"
+          ? "protocol_mismatch"
+          : "no_browser_session",
+    };
+  }
 
   const client = new BrowserdClient({
     baseUrl: session.publicOrigin,
@@ -224,6 +238,14 @@ async function peekHosted(
   const status = await client.status({ signal }).catch(() => null);
   if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
     return { tools: [], reason: "no_browser_session" };
+  }
+  // The row said this daemon speaks our wire; the daemon itself is the
+  // authority, and it can have been replaced since the row was written.
+  if (
+    status.protocolVersion !== undefined &&
+    status.protocolVersion !== BROWSERD_PROTOCOL_VERSION
+  ) {
+    return { tools: [], reason: "protocol_mismatch" };
   }
   return readTools(
     (command) => client.sendCommand(command, session.bootId, { signal }),
@@ -280,7 +302,10 @@ async function lookupConversationSession(
         });
   // The box may have been rebound since the owner lookup. Check the logical
   // identity just as the browser viewer does before using daemon credentials.
-  if (lookup.session?.logicalSessionId !== owner.sessionId) return null;
+  // A sessionless (stale) row passes through so the caller can report why.
+  if (lookup.session && lookup.session.logicalSessionId !== owner.sessionId) {
+    return null;
+  }
   return lookup;
 }
 

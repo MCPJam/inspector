@@ -200,6 +200,17 @@ export function hostedBrowserEnabled(
  * per-process in staging and per-test, and a module constant would freeze
  * whatever the environment said when this module first loaded.
  */
+/**
+ * Redact credential-shaped strings in browser messages (errors, console,
+ * network failures) sent to the model; never page content. Defaults on;
+ * `MCPJAM_BROWSER_SHAPE_REDACTION=0` disables it.
+ */
+export function browserShapeRedactionEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.MCPJAM_BROWSER_SHAPE_REDACTION !== "0";
+}
+
 export type WebmcpPageToolsMode = "verbs" | "first_class";
 
 export function webmcpPageToolsMode(
