@@ -242,9 +242,11 @@ export function GroupSummaryRow({
   const active = rows.filter((row) =>
     ["pending", "running", "grading"].includes(row.status),
   ).length;
-  const sources = [
-    ...new Set(rows.map((row) => row.source ?? row.suiteSource ?? "ui")),
-  ];
+  const platformRows = new Map<string, ProjectRunRow>();
+  for (const row of rows) {
+    const origin = resolveRunOrigin(row) ?? "ui";
+    if (!platformRows.has(origin)) platformRows.set(origin, row);
+  }
   const gitRows = rows.map((row) => {
     const origin = resolveRunOrigin(row);
     return origin === "github_check" || origin === "github_action"
@@ -407,8 +409,8 @@ export function GroupSummaryRow({
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap gap-1">
-          {sources.map((source) => (
-            <RunPlatformBadge key={source} run={{ source }} />
+          {[...platformRows.entries()].map(([origin, row]) => (
+            <RunPlatformBadge key={origin} run={row} />
           ))}
         </div>
       </TableCell>

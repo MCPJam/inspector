@@ -955,6 +955,42 @@ describe("project run history metrics", () => {
 });
 
 describe("GitHub run context", () => {
+  it("groups platform badges by resolved origin and keeps their provenance", () => {
+    render(
+      <table>
+        <tbody>
+          <GroupSummaryRow
+            rows={[
+              makeRow({
+                source: "api",
+                launcher: { kind: "cli" },
+              }),
+              makeRow({
+                _id: "run_bbbbbbbbbbbb",
+                source: "api",
+                launcher: { kind: "cli" },
+              }),
+              makeRow({
+                _id: "run_cccccccccccc",
+                source: "api",
+                attribution: { surface: "mcp" },
+              }),
+            ]}
+            details={new Map()}
+            historyRows={new Map()}
+            showGitContext={false}
+            label="#1"
+          />
+        </tbody>
+      </table>,
+    );
+
+    expect(screen.getAllByText("CLI")).toHaveLength(1);
+    expect(screen.getByText("CLI").getAttribute("title")).toContain("declared");
+    expect(screen.getByText("MCP").getAttribute("title")).toContain("verified");
+    expect(screen.queryByText("API")).toBeNull();
+  });
+
   it("shows only Git values shared by every run in a grouped launch", () => {
     const common = {
       commitSha: "abcdef123456",
