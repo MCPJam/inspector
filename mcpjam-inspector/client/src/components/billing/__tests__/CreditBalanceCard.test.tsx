@@ -37,6 +37,18 @@ vi.mock("@/hooks/useCreditBalance", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useAutoTopup", () => ({
+  useAutoTopup: () => ({
+    enrollment: null,
+    isLoading: false,
+    querySkipped: false,
+    error: null,
+    isSaving: false,
+    save: vi.fn(),
+    disable: vi.fn(),
+  }),
+}));
+
 vi.mock("@/hooks/use-eval-iteration-quota", () => ({
   useEvalIterationQuota: () => ({
     quota: evalQuotaState,
@@ -89,28 +101,20 @@ describe("CreditBalanceCard", () => {
 
   it("opens enrollment from Auto-reload beneath the balance", async () => {
     const user = userEvent.setup();
-    render(
-      <CreditBalanceCard
-        canManageCredits
-        autoManagePanel={<div>Budget controls</div>}
-      />,
-    );
+    render(<CreditBalanceCard canManageCredits />);
     expect(
       screen.getByRole("region", { name: "Buy Credits" }),
     ).toContainElement(screen.getByRole("button", { name: "Buy credits" }));
-    expect(screen.queryByText("Budget controls")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Manage" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Minimum balance");
-    expect(screen.getByRole("dialog")).not.toHaveTextContent("Budget controls");
   });
 
   it("lets members review auto-reload without buying credits", async () => {
     const user = userEvent.setup();
-    render(<CreditBalanceCard autoManagePanel={<div>Read-only budget</div>} />);
+    render(<CreditBalanceCard />);
     expect(
       screen.queryByRole("button", { name: "Buy credits" }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText("Read-only budget")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Manage" }));
     expect(screen.getByLabelText("Maximum monthly spend (optional)")).toBeDisabled();
     expect(screen.getByRole("dialog")).toHaveTextContent(

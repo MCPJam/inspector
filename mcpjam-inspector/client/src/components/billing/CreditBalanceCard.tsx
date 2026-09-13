@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Info, Settings } from "lucide-react";
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { Card, CardContent } from "@mcpjam/design-system/card";
@@ -17,10 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import {
-  AutoTopupSettings,
-  type AutoTopupSettingsProps,
-} from "./AutoTopupSettings";
+import { AutoTopupDialogBody } from "./AutoTopupDialogBody";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { PendingCreditTopupsBanner } from "@/components/billing/PendingCreditTopupsBanner";
 import { TopupActionButton } from "@/components/billing/TopupActionButton";
@@ -44,16 +41,12 @@ interface CreditBalanceCardProps {
   canManageCredits?: boolean;
   /** Optional override for the chat session id used by the top-up flow. */
   chatSessionId?: string;
-  autoManagePanel?: ReactNode;
-  autoTopup?: Omit<AutoTopupSettingsProps, "canManage">;
 }
 
 export function CreditBalanceCard({
   organizationId,
   canManageCredits = false,
   chatSessionId,
-  autoManagePanel,
-  autoTopup,
 }: CreditBalanceCardProps = {}) {
   const navigate = useAppNavigate();
   const { balance, isLoading } = useCreditBalance({
@@ -303,11 +296,7 @@ export function CreditBalanceCard({
             Credit spending is paused pending review.
           </p>
         ) : null}
-        <div
-          className={`grid gap-4 border-t border-border/60 pt-5 ${
-            autoManagePanel ? "sm:grid-cols-2" : ""
-          }`}
-        >
+        <div className="grid gap-4 border-t border-border/60 pt-5 sm:grid-cols-2">
           <section
             className="flex flex-col gap-4 rounded-lg border border-border/60 p-4"
             aria-label="Buy Credits"
@@ -339,47 +328,43 @@ export function CreditBalanceCard({
               across your organization.
             </p>
           </section>
-          {autoManagePanel ? (
-            <section
-              className="flex flex-col gap-4 rounded-lg border border-border/60 p-4"
-              aria-label="Auto-reload"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold">Auto-reload</h3>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setIsAutoManageOpen(true)}
-                >
-                  <Settings className="size-4" aria-hidden="true" />
-                  Manage
-                </Button>
-              </div>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Automatically add credits when your balance runs low.
-              </p>
-            </section>
-          ) : null}
+          <section
+            className="flex flex-col gap-4 rounded-lg border border-border/60 p-4"
+            aria-label="Auto-reload"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold">Auto-reload</h3>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setIsAutoManageOpen(true)}
+              >
+                <Settings className="size-4" aria-hidden="true" />
+                Manage
+              </Button>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Automatically add credits when your balance runs low.
+            </p>
+          </section>
         </div>
       </CardContent>
-      {autoManagePanel ? (
-        <Dialog open={isAutoManageOpen} onOpenChange={setIsAutoManageOpen}>
-          <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Auto-reload</DialogTitle>
-              <DialogDescription>
-                Automatically purchase credits when you’re running low.
-              </DialogDescription>
-            </DialogHeader>
-            <AutoTopupSettings
-              {...autoTopup}
-              canManage={canManageCredits}
-              onClose={() => setIsAutoManageOpen(false)}
-            />
-          </DialogContent>
-        </Dialog>
-      ) : null}
+      <Dialog open={isAutoManageOpen} onOpenChange={setIsAutoManageOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Auto-reload</DialogTitle>
+            <DialogDescription>
+              Automatically purchase credits when you’re running low.
+            </DialogDescription>
+          </DialogHeader>
+          <AutoTopupDialogBody
+            organizationId={organizationId}
+            canManage={canManageCredits}
+            onClose={() => setIsAutoManageOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
       {isTopupOpen && canManageCredits && (
         <CreditTopupDialog
           open

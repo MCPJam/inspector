@@ -85,13 +85,69 @@ describe("AutoTopupSettings", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
   });
-  it("never claims enrollment or saves when the service is unavailable", async () => {
-    const user = userEvent.setup();
-    render(<AutoTopupSettings canManage />);
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  it("shows a loading state and never saves before enrollment resolves", () => {
+    render(<AutoTopupSettings canManage onSave={vi.fn()} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading");
     expect(
       screen.getByRole("button", { name: "Turn on auto-reload" }),
     ).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Turn off auto-reload" }),
+    ).not.toBeInTheDocument();
+  });
+  it("only offers Turn off once enrolled, and closes after it succeeds", async () => {
+    const user = userEvent.setup();
+    const disable = vi.fn().mockResolvedValue(undefined);
+    const close = vi.fn();
+    const { rerender } = render(
+      <AutoTopupSettings
+        enrollment={null}
+        canManage
+        onSave={vi.fn()}
+        onDisable={disable}
+        onClose={close}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Turn off auto-reload" }),
+    ).not.toBeInTheDocument();
+    rerender(
+      <AutoTopupSettings
+        enrollment={{ thresholdCredits: 100, topupCredits: 500 }}
+        canManage
+        onSave={vi.fn()}
+        onDisable={disable}
+        onClose={close}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Turn off auto-reload" }),
+    );
+    expect(disable).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+  it("surfaces a Convex payload message when turning off fails", async () => {
+    const user = userEvent.setup();
+    const close = vi.fn();
+    const failure = Object.assign(new Error("[Request ID abc] Server Error"), {
+      data: "Only owners can change auto-reload.",
+    });
+    render(
+      <AutoTopupSettings
+        enrollment={{ thresholdCredits: 100, topupCredits: 500 }}
+        canManage
+        onSave={vi.fn()}
+        onDisable={vi.fn().mockRejectedValue(failure)}
+        onClose={close}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Turn off auto-reload" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Only owners can change auto-reload.",
+    );
+    expect(close).not.toHaveBeenCalled();
   });
   it("keeps member configuration read-only", () => {
     render(

@@ -2,6 +2,7 @@ import { creditsToUsdString, usdStringToCredits } from "@/shared/usd-credits";
 import { CreditAmountOption } from "./CreditAmountOption";
 import { useState } from "react";
 import { Info, RefreshCw } from "lucide-react";
+import { messageOf } from "@/hooks/useOrgScopedWrite";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -25,12 +26,15 @@ export interface AutoTopupSettingsProps {
   canManage: boolean;
   /** Resolves only once enrollment/configuration has been persisted. */
   onSave?: (configuration: AutoTopupConfiguration) => Promise<void>;
+  /** Resolves only once enrollment has been removed. */
+  onDisable?: () => Promise<void>;
 }
 
 export function AutoTopupSettings({
   enrollment,
   canManage,
   onSave,
+  onDisable,
   onClose,
 }: AutoTopupSettingsProps) {
   const [custom, setCustom] = useState(
@@ -46,8 +50,11 @@ export function AutoTopupSettings({
       : creditsToUsdString(enrollment.monthlySpendLimitCredits),
   );
   const [saving, setSaving] = useState(false);
+  const [disabling, setDisabling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const enrolled = Boolean(enrollment);
+  const loading = enrollment === undefined;
+  const busy = saving || disabling;
 
   const save = async () => {
     const thresholdCredits = Number(threshold);
@@ -83,12 +90,26 @@ export function AutoTopupSettings({
       });
     } catch (cause) {
       setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not save auto top-up settings. Try again.",
+        messageOf(cause) || "Could not save auto-reload settings. Try again.",
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  const disable = async () => {
+    if (!canManage || !onDisable || !enrolled) return;
+    setDisabling(true);
+    setError(null);
+    try {
+      await onDisable();
+      onClose?.();
+    } catch (cause) {
+      setError(
+        messageOf(cause) || "Could not turn off auto-reload. Try again.",
+      );
+    } finally {
+      setDisabling(false);
     }
   };
 
@@ -109,7 +130,7 @@ export function AutoTopupSettings({
               credits={credits.toLocaleString()}
               price={`$${Number(creditsToUsdString(credits))}`}
               selected={!custom && amount === String(credits)}
-              disabled={!canManage || saving}
+              disabled={!canManage || busy}
               onSelect={() => {
                 setCustom(false);
                 setAmount(String(credits));
@@ -122,7 +143,7 @@ export function AutoTopupSettings({
               name="reload-amount"
               aria-label="Custom amount"
               checked={custom}
-              disabled={!canManage || saving}
+              disabled={!canManage || busy}
               onChange={() => setCustom(true)}
               className="peer sr-only"
             />
@@ -143,7 +164,7 @@ export function AutoTopupSettings({
             step="1"
             value={amount}
             onChange={(event) => setAmount(event.target.value)}
-            disabled={!canManage || saving}
+            disabled={!canManage || busy}
           />
           {Number(amount) > 0 && Number.isSafeInteger(Number(amount)) && (
             <p className="text-xs text-muted-foreground">
@@ -179,7 +200,7 @@ export function AutoTopupSettings({
             step="1"
             value={threshold}
             onChange={(event) => setThreshold(event.target.value)}
-            disabled={!canManage || saving}
+            disabled={!canManage || busy}
             className="pr-20"
           />
           <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
@@ -221,11 +242,16 @@ export function AutoTopupSettings({
             placeholder="No limit"
             value={monthlyLimit}
             onChange={(event) => setMonthlyLimit(event.target.value)}
-            disabled={!canManage || saving}
+            disabled={!canManage || busy}
             className="pl-7"
           />
         </div>
       </div>
+      {loading && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Loading auto-reload settings…
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
@@ -236,22 +262,30 @@ export function AutoTopupSettings({
           Ask an organization admin to manage auto-reload.
         </p>
       )}
-      <div className="flex justify-end gap-3 border-t border-border pt-4">
+      <div className="flex flex-wrap justify-end gap-3 border-t border-border pt-4">
+        {canManage && enrolled && onDisable && (
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={busy}
+            onClick={() => void disable()}
+            className="mr-auto"
+          >
+            {disabling ? "Turning off…" : "Turn off auto-reload"}
+          </Button>
+        )}
         {onClose && (
           <Button
             type="button"
             variant="outline"
-            disabled={saving}
+            disabled={busy}
             onClick={onClose}
           >
             Back
           </Button>
         )}
         {canManage && (
-          <Button
-            type="submit"
-            disabled={saving || !onSave || enrollment === undefined}
-          >
+          <Button type="submit" disabled={busy || !onSave || loading}>
             <RefreshCw
               aria-hidden="true"
               className={saving ? "size-4 animate-spin" : "size-4"}
@@ -259,8 +293,8 @@ export function AutoTopupSettings({
             {saving
               ? "Saving…"
               : enrolled
-              ? "Save changes"
-              : "Turn on auto-reload"}
+                ? "Save changes"
+                : "Turn on auto-reload"}
           </Button>
         )}
       </div>
