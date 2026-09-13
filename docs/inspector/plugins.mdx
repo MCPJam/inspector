@@ -102,7 +102,7 @@ Problems are contained at the narrowest boundary the format defines:
 | One invalid server entry (unknown `type`, unknown field, placeholder in `command`, escaping path) | Only that entry is **skipped**; sibling servers import |
 | One non-conforming skill | Only that skill is skipped; sibling skills import |
 
-A **skip** in the import preview means exactly this: the component was declared but did not conform, so it is absent from the imported revision. Each skip appears in the preview's warnings as a `COMPONENT_SKIPPED` entry naming the component and the reason. A skipped server is a bundle problem to fix and re-import — not a runtime failure.
+A **skip** means the component was declared but did not conform, so it is absent from the imported revision. The import preview shows a **Skipped components** warning block — always visible before the commit buttons — listing each skipped component's type, key, and reason. A skipped server is a bundle problem to fix and re-import, not a runtime failure. This block is distinct from the Unsupported components section: unsupported components are preserved by design; skipped ones failed validation and are not installed at all.
 
 ### Credential values are never imported
 
@@ -142,13 +142,14 @@ Before you confirm the install, MCPJam shows a preview of what the bundle declar
 
 | Section | What it shows |
 |---------|---------------|
-| Identity | Plugin name, version, and a short content-addressed revision ID |
+| Identity | Plugin name, version, schema version (when present), and a short content-addressed revision ID |
 | Census | Counts of skills, MCP servers, app mappings, and assets |
-| Warnings | Non-fatal issues, including every skipped component with its reason |
+| Skipped components | A prominent warning block listing every component that **failed validation** and will not be installed — shown before the commit buttons so a partial install is never a surprise. Absent when all components passed. |
+| Warnings | Non-fatal issues such as `MCP_CONFIG_IGNORED` or secret-field omissions |
 | Unsupported components | One line per component MCPJam stores but does not run — lifecycle hooks, browser extensions, scheduled-task templates, and unrecognized manifest fields — each with its key and the reason it is inert |
-| Setup required | Environment variable and header names the bundle declares — you supply values per server after installing, not here |
+| Setup required | Environment variable and header names the bundle declares — you supply values per server after installing, not here. Names the bundle pre-configures itself (non-secret literals or runtime-resolved templates) are noted as pre-configured. |
 | Skills | Declared skill model references and descriptions |
-| MCP servers | Server keys, transports, and any OAuth or credential requirements |
+| MCP servers | Server keys, transport (including the specific HTTP variant — `streamable-http` or `sse` — when declared), and any OAuth or credential requirements |
 | App mappings | Metadata entries preserved from `.app.json` files |
 | Assets | Icons and other static files included in the bundle |
 
@@ -175,6 +176,7 @@ The card shows the plugin's name and a rolled-up health badge:
 | Badge | Meaning |
 |-------|---------|
 | Ready | All components of the active revision are ready to use |
+| Needs configuration | At least one component requires environment variable or header values before it can run |
 | Needs auth | At least one component requires authorization before its first tool call |
 | Local runtime | At least one component runs only from a local MCPJam process |
 | Computer required | At least one component runs only inside a Project Computer |
@@ -185,7 +187,9 @@ The card shows the plugin's name and a rolled-up health badge:
 Click the card header to expand it and see the active revision's components:
 
 - **Revision ID** — the short content-addressed identity of the active bundle.
-- **MCP servers** — each server's key, transport, placement, and readiness.
+- **Schema version** — the Agent Plugins schema version the bundle targets (for example, `Agent Plugins 1.0.0`), shown when present.
+- **MCP servers** — each server's key, transport (the specific HTTP variant — `streamable-http` or `sse` — when declared), placement, and readiness. A per-component readiness badge appears next to each server; hover it to see the raw state code when the badge label is generic.
+- **Configure** — servers whose bundle declared environment variable or header requirements show a **Configure** button. Click it to open an inline editor where you can enter the required values. Bundle-declared non-secret literals (for example `MODE=production`) appear read-only with an **Override** affordance; runtime-resolved template values (for example `${PLUGIN_ROOT}/data`) appear as **Pre-configured** with no input — the runtime fills them at launch. See [Credential setup](#credential-setup) for details.
 - **Skills** — model references for each declared skill, namespaced as `<plugin-name>/<skill-name>`.
 - **Unsupported components** — a count of the same inert components the import preview itemizes. Only the count appears here; the per-component keys and reasons are shown at import time.
 - **Other revisions** — ready revisions of the same plugin that are not currently active. Click **Activate** next to a revision to make it the active one.
@@ -199,7 +203,20 @@ Click the **⋮** menu on a plugin card to:
 
 ## Credential setup
 
-After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
+After installing a plugin, each MCP server component that requires credentials shows a **Needs configuration** readiness badge in the plugin card. Click **Configure** next to that server to open the inline setup editor.
+
+The editor lists every declared environment variable and header name for that server:
+
+- **Required values** — enter the value in the masked input field.
+- **Optional values** — marked `optional`; you can leave them blank.
+- **Bundle-declared literals** — non-secret values the bundle ships (for example `MODE=production`) appear read-only. Click **Override** to replace the bundle value with your own; overriding pre-fills the declared value so you can edit from it. An override that is unchanged from the bundle value has nothing to save.
+- **Pre-configured values** — entries backed by a runtime-resolved template (for example `${PLUGIN_ROOT}/data`) show **Pre-configured** with no input and no override. The runtime fills these at launch; there is nothing to enter.
+
+Click **Save values** to apply. The card's readiness badge updates once the backend confirms the new state.
+
+<Note>
+The setup editor sends the complete set of values for each group you edit in one save. Values you entered in an earlier session are not pre-filled — re-enter them in the same save to keep them. Leaving a group's editor without saving leaves that group's existing values unchanged.
+</Note>
 
 ## Plugin provenance in runs and sessions
 
