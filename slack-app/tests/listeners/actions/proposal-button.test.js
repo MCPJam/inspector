@@ -261,11 +261,46 @@ describe('announcementFor', () => {
       'U1',
     );
     assert.match(text, /<https:\/\/app\/x\|follow it here>/);
+    // URL also wins for generate, schedule, and external when the server returns one.
+    for (const kind of ['generate', 'schedule', 'external']) {
+      const t = announcementFor({ operation: 'x', kind, resource: { url: 'https://app/r' } }, 'U1');
+      assert.match(t, /<https:\/\/app\/r\|follow it here>/, `URL should win for kind=${kind}`);
+    }
   });
 
   it('falls back to operation names for a server that predates `kind`', () => {
     assert.match(announcementFor({ operation: 'cancel_eval_run' }, 'U1'), /Cancelled by/);
     assert.match(announcementFor({ operation: 'run_eval_suite' }, 'U1'), /it's away/);
+  });
+
+  it('announces cancel_eval_run as Cancelled even when a resource URL is present', () => {
+    // Without this fix, a legacy server returning cancel_eval_run + resource.url
+    // would be announced as "Approved — follow it here" because the URL fallback
+    // ran before the operation-name check.
+    const text = announcementFor({ operation: 'cancel_eval_run', resource: { url: 'https://app/run/1' } }, 'U1');
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/Approved/.test(text), 'cancellation must not say Approved');
+    assert.ok(!/follow it here/.test(text), 'cancellation must not show the run URL');
+  });
+
+  it('includes the resource URL in legacy generate/run announcements when the server returns one', () => {
+    const genText = announcementFor(
+      { operation: 'generate_eval_cases', resource: { url: 'https://app/cases/1' } },
+      'U1',
+    );
+    assert.match(genText, /<https:\/\/app\/cases\/1\|follow it here>/);
+
+    const suiteText = announcementFor(
+      { operation: 'run_eval_suite', resource: { url: 'https://app/runs/2' } },
+      'U1',
+    );
+    assert.match(suiteText, /<https:\/\/app\/runs\/2\|follow it here>/);
+
+    const caseText = announcementFor(
+      { operation: 'run_eval_case', resource: { url: 'https://app/runs/3' } },
+      'U1',
+    );
+    assert.match(caseText, /<https:\/\/app\/runs\/3\|follow it here>/);
   });
 
   it('claims nothing for an operation and kind it has never seen', () => {
