@@ -15,6 +15,10 @@
  * Writing a tracked input also invalidates Docker's client-build layer when the
  * same SHA is deliberately redeployed.
  *
+ * deploy-webapp.yml keeps an inline copy of the write below as a fallback,
+ * because it checks out `inputs.ref` and a rollback can land on a commit older
+ * than this file. Change the output format here and change it there too.
+ *
  * The file is committed as `null` — local and non-production builds keep the
  * catalog date — so this only ever runs in CI, on a throwaway checkout, and is
  * never committed back.
