@@ -138,6 +138,7 @@ function AssertStepBody({
   // the step row owns deletion.
   return (
     <CheckRow
+      noun="assertion"
       predicate={a}
       onChange={(next: Predicate) => setAssertion(next)}
       availableTools={availableTools.map((t) => t.name)}

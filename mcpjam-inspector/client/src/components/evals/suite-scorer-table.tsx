@@ -436,6 +436,7 @@ function ScorerRow({
         <tr className="border-b border-border/40">
           <td colSpan={4} className="pb-3 pt-1">
             <CheckRow
+              noun="assertion"
               embedded
               predicate={predicate}
               onChange={(next) => onPredicateChange(row.predicateIndex!, next)}
