@@ -62,6 +62,7 @@ describe("conformance run bundle", () => {
       GITHUB_SHA: "abc123def",
       GITHUB_REF_NAME: "feature",
       GITHUB_REF: "refs/pull/12/merge",
+      GITHUB_HEAD_REF: "feature",
       GITHUB_WORKFLOW: "conformance",
       GITHUB_JOB: "check",
       GITHUB_RUN_ID: "99",
@@ -76,6 +77,8 @@ describe("conformance run bundle", () => {
       pullRequestNumber: 12,
       workflow: "conformance",
       job: "check",
+      repositoryUrl: "https://github.com/acme/widgets",
+      prUrl: "https://github.com/acme/widgets/pull/12",
       runUrl: "https://github.com/acme/widgets/actions/runs/99",
       runId: "99.2",
     });
