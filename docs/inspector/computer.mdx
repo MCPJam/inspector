@@ -155,6 +155,16 @@ that image — not on your personal computer.
 
 When a host configuration includes a browser tool, the Playground shows a browser panel alongside the chat. Each conversation owns its own browser — switching between chats reattaches the existing browser for that conversation rather than opening a new one or navigating away.
 
+### Granting Browser permission
+
+The first time you use a local browser session, the Browser panel requires a one-time Allow action before the agent can browse. If permission hasn't been granted yet, the panel shows:
+
+> Allow Browser below, then retry your request.
+
+Click **Allow** in the Browser panel to grant permission. The message clears automatically once permission is granted. After allowing, retry the request that was blocked — the agent does not automatically replay a turn that ran before permission was granted.
+
+If the agent responds that it cannot browse, check the Browser panel for this message and click Allow before retrying.
+
 ### Switching conversations
 
 When you switch from one conversation to another, the Playground reconnects to that conversation's existing browser. The live tabs, page content, unsaved form text, and scroll position are preserved exactly as you left them. No navigation happens on reattach.
