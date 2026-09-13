@@ -270,15 +270,15 @@ export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
     "Observed by the runner — decided by the client and server connection settings",
   discovery:
     "Observed by the runner — decided by the client's discovery settings",
-  selection: "No grader",
+  selection: "No evaluator",
   call: "Observed by the runner — nothing to configure",
-  response: "No grader",
-  userValue: "No grader",
+  response: "No evaluator",
+  userValue: "No evaluator",
 };
 
 /** True when this stage's empty state is a gap rather than a runner concern. */
 export function stageEmptyIsGap(stage: UserValueStage): boolean {
-  return STAGE_EMPTY_COPY[stage] === "No grader";
+  return STAGE_EMPTY_COPY[stage] === "No evaluator";
 }
 
 /**

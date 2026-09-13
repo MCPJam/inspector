@@ -220,7 +220,7 @@ export function connectionLines(
       // The number is per RUN, not per trial. A run with 200 trials copies one
       // connect onto all of them, and a reader who averages it gets a
       // three-second connection measured 200 times.
-      note: "measured once for the run, not per trial",
+      note: "measured once for the run, not per iteration",
     });
   }
   return lines;

@@ -68,7 +68,7 @@ export function AfterTheRunSection({
           <SuiteScorerLibraryMenu
             kinds={spineLibraryKinds()}
             authorableKinds={authorableKinds}
-            triggerLabel="Add a check on the whole run"
+            triggerLabel="Add an assertion on the whole run"
             onAdd={(kind) => onAddScorer(blankPredicate(kind))}
           />
         )}

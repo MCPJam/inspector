@@ -1,7 +1,7 @@
 /**
  * "Suggested from this run" — what the evidence would let you require next.
  *
- * Each row leads with what the check PROTECTS, because a row that opens with
+ * Each row leads with what the assertion PROTECTS, because a row that opens with
  * "Response contains ORD-48213" says what it does and nothing about whether
  * you want it. The mechanism is underneath, the evidence beside it, and a
  * requirement also states its consequence — accepting one changes whether
@@ -15,6 +15,7 @@ import { useState, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { measurementUnitLabel } from "@mcpjam/sdk/contract";
 import { EVAL_WARN_BADGE_STRONG_CLASS } from "@/components/evals/constants";
 import { RoleChip } from "@/components/evals/scorer-role-control";
 import type { SuggestDiagnosis, Suggestion } from "./suggest-from-run";
@@ -71,7 +72,7 @@ export function SuggestedFromRunCard({
           <p className="text-[11px] text-muted-foreground">
             {diagnosis
               ? "Reports only — requirements need a run that worked."
-              : `Held in every trial of the newest batch${of > 0 ? `, and every trial accomplished the goal` : ""}.`}
+              : `Held in every iteration of the newest batch${of > 0 ? `, and every iteration accomplished the goal` : ""}.`}
           </p>
         </div>
         {pending.length >= 2 ? (
@@ -99,7 +100,10 @@ export function SuggestedFromRunCard({
           <p className="text-foreground">
             {diagnosis.noSignal
               ? "Nothing confirmed that this run accomplished the goal."
-              : `${diagnosis.unsuccessful} of ${diagnosis.of} trials did not accomplish the goal.`}
+              : `${diagnosis.unsuccessful} of ${diagnosis.of} ${measurementUnitLabel(
+                  "trial",
+                  diagnosis.of,
+                )} did not accomplish the goal.`}
             {onSeeFailure && !diagnosis.noSignal ? (
               <Button
                 type="button"
@@ -115,7 +119,7 @@ export function SuggestedFromRunCard({
           <p className="text-muted-foreground">
             {diagnosis.noSignal
               ? "Run test with a goal sentence so the judge can confirm the run succeeded, then its route and tools can be required."
-              : "Requirements are suggested once every trial accomplishes the goal."}
+              : "Requirements are suggested once every iteration accomplishes the goal."}
           </p>
         </div>
       ) : null}
@@ -191,7 +195,7 @@ export function SuggestedFromRunCard({
 
       {suggestions.length === 0 && read.pending === 0 && !diagnosis ? (
         <p className="text-muted-foreground">
-          Nothing else was stable across every trial.
+          Nothing else was stable across every iteration.
         </p>
       ) : null}
 
@@ -211,19 +215,20 @@ function ReadState({
   if (read.pending > 0) {
     return (
       <p className="text-muted-foreground" data-testid="suggestion-read-state">
-        Reading {read.pending} trial {read.pending === 1 ? "trace" : "traces"}…
+        Reading {read.pending} iteration{" "}
+        {read.pending === 1 ? "trace" : "traces"}…
       </p>
     );
   }
   const lines: string[] = [];
   if (read.failed > 0) {
     lines.push(
-      `${read.failed} ${read.failed === 1 ? "trace" : "traces"} could not be read, so wording and error checks are not offered.`,
+      `${read.failed} ${read.failed === 1 ? "trace" : "traces"} could not be read, so wording and error assertions are not offered.`,
     );
   }
   if (read.capped > 0) {
     lines.push(
-      `This batch has ${read.total} trials; traces are read for ${read.total - read.capped}, so only checks that need no trace are offered.`,
+      `This batch has ${read.total} ${measurementUnitLabel("trial", read.total)}; traces are read for ${read.total - read.capped}, so only assertions that need no trace are offered.`,
     );
   }
   if (lines.length === 0) return null;
@@ -310,7 +315,10 @@ export function SuggestionRow({
       >
         {lonely
           ? "1 of 1 — run more to be sure"
-          : `held in ${suggestion.stability.held} of ${suggestion.stability.of} trials`}
+          : `held in ${suggestion.stability.held} of ${suggestion.stability.of} ${measurementUnitLabel(
+              "trial",
+              suggestion.stability.of,
+            )}`}
       </p>
     </li>
   );

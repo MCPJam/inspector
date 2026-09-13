@@ -162,7 +162,7 @@ function resultFromScore(
     return {
       state: "error",
       source: "scoreRow",
-      reason: score.error ?? "The scorer could not be evaluated.",
+      reason: score.error ?? "The evaluator could not run.",
     };
   }
   if (score.status === "skipped") {

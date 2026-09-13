@@ -25,9 +25,9 @@ const VALIDITY_PLACEHOLDERS = {
   /**
    * No numeric default: an omitted floor is not "no minimum", it selects the
    * contract's coverage rule (every configured trial attempted, and at least
-   * one gradeable trial). Saying "every trial" is the honest placeholder.
+   * one gradeable trial). Saying "every iteration" is the honest placeholder.
    */
-  minEligibleTrials: "every trial",
+  minEligibleTrials: "every iteration",
   minCompletionRate: "80%",
   maxEvaluatorErrorRate: "10%",
 } as const;
@@ -184,7 +184,7 @@ export function VerdictPolicyV2Controls({
           className={`flex items-center gap-2 text-xs text-muted-foreground ${aligned ? "justify-between" : ""}`}
           htmlFor={repetitionsId}
         >
-          <span className="min-w-[9rem]">Repetitions</span>
+          <span className="min-w-[9rem]">Iterations</span>
           <select
             id={repetitionsId}
             className={`h-8 ${aligned ? "w-40 shrink-0" : ""} rounded-md border border-input bg-background px-2 text-xs text-foreground`}
@@ -300,10 +300,10 @@ export function VerdictValidityControls({
         onCommit={(fraction) => setValidity({ minCompletionRate: fraction })}
       />
       <PercentInput
-        label="Maximum grader errors"
+        label="Maximum evaluator errors"
         value={validity.maxEvaluatorErrorRate}
         placeholder={VALIDITY_PLACEHOLDERS.maxEvaluatorErrorRate}
-        ariaLabel="Maximum share of iterations whose grader errored"
+        ariaLabel="Maximum share of iterations whose evaluator errored"
         onCommit={(fraction) =>
           setValidity({ maxEvaluatorErrorRate: fraction })
         }
@@ -350,7 +350,7 @@ export function VerdictPolicyUpgradeButton({
       </Button>
       <p className="text-[11px] text-muted-foreground/60">
         {disabledReason ??
-          `Grades each case on its own iterations: ${proposal.repetitions} repetition${
+          `Grades each case on its own iterations: ${proposal.repetitions} iteration${
             proposal.repetitions === 1 ? "" : "s"
           }, ${Math.round(proposal.passThreshold * 100)}% threshold. One-way.`}
       </p>

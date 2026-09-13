@@ -156,7 +156,7 @@ describe("the first-run form", () => {
     ).toHaveClass("justify-end");
     await user.click(add);
     await user.type(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
       "element",
     );
     await user.click(screen.getByTestId("add-step-item-widget:elementVisible"));
@@ -174,7 +174,7 @@ describe("the first-run form", () => {
     await user.click(trigger);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
     ).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -187,7 +187,7 @@ describe("the first-run form", () => {
     render(<StatefulSpine steps={[]} onStepsChange={onStepsChange} />);
     await user.click(screen.getByRole("button", { name: "Add" }));
     await user.type(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
       "element",
     );
     await user.click(screen.getByTestId("add-step-item-widget:elementVisible"));
@@ -310,7 +310,10 @@ describe("the spine", () => {
     const user = await openSpine({ steps: golden, onStepsChange });
     const [prompt] = screen.getAllByTestId("spine-action-row");
     await user.click(within(prompt!).getByRole("button", { name: "Add" }));
-    await user.type(screen.getByLabelText("Filter steps and checks"), "errors");
+    await user.type(
+      screen.getByLabelText("Filter steps and assertions"),
+      "errors",
+    );
     await user.click(screen.getByTestId("add-step-item-check:noToolErrors"));
     const written = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
     // After the prompt's whole block — behind a1 and a2, never in front of
@@ -328,7 +331,7 @@ describe("the spine", () => {
     const [, click] = screen.getAllByTestId("spine-action-row");
     await user.click(within(click!).getByRole("button", { name: "Add" }));
     await user.type(
-      screen.getByLabelText("Filter steps and checks"),
+      screen.getByLabelText("Filter steps and assertions"),
       "element",
     );
     expect(

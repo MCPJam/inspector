@@ -17,7 +17,7 @@ export function SuiteScorerLibraryMenu({
   onAdd,
   kinds,
   authorableKinds,
-  triggerLabel = "Add scorer",
+  triggerLabel = "Add assertion",
   triggerClassName,
   onAddWidgetCheck,
 }: {
@@ -32,7 +32,7 @@ export function SuiteScorerLibraryMenu({
   kinds?: readonly Predicate["type"][];
   /**
    * The kinds this DEPLOYMENT accepts (`authorablePredicateKinds`). Offering
-   * a kind the backend rejects turns "Add scorer" into a failed save, and one
+   * a kind the backend rejects turns "Add assertion" into a failed save, and one
    * an older runner cannot evaluate fails closed on every trial.
    *
    * Independent of `kinds` and intersected with it: that one is about this

@@ -92,7 +92,7 @@ export function CaseScorecard({
     <section className="space-y-4" data-testid="case-scorecard">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="space-y-0.5">
-          <h3 className="text-[11px] font-medium text-foreground">Scorers</h3>
+          <h3 className="text-[11px] font-medium text-foreground">Evaluators</h3>
           <p className="max-w-prose text-[11px] leading-snug text-muted-foreground">
             {PASS_OR_FAIL_HINT}
           </p>

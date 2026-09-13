@@ -391,7 +391,7 @@ export function CaseRunTimeline({
                 ? `Run ${formatRunId(selected.suiteRunId ?? selected._id)} · ${modelName(
                     selected,
                   )} · ${age(selected.createdAt)}`
-                : "Conversation, checks, tool calls, trace, and replay."}
+                : "Conversation, assertions, tool calls, trace, and replay."}
             </SheetDescription>
           </SheetHeader>
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">

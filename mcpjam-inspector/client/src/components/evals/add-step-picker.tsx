@@ -233,7 +233,7 @@ export function AddStepPicker({
             }
             onKeyDown={handleSearchKeyDown}
             placeholder="Filter…"
-            aria-label="Filter steps and checks"
+            aria-label="Filter steps and assertions"
             className="h-7 border-none bg-transparent px-2 text-xs shadow-none focus-visible:ring-0"
           />
         </div>

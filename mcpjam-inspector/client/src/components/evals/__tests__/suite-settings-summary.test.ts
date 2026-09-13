@@ -48,7 +48,7 @@ describe("suite-settings-summary", () => {
     ).toBe("Run run_abc, 0% allowed drop, 0ms p95 increase");
     expect(
       describeGatePolicy({ noGatingScoreErrors: true }),
-    ).toBe("any gating scorer errored");
+    ).toBe("any gating evaluator errored");
   });
 
   it("describes validity ceilings as percents", () => {
@@ -59,7 +59,7 @@ describe("suite-settings-summary", () => {
         passThreshold: 1,
         validity: { minCompletionRate: 0.8, maxEvaluatorErrorRate: 0.1 },
       }),
-    ).toBe("80% completed, at most 10% grader errors");
+    ).toBe("80% completed, at most 10% evaluator errors");
   });
 
   it("joins rubric criteria by label", () => {

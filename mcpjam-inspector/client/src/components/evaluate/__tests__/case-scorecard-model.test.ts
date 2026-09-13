@@ -275,7 +275,7 @@ describe("buildCaseScorecard — the route question", () => {
       steps: [prompt("p1", "hi"), assert("a1", { type: "noToolErrors" } as Predicate)],
     });
     expect(card.route.route?.kind).toBe("checks");
-    expect(card.route.label).toBe("Any route — graded by the scorers below");
+    expect(card.route.label).toBe("Any route — graded by the evaluators below");
     expect(card.unsetBlockReason).toBeNull();
   });
 

@@ -236,9 +236,9 @@ describe("blind review", () => {
   it("still hosts the review control, which is the point", () => {
     render(
       <JudgeAnswerRow state={{ kind: "withheld" }}>
-        <button>Label this trial</button>
+        <button>Label this iteration</button>
       </JudgeAnswerRow>,
     );
-    expect(screen.getByText("Label this trial")).toBeTruthy();
+    expect(screen.getByText("Label this iteration")).toBeTruthy();
   });
 });

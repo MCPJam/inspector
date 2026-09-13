@@ -281,7 +281,7 @@ function SuiteRunStageFunnel({
     <StageFunnel
       summary={toChatSessionFunnel(funnel)}
       title="User value chain"
-      populationLabel="Trials in this run"
+      populationLabel="Iterations in this run"
       className={className}
     />
   );

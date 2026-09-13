@@ -65,10 +65,10 @@ describe("a row leads with what it protects", () => {
     ).toBeTruthy();
   });
 
-  it("shows the evidence and how many trials it held in", () => {
+  it("shows the evidence and how many iterations it held in", () => {
     renderCard();
     expect(screen.getByText(/No tool errored in 3 of 3/)).toBeTruthy();
-    expect(screen.getByText("held in 3 of 3 trials")).toBeTruthy();
+    expect(screen.getByText("held in 3 of 3 iterations")).toBeTruthy();
   });
 
   it("warns when a single trial is all the evidence there is", () => {
@@ -175,11 +175,11 @@ describe("a batch that did not succeed", () => {
       diagnosis: { unsuccessful: 2, of: 3, noSignal: false },
     });
     expect(
-      screen.getByText(/2 of 3 trials did not accomplish the goal/),
+      screen.getByText(/2 of 3 iterations did not accomplish the goal/),
     ).toBeTruthy();
     expect(
       screen.getByText(
-        "Requirements are suggested once every trial accomplishes the goal.",
+        "Requirements are suggested once every iteration accomplishes the goal.",
       ),
     ).toBeTruthy();
   });
@@ -218,14 +218,14 @@ describe("a batch that did not succeed", () => {
 describe("read state", () => {
   it("says traces are still loading", () => {
     renderCard({ read: { ...noRead, pending: 3 } });
-    expect(screen.getByText("Reading 3 trial traces…")).toBeTruthy();
+    expect(screen.getByText("Reading 3 iteration traces…")).toBeTruthy();
   });
 
-  it("says which checks a failed read cost", () => {
+  it("says which assertions a failed read cost", () => {
     renderCard({ read: { ...noRead, failed: 1 } });
     expect(
       screen.getByText(
-        /1 trace could not be read, so wording and error checks/,
+        /1 trace could not be read, so wording and error assertions/,
       ),
     ).toBeTruthy();
   });
@@ -233,7 +233,7 @@ describe("read state", () => {
   it("says when the batch was larger than the read cap", () => {
     renderCard({ read: { pending: 0, failed: 0, capped: 3, total: 8 } });
     expect(
-      screen.getByText(/This batch has 8 trials; traces are read for 5/),
+      screen.getByText(/This batch has 8 iterations; traces are read for 5/),
     ).toBeTruthy();
   });
 });
@@ -247,7 +247,7 @@ describe("always", () => {
   it("says so when nothing was stable", () => {
     renderCard({ suggestions: [] });
     expect(
-      screen.getByText("Nothing else was stable across every trial."),
+      screen.getByText("Nothing else was stable across every iteration."),
     ).toBeTruthy();
   });
 });

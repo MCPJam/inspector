@@ -246,7 +246,7 @@ describe("STAGE_EMPTY_COPY", () => {
     }
     for (const stage of ["selection", "response", "userValue"] as const) {
       expect(stageEmptyIsGap(stage), stage).toBe(true);
-      expect(STAGE_EMPTY_COPY[stage]).toBe("No grader");
+      expect(STAGE_EMPTY_COPY[stage]).toBe("No evaluator");
     }
   });
 });

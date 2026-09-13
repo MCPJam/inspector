@@ -282,7 +282,7 @@ function AddToolRow({
           onValueChange={(tool) => {
             if (tool) onAdd(tool);
           }}
-          placeholder="+ Add tool to this check"
+          placeholder="+ Add tool to this assertion"
           searchPlaceholder="Search tools…"
           emptyMessage="No matching tools"
           className="h-8 w-full justify-between text-xs"

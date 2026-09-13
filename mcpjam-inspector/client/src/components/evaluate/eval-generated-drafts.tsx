@@ -251,7 +251,7 @@ export function EvalGeneratedDrafts({
                     <p className="line-clamp-2 text-[13px] leading-relaxed">
                       {prompt?.kind === "prompt" && prompt.prompt.trim()
                         ? prompt.prompt
-                        : "Open this draft to review its steps and checks."}
+                        : "Open this draft to review its steps and assertions."}
                     </p>
                   </div>
                 )}

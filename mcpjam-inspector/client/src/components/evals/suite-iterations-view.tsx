@@ -863,7 +863,7 @@ export function SuiteIterationsView({
   const passOrFailRowError = !isRubricValid(draft.current.judgeRubric)
     ? { message: "A criterion is missing a label" }
     : !areAllChecksValid(draftDefaultPredicates)
-    ? { message: "A check is incomplete" }
+    ? { message: "An assertion is incomplete" }
     : undefined;
   // Which POLICY the sheet is editing. Read from the DRAFT, not the suite, so
   // the v2 rows appear the moment someone drafts the upgrade rather than only
@@ -2727,7 +2727,7 @@ export function SuiteIterationsView({
                         chained={false}
                         data-subsection-id="computerEnvironment"
                         disabledReason={computerEnvironmentDisabledReason}
-                        hint="Each trial boots a fresh MCPJam cloud sandbox from this image, never on this machine. Build the image first, or the run fails fast."
+                        hint="Each iteration boots a fresh MCPJam cloud sandbox from this image, never on this machine. Build the image first, or the run fails fast."
                       >
                         <select
                           className="h-8 max-w-[16rem] rounded-md border border-input bg-background px-2 text-xs text-foreground"

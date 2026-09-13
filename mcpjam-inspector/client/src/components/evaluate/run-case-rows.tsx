@@ -395,7 +395,7 @@ export function RunCaseRows({
                 className="hidden w-24 shrink-0 truncate text-right text-[12.5px] tabular-nums text-muted-foreground sm:block"
                 title={
                   row.costUsd === null
-                    ? "No trial in this case has a cost"
+                    ? "No iteration in this case has a cost"
                     : [
                         row.costedIterations < row.coverage.total
                           ? `${row.costedIterations} of ${row.coverage.total} iterations priced`

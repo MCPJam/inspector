@@ -115,7 +115,7 @@ export function PredicatesList({
   if (predicates.length === 0) return null;
   // Advisory (Warn/Report) rows are reported, never decisive: the runner's
   // own verdict skips them, so counting their failures here would paint a
-  // red "2 / 3 checks passed" badge on a trial the runner passed.
+  // red "2 / 3 assertions passed" badge on an iteration the runner passed.
   const gating = predicates.filter(
     (r) => checkRole(r.predicate) !== "advisory"
   );
@@ -170,13 +170,13 @@ export function PredicatesList({
             <XCircle className="h-3 w-3 shrink-0" aria-hidden />
           )}
           {allPassed
-            ? `${gating.length} / ${gating.length} checks passed`
-            : `${passed} / ${gating.length} checks passed`}
+            ? `${gating.length} / ${gating.length} assertions passed`
+            : `${passed} / ${gating.length} assertions passed`}
         </div>
       </div>
 
-      {renderGroup("Whole-run checks", caseLevel, "case")}
-      {renderGroup("Step checks", stepScoped, "step")}
+      {renderGroup("Whole-run assertions", caseLevel, "case")}
+      {renderGroup("Step assertions", stepScoped, "step")}
     </div>
   );
 }

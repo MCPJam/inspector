@@ -27,12 +27,12 @@ export function SuiteStageChecks({
           id="suite-stage-checks-title"
           className="text-lg font-semibold tracking-tight text-foreground"
         >
-          Checks by stage
+          Assertions by stage
         </h3>
         <p className="text-sm text-muted-foreground">
           {suiteDisabledChecks
-            ? "Standard checks inherited from the suite. Changes for this case are marked below."
-            : "Choose which checks to run at each stage. All checks are on by default."}
+            ? "Standard assertions inherited from the suite. Changes for this case are marked below."
+            : "Choose which assertions to run at each stage. All assertions are on by default."}
         </p>
       </div>
       <table className="w-full table-fixed border-collapse text-left text-sm">

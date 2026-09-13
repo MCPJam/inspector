@@ -48,7 +48,7 @@ export const ADD_SECTIONS = [
   "Assertions · Answer and outcome",
   "Assertions · View",
   "Limits · Time and usage",
-  "Observations · Advisory checks",
+  "Observations · Advisory assertions",
 ] as const;
 export type AddSection = (typeof ADD_SECTIONS)[number];
 export type EvalAddChoice =

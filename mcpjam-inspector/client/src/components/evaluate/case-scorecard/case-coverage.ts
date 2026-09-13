@@ -105,12 +105,15 @@ export function coverageDetail(
   }
   if (suggestionsAtStage > 0) {
     return {
-      label: `Nothing checks this · ${suggestionsAtStage} suggested`,
+      label: `No assertion here · ${suggestionsAtStage} suggested`,
       toneClass: STAGE_CHIP_TONE_CLASS.mixed,
     };
   }
   // A gap this release cannot fill. Neutral, because there is nothing to do.
-  return { label: "No grader", toneClass: STAGE_CHIP_TONE_CLASS.unmeasured };
+  return {
+    label: "No evaluator",
+    toneClass: STAGE_CHIP_TONE_CLASS.unmeasured,
+  };
 }
 
 export function coverageDetailByStage(

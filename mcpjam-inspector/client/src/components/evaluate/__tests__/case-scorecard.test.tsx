@@ -157,7 +157,7 @@ describe("CaseScorecard — the left rail", () => {
       within(screen.getByTestId("case-judge-block")).getAllByTestId(
         "scorecard-row-marker",
       )[0],
-    ).toHaveAttribute("title", "Runs last, after every check");
+    ).toHaveAttribute("title", "Runs last, after every assertion");
   });
 });
 
@@ -267,7 +267,7 @@ describe("CaseScorecard — the library", () => {
   it("adds one case-level scorer, open, from a single menu", async () => {
     const user = userEvent.setup();
     const { onAddScorer } = renderCard();
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     await user.click(screen.getByTestId("add-step-item-check:noToolErrors"));
     expect(onAddScorer).toHaveBeenCalledWith({ type: "noToolErrors" });
   });
@@ -275,7 +275,7 @@ describe("CaseScorecard — the library", () => {
   it("does not offer the kind the route question owns", async () => {
     const user = userEvent.setup();
     renderCard();
-    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(screen.getByRole("button", { name: "Add assertion" }));
     expect(
       screen.queryByTestId("add-step-item-check:toolCalledWith"),
     ).toBeNull();
@@ -344,7 +344,7 @@ describe("CaseScorecard — read-only", () => {
       },
     });
     expect(
-      screen.queryByRole("button", { name: "Add scorer" }),
+      screen.queryByRole("button", { name: "Add assertion" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("switch", { name: "Skip the judge for this case" }),

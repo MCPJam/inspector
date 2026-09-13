@@ -75,7 +75,7 @@ export function summaryLine(
   } else {
     // Nothing was measured at all. "0 of 0 gates passed" would read like a
     // result; this says there is no result to read.
-    parts.push("No scorers ran");
+    parts.push("No evaluators ran");
   }
   if (summary.warn > 0) parts.push(`${summary.warn} warn`);
   if (summary.errors > 0) {
@@ -404,7 +404,9 @@ export function TrialScorecard({
       */}
       {(!judgeHidden || !judgeCase) && suggestionsSlot ? (
         <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer py-2">Suggested checks</summary>
+          <summary className="cursor-pointer py-2">
+            Suggested assertions
+          </summary>
           {suggestionsSlot}
         </details>
       ) : null}

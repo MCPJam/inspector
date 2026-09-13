@@ -80,7 +80,7 @@ export function normalizeDisabledStageChecks(
 export function describeStageChecks(
   disabled: readonly string[] | undefined,
 ): string {
-  if (!disabled?.length) return "All checks enabled";
+  if (!disabled?.length) return "All assertions enabled";
   const labels = new Map(
     SUITE_STAGE_CHECKS.flatMap(({ checks }) =>
       checks.map(({ id, label }) => [id, label] as const),
