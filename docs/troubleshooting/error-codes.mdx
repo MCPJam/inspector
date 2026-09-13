@@ -344,12 +344,13 @@ You authenticated successfully but lack permission for the operation.
 An expired OAuth access token could not be refreshed.
 
 **Likely causes**
-- Refresh token was revoked.
-- Refresh token expired.
-- Server returned `invalid_grant` to the refresh attempt.
+- Refresh token was revoked or expired — server returned `invalid_grant` or `invalid_client`.
+- The OAuth client registration was deleted or rotated on the authorization server.
+- In hosted mode, the authorization server was unreachable when the cloud backend tried to refresh (you'll see a "Could not reach `<host>`" toast with a **Retry** option instead of **Reconnect**).
 
 **Next steps**
-- Click **Reconnect** on the server card to run a fresh OAuth flow.
+- If the toast shows **Reconnect**: click it (or use the **Reconnect** button on the server card) to run a fresh OAuth flow and re-register the client.
+- If the toast shows **Retry**: the authorization server was temporarily unreachable — wait a moment and click **Retry**. If it keeps failing, check whether the authorization server is online.
 
 ### Missing bearer
 
