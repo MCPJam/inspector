@@ -29,8 +29,9 @@ export function isVerifiedAtStale(verifiedAt: number | undefined): boolean {
 
 /**
  * The MCPJam profile describes THIS app, so its facts are as fresh as the
- * deploy that shipped them — the catalog's hand-stamped date would age even
- * though the profile never does. Every other host keeps its catalog date.
+ * build that shipped them — webapp deploy or npm release alike — while the
+ * catalog's hand-stamped date would age even though the profile never does.
+ * Every other host keeps its catalog date.
  */
 export function resolveVerifiedAt(
   hostId: string,
