@@ -1,5 +1,13 @@
-import type { PlatformSessionBrowserBodies, PlatformSessionBrowserResults } from "./types.js";
-import type { PlatformSessionBrowserInput, PlatformSessionBrowserOperation, PlatformSessionBrowserOpened, PlatformBrowserToolPolicy } from "./types.js";
+import type {
+  PlatformSessionBrowserBodies,
+  PlatformSessionBrowserResults,
+} from "./types.js";
+import type {
+  PlatformSessionBrowserInput,
+  PlatformSessionBrowserOperation,
+  PlatformSessionBrowserOpened,
+  PlatformBrowserToolPolicy,
+} from "./types.js";
 import { PlatformApiError } from "./errors.js";
 import { readSdkVersion } from "../sdk-version.js";
 import type {
@@ -255,6 +263,9 @@ export interface PlatformCiMetadataOption {
   job?: string;
   runUrl?: string;
   runId?: string;
+  repositoryUrl?: string;
+  prUrl?: string;
+  branchUrl?: string;
   /** Accepted in the run row's own spelling too, when a caller has it. */
   pipelineId?: string;
   jobId?: string;
@@ -367,6 +378,9 @@ function buildLaunchHeaders(
       "job",
       "jobId",
       "runUrl",
+      "repositoryUrl",
+      "prUrl",
+      "branchUrl",
       "runId",
       "pipelineId",
     ] as const) {
@@ -693,8 +707,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-              ? "true"
-              : "false",
+                ? "true"
+                : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
